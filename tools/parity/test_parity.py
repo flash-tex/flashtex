@@ -3,6 +3,8 @@
     python3 -m unittest discover -s tools/parity -p 'test_*.py' -v
 """
 
+import contextlib
+import faulthandler
 import gzip
 import io
 import json
@@ -14,6 +16,19 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+
+@contextlib.contextmanager
+def watchdog(seconds=180):
+    """A test that runs parity.main's process pool in this process: if it
+    has not finished in `seconds`, print every thread's stack and exit, so
+    a hang fails the CI step at once with where it hung, instead of eating
+    the job's timeout."""
+    faulthandler.dump_traceback_later(seconds, exit=True)
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 import corpus  # noqa: E402
 import definers  # noqa: E402
@@ -191,6 +206,51 @@ class Levels(unittest.TestCase):
                 json.dump({"levels": {"a": 3, "b": 1, "gone": 0, "excl": None}}, f)
             rs = [self._r("a", 2), self._r("b", 4)]
             self.assertEqual(parity.check_baseline(rs, p), [("a", 3, 2), ("gone", 0, None)])
+
+    def test_baseline_host(self):
+        # RQ8: a baseline names its host; one recorded on another OS is refused,
+        # one on this OS (or a /1 baseline with no host) is checked as before
+        here = parity.baseline_host()
+        self.assertEqual(here["system"], parity.platform.system())
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "b.json")
+            other = "Plan9" if here["system"] != "Plan9" else "Darwin"
+            with open(p, "w") as f:
+                json.dump({"host": {"system": other}, "levels": {"a": 1}}, f)
+            with self.assertRaises(parity.BaselineHostMismatch):
+                parity.check_baseline([self._r("a", 3)], p)
+            for host in (here, None):
+                with open(p, "w") as f:
+                    json.dump({"host": host, "levels": {"a": 1}}, f)
+                self.assertEqual(parity.check_baseline([self._r("a", 3)], p), [])
+
+    def test_the_default_engine_is_the_new_one(self):
+        # S5 (plan §1.8): with no --engine the new engine is measured, and it
+        # wants its formats; --old-engine picks the CLI
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("FLASHTEX_ENGINE", "FLASHTEX_CLI", "FLASHTEX_FORMATS"):
+                os.environ.pop(k, None)
+            eng = os.path.join(d, "flashtex-initex")
+            with open(eng, "w") as f:
+                f.write("#!/bin/sh\necho 'pdfTeX 3.141592653-2.6-1.40.29 (flashtex-initex)'\n")
+            os.chmod(eng, 0o755)
+            missing = os.path.join(d, "none", "flashtex")
+            err = io.StringIO()
+            with mock.patch.object(parity, "DEFAULT_ENGINE", eng), mock.patch.object(parity, "DEFAULT_FLASHTEX", missing), \
+                    contextlib.redirect_stderr(err):
+                self.assertEqual(parity.main(["--tier", "fixtures", "--out", d, "--work", d]), 2)
+                self.assertIn("needs its formats", err.getvalue())
+                self.assertEqual(parity.main(["--tier", "fixtures", "--old-engine", "--out", d, "--work", d]), 2)
+                self.assertIn(f"engine not found at {missing}", err.getvalue())
+                with self.assertRaises(SystemExit):
+                    parity.main(["--old-engine", "--engine", eng])
+
+    def test_committed_fixtures_baseline_names_its_host(self):
+        with open(os.path.join(parity.REPO, "tools", "parity", "baseline-fixtures.json")) as f:
+            b = json.load(f)
+        self.assertEqual(b["schema"], "flashtex-parity-baseline/2")
+        self.assertIn("system", b["host"])
 
     def test_pt_gate(self):
         ok = {"id": "ok", "pt": {"P-T1": True, "P-T2": True, "why": {}}}
@@ -509,6 +569,54 @@ class Corpus(unittest.TestCase):
             self.assertEqual(ok["dir"], os.path.join(d, "cache", "src", "packages", "p-single"))
             self.assertEqual(sorted(os.listdir(ok["dir"])), [".parity-copied", "fig.png", "p.tex"])
             self.assertIn("sha256 mismatch", bad["problem"])
+
+    def test_arxiv_fetch_retries_verifies_and_never_caches_short_bytes(self):
+        import http.client
+        from unittest import mock
+        good = b"pinned e-print bytes"
+        answers = [http.client.IncompleteRead(b"pinned"), b"pinned", good]  # a cut read, a short body, the bytes
+        calls = []
+
+        def get(url, timeout=120):
+            calls.append(url)
+            a = answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(corpus, "http_get", get), \
+                mock.patch.object(corpus.time, "sleep", lambda s: None):
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "nightly-5k", "entries": [
+                    {"id": "1603.06059v3", "url": "https://x/e-print/1603.06059v3", "sha256": corpus.sha256_bytes(good)},
+                    {"id": "1612.03571v1", "url": "https://x/e-print/1612.03571v1", "sha256": "0" * 64}]}, f)
+            cache = os.path.join(d, "cache")
+            with mock.patch.object(corpus, "unpack", lambda data, dest: os.makedirs(dest, exist_ok=True)):
+                rec = corpus.fetch_manifest(man, cache, log=lambda *_: None, delay=0, only={"1603.06059v3"})[0]
+                self.assertIsNone(rec["problem"])
+                self.assertEqual(len(calls), 3)
+                with open(os.path.join(cache, "eprints", "1603.06059v3"), "rb") as f:
+                    self.assertEqual(f.read(), good)
+                # changed bytes: fetched once more, then a sha256 mismatch, and nothing cached
+                answers[:] = [b"other", b"other"]
+                (bad,) = corpus.fetch_manifest(man, cache, log=lambda *_: None, delay=0, only={"1612.03571v1"})
+                self.assertIn("sha256 mismatch", bad["problem"])
+                self.assertFalse(os.path.exists(os.path.join(cache, "eprints", "1612.03571v1")))
+                # a network error on every try fails after FETCH_TRIES, and `fetch` exits non-zero
+                answers[:] = [OSError("reset")] * corpus.FETCH_TRIES
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                    rc = corpus.main(["--cache", cache, "--delay", "0", "fetch", "--manifest", man, "--shard", "1/2"])
+                self.assertEqual(rc, 1)
+                self.assertIn(f"fetch failed after {corpus.FETCH_TRIES} tries", err.getvalue())
+                self.assertEqual(answers, [])
+                # a cached file that is not the pinned bytes is fetched again
+                with open(os.path.join(cache, "eprints", "1603.06059v3"), "wb") as f:
+                    f.write(b"pin")
+                answers[:] = [good]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(corpus.main(["--cache", cache, "--delay", "0", "fetch", "--manifest", man,
+                                                  "--shard", "0/2"]), 0)
+                self.assertEqual(answers, [])
 
     def test_packages_manifest_is_well_formed(self):
         with open(os.path.join(corpus.MANIFEST_DIR, "packages-texlive-2026.json"), encoding="utf-8") as f:
@@ -1525,7 +1633,7 @@ class PTWithOracle(unittest.TestCase):
         src = os.path.join(self.d, "warn")
         os.makedirs(src)
         _, _, pdf = self.build("fig", "Figure.")
-        subprocess.run(["qpdf", "--force-version=2.0", pdf, os.path.join(src, "fig.pdf")], check=True)
+        subprocess.run(["qpdf", "--force-version=2.0", pdf, os.path.join(src, "fig.pdf")], check=True, timeout=60)
         with open(os.path.join(src, "main.tex"), "w") as f:
             f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
                     "\\includegraphics{fig.pdf}\\end{document}\n")
@@ -1608,9 +1716,10 @@ class PTWithOracle(unittest.TestCase):
                 if n:
                     time.sleep(2.1)  # a conversion of the candidate's own would carry another time
                 out, work = os.path.join(self.d, f"out{n}"), os.path.join(self.d, f"work{n}")
-                code = parity.main(["--tier", "packages", "--engine", engine, "--oracle-pdftex", PDFTEX,
-                                    "--shell-escape-flag=-shell-restricted", "--texmf", texmf, "--cache", cache,
-                                    "--raster", "none", "-j", "1", "--out", out, "--work", work, "--keep-work"])
+                with watchdog(600):
+                    code = parity.main(["--tier", "packages", "--engine", engine, "--oracle-pdftex", PDFTEX,
+                                        "--shell-escape-flag=-shell-restricted", "--texmf", texmf, "--cache", cache,
+                                        "--raster", "none", "-j", "1", "--out", out, "--work", work, "--keep-work"])
                 with open(os.path.join(out, "documents.json")) as f:
                     rec = json.load(f)["packages"][0]
                 entries = {p: os.stat(p).st_mtime_ns for p in glob.glob(os.path.join(cache, "pt-oracle", "*", "*",
@@ -1651,7 +1760,7 @@ class PTWithOracle(unittest.TestCase):
     def test_object_renumbering_is_invisible(self):
         _, _, p1 = self.build("a", "Hello world.")
         lin = os.path.join(self.d, "renumbered.pdf")
-        subprocess.run(["qpdf", "--linearize", "--object-streams=generate", p1, lin], check=True)
+        subprocess.run(["qpdf", "--linearize", "--object-streams=generate", p1, lin], check=True, timeout=60)
         self.assertTrue(tiers.compare_pt2(p1, lin, self.d)["ok"])
 
 
@@ -1774,7 +1883,7 @@ class NightlyDiskAndCommit(unittest.TestCase):
             else:
                 os.environ["GITHUB_SHA"] = saved
         head = subprocess.run(["git", "-C", nightly.REPO, "rev-parse", "HEAD"], capture_output=True,
-                              text=True).stdout.strip()
+                              text=True, timeout=60).stdout.strip()
         self.assertEqual(sha, head if len(head) == 40 else "f" * 40)
 
 
@@ -2059,9 +2168,10 @@ class WorkerDeath(unittest.TestCase):
                         "case \"$(pwd)\" in *article-twocolumn*) kill -9 $PPID; sleep 5;; esac\nexit 1\n")
             os.chmod(probe, 0o755)
             out = os.path.join(d, "out")
-            code = parity.main(["--tier", "fixtures", "--only", a, "--only", b, "--engine", probe,
-                                "--pt", "off", "--raster", "none", "-j", "2", "--out", out,
-                                "--work", os.path.join(d, "work"), "--cache", os.path.join(d, "cache")])
+            with watchdog():
+                code = parity.main(["--tier", "fixtures", "--only", a, "--only", b, "--engine", probe,
+                                    "--pt", "off", "--raster", "none", "-j", "2", "--out", out,
+                                    "--work", os.path.join(d, "work"), "--cache", os.path.join(d, "cache")])
             self.assertEqual(code, parity.DIED_EXIT)
             with open(os.path.join(out, "documents.json")) as f:
                 recs = {r["id"]: r for r in json.load(f)["fixtures"]}
@@ -2422,7 +2532,8 @@ class PTStream(unittest.TestCase):
         while a LogPipe at `p` reads."""
         p = os.path.join(d, "main.log")
         with pt1stream.LogPipe(p, d, budget) as pipe:
-            subprocess.run([sys.executable, "-c", "import os, sys\np = sys.argv[1]\n" + body, p], check=True)
+            subprocess.run([sys.executable, "-c", "import os, sys\np = sys.argv[1]\n" + body, p], check=True,
+                           timeout=120)
         return pipe, p
 
     def test_log_pipe_reads_what_the_engine_writes(self):
@@ -2769,9 +2880,46 @@ sys.exit(0)
                     p.kill()
             self.assertEqual(self.work_dirs(cache), [])
 
+    def test_sigterm_exits_even_when_terminated_is_swallowed(self):
+        """A `Terminated` raised in a `__del__` is printed and dropped, and one
+        raised inside subprocess's lock handling can leave the worker blocked
+        on that lock; either way the worker must still exit, or the pool's
+        join of it hangs the run (CI, 2026-10). A second SIGTERM exits at once.
+        (With two signals the grace is long, 60 s, so "at once" is told apart
+        from "after the grace" with no tight bound on a loaded runner.)"""
+        for signals, grace in ((1, 0.5), (2, 60.0)):
+            child = f"""
+import sys, time
+sys.path.insert(0, {HERE!r})
+import parity
+parity.TERM_GRACE = {grace!r}
+parity.set_shell_escape("-no-shell-escape")  # installs the worker's SIGTERM handler
+print("ready", flush=True)
+while True:
+    try:
+        time.sleep(0.05)
+    except BaseException:  # what a __del__ does to an exception
+        pass
+"""
+            p = subprocess.Popen([sys.executable, "-c", child], stdout=subprocess.PIPE)
+            try:
+                self.assertEqual(p.stdout.readline().strip(), b"ready")
+                t0 = time.monotonic()
+                for _ in range(signals):
+                    p.send_signal(signal.SIGTERM)
+                    time.sleep(0.05)
+                self.assertEqual(p.wait(30), 128 + signal.SIGTERM)
+                if signals == 2:
+                    self.assertLess(time.monotonic() - t0, grace / 2)  # before the grace ran out
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                p.wait(30)
+                p.stdout.close()
+
     def test_stale_work_dirs_are_swept_at_startup(self):
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
-        dead.wait()
+        dead.wait(60)
         live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         try:
             with tempfile.TemporaryDirectory() as d:
@@ -2785,9 +2933,10 @@ sys.exit(0)
                 with open(probe, "w") as f:
                     f.write("#!/bin/sh\ncase \"$1\" in --version) echo 'pdfTeX probe'; exit 0;; esac\nexit 1\n")
                 os.chmod(probe, 0o755)
-                parity.main(["--tier", "fixtures", "--only", "real-world/article-twocolumn", "--engine", probe,
-                             "--pt", "off", "--raster", "none", "-j", "1", "--out", os.path.join(d, "out"),
-                             "--work", os.path.join(d, "work"), "--cache", cache])
+                with watchdog():
+                    parity.main(["--tier", "fixtures", "--only", "real-world/article-twocolumn", "--engine", probe,
+                                 "--pt", "off", "--raster", "none", "-j", "1", "--out", os.path.join(d, "out"),
+                                 "--work", os.path.join(d, "work"), "--cache", cache])
                 left = sorted(os.path.basename(x) for x in self.work_dirs(cache))
                 self.assertEqual(left, sorted([f"work-{live.pid}", "work-notapid"]))
                 for pid in (dead.pid, live.pid):  # a half-written cache file of each
@@ -2798,6 +2947,186 @@ sys.exit(0)
         finally:
             live.kill()
             live.wait()
+
+
+@unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
+class PT2SizeCap(unittest.TestCase):
+    """P5-BOARD-T4: a PDF whose qdf copy is over the cap is a harness error (unmeasured),
+    never a P-T2 pass or fail, and qpdf stops writing at the cap (T4 2511.15561v1: 3.0 GB)."""
+
+    def test_over_the_cap_raises_and_leaves_nothing(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        src = os.path.join(d, "a.pdf")
+        body = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages "
+                b"/Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] "
+                b">>\nendobj\ntrailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n")
+        with open(src, "wb") as f:
+            f.write(body)
+        out = os.path.join(d, "a.qdf.pdf")
+        old = tiers.PT2_MAX_QDF_BYTES
+        try:
+            tiers.PT2_MAX_QDF_BYTES = 64
+            with self.assertRaises(tiers.PT2TooLarge):
+                tiers.normalise_pdf(src, out)
+            self.assertFalse(os.path.exists(out))
+            self.assertFalse(issubclass(tiers.PT2TooLarge, tiers.pdftext.PdfError))  # compare_pt2 lets it through
+        finally:
+            tiers.PT2_MAX_QDF_BYTES = old
+        tiers.normalise_pdf(src, out)  # under the default cap: as before
+        self.assertTrue(os.path.getsize(out) > 0)
+
+    def predictor_pdf(self, d, name, pixels, width, level, png_filter):
+        """A one-page PDF whose RGB image is Flate with a PNG predictor (as pdfTeX's PNG
+        copy writes it), every row with `png_filter` (0 None, 1 Sub), at zlib `level`."""
+        import zlib
+        bpp, rowbytes = 3, width * 3
+        rows = []
+        for y in range(len(pixels) // rowbytes):
+            row = pixels[y * rowbytes:(y + 1) * rowbytes]
+            if png_filter == 1:
+                row = bytes((row[i] - (row[i - bpp] if i >= bpp else 0)) & 0xff for i in range(rowbytes))
+            rows.append(bytes([png_filter]) + row)
+        data = zlib.compress(b"".join(rows), level)
+        img = (b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /BitsPerComponent 8 "
+               b"/ColorSpace /DeviceRGB /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 "
+               b"/Columns %d >> /Length %d >>\nstream\n" % (width, len(rows), width, len(data))) + data + b"\nendstream"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] /Resources << /XObject << /Im1 5 0 R >> >> "
+                b"/Contents 4 0 R >>",
+                b"<< /Length 18 >>\nstream\nq 9 0 0 9 0 0 cm /Im1 Do Q\nendstream", img]
+        body = b"%PDF-1.4\n" + b"".join(b"%d 0 obj\n%s\nendobj\n" % (i + 1, o) for i, o in enumerate(objs))
+        body += b"trailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n"
+        p = os.path.join(d, name)
+        with open(p, "wb") as f:
+            f.write(body)
+        return p
+
+    def test_same_pixels_other_encoding_is_equal(self):
+        """#1635 review: a Flate image with a PNG predictor is compared by its samples, not by
+        zlib's bytes (--recompress-flate): the same pixels at another level and with another
+        PNG row filter pass, and one changed pixel fails."""
+        import random
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        rnd = random.Random(1635)
+        width, height = 40, 30
+        pixels = bytes(rnd.randrange(256) for _ in range(width * height * 3))
+        a = self.predictor_pdf(d, "a.pdf", pixels, width, 9, 0)
+        b = self.predictor_pdf(d, "b.pdf", pixels, width, 1, 1)
+        self.assertTrue(tiers.compare_pt2(a, b, os.path.join(d, "w1"))["ok"])
+        changed = bytearray(pixels)
+        changed[1234] ^= 1
+        c = self.predictor_pdf(d, "c.pdf", bytes(changed), width, 9, 0)
+        r = tiers.compare_pt2(a, c, os.path.join(d, "w2"))
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["first_page"]["differs"], ["resources"])
+
+    def test_qdf_keeps_images_compressed_and_the_digest_is_unchanged(self):
+        """#1621: the qdf copy is written compressed (--compress-streams=y), and an image's
+        digest is the streamed one, equal to hashing its decoded, padding-cleared samples."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        rows = bytes([0xAA, 0b11101110] * 600)  # 9 px at 1 bit, 600 rows, padding bits set
+        img = (b"<< /Type /XObject /Subtype /Image /Width 9 /Height 600 /BitsPerComponent 1 "
+               b"/ColorSpace /DeviceGray /Length %d >>\nstream\n" % len(rows)) + rows + b"\nendstream"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] /Resources << /XObject << /Im1 5 0 R >> >> "
+                b"/Contents 4 0 R >>",
+                b"<< /Length 18 >>\nstream\nq 9 0 0 9 0 0 cm /Im1 Do Q\nendstream", img]
+        body = b"%PDF-1.4\n" + b"".join(b"%d 0 obj\n%s\nendobj\n" % (i + 1, o) for i, o in enumerate(objs))
+        body += b"trailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n"
+        src, out = os.path.join(d, "i.pdf"), os.path.join(d, "i.qdf.pdf")
+        with open(src, "wb") as f:
+            f.write(body)
+        tiers.normalise_pdf(src, out)
+        doc = tiers.pdftext.PdfDocument.load(out)
+        g = tiers.Graph(doc)
+        nums = [n for n, (o, raw) in doc.objects.items() if isinstance(o, dict) and o.get("Subtype") == "Image"]
+        self.assertEqual(len(nums), 1)
+        obj, raw = doc.objects[nums[0]]
+        self.assertEqual(obj.get("Filter"), "FlateDecode")  # compressed in the copy
+        self.assertLess(len(raw), len(rows))
+        cleared = bytes([0xAA, 0b10000000] * 600)
+        self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(cleared))
+        self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(g.stream(nums[0])))
+
+
+class RowPadding(unittest.TestCase):
+    """P5-BOARD-T4: pdfTeX leaves heap bytes in the unused bits of a sub-byte image row
+    (writepng.c's uninitialised row buffer and libpng's png_combine_row), so P-T2
+    compares image samples with those bits cleared, and every pixel still counts."""
+
+    class Doc:
+        def __init__(self, objs=None):
+            self.objs = objs or {}
+
+        def resolve(self, x):
+            return self.objs.get(x, x) if isinstance(x, (str, int)) else x
+
+    def image(self, width, **over):
+        o = {"Subtype": "Image", "Width": width, "Height": 2, "BitsPerComponent": 1,
+             "ColorSpace": ["Indexed", "DeviceRGB", 1, b"\x00\x00\x00\xff\xff\xff"]}
+        o.update(over)
+        return o
+
+    def test_padding_cleared_pixels_kept(self):
+        doc = self.Doc()
+        # 9 px at 1 bit: 2 bytes a row, 7 padding bits in the second
+        a = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b11101110, 0x55, 0b01101110]))
+        b = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b10000000, 0x55, 0b00000000]))
+        self.assertEqual(a, b)
+        c = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b00000000, 0x55, 0b00000000]))
+        self.assertNotEqual(a, c)  # the 9th pixel differs: still a difference
+
+    def test_left_alone(self):
+        doc = self.Doc()
+        whole = bytes([1, 2, 3, 4])
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(16), whole), whole)  # rows end on a byte
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(9), b"\xff" * 3), b"\xff" * 3)  # not plain rows
+        self.assertEqual(tiers.clear_row_padding(doc, {"Subtype": "Form"}, b"\xff\xff"), b"\xff\xff")
+        unknown = self.image(9, ColorSpace="Unknown")
+        self.assertEqual(tiers.clear_row_padding(doc, unknown, b"\xff" * 4), b"\xff" * 4)
+
+    def test_streamed_digest_is_the_in_memory_one(self):
+        """#1621: image_digest hashes an image as a stream, in chunks; it must give exactly
+        sha(clear_row_padding(decoded)) whatever the chunk boundaries."""
+        import random
+        import zlib
+        rnd = random.Random(1621)
+        doc = self.Doc()
+        old = tiers.DIGEST_CHUNK
+        try:
+            for chunk in (1, 7, 64, 1 << 20):
+                tiers.DIGEST_CHUNK = chunk
+                for width, h in ((9, 5), (16, 3), (977, 4), (1, 1)):
+                    o = self.image(width, Height=h, Filter="FlateDecode")
+                    rowbytes = (width + 7) // 8
+                    data = bytes(rnd.randrange(256) for _ in range(rowbytes * h))
+                    want = tiers.sha(tiers.clear_row_padding(doc, o, data))
+                    self.assertEqual(tiers.image_digest(doc, o, zlib.compress(data)), want, (chunk, width))
+                    # not plain rows (a longer stream): the plain digest, as clear_row_padding leaves it
+                    more = data + b"\xff"
+                    self.assertEqual(tiers.image_digest(doc, o, zlib.compress(more)), tiers.sha(more))
+        finally:
+            tiers.DIGEST_CHUNK = old
+        # anything but plain /FlateDecode is the caller's to decode as before
+        self.assertIsNone(tiers.image_digest(doc, self.image(9, Filter="DCTDecode"), b"x"))
+        self.assertIsNone(tiers.image_digest(doc, self.image(9, Filter="FlateDecode",
+                                                             DecodeParms={"Predictor": 15}), b"x"))
+        self.assertIsNone(tiers.image_digest(doc, {"Subtype": "Form", "Filter": "FlateDecode"}, b"x"))
+        with self.assertRaises(zlib.error):
+            tiers.image_digest(doc, self.image(9, Filter="FlateDecode"), zlib.compress(b"\x00" * 40)[:-6])
+
+    def test_components_from_the_colour_space(self):
+        doc = self.Doc({"icc": {"N": 3}})
+        rgb = self.image(3, ColorSpace="DeviceRGB", BitsPerComponent=4)  # 36 bits: 5 bytes, 4 spare bits
+        out = tiers.clear_row_padding(doc, rgb, b"\xff" * 10)
+        self.assertEqual(out, b"\xff\xff\xff\xff\xf0" * 2)
+        icc = self.image(3, ColorSpace=["ICCBased", "icc"], BitsPerComponent=4)
+        self.assertEqual(tiers.clear_row_padding(doc, icc, b"\xff" * 10), out)
+        mask = {"Subtype": "Image", "Width": 9, "Height": 1, "ImageMask": True}
+        self.assertEqual(tiers.clear_row_padding(doc, mask, b"\xff\xff"), b"\xff\x80")
 
 
 if __name__ == "__main__":

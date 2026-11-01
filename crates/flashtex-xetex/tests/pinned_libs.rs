@@ -1,12 +1,18 @@
-//! The shaping and metrics libraries are pinned to TeX Live 2026's versions
-//! (docs/design/xetex/PLAN.md §3.1 and §5: XeTeX's output depends on the
-//! exact HarfBuzz and FreeType). These tests fail when:
+//! The shaping, metrics and mapping libraries are pinned to TeX Live 2026's
+//! versions (docs/design/xetex/PLAN.md §3.1 and §5: XeTeX's output depends
+//! on the exact HarfBuzz, FreeType and TECkit). These tests fail when:
 //!
-//! * the linked HarfBuzz does not report 12.3.2 or FreeType 2.14.1;
-//! * either `third_party/<lib>/README.md` pins another version;
+//! * the linked HarfBuzz does not report 12.3.2 or FreeType 2.14.1, or
+//!   TECkit's engine not the API version 2.4 that TECkit 2.5.13 reports
+//!   (`TECkit_GetVersion` has said 0x00020004 since 2006, so the release
+//!   itself is pinned by the README and the checksums);
+//! * a `third_party/<lib>/README.md` pins another version (ICU's too, of
+//!   which only the line-break tables and the bidi sources are vendored);
 //! * any vendored file differs from its `SHA256SUMS` entry, or a file of the
 //!   vendored tree is missing from `SHA256SUMS`;
-//! * a declared FFI function does not link.
+//! * a declared FFI function does not link;
+//! * ICU's bidi sources (third_party/icu, which src/native/ubidi ports and
+//!   does not link) are not 78.2's.
 //!
 //! An upgrade changes all of these together, in a lane of its own with a
 //! lockstep run against the TeX Live that ships the new versions.
@@ -22,10 +28,15 @@ use std::os::raw::{c_uint, c_void};
 use std::path::{Path, PathBuf};
 
 use flashtex_xetex_fontlibs::{ft, hb};
+use flashtex_xetex_teckit as teckit;
 use sha2::{Digest, Sha256};
 
 const HARFBUZZ: &str = "12.3.2";
 const FREETYPE: (i32, i32, i32) = (2, 14, 1);
+const TECKIT: &str = "2.5.13";
+/// TeX Live 2026's ICU (third_party/icu): its line-break tables, and the
+/// bidi sources that src/native/ubidi ports (neither is linked).
+const ICU: &str = "78.2";
 
 fn third_party() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party")
@@ -71,6 +82,16 @@ fn readmes_pin_the_same_versions() {
     assert_eq!(readme_version("harfbuzz"), HARFBUZZ);
     let (a, b, c) = FREETYPE;
     assert_eq!(readme_version("freetype"), format!("{a}.{b}.{c}"));
+    assert_eq!(readme_version("teckit"), TECKIT);
+    assert_eq!(readme_version("icu"), ICU);
+}
+
+#[test]
+fn teckit_runtime_version_is_pinned() {
+    // SAFETY: a call without arguments.
+    let v = unsafe { teckit::TECkit_GetVersion() };
+    assert_eq!(v, teckit::kCurrentTECkitVersion);
+    assert_eq!(v, 0x0002_0004);
 }
 
 fn files_under(dir: &Path, base: &Path, out: &mut BTreeSet<String>) {
@@ -89,7 +110,7 @@ fn files_under(dir: &Path, base: &Path, out: &mut BTreeSet<String>) {
     }
 }
 
-fn check_sums(lib: &str, tree: &str) {
+fn check_sums(lib: &str, trees: &[&str], at_least: usize) {
     let base = third_party().join(lib);
     let sums = std::fs::read_to_string(base.join("SHA256SUMS")).unwrap();
     let mut listed = BTreeSet::new();
@@ -114,14 +135,16 @@ fn check_sums(lib: &str, tree: &str) {
         bad.join("\n")
     );
     let mut on_disk = BTreeSet::new();
-    files_under(&base.join(tree), &base, &mut on_disk);
+    for tree in trees {
+        files_under(&base.join(tree), &base, &mut on_disk);
+    }
     let unlisted: Vec<_> = on_disk.difference(&listed).collect();
     assert!(
         unlisted.is_empty(),
         "third_party/{lib}: files not in SHA256SUMS: {unlisted:?}"
     );
     assert!(
-        listed.len() > 300,
+        listed.len() >= at_least,
         "third_party/{lib}: only {} files listed",
         listed.len()
     );
@@ -129,12 +152,46 @@ fn check_sums(lib: &str, tree: &str) {
 
 #[test]
 fn vendored_harfbuzz_matches_sha256sums() {
-    check_sums("harfbuzz", "harfbuzz-src");
+    check_sums("harfbuzz", &["harfbuzz-src"], 300);
 }
 
 #[test]
 fn vendored_freetype_matches_sha256sums() {
-    check_sums("freetype", "freetype-src");
+    check_sums("freetype", &["freetype-src"], 300);
+}
+
+#[test]
+fn vendored_teckit_matches_sha256sums() {
+    check_sums("teckit", &["TECkit-src", "TLpatches"], 20);
+}
+
+#[test]
+fn vendored_icu_line_tables_match_sha256sums() {
+    check_sums("icu", &["brkitr"], 16);
+}
+
+/// TECkit's own normalizer (no mapping file, as XeTeX's
+/// `\XeTeXinputnormalization` makes it): NFD and NFC of "é", "Å" and an
+/// unordered pair of combining marks.
+#[test]
+fn teckit_normalizes_utf32() {
+    let mut g = flashtex_xetex::Globals::new();
+    let text = [0xE9, 0x41, 0x30A, 0x61, 0x323, 0x302];
+    assert_eq!(
+        g.normalize_utf32(&text, true, 100).unwrap(),
+        [0x65, 0x301, 0x41, 0x30A, 0x61, 0x323, 0x302]
+    );
+    assert_eq!(
+        g.normalize_utf32(&text, false, 100).unwrap(),
+        [0xE9, 0xC5, 0x1EAD]
+    );
+    // The converter is kept and reset: the same result again.
+    assert_eq!(
+        g.normalize_utf32(&[0xE9], true, 100).unwrap(),
+        [0x65, 0x301]
+    );
+    // No room for the result: C's buffer_overflow.
+    assert_eq!(g.normalize_utf32(&[0xE9], true, 1), None);
 }
 
 #[test]
@@ -142,6 +199,7 @@ fn every_declared_function_links() {
     let all: Vec<_> = flashtex_xetex_fontlibs::hb::all_functions()
         .into_iter()
         .chain(flashtex_xetex_fontlibs::ft::all_functions())
+        .chain(teckit::all_functions())
         .collect();
     assert!(all.len() > 90, "{} functions", all.len());
     for (name, addr) in all {
@@ -273,4 +331,13 @@ fn shapes_office_with_the_ffi_ligature() {
         ft::FT_Done_Face(face);
         ft::FT_Done_FreeType(lib);
     }
+}
+
+#[test]
+fn vendored_icu_matches_sha256sums() {
+    check_sums("icu", &["icu-src"], 16);
+    let uvernum =
+        std::fs::read_to_string(third_party().join("icu/icu-src/source/common/unicode/uvernum.h"))
+            .unwrap();
+    assert!(uvernum.contains(&format!("#define U_ICU_VERSION \"{ICU}\"")));
 }

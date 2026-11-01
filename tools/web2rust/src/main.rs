@@ -63,6 +63,14 @@ struct Args {
     /// string (256, TANGLE's; 65536 for xetex.web, as `otangle` numbers
     /// them).
     first_string: i64,
+    /// `--host-state TYPE`: one more field of `Globals`, `host: TYPE`,
+    /// initialised with `Default::default()`: the engine's state outside the
+    /// word space (none if not given).
+    host_state: Option<String>,
+    /// `--translate NAME`: translate the WEB routine NAME although it is one
+    /// whose body the TeX engines write by hand (`a_open_in`, `input_ln`,
+    /// ...); BibTeX's `input_ln` is its own Pascal.
+    translate: Vec<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -103,6 +111,8 @@ fn parse_args() -> Result<Args, String> {
         inline: vec![],
         array_views: vec![],
         first_string: 256,
+        host_state: None,
+        translate: vec![],
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -166,6 +176,12 @@ fn parse_args() -> Result<Args, String> {
                     .parse()
                     .map_err(|_| format!("--first-string: not a number: {v}"))?;
             }
+            "--host-state" => {
+                a.host_state = Some(it.next().ok_or("--host-state needs a type path")?)
+            }
+            "--translate" => a
+                .translate
+                .push(it.next().ok_or("--translate needs a routine name")?),
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -302,8 +318,10 @@ fn main() -> ExitCode {
         &sources,
         &args.arena_caps,
         args.index_type.as_deref(),
+        args.host_state.as_deref(),
         &args.inline,
         &args.array_views,
+        &args.translate,
     ) {
         eprintln!("web2rust: emit error: {e}");
         return ExitCode::FAILURE;

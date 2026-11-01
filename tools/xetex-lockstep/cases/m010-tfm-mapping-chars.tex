@@ -1,0 +1,14 @@
+% m010-tfm-mapping-chars: characters of a mapped TFM font whose mapped code is missing or another; \accent; \fontcharwd
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\font\q=cmr10:mapping=qx-unicode \q
+\setbox0=\hbox{\char"19\char"1B\char"7F\char"5C\char"22\char"7B\char"7D\char"3C\char"3E\char"7C x\accent"7F e\accent18 a\accent"5E o}
+\message{[\the\fontcharwd\q"DF][\the\fontcharwd\q"19][\the\fontcharwd\q"41][\the\wd0]}
+\font\sy=cmsy10 \font\ex=cmex10 \textfont2=\sy \scriptfont2=\sy \scriptscriptfont2=\sy
+\textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex
+\textfont0=\q \scriptfont0=\q \scriptscriptfont0=\q
+\setbox1=\hbox{$\fam0 a^b\mathchar"7019 ff\mathchar"7022\mathaccent"7015 x$}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end

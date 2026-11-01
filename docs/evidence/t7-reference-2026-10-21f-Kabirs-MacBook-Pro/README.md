@@ -1,0 +1,160 @@
+# T7 reference run, 2026-10-21, Kabirs-MacBook-Pro
+
+P4 gate (DESIGN.md §12; Q1 decided 2026-10-05): `scripts/t7-reference.sh`, the full T7 run on an
+idle, plugged-in Apple-Silicon Mac with Low Power Mode off.
+
+- **Verdict:** T7: 1 MISSES (119 of 120 gated rows pass; reference run)
+- **Exit:** 1: a gated target missed (the table's MISS rows)
+- **Commit:** `389821f53` (Merge pull request #1880 from flash-tex/agent/kabir-claude-a9/fonts)
+- **Machine:** Mac17,9 Apple M5 Pro 26.6.2
+- **Command:** `scripts/t7-reference.sh --max-load 100 --wait 0 --force --out docs/evidence/t7-reference-2026-10-21f-Kabirs-MacBook-Pro`, which ran `t7.py --engine ref --out /tmp/flashtex-t7-reference/t7-reference-run --max-load 100 --wait-load 100 --wait-max 0 --build`
+
+Files: `table.md` (the rows), `summary.json.gz` (`t7.py --check` re-evaluates it after
+gunzip), `raw.tgz` (dl3-keys' lines), `environment.txt`, `t7-output.txt`.
+
+Reference run.
+
+| doc | pages | edit | n | ms p50 / p95 / max | gated on | target | first changed page p95 | DONE p95 ms | off-CPU p95 ms | converged | re-typeset pages p50 / max | host RSS peak | load1 | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| plain-10 | 10 | letter@start | 19 | 5.8 / 8.2 / 9.1 | p95 | 11 | 8.2 | 23.8 | 1.9 | 19/19 | 2 / 2 | 167 MB | 1.63-1.5 | PASS |
+| plain-10 | 10 | letter@middle | 19 | 3.8 / 4.5 / 4.5 | p95 | 11 | 2.8 | 15.7 | 0.1 | 19/19 | 3 / 3 | 167 MB | 1.5-1.42 | PASS |
+| plain-10 | 10 | letter@end | 19 | 2.9 / 3.7 / 4.1 | p95 | 11 | 3.7 | 8.6 | 0.1 | 0/19 | 1 / 1 | 167 MB | 1.42-1.31 | PASS |
+| plain-10 | 10 | sentence@middle | 19 | 3.9 / 4.6 / 4.6 | p95 | 11 | 2.9 | 21.5 | 0.1 | 0/19 | 6 / 6 | 167 MB | 1.31-1.44 | PASS |
+| plain-10 | 10 | newline@middle | 19 | 4.1 / 4.7 / 4.8 | p95 | 11 | 3.1 | 15.4 | 0.1 | 19/19 | 3 / 3 | 167 MB | 1.44-1.53 | PASS |
+| plain-10 | 10 | split@middle | 19 | 3.8 / 4.6 / 4.7 | p95 | 11 | 3.0 | 19.5 | 0.1 | 0/19 | 6 / 6 | 167 MB | 1.53-1.48 | PASS |
+| plain-10 | 10 | typing@50ms | 39 | 3.0 / 3.4 / 3.5 | p95 | 11 | - | - | 0.1 | - | - | 167 MB | 1.48-1.48 | PASS |
+| plain-10 | 10 | typing@60ms | 39 | 3.0 / 3.4 / 3.4 | p95 | 11 | - | - | 0.1 | - | - | 167 MB | 1.48-1.37 | PASS |
+| plain-10 | 10 | typing@80ms | 39 | 3.2 / 3.6 / 4.9 | p95 | 11 | - | - | 0.1 | - | - | 167 MB | 1.37-1.37 | PASS |
+| plain-10 | 10 | typing@100ms | 39 | 3.3 / 3.5 / 3.5 | p95 | 11 | - | - | 0.1 | - | - | 167 MB | 1.37-1.5 | PASS |
+| plain-10 | 10 | typing@150ms | 39 | 3.6 / 4.1 / 4.2 | p95 | 11 | - | - | 0.1 | - | - | 167 MB | 1.5-1.38 | PASS |
+| plain-10 | 10 | preamble | 13 | 32.1 / 33.2 / 41.5 | p95 | 400 | 33.2 | 45.1 | 1.2 | 0/13 | 10 / 10 | 167 MB | 1.38-1.35 | PASS |
+| plain-10 | 10 | reopen: host's share, cold (spawn -> page 1) | 12 | 55.7 / 57.8 / 66.9 | p95 | (100, app) | - | - | - | - | - | 167 MB | 1.29-1.4 | report-only |
+| plain-10 | 10 | reopen: host already listening (not counted, decision 8) | 12 | 16.6 / 18.1 / 18.4 | p95 | (100, app) | - | - | - | - | - | 167 MB | 1.29-1.4 | report-only |
+| full-10 | 11 | letter@middle | 19 | 7.5 / 8.4 / 8.8 | p95 | 11 | 4.8 | 28.1 | 0.2 | 19/19 | 3 / 3 | 237 MB | 1.29-1.33 | PASS |
+| full-10 | 11 | letter@end | 19 | 7.3 / 8.9 / 9.7 | p95 | 11 | 4.6 | 27.3 | 0.2 | 19/19 | 3 / 3 | 237 MB | 1.33-2.1 | PASS |
+| full-10 | 11 | sentence@middle | 19 | 7.0 / 8.4 / 8.7 | p95 | 11 | 4.8 | 34.6 | 0.2 | 0/19 | 7 / 7 | 237 MB | 2.1-2.01 | PASS |
+| full-10 | 11 | newline@middle | 19 | 7.9 / 8.7 / 8.7 | p95 | 11 | 5.0 | 29.0 | 0.2 | 19/19 | 3 / 3 | 237 MB | 2.01-1.86 | PASS |
+| full-10 | 11 | split@middle | 19 | 7.8 / 8.8 / 9.7 | p95 | 11 | 5.1 | 30.6 | 0.2 | 19/19 | 3 / 3 | 237 MB | 1.86-1.79 | PASS |
+| full-10 | 11 | letter@start | 19 | 8.2 / 9.4 / 9.4 | p95 | 11 | 9.4 | 30.5 | 0.8 | 19/19 | 2 / 2 | 237 MB | 1.79-1.65 | PASS |
+| full-10 | 11 | typing@50ms | 39 | 6.1 / 6.3 / 6.6 | p95 | 11 | - | - | 0.2 | - | - | 237 MB | 1.65-1.59 | PASS |
+| full-10 | 11 | typing@60ms | 39 | 6.2 / 7.2 / 10.0 | p95 | 11 | - | - | 0.2 | - | - | 237 MB | 1.59-1.59 | PASS |
+| full-10 | 11 | typing@80ms | 39 | 6.3 / 6.6 / 6.9 | p95 | 11 | - | - | 0.2 | - | - | 237 MB | 1.59-1.55 | PASS |
+| full-10 | 11 | typing@100ms | 39 | 6.4 / 7.0 / 7.2 | p95 | 11 | - | - | 0.2 | - | - | 237 MB | 1.55-1.5 | PASS |
+| full-10 | 11 | typing@150ms | 39 | 6.9 / 7.5 / 7.6 | p95 | 11 | - | - | 0.2 | - | - | 237 MB | 1.5-1.46 | PASS |
+| full-10 | 11 | preamble | 13 | 152.0 / 157.3 / 158.9 | p95 | 400 | 157.3 | 190.1 | 2.4 | 0/13 | 11 / 11 | 237 MB | 1.46-1.5 | PASS |
+| full-10 | 11 | reopen: host's share, cold (spawn -> page 1) | 12 | 88.6 / 96.5 / 113.0 | p95 | (100, app) | - | - | - | - | - | 237 MB | 1.5-1.81 | report-only |
+| full-10 | 11 | reopen: host already listening (not counted, decision 8) | 12 | 49.3 / 51.5 / 61.4 | p95 | (100, app) | - | - | - | - | - | 237 MB | 1.5-1.81 | report-only |
+| plain-100 | 100 | letter@end | 19 | 4.5 / 5.1 / 5.3 | p95 | 11 | 3.4 | 15.7 | 0.1 | 19/19 | 3 / 3 | 196 MB | 1.81-1.66 | PASS |
+| plain-100 | 100 | sentence@middle | 19 | 2.9 / 4.2 / 4.4 | p95 | 11 | 4.2 | 76.2 | 0.1 | 0/19 | 50 / 50 | 196 MB | 1.66-1.41 | PASS |
+| plain-100 | 100 | newline@middle | 19 | 3.1 / 3.6 / 3.8 | p95 | 11 | 3.6 | 14.9 | 0.1 | 19/19 | 2 / 2 | 196 MB | 1.41-1.37 | PASS |
+| plain-100 | 100 | split@middle | 19 | 3.3 / 4.0 / 4.1 | p95 | 11 | 4.0 | 16.9 | 0.1 | 19/19 | 2 / 2 | 196 MB | 1.37-1.32 | PASS |
+| plain-100 | 100 | letter@start | 19 | 3.7 / 4.3 / 4.4 | p95 | 11 | 4.3 | 18.0 | 0.4 | 19/19 | 2 / 2 | 196 MB | 1.32-1.22 | PASS |
+| plain-100 | 100 | letter@middle | 19 | 3.6 / 4.2 / 4.3 | p95 | 11 | 4.2 | 17.6 | 0.1 | 19/19 | 2 / 2 | 196 MB | 1.22-1.44 | PASS |
+| plain-100 | 100 | typing@50ms | 39 | 2.3 / 2.5 / 2.6 | p95 | 11 | - | - | 0.1 | - | - | 196 MB | 1.44-1.4 | PASS |
+| plain-100 | 100 | typing@60ms | 39 | 2.4 / 2.8 / 5.3 | p95 | 11 | - | - | 0.1 | - | - | 196 MB | 1.4-1.4 | PASS |
+| plain-100 | 100 | typing@80ms | 39 | 2.5 / 2.7 / 2.8 | p95 | 11 | - | - | 0.1 | - | - | 196 MB | 1.4-1.37 | PASS |
+| plain-100 | 100 | typing@100ms | 39 | 2.7 / 2.9 / 4.9 | p95 | 11 | - | - | 0.1 | - | - | 196 MB | 1.37-1.37 | PASS |
+| plain-100 | 100 | typing@150ms | 39 | 3.1 / 3.5 / 3.6 | p95 | 11 | - | - | 0.1 | - | - | 196 MB | 1.37-1.23 | PASS |
+| plain-100 | 100 | preamble | 13 | 33.2 / 43.6 / 60.2 | p95 | 400 | 43.6 | 186.4 | 1.7 | 0/13 | 100 / 100 | 196 MB | 1.23-1.38 | PASS |
+| plain-100 | 100 | reopen: host's share, cold (spawn -> page 1) | 12 | 55.1 / 56.3 / 56.8 | p95 | (100, app) | - | - | - | - | - | 196 MB | 1.16-1.38 | report-only |
+| plain-100 | 100 | reopen: host already listening (not counted, decision 8) | 12 | 16.3 / 16.6 / 16.7 | p95 | (100, app) | - | - | - | - | - | 196 MB | 1.16-1.38 | report-only |
+| full-100 | 101 | sentence@middle | 19 | 5.9 / 6.6 / 6.6 | p95 | 11 | 6.6 | 27.5 | 0.2 | 19/19 | 2 / 2 | 289 MB | 1.16-1.06 | PASS |
+| full-100 | 101 | newline@middle | 19 | 5.9 / 6.6 / 7.6 | p95 | 11 | 6.6 | 25.1 | 0.2 | 19/19 | 2 / 2 | 289 MB | 1.06-1.13 | PASS |
+| full-100 | 101 | split@middle | 19 | 6.4 / 7.3 / 7.4 | p95 | 11 | 7.3 | 30.5 | 0.2 | 19/19 | 2 / 2 | 289 MB | 1.13-1.2 | PASS |
+| full-100 | 101 | letter@start | 19 | 6.3 / 7.1 / 7.3 | p95 | 11 | 7.1 | 26.5 | 0.3 | 19/19 | 2 / 2 | 289 MB | 1.2-1.25 | PASS |
+| full-100 | 101 | letter@middle | 19 | 6.0 / 6.6 / 6.8 | p95 | 11 | 6.6 | 25.5 | 0.2 | 19/19 | 2 / 2 | 289 MB | 1.25-1.15 | PASS |
+| full-100 | 101 | letter@end | 19 | 7.5 / 9.5 / 11.5 | p95 | 11 | 5.5 | 29.8 | 0.1 | 19/19 | 3 / 3 | 289 MB | 1.15-1.38 | PASS |
+| full-100 | 101 | typing@50ms | 39 | 4.8 / 5.6 / 5.8 | p95 | 11 | - | - | 0.2 | - | - | 289 MB | 1.38-1.27 | PASS |
+| full-100 | 101 | typing@60ms | 39 | 4.7 / 5.4 / 5.5 | p95 | 11 | - | - | 0.2 | - | - | 289 MB | 1.27-1.27 | PASS |
+| full-100 | 101 | typing@80ms | 39 | 4.8 / 6.6 / 6.8 | p95 | 11 | - | - | 0.3 | - | - | 289 MB | 1.27-1.41 | PASS |
+| full-100 | 101 | typing@100ms | 39 | 5.0 / 5.6 / 6.4 | p95 | 11 | - | - | 0.2 | - | - | 289 MB | 1.41-1.37 | PASS |
+| full-100 | 101 | typing@150ms | 39 | 5.4 / 5.9 / 6.3 | p95 | 11 | - | - | 0.2 | - | - | 289 MB | 1.37-1.42 | PASS |
+| full-100 | 101 | preamble | 13 | 159.5 / 161.5 / 163.0 | p95 | 400 | 161.5 | 561.0 | 2.4 | 0/13 | 101 / 101 | 289 MB | 1.42-1.58 | PASS |
+| full-100 | 101 | reopen: host's share, cold (spawn -> page 1) | 12 | 89.3 / 91.3 / 92.2 | p95 | (100, app) | - | - | - | - | - | 289 MB | 1.53-1.73 | report-only |
+| full-100 | 101 | reopen: host already listening (not counted, decision 8) | 12 | 50.5 / 51.0 / 52.0 | p95 | (100, app) | - | - | - | - | - | 289 MB | 1.53-1.73 | report-only |
+| plain-300 | 301 | newline@middle | 19 | 3.5 / 4.4 / 4.8 | p95 | 11 | 4.4 | 25.5 | 0.1 | 19/19 | 4 / 4 | 290 MB | 1.67-1.96 | PASS |
+| plain-300 | 301 | split@middle | 19 | 3.6 / 4.0 / 4.1 | p95 | 11 | 4.0 | 37.6 | 0.1 | 19/19 | 9 / 9 | 290 MB | 1.96-1.8 | PASS |
+| plain-300 | 301 | letter@start | 19 | 3.6 / 4.2 / 4.2 | p95 | 11 | 4.2 | 18.9 | 0.1 | 19/19 | 2 / 2 | 290 MB | 1.8-1.6 | PASS |
+| plain-300 | 301 | letter@middle | 19 | 3.3 / 4.2 / 4.4 | p95 | 11 | 4.2 | 23.2 | 0.2 | 19/19 | 2 / 2 | 290 MB | 1.6-1.47 | PASS |
+| plain-300 | 301 | letter@end | 19 | 3.5 / 4.2 / 4.3 | p95 | 11 | 4.2 | 15.8 | 0.1 | 19/19 | 2 / 2 | 290 MB | 1.47-1.51 | PASS |
+| plain-300 | 301 | sentence@middle | 19 | 3.3 / 4.1 / 4.5 | p95 | 11 | 4.1 | 107.2 | 0.1 | 19/19 | 65 / 65 | 290 MB | 1.51-1.57 | PASS |
+| plain-300 | 301 | typing@50ms | 39 | 2.4 / 2.7 / 2.8 | p95 | 11 | - | - | 0.1 | - | - | 290 MB | 1.57-1.57 | PASS |
+| plain-300 | 301 | typing@60ms | 39 | 2.5 / 2.8 / 2.8 | p95 | 11 | - | - | 0.1 | - | - | 290 MB | 1.57-1.61 | PASS |
+| plain-300 | 301 | typing@80ms | 39 | 2.6 / 2.8 / 3.0 | p95 | 11 | - | - | 0.1 | - | - | 290 MB | 1.61-1.61 | PASS |
+| plain-300 | 301 | typing@100ms | 39 | 2.6 / 2.9 / 3.0 | p95 | 11 | - | - | 0.1 | - | - | 290 MB | 1.61-1.48 | PASS |
+| plain-300 | 301 | typing@150ms | 39 | 3.1 / 3.4 / 3.5 | p95 | 11 | - | - | 0.1 | - | - | 290 MB | 1.48-1.44 | PASS |
+| plain-300 | 301 | preamble | 13 | 34.4 / 35.9 / 36.2 | p95 | 400 | 35.9 | 378.4 | 1.1 | 0/13 | 301 / 301 | 290 MB | 1.44-1.52 | PASS |
+| plain-300 | 301 | reopen: host's share, cold (spawn -> page 1) | 12 | 55.7 / 59.9 / 66.2 | p95 | (100, app) | - | - | - | - | - | 290 MB | 1.56-1.79 | report-only |
+| plain-300 | 301 | reopen: host already listening (not counted, decision 8) | 12 | 16.8 / 18.6 / 24.4 | p95 | (100, app) | - | - | - | - | - | 290 MB | 1.56-1.79 | report-only |
+| full-300 | 299 | split@middle | 19 | 7.4 / 8.3 / 8.6 | p95 | 11 | 8.3 | 178.1 | 0.2 | 19/19 | 33 / 33 | 449 MB | 1.79-1.68 | PASS |
+| full-300 | 299 | letter@start | 19 | 6.5 / 7.2 / 7.3 | p95 | 11 | 7.2 | 30.9 | 0.1 | 19/19 | 2 / 2 | 449 MB | 1.68-1.63 | PASS |
+| full-300 | 299 | letter@middle | 19 | 7.2 / 8.3 / 8.4 | p95 | 11 | 8.3 | 31.8 | 0.2 | 19/19 | 2 / 2 | 449 MB | 1.63-1.38 | PASS |
+| full-300 | 299 | letter@end | 19 | 7.3 / 8.8 / 9.2 | p95 | 11 | 5.0 | 29.2 | 0.1 | 19/19 | 3 / 3 | 449 MB | 1.38-1.27 | PASS |
+| full-300 | 299 | sentence@middle | 19 | 7.3 / 8.4 / 8.8 | p95 | 11 | 8.4 | 173.8 | 0.2 | 19/19 | 33 / 33 | 449 MB | 1.27-1.23 | PASS |
+| full-300 | 299 | newline@middle | 19 | 7.0 / 8.6 / 9.0 | p95 | 11 | 8.6 | 28.6 | 0.2 | 19/19 | 2 / 2 | 449 MB | 1.23-1.13 | PASS |
+| full-300 | 299 | typing@50ms | 39 | 5.8 / 6.3 / 6.9 | p95 | 11 | - | - | 0.2 | - | - | 449 MB | 1.13-1.12 | PASS |
+| full-300 | 299 | typing@60ms | 39 | 6.2 / 7.2 / 7.3 | p95 | 11 | - | - | 0.2 | - | - | 449 MB | 1.12-1.12 | PASS |
+| full-300 | 299 | typing@80ms | 39 | 6.0 / 6.5 / 7.2 | p95 | 11 | - | - | 0.2 | - | - | 449 MB | 1.12-1.11 | PASS |
+| full-300 | 299 | typing@100ms | 39 | 6.1 / 6.4 / 6.4 | p95 | 11 | - | - | 0.2 | - | - | 449 MB | 1.11-1.1 | PASS |
+| full-300 | 299 | typing@150ms | 39 | 6.6 / 7.9 / 8.3 | p95 | 11 | - | - | 0.2 | - | - | 449 MB | 1.1-1.01 | PASS |
+| full-300 | 299 | preamble | 13 | 166.5 / 174.7 / 177.8 | p95 | 400 | 174.7 | 1413.5 | 2.4 | 0/13 | 299 / 299 | 449 MB | 1.01-1.51 | PASS |
+| full-300 | 299 | reopen: host's share, cold (spawn -> page 1) | 12 | 92.2 / 97.0 / 100.1 | p95 | (100, app) | - | - | - | - | - | 449 MB | 1.5-1.82 | report-only |
+| full-300 | 299 | reopen: host already listening (not counted, decision 8) | 12 | 53.6 / 55.2 / 61.7 | p95 | (100, app) | - | - | - | - | - | 449 MB | 1.5-1.82 | report-only |
+| plain-1000 | 1001 | letter@start | 19 | 4.2 / 5.0 / 6.9 | p95 | 11 | 5.0 | 35.7 | 0.5 | 19/19 | 2 / 2 | 577 MB | 1.82-3.21 | PASS |
+| plain-1000 | 1001 | letter@middle | 19 | 5.0 / 5.4 / 5.5 | p95 | 11 | 4.0 | 24.0 | 0.1 | 19/19 | 3 / 3 | 577 MB | 3.21-2.87 | PASS |
+| plain-1000 | 1001 | letter@end | 19 | 3.4 / 4.1 / 4.3 | p95 | 11 | 4.1 | 17.5 | 0.1 | 19/19 | 2 / 2 | 577 MB | 2.87-2.72 | PASS |
+| plain-1000 | 1001 | sentence@middle | 19 | 5.7 / 6.4 / 6.4 | p95 | 11 | 5.0 | 2803.9 | 0.1 | 0/19 | 1503 / 1505 | 577 MB | 2.72-2.0 | PASS |
+| plain-1000 | 1001 | newline@middle | 19 | 5.1 / 6.4 / 7.4 | p95 | 11 | 5.0 | 26.3 | 0.1 | 19/19 | 3 / 3 | 577 MB | 2.0-1.99 | PASS |
+| plain-1000 | 1001 | split@middle | 19 | 5.8 / 6.4 / 6.6 | p95 | 11 | 5.1 | 2815.7 | 0.1 | 0/19 | 1503 / 1505 | 577 MB | 1.99-3.38 | PASS |
+| plain-1000 | 1001 | typing@50ms | 39 | 3.8 / 4.1 / 4.2 | p95 | 11 | - | - | 0.1 | - | - | 577 MB | 3.38-3.38 | PASS |
+| plain-1000 | 1001 | typing@60ms | 39 | 3.7 / 3.8 / 4.1 | p95 | 11 | - | - | 0.1 | - | - | 577 MB | 3.38-3.27 | PASS |
+| plain-1000 | 1001 | typing@80ms | 39 | 3.8 / 4.0 / 4.2 | p95 | 11 | - | - | 0.1 | - | - | 577 MB | 3.27-3.27 | PASS |
+| plain-1000 | 1001 | typing@100ms | 39 | 3.9 / 4.3 / 4.5 | p95 | 11 | - | - | 0.1 | - | - | 577 MB | 3.27-3.33 | PASS |
+| plain-1000 | 1001 | typing@150ms | 39 | 4.3 / 4.8 / 4.9 | p95 | 11 | - | - | 0.1 | - | - | 577 MB | 3.33-3.14 | PASS |
+| plain-1000 | 1001 | preamble | 13 | 41.5 / 42.6 / 50.8 | p95 | 400 | 42.6 | 1262.1 | 1.0 | 0/13 | 1001 / 1001 | 577 MB | 3.14-3.17 | PASS |
+| plain-1000 | 1001 | reopen: host's share, cold (spawn -> page 1) | 12 | 59.9 / 61.5 / 62.3 | p95 | (100, app) | - | - | - | - | - | 577 MB | 2.94-3.32 | report-only |
+| plain-1000 | 1001 | reopen: host already listening (not counted, decision 8) | 12 | 19.6 / 20.6 / 20.7 | p95 | (100, app) | - | - | - | - | - | 577 MB | 2.94-3.32 | report-only |
+| full-1000 | 1002 | letter@middle | 19 | 6.9 / 8.4 / 8.6 | p95 | 11 | 8.4 | 197.9 | 0.2 | 19/19 | 33 / 33 | 839 MB | 2.94-2.41 | PASS |
+| full-1000 | 1002 | letter@end | 19 | 6.7 / 7.3 / 8.3 | p95 | 11 | 4.3 | 36.1 | 0.1 | 19/19 | 3 / 3 | 839 MB | 2.41-2.27 | PASS |
+| full-1000 | 1002 | sentence@middle | 19 | 7.0 / 7.6 / 11.0 | p95 | 11 | 7.6 | 198.8 | 0.1 | 19/19 | 33 / 33 | 839 MB | 2.27-2.15 | PASS |
+| full-1000 | 1002 | newline@middle | 19 | 7.3 / 8.7 / 9.3 | p95 | 11 | 8.7 | 48.5 | 0.2 | 19/19 | 3 / 3 | 839 MB | 2.15-1.98 | PASS |
+| full-1000 | 1002 | split@middle | 19 | 7.3 / 8.6 / 26.8 | p95 | 11 | 8.6 | 422.3 | 0.2 | 19/19 | 33 / 33 | 839 MB | 1.98-2.86 | PASS |
+| full-1000 | 1002 | letter@start | 19 | 7.2 / 34.4 / 36.2 | p95 | 11 | 34.4 | 154.4 | 14.8 | 19/19 | 2 / 2 | 839 MB | 2.86-2.96 | MISS: p95 34.4 ms > 11 ms |
+| full-1000 | 1002 | typing@50ms | 39 | 6.9 / 7.8 / 14.6 | p95 | 11 | - | - | 0.4 | - | - | 839 MB | 2.96-2.96 | PASS |
+| full-1000 | 1002 | typing@60ms | 39 | 6.9 / 7.9 / 9.6 | p95 | 11 | - | - | 0.4 | - | - | 839 MB | 2.96-2.88 | PASS |
+| full-1000 | 1002 | typing@80ms | 39 | 7.0 / 8.4 / 13.3 | p95 | 11 | - | - | 0.4 | - | - | 839 MB | 2.88-2.88 | PASS |
+| full-1000 | 1002 | typing@100ms | 39 | 7.1 / 8.1 / 8.4 | p95 | 11 | - | - | 0.4 | - | - | 839 MB | 2.88-2.65 | PASS |
+| full-1000 | 1002 | typing@150ms | 39 | 7.5 / 8.5 / 9.8 | p95 | 11 | - | - | 0.4 | - | - | 839 MB | 2.65-2.68 | PASS |
+| full-1000 | 1002 | preamble | 13 | 185.9 / 189.1 / 189.2 | p95 | 400 | 189.1 | 5222.5 | 2.4 | 0/13 | 1002 / 1002 | 839 MB | 2.68-2.42 | PASS |
+| full-1000 | 1002 | reopen: host's share, cold (spawn -> page 1) | 12 | 103.4 / 106.6 / 135.4 | p95 | (100, app) | - | - | - | - | - | 839 MB | 2.16-2.63 | report-only: p95 106.6 ms > 100 ms |
+| full-1000 | 1002 | reopen: host already listening (not counted, decision 8) | 12 | 63.1 / 67.9 / 84.8 | p95 | (100, app) | - | - | - | - | - | 839 MB | 2.16-2.63 | report-only |
+| beamer-5 | 5 | letter@end | 19 | 4.1 / 5.5 / 5.7 | p95 | 11 | 5.5 | 28.8 | 1.4 | 19/19 | 2 / 2 | 248 MB | 2.4-2.11 | PASS |
+| beamer-5 | 5 | sentence@middle | 19 | 4.0 / 5.5 / 6.4 | p95 | 11 | 5.5 | 20.7 | 0.1 | 19/19 | 2 / 2 | 248 MB | 2.11-2.02 | PASS |
+| beamer-5 | 5 | newline@middle | 19 | 3.9 / 5.0 / 5.6 | p95 | 11 | 5.0 | 22.9 | 0.1 | 19/19 | 2 / 3 | 248 MB | 2.02-1.94 | PASS |
+| beamer-5 | 5 | split@middle | 19 | 3.9 / 4.3 / 4.4 | p95 | 11 | 4.3 | 45.1 | 0.1 | 19/19 | 3 / 3 | 248 MB | 1.94-1.72 | PASS |
+| beamer-5 | 5 | letter@start | 19 | 3.9 / 5.5 / 9.7 | p95 | 11 | 5.5 | 21.1 | 1.2 | 19/19 | 2 / 2 | 248 MB | 1.72-1.66 | PASS |
+| beamer-5 | 5 | letter@middle | 19 | 4.1 / 4.9 / 5.3 | p95 | 11 | 4.9 | 19.4 | 0.1 | 19/19 | 2 / 2 | 248 MB | 1.66-1.61 | PASS |
+| beamer-5 | 5 | typing@50ms | 39 | 3.5 / 3.7 / 4.0 | p95 | 11 | - | - | 0.1 | - | - | 248 MB | 1.61-1.64 | PASS |
+| beamer-5 | 5 | typing@60ms | 39 | 3.6 / 5.0 / 7.1 | p95 | 11 | - | - | 0.1 | - | - | 248 MB | 1.64-1.64 | PASS |
+| beamer-5 | 5 | typing@80ms | 39 | 3.7 / 4.8 / 8.6 | p95 | 11 | - | - | 0.1 | - | - | 248 MB | 1.64-1.51 | PASS |
+| beamer-5 | 5 | typing@100ms | 39 | 3.8 / 4.7 / 7.5 | p95 | 11 | - | - | 0.1 | - | - | 248 MB | 1.51-1.51 | PASS |
+| beamer-5 | 5 | typing@150ms | 39 | 3.9 / 4.3 / 4.7 | p95 | 11 | - | - | 0.1 | - | - | 248 MB | 1.51-1.36 | PASS |
+| beamer-5 | 5 | preamble | 13 | 228.2 / 234.9 / 247.9 | p95 | 400 | 234.9 | 278.0 | 5.1 | 0/13 | 5 / 5 | 248 MB | 1.36-1.33 | PASS |
+| beamer-5 | 5 | reopen: host's share, cold (spawn -> page 1) | 12 | 92.1 / 93.4 / 108.3 | p95 | (100, app) | - | - | - | - | - | 248 MB | 1.28-1.3 | report-only |
+| beamer-5 | 5 | reopen: host already listening (not counted, decision 8) | 12 | 52.2 / 52.5 / 58.6 | p95 | (100, app) | - | - | - | - | - | 248 MB | 1.28-1.3 | report-only |
+| beamer-30 | 58 | sentence@middle | 19 | 7.5 / 8.3 / 9.0 | p95 | 11 | 8.3 | 45.5 | 0.1 | 19/19 | 2 / 2 | 311 MB | 1.28-1.31 | PASS |
+| beamer-30 | 58 | newline@middle | 19 | 8.0 / 9.4 / 9.5 | p95 | 11 | 9.4 | 38.1 | 0.1 | 19/19 | 3 / 3 | 311 MB | 1.31-1.36 | PASS |
+| beamer-30 | 58 | split@middle | 19 | 7.6 / 8.9 / 10.3 | p95 | 11 | 8.9 | 62.6 | 0.1 | 19/19 | 3 / 3 | 311 MB | 1.36-1.15 | PASS |
+| beamer-30 | 58 | letter@start | 19 | 8.0 / 9.0 / 9.5 | p95 | 11 | 9.0 | 40.2 | 0.1 | 19/19 | 2 / 2 | 311 MB | 1.15-1.22 | PASS |
+| beamer-30 | 58 | letter@middle | 19 | 8.0 / 9.7 / 9.8 | p95 | 11 | 9.7 | 37.1 | 0.1 | 19/19 | 2 / 2 | 311 MB | 1.22-2.8 | PASS |
+| beamer-30 | 58 | letter@end | 19 | 7.7 / 9.0 / 10.0 | p95 | 11 | 9.0 | 45.3 | 0.1 | 19/19 | 2 / 2 | 311 MB | 2.8-2.69 | PASS |
+| beamer-30 | 58 | typing@50ms | 39 | 7.1 / 7.5 / 7.7 | p95 | 11 | - | - | 0.1 | - | - | 311 MB | 2.69-2.69 | PASS |
+| beamer-30 | 58 | typing@60ms | 39 | 6.9 / 7.5 / 9.1 | p95 | 11 | - | - | 0.1 | - | - | 311 MB | 2.69-2.63 | PASS |
+| beamer-30 | 58 | typing@80ms | 39 | 7.3 / 8.1 / 8.7 | p95 | 11 | - | - | 0.1 | - | - | 311 MB | 2.63-2.63 | PASS |
+| beamer-30 | 58 | typing@100ms | 39 | 7.4 / 8.3 / 8.5 | p95 | 11 | - | - | 0.1 | - | - | 311 MB | 2.63-2.58 | PASS |
+| beamer-30 | 58 | typing@150ms | 39 | 7.5 / 8.3 / 8.7 | p95 | 11 | - | - | 0.1 | - | - | 311 MB | 2.58-2.53 | PASS |
+| beamer-30 | 58 | preamble | 13 | 250.8 / 273.2 / 277.9 | p95 | 400 | 273.2 | 1120.6 | 19.0 | 0/13 | 58 / 58 | 311 MB | 2.53-2.5 | PASS |
+| beamer-30 | 58 | reopen: host's share, cold (spawn -> page 1) | 12 | 107.1 / 108.9 / 109.9 | p95 | (100, app) | - | - | - | - | - | 311 MB | 2.29-2.4 | report-only: p95 108.9 ms > 100 ms |
+| beamer-30 | 58 | reopen: host already listening (not counted, decision 8) | 12 | 67.2 / 68.3 / 68.6 | p95 | (100, app) | - | - | - | - | - | 311 MB | 2.29-2.4 | report-only |
+
+ms: COMPILE written to the watched page's PAGE frame read on the socket (preamble, reopen: page 1); typing@: the keystroke sent to the watched page from its own compile or a later one. off-CPU: of the host's time to that page, what its engine thread spent descheduled (wall minus queue minus thread CPU): load or a CPU quota, not the engine. The first sample of each phase is a warm-up, left out; rows with n < 12 are gated on their maximum. No noise margin: a row passes only when it meets its target.

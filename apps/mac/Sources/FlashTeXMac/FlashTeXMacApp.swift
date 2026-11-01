@@ -50,13 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Held for the app's lifetime: without it App Nap and timer coalescing
     /// quantize the main run loop of a backgrounded window to ~30 ms turns, so
     /// a compile result that arrived in 1 ms waited a whole turn to be applied
-    /// (measured with tools/typing-bench: fixture keystroke->paint p50 80 ms).
+    /// (measured with the typing bench of the time: fixture keystroke->paint p50 80 ms).
     private var liveActivity: NSObjectProtocol?
 
     /// Coming back to the app rechecks the document on disk (external edits
     /// become an explicit conflict state, never a silent overwrite).
     func applicationDidBecomeActive(_ notification: Notification) {
-        if let model { Task { @MainActor in await model.refreshDiskStatus() } } // helper route when attached
+        if let model { Task { @MainActor in await model.refreshDiskStatus() } }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -133,6 +133,7 @@ struct FlashTeXMacApp: App {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
                     EngineV3Bench.startIfConfigured(model: model) // FLASHTEX_V3_BENCH (EngineV3Bench.swift)
                     EngineV3PageCapture.startIfConfigured(model: model) // FLASHTEX_V3_CAPTURE_OUT (evidence)
+                    LiveShareAutomation.startIfConfigured(model: model) // FLASHTEX_LIVE_SHARE_HOST / _JOIN_FILE (LiveShareAutomation.swift)
                     // FLASHTEX_OPEN=<file.tex or folder>: open it at launch (scripts/run-mac-dev.sh).
                     if let open = ProcessInfo.processInfo.environment["FLASHTEX_OPEN"], !open.isEmpty, ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH"] == nil {
                         _ = model.openTex(at: URL(fileURLWithPath: (open as NSString).expandingTildeInPath))
@@ -159,7 +160,7 @@ struct FlashTeXMacApp: App {
                             }
                         }
                     }
-                    if let id = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_WINDOW"], ["nearby", AccessibilityHelpView.windowID, EditHistoryPanel.windowID, ProjectSearch.windowID, CitationRename.windowID].contains(id) { openWindow(id: id) }
+                    if let id = ProcessInfo.processInfo.environment["FLASHTEX_OPEN_WINDOW"], ["nearby", AccessibilityHelpView.windowID].contains(id) { openWindow(id: id) }
                     // Opt-in background update check (Settings > Updates; off by
                     // default): once per 24 h, quiet unless a newer release exists.
                     // Never during automation launches.
@@ -174,7 +175,7 @@ struct FlashTeXMacApp: App {
         // command reads re-evaluates the whole scene when it changes, and SwiftUI
         // then re-reads every window's root preferences (toolbar, title…) —
         // `AppKitWindowController.updateRootView` was ~20 % of the main thread
-        // while typing (FT-071 sample) because `result`/`displayListV2` were
+        // while typing (FT-071 sample) because the old engine's result was
         // read here per reply. Commands read the change-only mirrors instead.
         .commands {
             NavigationCommands(model: model) // Navigation.swift: Navigate menu
@@ -183,18 +184,15 @@ struct FlashTeXMacApp: App {
                 FindCommands() // EditorFind.swift: Edit > Find submenu (⌘F, ⌥⌘F, ⌘G, ⇧⌘G, ⌘E, ⌘J)
                 EditorMenuCommands(model: model) // EditorMenu.swift: one Editor menu (line commands + Change Environment…)
             }
-            ProjectSearchCommands(openWindow: openWindow) // ProjectSearchPanel.swift: ⌘⇧F Find in Project…
-            CitationRenameCommands(openWindow: openWindow) // CitationRename.swift: Edit > Rename Citation… (no shortcut)
             CommandGroup(after: .toolbar) {
                 Toggle("Show Preview Debug Status", isOn: Binding(get: { model.previewDebugStatus }, set: { model.previewDebugStatus = $0 }))
                     .help("Show the compile status word, provisional-rendering note, display-list identity line and display-list diagnostics in the preview pane (off by default).")
-                // The engine for the open document (EngineChoice.swift): saved per
-                // document; Settings > Compile for the others; FLASHTEX_ENGINE_V3 forces.
-                Menu("Engine for This Document") { EngineChoiceMenuItems(model: model) }
-                // Helper display-candidate route (ShellModel+DisplayCandidates.swift): default OFF; untrusted v2 siblings painted in the v2 pane.
-                Toggle("Helper Display Candidates", isOn: Binding(get: { model.displayCandidates.requested }, set: { model.setDisplayCandidates($0) }))
-                    .disabled(!model.controllerAttached)
-                    .help("Ask the attached preview controller to forward the producer's display-list-v2 sibling (untrusted; validated natively before paint). Status: \(model.displayCandidates.status)")
+                // Classic or Unicode, kept in flashtex.toml (ProjectMode.swift).
+                Menu("Mode for This Document") { ModeMenuItems(model: model) }
+                // Chapter focus (EngineV3FocusChapter.swift): \includeonly the active chapter.
+                Toggle("Focus Preview on This Chapter", isOn: Binding(get: { model.engineV3.focus.isActive },
+                                                                      set: { $0 ? model.focusPreview() : model.showWholeDocument() }))
+                    .disabled(!model.engineV3.focus.isActive && model.focusChapter(for: model.activePath) == nil)
             }
             CommandGroup(after: .sidebar) {
                 // View menu (mac-ui-redesign): the command palette lists every
@@ -272,7 +270,6 @@ struct FlashTeXMacApp: App {
                 Divider()
                 Button("Nearby Companion…") { openWindow(id: "nearby") }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
-                Button("Durable History…") { openWindow(id: EditHistoryPanel.windowID) } // EditHistoryPanel.swift
             }
             CommandGroup(replacing: .newItem) {
                 Button("New Project…") { model.scaffold.presentNewProject() } // ProjectScaffoldViews.swift
@@ -284,6 +281,7 @@ struct FlashTeXMacApp: App {
                     .disabled(model.project.projectRoot == nil || model.activePath == model.menuEntryPath) // change-only mirror: `entryPath` reads `documents`
                 Button("Open LaTeX File…") { model.openTexPanel() } // also a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
                     .keyboardShortcut("o")
+                LiveShareMenuItems(model: model) // LiveShareViews.swift: Start/Join/Leave Live Share Session, while Settings > Live Share is on
                 // The project manifest (ProjectManifest.swift): writes the
                 // commented template next to the entry and opens it.
                 Button("Create flashtex.toml…") { Task { await model.manifest.createManifestInteractive() } }
@@ -306,29 +304,16 @@ struct FlashTeXMacApp: App {
                 Button("Save As…") { model.saveTexAs() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                 Button("Show in Finder") { model.showActiveDocumentInFinder() } // RevealInFinder.swift
-                    .keyboardShortcut("r", modifiers: [.command, .option]) // ⌘⇧R is Attach Render Pipeline
+                    .keyboardShortcut("r", modifiers: [.command, .option])
                     .disabled(model.project.projectRoot == nil)
                 Divider()
-                Button("Open Compile Result Fixture…") { model.openFixturePanel() }
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
-                // Developer-only: no shortcut, and confirms/detaches the real
-                // document before replacing it with fixture content (#72).
-                Button("Reload Fixture") { model.reloadFixture() }
-                Button("Open Display List (v2)…") { model.openDisplayListV2Panel() } // experimental, PreviewV2View.swift
                 // The app's one export route (ExactPDFExport.swift); File > Print…
                 // prints exactly these bytes.
                 Button("Export PDF…") { model.exportPDF() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(!model.exportAvailable) // change-only mirror, or the v3 host (see .commands)
+                    .disabled(!model.exportAvailable) // the engine's export (ShellModel.exportAvailable)
                 Divider()
-                Button("Attach Built Compiler") { model.attachDiscoveredWorker() }
-                    .keyboardShortcut("k", modifiers: [.command, .shift])
-                Button("Attach Render Pipeline (Latin Modern)") { model.attachDiscoveredRenderPipeline() }
-                    .keyboardShortcut("r", modifiers: [.command, .shift])
-                    .help("Attach flashtex-render (crates/render-pipeline) — the producer whose metrics are Latin Modern, so the preview shows Computer Modern-style text")
-                Button("Attach Worker Executable…") { model.attachWorkerPanel() }
-                    .keyboardShortcut("k")
-                Button("Compile") { model.compileCommand() } // the engine the preview shows (engine v3 or the old one)
+                Button("Compile") { model.compileCommand() } // the engine (EngineV3Session)
                     .keyboardShortcut("b")
                     .disabled(!model.canCompile)
                 Button("Stop Compile") { model.engineV3.stopCompile() } // engine v3: end a compile that runs too long (EngineV3Session)
@@ -336,8 +321,6 @@ struct FlashTeXMacApp: App {
                     .disabled(!model.engineV3Enabled || !model.engineV3.compiling)
                 Button("Show TeX Log") { model.engineV3.showTeXLog() } // engine v3: the last compile's .log (gap A21)
                     .disabled(!model.engineV3Enabled)
-                Button("Detach Worker") { model.detachWorker() }
-                    .disabled(!model.workerAttached)
             }
         }
         .commands {
@@ -353,6 +336,10 @@ struct FlashTeXMacApp: App {
                     .disabled(!PrintController.sourceEnabled(model))
                     .help(PrintController.sourceHelp(model))
             }
+            CommandGroup(replacing: .appInfo) {
+                // The standard About panel with the GPL source offer in its credits (AboutPanel.swift, #1806).
+                Button("About FlashTeX") { AboutPanel.show() }
+            }
             CommandGroup(after: .appInfo) {
                 // FlashTeX menu, after About (UpdateChecker.swift, #694 slice 1):
                 // asks GitHub Releases, shows version + notes, Download opens the
@@ -364,14 +351,9 @@ struct FlashTeXMacApp: App {
             NearbyView().environmentObject(nearby).environment(model)
         }
         .windowResizability(.contentSize)
-        Window("Durable History", id: EditHistoryPanel.windowID) {
-            EditHistoryPanel().environment(model) // undo/redo on the helper's ledger
-        }
         Window("Accessibility Help", id: AccessibilityHelpView.windowID) {
             AccessibilityHelpView() // FlashTeXAccessibility: focus order, VoiceOver notes, command table
         }
         Settings { SettingsRootView().environment(model) } // EditorPreferences.swift (⌘,): Editor, Compile and Conversion tabs, applying live
-        ProjectSearchWindow(model: model) // ProjectSearchPanel.swift: Find in Project (⌘⇧F)
-        CitationRenameWindow(model: model) // CitationRename.swift: Rename Citation (reviewed plan_citation_rename → apply_group)
     }
 }

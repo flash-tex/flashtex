@@ -110,7 +110,6 @@ final class EngineV3PreviewNavTests: XCTestCase {
         XCTAssertEqual(clip.bounds.minY, p3.y - 16, accuracy: 0.5)
         pages.keyDown(with: key(116, in: window))
         XCTAssertEqual(clip.bounds.minY, p2.y - 16, accuracy: 0.5)
-        model.previewAnnouncer.flush()
         XCTAssertEqual(model.previewAnnouncer.announcements.suffix(1), ["Page 2 of 4"])
         // The first page at its top: nowhere to go up.
         clip.scroll(to: .zero)

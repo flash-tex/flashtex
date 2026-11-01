@@ -64,6 +64,9 @@ ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--region', default='any')
 ap.add_argument('--host-args', default='')
 ap.add_argument('--out')
+ap.add_argument('--first-line', help='the first line instead of DOC.tex, with -jobname=DOC, for the host and '
+                                      'the scratch runs alike (a chapter focus: '
+                                      r'"\\AtBeginDocument{\\includeonly{ch03}}\\input main.tex")')
 ap.add_argument('--window', type=int, default=0, help='after the first edit, pick positions within this many bytes of it')
 ap.add_argument('--keep', action='store_true')
 ap.add_argument('--quiet', action='store_true')
@@ -82,6 +85,11 @@ ap.add_argument('--cold', action='store_true',
                 help='with --interleave: the first edit also adds a comment line to the preamble, so that its '
                      'compile runs from the format (the one interrupted, in pass 1); the second edit keeps it '
                      '(a restart from the stopped run\'s S0) or reverts both (from the format again)')
+ap.add_argument('--first-open', action='store_true',
+                help='with --interleave: before each interrupted edit, the files the compiles wrote (.aux, .toc, '
+                     '.out, the PDF, ...) are removed, as on a document\'s first open, so that the compile runs '
+                     'from the format with no .aux and is interrupted in its first pass (lane COLD-OPEN: the '
+                     '.aux point at \\document\'s start, a keystroke during the initial compile)')
 a = ap.parse_args()
 import edits  # noqa: E402
 try:
@@ -103,7 +111,10 @@ for n in os.listdir(a.srcdir):
     if os.path.isfile(p):
         shutil.copy(p, work)
 editfile = a.edit or f'{a.doc}.tex'
-cmdline = ['-fmt=pdflatex', '-interaction=batchmode', f'{a.doc}.tex']
+# (`--first-open`: what the document's directory holds before any compile)
+source_files = set(os.listdir(work))
+cmdline = ['-fmt=pdflatex', '-interaction=batchmode'] + (
+    [f'-jobname={a.doc}', a.first_line] if a.first_line else [f'{a.doc}.tex'])
 prof = os.environ.get('PROFILE_OUT')
 pre = ['samply', 'record', '-s', '--unstable-presymbolicate', '-r', '4000', '-o', prof] if prof else []
 host = subprocess.Popen(pre + [f'{E}/flashtex-host', 'iserve'] + a.host_args.split() + ['--'] + cmdline,
@@ -333,6 +344,8 @@ def one(content, tag, interrupt=None, pre=None):
                passes=r.get('passes', 1), pass_modes=r.get('pass_modes'), pass_s=r.get('pass_s'),
                oscillation=r.get('oscillation'), ref_runs=REFRUNS.get(tag),
                restart_mid_page=r.get('restart_mid_page'), restart_gap=r.get('restart_gap'),
+               restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'), revalidated=r.get('revalidated'),
+               preamble_patched=r.get('preamble_patched'),
                l5=r.get('l5'), rs_events=r.get('rs_events'), ck_stats=r.get('ck_stats'))
     results.append(rec)
     if out:
@@ -419,7 +432,7 @@ def structural(kind, src, p, i):
             return None
         m = min(ms, key=lambda m: abs(m.start() - p))
         return src[:m.start()] + src[m.end():]
-    if kind in ('newline', 'split', 'join', 'math_par', 'verbatim_blank', 'cell_blank'):
+    if kind in edits.LINE_KINDS + edits.CONTEXT_KINDS + edits.PREAMBLE_KINDS:
         return getattr(edits, kind)(src, p)
     if kind == 'unsection':
         ms = [m for m in re.finditer(rb'\\section\{[^}\n]*\}', src)]
@@ -458,8 +471,14 @@ for i in range(a.trials):
             continue
     toggled = toggle_one(i)
     if a.interleave:
+        if a.first_open:
+            # (a first open: none of the compiles' files; the reference
+            # starts without them too)
+            for n in os.listdir(work):
+                if n not in source_files and os.path.isfile(os.path.join(work, n)):
+                    os.unlink(os.path.join(work, n))
         pre_c = snapshot(work)
-        at = (rng.choice([1, 1, 2]), rng.randint(1, 4))
+        at = (rng.choice([1, 1, 2]) if not a.first_open else 1, rng.randint(1, 4))
         shift = 0
         if a.cold:
             # (a preamble edit: the compile of this edit is from the format)

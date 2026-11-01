@@ -1,0 +1,14 @@
+# TeX Live 2026's biber, mirrored for no-TeX-Live documents (tools/bundle/biber.py, #1782).
+# Each container is pinned by TeX Live's own tlpdb containerchecksum (SHA-512) and revision,
+# read from tlnet's texlive.tlpdb on 2026-10-11. biber must be the version the bundle's tree
+# has (biber.py checks the pinned image's tlpdb), so that it agrees with the bundle's biblatex.
+version 2.22
+# the release the assets go to (published by the owner; nothing is published by a dry run)
+tag biber-2.22-tl2026-1
+# arch revision container-sha512
+universal-darwin 80020 6295863abe23c9de3ab47334ac36b194db1200ac24ae72459a0a5f2782d429d0a75d6dcdce0831c3369f649c312e9331c5cdfdd2f5d035ab9929ed9b723eccc4
+x86_64-linux 79977 d772863640678caf29dbe44133a33123928c55c447503db0d2f8c5df51d9c6086b45edbc7ac24c7b60b06286262ac3de1370b893f7271495ee5092829ffd1994
+aarch64-linux 80003 113937ecbff259fa01654a69dacf5eab09494d317e229a3631f94326b3ad92742fa65229e74ba44c1f0578ccb5a4f59f6372b06e9eb124e75b70ab4ca9ec2403
+windows 79977 b709ee3fdc6b442de44f9beed58733d6ab0700bb0d704f3352c678514f629a9f1287c3faf082694c41d535e3721bf67215359b00bb832cffebef2768756e1fcb
+# the source container (package biber's srccontainerchecksum)
+source 79977 9f4b1016ccaf1c5e6fb3c16d208d6cb736827157fd7e953e415e08567553d7be31142f133e5222943db501c51a45242704a50b468349aaf79d0ce0f6d8f276dd

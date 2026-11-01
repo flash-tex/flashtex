@@ -256,7 +256,7 @@ final class EditorIntelligenceTests: XCTestCase {
         var body: some View {
             SourceEditorView(
                 text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
-                selection: model.selection, pendingEdit: model.pendingEdit, marks: marks, result: model.result,
+                selection: model.selection, pendingEdit: model.pendingEdit, marks: marks,
                 onCaretChange: { probe.carets.append($0); model.caretUTF16 = $0 },
                 onDefinitionRequest: { probe.definitions.append($0) }
             )

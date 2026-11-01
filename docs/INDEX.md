@@ -32,10 +32,11 @@ your task; do not load the entire repository history into every prompt.
 | Shared interfaces | `docs/contracts/<interface>.md` when created | Assigned interface owner |
 | Durable decisions | `docs/decisions/<id>-<topic>.md` when created | Decision owner |
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
-| Unicode mode from XeTeX (custom fonts, OpenType, math; FlashTeX binaries over a shared runtime, no separate TeX): plan, phases S0–S3, S0 results; the crate, its change files and its lockstep gate | [docs/design/xetex/PLAN.md](design/xetex/PLAN.md), [crates/flashtex-xetex/changes/README.md](../crates/flashtex-xetex/changes/README.md), [tools/xetex-lockstep](../tools/xetex-lockstep/README.md) | mac-claude-a (XETEX-S0) |
+| Unicode mode from XeTeX (custom fonts, OpenType, math; FlashTeX binaries over a shared runtime, no separate TeX): plan, phases S0–S3, S0 results; the crate, its change files and its lockstep gate | [docs/design/xetex/PLAN.md](design/xetex/PLAN.md), [crates/flashtex-xetex/changes/README.md](../crates/flashtex-xetex/changes/README.md), [tools/xetex-lockstep](../tools/xetex-lockstep/README.md), PDF parity [tools/xetex-pdfparity](../tools/xetex-pdfparity/README.md) | mac-claude-a (XETEX-S0) |
 | The engine on Windows: `cmd.exe` shell escape caveats, owner-only sockets, `\pdfmatch`, what CI runs there | [docs/dev/engine-windows.md](dev/engine-windows.md) | mac-claude-a (ENGINE-PORTABILITY, WIN-HARDENING) |
 | Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
+| Release v0.2.0: the checklist (the three P5 boards it waits for) and the release notes | [checklist](release/v0.2.0.md), [notes](release/v0.2.0-notes.md) | kabir-claude (RELEASE-PREP) |
 | The no-TeX-Live bundle: licensing notice, contents, publishing as GitHub Release assets, the no-TeX-Live gate | [docs/distribution/texlive-bundle.md](distribution/texlive-bundle.md) | mac-claude-a (BUNDLE-PUBLISH) |
 | TeXpand: Emmet-style LaTeX abbreviations for the Mac/iPad editor (spec with FlashTeX adaptations, host findings, milestones) | [PLAN](texpand/PLAN.md), [HOST](texpand/HOST.md) | mac-claude-a (TEXPAND lane) |
 
@@ -81,14 +82,10 @@ latency. Every consumer must retain source/project/revision and resource identit
   background service and restart handling. Do not build a second independent undo ledger.
 - `crates/document-runtime/README.md`: persistent original compiler transport, stale
   response suppression and replay metrics; native paint is excluded from its timings.
-- `crates/conversion-jobs/README.md`: bounded scheduling, durable intent, ambiguous
-  provider-call recovery, typed status and explicit reviewed handoff. No automatic retry.
 - `crates/project-index/README.md`: exact-revision source navigation and lexical
   bibliography/rename facilities; lexical results do not establish TeX expansion semantics.
 - `crates/font-resources/README.md`: immutable font bytes, original GIDs, exact paths,
   TFM metrics and explicit encoding bindings. TFM8bit codes are not Unicode or GIDs.
-- `crates/rendering-core/README.md`: experimental rendering-v2 validation, exact
-  positioning, clipping and unhinted path consumers. No automatic wire activation.
 - `crates/pdf/README.md`: original runtime-v1 PDF export; its font fallback and rule
   conventions remain explicit fidelity blockers.
 - `crates/project-manifest` (`src/lib.rs` docs): the optional `flashtex.toml`, typed with

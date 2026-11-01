@@ -21,10 +21,14 @@ final class CollabConnection {
     /// preJoinFrameBytes`) until a connection has joined, so an
     /// unauthenticated peer cannot make it buffer megabytes.
     var maxFrameBytes = CollabWire.maxFrame
-    /// The peer's address (per-address connection caps).
+    /// The peer's address for per-address caps: an IPv6 peer counts by its
+    /// /64 (one host can hold a whole /64), an IPv4 one by its address.
     var remoteAddress: String {
-        if case let .hostPort(host, _) = nw.endpoint { return "\(host)" }
-        return "\(nw.endpoint)"
+        guard case let .hostPort(host, _) = nw.endpoint else { return "\(nw.endpoint)" }
+        if case let .ipv6(a) = host {
+            return a.rawValue.prefix(8).map { String(format: "%02x", $0) }.joined() + "::/64"
+        }
+        return "\(host)"
     }
     /// Bytes handed to the stack and not yet reported sent.
     private(set) var unsentBytes = 0

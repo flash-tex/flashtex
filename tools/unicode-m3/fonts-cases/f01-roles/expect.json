@@ -1,0 +1,8 @@
+{
+ "expect_fonts": [
+  "texgyretermes-regular.otf",
+  "texgyreheros-regular.otf",
+  "texgyrecursor-regular.otf",
+  "texgyretermes-math.otf"
+ ]
+}

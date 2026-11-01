@@ -1,7 +1,7 @@
 # FlashTeX Cargo workspace (docs/proposals/generated-data-and-maintainability.md
 # §3.2, slice 2 complete).
 #
-# All 38 crates are members: one Cargo.lock (this directory's), one target
+# Every crate under crates/ is a member, except crates/flashtex-xetex (exclude below): one Cargo.lock (this directory's), one target
 # directory (./target), and `cargo test --workspace` tests them all.
 # Binaries of member crates are therefore built into ./target/<profile>/, NOT
 # crates/<name>/target/<profile>/ -- scripts that need a helper binary resolve

@@ -70,6 +70,7 @@ What web2c gets from `texmf.cnf` is a value, not code, so it is an option:
 | `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
 | `--arena-cap NAME=EXPR` | the largest index of a growable (`^T`) array global, which reserves its region of the word space (see below) |
 | `--index-type PATH` | wraps every array subscript in `PATH(...)`; the engine passes `crate::ix::U`, whose `Index` impls check every read except in a benchmarking build with the `unchecked-reads` feature (`crates/flashtex-engine/src/ix.rs`) |
+| `--host-state TYPE` | adds one field, `host: TYPE` (initialised with `Default::default()`), to `Globals`: the engine's state outside the word space. The XeTeX port passes `crate::state::Host` (its handle tables and what TeX Live keeps in C globals; `crates/flashtex-xetex/src/state.rs`); the pdfTeX engine passes nothing, so its translation is unchanged |
 | `--inline NAME=always\|never` | puts `#[inline(always)]` or `#[inline(never)]` on routine NAME (an error if there is none); the engine inlines `get_next`'s fast path into its callers and keeps the rest, `get_next_slow`, out of line (`changes/throughput.ch` [3]) |
 
 Code changes are change files (`crates/flashtex-engine/changes/`).
@@ -189,6 +190,29 @@ The tangle stage needed nothing new: `web2rust --pool --emit-pascal` on
 `pdftex.web` agrees with TANGLE 4.6 (TeX Live 2026) exactly, 230,400 tokens
 and a byte-identical pool (1795 strings, checksum `400476366`), checked
 2026-09-29 with `tools/pascal_tokens.py` as for tex.web below.
+
+## What bibtex.web needs
+
+`third_party/bibtex/bibtex.web` (BibTeX 0.99e, the port in `crates/bibtex`,
+lane RUST-TOOLS) is translated with TeX Live's own `bibtex.ch` unchanged and
+then `crates/bibtex/changes/flashtex.ch`, which restates `bibtex.ch`'s C (what
+web2c's `convert`, `cvtbib.sed` and `fixwrites` do with it) as Pascal and
+`external` routines. Two things are new in the translator, and neither changes
+the pdfTeX or XeTeX translations (both drift tests pass):
+
+- **`--translate NAME`**: a routine whose name is one the engines write by
+  hand (`input_ln`, `a_open_in`, ...) is translated anyway. BibTeX's
+  `input_ln` is its own Pascal.
+- **`const_cstring`**, web2c's type of a C string literal passed to C, is a
+  Rust `&'static str` (BibTeX's `pds_type`, the pre-defined strings).
+
+The runtime the translation uses (`crate::arena`, `crate::system`) is the
+crate's own: no checkpoints, so each array global is a growable vector, and
+the `var` parameters of a pointer type (`var buf: buf_type`) take the array's
+`Vec`. BibTeX's nonlocal `goto`s (`close_up_shop` from anywhere, `bst_done`
+from inside the style-file parser) are cvtbib.sed's `longjmp`s; the change
+file turns them into calls of `external` routines that unwind to a catching
+wrapper. Its drift test is the third test of `tests/drift.rs`.
 
 ## Change files against TANGLE
 

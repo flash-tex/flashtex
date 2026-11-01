@@ -4,7 +4,7 @@
 //!
 //!     dl3-keys --socket PATH --root DIR --main main.tex [--output-dir DIR]
 //!         [--keys N] [--at FRACTION] [--gap-ms MS] [--overlap] [--no-viewport]
-//!         [--page INDEX] [--where start|middle|end] [--sentence]
+//!         [--page INDEX] [--where start|middle|end] [--sentence] [--includeonly NAME,...]
 //!
 //! Opens the document (compiles until nothing changes), picks a prose line
 //! whose glyphs are on one page about FRACTION (default 0.5) into the
@@ -199,7 +199,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport] [--includeonly NAME,...]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -220,6 +220,8 @@ fn main() {
         let mut r = CompileRequest::new(id, &root, &main);
         r.output_dir = arg("--output-dir");
         r.incremental = true;
+        // `--includeonly a,b`: a chapter focus (`\includeonly{a,b}`).
+        r.includeonly = arg("--includeonly").map(|v| v.split(',').map(str::to_string).collect());
         r
     };
     // Open: until nothing changes.
@@ -304,7 +306,13 @@ fn main() {
         }
         (l, p)
     });
+    // A preamble edit types after `\documentclass` and watches page 0: it
+    // needs no prose line, and a book's main file (only `\include`s) has none.
+    let preamble = arg("--kind").as_deref() == Some("preamble");
     let (line, page) = given.unwrap_or_else(|| {
+        if preamble {
+            return (1, 0);
+        }
         (1..=lines.len() as u32)
             .filter(|&l| lines[l as usize - 1].split(' ').count() > 40)
             .filter_map(|l| {
@@ -482,6 +490,42 @@ fn main() {
             let now = Instant::now();
             match ev {
                 Event::Started(j) => started = j.int_field("id").unwrap_or(0),
+                // A compile can find its keystroke's page already on screen:
+                // the run a newer keystroke had stopped typeset this very
+                // text (a letter typed and deleted again) and the client
+                // holds that page. The host says so in `PAGES`' `current`
+                // instead of sending the page again; for the user it is
+                // painted then (lane P4-TYPING-200WPM).
+                Event::Pages(j)
+                    if started >= first_id
+                        && j.int_field("id") == Some(started)
+                        && j.get("current").and_then(Json::as_array).is_some_and(|rs| {
+                            rs.iter().any(|r| {
+                                r.as_array().is_some_and(|a| {
+                                    a.len() == 2
+                                        && a[0].as_i64().is_some_and(|lo| lo <= page as i64)
+                                        && a[1].as_i64().is_some_and(|hi| page as i64 <= hi)
+                                })
+                            })
+                        }) =>
+                {
+                    let upto = (started - first_id + 1) as usize;
+                    let s = sent.lock().unwrap();
+                    while covered < upto.min(s.len()) {
+                        let l = (now - s[covered]).as_secs_f64() * 1e3;
+                        println!(
+                            "{}",
+                            Json::Obj(vec![
+                                ("key".into(), Json::Int(covered as i64)),
+                                ("edited_page_ms".into(), Json::Num(l)),
+                                ("by".into(), Json::Int(started)),
+                                ("current".into(), Json::Bool(true)),
+                            ])
+                        );
+                        lat.push(l);
+                        covered += 1;
+                    }
+                }
                 Event::Page(p) if p.index == page && started >= first_id => {
                     let upto = (started - first_id + 1) as usize;
                     let s = sent.lock().unwrap();

@@ -158,6 +158,63 @@ enum EngineV3Trust {
                 try? data.write(to: url, options: .atomic)
             }
         }
+
+        /// Live Share taints: canonical project root → the session event.
+        func loadTaints() -> [String: String] {
+            let data: Data?
+            switch self {
+            case .defaults(let d): data = d.data(forKey: EngineV3Trust.liveShareTaintKey)
+            case .file(let url): data = try? Data(contentsOf: Self.taintFile(url))
+            }
+            return data.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        }
+
+        func saveTaints(_ taints: [String: String]) {
+            guard let data = try? JSONEncoder().encode(taints) else { return }
+            switch self {
+            case .defaults(let d): d.set(data, forKey: EngineV3Trust.liveShareTaintKey)
+            case .file(let url):
+                let f = Self.taintFile(url)
+                try? FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? data.write(to: f, options: .atomic)
+            }
+        }
+
+        static func taintFile(_ records: URL) -> URL {
+            records.deletingPathExtension().appendingPathExtension("liveshare.json")
+        }
+    }
+
+    // MARK: Live Share
+
+    static let liveShareTaintKey = "FlashTeX.EngineV3.liveShareTaints.v1"
+
+    /// A Live Share guest's text reached a file of the project at `root`
+    /// (LiveShareController): the project is untrusted until the user trusts
+    /// it again, whatever then happens to its files. The record is the app's
+    /// own (the trust store, beside the trust records), so no save path,
+    /// editor, `git checkout` or copy can drop it, as one would drop a
+    /// `com.apple.quarantine` attribute (the project-files helper's atomic
+    /// save does not carry extended attributes). `event`: the session; a
+    /// later session's edits need trusting again.
+    static func taint(root: URL, event: String, store: Store = .current) {
+        var t = store.loadTaints()
+        let key = canonical(root).path
+        guard t[key] != event else { return }
+        t[key] = event
+        store.saveTaints(t)
+    }
+
+    /// The subject a taint adds: the root's identity under a path of its
+    /// own (`#liveshare`, never a real file, so it never replaces the
+    /// folder's quarantine record), carrying the session event. Nil when the
+    /// root is not tainted; `.some(nil)` when it cannot be read (fails closed).
+    static func taintSubject(root: URL, store: Store) -> Identity?? {
+        guard let event = store.loadTaints()[canonical(root).path] else { return nil }
+        guard var id = identity(root) else { return .some(nil) }
+        id.path += "#liveshare"
+        id.quarantine = "liveshare;" + event
+        return .some(id)
     }
 
     // MARK: decisions
@@ -171,9 +228,13 @@ enum EngineV3Trust {
     ///   download. TeX can `\input` any of them, whatever its name.
     /// Nil when an item that counts cannot be read (fails closed); empty
     /// when nothing is quarantined.
-    static func subjects(root: URL, main: URL?, others: [URL] = []) -> [Identity]? {
+    static func subjects(root: URL, main: URL?, others: [URL] = [], store: Store = .current) -> [Identity]? {
+        // A Live Share taint is a subject of its own, whatever the quarantine.
+        let taint = taintSubject(root: root, store: store)
+        if case .some(.none) = taint { return nil }
+        let tainted: [Identity] = taint.flatMap { $0 }.map { [$0] } ?? []
         let rootQuarantined = isQuarantined(root), mainQuarantined = main.map(isQuarantined) ?? false
-        guard rootQuarantined || mainQuarantined || !others.isEmpty else { return [] }
+        guard rootQuarantined || mainQuarantined || !others.isEmpty else { return tainted }
         guard let r = identity(root) else { return nil }
         let folderCounts = rootQuarantined && !isShared(root)
         // A quarantined shared folder says nothing about which download this
@@ -208,7 +269,7 @@ enum EngineV3Trust {
             seen.insert(m.path)
             out.append(m)
         }
-        return out
+        return out + tainted
     }
 
     // MARK: what to check
@@ -230,7 +291,7 @@ enum EngineV3Trust {
     /// Reads the disk: call off the main thread.
     static func decide(root: URL, main: String, texts: [String: String], walkQuarantined: [URL], store: Store = .current) -> Decision {
         let others = isShared(root) ? referencedFiles(root: root, main: main, texts: texts).filter(isQuarantined) : walkQuarantined
-        guard let need = subjects(root: root, main: root.appendingPathComponent(main), others: others) else {
+        guard let need = subjects(root: root, main: root.appendingPathComponent(main), others: others, store: store) else {
             return Decision(trusted: false, others: others, need: [])
         }
         let records = store.load()
@@ -304,7 +365,7 @@ enum EngineV3Trust {
     /// has nothing to run: trusted.
     static func isTrusted(root: URL?, main: URL?, others: [URL] = [], store: Store = .current) -> Bool {
         guard let root else { return true }
-        guard let need = subjects(root: root, main: main, others: others) else { return false }
+        guard let need = subjects(root: root, main: main, others: others, store: store) else { return false }
         return covered(need, store: store)
     }
 
@@ -320,7 +381,7 @@ enum EngineV3Trust {
 
     /// Records the project's subjects as they are now (tests).
     static func record(root: URL, main: URL?, others: [URL] = [], store: Store = .current) {
-        guard let new = subjects(root: root, main: main, others: others) else { return }
+        guard let new = subjects(root: root, main: main, others: others, store: store) else { return }
         record(new, store: store)
     }
 }

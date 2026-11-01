@@ -1,0 +1,18 @@
+% u03-system-fonts: macOS system fonts by name, .ttf and .ttc faces with weights and styles
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Georgia}
+\setsansfont{Helvetica Neue}
+\setmonofont{Menlo}
+\newfontfamily\hnlight{Helvetica Neue Light}
+\newfontfamily\tnr{Times New Roman}
+\begin{document}
+Georgia regular 1234567890, \textbf{bold}, \textit{italic}, \textbf{\textit{bold italic}}.
+
+\textsf{Helvetica Neue (ttc face) \textbf{bold} \textit{italic} \textbf{\textit{bold italic}}}
+and {\hnlight Helvetica Neue Light}.
+
+\texttt{Menlo mono \textbf{bold} \textit{italic} \{\}[]()<>}
+
+{\tnr Times New Roman ``quotes'' fi fl.}
+\end{document}

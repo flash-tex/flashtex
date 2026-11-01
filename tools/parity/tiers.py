@@ -39,7 +39,26 @@ DEFAULT_ORACLE = "/Library/TeX/texbin/pdftex"
 FMT = "pdflatex"
 PASSES = 6
 PASS_TIMEOUT = 300
-QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable"]
+# --compress-streams=y: qpdf still decodes every stream it can (Flate, LZW, predictors) and
+# normalises the content streams, then writes them compressed again with its own Flate, so
+# the qdf copy stays about the size of the PDF; Graph decodes one stream at a time, and an
+# image as a stream (image_digest). Without it a 12.7 MB PDF became a 3.0 GB copy (#1621).
+# --recompress-flate: without it qpdf passes a stream that is already Flate through as it is,
+# PNG predictor included, and P-T2 would compare zlib's bytes instead of the samples (#1635
+# review: the same pixels at another zlib level failed); with it every Flate stream is
+# decoded (predictors undone) and written again with qpdf's own Flate.
+QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable", "--compress-streams=y",
+             "--recompress-flate"]
+# P-T2's normalised (qdf) copy of a PDF holds every stream decoded, and the comparison reads
+# it whole: a 12.7 MB PDF with large images (T4 2511.15561v1) became 3.0 GB and an OOM kill.
+# Over this size the document is a harness error (unmeasured; its tier reads partial), never
+# a pass or a fail, until the normaliser stops expanding images (P5-BOARD-T4 follow-up).
+PT2_MAX_QDF_BYTES = int(float(os.environ.get("FLASHTEX_PT2_MAX_QDF_MB", "1024")) * 1048576)
+
+
+class PT2TooLarge(Exception):
+    """A PDF whose P-T2 normalisation is over PT2_MAX_QDF_BYTES. Not a PdfError: compare_pt2
+    lets it through, and parity.score_safe records the document as a harness error."""
 TAG = re.compile(r"^[A-Z]{6}\+")
 SNIP = 200
 # What a run converts with \write18 (epstopdf.sty's `<name>-eps-converted-to.pdf`,
@@ -563,6 +582,116 @@ def compare_pt1_streamed(ref, cand):
 # P-T2
 
 
+# Components per sample of an image's /ColorSpace (a name, or the family of an array).
+_COLOR_COMPONENTS = {"DeviceGray": 1, "CalGray": 1, "Indexed": 1, "Separation": 1, "Pattern": 1,
+                     "DeviceRGB": 3, "CalRGB": 3, "Lab": 3, "DeviceCMYK": 4}
+
+
+def image_components(doc, obj):
+    """Components per sample of an image XObject, or None when they cannot be told."""
+    if obj.get("ImageMask") is True:
+        return 1
+    cs = doc.resolve(obj.get("ColorSpace"))
+    if isinstance(cs, list) and cs:
+        fam = str(cs[0])
+        if fam == "ICCBased" and len(cs) > 1:
+            icc = doc.resolve(cs[1])
+            n = icc.get("N") if isinstance(icc, dict) else None
+            return n if isinstance(n, int) else None
+        if fam == "DeviceN" and len(cs) > 1:
+            names = doc.resolve(cs[1])
+            return len(names) if isinstance(names, list) else None
+        return _COLOR_COMPONENTS.get(fam)
+    return _COLOR_COMPONENTS.get(str(cs)) if cs is not None else None
+
+
+def clear_row_padding(doc, obj, data):
+    """An image's decoded samples with the unused low bits of each row's last byte
+    cleared (PDF 32000-1 8.9.3: each row starts on a byte boundary, and those bits are
+    not pixels).
+
+    pdfTeX writes whatever its row buffer held there: writepng.c's palette and grey
+    paths decode rows with libpng into an uninitialised xtalloc'd buffer, and
+    png_combine_row keeps the destination's bits past the last pixel. The same pdfTeX
+    1.40.29 on the same PNG wrote 0 on the Macs and 1101110 on the NixOS PC
+    (tcolorbox-example's Basilica_5.png, 977 px at 1 bit, P5-BOARD-T4, 2026-10-06):
+    heap contents, not output anyone can match. Every pixel is still compared."""
+    g = row_geometry(doc, obj)
+    if g is None:
+        return data
+    h, rowbytes, keep = g
+    if len(data) != h * rowbytes:  # still encoded (DCT, JPX), or not plain rows: as it is
+        return data
+    out = bytearray(data)
+    for i in range(rowbytes - 1, len(out), rowbytes):
+        out[i] &= keep
+    return bytes(out)
+
+
+def row_geometry(doc, obj):
+    """(height, bytes per row, mask of the last byte's pixel bits) of an image whose rows
+    end inside a byte, or None (not an image, rows ending on a byte, or unknown)."""
+    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image":
+        return None
+    w, h = obj.get("Width"), obj.get("Height")
+    bpc = 1 if obj.get("ImageMask") is True else obj.get("BitsPerComponent")
+    n = image_components(doc, obj)
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (w, h, bpc, n or 0)):
+        return None
+    bits = w * bpc * n
+    if bits % 8 == 0:
+        return None
+    return h, (bits + 7) // 8, (0xff << (8 - bits % 8)) & 0xff
+
+
+# Decoded bytes handled at a time when an image is hashed as a stream (image_digest).
+DIGEST_CHUNK = 8 << 20
+
+
+def image_digest(doc, obj, raw):
+    """sha256 (hex) of an image XObject's decoded samples with the row padding cleared
+    (clear_row_padding), computed as a stream in constant memory; None when the image is
+    not plain /FlateDecode (no /DecodeParms), which the caller decodes as before.
+
+    The same digest as sha(clear_row_padding(doc, obj, decode(...))), without holding
+    the image: T4's 2511.15561v1 holds 3.0 GB of decoded image data (#1621). Unlike
+    Graph.stream it does not fold font subset tags (ABCDEF+) in the samples: they name
+    fonts, and image data that happens to contain one is negligible."""
+    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image" or obj.get("DecodeParms"):
+        return None
+    filt = obj.get("Filter")
+    if not (filt == "FlateDecode" or (isinstance(filt, list) and len(filt) == 1 and filt[0] == "FlateDecode")):
+        return None
+    geo = row_geometry(doc, obj)
+    table = bytes(i & geo[2] for i in range(256)) if geo else None
+    plain, masked = hashlib.sha256(), hashlib.sha256()
+    z = zlib.decompressobj()
+    pos = 0
+
+    def take(buf):
+        nonlocal pos
+        if not buf:
+            return
+        plain.update(buf)
+        if geo:
+            rb = geo[1]
+            first = (rb - 1 - pos) % rb  # index in buf of the first row's last byte
+            out = bytearray(buf)
+            out[first::rb] = out[first::rb].translate(table)
+            masked.update(out)
+        pos += len(buf)
+
+    data = raw
+    while data:
+        take(z.decompress(data, DIGEST_CHUNK))
+        data = z.unconsumed_tail
+    take(z.flush())
+    if not z.eof:
+        raise zlib.error("incomplete or truncated stream")
+    use_masked = geo is not None and pos == geo[0] * geo[1]
+    return (masked if use_masked else plain).hexdigest()
+
+
 class Graph:
     """Canonical, number-free view of a qpdf-normalised PDF. Every indirect
     object is named by a hash of what it contains (its dictionary with each
@@ -585,12 +714,21 @@ class Graph:
         if raw is None:
             return b""
         try:
-            data = self.doc.decode(obj, raw)
+            data = clear_row_padding(self.doc, obj, self.doc.decode(obj, raw))
         except (pdftext.PdfError, zlib.error):
             data = raw  # a filter qpdf keeps (DCT, JPX, ...): compare the encoded bytes
         for t in self.tags:
             data = data.replace(t.encode("latin-1"), b"SUBSET+")
         return data
+
+    def stream_digest(self, num, obj, raw):
+        """sha of the stream's compared bytes (`stream`); an image is hashed as a stream
+        (image_digest), so a large one is never held in memory."""
+        try:
+            d = image_digest(self.doc, obj, raw)
+        except zlib.error:
+            d = None
+        return d if d is not None else sha(self.stream(num))
 
     def node(self, num):
         if num in self.memo:
@@ -599,7 +737,7 @@ class Graph:
         obj, raw = self.doc.objects.get(num, (None, None))
         s = self.canon(obj)
         if raw is not None:
-            s += " stream " + sha(self.stream(num))
+            s += " stream " + self.stream_digest(num, obj, raw)
         h = sha(s)[:40]
         self.memo[num] = h
         if isinstance(obj, dict) and obj.get("Type") == "Font":
@@ -644,7 +782,22 @@ def normalise_pdf(pdf, out):
     q = shutil.which("qpdf")
     if not q:
         raise pdftext.PdfError("qpdf not found on PATH")
-    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=300)
+    cap = PT2_MAX_QDF_BYTES
+
+    def limit():  # qpdf may not write more than the cap (SIGXFSZ), and dumps no core
+        import resource
+        resource.setrlimit(resource.RLIMIT_FSIZE, (cap + 1, cap + 1))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=300,
+                       preexec_fn=limit if cap > 0 else None)
+    size = os.path.getsize(out) if os.path.isfile(out) else 0
+    if cap > 0 and (p.returncode == -25 or size > cap):  # -25: SIGXFSZ
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        raise PT2TooLarge(f"P-T2 not measured: the qdf copy of {os.path.basename(pdf)} is over "
+                          f"{cap >> 20} MiB (FLASHTEX_PT2_MAX_QDF_MB), a harness limit")
     if p.returncode not in (0, 3) or not os.path.isfile(out):
         raise pdftext.PdfError(f"qpdf exit {p.returncode}: {p.stderr.decode('utf-8', 'replace')[:200]}")
 

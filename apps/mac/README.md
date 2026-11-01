@@ -1,18 +1,26 @@
 # FlashTeX Mac shell (FT-003)
 
 Native macOS source editor + preview shell. Swift Package, macOS 14+, SwiftUI/AppKit.
-Owner: mac-claude-a. Contract: `docs/contracts/runtime-v1.md`.
+Owner: mac-claude-a. The preview's engine is `flashtex-host`, the
+pdfLaTeX-compatible engine, run as a separate process and spoken to over the
+display-list-v3 protocol (`docs/protocol/display-list-v3.md`); see
+[docs/engine-v3-preview.md](docs/engine-v3-preview.md). Since the old-engine
+retirement plan's stage S6 (#1236) it is the app's only engine: the old
+worker, the preview controller (helper) route, the v1/v2 panes and their
+commands are gone. The diagnostics shape is still runtime-v1's
+(`docs/contracts/runtime-v1.md`).
 
 Opened with no file, the window holds an untitled LaTeX document: File › New
 Project…'s "Blank article" titled "Untitled" (`UntitledDocument` in
 `ProjectScaffold.swift`), with the caret on the empty line under
-`\section{Introduction}`. It is not dirty until edited, and the attached engine
-(old or v3) compiles it like any other buffer.
+`\section{Introduction}`. It is not dirty until edited, and the engine
+compiles it like any other buffer.
 
-A bare `ShellModel()` (tests, automation) is **fixture-backed** instead: it renders
-`protocol/fixtures/compile-result.json` and shows a `FIXTURE` badge, result
-id/revision/status, and `pdf: none`; when the buffer is edited the banner says the
-preview was not recompiled.
+A bare `ShellModel()` (tests, automation) seeds its documents, entry and
+revision from `protocol/fixtures/compile-request.json` (`fixtureURL` is set;
+`replaceProject` clears it). It shows no compile result: diagnostics and pages
+come only from the engine, and under XCTest the engine session is off unless a
+test turns it on (`EngineV3.enabledAtLaunch`).
 
 ## Build and test
 
@@ -24,13 +32,12 @@ xcodebuild -scheme FlashTeXMac -destination 'platform=macOS' build
 FLASHTEX_REPO=$(git rev-parse --show-toplevel) .build/debug/FlashTeXMac
 ```
 
-The app locates `protocol/fixtures/` via `FLASHTEX_REPO`, the working directory,
-the bundle path, or the source path; `File > Open Compile Result Fixture…` (⌘O)
-loads another `compile_result` JSON, with a sibling `compile-request.json` (or
-`<name>-request.json` for a `<name>-result.json`) used to seed the editor when
-present. `File > Reload Fixture` (developer-only, no shortcut) reloads it; loading
-a fixture over a real document confirms first and detaches the file, so Save can
-never overwrite it (#72).
+`scripts/run-mac-dev.sh` (repository root) builds `flashtex-host`,
+`flashtex-bridge` and the app in release and launches it with the engine on.
+The app locates `protocol/fixtures/` via `FLASHTEX_REPO`, the working
+directory, the bundle path, or the source path. *File › Open Compile Result
+Fixture…* and *Reload Fixture* were removed with the old engine's route (S6);
+open a `.tex` file or a folder instead.
 
 ## Packaging
 
@@ -39,94 +46,60 @@ and macOS cannot grant it per-app permissions (e.g. local network, later).
 `scripts/make-app.sh` wraps the built executable in a minimal `FlashTeX.app`:
 
 ```sh
-apps/mac/scripts/make-app.sh [--debug] [--compiler <path>] [--pdf <path>] [--open] [--install] [--dmg]
+apps/mac/scripts/make-app.sh [--debug] [--bridge <path>] [--ledger <path>] [--project-files <path>]
+  [--engine-host <path>] [--engine-host-unicode <path>] [--require-engine-host]
+  [--open] [--install] [--dmg]
 ```
 
 It builds `FlashTeXMac` (release by default), assembles
 `apps/mac/build/FlashTeX.app` (`CFBundleIdentifier tech.jay3332.flashtex.mac`),
 copies `protocol/fixtures/compile-{request,result}.json` and `Samples/*` into
-`Contents/Resources/Samples` (so a bundled app finds fixtures via
-`Bundle.main.resourceURL`), bundles `flashtex-compiler`/`flashtex-pdf` into
-`Contents/MacOS` when built at `crates/{compiler,pdf}/target/release/…` under
-the repo root (or passed via `--compiler`/`--pdf`), and ad-hoc codesigns the
+`Contents/Resources/Samples`, bundles `flashtex-bridge`, `flashtex-edit-ledger`
+and `flashtex-project-files` into `Contents/MacOS` when built (or passed via
+`--bridge`/`--ledger`/`--project-files`; `scripts/ci/build-helpers.sh` builds
+the three), stages the engine host as `Contents/Helpers/flashtex-host` with its
+pool, licence and the TeX bundle's lock under `Contents/Resources/engine/`
+(`--engine-host`; `--require-engine-host`, used by releases, fails the
+packaging when it is missing) and Unicode mode's host as
+`Contents/Helpers/flashtex-host-unicode` when built, and ad-hoc codesigns the
 result. Launch with `open apps/mac/build/FlashTeX.app` or pass `--open`.
 `apps/mac/build/` is gitignored. `--install` atomically replaces
 `~/Applications/FlashTeX.app` (verified to launch before the previous bundle
 is discarded) and `--dmg` produces a compressed disk image; see
 `apps/mac/docs/packaging.md` for signing/notarization status and the
-update-path and launch-recovery evidence (`scripts/launch-check.sh`).
+update-path and launch-recovery evidence (`scripts/launch-check.sh`, which
+checks that the bundled engine host starts). `scripts/packaging-selftest.sh`
+fails on a missing helper. The old engine's helpers (`flashtex-cli`,
+`flashtex-compiler`, `flashtex-pdf`, `flashtex-render`, `flashtex-pdf-exact`),
+the preview controller and `flashtex-explain` are no longer bundled, and
+`--cli`/`--compiler`/`--pdf`/`--render`/`--pdf-exact`/`--controller`/`--explain`
+are gone.
 
-### Rooted TeX metrics for no-TeX operation (GH36)
+### Rooted TeX metrics (GH36)
 
-`flashtex-render` lays text out with Latin Modern's TeX metrics. It looks for
-`.tfm` files in `FLASHTEX_TFM_DIRS` (colon separated) before anything it infers,
-and loads its digest-bound required 12 pt set only from a rooted `texmf` tree:
-the directory must end in `fonts/tfm/public/lm` and
-`<root>/doc/fonts/lm/GUST-FONT-LICENSE.TXT` must sit beside it. A flat
-`Resources/Fonts` cannot satisfy that, and a MacTeX on the build machine can
-hide the gap. The bundle therefore ships the five official LM 2.004 metrics the
-established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
-`rm-lmr6`) plus the rooted license, vendored under `apps/mac/Fonts/texmf/…`:
+`make-app.sh` still stages the five official LM 2.004 metrics (`ec-lmr10`,
+`ec-lmr12`, `rm-lmr12`, `rm-lmr8`, `rm-lmr6`), the rooted GUST license and the
+supplementary metrics (`apps/mac/Fonts/texmf/SUPPLEMENTARY-METRICS.json`)
+under `Contents/Resources/texmf/…`:
 
 - `scripts/bundle-texmf.py` (called by `make-app.sh`) verifies every file's
   byte length and SHA-256 against the Commander's pinned manifest
   (`apps/mac/scripts/native-assets-manifest.json`, itself
   SHA-pinned in `apps/mac/scripts/verify_bundle_resources.py`)
-  BEFORE the build, stages them into `Contents/Resources/texmf/fonts/tfm/public/lm`
-  and `Contents/Resources/texmf/doc/fonts/lm/GUST-FONT-LICENSE.TXT`, then runs
-  the pinned verifier over the whole `Resources` directory (3 fonts + 5 metrics
-  + license) before signing. Any missing/mismatched/symlinked file refuses
-  packaging; nothing is downloaded and the host TeX tree is never consulted.
-  `FLASHTEX_BUNDLE_TEXMF_ROOT` points at another verified official root.
+  BEFORE the build, stages them, then runs the pinned verifier over the whole
+  `Resources` directory before signing. Any missing/mismatched/symlinked file
+  refuses packaging; nothing is downloaded and the host TeX tree is never
+  consulted. `FLASHTEX_BUNDLE_TEXMF_ROOT` points at another verified official
+  root.
 - The verified hashes are recorded in `Contents/Resources/components.json`
   (`"resources"`) and `Contents/Resources/resource-coverage.json`, both sealed by
   the app signature.
-- `BundledMetrics` (`BundledMetrics.swift`) finds the bundled directory (bundle
-  `Resources/texmf`, else the repository copy for `swift build` products) and
-  appends it to `FLASHTEX_TFM_DIRS` for every producer launch — the directly
-  attached worker (`WorkerClient`) and the helper-spawned producer
-  (`PreviewControllerClient` → `flashtex-preview-controller` → compiler child,
-  which inherits the helper's environment). Policy: explicit user entries come
-  first and override the bundle (a populated user directory wins — verified by
-  `BundledMetricsTests` with a truncated user `ec-lmr10.tfm`, which the producer
-  then reads and reports as `tfm_missing … InvalidFont` although an intact copy
-  sits behind it); the bundled directory is the fallback for everything the user
-  entries do not carry; nothing else in the environment changes.
-  A producer at or after render-pipeline 421a2049 also discovers
-  `<exe>/../Resources/texmf` by itself (explicit env first, then the bundle,
-  then host TeX); the env route keeps older producers and explicit overrides
-  working and is what the shell sets regardless.
-- Supplementary metrics (`apps/mac/Fonts/texmf/SUPPLEMENTARY-METRICS.json`):
-  24 further Latin Modern text TFMs — `ec-lmr{5,6,7,8,9,17}`,
-  `ec-lmbx{5,6,7,8,9,10,12}`, `ec-lmri{7,8,9,10,12}`, `ec-lmbxi10`,
-  `rm-lmr{5,7,9,10,17}` — so 5–17 pt regular, 5–12 pt bold, 7–12 pt italic,
-  10 pt bold-italic and 5–10 pt and `\Large`-and-above roman math lay out with TeX metrics (GH34:
-  10/11 pt documents are `ok`, not `recovered/tfm_missing`). They are NOT in
-  the Commander's manifest: copied from MacTeX 2026 (TeX Live `lm` rev 77682,
-  catalogue 2.005, MANIFEST 2.004) and byte-identical to the CTAN `lm.zip`
-  copy on the build machine, but not verified against the pinned 2.004
-  archive; their SHA-256/lengths are pinned in that JSON, verified by
-  `bundle-texmf.py` on every package (drift refuses packaging), and recorded
-  under `components.json` `resources.supplementary`. Not covered: sans,
-  typewriter, caps, slanted, dunhill; the `lmmi/lmsy/lmex` math families come
-  from Latin Modern Math (OTF).
-- Acceptance: `scripts/texmf-acceptance.sh [--app …] [--evidence <dir>]` runs
-  the producer actually inside the bundle with host TeX excluded (`env -i`,
-  `PATH=/usr/bin:/bin`, empty `HOME`, no `FLASHTEX_*`/`TEXMF*`, plus a
-  `sandbox-exec` profile denying reads under `/usr/local/texlive`,
-  `/Library/TeX`, `/usr/share/texmf|texlive`) on the corrected 10 pt
-  multi-document request and 12 pt text/math documents through the direct route,
-  the route with a user entry appended, and the bundled preview controller;
-  requires zero `tfm_missing`/`required_metrics_unavailable`/`font_unavailable`
-  diagnostics, an explicit failure once `ec-lmr10.tfm` is deleted from a copy,
-  and verifier exit 0. `packaging-selftest.sh` covers the refusal paths without
-  a build and runs the acceptance in `--full` mode; `launch-check.sh` verifies
-  the resources statically. Evidence: `docs/evidence/mac-bundle-texmf-<UTC>/`
-  (134120Z: env route with an unpatched f762f82a producer; 135157Z and
-  135718Z: discovery + env routes with producers 98e829bf and 9aaec57a).
-  `make-app.sh --source-sha render=<sha>` records the producer's source
-  revision in `components.json` (`git_sha_origin: declared`) when the binary
-  was built outside a repository checkout.
+- They served the old engine's producer (`BundledMetrics.swift` appended them
+  to `FLASHTEX_TFM_DIRS`; `scripts/texmf-acceptance.sh` checked the bundled
+  producer without host TeX; evidence `docs/evidence/mac-bundle-texmf-<UTC>/`).
+  Those left in S6; the app's engine reads the metrics of TeX Live or the TeX
+  bundle. The staged files leave with `apps/mac/Fonts/` in stage S7 unless the
+  TeX bundle reuses them (`docs/design/engine-v2/retirement-plan.md` §1.4).
 
 ## Behavior
 
@@ -142,48 +115,32 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   `..`/absolute no, `main.tex` no), writes it under `ProjectDocuments.rootedFile`,
   opens it via `openDocument`, and optionally posts `\input{name}` at the caret
   as one `pendingEdit`. A literal `\input`/`\include` with no file is a
-  "missing — create" sidebar row, and the compiler's `included file not found:
-  looked for 'x' and 'x.tex'` diagnostic gets a **Create x.tex** button on its
-  Problems row (`MissingIncludeFix`, deterministic message parse). Context-menu
+  "missing — create" sidebar row, and TeX's ``LaTeX Error: File `x.tex' not
+  found.`` (or `No file x.tex.` for an `\include`) gets a **Create x.tex**
+  button on its Problems row (`MissingIncludeFix`, deterministic message
+  parse). Context-menu
   *Rename…* moves the file, retargets the member's metadata and rewrites
   references in open documents (`ReferenceRewrite.plan`: one grouped
   `pendingEdit` per document, applied in sequence as the editor consumes each);
   *Delete…* detaches and `FileManager.trashItem`s. Both refuse the entry
   document and unsaved edits. Tests: `ProjectScaffoldTests`.
-- Preview: pages drawn at 1pt = 1 screen point, origin top-left; text items are
-  placed by `x_pt` / `baseline_y_pt` / `font_size_pt`. Hover highlights an item;
-  clicking it navigates to its `source` range. Diagnostics list with "Go to source".
+- Preview: the engine-v3 pane (`EngineV3Preview.swift`) draws the engine's
+  display list exactly as Core Graphics draws the engine's PDF; clicking a
+  glyph selects the source character it came from; see
+  [docs/engine-v3-preview.md](docs/engine-v3-preview.md).
 - Navigation converts the contract's zero-based end-exclusive UTF-8 byte offsets to
   a UTF-16 `NSRange` (`String.nsRange(utf8Bytes:)`). Offsets that are out of range,
   reversed, or inside a multi-byte scalar are rejected with a footer message rather
-  than applied. Unknown item `kind`s decode as `.unknown`; on the legacy route
-  they are skipped, on a negotiated route they are reported (see "Negotiated
-  layout capabilities").
-- Caret sync (source→preview): text items whose `source` range contains the
-  editor caret (UTF-16 caret → UTF-8 byte via `String.utf8ByteRange(of:)`,
-  `CaretSync.itemsContaining`) get a secondary highlight (15% accent fill +
-  underline) on every page. Empty ranges match only an exactly equal byte. The
-  preview does not auto-scroll to the highlighted item.
-- Inline diagnostics: each diagnostic with a `source` in the active document is
-  underlined in the editor (red dotted for errors, orange for warnings); hovering
-  shows the message and, when present, the `recovery` text (`EditorDiagnostics`).
+  than applied.
+- Inline diagnostics: each diagnostic the engine reports with a `source` in the
+  active document is underlined in the editor (red dotted for errors, orange
+  for warnings); hovering shows the message and its notes (`EditorDiagnostics`).
   Marks are layout-manager temporary attributes, so undo and the text binding are
   unaffected. After edits a mark is rebased through `SourceMapping` or dropped when
   it overlaps the edited region — never drawn under the wrong text. Diagnostics
-  with null `source` appear only in the preview's diagnostics list.
-  Partial output (`recovered` with pages AND diagnostics) marks every reported
-  span, including spans inside regions the compiler skipped; a diagnostic raised
-  while expanding a user macro is reported at the macro's call site (HW1:
-  `\problem` carries `\subsection`/`\hfill`/`\normalfont`, `\Z` carries
-  `\mathbb`), verified for all 119 HW1 diagnostics in
-  `EditorDiagnosticsPartialOutputTests`. A `failed` result with no pages keeps
-  the last result's underlines, rebased and flagged "kept from revision N:
-  revision M failed with no output" (tooltip, VoiceOver line, footer) — never
-  cleared, never duplicated across consecutive failures; any result with
-  output replaces them (`EditorDiagnostics.Retained`,
-  `ShellModel+DiagnosticRetention.swift`). The diagnostics list groups
-  identical diagnostics (same severity and message) into one row — "12× `\in`
-  is not supported in math mode" — with an "N places" menu that jumps to each
+  with null `source` appear only in the Problems panel. The diagnostics list groups
+  identical diagnostics (same severity and message) into one row with an
+  "N places" menu that jumps to each
   occurrence ("3 of 12: main.tex line 41"); Fix… and the explanation line
   belong to the first occurrence (`EditorDiagnostics.groups`). The panel
   (`DiagnosticsListView`, DiagnosticsPanel.swift) has a keyboard selection:
@@ -195,94 +152,38 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
   lines for the selected row (every place; all diagnostics when none is
   selected; `-:0:` for unsourced ones) for pasting into an issue
   (`DiagnosticsPanelTests`).
-- Inline math preview on hover (`MathHoverPreview.swift`, `HoverController.mathPreview`):
-  resting the pointer over an inline formula (`$…$`, `\(…\)`) shows a small
-  popover with the formula as already rendered — cropped straight out of the
-  current v2 page bitmap (`V2PageRasterizer.images`), a few points of padding
-  added; nothing is rendered on the hover path itself. The formula's span comes
-  from `EditorIntelligence.inlineMathSpan` (the enclosing `.mathDelimiter` pair
-  from `SyntaxHighlighter`, delimiters included), converted to a UTF-8 byte
-  range and matched against every page item carrying that exact `source` span
-  (`V2Geometry.formulaBox`, the same machinery the caret's formula-box
-  highlight uses). Shows nothing when the preview is stale, when the current
-  frame has no item for that span, or when the formula's source spans more
-  than two editor lines; a ≤2-line formula's box is the union of every member
-  item. Display math (`$$…$$`, `\[…\]`) and math environments are not covered.
-  Debounced like other hover (the same 0.45 s timer; nothing while typing).
-  Tests: `MathHoverTests`.
-- Dark preview toggle in the preview header (page and text colors only).
-- Stale offsets are never applied. Each `compile_result` remembers the exact
-  document text it was produced for; after edits, a span is rebased through the
-  common prefix/suffix of old vs new text (`SourceMapping`), verified against the
-  item's text when known, and refused ("recompile to navigate") if it overlaps the
-  edited region. Multiple edits collapse conservatively.
-- Auto-compile (toolbar toggle, default on when a worker is attached): edits are
-  debounced (`FLASHTEX_DEBOUNCE_MS`, default 0) and coalesced — one request in
-  flight, the newest buffer goes out when it returns; only a layout-capability
-  switch is sent immediately alongside it (see "Negotiated layout capabilities").
-  Latency (send→result) is shown in the banner with a median.
-  Measured with the FT-002 compiler on an M1 Max: 0.5–9 ms per request; a 10-edit
-  burst coalesced into 2 requests (`RealCompilerTests`).
-- Worker transport: `File > Attach Built Compiler` (⌘⇧K) finds `$FLASHTEX_COMPILER`
-  or `crates/compiler/target/{release,debug}/flashtex-compiler` under the repo;
-  `File > Attach Worker Executable…` (⌘K) launches a process
-  speaking runtime v1 JSON Lines on stdin/stdout; `Compile` (⌘B) sends the current
-  buffers as a `compile` envelope with the editor revision. The banner badge
-  switches from `FIXTURE` to `WORKER`; an older `compile_result` never replaces a
-  newer one. `error` envelopes, undecodable lines, unsupported versions, and worker
-  exit are reported in the banner. Any line over 16 MiB — complete or still
-  unterminated — is a protocol violation that terminates the worker, and a worker
-  that exits leaving unterminated trailing bytes is reported as a violation too.
-  A `compile_result` is applied only if its `id` matches an in-flight request and
-  its `project_id` and `revision` match that request; unsolicited or mismatched
-  results are logged and never shown.
+- Inline math preview on hover (`EngineV3MathHover.swift`, tests
+  `EngineV3MathHoverTests`): resting the pointer over an inline formula shows
+  it as already rendered on the page; nothing is rendered on the hover path.
+- Dark preview toggle in the title bar (the pages drawn dark; images keep their
+  pixels; exports are unaffected).
+- Stale offsets are never applied: a span is rebased through the common
+  prefix/suffix of the compiled vs current text (`SourceMapping`) and refused
+  ("recompile to navigate") if it overlaps the edited region.
+- Auto-compile (Settings > Compile, default on): every edit goes to the engine
+  at once as byte edits; a newer compile supersedes the running one. The
+  keystroke-to-page latency is in the status bar.
 
 - Capture review and insertion (contract "Capture and insertion", Mac side):
   `Edit > Pin Insertion Point` (⌘⌥P) records the caret as a `destination_id`
   anchor (UTF-8 byte offset + revision + following context). `Edit > Open Capture
   Proposal…` (no shortcut) queues a `capture_proposal`; a review sheet shows editable
-  LaTeX, ambiguities, and required packages. Approve applies exactly one edit
+  LaTeX, the wrap and insertion preview, the destination, the ambiguities, and Approve / Reject (the shadow-compile preview of the
+  proposal left with the old engine in S6). Approve applies exactly one edit
   through the text view's undo manager (⌘Z reverts). Repeated `capture_id`s never
   insert twice. If the buffer changed since pinning, the anchor is rebased by its
   context or, when the destination was deleted/ambiguous, reselection is required.
   See `Samples/capture-proposal.json`. No network or provider call is involved here.
-- PDF export: `File > Export PDF…` (⌘⇧E) hands the loaded v2 display list to
-  `flashtex-pdf-exact from-v2` (`ExactPDFExport.swift`, `ExportSession.swift`).
-  This is the app's only export route and the same one `flashtex build` uses:
-  every glyph by its original GID at its exact tick position, the font programs
-  embedded as GID-preserving CFF subsets, typed rules, `path_fill`/`path_stroke`
-  (TikZ), image XObjects, device colour and ToUnicode. It refuses anything it
-  cannot express exactly, naming the item, instead of approximating it. The dark
-  preview toggle is a viewing mode only; the exported document is always white.
-  `File > Print…` (⌘P) prints exactly those bytes through PDFKit's system print
-  panel (`PrintController.swift`). Both are disabled without a display list that
-  has pages (`ShellModel.toolbarExportable`) and both refuse a historical
-  preview rather than writing the older snapshot as current. `File > Print
-  Source…` prints the editor buffer with line numbers from a copy and is
-  disabled when no document is open.
-- A **windowed** frame is an incomplete view (window proposal §4.1) and is never
-  handed to the writer, but it does not block the export either
-  (`WholeDocumentList.swift`). The window engages only after the producer has
-  refused the unwindowed reply as over-limit, so re-asking for one would be
-  refused again — the 16 MiB ceiling belongs to the JSON Lines transport, not to
-  the document. The producer's own `--v2 FILE` side output has no such limit and
-  is written even when the reply it sent *was* the over-limit refusal
-  (`Outputs::write` runs off `Reply.rendered`, which that refusal still
-  carries). So Export runs the same producer binary one-shot in worker mode,
-  feeds it the current buffers on stdin, ignores the reply, and takes the
-  complete list from the file — exactly what `flashtex build --v2` does. The
-  list comes from the request the app just sent, so it matches the editor by
-  construction; the file is private to that run and read only after the process
-  exited, so there is no freshness check and no torn read. With no
-  `flashtex-render` discoverable the refusal names that instead, and is worded
-  differently from "nothing to export" because it is a different situation.
-- Removed with #669: the CoreGraphics `PDFExport` command (v1 items, Times
-  fallback faces, no images, monochrome), `Export PDF via Rust Writer…` (⌘⌥E,
-  `flashtex-pdf`, a self-described SHIM that re-encoded by character) and the v2
-  pane's own `Export PDF (v2)…` (the preview draw routine). They were three
-  lower-fidelity duplicates of one command. `PDFExport.render` survives only as
-  the capture-proposal preview painter (`ProposalPreview.swift`), and
-  `GlyphRunRenderer.pdfData` only as the export side of the parity harness.
+- PDF export: `File > Export PDF…` (⌘⇧E) writes the PDF pdflatex would write
+  for the editor's text, from the engine host's `export: true` run
+  (`ExactPDFExport.swift`, `EngineV3Session.export`), published through
+  `ExportSession.swift` (sibling temp file, overwrite-conflict check, atomic
+  rename, Cancel). This is the app's only export route. `File > Print…` (⌘P)
+  prints exactly those bytes through PDFKit's system print panel
+  (`PrintController.swift`). `File > Print Source…` prints the editor buffer
+  with line numbers from a copy and is disabled when no document is open.
+  The old `flashtex-pdf-exact from-v2` export, and before it the CoreGraphics,
+  `flashtex-pdf` and v2-pane exports, are gone.
 
 ## Capture bridge (transfer-v1)
 
@@ -357,7 +258,6 @@ What works offline (no key, no network — verified with `RealBridgeTests`):
   pending receipts whose text differs from the buffer is adopted into the editor
   as one undoable operation; without pending receipts the buffer replaces the
   stored text (`replace_document`).
-- Automatic relaunch of the preview-controller helper: an abnormal exit (crash, SIGKILL) relaunches the same executable for the same project after 0.2/1/3 s, at most 3 times per minute, never after a clean exit or an explicit detach. The helper reopens its ledger, so the durable document returns through the normal `document` reply and the buffer is resubmitted only when it differs; the last preview stays on screen meanwhile (`PreviewControllerTests.testKilledHelperIsRelaunchedAndDurableTextSurvives`).
 - Automatic relaunch: an abnormal exit of the bridge or the edit-ledger helper is relaunched with the same store after 0.2/1/3 s, at most 3 times per minute per helper, never after a clean exit or detach; the same reconciliation then runs against the live buffer (ledger realigned, pending receipts settled through `recovery_import`, document reopened, pinned destination re-pinned identically or dropped with a note). A capture or receipt in flight at the crash is shown as `uncertain` and settled exactly once; a capture the bridge never acknowledged may be resubmitted with the same ID.
 
 ### Edit ledger helper (durable document transaction)
@@ -422,36 +322,18 @@ fixture `protocol/fixtures/capture-submission.json` decodes since main 9da7e48.
 
 ## Samples
 
-`Samples/multipage-result.json` + `multipage-request.json` (⌘O on the result):
-two pages, nine text items with byte-exact source ranges into a `main.tex` that
-contains non-ASCII words ("naïve", "Résumé") so UTF-8 and UTF-16 offsets differ,
-plus one error diagnostic with a source range and recovery text and one warning
-with null source/recovery. Use it for manual click-to-source, caret-sync, and
-diagnostics checks beyond the one-line contract fixture.
+`Samples/multipage-request.json` holds a two-page `main.tex` with non-ASCII
+words ("naïve", "Résumé") so UTF-8 and UTF-16 offsets differ, and a missing
+brace; `multipage-result.json` is the old engine's result for it. The app no
+longer loads result files (S6): put the request's `main.tex` text in a file and
+open it for manual click-to-source, caret-sync and diagnostics checks.
+`Samples/README.md` describes the others.
 
-- Faces: LaTeX's default is Computer Modern, so the preview and CoreGraphics
-  export use **Latin Modern** (GUST FL; registered at launch from `FLASHTEX_LM_DIR`,
-  a bundled `Resources/Fonts`, or BasicTeX's `fonts/opentype/public/lm`) when the
-  attached producer is the new `flashtex-render` pipeline or `FLASHTEX_PREVIEW_FACE=latin-modern`
-  is set; when attached to today's `flashtex-compiler` (Core-14 Times metrics) they
-  draw Times-Roman so glyph widths match the positions. Optical masters follow
-  LaTeX (lmroman5/7/8/9/10/12/17).
 - Opening another file while the buffer is dirty asks Save / Discard / Cancel;
   a discarded buffer stays recoverable for the session (Edit > Restore
   Discarded Buffer).
-- Export is always white: dark preview is a viewing mode only. There is exactly
-  one export route — `File > Export PDF…` (⌘⇧E) → `flashtex-pdf-exact from-v2`
-  (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/{release,debug}`),
-  the same route `flashtex build` uses. It runs off the main actor through
-  `ExportSession` (sibling temp file, atomic replace, Cancel and timeout by
-  pid), so a chatty or stuck writer can neither deadlock nor freeze the UI
-  (issue #19). `File > Print…` (⌘P) prints those same bytes. The CoreGraphics
-  export (v1 items, Times fallback faces, no images), the `flashtex-pdf`
-  re-encoding route (⌘⌥E) and the v2 pane's own draw-routine export were
-  removed: three lower-fidelity duplicates of one command.
-- Diagnostics panel under the preview is never hidden when diagnostics exist; each
-  entry shows severity, message, recovery note (or "no provisional rendering"),
-  and source bytes; the banner shows error/warning counts and a `recovered` note.
+- The Problems panel is never hidden when diagnostics exist; each entry shows
+  severity, message, notes and source.
 
 ## Nearby companion (proposal nearby-v1)
 
@@ -667,145 +549,27 @@ is a stand-in, the real listener is only exercised from `apps/mac`.
 
 Capture conversion: `FLASHTEX_CONVERSION_PROVIDER` (`none` / `xai`; overrides Preferences → Capture conversion), `FLASHTEX_CONVERSION_MODEL`, `FLASHTEX_AI_API_KEY` (after the Keychain; the provider's own names such as `XAI_API_KEY` still count), `FLASHTEX_KEYCHAIN_OFF=1`. The key reaches only the bridge's environment — the one child that may reach a network, by the user's choice. Live check: `FLASHTEX_CONVERSION_LIVE=1` + `FLASHTEX_CONVERSION_EVIDENCE_DIR`. See `docs/capture-conversion.md`.
 
+The engine: `FLASHTEX_ENGINE_V3=0` keeps the engine session off (an editor
+only); `=1` turns it on under XCTest. `FLASHTEX_HOST` / `FLASHTEX_HOST_UNICODE`
+name the hosts, `FLASHTEX_V3_CACHE` moves the engine's cache
+([docs/engine-v3-preview.md](docs/engine-v3-preview.md) lists the rest).
+The app no longer reads `FLASHTEX_COMPILER`, `FLASHTEX_RENDER`,
+`FLASHTEX_PDF_EXACT`, `FLASHTEX_PREVIEW_CONTROLLER`, `FLASHTEX_PREVIEW_V2` or
+`FLASHTEX_LAYOUT_CAPABILITIES`, and the first launch removes the defaults
+`FlashTeX.EngineV3.enabled`, `FlashTeX.EngineV3.legacyMigrated.v1`,
+`FlashTeX.EngineV3.defaultEngine` and `FlashTeX.Preview.v1.debugStatus`.
+
 `FLASHTEX_NO_ACTIVATE=1` launches without activating/focusing the window (for
-automation; never steals keyboard focus). `FLASHTEX_DEBOUNCE_MS` sets the
-keystroke-to-compile delay (default 0: every edit submits immediately; one
-request in flight, newest buffer coalesced).
-`FLASHTEX_LOG=<path>` appends timestamped worker/bridge status lines (e.g.
-`status: worker exited (9)`) for automation such as `scripts/launch-check.sh`.
-`FLASHTEX_TRANSCRIPT=<path>` appends every runtime-v1 JSON line the shell sends
-to or receives from the worker, verbatim and in transport order, so a session
-can be validated afterwards with main's `python3 scripts/check_runtime.py
-<path>` (exit 0 = valid protocol; its `responses[].preview` says which replies
-were `current` and which `stale_ignore`).
-`FLASHTEX_AUTOATTACH=1` attaches the discovered compiler at launch and compiles
-(a compiler bundled inside `FlashTeX.app` attaches by default; `=0` disables);
-`FLASHTEX_SEED_FILE=<path.tex>` seeds the editor. Example (from `apps/mac`):
+automation; never steals keyboard focus).
+`FLASHTEX_LOG=<path>` appends timestamped status lines for automation such as
+`scripts/launch-check.sh`.
+`FLASHTEX_AUTOATTACH=1` attaches the discovered capture bridge at launch (a
+bridge bundled inside `FlashTeX.app` attaches by default; `=0` disables);
+`FLASHTEX_SEED_FILE=<path.tex>` seeds the editor and `FLASHTEX_OPEN=<file or
+folder>` opens a document at launch. Example (repository root):
 ```sh
-FLASHTEX_REPO=$(git rev-parse --show-toplevel) FLASHTEX_AUTOATTACH=1 \
-  FLASHTEX_SEED_FILE=Samples/recovery-demo.tex .build/debug/FlashTeXMac
+scripts/run-mac-dev.sh apps/mac/Samples/recovery-demo.tex
 ```
-
-Screenshot of that run against crates/compiler 29221d8:
-`docs/evidence/mac-shell-real-compiler-2026-09-12.png` — WORKER badge, status
-`recovered`, three diagnostics with recovery notes, inline underlines. Words
-crowded in that capture for two reasons, both since fixed: the compiler used
-placeholder glyph widths (real Core-14 metrics arrived in de1020c) and the
-preview drew with the system serif (New York) instead of Times-Roman. With
-compiler de1020c the preview now matches: `docs/evidence/mac-shell-math-times-2026-09-12.png`
-(inline fractions with rules, Greek, radicals, sum limits).
-
-Rules on the legacy route (no `rules-v1` accepted): text items consisting only
-of U+2500 are taken to be the compiler's fraction bars and are **approximated**
-as filled rectangles (`RuleConvention`: 0.5 em per character, 0.0857 em thick,
-hugging the baseline) in the preview and both PDF paths, so bars never depend on
-font glyph coverage. This is a convention, not contract geometry, and cannot
-establish exact rule fidelity; typed rules replace it once `rules-v1` is
-negotiated (next section). Heading weight is honored only through a negotiated
-`font-hints-v1` hint; without one the preview draws the regular face.
-
-## Negotiated layout capabilities
-
-Contract: `docs/contracts/runtime-v1-layout-capabilities.md` (additive to
-runtime-v1). Every compile request carries `layout_capabilities`, by default
-`["rules-v1", "font-hints-v1"]` (`ShellModel.requestedLayoutCapabilities`;
-gate 3 of the contract — the consumer tests below passed first). Override with
-`FLASHTEX_LAYOUT_CAPABILITIES` (comma-separated; an empty string sends no field
-at all, i.e. the legacy request). The result's accepted set is bound to that
-result: the banner shows `layout: legacy` or `layout: rules-v1, font-hints-v1`
-for the preview currently on screen, never for the request in flight.
-
-- Per-request binding. Each in-flight request records its capability set; a
-  reply is correlated by `id` + `project_id` + `revision` *and* checked against
-  that request's set, so a late reply for an older request never changes the
-  renderer mode, and rapid legacy↔extended switching binds each preview to its
-  own request (`ShellLayoutNegotiationTests`).
-- Capability switch = its own request. Changing the set re-requests the current
-  buffers under a new `id` at the **same** revision when nothing was edited
-  (revisions never decrease; with auto-compile on the switch compiles by
-  itself). Edits still coalesce behind the request in flight, but a switch does
-  not wait: it goes out immediately, and the older request's reply — when it
-  arrives later — is *superseded*: checked for violations, logged as `ignored
-  stale compile_result mac-6 (...): superseded by mac-7`, and never applied.
-  This is exactly `scripts/check_runtime.py`'s classification (a reply to any
-  id older than the newest request is `stale_ignore`, never an error);
-  `RuntimeTranscriptTests` records the shell's real exchange with the worker
-  double and asserts the validator exits 0 and that its `current`/`stale_ignore`
-  verdicts coincide with the ids the shell applied, including the asynchronous
-  same-revision switch (slow legacy request, immediate extended request, legacy
-  reply arriving last). A reply carrying an unnegotiated rule/font hint is
-  rejected by both (validator exit 1, request left pending).
-- Protocol violations (result rejected, banner `protocol violation: …`, log):
-  an accepted capability that was not requested; a `rule` item without accepted
-  `rules-v1`; a `font` hint without accepted `font-hints-v1` — including when the
-  client asked but the worker did not echo acceptance (support is never guessed).
-  A fixture loaded with ⌘O is checked the same way against its sibling request
-  or, failing that, the set it declares itself.
-- Not accepted: when the worker does not echo a requested capability the banner
-  says `capability rules-v1 not accepted by the worker` (one note per missing
-  capability) and the legacy rendering applies (fake worker without `%caps`,
-  and any unknown capability such as `future-v9`).
-- Against main's `flashtex-compiler` (main 462fb27, built from this tree): it
-  **accepts both** — `RealCompilerTests.testLayoutCapabilityNegotiationAgainstRealWorkerIsExplicit`
-  prints `REAL-COMPILER CAPABILITIES: requested=["rules-v1", "font-hints-v1"]
-  accepted=["rules-v1", "font-hints-v1"] notes=[]` and checks end to end that
-  `$\frac{1}{2}$` arrives as a typed rule (positive geometry, numerator baseline
-  above `y_pt`, denominator below `y_pt + height_pt`, source navigating to
-  `\frac`, no U+2500 text and no "will not survive PDF export" diagnostic),
-  that every text item carries a hint (`\section` → `Times-Bold` bold, honored
-  with no substitution note), that the CoreGraphics export still renders, and
-  that opting out (`requestedLayoutCapabilities = []`, same revision, new id)
-  returns the U+2500 legacy route with the compiler's own diagnostic.
-  `testRealWorkerTranscriptPassesRuntimeValidator` runs `check_runtime.py` over
-  that real exchange (four replies, all `current`, accepted sets `[both]`,
-  `[rules-v1]`, `[]`, `[both]` with `future-v9` reported missing). The
-  compiler does not yet style `\textbf`/`\emph` in its hints (they arrive as
-  `Times-Roman` normal) — a producer limitation, reported as-is.
-- Typed rules (`rules-v1`): `{"kind":"rule","x_pt","y_pt","width_pt","height_pt","source"}`
-  decodes only as a typed rule — top-left corner at `(x_pt, y_pt)`, positive
-  finite dimensions, magnitudes ≤ 1e6; anything else is a decode error, never
-  downgraded to an unknown item. Preview and CoreGraphics export fill the
-  rectangle (`RuleGeometry`; dark preview only recolors, export is opaque black
-  on white); `y_pt` is never reinterpreted as a baseline. Clicking a rule
-  navigates to its `source`. Once `rules-v1` is accepted the U+2500
-  approximation is off for that result.
-- Font hints (`font-hints-v1`): `{"family","weight":normal|bold,"style":normal|italic}`
-  on text items (family 1–128 UTF-8 bytes, no control characters). Resolution
-  (`PreviewFonts.resolve`): `Latin Modern*`/`lmroman*`/`Computer Modern` → the
-  bundled LM masters (`apps/mac/Fonts`, registered from the repo copy in tests
-  and from `Fonts/` in the app) at the requested weight/style —
-  `Latin Modern Roman` bold at 12 pt is `LMRoman12-Bold`, a real CoreText face,
-  with **no** substitution (`testBundledLatinModernBoldHintResolvesToLMRoman12BoldWithoutSubstitution`);
-  Core-14 families `Times`/`Times New Roman`, `Helvetica`/`Arial`/`Helvetica
-  Neue`, `Courier`/`Courier New` → their Core-14 faces at the hint's
-  weight/style (`Times-BoldItalic`, `Helvetica-BoldOblique`, `Courier-Bold`),
-  and the compiler's face-named families (`Times-Bold`, `Times-Italic`, …) are
-  aliases of the family, not substitutions; anything else (e.g. `Comic Sans`)
-  → Times at the requested weight/style **and** a banner note
-  `font substituted: <family> [bold] [italic] → <face>`. A hint fixes style
-  intent only; the shell never claims the requested metrics were preserved.
-  Absent hint = legacy face selection, never a substitution.
-- Unknown primitive kinds: on a negotiated route (at least one capability
-  accepted) every unknown `kind` becomes an error diagnostic in the diagnostics
-  list — `unsupported layout primitive 'X' at main.tex bytes a..<b on page n`
-  (with "Go to source" when the item carried a `source`) — so nothing is
-  silently dropped. On the legacy route unknown kinds are still skipped
-  silently, as before.
-- Not covered: the accessibility overlay (`FlashTeXAccessibility`, owner
-  mac-accessibility) still reads only text items and the legacy U+2500 bars;
-  typed rules and font hints are not yet exposed to VoiceOver.
-- Tests: `LayoutCapabilityTests` (protocol: field round trip and limits, rule
-  and font-hint validation, negotiation checks), `RuleGeometryTests`,
-  `FontHintResolutionTests` (bundled LM, Core-14 aliases, substitution),
-  `LayoutCapabilityPDFExportTests`, `ShellLayoutNegotiationTests` (fake worker
-  `%caps` directive: negotiated compile, requested-but-not-accepted,
-  substitution, unknown-kind diagnostic vs legacy skip, unrequested-shape and
-  false-claim rejection, rapid switching with the in-flight reply superseded,
-  same-revision switch and auto-compile switch, late/out-of-order replies,
-  fixture rejection), `RuntimeTranscriptTests` (main's validator over the
-  shell's transcript), and the two `RealCompilerTests` cases above (need
-  `FLASHTEX_COMPILER`). The test double only *echoes* capabilities; the real
-  compiler cases are the producer evidence.
 
 ## Completion and navigation
 
@@ -959,16 +723,9 @@ Navigation (`Navigation.swift`, `Navigate` menu):
   edit made since the compile is refused with "recompile to navigate" rather
   than selected on the wrong text; the others stay reachable. Diagnostics with
   null `source` are skipped and counted in the footer note.
-- **Reveal Caret in Preview** (⌘⇧J): selects the full source span of the preview
-  item under the caret so the preview highlight and page scroll follow, and names
-  the page. On the v2 pane (the default) it reads the display list through the
-  same `V2Geometry.caretHighlights` the pane draws with and the same
-  `navigateV2Now` a click on the page uses — the enclosing formula box for a
-  caret inside math, the cluster otherwise — so ⌘⇧J and clicking a page agree by
-  construction. It previously mapped only runtime-v1 page items (`CaretSync`),
-  which the v2 route asks the producer to elide (`display-list-v2-only`), so on
-  the shipped default it could only answer "inside no preview item"; the v1
-  branch now serves `FLASHTEX_PREVIEW_V2=0` only. It is also the manual override for
+- **Reveal Caret in Preview** (⌘⇧J): forward search — the engine-v3 pane
+  scrolls to the caret's glyph and flashes it (the engine's source map,
+  `EngineV3SourceMap.swift`). It is also the manual override for
   automatic following (`CaretFollow.swift`): it scrolls at once — no debounce,
   and regardless of the "Preview follows the caret" preference, on or off —
   and re-arms following (once the preference is on) after a manual preview
@@ -977,16 +734,13 @@ Navigation (`Navigation.swift`, `Navigate` menu):
   line or a different preview page (a caret move that stays within the same
   line does not re-arm it).
 
-Without a compile result the navigation commands are disabled and, if invoked,
-explain that nothing is loaded.
-
 ## Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
 | ⌘, | Settings window (editor preferences: font, wrapping, tab width, indent, appearance, auto-close brackets & math, completion list; Tab walks the controls top to bottom) |
 | FlashTeX > Check for Updates… | Check for updates: asks GitHub Releases (`flash-tex/flashtex`, `/releases/latest`) for the newest version and shows installed vs available with the release notes; Download opens the release page in the browser, Skip This Version silences the background check for that tag. Nothing is downloaded or installed by the app (#694 slice 1). Settings > Updates > *Check for updates automatically* (off by default) checks once a day after launch and only speaks up when a newer release exists |
-| ⌘O | Open LaTeX file… (becomes the `main.tex` entry document; compiles if a worker is attached) |
+| ⌘O | Open LaTeX file… (becomes the `main.tex` entry document; the engine compiles it) |
 | ⌘⌥N | New Project… sheet (folder, name, template: Blank article / Article with sections / Report with chapters / Homework sheet; writes `<folder>/<name>/main.tex` plus its `\input`/`\include` members, opens `main.tex` as the entry document with the include tree in the sidebar; asks before replacing existing template files) |
 | ⌘N | New File… sheet (also the sidebar's + button and the project row's context menu): a rooted `.tex` name, subfolders allowed, never above the project root; "Insert `\input` at the caret" (on by default while the entry document is active) is one undoable edit; the file opens in a tab |
 | File > Move To… | Move file: the active document into another folder of the project (also "Move to…" in a project row's context menu; dragging a row onto another row moves it into that row's folder, onto the tree's empty space to the project root). Every `\input`/`\include`/`\includegraphics`/`\bibliography`/`\addbibresource`/`\lstinputlisting` that resolved to the file is rewritten to the new rooted path — one undoable edit per open document (⌘Z there), closed documents of the include tree on disk; refused for the entry document, with unsaved edits, or onto an existing file |
@@ -994,14 +748,9 @@ explain that nothing is loaded.
 | ⌘S / ⌘⇧S | Save / Save As… (UTF-8; header shows "— edited" when dirty) |
 | ⌘⌥R | Show in Finder: the active document's file, selected (also "Reveal in Finder" in a sidebar row's context menu; right-click the project tree's empty space for "Reveal Project in Finder") |
 | Edit > Restore Discarded Buffer | Brings back the unsaved text replaced by a "Discard" decision when opening another file |
-| ⌘⇧O | Open compile result fixture… (sibling `-request.json` seeds the editor) |
-| File > Reload Fixture | Reload Fixture (developer-only, no shortcut — confirms before replacing a real/unsaved document) |
-| ⌘⇧K | Attach built compiler (`$FLASHTEX_COMPILER` or `crates/compiler/target/…`) |
-| ⌘⇧R | Attach render pipeline (`$FLASHTEX_RENDER`, the app bundle, or `crates/render-pipeline/target/…`): the Latin Modern-metric producer, so the preview shows Computer Modern-style text |
-| ⌘K | Attach worker executable… |
-| ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
-| ⌘. | Stop compile: ends a compile that runs too long under the engine-v3 preview |
-| ⌘⇧E | Export PDF… — the app's one export route: the loaded v2 display list through `flashtex-pdf-exact from-v2` (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/…`): original GIDs, embedded font programs, typed rules, images; refusals name the item. Progress and Cancel in the status bar; the file is written atomically |
+| ⌘B | Compile now (and restart the engine after it stopped; with auto-compile on, edits also compile as they are typed) |
+| ⌘. | Stop compile: ends a compile that runs too long |
+| ⌘⇧E | Export PDF… — the app's one export route: the PDF pdflatex would write for the editor's text, from the engine's export run. Progress and Cancel in the status bar; the file is written atomically, and a file changed on disk since you chose it is kept |
 | ⌘P | Print… (the same bytes Export PDF… writes; system print panel; page size follows the PDF) |
 | File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |
 | ⌘⌥P | Pin insertion point at caret (capture destination anchor) |
@@ -1010,7 +759,6 @@ explain that nothing is loaded.
 | ⌘⇧U | Submit sample capture… (PNG/JPEG → `capture_submit` through the attached bridge) |
 | ⌘⇧G | Convert capture (`capture_convert` for the latest received capture) |
 | ⌘⇧N | Nearby Companion… (advertise, pairing code, paired devices, received captures; Return shows or resumes a pairing code, Esc cancels it or dismisses a banner, Tab walks Advertise → pairing controls → Forget → Clear; the step indicator, status row and every transition are VoiceOver text) |
-| Edit > Rename Citation… | Rename citation window (reviewed `plan_citation_rename` across the project → one `apply_group`) |
 | ⌘⇧P | Command palette (View; also the toolbar's Commands button): scope tabs for Files, Sections, Labels, Citations and every command in this table; type to filter, Tab cycles scopes, ↑/↓ choose, Return opens or runs, Esc closes |
 | ⌘= | Zoom in preview (View; also the preview header's + button or a pinch): multiply the fit-width zoom by 1.25, up to 4x; wide pages scroll horizontally |
 | ⌘- | Zoom out preview (View; also the header's − button): divide by 1.25, down to 0.25x fit width |
@@ -1022,15 +770,12 @@ explain that nothing is loaded.
 | ⌘⌥0 | Reset editor font size (View): back to the default 13 pt |
 | ⌘⇧M | Toggle Problems panel (View): the grouped diagnostics list under the editor and preview with a severity filter, jump, explanations and Fix…; the sidebar's Problems rows and the status bar counts open it too |
 | ⌃⌘V | Toggle Vim keybindings (View; also the Settings switch, default off): modal editing in the source editor — a Vim status line at the bottom of the editor pane shows `-- NORMAL --` / `-- INSERT --` / `-- VISUAL --`; see *Vim keybindings* below |
-| Edit > Durable History… | Durable History window (undo/redo on the helper's edit ledger: Refresh, Undo, Redo, Retry/Discard after an uncertain reply, retention gauge, both stacks) |
 | ⌘F | Find… (opens the source editor's find bar; AppKit's built-in incremental search) |
 | ⌘⌥F | Find and Replace… (opens the find bar already showing its Replace row; a replacement is one undoable edit, so ⌘Z undoes it and the preview recompiles) |
-| Edit > Find Next | Find Next (selects the next find-bar match; no key equivalent — ⌘G is Find in Project's Next match, ⇧⌘G is Convert Capture — Return in the find bar's search field does the same) |
+| Edit > Find Next | Find Next (selects the next find-bar match; no key equivalent — ⇧⌘G is Convert Capture — Return in the find bar's search field does the same) |
 | Edit > Find Previous | Find Previous (selects the previous find-bar match; no key equivalent for the same reason — Shift-Return in the find bar's search field does the same) |
 | ⌘E | Use Selection for Find (sets the focused editor's selection as the find bar's search string) |
 | ⌘J | Jump to Selection (scrolls the focused editor's current selection into view and centers it) |
-| ⌘⇧F | Find in Project… window (case-sensitive literal search of the durable project source; Return searches or goes to the selected match, ↑/↓ move the selection, Esc closes; Plan Replacement / Apply for reviewed replacement) |
-| ⌘G | Next match (while the Find in Project window is key: selects the next match, wrapping, and goes there) |
 | ⌘Z | Undo (including an approved capture insertion) |
 | Esc / ⌃Space | Completion popup (supported commands, `\end{…}` for open environments, labels, citation keys, document words; never takes the keyboard from the editor) |
 | ↑ / ↓ / Tab / ⇧Tab / Page Up / Page Down / Home / End / Return | Completion list keys, while the list is open: ↑/↓ or Tab/⇧Tab choose the candidate (wrapping; VoiceOver announces “n of m: candidate, kind, origin”), Page Up/Page Down move by a screenful of rows and Home/End go to the first/last row (never wrapping), Return/Enter inserts it over the typed token, Esc closes without inserting; typing narrows the list, any other caret move closes it |
@@ -1040,7 +785,7 @@ explain that nothing is loaded.
 | ⌥⇧↓ | Duplicate Line (every full line the selection touches, copy below, caret/selection stays on the copy, one undo step; the Overleaf shortcut) |
 | ⌥⇧↑ | Duplicate Line Up (every full line the selection touches, copy above, caret/selection stays on the copy, one undo step) |
 | ⌘⌥↑ / ⌘⌥↓ | Move line up / down (full lines only, no-op at the buffer edges; ⌥⌘[ / ⌥⌘] remain Previous/Next Occurrence) |
-| ⌃⌘K | Delete Line (every full line the selection touches; ⇧⌘K remains Attach Built Compiler) |
+| ⌃⌘K | Delete Line (every full line the selection touches, one undo step) |
 | ⌃J | Join Lines (one space; strips the next line's leading whitespace and a trailing `%` comment marker only when it ends the line) |
 | Editor > Sort Lines Ascending | Sort Lines Ascending (stable, locale-aware compare of the touched lines; no key equivalent) |
 | Editor > Sort Lines Descending | Sort Lines Descending (stable, locale-aware compare of the touched lines; no key equivalent) |
@@ -1062,16 +807,13 @@ explain that nothing is loaded.
 | ⌘⌥W | Wrap selection in command… (asks for a command name; common commands first, then the document's own macros) |
 | ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
 | ⌃⌘T | Expand abbreviation or edit structure… (TeXpand: the grid editor inside a matrix/tabular/cases/align, the abbreviation prompt elsewhere; wraps a selection) |
-| ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
+| ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the diagnostics panel's selected group (wrapping; the row reads "k of n") |
 | ⌘⌥C | Copy diagnostics as text (`path:line: error/warning: message` lines for the selected row, all when none; ⌘C while the list has the keyboard) |
-| ⌘⇧J | Reveal caret in preview (selects the item's source span) |
+| ⌘⇧J | Reveal caret in preview (scrolls the preview to the caret's glyph and flashes it) |
 | Click preview text | Select its source (UTF-8 span → UTF-16; refused if edited since compile) |
 | Help > FlashTeX Accessibility Help | Help window: focus order, what VoiceOver reads in each pane, every command above |
-
-The compiler rejects request lines over 8 MiB with an `error` envelope, which the
-banner shows; the shell rejects response lines over 16 MiB.
 
 ## Editor keys
 
@@ -1153,295 +895,47 @@ on the *same* line moves it here where Vim would leave the column alone.
 
 ## Targets
 
-- `FlashTeXProtocol` — Codable models for runtime v1 (`RuntimeV1`) and the
-  capture bridge (`TransferV1`), byte-offset conversion, changed-region diffing.
-- `FlashTeXMac` — the app. `BridgeClient` (JSON Lines transport, id-correlated
+- `FlashTeXProtocol` — Codable models for runtime v1 (`RuntimeV1`, the
+  diagnostics shape) and the capture bridge (`TransferV1`), byte-offset
+  conversion, changed-region diffing.
+- `FlashTeXDisplayListV3` — the display-list-v3 protocol and decoder (MIT,
+  Foundation only); `FlashTeXPreviewV3` — its Core Graphics renderer.
+- `FlashTeXMac` — the app. The engine session (`EngineV3Session`,
+  `EngineV3Host`), `BridgeClient` (JSON Lines transport, id-correlated
   replies, 12 MiB line limit), `BridgeSession` (bridge-side document shadow,
-  destination, captures, edit ledger, reconciliation), `ShellModel+Bridge`.
-- `FlashTeXMac` also holds `LineProcessClient` (shared bounded JSON Lines
-  process transport) and `EditLedgerClient` (edit-ledger helper protocol).
-- Tests (136 across all targets, of which `RealCompilerTests`,
-  `RealBridgeTests` and `RealEditLedgerTests` are gated on `FLASHTEX_COMPILER`,
-  `FLASHTEX_PDF`, `FLASHTEX_BRIDGE` and `FLASHTEX_EDIT_LEDGER`): completion
-  (prefix/trigger rules, unclosed `\end{}`, unsupported marks, non-ASCII and
-  invalid carets, 1 MB latency) and navigation (label/ref incl. Unicode, nested
-  begin/end, diagnostic cycling/wrap/refusal on the multipage sample, caret
-  reveal); bridge transport round trip of every transfer-v1 request type incl. error envelopes,
-  garbage/oversized/trailing lines and oversized requests; edit-ledger helper
-  round trip (initialize/apply/dedup/undo/confirm/error codes); shell ↔ fake
-  bridge + fake ledger flow (open → edit → pin → submit → received → convert →
-  review → prepare → verify → durable apply → adopt once → `capture_applied` →
-  confirm, duplicate approval no-op incl. after undo, edited-LaTeX refusal,
-  stale edit refused by shell and helper, provider error as text, reject
-  forwarded, no-helper fail-closed); fault/recovery (persistence failure inserts
-  nothing and sends no receipt, file-backed export before receipt, export
-  failure withholds the receipt while the durable commit stands, corrupt or
-  unreadable store fails closed, transient status failures retain
-  transactions and snapshots, missing receipt replayed from the retained
-  snapshot only for an exactly matching prepared edit, stalled bridge never
-  blocks the main thread + backpressure, detach/reattach ignores old-session
-  events, edits during reconciliation); real bridge (durable receipt,
-  duplicate/conflict, `provider_disabled`, `proposal_missing`, reject,
-  `capture_missing`); real edit ledger (durable apply with on-disk hash check,
-  duplicate edit ID refused, recovery export/import incl. stale token, undo
-  keeps dedup, session metadata, second writer refused, full shell flow);
-  nearby listener (TLS-PSK round trip of `hello` /
-  fixture `capture_submit` / `destination_query` through an `NWConnection`
-  client with the same PSK, wrong key and unknown identity refused before any
-  line is parsed, oversized complete and unterminated lines close, message
-  before `hello`, cross-pairing `hello` with the wrong proof, nonce reuse,
-  bootstrap → long-term PSK hand-over with the old key refused after a
-  same-port restart while the live session survives, Bonjour advertising
-  reaches `.ready`, pure session validation), HKDF/proof vectors, pair store
-  round trip with 0600 and corrupt-file handling, `ShellModel` inbox and
-  destination, `NearbyState` pair → capture → forget → same-port restart
-  flow, plaintext peer refused without parsing while TLS peers keep working,
-  nearby capture forwarded through the fake bridge (durable ack, error
-  pass-through, inbox fallback after detach); plus the earlier: oversized complete line, trailing bytes at EOF, unsolicited/mismatched result correlation; inline diagnostic marks (byte→UTF-16, rebase/drop, path filter,
-  sample slice, temporary-attribute-only); source mapping (shift/refuse/multi-byte/expected-text), stale
-  navigation refusal and rebase, auto-compile debounce/coalescing, latency; PDF export (fixture → 612×792 page containing the item text,
-  two-page synthetic sizes, unknown-kind skipping, page-less result); anchor/rebase/reselection logic, review flow with duplicate
-  suppression, capture fixture decoding; caret sync (multi-page sample slices
-  byte-exactly, `itemsContaining` boundaries incl. inside a multi-byte scalar,
-  `ShellModel.caretByte`/`caretItems`, sibling request discovery); end-to-end
-  against the real compiler (gated on `FLASHTEX_COMPILER`); plus fixture
-  decoding, version/type rejection, unknown kinds, UTF-8→UTF-16
-  conversion with multi-byte scalars, `ShellModel` load/navigate/stale behavior,
-  line splitting/encoding, and a round trip through `Tests/.../fake_worker.py`
-  (a Python test double, not a compiler) including error/garbage/exit paths and
-  the stale-revision guard.
+  destination, captures, edit ledger, reconciliation), `ShellModel+Bridge`,
+  `LineProcessClient` (shared bounded JSON Lines process transport) and
+  `EditLedgerClient` (edit-ledger helper protocol).
+- Tests: `swift test`. `RealBridgeTests` and `RealEditLedgerTests` are gated on
+  `FLASHTEX_BRIDGE` and `FLASHTEX_EDIT_LEDGER`; the engine's end-to-end tests
+  need a built `flashtex-host` and TeX Live (see
+  [docs/engine-v3-preview.md](docs/engine-v3-preview.md) › Gates). The Python
+  doubles in `Tests/FlashTeXMacTests/Fixtures/` are `fake_bridge.py`,
+  `fake_edit_ledger.py` and `fake_project_files.py`; the old engine's doubles
+  and display-list fixtures (`fake_worker.py`, `fake_worker_v2.py`,
+  `fake_preview_controller.py`, `display-list-v2-*.json`) were deleted in S6
+  with the tests that used them.
 
-## v2 preview (experimental)
+## Removed in retirement stage S6
 
-An opt-in consumer for the EXPERIMENTAL rendering-v2 display list
-(`docs/contracts/rendering-v2-proposal.md`, `protocol/rendering-v2.schema.json`;
-not a negotiated production wire). The runtime-v1 preview above stays the default;
-this pane only exists to prove the consumer gates on real pipeline output. It does
-not replace, negotiate, or change the v1 path.
-
-- Input, live: while the pane is visible the shell adds `display-list-v2` to the
-  compile request's `layout_capabilities` (`docs/contracts/runtime-v1-display-list-v2.md`;
-  `ShellModel.setLiveV2`). A producer that accepts it (flashtex-render ≥ 4888a67) echoes
-  it and writes the `display_list` envelope as one sibling line right after the
-  `compile_result`; `WorkerClient.decode` routes `protocol_version: 2` + `display_list`
-  lines (header probed by a byte scan, `RenderingV2Fast.header`) to
-  `ShellModel.receiveDisplayListV2`, which applies a line only when its `id` is the applied
-  result's id and that result accepted the capability — anything else is stale or
-  unsolicited and is dropped (`V2Live` counters; unsolicited → protocol-violation status).
-  The header shows LIVE / "v1 only" and "frame revision N — applied result is M" when a
-  result came without a frame (failed or declined per request). The v1 pages of the same
-  result paint first and stay the product preview. Old producers ignore the capability;
-  the pane never requests it while hidden. The preview-controller (helper) route does not
-  forward the line yet.
-- Images (`display-list-v2-images`, `protocol/proposals/display-list-v2-image.md`,
-  consumer co-signed): `setLiveV2` requests `display-list-v2-images` alongside
-  `display-list-v2` and the compile request carries `project_root` (the open project's
-  directory) so the producer can size `\includegraphics{…}` files (png/jpeg/pdf, inside
-  `figure`/`table` floats). Image items (`kind: "image"`: tick box, unit-square
-  `transform`, `image{image_id = sha256, byte_length, format, path, pixel dims | pdf_page/
-  pdf_box/pdf_rotate}`) are decoded by both readers and validated like rules
-  (`RenderingV2.validateImageResource`; unknown fields tolerated). Bytes are NOT on the
-  line: `V2ImageStore` (V2ImageStore.swift) reads `path` under the project root with the
-  same rooted, symlink-refusing rule as the project-files helper
-  (`ProjectDocuments.rootedFile`; the helper's `read` is text-only, so binary assets take
-  the rooted local read), verifies `byte_length` and SHA-256 before decoding, and caches
-  by `image_id`. A mismatch refuses that item only: the frame is kept, the item paints
-  nothing, and the pane header shows one non-modal notice per path ("stale image:
-  figures/plot.png"; "image unavailable: …: a.png is a symbolic link" / "no project root").
-  PNG/JPEG paint through `CGImage`, PDF pages through `CGPDFDocument` with the producer's
-  `pdf_box`/`pdf_rotate` mapped onto the unit square (`V2PreparedImage.pageToUnit`), all
-  clipped to the tick box and placed by the item's transform (`[a, −b, c, −d, e, H − f]`
-  in PDF space), in the preview bitmap and in the parity export
-  (`GlyphRunRenderer.pdfData`) alike.
-  A click on the box navigates to the `\includegraphics` command; selection ignores
-  images. `V2PageCache` keys on the image root too, so a page prepared under another root
-  (or with no root) is never reused. `flashtex-pdf-exact from-v2` places image items as
-  `q … cm /ImN Do Q` XObjects, so `File > Export PDF…` carries them (the earlier
-  "glyph_run and rule only" refusal was lifted in crates/pdf).
-  Tests: `V2ImageTests` (generated PNG/JPEG/PDF fixtures, stale-hash and symlink
-  refusals, rotated PDF box, cache keying, request wiring, and a `FLASHTEX_RENDER`-gated
-  round trip through the real producer with `project_root`).
-- TikZ paths (proposal `path-v0`, `crates/render-pipeline/src/display.rs` `PathItem`;
-  producer: Kabir's tikz-min work). Whenever `display-list-v2` is negotiated — there is
-  no separate capability to request, `protocol.rs` gates only `display-list-v2` and
-  `display-list-v2-images` — a `tikzpicture` arrives as `kind: "path_fill"`
-  (`fill_rule` nonzero|evenodd) and `kind: "path_stroke"` (`stroke{width, cap, join,
-  miter_limit, dash{array, phase}?}`) items with `path` commands `["m",x,y]`, `["l",x,y]`,
-  `["c",x1,y1,x2,y2,x,y]`, `["z"]` in page ticks (top-left, y down; no transform on the
-  wire), optional `clips` (`kind: "path"` + `fill_rule` + `path`), `paint` and the usual
-  provenance (the producer attributes every path to the whole `tikzpicture` span), and
-  `required_features` gains `path_fill` / `path_stroke` / `clip` (all in
-  `RenderingV2.knownFeatures`). Both readers decode them
-  (`RenderingV2.Path`/`PathCommand`/`Stroke`/`ClipPath`; `RenderingV2Fast` typed path);
-  validation is fail-closed: 1…65536 commands per path or clip, ≤16 clips, exact ticks, a
-  move before any line/curve/close, positive stroke width, finite miter limit ≥ 1, a
-  1…32-entry nonnegative dash with a positive entry, paint in 0…1, provenance, and used
-  features declared. `V2PathGeometry` (V2PathGeometry.swift) turns commands into a
-  `CGPath` in PDF space (y flipped, 7-significant-digit quantized like every other
-  coordinate) and `V2PreparedPath.draw` paints it inside the one `GlyphRunRenderer.draw`
-  routine — fill rule, width/cap/join/miter/dash in points from ticks, every clip applied
-  in a saved graphics state — so the preview bitmap and the CoreGraphics `Export PDF
-  (v2)…` paint identical geometry; the dark preview inverts path ink like rules and text.
-  Hit-testing is exact ink containment (`CGPath.contains` by fill rule, or the stroked
-  outline at least 2 pt wide, and inside every clip) and a click navigates to the
-  picture's source span; `DisplayListDelta.pageDigest` covers commands, op, clips, paint
-  and provenance and relocation moves path sources; `V2PageCache` keys on page bytes so
-  paths are covered by construction. `flashtex-pdf-exact from-v2` (crates/pdf `v2.rs`)
-  paints `path_fill`/`path_stroke`, so a `tikzpicture` survives `File > Export PDF…`
-  (the earlier "glyph_run, rule and image only" refusal was lifted). Tests: `V2PathTests` (both readers agree and round-trip,
-  malformed shapes refused, a triangle / Bézier circle / dashed line with arrowhead /
-  clipped fill painted offscreen with pixel assertions in preview and export, hit tests,
-  dark inversion, digest and relocation, and a `FLASHTEX_RENDER`-gated live compile of
-  `\draw (0,0) -- (2,1); \fill[red] (1,1) circle (0.3);` asserting path items arrive,
-  decode, prepare and paint red at the disc centre).
-- Input, file: a `display_list` JSON envelope written by `flashtex-render --v2 out.json`.
-  Open it with `File > Open Display List (v2)…`, or launch with `FLASHTEX_V2_FILE=<json>`
-  (`FLASHTEX_PREVIEW_V2=1` starts with the switch on). The preview header's
-  "v2 pane" switch flips between the v1 and v2 panes.
-- Keeping up with typing (`docs/evidence/mac-preview-v2-live-2026-09-12.md`): one
-  preparation in flight, the newest arrival waits and lists in between are dropped
-  undecoded (coalescing; strict supersession alone starved visible progress: only the last
-  frame painted); `RenderingV2Fast`, a typed byte-level reader for the envelope (9 ms for
-  the 1.9 MB two-page demo envelope against 75 ms with JSONDecoder, same values, JSONDecoder
-  remains the arbiter of what is rejected); a new frame is pre-rasterized off-main at the
-  pane's last pixels-per-point and its bitmaps are installed right before it is published,
-  so the pass that shows it blits at once; the header is its own view, bitmaps are observed
-  per page and page views are Equatable, so a bitmap or caret change redraws one page.
-  Measured with flashtex-render 4888a67 on demo.tex: keystroke→paint p50 89 ms (p95 116)
-  through the v2 pane, 40 ms through the v1 pane with the same producer; every keystroke
-  painted, every frame published.
-- Fail closed (`FlashTeXProtocol/RenderingV2.swift`): unknown `protocol_version`,
-  message `type`, item `kind`, `required_features`, font `format`, or an undeclared
-  font/document reference, a glyph ID outside `1..<glyph_count`, a cluster that does
-  not partition the run text on UTF-8 boundaries, malformed carets/rects/paint, or
-  non-integer geometry is a diagnostic-bearing `ValidationError`. The validator also
-  applies crates/rendering-core's `DisplayList::validate` structural rules: every
-  feature the list uses must be declared in `required_features` (`glyph_run`, `rule`,
-  and always `rgba-srgb`/`cluster-actualtext`; `static-truetype` is deliberately not
-  derived from glyph runs because the pipeline paints Latin Modern as `opentype-cff`),
-  every cluster is referenced by at least one glyph, source ranges lie within the
-  declared document `byte_length`, every tick and tick sum stays within ±(2^53−1),
-  document paths follow rendering-core's `path` rule, and collection sizes are
-  bounded (`RenderingV2.Bounds`: documents 1…4096, fonts ≤256, pages ≤10000, items
-  ≤100000, glyphs/clusters 1…65536, hit rects 1…128, carets ≤128). The pane then
-  shows the code and message and NO page: a refused list never renders partially.
-- Fonts by content hash only (`GlyphRunRenderer.swift`, `V2FontStore`): every
-  `.otf`/`.ttf` in the existing `PreviewFonts.latinModernSearchPaths` directories
-  (bundle `Fonts`, `apps/mac/Fonts`, `FLASHTEX_LM_DIR`) is SHA-256'd once; a
-  manifest entry resolves only if its `sha256` matches a file exactly, and the file's
-  byte length, glyph count, units per em and PostScript name must agree with the
-  manifest. A run whose font is not bundled refuses the whole frame with
-  `font_resource_unavailable: font resource <sha256> (<name>) unavailable`. Platform
-  font names are never an identity; nothing is substituted.
-- Preparation, off-main and immutable (`V2Frame.prepare` → `V2PreparedPage`): each
-  page is converted ONCE into what CoreGraphics consumes — the exact `CTFont` per run
-  (from the hash-resolved `CGFont`), `CGGlyph` IDs, absolute baseline origins in PDF
-  space, rule `CGRect`s — on `V2Loader.queue` (serial, `userInitiated`), together with
-  decoding, validation and font resolution. A frame is a value over immutable
-  CoreFoundation fonts and carries a per-preparation nonce. Every load takes a
-  monotonically increasing ticket; the result reaches the main run loop as a
-  run-loop block plus wake-up (as `WorkerClient` delivers worker events) and is
-  published only if its ticket is still the one the shell is waiting for — a
-  superseded result is dropped and counted (`V2Loader.staleResultsDropped`). While a
-  load is in flight the previous verified frame stays on screen with an explicit
-  STALE indicator (header + page label, `v2-stale`), as the rendering-v2 proposal
-  asks; a refusal drops it (nothing unverified stays visible).
-- Drawing: one CoreGraphics routine (`GlyphRunRenderer.draw`) in PDF space (y up,
-  1 unit = 1 pt) paints a prepared page's items in list order — rules as path fills,
-  glyph runs with `CTFontDrawGlyphs` by ORIGINAL glyph ID at the absolute origins
-  (advances are never re-added, no reshaping/kerning). The parity export
-  (`GlyphRunRenderer.pdfData`) calls it on a PDF context with one glyph per call (`glyphByGlyph`): CG's PDF writer otherwise
-  merges glyphs into `Tj` strings positioned by the font's advances plus integer
-  1/1000 em `TJ` adjustments, which drifted up to a pixel at line ends once the producer
-  laid text out with TeX/TFM metrics (444 differing pixels per frame, now 0); the pane does not draw glyphs on the main thread at all: `V2PageRasterizer`
-  (`@Observable`, bounded bytes, LRU) rasterizes each page once through
-  `GlyphRunRenderer.rasterize` at the pane's pixels-per-point on its own queue and the
-  canvas blits that bitmap 1:1 (device pixels) under the hover/caret overlays, so a
-  hover or caret change costs a blit. Bitmaps of a frame that is no longer current are
-  dropped on arrival and evicted on frame change (`staleBitmapsDropped`). Dark
-  preview inverts paint in the bitmap only; export keeps the list's colors.
-- Export/preview parity, tolerance 0 (`V2Parity`): every page's preview raster
-  (the bitmap above) is compared byte-for-byte with the CG PDF export rasterized
-  back by CoreGraphics into the same bitmap configuration (sRGB premultiplied RGBA,
-  antialiased, font smoothing off, subpixel positioning on). Two measured causes of
-  disagreement are fixed in the shared routine: CG's fast `fill(rect)` computes edge
-  coverage differently from the scan converter that replays `re f` (one gray level
-  along every rule row), so rules are path fills; and CG's PDF writer serializes
-  numbers at 7 significant digits, so prepared coordinates and font sizes are
-  quantized through the same `%.7g` (≤5e-5 pt from the tick geometry) and both
-  sides start from identical numbers. Measured: 0 differing pixels at 1 and 2 px/pt
-  on 22 real pipeline pages (text fixture, math+rules fixture, a 20-page/47k-glyph
-  document) and at every scale tried on the two fixtures; at some fractional
-  scales CoreGraphics rasterizes thin glyph stems differently through a `CTFont`
-  than through the PDF-embedded font (e.g. one 0.7 px en dash at 1.37 px/pt), so the
-  gate pins 1 and 2 px/pt (display scales) and reports other scales. Evidence and
-  numbers: `docs/evidence/mac-preview-v2-parity-2026-09-12.md`.
-  `FLASHTEX_V2_PARITY_OUT=<dir>` (and `FLASHTEX_V2_PARITY_SCALE`, default 2) makes the
-  app write `parity.json`, `export.pdf` and per-page preview/export PNGs after each load.
-- Hit/caret geometry (`V2Geometry`): click → the cluster whose `hit_rects` contain
-  the point (half-open, in ticks, later-painted wins) → its `sources`; the shell
-  checks the display list's document `sha256` against the current buffer and then
-  goes through `ShellModel.navigate(to:expectedText:)` (same stale-revision refusal
-  and rebase verification as v1). Synthetic clusters/rules report their
-  `synthetic_reason`. Editor caret → clusters whose sources contain the byte: an
-  exact caret bar when the cluster maps its bytes 1:1 and the compiler supplied a
-  caret at that byte, else the whole cluster's rectangles (documented fallback;
-  no width is divided by character count).
-- Deviations between the schema and the pipeline that the model accepts, explicitly:
-  `fonts[].format` is `opentype-cff` (Latin Modern) or `core14-afm` (metrics only,
-  `byte_length` 0, never paintable) where the schema allows only `static-truetype`;
-  `fonts[].sha256`/`font_id` is SHA-256(bytes ‖ face_index as u32 BE) (font-engine's
-  `content_sha256`), so the store indexes both that and plain SHA-256(bytes); unknown
-  JSON keys are ignored by `Codable` where the schema says `additionalProperties:
-  false`; clusters must partition the run and source paths must name a declared
-  document (stricter than the schema, as crates/rendering-core requires).
-- Tests (`RenderingV2Tests`, `PreviewV2Tests`, `PreviewV2ShellTests`,
-  `PreviewV2ParityTests`, `PreviewV2LiveTests`): real `flashtex-render --v2` fixtures
-  (`Tests/FlashTeXMacTests/Fixtures/display-list-v2-*.json`: text and math from
-  pipeline 7094ef7 with `apps/mac/Fonts` only; `display-list-v2-math-rules.json` from
-  79ba728 with three typed fraction rules and Latin Modern Math) decode, resolve by
-  hash and navigate ligature clusters (`ffi` = one glyph, three source bytes; `é`
-  from `\'e`); the math fixture fails closed on the unbundled `latinmodern-math.otf`
-  hash (the rules parity case resolves it from MacTeX's `lm-math` directory and skips
-  without it); every fail-closed rule above has a negative case; the shared routine
-  drawing a run built from CoreText's own glyph positions matches `CTLineDraw` with 0
-  differing pixels; export equals preview with 0 differing pixels at the pinned
-  scales; prepared geometry is verified against the tick geometry; stale load results
-  and stale page bitmaps are dropped; retention is bounded; the fast reader equals
-  Codable on every fixture and falls back on anything else; the live route against
-  `Fixtures/fake_worker_v2.py` (a producer double that rebinds the real text envelope to
-  each request): line routing, capability toggling, frame arrives/navigates/passes
-  parity, second edit replaces it, old producer, per-request decline, failed result,
-  stale/unsolicited/mismatched lines. Evidence:
-  `docs/evidence/mac-preview-v2-latin-modern-2026-09-12.png`,
-  `docs/evidence/mac-preview-v2-parity-2026-09-12.md`,
-  `docs/evidence/mac-preview-v2-live-2026-09-12.md`.
-- Not done: the rendering-v2 proposal's own `render_capabilities`/`render_format_selected`
-  handshake (the live route negotiates per request through `layout_capabilities`
-  instead); the preview-controller route; no clip/rotation/image primitives (rejected as
-  unknown kinds/features); v1 → v2 caret sync uses the v2 clusters only while the pane
-  is visible; the pipeline's own `--pdf` is still the legacy v1 writer, so parity is
-  against the Mac CoreGraphics export (the product exporter is crates/pdf).
-
-## Known upstream issue
-
-`protocol/fixtures/compile-result.json` item text is `"Hello FlashTeX."` (15
-bytes) but its source range is `0..<14` (`"Hello FlashTeX"`). The real compiler's
-spans are exact. Reported to the fixture owner (Commander, FT-001).
+The old engine's route and everything only it offered: the worker transport
+and *Attach Built Compiler* (⌘⇧K), *Attach Render Pipeline* (⌘⇧R), *Attach
+Worker Executable…* (⌘K) and *Detach Worker*; *Open Compile Result Fixture…*
+(⌘⇧O) and *Reload Fixture*; *Open Display List (v2)…* and the v1 and v2
+preview panes; the negotiated layout capabilities (`rules-v1`,
+`font-hints-v1`, `display-list-v2`); the preview-controller (helper) route
+and what it powered (*Find in Project…* ⌘⇧F with ⌘G, *Edit › Rename
+Citation…*, *Edit › Durable History…*, `\cite`/macro navigation through the
+project index, ledger-grouped renames), the helper display candidates and the
+historical preview; the per-document engine choice (the status bar's engine
+item, *View › Engine for This Document*, *Settings › Compile › Engine for
+other documents*), its fallback rules and banners, and the Unicode-mode
+suggestion banner; the `flashtex-pdf-exact` export; and the capture review
+sheet's shadow-compile preview. Their history is in the retirement plan
+(`docs/design/engine-v2/retirement-plan.md`) and `docs/evidence/`.
 
 ## Not done
 
-- The FT-002 compiler (`crates/compiler`, branch `agent/claude/compiler-foundation`
-  at 29221d8 when checked) round-trips through this shell: `RealCompilerTests`
-  runs only when `FLASHTEX_COMPILER` points at a built binary and verifies every
-  emitted span slices back to its text after UTF-8→UTF-16 conversion. Without
-  the binary that test is skipped and only the Python double is exercised.
-- PDF export draws only what the contract's text items describe; it is not a
-  TeX-engine PDF and has no compiler-produced `pdf_path` behind it. A result with
-  zero pages exports one blank page (a PDF must have at least one).
-- No image items. Typed rules exist only through negotiated `rules-v1`, which
-  main's compiler does not yet accept (checked with `RealCompilerTests`). Caret
-  sync highlights items and scrolls to the page under the caret, not to the
-  item within the page.
 - Screen capture of the running app was not possible from the agent's terminal
   (no Screen Recording permission); visual click behavior needs a human check.
+- Engine gaps are listed in [docs/engine-v3-preview.md](docs/engine-v3-preview.md) › Known gaps.

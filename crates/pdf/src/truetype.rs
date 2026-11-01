@@ -42,7 +42,8 @@ const COPIED_IF_PRESENT: [&[u8; 4]; 3] = [b"cvt ", b"fpgm", b"prep"];
 
 #[derive(Debug, Clone)]
 pub struct TrueTypeFont {
-    data: Vec<u8>,
+    /// The program (shared: [`TrueTypeFont::parse_face_shared`]).
+    data: std::sync::Arc<Vec<u8>>,
     tables: BTreeMap<[u8; 4], (usize, usize)>,
     pub units_per_em: u16,
     num_glyphs: u16,
@@ -125,6 +126,15 @@ impl TrueTypeFont {
     /// header (`fc-scan`/font-engine's `load_from_path_index` count the
     /// same way).
     pub fn parse_face(data: Vec<u8>, face_index: u32) -> Result<Self, String> {
+        Self::parse_face_shared(std::sync::Arc::new(data), face_index)
+    }
+
+    /// [`TrueTypeFont::parse_face`] over a program the caller keeps too
+    /// (no copy of it is made).
+    pub fn parse_face_shared(
+        data: std::sync::Arc<Vec<u8>>,
+        face_index: u32,
+    ) -> Result<Self, String> {
         // OpenType spec, "The TrueType Collection header": `ttcf`,
         // majorVersion u16, minorVersion u16, numFonts u32, then
         // tableDirectoryOffsets[numFonts] (absolute); version 2 appends the

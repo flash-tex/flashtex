@@ -1,8 +1,8 @@
 # FlashTeX user guide
 
-FlashTeX is a native Mac LaTeX editor with its own engine: you type LaTeX, the
-page re-renders as you type (tens of milliseconds, no TeX distribution
-required), and you export a PDF when you are done. An iPad companion turns
+FlashTeX is a native Mac LaTeX editor with its own pdfLaTeX-compatible
+engine: you type LaTeX, the page re-renders as you type, and you export the
+PDF pdflatex would write when you are done. An iPad companion turns
 Pencil sketches and photos into reviewed LaTeX/TikZ insertions.
 
 | Guide | What it covers |
@@ -11,7 +11,7 @@ Pencil sketches and photos into reviewed LaTeX/TikZ insertions.
 | [The Mac app](gui.md) | Workspace, projects and multi-file documents, editing and IntelliSense, compiling, the preview, the Problems panel and quick fixes, PDF export, capture conversion, the Nearby companion, Preferences, all keyboard shortcuts |
 | [FlashTeXPad for iPad](ipad.md) | What the capture companion does, building it on a device, pairing, sending a capture, limits |
 | [The project manifest](project-manifest.md) | `flashtex.toml`: opening a folder, `texinputs` directories of `.sty`/`.cls` files, the output directory, fonts and package policy; every key, every default, and the promise that no manifest changes nothing |
-| [Command-line tools](compiler.md) | `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`/`flashtex-pdf-exact`, fonts and metrics, building from source, **supported LaTeX**, diagnostic codes |
+| [Command-line tools](compiler.md) | The command-line engine (`flashtex-render`, `flashtex-compiler`, `flashtex-pdf`/`flashtex-pdf-exact`; not used by the Mac app), fonts and metrics, building from source, **supported LaTeX** of that engine, diagnostic codes |
 
 ## Requirements
 
@@ -24,8 +24,8 @@ on the website).
   [CI/CD](../ci-cd.md)). No TeX installation needed; the tarball bundles the
   engine, Latin Modern fonts and the TeX font metrics it lays out with.
 - **Native GUI (this guide)**: macOS 14 Sonoma or later on **Apple Silicon**
-  (arm64). Same bundled fonts/metrics, plus the CLI at
-  `Contents/MacOS/flashtex-cli`.
+  (arm64). To compile, the app needs a TeX Live (MacTeX) installation, or
+  downloads the pinned TeX bundle once, after asking.
 - Optional: an API key for a conversion provider (xAI today) if you want iPad
   captures converted to LaTeX/TikZ — see [capture conversion](gui.md#capture-conversion-the-only-model-backed-feature).
 
@@ -66,10 +66,11 @@ preferences are kept.
 
 1. **Open FlashTeX.** The window has a project sidebar on the left, the source
    editor in the middle and the page preview on the right. The editor starts
-   with a one-line sample and the bundled engine (`flashtex-render`, Latin
-   Modern fonts, exact v2 preview) attaches automatically — the preview
-   header names it. *File › Attach Render Pipeline (Latin Modern)* (⌘⇧R)
-   re-attaches it if you switched engines.
+   with a one-line sample, and the bundled engine starts by itself. On first
+   use it prepares the pdfLaTeX format from your TeX Live (a few seconds);
+   without TeX Live it offers to download the TeX files it needs. With
+   neither, the window says "Compiling needs the TeX bundle or a TeX Live
+   installation." and the editor still works.
 
 2. **Create a project** with *File › New Project…* (⌘⌥N): choose a folder,
    a name and a template (Blank article, Article with sections, Report with
@@ -102,7 +103,7 @@ preferences are kept.
 5. **Save and export.** ⌘S saves the `.tex` (UTF-8). *File › Export PDF…*
    (⌘⇧E) writes a PDF with the same glyphs and positions as the preview, and
    *File › Print…* (⌘P) prints those same bytes. The dark-preview toggle only
-   changes the on-screen colours — the export is always black on white.
+   changes the on-screen colours — the export is the document's own PDF.
 
 ### A multi-file project from scratch, in 4 steps
 
@@ -120,18 +121,20 @@ preferences are kept.
    Trash). ⌘S saves each file to its own path.
 
 Next: read [the Mac app guide](gui.md) for projects, IntelliSense, the AI
-capture conversion and the full shortcut table, and [Supported LaTeX](compiler.md#supported-latex)
-to see what the engine implements today and what it reports as unsupported.
+capture conversion and the full shortcut table. The app's engine is
+pdfLaTeX-compatible and reads your TeX Live's packages (or the TeX bundle's),
+and aims to typeset every document exactly as `pdflatex` does.
 
 ## Where things live
 
 | | Path |
 |---|---|
 | The app | `/Applications/FlashTeX.app` (or `~/Applications`) |
-| Bundled engine binaries | `FlashTeX.app/Contents/MacOS/flashtex-render`, `flashtex-compiler`, `flashtex-pdf`, `flashtex-pdf-exact`, … |
+| Bundled engine | `FlashTeX.app/Contents/Helpers/flashtex-host` (Unicode mode: `flashtex-host-unicode`) |
+| Bundled helpers | `FlashTeX.app/Contents/MacOS/flashtex-bridge`, `flashtex-edit-ledger`, `flashtex-project-files` |
 | Bundled fonts and TeX metrics | `FlashTeX.app/Contents/Resources/Fonts`, `Contents/Resources/texmf` |
 | Nearby pairings | `~/Library/Application Support/FlashTeX/pairs.json` |
-| Captures and durable edit history | `~/Library/Application Support/FlashTeX/captures/` |
+| Captures | `~/Library/Application Support/FlashTeX/captures/` |
 | AI provider key | the login Keychain (never a file) |
 
 Problems or questions: the Discord <https://discord.gg/J4kHDJmTrD> for a quick answer,

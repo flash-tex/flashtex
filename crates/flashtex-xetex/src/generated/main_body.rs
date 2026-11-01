@@ -20,7 +20,7 @@ impl Globals {
                 if (self.error_line > ssup_error_line) {
                     self.error_line = ssup_error_line;
                 }
-                // §1716
+                // §1718
                 self.interaction_option = self.web2c_interaction_option();
                 self.file_line_error_style_p = self.web2c_file_line_error_style_p();
                 self.halt_on_error_p = self.web2c_halt_on_error_p();
@@ -120,13 +120,17 @@ impl Globals {
                     }
                 }
                 self.initialize();
-                if (!self.get_strings_started()) {
-                    break 'l_final_end_f;
+                if self.initex_tables() {
+                    {
+                        if (!self.get_strings_started()) {
+                            break 'l_final_end_f;
+                        }
+                        self.init_prim();
+                        self.init_str_ptr = self.str_ptr;
+                        self.init_pool_ptr = self.pool_ptr;
+                        self.fix_date_and_time();
+                    }
                 }
-                self.init_prim();
-                self.init_str_ptr = self.str_ptr;
-                self.init_pool_ptr = self.pool_ptr;
-                self.fix_date_and_time();
                 self.ready_already = 314159i32;
             }
             self.selector = term_only;
@@ -423,32 +427,8 @@ impl Globals {
                         }
                     }
                 }
-                if (self.eTeX_mode == 1i32) {
-                    {
-                        crate::system::wr_str(&mut self.term_out, "entering extended mode");
-                        crate::system::wr_ln(&mut self.term_out);
-                    }
-                }
-                if ((self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() > 255i32)) {
-                    self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
-                } else {
-                    { let __ix1967 = self.cur_input.limit_field; let __v1968 = self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix1967) as usize)] = __v1968; }
-                }
-                self.fix_date_and_time();
-                self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));
-                self.init_randoms(self.random_seed);
-                // §813
-                self.magic_offset = (self.str_start[crate::ix::U(((math_spacing).wrapping_sub(65536i32)) as usize)]).wrapping_sub((9i32).wrapping_mul(ord_noad));
-                // §79
-                if (self.interaction == batch_mode) {
-                    self.selector = no_print;
-                } else {
-                    self.selector = term_only;
-                }
-                // §1391
-                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[crate::ix::U((((cat_code_base).wrapping_add(self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)])) - 1) as usize)].hh().rh() != escape)) {
-                    self.start_input();
-                }
+                self.flashtex_format_ready();
+                self.start_after_format();
             }
             // §1386
             self.history = spotless;

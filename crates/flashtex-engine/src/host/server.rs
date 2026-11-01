@@ -30,7 +30,8 @@
 //!
 //! ```text
 //! flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
-//!     [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//!     [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR]
+//!     [--profile low-memory|balanced|high-performance] [--budget BYTES] [--timed SECONDS]
 //!     [--keep-warm MS] [--keep-warm-pause US]
 //!     [--external-tools off|auto] [--tool-timeout SECONDS]
 //! ```
@@ -40,8 +41,14 @@
 //! it is gone (Unix: its parent changed), or after `--accept-timeout`
 //! seconds, so a client killed before it connected leaves no host behind.
 //!
+//! `--profile NAME` (or `FLASHTEX_PROFILE`): the performance mode the host
+//! starts in, `balanced` by default (`crate::profile`: the checkpoints'
+//! budget and spacing, keep-warm, prepare-ahead, idle trimming); a client
+//! may choose another (`HELLO.profile`, `PROFILE`; capability `profile-v1`).
+//! `--budget`, `--timed` and `--keep-warm` pin their knob in every mode.
+//!
 //! `--keep-warm MS` (or `FLASHTEX_HOST_KEEP_WARM_MS`; default 2000, the
-//! owner's decision 10A; 0 turns it off): after each compile the engine
+//! owner's decision 10A, and High Performance's 10000; 0 turns it off): after each compile the engine
 //! thread polls for the next request for MS milliseconds instead of
 //! sleeping, so that the next keystroke's compile starts on a core already
 //! at full speed (an idle Apple Silicon core runs a burst at a half to a
@@ -78,8 +85,6 @@ use std::time::Instant;
 
 pub(crate) type Out = Arc<Mutex<BufWriter<Stream>>>;
 
-/// `--keep-warm`'s default (ms after each compile).
-const DEFAULT_KEEP_WARM_MS: u64 = 2000;
 /// `--keep-warm-pause`'s default: 100 us sleeps between 100 us spins kept
 /// the latency of a full spin (plain/full 10/120/1,000, 300 ms between
 /// keystrokes) at about half its CPU: 30-33 against 60 CPU s per minute of
@@ -144,11 +149,18 @@ pub(crate) struct Config {
     pub texmf: Json,
     /// Where S₀ of each document persists (DESIGN.md §5.1), if anywhere.
     pub s0_cache: Option<PathBuf>,
-    /// The resident engine's options (budget, timed checkpoints).
+    /// The resident engine's options; a performance mode's knobs (budget,
+    /// checkpoint spacing) are applied over them (`crate::profile`).
     pub opts: crate::incr::Options,
-    /// `--keep-warm MS`: after a compile, the engine thread polls for the
-    /// next request this long instead of sleeping (`resident::Engine::run`).
-    pub keep_warm: std::time::Duration,
+    /// The performance mode the host starts in (`--profile`,
+    /// `FLASHTEX_PROFILE`; Balanced by default): its knobs include the
+    /// keep-warm window (`--keep-warm MS`: after a compile, the engine
+    /// thread polls for the next request this long instead of sleeping,
+    /// `resident::Engine::run`). A client's `HELLO` or `PROFILE` changes it.
+    pub profile: crate::profile::Profile,
+    /// Knobs the command line or the environment fixed: no profile changes
+    /// them.
+    pub pinned: crate::profile::Pinned,
     /// `--keep-warm-pause US`: while warm, alternate sleeps and spins of
     /// this length instead of spinning throughout (0: spin).
     pub keep_warm_pause: std::time::Duration,
@@ -193,6 +205,14 @@ pub(crate) enum Req {
     },
     Closed(u64),
     Warm(mpsc::Sender<Result<f64, String>>),
+    /// A client chose a performance mode (`HELLO.profile` or `PROFILE`,
+    /// capability `profile-v1`): applied between compiles; `reply`: send
+    /// the client a `PROFILE` with the effective knobs once applied.
+    Profile {
+        conn: Arc<Conn>,
+        profile: crate::profile::Profile,
+        reply: bool,
+    },
     /// The external tools' worker is done (`super::external`).
     ToolsDone {
         gen: u64,
@@ -219,10 +239,8 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut warm = true;
     let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
     let mut opts = crate::incr::Options::default();
-    let mut keep_warm_ms: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_KEEP_WARM_MS);
+    let mut pinned = crate::profile::Pinned::from_env();
+    let mut mode = crate::profile::Mode::from_env();
     let mut keep_warm_pause_us: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_PAUSE_US")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -258,9 +276,19 @@ pub fn main(args: Vec<String>) -> i32 {
                 s0_cache = v.map(PathBuf::from);
                 i += 1;
             }
+            "--profile" => {
+                match v.as_deref().and_then(crate::profile::Mode::parse) {
+                    Some(m) => mode = m,
+                    None => {
+                        eprintln!("flashtex-host: --profile low-memory|balanced|high-performance");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--budget" => {
                 match v.and_then(|v| v.parse().ok()) {
-                    Some(b) => opts.budget = b,
+                    Some(b) => pinned.budget = Some(b),
                     None => {
                         eprintln!("flashtex-host: --budget BYTES");
                         return 2;
@@ -270,7 +298,7 @@ pub fn main(args: Vec<String>) -> i32 {
             }
             "--timed" => {
                 match v.and_then(|v| v.parse().ok()) {
-                    Some(t) => opts.timed_s = t,
+                    Some(t) => pinned.timed_s = Some(t),
                     None => {
                         eprintln!("flashtex-host: --timed SECONDS");
                         return 2;
@@ -280,7 +308,7 @@ pub fn main(args: Vec<String>) -> i32 {
             }
             "--keep-warm" => {
                 match v.and_then(|v| v.parse().ok()) {
-                    Some(t) => keep_warm_ms = t,
+                    Some(t) => pinned.keep_warm_ms = Some(t),
                     None => {
                         eprintln!("flashtex-host: --keep-warm MS");
                         return 2;
@@ -325,7 +353,7 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--profile low-memory|balanced|high-performance] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
                 println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
@@ -344,17 +372,28 @@ pub fn main(args: Vec<String>) -> i32 {
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("flashtex-initex"));
-    let engine_version = crate::os::engine_command(&engine)
-        .arg("-version")
-        .output()
-        .ok()
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .next()
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
+    // This program's own version needs no process (a process start costs
+    // tens of milliseconds before the first compile); another engine's is
+    // asked for.
+    let engine_version = if is_this_program(&engine) {
+        crate::system::version_text()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    } else {
+        crate::os::engine_command(&engine)
+            .arg("-version")
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .map(str::to_string)
+            })
+            .unwrap_or_default()
+    };
     if formats.is_empty() {
         formats.push("pdflatex".into());
     }
@@ -368,13 +407,16 @@ pub fn main(args: Vec<String>) -> i32 {
         kv.push(("tools".into(), tools.programs.json()));
         kv.push(("external_tools".into(), js(tools.default.name())));
     }
+    let profile = crate::profile::Profile::new(mode, &pinned);
+    opts.apply_profile(&profile);
     let cfg = Arc::new(Config {
         engine,
         engine_version,
         texmf,
         s0_cache,
         opts,
-        keep_warm: std::time::Duration::from_millis(keep_warm_ms),
+        profile,
+        pinned,
         keep_warm_pause: std::time::Duration::from_micros(keep_warm_pause_us),
         tools,
     });
@@ -451,7 +493,13 @@ pub fn main(args: Vec<String>) -> i32 {
             let late = accept_timeout.is_some_and(|t| t0.elapsed().as_secs_f64() > t);
             if orphaned || late {
                 let _ = std::fs::remove_file(&socket);
-                eprintln!(
+                // Not `eprintln!`, which panics when the write fails: a
+                // dead parent has often taken its end of the stderr pipe
+                // with it, and the panic ended this thread before the
+                // `exit`, so the orphan waited for ever (#1491's finding;
+                // tests/host_lifetime.rs).
+                let _ = writeln!(
+                    std::io::stderr(),
                     "flashtex-host: {} before a connection (--once); exiting",
                     if orphaned {
                         "the parent process exited"
@@ -521,14 +569,40 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
             )])
         ))
     });
-    let resolver =
-        crate::resolver::default_resolver("pdflatex", crate::system::ENGINE_NAME).describe();
+    // The process's own resolver, started once: the first compile (run as
+    // `pdflatex`) keeps it, so kpathsea's start-up is not paid twice.
+    let resolver = crate::system::with_resolver_for("pdflatex", |r| r.describe());
     let bundle = bundle_json(&resolver);
     let dir = std::env::temp_dir().join(format!("flashtex-host-prepare-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
     let mut ready = Vec::new();
-    for f in formats {
+    // `pdflatex` last, so that the resolver left running is the one its
+    // compiles keep.
+    let mut order: Vec<&String> = formats.iter().filter(|f| *f != "pdflatex").collect();
+    order.extend(formats.iter().filter(|f| *f == "pdflatex"));
+    for f in order {
         let t0 = Instant::now();
+        if let Some(r) = ready_in_process(engine, f) {
+            let mut kv = vec![
+                ("name".to_string(), js(f.as_str())),
+                (
+                    "status".to_string(),
+                    js(if r.is_ok() { "ready" } else { "failed" }),
+                ),
+                (
+                    "ms".to_string(),
+                    Json::Num((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0),
+                ),
+            ];
+            if let Err(why) = r {
+                kv.push((
+                    "error".into(),
+                    js(why.chars().take(400).collect::<String>()),
+                ));
+            }
+            ready.push((f, Json::Obj(kv)));
+            continue;
+        }
+        let _ = std::fs::create_dir_all(&dir);
         // Load the format and stop at once (\@@end in LaTeX, \end in plain).
         let st = crate::os::engine_command(engine)
             .arg(format!("-fmt={f}"))
@@ -566,15 +640,71 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
         if !ok {
             kv.push(("error".into(), js(why)));
         }
-        ready.push(Json::Obj(kv));
+        ready.push((f, Json::Obj(kv)));
     }
     let _ = std::fs::remove_dir_all(&dir);
+    // In the order asked for.
+    let ready: Vec<Json> = formats
+        .iter()
+        .filter_map(|f| ready.iter().find(|(g, _)| *g == f).map(|(_, j)| j.clone()))
+        .collect();
     obj([
         ("texlive", texlive),
         ("resolver", js(resolver)),
         ("bundle", bundle),
+        // Why typesetting cannot start (no TeX Live, bundle unusable), with
+        // what to do; null when it can.
+        (
+            "setup",
+            crate::resolver::setup_problem().map_or(Json::Null, |p| js(p.message())),
+        ),
         ("formats", Json::Arr(ready)),
     ])
+}
+
+/// Whether `engine` is this program (the default `--engine`).
+fn is_this_program(engine: &Path) -> bool {
+    let canon = |p: &Path| std::fs::canonicalize(p).ok();
+    std::env::current_exe()
+        .ok()
+        .and_then(|me| canon(&me))
+        .is_some_and(|me| canon(engine).is_some_and(|e| e == me))
+}
+
+/// A format made ready in this process, exactly as a compile finds it
+/// (system.rs `find_format`: the format cache, `formats::ensure_format`,
+/// with the process's resolver), instead of in an engine process started
+/// for it: that process's start, kpathsea start-up and format load were
+/// about a quarter of a second before every host could listen. A build,
+/// when the cache has no valid format, still runs INITEX in its own
+/// process (`FormatCache::build`). `None` where a compile would not take
+/// the cache path (another `--engine`, `FLASHTEX_FORMATS`, a format on the
+/// search path, the cache turned off): there the engine process loads the
+/// format as before.
+#[cfg(feature = "distribution")]
+fn ready_in_process(engine: &Path, f: &str) -> Option<Result<(), String>> {
+    if !is_this_program(engine)
+        || !crate::formats::cache_enabled()
+        || std::env::var("FLASHTEX_FORMATS").is_ok_and(|d| !d.is_empty())
+    {
+        return None;
+    }
+    crate::system::with_resolver_for(f, |r| {
+        let name = format!("{f}.fmt");
+        if r.find(&name, crate::resolver::Format::Fmt).is_some() {
+            return None;
+        }
+        Some(
+            crate::formats::ensure_format(f, f, r)
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+        )
+    })
+}
+
+#[cfg(not(feature = "distribution"))]
+fn ready_in_process(_engine: &Path, _f: &str) -> Option<Result<(), String>> {
+    None
 }
 
 /// `HELLO.texmf.bundle`: the configured bundle (`bundle::BundleSpec::
@@ -650,8 +780,15 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "external-tools",
     // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
     "exact-geometry",
+    // COMPILE `halt_on_error` is honoured (`Job::halt`): a client's strict mode.
+    "halt-on-error",
+    // COMPILE `includeonly` is honoured (`Job::includeonly`): a client's
+    // chapter focus through LaTeX's own `\includeonly` (lane FOCUS-CHAPTER).
+    "includeonly",
     flashtex_display_list::diag::CAPABILITY,
     flashtex_display_list::PROGRESS_CAPABILITY,
+    // HELLO `profile` and the PROFILE message: performance modes (spec §6.9).
+    flashtex_display_list::PROFILE_CAPABILITY,
 ];
 
 fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
@@ -665,6 +802,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     // HELLO
     let diag;
     let progress;
+    let profile;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
             let j = std::str::from_utf8(&body)
@@ -690,6 +828,12 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                 a.iter()
                     .any(|x| x.as_str() == Some(flashtex_display_list::PROGRESS_CAPABILITY))
             });
+            // A mode the host does not know is ignored, as unknown names are
+            // (the host's own then stays, and its HELLO says which).
+            profile = j
+                .str_field("profile")
+                .and_then(crate::profile::Mode::parse)
+                .map(|m| crate::profile::Profile::new(m, &cfg.pinned));
             version
                 .and_then(|a| a.get(1))
                 .and_then(Json::as_i64)
@@ -719,6 +863,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
             "capabilities",
             Json::Arr(CAPABILITIES.iter().map(|c| js(*c)).collect()),
         ),
+        ("profile", profile.as_ref().unwrap_or(&cfg.profile).json()),
     ]);
     if !send_json(&out, kind::HELLO, &hello) {
         return;
@@ -732,6 +877,13 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
         diag,
         progress,
     });
+    if let Some(p) = profile {
+        let _ = tx.send(Req::Profile {
+            conn: conn.clone(),
+            profile: p,
+            reply: false,
+        });
+    }
     let mut export: Option<Running> = None;
     loop {
         let (k, body) = match read_frame(&mut r) {
@@ -764,6 +916,8 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                     // A compile already queued or running for this
                     // connection is superseded: `queued` tells it so.
                     conn.queued.fetch_add(1, Ordering::SeqCst);
+                    // (a running compile looks at once: `checkpoint::PREEMPT_HINT`)
+                    crate::checkpoint::hint_preempt();
                     if tx
                         .send(Req::Compile {
                             conn: conn.clone(),
@@ -788,6 +942,25 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
                         .insert(c);
+                    crate::checkpoint::hint_preempt();
+                }
+            }
+            kind::C_PROFILE => {
+                let m = j.as_ref().and_then(|j| j.str_field("profile"));
+                match m.and_then(crate::profile::Mode::parse) {
+                    Some(m) => {
+                        let _ = tx.send(Req::Profile {
+                            conn: conn.clone(),
+                            profile: crate::profile::Profile::new(m, &cfg.pinned),
+                            reply: true,
+                        });
+                    }
+                    None => error(
+                        &out,
+                        None,
+                        "request",
+                        "PROFILE: profile is low-memory, balanced or high-performance",
+                    ),
                 }
             }
             kind::BYE => break,
@@ -812,6 +985,14 @@ pub(crate) struct Job {
     /// `-halt-on-error` (`"halt_on_error": true`): TeX stops at the first
     /// error, as `pdflatex -halt-on-error` does (the app's strict mode).
     pub halt: bool,
+    /// `"includeonly": ["chapters/03", …]` (lane FOCUS-CHAPTER): LaTeX's own
+    /// `\includeonly`, given on pdflatex's command line before the main file
+    /// (`pdflatex '\AtBeginDocument{\includeonly{chapters/03}}\input
+    /// main.tex'`, see `argv`). The names as the document's `\include`s
+    /// write them, comma-joined; the other chapters' pages and references
+    /// come from their `.aux` files. None: the whole document (the main
+    /// file alone).
+    pub includeonly: Option<String>,
 }
 
 impl Job {
@@ -876,6 +1057,11 @@ impl Job {
             Some(Json::Bool(b)) => *b,
             Some(_) => return Err("halt_on_error is a boolean".into()),
         };
+        let includeonly = match req.get("includeonly") {
+            None | Some(Json::Null) => None,
+            Some(Json::Arr(names)) => Some(includeonly_list(names, &main)?),
+            Some(_) => return Err("includeonly is an array of \\include names".into()),
+        };
         Ok(Job {
             root,
             main,
@@ -884,6 +1070,7 @@ impl Job {
             out_dir,
             jobname,
             halt,
+            includeonly,
         })
     }
 
@@ -899,7 +1086,8 @@ impl Job {
         } else {
             self.root.join(&self.out_dir)
         };
-        canon(&out).is_some() && canon(&out) == canon(&self.root)
+        let out = canon(&out);
+        out.is_some() && out == canon(&self.root)
     }
 
     /// pdflatex's command line for the job (without argv[0]).
@@ -919,8 +1107,76 @@ impl Job {
         if let Some(f) = self.shell {
             argv.push(f.to_string());
         }
-        argv.push(self.main.clone());
+        argv.push(match &self.includeonly {
+            None => self.main.clone(),
+            // `\includeonly` runs in the `begindocument` hook: after
+            // `\document` has read the `.aux` and before it disables the
+            // preamble commands, and before any `\include`, so its effect
+            // is the preamble's (the same pages, streams and `.aux` as
+            // `\includeonly{…}\input main.tex` under pdflatex, measured).
+            // In the preamble its name lookup (l3's `\file_full_name:n`,
+            // `\pdffilesize`) would put the chapter's content in S₀'s key,
+            // and every keystroke in the focused chapter would be a cold
+            // run from the format; after the `.aux` point it is a read of
+            // the body (of the whole chapter: its size, #1724), and an edit
+            // in the chapter restarts at S₀.
+            // LaTeX's `\input` without a brace is the primitive (`\@@input`),
+            // so the main file is read exactly as a bare first line reads it.
+            Some(list) => format!(
+                "\\AtBeginDocument{{\\includeonly{{{list}}}}}\\input {}",
+                input_name(&self.main)
+            ),
+        });
         argv
+    }
+}
+
+/// The `includeonly` names, checked and comma-joined. Each is an
+/// `\include` argument as the document writes it: a relative path inside
+/// the root with nothing TeX would read as markup on a first line (no
+/// comma, brace, backslash, `%`, `#`, `"` or control character), so the
+/// list means exactly the names given. `main` must be a name `\input` can
+/// take (no `"`; one with a space is quoted).
+fn includeonly_list(names: &[Json], main: &str) -> Result<String, String> {
+    if names.is_empty() {
+        return Err("includeonly names no \\include".into());
+    }
+    if main.contains('"') || main.chars().any(char::is_control) {
+        return Err("includeonly needs a main file name without quotes".into());
+    }
+    let bad = |c: char| matches!(c, ',' | '{' | '}' | '\\' | '%' | '#' | '"') || c.is_control();
+    let mut list = Vec::with_capacity(names.len());
+    for n in names {
+        let Some(name) = n.as_str() else {
+            return Err("includeonly is an array of \\include names".into());
+        };
+        // Rooted on any platform, whatever `Path` says on this one: on
+        // Windows `/abs` is not `is_absolute` (no drive), and `C:x` is
+        // relative to drive C's current directory.
+        let rooted = name.starts_with(['/', '\\'])
+            || matches!(name.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic());
+        if name.is_empty()
+            || name.trim() != name
+            || name.chars().any(bad)
+            || rooted
+            || !inside(Path::new(name))
+        {
+            return Err(format!(
+                "includeonly: {name:?} is not an \\include name inside root"
+            ));
+        }
+        list.push(name);
+    }
+    Ok(list.join(","))
+}
+
+/// The main file as `\input` names it on the first line: quoted when it
+/// holds a space (web2c's quoted file names), else as given.
+fn input_name(main: &str) -> String {
+    if main.contains(' ') {
+        format!("\"{main}\"")
+    } else {
+        main.to_string()
     }
 }
 
@@ -1304,5 +1560,100 @@ mod job_tests {
             ]
         );
         assert!(Job::parse(&req(Some(js("yes"))), 1).is_err());
+    }
+
+    /// `req(None)` with `includeonly` set to `v`, and `main` replaced.
+    fn focused(v: Json, main: Option<&str>) -> Json {
+        let Json::Obj(mut kv) = req(None) else {
+            unreachable!()
+        };
+        if let Some(m) = main {
+            let dir =
+                std::env::temp_dir().join(format!("flashtex-job-test-{}", std::process::id()));
+            std::fs::write(dir.join(m), "x").unwrap();
+            kv.retain(|(k, _)| k != "main");
+            kv.push(("main".to_string(), js(m)));
+        }
+        kv.push(("includeonly".to_string(), v));
+        Json::Obj(kv)
+    }
+
+    fn names(n: &[&str]) -> Json {
+        Json::Arr(n.iter().map(|s| js(*s)).collect())
+    }
+
+    /// Chapter focus (lane FOCUS-CHAPTER): the first line is LaTeX's own
+    /// `\includeonly{…}`, run at `\begin{document}`
+    /// (`\AtBeginDocument{\includeonly{…}}\input main.tex`); LaTeX's `\input`
+    /// without a brace is the primitive, so the main file is read as a bare
+    /// first line reads it. Another job; without the field, unchanged.
+    #[test]
+    fn includeonly_is_latexs_own_first_line() {
+        let plain = Job::parse(&req(None), 1).unwrap();
+        assert_eq!(plain.includeonly, None);
+        assert_eq!(plain.argv().last().unwrap(), "main.tex");
+        let null = Job::parse(&focused(Json::Null, None), 1).unwrap();
+        assert_eq!(null, plain);
+        let one = Job::parse(&focused(names(&["chapters/03"]), None), 1).unwrap();
+        assert_ne!(one, plain, "another job: the resident document is replaced");
+        assert_eq!(
+            one.argv().last().unwrap(),
+            "\\AtBeginDocument{\\includeonly{chapters/03}}\\input main.tex"
+        );
+        // everything before the first line is the plain job's
+        let (a, b) = (plain.argv(), one.argv());
+        assert_eq!(a[..a.len() - 1], b[..b.len() - 1]);
+        let two = Job::parse(&focused(names(&["ch1", "ch 2.tex"]), None), 1).unwrap();
+        assert_eq!(
+            two.argv().last().unwrap(),
+            "\\AtBeginDocument{\\includeonly{ch1,ch 2.tex}}\\input main.tex"
+        );
+        let spaced = Job::parse(&focused(names(&["ch1"]), Some("my book.tex")), 1).unwrap();
+        assert_eq!(
+            spaced.argv().last().unwrap(),
+            "\\AtBeginDocument{\\includeonly{ch1}}\\input \"my book.tex\""
+        );
+    }
+
+    /// Only names that mean themselves on a first line, inside the root.
+    #[test]
+    fn includeonly_refuses_markup_and_escapes() {
+        for bad in [
+            names(&[]),
+            names(&["a,b"]),
+            names(&["a}\\input{x"]),
+            names(&["a%"]),
+            names(&["#1"]),
+            names(&["\"q\""]),
+            names(&["../outside"]),
+            names(&["/abs"]),
+            names(&["C:ch1"]),
+            names(&["c:/abs"]),
+            names(&[" lead"]),
+            names(&[""]),
+            names(&["line\nbreak"]),
+            Json::Arr(vec![Json::Int(3)]),
+            js("ch1"),
+        ] {
+            assert!(
+                Job::parse(&focused(bad.clone(), None), 1).is_err(),
+                "{bad:?} accepted"
+            );
+        }
+        // A main file named with a quote: refused by the list itself (no file
+        // needed), and through `Job::parse` where such a file can exist
+        // (Windows refuses `"` in a file name: os error 123).
+        assert!(includeonly_list(&[js("ch1")], "q\"uote.tex").is_err());
+        assert!(includeonly_list(&[js("ch1")], "quote.tex").is_ok());
+        if cfg!(not(windows)) {
+            assert!(Job::parse(&focused(names(&["ch1"]), Some("q\"uote.tex")), 1).is_err());
+        }
+    }
+
+    /// The host says it honours the field (an older one ignores it and
+    /// compiles the whole document, so a client asks only when offered).
+    #[test]
+    fn includeonly_is_a_capability() {
+        assert!(CAPABILITIES.contains(&"includeonly"));
     }
 }

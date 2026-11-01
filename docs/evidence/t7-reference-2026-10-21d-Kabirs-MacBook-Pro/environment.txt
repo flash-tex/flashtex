@@ -1,0 +1,10 @@
+start 2026-10-21T13:00:14Z 9:00  up 27 days, 12:01, 2 users, load averages: 1.33 1.64 1.66
+Darwin 25.6.0 arm64
+Apple M5 Pro 15 25769803776
+engine /tmp/flashtex-t7-reference/ref HEAD 8b3f9ec62; checkout 8b3f9ec62
+waited for load1 < 100.0: now 2.07
+end 2026-10-21T13:19:35Z 9:19  up 27 days, 12:21, 2 users, load averages: 1.25 1.94 1.95
+commit 8b3f9ec6239d8f2208e96c707e05f72febb15c3f
+ProductName:		macOS ProductVersion:		26.6.2 BuildVersion:		25G83 
+Mac17,9 Apple M5 Pro 15 25769803776 
+Now drawing from 'AC Power'

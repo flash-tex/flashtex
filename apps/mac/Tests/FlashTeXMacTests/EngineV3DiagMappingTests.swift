@@ -36,7 +36,8 @@ final class EngineV3DiagMappingTests: XCTestCase {
         XCTAssertEqual(src.path, "main.tex")
         XCTAssertEqual(src.startByte, lineStart + from)
         XCTAssertEqual(String(decoding: Array(text.utf8)[src.startByte ..< src.endByte], as: UTF8.self), "\\mycmd{x}")
-        XCTAssertEqual(e.notes, ["in \\mycmd (defined at main.tex:2)"])
+        XCTAssertEqual(e.notes, [EngineV3Explain.explanation(code: "tex/undefined-control-sequence", message: "")!,
+                                 "in \\mycmd (defined at main.tex:2)"], "the explanation first (EngineV3Explain)")
         XCTAssertTrue(e.help?.message.hasPrefix("The control sequence") ?? false)
         let w = problems[1]
         XCTAssertNil(w.source)
@@ -44,7 +45,7 @@ final class EngineV3DiagMappingTests: XCTestCase {
         // Best effort (the default): the same row, a warning marked as pdfLaTeX's error.
         let soft = EngineV3Session.problems(diags: diags, model: model, projectRoot: root)
         XCTAssertEqual(soft[0].severity, .warning)
-        XCTAssertEqual(soft[0].message, "Undefined control sequence. (pdfLaTeX would report an error here)")
+        XCTAssertEqual(soft[0].message, "Undefined control sequence (pdfLaTeX would report an error here)")
         XCTAssertEqual(soft[0].source, e.source)
     }
 }

@@ -205,8 +205,12 @@ final class EngineV3CaretMarkTests: XCTestCase {
         let edited = Self.doc.replacingOccurrences(of: "Alpha", with: "Alpha x")
         model.caretUTF16 = gamma + 2
         model.updateActiveText(edited)
+        let typed = Date()
         try await Task.sleep(nanoseconds: 30_000_000)
-        XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
+        // (On a loaded runner the 30 ms sleep can outlast the settle itself: then "not yet" cannot be seen.)
+        if Date().timeIntervalSince(typed) < EngineV3Session.caretSettle * 0.8 {
+            XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
+        }
         try await waitUntil("the settled mark", timeout: 5) { pages.caretKey?.utf16 == gamma + 2 }
         XCTAssertNotNil(pages.caretMark)
     }
@@ -426,6 +430,34 @@ final class EngineV3CaretMarkTests: XCTestCase {
     /// over them and typing further on, each key sent from the storage
     /// notification. The host's copy of the file ends byte for byte as the
     /// editor's text, and the slow path never found a splice out of step.
+    /// LIVE-30MS (review of #1538): the storage notification comes for every
+    /// text storage of the app; an edit in another one (a search field's,
+    /// another editor's) leaves this editor's anchors alone.
+    func testAnEditElsewhereKeepsTheFastPathsAnchors() async throws {
+        try EngineV3TestHost.require()
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.doc, named: "main.tex")
+        let (s, _, tv, window) = try await editorPane(model, autoCompile: true)
+        defer { s.stop(); window.contentView = nil }
+        let at = (Self.doc as NSString).range(of: "gamma").location
+        s.nextKeystrokeNs = MonotonicClock.nowNs()
+        tv.insertText("x", replacementRange: NSRange(location: at, length: 0))
+        model.updateActiveText(tv.string)
+        XCTAssertTrue(s.fastAnchored("main.tex"), "the fast path took anchors")
+        // another text view, in another window, edited
+        let other = NSTextView(usingTextLayoutManager: false)
+        other.string = "search"
+        let w2 = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled])
+        w2.isReleasedWhenClosed = false
+        w2.contentView = other
+        other.insertText("ing", replacementRange: NSRange(location: 6, length: 0))
+        XCTAssertTrue(s.fastAnchored("main.tex"), "an edit elsewhere dropped the anchors")
+        // this editor's text replaced outside the fast path: they go
+        tv.string = tv.string + "\n"
+        XCTAssertFalse(s.fastAnchored("main.tex"), "a change the fast path did not send kept them")
+        w2.contentView = nil
+    }
+
     func testAnchoredFastSplicesKeepTheHostsCopyExact() async throws {
         try EngineV3TestHost.require()
         let model = ShellModel()
@@ -594,21 +626,31 @@ final class EngineV3CaretMarkTests: XCTestCase {
     }
 
     /// Each page says "page N" at its bottom right, in the label colour of
-    /// its appearance (as the v2 pane's).
+    /// its appearance (as the v2 pane's). Several fresh panes: AppKit
+    /// attaches a page's layer to the tree on a later pass, and a label
+    /// placed from the detached layer's flip sat at the top in about one
+    /// pane in four on a hosted runner (2026-10-12).
     func testEachPageIsLabelled() async throws {
-        let (model, pages, window) = try await pane()
-        defer { model.engineV3.stop(); window.contentView = nil }
-        let v = try XCTUnwrap(pages.heldPageView(1))
-        XCTAssertEqual(v.label.string as? String, "page 2")
-        // Bottom right of the page in the view's own (flipped) coordinates.
-        let frame = v.labelFrameInView
-        XCTAssertGreaterThan(frame.minY, v.bounds.height / 2, "at the bottom: \(frame) in \(v.bounds)")
-        XCTAssertEqual(frame.maxX, v.bounds.width - 4, accuracy: 0.5)
-        XCTAssertEqual(v.label.alignmentMode, .right)
-        // Where the layer tree really puts it, in the view's coordinates.
-        let shown = v.convertFromLayer(v.label.frame)
-        XCTAssertEqual(shown.minY, frame.minY, accuracy: 0.5, "the label layer is at the bottom on screen: \(shown) in \(v.bounds)")
-        pages.setAppearance(.dark)
-        XCTAssertEqual(v.label.foregroundColor, NSColor(white: 0.7, alpha: 1).cgColor, "the dark page's label colour")
+        for round in 0 ..< 8 {
+            let (model, pages, window) = try await pane()
+            defer { model.engineV3.stop(); window.contentView = nil }
+            let v = try XCTUnwrap(pages.heldPageView(1))
+            XCTAssertEqual(v.label.string as? String, "page 2")
+            // Bottom right of the page in the view's own (flipped) coordinates.
+            let frame = v.labelFrameInView
+            XCTAssertGreaterThan(frame.minY, v.bounds.height / 2, "at the bottom: \(frame) in \(v.bounds)")
+            XCTAssertEqual(frame.maxX, v.bounds.width - 4, accuracy: 0.5)
+            XCTAssertEqual(v.label.alignmentMode, .right)
+            // Where the layer tree really puts it, once the page's layer is in
+            // it (the tree's flip is known only then; `convertFromLayer` does
+            // not apply it). Nothing places the label again when it arrives.
+            let l = try XCTUnwrap(v.layer)
+            try await waitUntil("the page's layer in the layer tree", timeout: 10) { l.superlayer != nil }
+            let shownY = l.contentsAreFlipped() ? v.label.frame.minY : v.bounds.height - v.label.frame.maxY
+            XCTAssertEqual(shownY, frame.minY, accuracy: 0.5, "round \(round): the label layer is at the bottom on screen: \(v.label.frame) in \(v.bounds), tree flipped \(l.contentsAreFlipped())")
+            XCTAssertEqual(v.layerShownFlipped, l.contentsAreFlipped(), "round \(round): the flip the label was placed for is the tree's")
+            pages.setAppearance(.dark)
+            XCTAssertEqual(v.label.foregroundColor, NSColor(white: 0.7, alpha: 1).cgColor, "the dark page's label colour")
+        }
     }
 }

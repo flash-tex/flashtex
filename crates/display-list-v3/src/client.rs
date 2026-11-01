@@ -52,6 +52,9 @@ pub enum Event {
     /// 3.3, the Typst host: a package's fetch (spec §11.8), for a client
     /// that accepted `packages-v1`.
     Package(Json),
+    /// `profile-v1` (spec §6.9): the performance mode now in effect, after
+    /// the client's `PROFILE`.
+    Profile(Json),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -78,6 +81,7 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::RESOLVED => Event::Resolved(json(&body)?),
         kind::LOCATED => Event::Located(json(&body)?),
         kind::PACKAGE => Event::Package(json(&body)?),
+        kind::PROFILE => Event::Profile(json(&body)?),
         _ => Event::Other(k, body),
     })
 }
@@ -118,6 +122,14 @@ pub struct CompileRequest {
     /// never; `None`: the host's default (`--external-tools`, off unless
     /// set). Spec §6.3.
     pub external_tools: Option<String>,
+    /// Host capability `includeonly`: LaTeX's `\includeonly{…}` on the first
+    /// line before the main file (a chapter focus), the names as the
+    /// document's `\include`s write them. Spec §6.3.
+    pub includeonly: Option<Vec<String>>,
+    /// The FONT formats this client draws (spec §5.1, `font_formats`):
+    /// the programs of other formats do not travel. Empty: not sent (the
+    /// host's default, Type 1 only).
+    pub font_formats: Vec<String>,
 }
 
 /// A splice of a file's bytes (spec §6.3, `edits`).
@@ -146,6 +158,8 @@ impl CompileRequest {
             edits: vec![],
             export: false,
             external_tools: None,
+            includeonly: None,
+            font_formats: vec![],
         }
     }
 
@@ -177,6 +191,18 @@ impl CompileRequest {
         }
         if let Some(t) = &self.external_tools {
             kv.push(("external_tools".into(), s(t.as_str())));
+        }
+        if let Some(names) = &self.includeonly {
+            kv.push((
+                "includeonly".into(),
+                Json::Arr(names.iter().map(|n| s(n.as_str())).collect()),
+            ));
+        }
+        if !self.font_formats.is_empty() {
+            kv.push((
+                "font_formats".into(),
+                Json::Arr(self.font_formats.iter().map(|f| s(f.as_str())).collect()),
+            ));
         }
         if !self.buffers.is_empty() {
             kv.push((
@@ -270,6 +296,20 @@ impl Client {
 
     /// `over`, accepting optional message families.
     pub fn over_accepting(stream: Stream, accept: &[&str]) -> io::Result<Client> {
+        Self::over_with(stream, accept, None)
+    }
+
+    /// `connect_accepting`, naming a performance mode in `HELLO.profile`
+    /// (`low-memory`, `balanced`, `high-performance`; host capability
+    /// `profile-v1`, spec §6.9): the host's `HELLO.profile` says what it
+    /// applies.
+    pub fn connect_with(path: &Path, accept: &[&str], profile: Option<&str>) -> io::Result<Client> {
+        let stream = Stream::connect(path)?;
+        Self::over_with(stream, accept, profile)
+    }
+
+    /// The same over an already connected stream.
+    pub fn over_with(stream: Stream, accept: &[&str], profile: Option<&str>) -> io::Result<Client> {
         crate::widen_socket_buffers(&stream);
         let mut c = Client {
             r: BufReader::with_capacity(1 << 20, stream.try_clone()?),
@@ -299,6 +339,13 @@ impl Client {
                 Json::Obj(kv)
             }
             h => h,
+        };
+        let hello = match (hello, profile) {
+            (Json::Obj(mut kv), Some(p)) => {
+                kv.push(("profile".into(), s(p)));
+                Json::Obj(kv)
+            }
+            (h, _) => h,
         };
         write_frame(&mut c.w, kind::C_HELLO, hello.to_string().as_bytes())?;
         c.w.flush()?;
@@ -343,6 +390,14 @@ impl Client {
     pub fn cancel(&mut self, id: i64) -> io::Result<()> {
         let b = obj([("id", Json::Int(id))]).to_string();
         write_frame(&mut self.w, kind::CANCEL, b.as_bytes())?;
+        self.w.flush()
+    }
+
+    /// Switch the host's performance mode (`PROFILE`, spec §6.9): it
+    /// applies between compiles and answers with a `PROFILE` event.
+    pub fn set_profile(&mut self, profile: &str) -> io::Result<()> {
+        let b = obj([("profile", s(profile))]).to_string();
+        write_frame(&mut self.w, kind::C_PROFILE, b.as_bytes())?;
         self.w.flush()
     }
 

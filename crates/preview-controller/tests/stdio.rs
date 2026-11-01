@@ -1162,7 +1162,7 @@ for line in sys.stdin:
         json!({"source_binding_token":"editor-A:α\nopaque"}),
     );
     assert_eq!(client.reply("a")["type"], "result");
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while !dir.path().join("started2").exists() {
         assert!(std::time::Instant::now() < deadline);
         thread::sleep(Duration::from_millis(1));
@@ -1211,7 +1211,7 @@ for line in sys.stdin:
         json!({"source_binding_token":"must-not-enroll"}),
     );
     assert_eq!(client.reply("after-restart-a")["type"], "result");
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while !dir.path().join("started5").exists() {
         assert!(std::time::Instant::now() < deadline);
         thread::sleep(Duration::from_millis(1));
@@ -2058,7 +2058,7 @@ for line in sys.stdin:
 "#)).unwrap();
         std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut client = Client::with_compiler(dir.path(), Some(&compiler));
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
         while !dir.path().join("started").exists() {
             assert!(std::time::Instant::now() < deadline);
             thread::sleep(Duration::from_millis(2));

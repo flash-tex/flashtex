@@ -259,26 +259,77 @@ class Polite:
         self.last = time.time()
 
 
+def backoff(i, e):
+    """Seconds to wait before attempt i + 2 after error `e`: 30 s doubling per
+    attempt up to 10 min; a 429/503 (arXiv asks us to slow down) at least its
+    Retry-After and 5 min per attempt."""
+    wait = min(30 * 2 ** i, 600)
+    if getattr(e, "code", None) in THROTTLED:
+        try:
+            wait = max(wait, int((e.headers or {}).get("Retry-After") or 0), 300 * (i + 1))
+        except (TypeError, ValueError):
+            wait = max(wait, 300 * (i + 1))
+    return wait
+
+
+NOT_RETRIED = (403, 404, 410)  # no retry makes these appear
+
+
 def with_retries(fn, polite, tries=3, log=None):
     """`fn()` with up to `tries` attempts, each after `polite()`, backing off
-    (30 s, 60 s, ...) after an error such as arXiv's 503 "retry later"."""
+    (`backoff`: 30 s, 60 s, 120 s, ...) after an error such as arXiv's 503 "retry later"."""
     for i in range(tries):
         polite()
         try:
             return fn()
         except Exception as e:  # noqa: BLE001 - retried, then raised
-            if i == tries - 1 or getattr(e, "code", None) in (403, 404, 410):  # no retry makes these appear
+            if i == tries - 1 or getattr(e, "code", None) in NOT_RETRIED:
                 raise
-            wait = 30 * (i + 1)
-            if getattr(e, "code", None) in THROTTLED:  # arXiv asks us to slow down: honour Retry-After
-                try:
-                    wait = max(wait, int((e.headers or {}).get("Retry-After") or 0), 300 * (i + 1))
-                except (TypeError, ValueError):
-                    wait = max(wait, 300 * (i + 1))
+            wait = backoff(i, e)
             if log:
                 log(f"  retry {i + 1}/{tries - 1} in {wait} s after: {e}")
             time.sleep(wait)
     return None
+
+
+# A pinned document's download: 6 attempts span about 15 min of backoff, which
+# outlasts the short drops (IncompleteRead) and 429s a hosted runner sees.
+FETCH_TRIES = 6
+
+
+class ShaMismatch(ValueError):
+    pass
+
+
+def fetch_verified(url, want, polite, log=None, tries=FETCH_TRIES):
+    """The bytes at `url`, verified against the pinned SHA-256 `want` before
+    the caller caches them. A network error or a short body (IncompleteRead)
+    is retried with `backoff`; a body of another hash is fetched once more (a
+    proxy or a cut connection can hand back other bytes) and then raised as
+    ShaMismatch, since arXiv serving changed bytes twice is no network error.
+    Raises the last error after `tries` attempts."""
+    mismatches = 0
+    for i in range(tries):
+        polite()
+        try:
+            data = http_get(url)
+        except Exception as e:  # noqa: BLE001 - retried, then raised
+            if i == tries - 1 or getattr(e, "code", None) in NOT_RETRIED:
+                raise
+            err, wait = e, backoff(i, e)
+        else:
+            got = sha256_bytes(data)
+            if got == want:
+                return data
+            mismatches += 1
+            err = ShaMismatch(f"sha256 mismatch: manifest {want[:12]}, fetched {got[:12]} ({len(data)} bytes)")
+            if mismatches >= 2 or i == tries - 1:
+                raise err
+            wait = 30
+        if log:
+            log(f"  {url}: retry {i + 1}/{tries - 1} in {wait} s after: {err}")
+        time.sleep(wait)
+    raise RuntimeError("unreachable")
 
 
 THROTTLED = (429, 503)
@@ -517,21 +568,25 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
             rec["pt1_skip"] = e["pt1_skip"]
         if tier in ARXIV_TIERS or tier in ARCHIVE_TIERS:
             path = os.path.join(cache, store, doc_id)
-            if not os.path.isfile(path):
-                try:  # one request per `delay` s; a 429/503 is retried after arXiv's Retry-After
-                    data = with_retries(lambda: http_get(e["url"]), polite)
+            data = slurp(path, "rb") if os.path.isfile(path) else None
+            if data is not None and sha256_bytes(data) != e["sha256"]:
+                log(f"  {tier}/{doc_id}: cached bytes are not the pinned sha256; fetched again")
+                os.remove(path)
+                data = None
+            if data is None:
+                try:  # one request per `delay` s, retried with backoff, verified before it is cached
+                    data = fetch_verified(e["url"], e["sha256"], polite, log=log)
+                except ShaMismatch as ex:
+                    rec["problem"] = str(ex)
+                    docs.append(rec)
+                    continue
                 except Exception as ex:  # noqa: BLE001
-                    rec["problem"] = f"fetch failed: {ex}"
+                    rec["problem"] = f"fetch failed after {FETCH_TRIES} tries: {ex}"
                     docs.append(rec)
                     continue
                 with open(path + ".tmp", "wb") as f:
                     f.write(data)
                 os.replace(path + ".tmp", path)
-            data = slurp(path, "rb")
-            if sha256_bytes(data) != e["sha256"]:
-                rec["problem"] = f"sha256 mismatch: manifest {e['sha256'][:12]}, fetched {sha256_bytes(data)[:12]}"
-                docs.append(rec)
-                continue
             # UNPACK_V in the marker: a tree unpacked before unpack kept the archive's times is made again
             root = e.get("root")
             marker = os.path.join(dest, ".parity-unpacked")
@@ -634,11 +689,23 @@ def cmd_fetch(args):
     chosen = manifests(args.manifest, include_on_demand=bool(args.tier))
     if args.tier:
         chosen = [m for m in chosen if manifest_tier(m) in args.tier]
+    tiers = [manifest_tier(m) for m in chosen]
+    if args.shard and len(set(tiers)) != len(tiers):
+        print("fetch --shard: a tier with several manifests is sharded over all of them; name one manifest",
+              file=sys.stderr)
+        return 2
+    n = 0
     for m in chosen:
-        for d in fetch_manifest(m, args.cache, args.texmf, args.delay):
+        only = None
+        if args.shard:  # the documents of these shards, as parity.py --shard K/N picks them
+            ids = manifest_ids(m)
+            only = {i for k, n in args.shard for i in ids[k::n]}
+        for d in fetch_manifest(m, args.cache, args.texmf, args.delay, only=only):
+            n += 1
             if d["problem"]:
                 bad += 1
                 print(f"  {d['tier']}/{d['id']}: {d['problem']}", file=sys.stderr)
+    print(f"fetched and verified {n - bad} of {n} documents" + (f"; {bad} failed" if bad else ""))
     return 1 if bad else 0
 
 
@@ -653,6 +720,16 @@ def cmd_hash_templates(args):
         json.dump(man, f, indent=1, ensure_ascii=False)
         f.write("\n")
     return 0
+
+
+def parse_shard(v):
+    try:
+        k, n = (int(x) for x in v.split("/"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--shard wants K/N, got {v!r}") from None
+    if not 0 <= k < n:
+        raise argparse.ArgumentTypeError(f"--shard {v}: K must be in 0..N-1")
+    return k, n
 
 
 def main(argv=None):
@@ -680,6 +757,9 @@ def main(argv=None):
     f = sub.add_parser("fetch")
     f.add_argument("--manifest", action="append", default=[])
     f.add_argument("--tier", action="append", default=[], help="only the manifests of this tier (repeatable)")
+    f.add_argument("--shard", action="append", default=[], type=parse_shard, metavar="K/N",
+                   help="only the documents of shard K of N (repeatable), as parity.py --shard; a manifest of "
+                        "one tier, since parity.py shards each tier's documents in manifest order")
     h = sub.add_parser("hash-templates")
     h.add_argument("--manifest", required=True)
     args = ap.parse_args(argv)

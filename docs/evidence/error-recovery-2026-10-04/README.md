@@ -127,8 +127,46 @@ open finds it gone (`changed_outside`), so the compile runs cold.
 
 The fixed document's pages are identical to the good run's in every case (`same_as_before`).
 
+## Phase 2, PR 3: locations, explanations and fixes (gaps 4 and 5), plus two follow-ups
+
+Branch `agent/mac-claude-a/errrec-locate`, stacked on PR 1.
+
+**Gap 4: "File ended while scanning use of \X" now has a location.**
+- TeX names no place for it, because the file level has already ended when TeX reports it.
+- It does print the start of the argument, on the line after "Runaway argument?" (§306).
+- The host (`host/diag.rs`, `locate_runaways`) looks for that text in the project files
+  TeX opened, comparing tokens without blanks or comments, with a blank line read as `\par`.
+  It then places the report on the argument's opening brace, the one never closed.
+- The stop reports right after it that name no place go there too.
+- In the corpus, all four such cases are now underlined on the `{`, for example `\textbf{`
+  at 13:13. Before, they had no file and no line.
+- This only reads what TeX printed, so the engine's output does not change.
+
+**Gap 5: a plain-language explanation for every error code in the corpus** (`EngineV3Explain`).
+It is the row's first note; TeX's own help stays a note too. A fix is attached only where
+it is mechanical and the row's range is exactly the text it replaces:
+
+| Code | Fix |
+|---|---|
+| `tex/too-many-right-braces` | remove the `}` |
+| `tex/misplaced-alignment-tab` | `&` → `\&` |
+| `latex/environment-mismatch` | `\end{B}` → `\end{A}`, or add `\end{A}` before `\end{document}` |
+| `latex/file-not-found` (`.sty`) | the one close package name, as "did you mean amsmath?" |
+
+- **Environment fixes** are offered only when the line LaTeX names contains `\begin{A}`.
+  So there is none for `\[` (amsmath's `equation*`), and none for an unknown environment
+  that closed `document`.
+- **A missing package** used to be placed on the *next* line's `\usepackage`, because
+  LaTeX looks ahead for an optional date argument. It is now placed on the name itself.
+- **The old engine's "did you mean \X?"** for undefined commands (`EngineV3Fixes`) is
+  unchanged.
+
+**Follow-ups to PR 1.**
+- A DONE without a `pages` field no longer clears the stale marks.
+- The host announces `halt-on-error` in its HELLO capabilities. When strict mode is on and
+  the host lacks that capability, Settings says that strict mode is not honoured.
+
 ## Not done here (next)
-- **Gap 4:** locating a runaway argument.
-- **Gap 5:** explanations.
-- **Gap 6:** mid-typing grace. Partly moot now that recoverable errors are warnings and
-  fatal ones keep the pages.
+
+- **Gap 6:** the mid-typing grace period. It is partly moot now that recoverable errors are
+  warnings and fatal ones keep the pages.

@@ -1,0 +1,54 @@
+# The XeTeX port's translation regenerated on a hosted runner
+# (scripts/xetex-regenerate.sh: web2rust over third_party/xetex/xetex.web and
+# crates/flashtex-xetex/changes/), for a change-file edit made on a machine
+# that does not build. The fresh crates/flashtex-xetex/src/generated/ and
+# xetex.pool are the `xetex-generated` artifact. They are committed by hand
+# after review; the drift test (quick gate) then checks them.
+#
+#   gh workflow run xetex-regenerate.yml --ref <branch>
+#
+# It also runs on a push that changes a change file or the translator's
+# arguments.
+name: xetex-regenerate
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main, "gh-readonly-queue/**"]
+    paths:
+      - "crates/flashtex-xetex/changes/**"
+      - "crates/flashtex-xetex/web2rust-default.args"
+      - ".github/workflows/xetex-regenerate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xetex-regenerate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: xetex-regenerate
+      - name: web2rust over xetex.web and the change files
+        run: |
+          set -euo pipefail
+          sh scripts/xetex-regenerate.sh
+          git status --short crates/flashtex-xetex
+          git diff --stat crates/flashtex-xetex | tail -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xetex-generated
+          path: |
+            crates/flashtex-xetex/src/generated
+            crates/flashtex-xetex/xetex.pool
+          retention-days: 7

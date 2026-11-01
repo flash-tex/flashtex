@@ -1,0 +1,25 @@
+% beamer with fontspec (Libertinus Sans), unicode-math, columns, blocks, overlays
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Boadilla}
+\usefonttheme{professionalfonts}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setsansfont{Libertinus Sans}
+\setmathfont{Libertinus Math}
+\begin{document}
+\begin{frame}{Columns and blocks}
+\begin{columns}
+\column{0.5\textwidth}
+\begin{block}{Theorem}
+For all $n ∈ ℕ$: $\sum_{k=1}^n k = \frac{n(n+1)}{2}$.
+\end{block}
+\column{0.5\textwidth}
+\begin{alertblock}{Warning}<2->
+Overlays: this appears on slide 2.
+\end{alertblock}
+\begin{exampleblock}{Example}<3>
+$e^{iπ} + 1 = 0$
+\end{exampleblock}
+\end{columns}
+\end{frame}
+\end{document}

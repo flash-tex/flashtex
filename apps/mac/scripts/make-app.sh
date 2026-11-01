@@ -7,9 +7,10 @@
 # with `open` and eventually granted such permissions.
 #
 # Usage: apps/mac/scripts/make-app.sh [--debug] [--version <x.y.z>] [--helper-root <repo>]
-#          [--cli <path>] [--compiler <path>] [--pdf <path>] [--bridge <path>] [--ledger <path>]
-#          [--render <path>] [--pdf-exact <path>] [--controller <path>] [--project-files <path>]
-#          [--explain <path>] [--engine-host <path>] [--source-sha <key>=<sha>]
+#          [--bridge <path>] [--ledger <path>] [--project-files <path>]
+#          [--engine-host <path>] [--require-engine-host]
+#          [--engine-host-unicode <path>]
+#          [--source-sha <key>=<sha>]
 #          [--sign <identity>] [--entitlements <file>] [--notarize <keychain-profile>]
 #          [--open] [--install] [--install-dir <dir>] [--dmg]
 #
@@ -22,7 +23,8 @@
 # --wait` using a keychain profile created by `xcrun notarytool
 # store-credentials <profile>`, then staples the app (and the DMG with --dmg).
 # --version <x.y.z> (or the APP_VERSION environment variable) sets
-# CFBundleShortVersionString; the default below is the last released version.
+# CFBundleShortVersionString; the default below is the release being prepared
+# (docs/release/), for local builds only.
 # CI passes the tag (.github/workflows/release.yml), so cutting a release never
 # edits this script.
 # --source-sha <key>=<sha> declares the source revision of a helper built
@@ -35,6 +37,17 @@
 # the pinned no-TeX-Live bundle's lock, tools/bundle/tl2026/flashtex-bundle.lock,
 # as Contents/Resources/engine/flashtex-bundle.lock; it is
 # signed like the other helpers (hardened runtime with --sign) before the app.
+# Unicode mode's host (flashtex-host-unicode, crates/flashtex-xetex, GPL-2.0-or-later,
+# also a separate process; docs/design/xetex/PLAN.md §3.3-§3.4) is staged beside it
+# as Contents/Helpers/flashtex-host-unicode when built (--engine-host-unicode, else
+# the xetex crate's own release build), with its licence as
+# Contents/Resources/engine/LICENSE-unicode and the notices of the libraries it links
+# (HarfBuzz, FreeType, TECkit) as Contents/Resources/engine/THIRD-PARTY-NOTICES-unicode.txt;
+# it reads the same bundle lock. Optional: without it a Unicode document says the
+# host is not found.
+# --require-engine-host (a release, .github/workflows/release.yml): a missing
+# host, or its pool or licence, fails the packaging before the build instead of
+# being skipped (app-parity row D5); without it the host stays optional.
 # Helpers default to <crate target dir>/release/<name> (scripts/crate-target-dir.sh);
 # --helper-root defaults to this repository (set it to the main checkout when
 # packaging from a worktree). No credential is ever printed by this script.
@@ -53,7 +66,7 @@ MAC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$MAC_DIR/../.." && pwd)"
 RESOURCES_SRC="$MAC_DIR/Resources"
 
-DEFAULT_APP_VERSION="0.1.1"
+DEFAULT_APP_VERSION="0.2.0"
 APP_VERSION="${APP_VERSION:-$DEFAULT_APP_VERSION}"
 BUNDLE_ID="tech.jay3332.flashtex.mac"
 
@@ -71,24 +84,20 @@ DO_INSTALL=0
 INSTALL_DIR="$HOME/Applications"
 DO_DMG=0
 ENGINE_HOST=""
+ENGINE_HOST_UNICODE=""
+REQUIRE_ENGINE_HOST=0
 
 # Bundled helpers, in components.json order. Fields: components.json key,
 # executable name, crate directory (relative to --helper-root), CLI flag.
 # The bridge is additionally built on demand when missing (see below); the
 # others are optional and skipped when not built or passed.
+# The old engine's helpers (cli, compiler, pdf, render, pdf_exact), the
+# preview controller and explain left in retirement stage S6 (#1236): the app
+# no longer runs them. The engine hosts are staged below (Contents/Helpers).
 HELPER_TABLE=(
-  # Staged as flashtex-cli: on a case-insensitive volume "flashtex" would
-  # overwrite the app executable "FlashTeX" in the same directory.
-  "cli|flashtex-cli|flashtex-cli|--cli"
-  "compiler|flashtex-compiler|compiler|--compiler"
-  "pdf|flashtex-pdf|pdf|--pdf"
   "bridge|flashtex-bridge|bridge|--bridge"
   "edit_ledger|flashtex-edit-ledger|edit-ledger|--ledger"
-  "render|flashtex-render|render-pipeline|--render"
-  "pdf_exact|flashtex-pdf-exact|pdf|--pdf-exact"
-  "preview_controller|flashtex-preview-controller|preview-controller|--controller"
   "project_files|flashtex-project-files|project-files|--project-files"
-  "explain|flashtex-explain|diagnostic-explanations|--explain"
 )
 # Explicit --<flag> <path> overrides as "key=path" (bash 3.2: no assoc arrays).
 HELPER_OVERRIDES=()
@@ -137,13 +146,21 @@ while [[ $# -gt 0 ]]; do
       APP_VERSION="${2:?--version needs x.y.z}"
       shift 2
       ;;
-    --cli|--compiler|--pdf|--bridge|--ledger|--render|--pdf-exact|--controller|--project-files|--explain)
+    --bridge|--ledger|--project-files)
       key="$(helper_key_for_flag "$1")"
       HELPER_OVERRIDES+=("$key=${2:-}")
       shift 2
       ;;
     --engine-host)
       ENGINE_HOST="${2:?--engine-host needs a path}"
+      shift 2
+      ;;
+    --require-engine-host)
+      REQUIRE_ENGINE_HOST=1
+      shift
+      ;;
+    --engine-host-unicode)
+      ENGINE_HOST_UNICODE="${2:?--engine-host-unicode needs a path}"
       shift 2
       ;;
     --sign)
@@ -176,13 +193,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --source-sha)
       [[ "${2:-}" == *=* ]] || die_early "--source-sha needs <key>=<sha>"
-      [[ "${2%%=*}" =~ ^[a-z_]+$ ]] || die_early "--source-sha: component key must be a components.json key such as render"
+      [[ "${2%%=*}" =~ ^[a-z_]+$ ]] || die_early "--source-sha: component key must be a components.json key such as bridge"
       [[ "${2#*=}" =~ ^[0-9a-f]{7,40}$ ]] || die_early "--source-sha: <sha> must be 7-40 hex characters"
       HELPER_SHA_OVERRIDES+=("$2")
       shift 2
       ;;
     -h|--help)
-      sed -n '2,30p' "${BASH_SOURCE[0]}"
+      sed -n '2,34p' "${BASH_SOURCE[0]}"
       exit 0
       ;;
     *)
@@ -259,8 +276,9 @@ SUPPORTED_LATEX_JSON="$MAC_DIR/Sources/FlashTeXMac/Resources/supported-latex.jso
 "$SUPPORTED_LATEX_SYNC" --check --root "$REPO_ROOT" || die "bundled supported-latex.json is stale; run apps/mac/scripts/sync-supported-latex.sh and commit"
 
 # --- Pre-flight: pinned rooted TFM metrics must verify before the build -------
-# GH36: flashtex-render loads its required metrics only from a rooted texmf
-# tree; a flat Fonts directory or the build machine's TeX cannot stand in.
+# GH36: the bundle's rooted texmf tree of Latin Modern metrics (staged for the
+# old engine's flashtex-render; S7 decides whether it stays, retirement plan
+# §1.4); a flat Fonts directory or the build machine's TeX cannot stand in.
 BUNDLE_TEXMF_ROOT="${FLASHTEX_BUNDLE_TEXMF_ROOT:-$MAC_DIR/Fonts/texmf}"
 BUNDLE_TEXMF_TOOL="$SCRIPT_DIR/bundle-texmf.py"
 [[ -f "$BUNDLE_TEXMF_TOOL" ]] || die "missing $BUNDLE_TEXMF_TOOL"
@@ -276,6 +294,39 @@ TEXMF_PREFLIGHT="$(python3 "$BUNDLE_TEXMF_TOOL" check "$BUNDLE_TEXMF_ROOT" "$BUN
   die "pinned bundle metric refused under $BUNDLE_TEXMF_ROOT, or a Latin Modern face refused/unpinned under $BUNDLE_FONTS_DIR (hash/length mismatch, missing, symlink, or an .otf no pin lists; see above). Nothing is downloaded and the host TeX tree is never used."
 }
 echo "==> Pinned rooted TFM metrics and Latin Modern faces verified under $BUNDLE_TEXMF_ROOT / $BUNDLE_FONTS_DIR ($(( $(grep -c '"status": "verified"' <<< "$TEXMF_PREFLIGHT") - 1 )) entries)"
+
+# --- Pre-flight: the engine-v3 preview host ----------------------------------
+# Found here (it does not depend on the app build): --engine-host, else the
+# engine crate's release build. A release (--require-engine-host) refuses to
+# go on without it, its string pool and its licence.
+ENGINE_CRATE="$HELPER_ROOT/crates/flashtex-engine"
+if [[ -z "$ENGINE_HOST" && -f "$ENGINE_CRATE/Cargo.toml" ]]; then
+  engine_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$ENGINE_CRATE" 2>/dev/null)" || engine_target="$HELPER_ROOT/target"
+  [[ -f "$engine_target/release/flashtex-host" ]] && ENGINE_HOST="$engine_target/release/flashtex-host"
+fi
+# Unicode mode's host: --engine-host-unicode, else the xetex crate's release
+# build (its own workspace and target/).
+XETEX_CRATE="$HELPER_ROOT/crates/flashtex-xetex"
+if [[ -z "$ENGINE_HOST_UNICODE" && -f "$XETEX_CRATE/Cargo.toml" ]]; then
+  xetex_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$XETEX_CRATE" 2>/dev/null)" || xetex_target="$XETEX_CRATE/target"
+  [[ -f "$xetex_target/release/flashtex-host-unicode" ]] && ENGINE_HOST_UNICODE="$xetex_target/release/flashtex-host-unicode"
+fi
+if [[ -n "$ENGINE_HOST_UNICODE" ]]; then
+  [[ -f "$ENGINE_HOST_UNICODE" ]] || die "--engine-host-unicode: no file at $ENGINE_HOST_UNICODE"
+  for f in "$XETEX_CRATE/LICENSE" "$REPO_ROOT/third_party/harfbuzz/harfbuzz-src/COPYING" \
+           "$REPO_ROOT/third_party/freetype/freetype-src/LICENSE.TXT" "$REPO_ROOT/third_party/freetype/freetype-src/docs/FTL.TXT" \
+           "$REPO_ROOT/third_party/teckit/TECkit-src/license/License_LGPLv21.txt" \
+           "$REPO_ROOT/third_party/icu/LICENSE"; do
+    [[ -f "$f" ]] || die "flashtex-host-unicode: its licence or a notice is missing: $f"
+  done
+  echo "==> Unicode engine host: $ENGINE_HOST_UNICODE"
+fi
+if [[ "$REQUIRE_ENGINE_HOST" -eq 1 ]]; then
+  [[ -n "$ENGINE_HOST" && -f "$ENGINE_HOST" ]] || die "--require-engine-host: no flashtex-host${ENGINE_HOST:+ at $ENGINE_HOST} (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); a release app without it has no engine-v3 preview"
+  [[ -f "$ENGINE_CRATE/pdftex.pool" ]] || die "--require-engine-host: the host's string pool $ENGINE_CRATE/pdftex.pool is missing"
+  [[ -f "$ENGINE_CRATE/LICENSE" ]] || die "--require-engine-host: the host's licence $ENGINE_CRATE/LICENSE is missing"
+  echo "==> Engine host (required): $ENGINE_HOST"
+fi
 
 # Resolves the short git SHA of the repo that CONTAINS $1 (the resolved source
 # path of a bundled binary, before it is copied into the bundle) — never the
@@ -342,6 +393,12 @@ if grep -q '@[A-Z_]*@' "$CONTENTS_DIR/Info.plist"; then
 fi
 
 printf 'APPL????' > "$CONTENTS_DIR/PkgInfo"
+
+# App icon (CFBundleIconFile = AppIcon). Generated from the brand SVG by
+# assets/brand/generate.py and committed, so packaging needs no rasteriser.
+APP_ICON="$RESOURCES_SRC/AppIcon.icns"
+[[ -f "$APP_ICON" ]] || die "app icon not found: $APP_ICON (run python3 assets/brand/generate.py)"
+cp "$APP_ICON" "$RESOURCES_DIR/AppIcon.icns"
 
 echo "==> Copying fixtures and samples into Contents/Resources/Samples"
 FIXTURES_DIR="$REPO_ROOT/protocol/fixtures"
@@ -444,8 +501,6 @@ for row in "${HELPER_TABLE[@]}"; do
     target_dir="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$HELPER_ROOT/crates/$crate" 2>/dev/null)" \
       || target_dir="$HELPER_ROOT/crates/$crate/target"
     default="$target_dir/release/$name"
-    # The CLI crate builds "flashtex"; it is staged under a distinct name.
-    [[ "$key" == "cli" ]] && default="$target_dir/release/flashtex"
     if [[ "$key" == "bridge" && ! -f "$default" && -f "$HELPER_ROOT/crates/$crate/Cargo.toml" ]]; then
       echo "    $name not built; building it (cargo build --release in crates/$crate)…"
       if (cd "$HELPER_ROOT/crates/$crate" && cargo build --release); then
@@ -453,6 +508,15 @@ for row in "${HELPER_TABLE[@]}"; do
       else
         echo "    warning: cargo build --release failed for crates/$crate" >&2
       fi
+    fi
+    # A binary older than its crate's sources is rebuilt rather than bundled
+    # as is: a stale flashtex-project-files without `set_mode` made the mode
+    # menu do nothing in an owner build.
+    if [[ -f "$default" && -f "$HELPER_ROOT/crates/$crate/Cargo.toml" ]] \
+      && [[ -n "$(find "$HELPER_ROOT/crates/$crate" -path '*/target' -prune -o \( -name '*.rs' -o -name Cargo.toml \) -newer "$default" -print -quit 2>/dev/null)" ]]; then
+      echo "    $name is older than crates/$crate; rebuilding it (cargo build --release)…"
+      (cd "$HELPER_ROOT/crates/$crate" && cargo build --release --bin "$name") \
+        || echo "    warning: rebuilding $name failed; bundling the stale build" >&2
     fi
     [[ -f "$default" ]] && src="$default"
   fi
@@ -471,11 +535,6 @@ done
 # A separate GPL process the app starts and talks to over a socket (never
 # linked). Optional: without it the flag-gated preview says it is not found.
 HELPERS_DIR="$CONTENTS_DIR/Helpers"
-ENGINE_CRATE="$HELPER_ROOT/crates/flashtex-engine"
-if [[ -z "$ENGINE_HOST" && -f "$ENGINE_CRATE/Cargo.toml" ]]; then
-  engine_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$ENGINE_CRATE" 2>/dev/null)" || engine_target="$HELPER_ROOT/target"
-  [[ -f "$engine_target/release/flashtex-host" ]] && ENGINE_HOST="$engine_target/release/flashtex-host"
-fi
 ENGINE_HOST_BUNDLED=""
 BUNDLE_LOCK="$REPO_ROOT/tools/bundle/tl2026/flashtex-bundle.lock"
 [[ -f "$BUNDLE_LOCK" ]] || die "missing $BUNDLE_LOCK (the pinned no-TeX-Live bundle)"
@@ -492,7 +551,39 @@ if [[ -n "$ENGINE_HOST" && -f "$ENGINE_HOST" && -f "$ENGINE_CRATE/pdftex.pool" ]
   ENGINE_HOST_BUNDLED="$HELPERS_DIR/flashtex-host"
   echo "    bundled flashtex-host from $ENGINE_HOST (+ Resources/engine/pdftex.pool, LICENSE, flashtex-bundle.lock)"
 else
+  [[ "$REQUIRE_ENGINE_HOST" -eq 0 ]] || die "--require-engine-host: flashtex-host was not staged into $HELPERS_DIR"
   echo "    no flashtex-host found (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); skipping"
+fi
+# Unicode mode's host (flashtex-host-unicode): its string pool is compiled in;
+# it reads the same bundle lock as flashtex-host.
+ENGINE_HOST_UNICODE_BUNDLED=""
+if [[ -n "$ENGINE_HOST_UNICODE" && -f "$ENGINE_HOST_UNICODE" ]]; then
+  mkdir -p "$HELPERS_DIR" "$RESOURCES_DIR/engine"
+  cp "$ENGINE_HOST_UNICODE" "$HELPERS_DIR/flashtex-host-unicode"
+  chmod +x "$HELPERS_DIR/flashtex-host-unicode"
+  cp "$XETEX_CRATE/LICENSE" "$RESOURCES_DIR/engine/LICENSE-unicode"
+  cp "$BUNDLE_LOCK" "$RESOURCES_DIR/engine/flashtex-bundle.lock"
+  {
+    echo "flashtex-host-unicode links these libraries, vendored unmodified (third_party/):"
+    echo
+    echo "== HarfBuzz (MIT-style; third_party/harfbuzz/harfbuzz-src/COPYING) =="
+    cat "$REPO_ROOT/third_party/harfbuzz/harfbuzz-src/COPYING"
+    echo
+    echo "== FreeType (used under the FreeType License, docs/FTL.TXT; portions of this software are copyright (C) The FreeType Project, www.freetype.org) =="
+    cat "$REPO_ROOT/third_party/freetype/freetype-src/LICENSE.TXT"
+    echo
+    cat "$REPO_ROOT/third_party/freetype/freetype-src/docs/FTL.TXT"
+    echo
+    echo "== TECkit (used under the GNU LGPL 2.1 or later; third_party/teckit/TECkit-src/license) =="
+    cat "$REPO_ROOT/third_party/teckit/TECkit-src/license/License_LGPLv21.txt"
+    echo
+    echo "== ICU's line-break tables and bidi algorithm (third_party/icu; the bidi port's notices are also in LICENSE-unicode) and ICU4X's segmenter and its data (Unicode License v3) =="
+    cat "$REPO_ROOT/third_party/icu/LICENSE"
+  } > "$RESOURCES_DIR/engine/THIRD-PARTY-NOTICES-unicode.txt"
+  ENGINE_HOST_UNICODE_BUNDLED="$HELPERS_DIR/flashtex-host-unicode"
+  echo "    bundled flashtex-host-unicode from $ENGINE_HOST_UNICODE (+ Resources/engine/LICENSE-unicode, THIRD-PARTY-NOTICES-unicode.txt)"
+else
+  echo "    no flashtex-host-unicode found (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode, or --engine-host-unicode <path>); skipping"
 fi
 
 # --- Signing (helpers first, then the app) -----------------------------------
@@ -533,6 +624,15 @@ if command -v codesign >/dev/null 2>&1; then
       echo "    warning: ad-hoc codesign failed for flashtex-host" >&2
     fi
   fi
+  if [[ -n "$ENGINE_HOST_UNICODE_BUNDLED" ]]; then
+    if sign_helper "$ENGINE_HOST_UNICODE_BUNDLED" "$BUNDLE_ID.flashtex-host-unicode"; then
+      echo "    signed flashtex-host-unicode ($BUNDLE_ID.flashtex-host-unicode)"
+    elif [[ "$HARDENED" -eq 1 ]]; then
+      die "codesign failed for helper flashtex-host-unicode"
+    else
+      echo "    warning: ad-hoc codesign failed for flashtex-host-unicode" >&2
+    fi
+  fi
 else
   echo "    warning: codesign not available on this system; helpers left as built" >&2
 fi
@@ -547,6 +647,7 @@ for row in "${BUNDLED_HELPERS[@]}"; do
 done
 
 record_component "engine_host" "$ENGINE_HOST_BUNDLED" "$ENGINE_HOST"
+record_component "engine_host_unicode" "$ENGINE_HOST_UNICODE_BUNDLED" "$ENGINE_HOST_UNICODE"
 
 # Pinned resource hashes (fonts, rooted metrics, license) as verified above,
 # so the component report carries them before the app signature seals it.

@@ -1,0 +1,28 @@
+% l011-bidi-rtl: ICU's bidi runs of measure_native_node: Latin and Hebrew in one native word, numbers, brackets, explicit embeddings and isolates, and polyglossia Hebrew and Arabic paragraphs with inter-word space shaping
+\documentclass{article}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{arabic}
+\setotherlanguage{hebrew}
+\setmainfont{Times New Roman}
+\newfontfamily\arabicfont{Geeza Pro}[Script=Arabic]
+\newfontfamily\hebrewfont{Times New Roman}[Script=Hebrew]
+\begin{document}
+abcשלוםdef 123שלום שלום(abc)שלום ש[1]ל 12.5\%שלום -3שלום
+
+\XeTeXinterwordspaceshaping=2
+שלום עולם 2026 abc def (שלום) [עולם] abc שלום, def!
+
+\XeTeXinterwordspaceshaping=0
+X‫abc def‬Y X‎שלום‎Y X⁧abc⁩Y X⁦שלום⁩Y X⁨123⁩Y X‮abc‬Y
+
+\begin{hebrew}
+\XeTeXinterwordspaceshaping=2
+שלום (עולם) [abc] 3.14 ו-2026, "ציטוט" ו-ABC 12%: סוף.
+\end{hebrew}
+
+\begin{Arabic}
+\XeTeXinterwordspaceshaping=2
+النص (العربي) مع كلمات و ٣٫١٤ و ١٢٣ في [القوسين]، نهاية.
+\end{Arabic}
+\end{document}

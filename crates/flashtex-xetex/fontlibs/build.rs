@@ -14,7 +14,8 @@
 //!   -DFT_CONFIG_OPTIONS_H=<ftoption.h>` (plus `-DDARWIN_NO_CARBON` on macOS),
 //!   `-std=c99 -O2 -fvisibility=hidden`.
 //! * HarfBuzz: TeX Live compiles `src/harfbuzz.cc` (the amalgamation) and the
-//!   subsetter sources with `-DHAVE_CONFIG_H -DHB_NO_MT -DHAVE_FALLBACK=1`,
+//!   subsetter sources with `-DHAVE_CONFIG_H -DHB_NO_MT -DHAVE_FALLBACK=1`
+//!   (here without `HB_NO_MT`: see `harfbuzz::build`),
 //!   `-O2 -fno-rtti -fno-exceptions -fvisibility=hidden
 //!   -fvisibility-inlines-hidden`, against configure's `config.h`
 //!   (config/harfbuzz/config.h here) and `hb-version.h` (generated below from
@@ -26,7 +27,22 @@
 
 use std::path::{Path, PathBuf};
 
-const HB_VERSION: (&str, &str, &str) = ("12", "3", "2");
+/// HarfBuzz's version, from TeX Live's own `libs/harfbuzz/version.ac`
+/// (vendored as third_party/harfbuzz/version.ac and sha-pinned with the
+/// sources), as TeX Live's configure takes it.
+fn hb_version(third_party: &Path) -> (String, String, String) {
+    let ac = third_party.join("harfbuzz/version.ac");
+    println!("cargo:rerun-if-changed={}", ac.display());
+    let text = std::fs::read_to_string(&ac).unwrap();
+    let v = text
+        .lines()
+        .find_map(|l| l.strip_prefix("m4_define([harfbuzz_version], ["))
+        .and_then(|r| r.strip_suffix("])"))
+        .expect("version.ac defines harfbuzz_version");
+    let mut it = v.split('.').map(str::to_string);
+    let (a, b, c) = (it.next(), it.next(), it.next());
+    (a.unwrap(), b.unwrap(), c.unwrap())
+}
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -50,7 +66,14 @@ fn main() {
         std::thread::spawn(move || harfbuzz::build(&hb_src, &hb_conf))
     };
     freetype::build(&ft_src, &ft_conf);
-    hb.join().expect("HarfBuzz build thread panicked");
+    let hb = hb.join().expect("HarfBuzz build thread panicked");
+    if let Some(dir) = rpath_cxx_runtime(&hb) {
+        // For this crate's own targets, and (through `links` metadata,
+        // DEP_FLASHTEX_XETEX_FONTLIBS_CXX_RPATH) for flashtex-xetex's, since
+        // a `rustc-link-arg` never reaches a dependent's link.
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        println!("cargo:cxx_rpath={}", dir.display());
+    }
 
     // The layout probe (csrc/layout_probe.c): sizeof/offsetof of every
     // struct the FFI declares, read by the layout test.
@@ -64,6 +87,51 @@ fn main() {
         .debug(false)
         .warnings(false);
     probe.compile("flashtex_fontlibs_probe");
+}
+
+/// Where the dynamic loader finds the C++ runtime that HarfBuzz needs.
+///
+/// A copy of `rpath_cxx_runtime` in crates/flashtex-engine/build.rs (#1232,
+/// for xpdf); keep the two in step. The `cc` crate links `-lstdc++` on
+/// Linux, and the linker finds it in the compiler's own library directory.
+/// On an FHS system that directory is also on the loader's search path; on
+/// NixOS (and any toolchain outside /usr) it is not, so flashtex-xetex and
+/// its tests died with "libstdc++.so.6: cannot open shared object file".
+/// When the compiler's libstdc++ lives outside /usr and /lib, this returns
+/// its directory, to be recorded as an rpath. On macOS (libc++ from the SDK),
+/// Windows and FHS Linux it returns `None`, so release binaries built there
+/// are unchanged.
+fn rpath_cxx_runtime(b: &cc::Build) -> Option<PathBuf> {
+    if !is_target("CARGO_CFG_TARGET_OS", "linux") {
+        return None;
+    }
+    let compiler = b.get_compiler();
+    let out = std::process::Command::new(compiler.path())
+        .args(compiler.args())
+        .arg("-print-file-name=libstdc++.so")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    cxx_runtime_dir(String::from_utf8_lossy(&out.stdout).trim())
+}
+
+/// The directory to rpath, given the compiler's answer to
+/// `-print-file-name=libstdc++.so`; `None` when there is nothing to add.
+fn cxx_runtime_dir(printed: &str) -> Option<PathBuf> {
+    let lib = Path::new(printed);
+    // A bare name back means the compiler does not know the file.
+    if !lib.is_absolute() {
+        return None;
+    }
+    if ["/usr/", "/lib/", "/lib64/"]
+        .iter()
+        .any(|p| printed.starts_with(p))
+    {
+        return None;
+    }
+    lib.parent().map(Path::to_path_buf)
 }
 
 fn is_target(var: &str, value: &str) -> bool {
@@ -240,12 +308,12 @@ mod harfbuzz {
         std::fs::create_dir_all(conf).unwrap();
         let config = std::fs::read_to_string(manifest.join("config/harfbuzz/config.h")).unwrap();
         write_if_changed(&conf.join("config.h"), &config);
-        let (major, minor, micro) = HB_VERSION;
+        let (major, minor, micro) = hb_version(&manifest.join("../../../third_party"));
         let template = std::fs::read_to_string(src.join("src/hb-version.h.in")).unwrap();
         let version = template
-            .replace("@HB_VERSION_MAJOR@", major)
-            .replace("@HB_VERSION_MINOR@", minor)
-            .replace("@HB_VERSION_MICRO@", micro)
+            .replace("@HB_VERSION_MAJOR@", &major)
+            .replace("@HB_VERSION_MINOR@", &minor)
+            .replace("@HB_VERSION_MICRO@", &micro)
             .replace("@HB_VERSION@", &format!("{major}.{minor}.{micro}"));
         assert!(
             !version.contains("@HB_"),
@@ -254,18 +322,22 @@ mod harfbuzz {
         write_if_changed(&conf.join("hb-version.h"), &version);
     }
 
-    pub fn build(src: &Path, conf: &Path) {
+    /// Builds `libflashtex_harfbuzz.a` and returns its `cc::Build`, from
+    /// which [`rpath_cxx_runtime`] asks the C++ compiler for its runtime.
+    pub fn build(src: &Path, conf: &Path) -> cc::Build {
         println!("cargo:rerun-if-changed={}", src.display());
         let mut b = cc::Build::new();
         // DEFS, DEFAULT_INCLUDES and AM_CPPFLAGS of libs/harfbuzz/Makefile:
         // -DHAVE_CONFIG_H -I<build dir> -DHB_NO_MT -DHAVE_FALLBACK=1
-        // -I<harfbuzz-src/src>. The compiler's default C++ dialect, as there
-        // (configure: "g++ supports C++11 features by default... yes").
+        // -I<harfbuzz-src/src>, except HB_NO_MT: an engine may move to
+        // another thread (Globals is Send), so HarfBuzz keeps its locking and
+        // atomic lazy globals. Locking changes no shaping result. The
+        // compiler's default C++ dialect, as there (configure: "g++ supports
+        // C++11 features by default... yes").
         b.cpp(true)
             .include(conf)
             .include(src.join("src"))
             .define("HAVE_CONFIG_H", None)
-            .define("HB_NO_MT", None)
             .define("HAVE_FALLBACK", "1")
             .flag_if_supported("-fno-rtti")
             .flag_if_supported("-fno-exceptions")
@@ -279,6 +351,7 @@ mod harfbuzz {
             b.file(src.join(s));
         }
         b.compile("flashtex_harfbuzz");
+        b
     }
 }
 

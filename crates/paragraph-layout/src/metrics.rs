@@ -38,9 +38,9 @@ impl FontId {
         FontId(out)
     }
 
-    /// Lower-case hex of the 32 bytes — the form rendering-core's
-    /// `FontResource.sha256` and rendering-v2 manifests use when the identity
-    /// is a real content hash.
+    /// Lower-case hex of the 32 bytes — the form rendering-v2's
+    /// `FontResource.sha256` and manifests use when the identity is a real
+    /// content hash.
     pub fn to_hex(&self) -> String {
         self.0.iter().map(|b| format!("{b:02x}")).collect()
     }

@@ -59,6 +59,10 @@
 			isa = PBXBuildFile;
 			fileRef = 08C275D119DF1F41894FD9F9;
 		};
+		A9B9670BEF21B102964AAA03 /* Assets.xcassets in Resources */ = {
+			isa = PBXBuildFile;
+			fileRef = 9AFEC47A57ED5D746955D7F0;
+		};
 		A87D4C8E0CAD968374E177C5 /* compile-result.json in Resources */ = {
 			isa = PBXBuildFile;
 			fileRef = B814BF36B6E3FFF2A9D456D9;
@@ -285,6 +289,12 @@
 			path = "PairingScanner.swift";
 			sourceTree = "<group>";
 		};
+		9AFEC47A57ED5D746955D7F0 /* Assets.xcassets */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = folder.assetcatalog;
+			path = "Assets.xcassets";
+			sourceTree = "<group>";
+		};
 		B814BF36B6E3FFF2A9D456D9 /* Resources/compile-result.json */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = text.json;
@@ -508,6 +518,7 @@
 				8154323B8EA2D5445564B276,
 				3CCE5357B9F6A9468F70115A,
 				08C275D119DF1F41894FD9F9,
+				9AFEC47A57ED5D746955D7F0,
 				B814BF36B6E3FFF2A9D456D9,
 				696D572EB552F1B485EC7FD4,
 				DF516A2769098DAFFC545638,
@@ -687,6 +698,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A9B9670BEF21B102964AAA03,
 				A87D4C8E0CAD968374E177C5,
 				BC0A22AF45038EEAE34C7CD7,
 				BD32D5321034B632D5392E0B,

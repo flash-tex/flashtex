@@ -264,7 +264,7 @@ name = "flashtex-bibliography"
 version = "0.1.0"
 
 [[package]]
-name = "flashtex-bibtex-bst"
+name = "flashtex-bibtex"
 version = "0.1.0"
 
 [[package]]
@@ -286,6 +286,7 @@ name = "flashtex-build"
 version = "0.1.0"
 dependencies = [
  "flashtex-display-list",
+ "flashtex-project-manifest",
  "libc",
 ]
 
@@ -310,13 +311,6 @@ name = "flashtex-collaboration-core"
 version = "0.1.0"
 
 [[package]]
-name = "flashtex-color-expressions"
-version = "0.1.0"
-dependencies = [
- "flashtex-vector-graphics",
-]
-
-[[package]]
 name = "flashtex-compiler"
 version = "0.1.0"
 dependencies = [
@@ -326,21 +320,6 @@ dependencies = [
  "flashtex-tex-boxes",
  "flashtex-tex-expansion",
  "flashtex-tex-text-encoding",
-]
-
-[[package]]
-name = "flashtex-conversion-jobs"
-version = "0.1.0"
-dependencies = [
- "base64",
- "flashtex-bridge",
- "flashtex-edit-ledger",
- "fs2",
- "image",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
 ]
 
 [[package]]
@@ -383,8 +362,11 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flashtex-bibtex",
  "flashtex-display-list",
- "flashtex-engine-build-id",
+ "flashtex-makeindex",
+ "flashtex-runtime",
+ "libc",
  "sha2",
 ]
 
@@ -418,6 +400,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "flashtex-makeindex"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -481,14 +470,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flashtex-project-bundle"
-version = "0.1.0"
-dependencies = [
- "flashtex-project-files",
- "unicode-normalization",
-]
-
-[[package]]
 name = "flashtex-project-files"
 version = "0.1.0"
 dependencies = [
@@ -530,22 +511,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "flashtex-rendering-core"
+name = "flashtex-runtime"
 version = "0.1.0"
 dependencies = [
- "flashtex-font-engine",
- "flashtex-font-resources",
- "flashtex-pdf",
- "flashtex-project-files",
- "serde",
- "serde_json",
+ "cc",
+ "flashtex-display-list",
+ "flashtex-engine-build-id",
+ "libc",
  "sha2",
- "tempfile",
+ "tikv-jemalloc-sys",
+ "tikv-jemallocator",
 ]
-
-[[package]]
-name = "flashtex-spellcheck"
-version = "0.1.0"
 
 [[package]]
 name = "flashtex-tex-boxes"
@@ -563,24 +539,6 @@ name = "flashtex-tex-text-encoding"
 version = "0.1.0"
 dependencies = [
  "serde_json",
-]
-
-[[package]]
-name = "flashtex-title-layout"
-version = "0.1.0"
-dependencies = [
- "flashtex-document-style",
-]
-
-[[package]]
-name = "flashtex-toc-layout"
-version = "0.1.0"
-
-[[package]]
-name = "flashtex-unicode-tex"
-version = "0.1.0"
-dependencies = [
- "flashtex-font-engine",
 ]
 
 [[package]]
@@ -1358,9 +1316,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.44"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6725596c3f2c3a0aef021139e145d4eafe314a6623e4680ca83852b2c67ab2ba"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -1702,6 +1660,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a2825c78386b4ae0314074867860ba9577875de945f05992c38815cbec327f0"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "249f09e49ab1609436f34c776e84231bead18d6a955f119f939bdc1d847561bd"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]
