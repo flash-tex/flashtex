@@ -1,0 +1,12 @@
+% u10-images: graphicx PNG, JPEG and PDF inclusion (mwe's example images), scaled, clipped and rotated
+\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\includegraphics[width=4cm]{example-image-a.png}\quad
+\includegraphics[width=4cm]{example-image.jpg}\quad
+\includegraphics[width=4cm]{example-image-a.pdf}
+
+\includegraphics[width=3cm,angle=30]{example-image-b.png}\quad
+\includegraphics[width=3cm,trim=20 20 20 20,clip]{example-image-c.pdf}\quad
+\includegraphics[height=2cm,page=2]{example-image-a4-numbered.pdf}
+\end{document}

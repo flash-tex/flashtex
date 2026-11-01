@@ -105,7 +105,8 @@ final class EngineV3PresentPair: @unchecked Sendable {
 @MainActor
 final class EngineV3FrameRateBoost: NSObject {
     static let enabled = ProcessInfo.processInfo.environment["FLASHTEX_V3_BOOST"] == "1"
-    private var link: CADisplayLink?
+    /// Invalidated in deinit (nonisolated(unsafe): deinit is nonisolated; it runs on main).
+    nonisolated(unsafe) private var link: CADisplayLink?
     private var lastKeyNs: UInt64 = 0
     private weak var view: NSView?
     /// The newest frame duration the link reported (evidence).
@@ -113,11 +114,13 @@ final class EngineV3FrameRateBoost: NSObject {
 
     init(view: NSView) { self.view = view }
 
+    deinit { link?.invalidate() }
+
     func keystroke() {
         guard Self.enabled, let view, view.window != nil else { return }
         lastKeyNs = MonotonicClock.nowNs()
         if link == nil {
-            let l = view.displayLink(target: self, selector: #selector(tick(_:)))
+            let l = view.displayLink(target: EngineV3WeakLinkTarget(self) { $0.tick($1) }, selector: #selector(EngineV3WeakLinkTarget.tick(_:)))
             l.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
             l.add(to: .main, forMode: .common)
             link = l
@@ -125,10 +128,34 @@ final class EngineV3FrameRateBoost: NSObject {
         link?.isPaused = false
     }
 
-    @objc private func tick(_ l: CADisplayLink) {
+    private func tick(_ l: CADisplayLink) {
         frameNs = UInt64(max(0, l.targetTimestamp - l.timestamp) * 1e9)
         if MonotonicClock.nowNs() &- lastKeyNs > 1_000_000_000 { l.isPaused = true }
     }
 
     func stop() { link?.invalidate(); link = nil }
+}
+
+/// A display link's target that holds the real one weakly. `CADisplayLink`
+/// retains its target until it is invalidated, and the run loop it was added
+/// to retains the link, so a link aimed straight at a view (or at an object
+/// the view owns) keeps that view, and whatever it references, alive forever,
+/// paused or not: every preview pane that ever took a keystroke's compile
+/// leaked that way (DocumentDeallocationTests). The link invalidates itself
+/// on its first tick after the target is gone; owners also invalidate it
+/// when they go.
+@MainActor
+final class EngineV3WeakLinkTarget: NSObject {
+    private weak var target: AnyObject?
+    private let action: (AnyObject, CADisplayLink) -> Void
+
+    init<T: AnyObject>(_ target: T, _ action: @escaping @MainActor (T, CADisplayLink) -> Void) {
+        self.target = target
+        self.action = { t, l in action(t as! T, l) } // swiftlint:disable:this force_cast
+    }
+
+    @objc func tick(_ l: CADisplayLink) {
+        guard let target else { l.invalidate(); return }
+        action(target, l)
+    }
 }

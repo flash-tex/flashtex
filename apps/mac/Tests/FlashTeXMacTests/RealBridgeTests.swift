@@ -156,8 +156,13 @@ final class RealBridgeTests: XCTestCase {
         XCTAssertNil(bridge.ledgerError, bridge.ledgerError ?? "")
         model.detachBridge()
         XCTAssertFalse(model.bridgeAttached)
-        try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertNil(RealHelperProcess.pid(commandLineContaining: "flashtex-bridge --store \(store.path)"), "detach leaves no bridge process")
+        // The process exits on its own schedule after detach: poll for it (a
+        // loaded runner reaps it later than a fixed 300 ms), then assert.
+        let gone = Date().addingTimeInterval(10)
+        while RealHelperProcess.pid(commandLineContaining: "flashtex-bridge --store \(store.path)") != nil, Date() < gone {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertNil(RealHelperProcess.pid(commandLineContaining: "flashtex-bridge --store \(store.path)"), "detach leaves no bridge process (waited up to 10 s)")
     }
 
     private func waitUntil(timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {

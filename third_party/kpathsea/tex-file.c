@@ -1105,6 +1105,9 @@ kpathsea_find_file_generic (kpathsea kpse, const_string const_name,
 
   /* Do we need to pound the disk? */
   if (! *ret && must_exist) {
+    /* FlashTeX change (2026-10-09): the empty list is freed before the
+       next search replaces it (it was lost at every miss).  */
+    free (ret);
     for (count = 0; target[count]; count++)
       free (target[count]);
     count = 0;
@@ -1131,6 +1134,7 @@ kpathsea_find_file_generic (kpathsea kpse, const_string const_name,
   /* If nothing was found, call mktex* to create a missing file.  Since
      this returns a single string, morph it into a list.  */
   if (! *ret && must_exist) {
+    free (ret); /* FlashTeX change (2026-10-09): as above.  */
     ret = XTALLOC (2, string);
     ret[0] = kpathsea_make_tex (kpse, format, name);
     if (ret[0]) {

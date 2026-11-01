@@ -71,12 +71,39 @@ hash_create (unsigned size)
   unsigned b;
   ret.buckets = XTALLOC (size, hash_element_type *);
   ret.size = size;
+  ret.tails = XTALLOC (size, hash_element_type *);
 
   /* calloc's zeroes aren't necessarily NULL, so be safe.  */
   for (b = 0; b <ret.size; b++)
-    ret.buckets[b] = NULL;
+    ret.buckets[b] = ret.tails[b] = NULL;
 
   return ret;
+}
+
+/* FlashTeX change (2026-10-06): append NEW_ELT to bucket N in O(1) through
+   `tails' instead of walking the chain to its end. The chain and its order
+   are exactly what the walk built; only the time differs. TeX Live's ls-R
+   has thousands of files of the same name (README: 2,345 in TeX Live 2026),
+   all in one bucket, so the walk made reading ls-R quadratic in them. A
+   table without `tails' (none is made here) still walks.  */
+static void
+append_to_bucket (hash_table_type *table, unsigned n,
+                  hash_element_type *new_elt)
+{
+  if (!table->buckets[n])
+    /* first element in bucket is a special case.  */
+    table->buckets[n] = new_elt;
+  else if (table->tails && table->tails[n])
+    table->tails[n]->next = new_elt;
+  else
+    {
+      hash_element_type *loc = table->buckets[n];
+      while (loc->next)         /* Find the last element.  */
+        loc = loc->next;
+      loc->next = new_elt;      /* Insert the new one after.  */
+    }
+  if (table->tails)
+    table->tails[n] = new_elt;
 }
 
 /* Whether or not KEY is already in TABLE, insert it and VALUE.  Do not
@@ -95,16 +122,7 @@ hash_insert (hash_table_type *table,
   new_elt->next = NULL;
 
   /* Insert the new element at the end of the list.  */
-  if (!table->buckets[n])
-    /* first element in bucket is a special case.  */
-    table->buckets[n] = new_elt;
-  else
-    {
-      hash_element_type *loc = table->buckets[n];
-      while (loc->next)         /* Find the last element.  */
-        loc = loc->next;
-      loc->next = new_elt;      /* Insert the new one after.  */
-    }
+  append_to_bucket (table, n, new_elt);
 }
 
 /* Same as above, for normalized keys. */
@@ -121,16 +139,7 @@ hash_insert_normalized (hash_table_type *table,
   new_elt->next = NULL;
 
   /* Insert the new element at the end of the list.  */
-  if (!table->buckets[n])
-    /* first element in bucket is a special case.  */
-    table->buckets[n] = new_elt;
-  else
-    {
-      hash_element_type *loc = table->buckets[n];
-      while (loc->next)         /* Find the last element.  */
-        loc = loc->next;
-      loc->next = new_elt;      /* Insert the new one after.  */
-    }
+  append_to_bucket (table, n, new_elt);
 }
 
 /* Remove a (KEY, VALUE) pair.  */
@@ -150,6 +159,10 @@ hash_remove (hash_table_type *table,  const_string key,
   if (p) {
     /* We found something, remove it from the chain.  */
     if (q) q->next = p->next; else table->buckets[n] = p->next;
+    /* FlashTeX change (2026-10-06): the last element removed, its
+       predecessor (null if the chain is now empty) is the last.  */
+    if (table->tails && table->tails[n] == p)
+      table->tails[n] = q;
     /* We cannot dispose of the contents.  */
     free (p);
   }

@@ -3,20 +3,24 @@ import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// Package resolution in the shell (ProjectPackages.swift,
-/// docs/user/project-manifest.md `[packages]`): the compiler's not-found
-/// diagnostics name the packages, the helper's `resolve_packages` answers,
-/// one consent sheet per project offers what would be fetched, Fetch
-/// delivers the files to the compile request and the sidebar, Not now is
-/// remembered for the session, Never writes the policy, and `always` never
-/// shows the sheet. Hermetic through the `resolver`/`rewriter` hooks; no
-/// network, no helper.
+/// docs/user/project-manifest.md `[packages]`): the engine's not-found
+/// diagnostics name the packages, the helper's offline `resolve_packages`
+/// (the libraries and the cache) answers first, one consent sheet per
+/// project offers what is in neither, Fetch delivers the files to the
+/// compile request and the sidebar, Not now is remembered for the session,
+/// Never writes the policy, and `always` never shows the sheet. Hermetic
+/// through the `offlineResolver`/`resolver`/`rewriter` hooks; no network, no
+/// helper.
 @MainActor
 final class ProjectPackagesTests: XCTestCase {
     private var tmp: URL!
+    /// The names each offline request asked about (the default hook answers "not cached").
+    private var offline: [[String]] = []
 
     override func setUp() {
         tmp = FileManager.default.temporaryDirectory.appendingPathComponent("project-packages-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        offline = []
     }
 
     override func tearDown() { try? FileManager.default.removeItem(at: tmp) }
@@ -56,6 +60,11 @@ final class ProjectPackagesTests: XCTestCase {
         return "{\"name\":\"\(name)\",\"status\":\"\(status)\",\"version\":\"2.2\"\(origin),\"files\":[{\"path\":\"packages/\(name)/\(name).sty\",\"text\":\"\\\\ProvidesPackage{\(name)}\\n\",\"sha256\":\"ab\",\"bytes\":24}]}"
     }
 
+    /// The offline answer for a package neither a library nor the cache has.
+    private func notCached(_ name: String) -> String {
+        "{\"name\":\"\(name)\",\"status\":\"not_available\",\"reason\":\"\(name) is not cached\"}"
+    }
+
     private func result(unresolved: [String], notes: [String] = []) -> RuntimeV1.CompileResult {
         var diagnostics: [String] = []
         if !unresolved.isEmpty {
@@ -66,13 +75,27 @@ final class ProjectPackagesTests: XCTestCase {
         return try! JSONDecoder().decode(RuntimeV1.CompileResult.self, from: Data(json.utf8))
     }
 
+    /// A compile whose TeX could not find `unresolved`: the engine's rows, as
+    /// its DONE hands them over (`model.engineV3Diagnostics`, then
+    /// `noteCompileResult`).
+    private func compiled(_ model: ShellModel, unresolved: [String]) {
+        let rows = unresolved.map {
+            RuntimeV1.Diagnostic(severity: .error, message: "LaTeX Error: File `\($0).sty' not found.", source: nil, recovery: nil, code: "latex/file-not-found")
+        }
+        model.engineV3Diagnostics = rows
+        model.projectPackages.noteCompileResult(diagnostics: rows)
+    }
+
     private func project(fetch: String, manifestExists: Bool = true) throws -> ShellModel {
         _ = try write("main.tex", "\\documentclass{article}\n\\usepackage{cancel}\n\\begin{document}\nHello.\n\\end{document}\n")
         if manifestExists { _ = try write("flashtex.toml", "[packages]\nfetch = \"\(fetch)\"\n") }
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .disabled(reason: "test: hermetic (direct writes)")
         model.manifest.reader = { root, _ in .success(self.manifestPayload(root: root, fetch: fetch, exists: manifestExists)) }
+        model.projectPackages.offlineResolver = { [unowned self] _, names, _ in
+            self.offline.append(names)
+            return .success(self.resolvePayload(names.map { self.notCached($0) }))
+        }
         XCTAssertEqual(model.openTex(at: tmp.appendingPathComponent("main.tex")), .opened)
         return model
     }
@@ -103,29 +126,29 @@ final class ProjectPackagesTests: XCTestCase {
             calls.append((names, consent))
             return .success(self.resolvePayload(names.map { consent ? self.fetched($0) : self.needsConsent($0) }))
         }
-        // The compile reports two missing packages: one resolve, no fetch, the sheet.
-        model.result = result(unresolved: ["cancel", "siunitx"])
+        // The compile reports two missing packages: one offline resolve, no
+        // request to the source, the sheet offering them by name.
+        compiled(model, unresolved: ["cancel", "siunitx"])
         try await settle { state.shown }
-        XCTAssertEqual(calls.count, 1)
-        XCTAssertEqual(calls[0].names, ["cancel", "siunitx"])
-        XCTAssertFalse(calls[0].consent, "ask never fetches by itself")
+        XCTAssertEqual(offline, [["cancel", "siunitx"]])
+        XCTAssertTrue(calls.isEmpty, "ask never fetches by itself, nor asks the source")
         XCTAssertEqual(state.offers.map(\.name), ["cancel", "siunitx"])
-        XCTAssertEqual(state.offers[0].summary, "cancel 2.2 — cancel.sty")
+        XCTAssertEqual(state.offers[0].summary, "cancel")
         XCTAssertEqual(state.offers[0].sourceLabel, "CTAN")
         XCTAssertTrue(state.documents().isEmpty)
         XCTAssertEqual(state.recompiles, 0)
         // The same result again (a recompile with nothing new) asks nothing more.
-        model.result = result(unresolved: ["cancel", "siunitx"])
+        compiled(model, unresolved: ["cancel", "siunitx"])
         try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(calls.count, 1, "offers already pending are not re-resolved")
+        XCTAssertEqual(offline.count, 1, "offers already pending are not re-resolved")
 
         let revision = state.revision
         let ok = await state.fetch()
         XCTAssertTrue(ok, state.note ?? "")
         XCTAssertFalse(state.shown)
-        XCTAssertEqual(calls.count, 2)
-        XCTAssertTrue(calls[1].consent, "Fetch is the consent")
-        XCTAssertEqual(calls[1].names, ["cancel", "siunitx"])
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertTrue(calls[0].consent, "Fetch is the consent")
+        XCTAssertEqual(calls[0].names, ["cancel", "siunitx"])
         XCTAssertEqual(state.documents().map(\.path), ["packages/cancel/cancel.sty", "packages/siunitx/siunitx.sty"])
         XCTAssertEqual(state.documents()[0].text, "\\ProvidesPackage{cancel}\n")
         XCTAssertGreaterThan(state.revision, revision, "a delivery bumps the revision the compile guard compares")
@@ -142,10 +165,11 @@ final class ProjectPackagesTests: XCTestCase {
         XCTAssertTrue(ids.contains("packages:group") && ids.contains("package:packages/cancel/cancel.sty"), "\(ids)")
         XCTAssertFalse(tree.first { $0.id == "packages:group" }!.selectable)
         XCTAssertEqual(tree.first { $0.id == "package:packages/cancel/cancel.sty" }!.indent, 1)
-        // A later compile still naming them (the engine without S1) resolves nothing again.
-        model.result = result(unresolved: ["cancel", "siunitx"])
+        // A later compile still naming them resolves nothing again.
+        compiled(model, unresolved: ["cancel", "siunitx"])
         try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(offline.count, 1)
+        XCTAssertEqual(calls.count, 1)
     }
 
     func testFetchKeepsOfferCountAndRowsStableWhileFetching() async throws {
@@ -160,7 +184,7 @@ final class ProjectPackagesTests: XCTestCase {
             }
             return .success(self.resolvePayload(names.map { self.needsConsent($0) }))
         }
-        model.result = result(unresolved: ["mathrsfs"])
+        compiled(model, unresolved: ["mathrsfs"])
         try await settle { state.shown }
 
         let task = Task { await state.fetch() }
@@ -189,7 +213,7 @@ final class ProjectPackagesTests: XCTestCase {
             if consent { return .failure(.init("background resolve failed")) }
             return .success(self.resolvePayload(names.map { self.needsConsent($0) }))
         }
-        model.result = result(unresolved: ["mathrsfs"])
+        compiled(model, unresolved: ["mathrsfs"])
         try await settle { state.shown }
         let priorFailure = await state.resolve(["other"], consent: true)
         XCTAssertFalse(priorFailure)
@@ -214,28 +238,28 @@ final class ProjectPackagesTests: XCTestCase {
     func testNotNowIsRememberedForTheSessionAndNeverWritesThePolicy() async throws {
         let model = try project(fetch: "ask")
         let state = model.projectPackages
-        var resolves = 0
-        state.resolver = { _, names, _ in resolves += 1; return .success(self.resolvePayload(names.map { self.needsConsent($0) })) }
+        var online = 0
+        state.resolver = { _, names, _ in online += 1; return .success(self.resolvePayload(names.map { self.needsConsent($0) })) }
         var written: [(fetch: String?, pin: [String: String]?)] = []
         state.rewriter = { root, _, fetch, pin in
             written.append((fetch, pin))
             let text = "[packages]\nfetch = \"\(fetch ?? "ask")\"\n"
             return .success(ProjectFilesV1.SetPackages(path: root.appendingPathComponent("flashtex.toml").path, exists: true, changed: true, text: text))
         }
-        model.result = result(unresolved: ["cancel"])
+        compiled(model, unresolved: ["cancel"])
         try await settle { state.shown }
-        XCTAssertEqual(resolves, 1)
+        XCTAssertEqual(offline.count, 1)
         state.notNow()
         XCTAssertFalse(state.shown)
         XCTAssertTrue(state.declined.contains("cancel"))
-        model.result = result(unresolved: ["cancel"])
+        compiled(model, unresolved: ["cancel"])
         try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(resolves, 1, "declined this session: not asked again")
+        XCTAssertEqual(offline.count, 1, "declined this session: not asked again")
         XCTAssertTrue(written.isEmpty)
         // The menu command asks again.
         state.present()
         try await settle { state.shown }
-        XCTAssertEqual(resolves, 2)
+        XCTAssertEqual(offline.count, 2)
         // Never: the policy is written through the rewrite and the rooted save, nothing fetched.
         let ok = await state.never()
         XCTAssertTrue(ok, state.note ?? "")
@@ -245,6 +269,7 @@ final class ProjectPackagesTests: XCTestCase {
         XCTAssertNil(written[0].pin)
         XCTAssertEqual(try String(contentsOf: tmp.appendingPathComponent("flashtex.toml"), encoding: .utf8), "[packages]\nfetch = \"never\"\n")
         XCTAssertTrue(state.documents().isEmpty)
+        XCTAssertEqual(online, 0, "the source was never asked")
     }
 
     func testAlwaysFetchesWithoutASheetAndRememberWritesAlways() async throws {
@@ -252,7 +277,7 @@ final class ProjectPackagesTests: XCTestCase {
         let state = model.projectPackages
         var consents: [Bool] = []
         state.resolver = { _, names, consent in consents.append(consent); return .success(self.resolvePayload(names.map { self.fetched($0) })) }
-        model.result = result(unresolved: ["cancel"])
+        compiled(model, unresolved: ["cancel"])
         try await settle { !state.documents().isEmpty }
         XCTAssertEqual(consents, [true], "the manifest is the remembered consent")
         XCTAssertFalse(state.shown)
@@ -267,7 +292,7 @@ final class ProjectPackagesTests: XCTestCase {
             written.append(fetch)
             return .success(ProjectFilesV1.SetPackages(path: root.appendingPathComponent("flashtex.toml").path, exists: true, changed: true, text: "[packages]\nfetch = \"\(fetch ?? "")\"\n"))
         }
-        asked.result = result(unresolved: ["cancel"])
+        compiled(asked, unresolved: ["cancel"])
         try await settle { s2.shown }
         s2.remember = true
         let fetchedOK = await s2.fetch()
@@ -279,31 +304,50 @@ final class ProjectPackagesTests: XCTestCase {
     func testUnavailableAndCachedAnswersNeedNoSheet() async throws {
         let model = try project(fetch: "ask")
         let state = model.projectPackages
-        var resolves = 0
-        state.resolver = { _, _, _ in
-            resolves += 1
-            return .success(self.resolvePayload([
-                "{\"name\":\"lipsum\",\"status\":\"not_available\",\"reason\":\"needs docstrip: lipsum ships only lipsum.dtx, lipsum.ins\"}",
-                self.fetched("mylib", from: "library"),
-            ]))
+        // A library's copy: delivered offline, nothing to consent to.
+        state.offlineResolver = { [unowned self] _, names, _ in
+            self.offline.append(names)
+            return .success(self.resolvePayload(names.map { $0 == "mylib" ? self.fetched("mylib", from: "library") : self.notCached($0) }))
         }
-        model.result = result(unresolved: ["lipsum", "mylib"])
+        compiled(model, unresolved: ["mylib"])
         try await settle { !state.documents().isEmpty }
         XCTAssertFalse(state.shown, "nothing to consent to")
-        XCTAssertEqual(state.unavailable["lipsum"]?.hasPrefix("needs docstrip"), true)
         XCTAssertEqual(state.documents().map(\.path), ["packages/mylib/mylib.sty"])
         XCTAssertTrue(state.rows[0].source?.contains("local library") == true, state.rows[0].source ?? "")
         XCTAssertTrue(state.rows[0].tooltip.contains("not a project file"))
-        model.result = result(unresolved: ["lipsum", "mylib"])
+        compiled(model, unresolved: ["mylib"])
         try await Task.sleep(nanoseconds: 50_000_000)
-        XCTAssertEqual(resolves, 1, "unavailable and delivered names are not re-resolved")
+        XCTAssertEqual(offline.count, 1, "delivered names are not re-resolved")
         // A failure from the helper is a note, never a sheet.
-        state.resolver = { _, _, _ in .failure(.init("no helper")) }
-        model.result = result(unresolved: ["other"])
+        state.offlineResolver = { _, _, _ in .failure(.init("no helper")) }
+        compiled(model, unresolved: ["other"])
         try await settle { state.note != nil }
         XCTAssertEqual(state.note, "Couldn't reach CTAN; check your connection, then try again.")
         XCTAssertEqual(state.errorDetails, "no helper")
         XCTAssertFalse(state.shown)
+        // What the source says is unavailable (Look Up's answer) is recorded,
+        // its offer withdrawn, and the name not asked about again.
+        state.offlineResolver = { [unowned self] _, names, _ in
+            self.offline.append(names)
+            return .success(self.resolvePayload(names.map { self.notCached($0) }))
+        }
+        var online = 0
+        state.resolver = { _, _, _ in
+            online += 1
+            return .success(self.resolvePayload(["{\"name\":\"lipsum\",\"status\":\"not_available\",\"reason\":\"needs docstrip: lipsum ships only lipsum.dtx, lipsum.ins\"}"]))
+        }
+        compiled(model, unresolved: ["lipsum"])
+        try await settle { state.shown }
+        let looked = await state.lookUp()
+        XCTAssertTrue(looked, state.note ?? "")
+        XCTAssertEqual(online, 1)
+        XCTAssertEqual(state.unavailable["lipsum"]?.hasPrefix("needs docstrip"), true)
+        XCTAssertTrue(state.offers.isEmpty)
+        let asked = offline.count
+        compiled(model, unresolved: ["lipsum"])
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(offline.count, asked, "an unavailable name is not re-resolved")
+        XCTAssertEqual(online, 1)
     }
 
     func testFetchFailureUsesFriendlyMessageAndKeepsRawDetailsCollapsedBehindTheSheetDisclosure() async throws {
@@ -314,7 +358,7 @@ final class ProjectPackagesTests: XCTestCase {
             if consent { return .failure(.init(raw)) }
             return .success(self.resolvePayload(names.map { self.needsConsent($0) }))
         }
-        model.result = result(unresolved: ["mathrsfs"])
+        compiled(model, unresolved: ["mathrsfs"])
         try await settle { state.shown }
 
         let fetched = await state.fetch()
@@ -328,8 +372,8 @@ final class ProjectPackagesTests: XCTestCase {
     func testSuccessfulResolveClearsPreviousErrorDetails() async throws {
         let model = try project(fetch: "ask")
         let state = model.projectPackages
-        state.resolver = { _, _, _ in .failure(.init("stale helper error")) }
-        model.result = result(unresolved: ["other"])
+        state.offlineResolver = { _, _, _ in .failure(.init("stale helper error")) }
+        compiled(model, unresolved: ["other"])
         try await settle { state.errorDetails != nil }
         XCTAssertEqual(state.errorDetails, "stale helper error")
 
@@ -341,7 +385,6 @@ final class ProjectPackagesTests: XCTestCase {
 
     func testNoProjectRootIsANoteAndTheHelperReplyDecodes() throws {
         let bare = ShellModel()
-        bare.detachWorker()
         bare.projectPackages.present()
         XCTAssertFalse(bare.projectPackages.shown)
         XCTAssertTrue(bare.navigationNote?.contains("Save the entry document first") == true, bare.navigationNote ?? "")

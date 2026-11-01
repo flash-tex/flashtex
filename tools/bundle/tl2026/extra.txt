@@ -1,0 +1,168 @@
+# TeX Live 2026 packages the no-TeX-Live bundle carries whole besides packages.txt
+# (tools/bundle/texbundle.py pack reads both). packages.txt is derived from what the
+# ENGINE reads over the corpora (`texbundle.py derive`); these are read by the tools the
+# engine host runs in-process (bibtex, makeindex: lane RUST-TOOLS) or by common documents
+# the corpora do not have, so no recording can find them. Hand-picked and bounded: each
+# line says why. One name per line; every one must have a free licence (the packer checks).
+
+# bibtex's standard styles plain, alpha, abbrv, unsrt, acm, apalike, ieeetr, siam, and
+# xampl.bib (\bibliographystyle{plain} with no TeX Live needs it)
+bibtex
+# makeindex's styles (latex.ist, din.ist, icase.ist, ...)
+makeindex
+# common BibTeX styles a document names only in \bibliographystyle (read by bibtex, not
+# by the engine): urlbst's plainurl/abbrvurl/alphaurl/unsrturl, apacite, chicago, and
+# harvard's agsm/dcu/kluwer
+urlbst
+apacite
+chicago
+harvard
+# common biblatex styles (thesis and journal templates; read by the engine when used):
+# IEEE, APA (7th), and biblatex-ext's ext-* styles
+biblatex-ieee
+biblatex-apa
+biblatex-ext
+# a thesis's list of symbols: nomencl.sty and the nomencl.ist makeindex reads
+nomencl
+
+# Unicode mode (XeLaTeX-compatible, flashtex-host-unicode; docs/design/xetex/PLAN.md §3.4,
+# modes U3c). Derived like packages.txt, but by the Unicode engine: `texbundle.py derive`
+# over FLASHTEX_READ_SET recordings of building xelatex.fmt and compiling
+# tools/xetex-lockstep/latex-cases, tools/xetex-pdfparity/cases and fontspec, unicode-math,
+# polyglossia, xeCJK and beamer-with-fontspec documents (MacTeX 2026's tree).
+# xelatex.ini, and what fontspec, unicode-math and their defaults read: the OpenType
+# Latin Modern Math, TECkit's tex-text.tec (xetex), unicode-data. (l3backend-xetex.def is
+# l3kernel's in the pinned tree, which packages.txt has; MacTeX's tree splits it out.)
+fontspec
+lm-math
+tex-ini-files
+unicode-data
+unicode-math
+xetex
+# the OpenType math fonts unicode-math documents name most (STIX Two, Libertinus,
+# TeX Gyre's)
+libertinus-fonts
+stix2-otf
+tex-gyre-math
+# languages and scripts: polyglossia; xeCJK with ctex's hook file and its default
+# Fandol fonts
+polyglossia
+xecjk
+ctex
+fandol
+# Since texbundle-tl2026-4: what the Unicode corpus (tools/xetex-corpus, 39 typical
+# xelatex documents) read and the bundle lacked, found by building it with no TeX
+# Live and by `texbundle.py derive` over xelatex's -recorder files of the same
+# documents. polyglossia's right-to-left languages (Arabic, Hebrew, Persian) load
+# bidi; ctex's classes load zhnumber; older templates load xltxtra, which loads
+# xunicode and realscripts.
+bidi
+zhnumber
+xltxtra
+xunicode
+realscripts
+# OpenType fonts xelatex documents name by file (fontspec, unicode-math) that the
+# bundle lacked: CM Unicode (Cyrillic and Greek Computer Modern), XITS and XITS
+# Math, Fira Math (Fira Sans is in fira), Amiri (Arabic), Culmus (Hebrew).
+cm-unicode
+xits
+firamath
+amiri
+culmus
+# the UTF-8 hyphenation patterns xelatex.fmt loads that pdflatex.fmt reads converted
+# (the core has those): every language TeX Live's language.dat names
+dehyph-exptl
+hyphen-afrikaans
+hyphen-albanian
+hyphen-ancientgreek
+hyphen-arabic
+hyphen-armenian
+hyphen-base
+hyphen-basque
+hyphen-belarusian
+hyphen-bulgarian
+hyphen-catalan
+hyphen-chinese
+hyphen-churchslavonic
+hyphen-coptic
+hyphen-croatian
+hyphen-czech
+hyphen-danish
+hyphen-dutch
+hyphen-english
+hyphen-esperanto
+hyphen-estonian
+hyphen-ethiopic
+hyphen-farsi
+hyphen-finnish
+hyphen-french
+hyphen-friulan
+hyphen-galician
+hyphen-georgian
+hyphen-german
+hyphen-greek
+hyphen-hebrew
+hyphen-hungarian
+hyphen-icelandic
+hyphen-indic
+hyphen-indonesian
+hyphen-interlingua
+hyphen-irish
+hyphen-italian
+hyphen-kazakh
+hyphen-kurmanji
+hyphen-latin
+hyphen-latvian
+hyphen-lithuanian
+hyphen-macedonian
+hyphen-mongolian
+hyphen-norwegian
+hyphen-occitan
+hyphen-piedmontese
+hyphen-polish
+hyphen-portuguese
+hyphen-romanian
+hyphen-romansh
+hyphen-russian
+hyphen-sanskrit
+hyphen-serbian
+hyphen-slovak
+hyphen-slovenian
+hyphen-spanish
+hyphen-swedish
+hyphen-thai
+hyphen-turkish
+hyphen-turkmen
+hyphen-ukrainian
+hyphen-uppersorbian
+hyphen-vietnamese
+hyphen-welsh
+# What the M3 Unicode corpus (tools/unicode-m3/corpus.json, lane M3-BUNDLE) reads and
+# the bundle lacked: tools/unicode-m3/bundle_gaps.py over TeX Live's xelatex -recorder
+# and each XDV's native fonts, in the pinned tree (unicode-m3-bundle.yml, run
+# 38201654312; since texbundle-tl2026-4). bidi, zhnumber, amiri, culmus, firamath and xits,
+# which it also needs, are listed above. Licences are the tlpdb's (the packer checks them).
+# the thuthesis template: thuthesis (lppl1.3c), and the bibunits (lppl1.3) and
+# notoccite (pd) it loads
+thuthesis
+bibunits
+notoccite
+# l3draw (xeCJK's and thuthesis's examples) and the rest of l3experimental (lppl1.3c)
+l3experimental
+# xeCJK's examples: showexpl (lppl1.2), typogrid (lppl1), Harano Aji (Japanese, ofl)
+# and UnBatang (unfonts-core, Korean, gpl2)
+showexpl
+typogrid
+haranoaji
+unfonts-core
+# unicode-math with New Computer Modern (gfl, gpl3+fe)
+newcomputermodern
+# polyglossia's manual: DejaVu (lppl1.3; on Linux xelatex takes the system's copy) and
+# GFS Complutum (Greek, ofl)
+dejavu
+gfscomplutum
+# Since texbundle-tl2026-5: Adobe's glyph list (glyphlist.txt, texglyphlist.txt), which
+# the PDF writer reads to map glyph names to Unicode for ToUnicode (M3 export lane).
+# The tlpdb records no licence: Apache-2.0 (Adobe), GPL-2.0+ (lcdf-typetools); see
+# texbundle.py NO_LICENCE_RECORDED
+glyphlist

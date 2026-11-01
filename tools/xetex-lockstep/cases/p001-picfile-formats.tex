@@ -1,0 +1,22 @@
+% p001-picfile-formats: \XeTeXpicfile of PNG, JPEG and BMP files: sizes from pHYs, JFIF, Exif and BMP resolutions
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+\input prelude
+\def\space{ }
+\setbox0=\vbox{\hbox{\XeTeXpicfile p-plain.png }
+\hbox{\XeTeXpicfile p-300dpi.png }
+\hbox{\XeTeXpicfile p-aspect.png }
+\hbox{\XeTeXpicfile p-mixed.png }
+\hbox{\XeTeXpicfile p-late-phys.png }
+\hbox{\XeTeXpicfile p-jfif-dpi.jpg }
+\hbox{\XeTeXpicfile p-jfif-dpcm.jpg }
+\hbox{\XeTeXpicfile p-jfif-aspect.jpg }
+\hbox{\XeTeXpicfile p-exif.jpg }
+\hbox{\XeTeXpicfile p-exif-cm.jpg }
+\hbox{\XeTeXpicfile p-nodpi.jpg }
+\hbox{\XeTeXpicfile p-info.bmp }
+\hbox{\XeTeXpicfile p-topdown.bmp }
+\hbox{\XeTeXpicfile p-palette.bmp }
+\hbox{\XeTeXpicfile p-core.bmp }
+}
+\lsshipbox0
+\end

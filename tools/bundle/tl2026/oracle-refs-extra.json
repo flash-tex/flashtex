@@ -1,0 +1,20 @@
+{
+ "about": "Oracle references of notex-gate documents added to the gate set after the bundle's release references were made (tools/bundle/texbundle.py merge_extra_refs). Made by `texbundle.py refs` in the pinned tree: bundle-publish.yml dry run 39532596007 (main 99a06dc01), whose other 116 references equal the release's. Applies only to bundle_digest; remove entries once a release's oracle-refs.json carries them.",
+ "bundle_digest": "9c4e31ad43288ba60dd3a485a9c373da9653ee4cb92333e31d6e2e4a89b4fa83",
+ "documents": {
+  "real-world/framed-tikz-theorems": {
+   "exit": 0,
+   "pages": 3,
+   "passes": 2,
+   "sha256": "32e3be26b34e04342e36e201902358c555e587da04039c78d2c8674bfe8f1e7e"
+  },
+  "real-world/tikzcd-shaded-notes": {
+   "exit": 0,
+   "pages": 2,
+   "passes": 2,
+   "sha256": "86c4cd62cf07b91e36084ede4b17ffc4eeb58c5610ef5d49b229c7e35d20d37a"
+  }
+ },
+ "image": "texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67",
+ "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+}

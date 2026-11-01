@@ -409,20 +409,17 @@ extension ShellModel {
     }
 
     /// Adds `\usepackage{graphicx}` to the entry document's buffer while
-    /// another document is active. Without the durable helper this is a
-    /// direct buffer write (as a multi-file rename applies to open non-active
-    /// buffers) that autosaves — and is not on any undo stack: ⌘Z in the
-    /// active editor does not remove it, which the returned note says. With
-    /// the helper attached (`helperAttached`, default `controllerAttached`)
-    /// the write would bypass its revisions, so the author is asked instead.
-    func ensureGraphicxInEntryBuffer(helperAttached: Bool? = nil) -> String? {
+    /// another document is active: a direct buffer write (as a multi-file
+    /// rename applies to open non-active buffers) that autosaves — and is not
+    /// on any undo stack: ⌘Z in the active editor does not remove it, which
+    /// the returned note says.
+    func ensureGraphicxInEntryBuffer() -> String? {
         let entry = project.entryPath
         guard entry != activePath, let i = documents.firstIndex(where: { $0.path == entry }) else { return nil }
         let text = documents[i].text
         guard let insertion = PasteImageFigure.graphicxInsertion(in: text) else {
             return PasteImageFigure.loadsGraphicx(in: text) ? nil : "Load graphicx in the root document's preamble."
         }
-        if helperAttached ?? controllerAttached { return "Add \\usepackage{graphicx} to \(entry)." }
         documents[i].text = (text as NSString).replacingCharacters(in: NSRange(location: insertion.location, length: 0), with: insertion.text)
         scheduleAutosave() // `updateActiveText` does this for the active buffer only
         return "Added \\usepackage{graphicx} to \(entry) (⌘Z here does not remove it)."

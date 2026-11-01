@@ -1,0 +1,18 @@
+% x011-charclass: \XeTeXcharclass and \XeTeXinterchartoks between character classes
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\XeTeXcharclass`a=3 \XeTeXcharclass`b=4
+\message{x011 \the\XeTeXcharclass`a \the\XeTeXcharclass`b \the\XeTeXcharclass`c}
+\XeTeXinterchartoks 3 4 {\kern1pt}
+\XeTeXinterchartoks 0 3 {\kern2pt}
+\XeTeXinterchartoks 4 4095 {\kern3pt}
+\message{x011 [\the\XeTeXinterchartoks 3 4]}
+\XeTeXinterchartokenstate=1
+\setbox0=\hbox{cab ab ba}
+\XeTeXinterchartokenstate=0
+\setbox1=\hbox{cab ab ba}
+\lsshipbox0
+\lsshipbox1
+\end

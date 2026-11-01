@@ -57,7 +57,7 @@ final class EngineV3ExportTests: XCTestCase {
     """
 
     private func startedModel(_ text: String = EngineV3ExportTests.source) async throws -> ShellModel {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)") }
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)") }
         let dir = try tempDir("project")
         let file = dir.appendingPathComponent("paper.tex")
         try text.write(to: file, atomically: true, encoding: .utf8)
@@ -66,7 +66,7 @@ final class EngineV3ExportTests: XCTestCase {
         model.engineV3Enabled = true
         let s = model.engineV3
         try await waitUntil("the host") { s.phase == .ready || { if case .failed = s.phase { true } else { false } }() }
-        guard s.phase == .ready else { throw XCTSkip("host did not start: \(s.phase)") }
+        guard s.phase == .ready else { throw EngineV3TestHost.unavailable("host did not start: \(s.phase)") }
         // The resident run converges its .aux (references resolved) before DONE.
         try await waitUntil("the first compile") { s.statusNote.hasPrefix("ok") && !s.compiling && s.pageCount == 2 }
         return model
@@ -137,7 +137,10 @@ final class EngineV3ExportTests: XCTestCase {
         // Typed while the export run is out: the third page must arrive after
         // it. (An edit typed before the run starts, while the host's copy is
         // brought up to date, is in the export: it is the text at that time.)
-        try await waitUntil("the export run to start") { s.exportRunning }
+        // (A two-page export can start and end between two 20 ms polls: its
+        // report then ends the wait too, and the edit below comes after it.)
+        try await waitUntil("the export run to start") { s.exportRunning || report != nil }
+        if !s.exportRunning, report == nil { XCTFail("the export never started: \(s.exportDebugState)") }
         model.updateActiveText(Self.source.replacingOccurrences(of: "Second page.", with: "Second page.\n\\newpage\nThird page."))
         await fulfillment(of: [done], timeout: 90)
         guard case .succeeded = report?.state else { return XCTFail("export: \(String(describing: report?.state))") }

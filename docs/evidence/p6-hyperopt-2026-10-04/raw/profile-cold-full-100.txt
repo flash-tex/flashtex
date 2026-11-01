@@ -1,0 +1,94 @@
+samples 3079, cycles 2657.0 M
+ self%  incl%  function
+ 20.76  27.46  body_2::get_next
+ 12.27  31.91  body_2::macro_call
+  6.93   7.28  hash_insert_normalized
+  6.89   7.02  body_2::end_token_list
+  4.22   4.41  body_1::id_lookup
+  3.20   3.20  body_0::get_avail
+  3.13  31.13  body_2::expand
+  2.55  87.77  body_7::main_control
+  2.28   3.58  body_1::copy_node_list
+  2.24   2.24  body_1::delete_token_ref
+  1.85  21.23  body_3::scan_toks
+  1.82   1.82  longest_match
+  1.56  11.23  body_3::conditional
+  1.47   1.47  body_0::get_node
+  1.17   5.13  mapfile::fm_read_info
+  1.13   1.74  body_1::flush_node_list
+  1.10   2.77  body_2::get_next_file
+  1.09   1.09  body_2::begin_token_list
+  0.95   1.82  read_line
+  0.78   0.78  intrinsics::holds
+  0.74   0.74  body_0::free_node
+  0.69   0.69  _platform_memmove
+  0.66   5.27  body_2::scan_general_text
+  0.60   3.02  deflate_slow
+  0.60   0.64  body_6::try_break
+  0.59   0.59  body_3::str_toks
+  0.56   2.35  intrinsics::replay
+  0.55   0.94  _xzm_free
+  0.54   0.61  body_0::search_string
+  0.51  21.77  body_7::prefixed_command
+  0.49   0.49  _xzm_xzone_malloc
+  0.46   0.46  <deduplicated_symbol>
+  0.46   1.67  mapfile::avl_do_entry
+  0.46   0.46  body_0::print_char
+  0.45   0.45  _tlv_get_addr
+  0.43   0.74  system::input_ln
+  0.42   0.42  _malloc_zone_malloc
+  0.39   0.39  compress_block
+  0.39   0.65  mapfile::read_field
+  0.37   0.37  _platform_memcmp
+  0.37   6.74  body_5::pdf_hlist_out
+  0.36   6.95  body_3::the_toks
+  0.36   1.08  body_2::back_input
+  0.35   3.08  body_2::eq_define
+  0.33   1.11  intrinsics::flashtex_intr_touch
+
+-- inclusive --
+100.00  start
+ 99.97  rt::lang_start_internal
+ 99.97  main
+ 99.97  JH2bnQ_1::flash
+ 99.97  flash::main
+ 89.52  main_body::tex_body
+ 87.77  body_7::main_control
+ 31.91  body_2::macro_call
+ 31.13  body_2::expand
+ 27.46  body_2::get_next
+ 21.77  body_7::prefixed_command
+ 21.23  body_3::scan_toks
+ 11.23  body_3::conditional
+ 10.87  body_3::conv_toks
+ 10.25  body_5::ship_out
+ 10.25  body_5::pdf_ship_out
+ 10.05  system::resolve
+ 10.01  resolver::default_resolver
+ 10.01  flashtex_kpse_format
+ 10.01  KpathseaResolver::for_texlive
+ 10.01  KpathseaResolver::new
+ 10.01  kpathsea_init_format
+ 10.01  init_path
+ 10.01  kpathsea_init_format_return_varlist
+ 10.01  system::configure
+  9.96  kpathsea_cnf_get
+  9.76  kpathsea_init_db
+  7.53  body_2::scan_int
+  7.28  hash_insert_normalized
+  7.02  body_2::end_token_list
+  6.95  body_5::pdf_vlist_out
+  6.95  body_3::the_toks
+  6.74  body_5::pdf_hlist_out
+  5.77  body_4::pdf_begin_string
+  5.28  body_4::pdf_set_font
+  5.27  body_2::scan_general_text
+  5.25  mapfile::isscalable
+  5.13  mapfile::fm_has_entry
+  5.13  body_4::pdf_init_font
+  5.13  mapfile::fm_read_info
+  4.41  body_1::id_lookup
+  3.89  mapfile::fm_scan_line
+  3.68  body_3::ins_the_toks
+  3.67  body_2::scan_left_brace
+  3.58  body_1::copy_node_list

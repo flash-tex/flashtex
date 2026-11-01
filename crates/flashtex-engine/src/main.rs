@@ -6,9 +6,19 @@ use flashtex_engine::system;
 
 fn main() {
     // Arguments that are not UTF-8 are read with replacement characters.
-    let argv: Vec<String> = std::env::args_os()
+    let mut argv: Vec<String> = std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    // Started by `flashtex_engine::os::engine_command` on Windows (the
+    // host's `--engine`, the format cache): the name it gave, as
+    // `flashtex-host` takes it, and out of the environment before any
+    // `\write18` child could inherit it.
+    #[cfg(not(feature = "tex82"))]
+    if let Some(name) = flashtex_engine::os::take_invoked_as() {
+        if let Some(a0) = argv.first_mut() {
+            *a0 = name;
+        }
+    }
     let o = flashtex_engine::cli::parse(&argv);
     system::configure(o);
     #[cfg(not(feature = "tex82"))]

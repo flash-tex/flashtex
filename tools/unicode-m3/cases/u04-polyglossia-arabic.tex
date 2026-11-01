@@ -1,0 +1,18 @@
+% Unicode corpus (M3): polyglossia with Arabic (joining, right to left),
+% Amiri by file name.
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{arabic}
+\newfontfamily\arabicfont{Amiri}[Script=Arabic, Extension=.ttf,
+  UprightFont=*-Regular, BoldFont=*-Bold, ItalicFont=*-Italic,
+  BoldItalicFont=*-BoldItalic]
+\begin{document}
+\begin{arabic}
+مرحبا بالعالم. هذا نص عربي مع \textbf{خط عريض} وأرقام ١٢٣٤. هذه فقرة
+أطول قليلا حتى تمتد على أكثر من سطر واحد ويتم اختبار تقسيم الأسطر.
+\end{arabic}
+
+English after Arabic, with \textarabic{السلام عليكم} inline.
+\end{document}

@@ -1,7 +1,0 @@
-{
-  "proposal_commit": "77477b70c34e2250feb89600321888f5b37ff6bb",
-  "proposal_path": "crates/render-pipeline/docs/proposals/display-list-v2-delta.md",
-  "proposal_sha256": "2763a930c8be86decd5c2e1bdd5f5f43f71388f56e91f4d06ca2d88f640a00a3",
-  "prior_counterexample_commit": "616ca60a",
-  "scope": "source review only; no executable gates rerun"
-}

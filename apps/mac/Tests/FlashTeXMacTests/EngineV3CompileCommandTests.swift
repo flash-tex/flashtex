@@ -3,8 +3,8 @@ import XCTest
 @testable import FlashTeXMac
 
 /// ⌘B and the auto-compile setting drive the engine-v3 preview (lane
-/// P5-APP-PARITY, gaps A1, A3, A4, A14): ⌘B compiles with the host, never the
-/// old engine; with auto-compile off, edits wait for ⌘B; an outside change to
+/// P5-APP-PARITY, gaps A1, A3, A4, A14): ⌘B compiles with the host (the only
+/// engine since S6); with auto-compile off, edits wait for ⌘B; an outside change to
 /// an unopened `\input` file recompiles; ⌘B restarts a host that stopped.
 /// The end-to-end cases need a built `flashtex-host` (skipped otherwise) and
 /// use a private v3 cache.
@@ -33,15 +33,15 @@ final class EngineV3CompileCommandTests: XCTestCase {
 
     // MARK: without a host
 
+    /// There is no old worker any more (S6): ⌘B goes to the engine's host,
+    /// and with none built it says so.
     func testCompileCommandNeverReachesTheOldWorkerUnderV3() {
         env.set("FLASHTEX_HOST", "none")
         let model = ShellModel()
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        defer { model.engineV3.stop(); model.detachWorker() }
+        defer { model.engineV3.stop() }
         model.engineV3Enabled = true
         XCTAssertTrue(model.canCompile)
         model.compileCommand()
-        XCTAssertTrue(model.inFlightRequests.isEmpty, "⌘B under v3 must not reach the old worker")
         guard case .failed(let why) = model.engineV3.phase else { return XCTFail("no host: \(model.engineV3.phase)") }
         XCTAssertTrue(why.contains("flashtex-host not found"), why)
     }
@@ -51,7 +51,7 @@ final class EngineV3CompileCommandTests: XCTestCase {
         let model = ShellModel()
         defer { model.engineV3.stop() }
         model.engineV3Enabled = false
-        XCTAssertEqual(model.canCompile, model.workerAttached)
+        XCTAssertFalse(model.canCompile, "nothing compiles while the engine's session is off")
         model.engineV3Enabled = true
         XCTAssertTrue(model.canCompile, "⌘B and the auto-compile toggle are enabled with only the v3 host")
     }
@@ -66,13 +66,13 @@ final class EngineV3CompileCommandTests: XCTestCase {
     }
 
     private func startedModel(opening file: URL) async throws -> ShellModel {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)") }
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)") }
         let model = ShellModel()
         XCTAssertEqual(model.openTex(at: file, dirty: .discard), .opened)
         model.engineV3Enabled = true
         let s = model.engineV3
         try await waitUntil("the host") { s.phase == .ready || { if case .failed = s.phase { true } else { false } }() }
-        guard s.phase == .ready else { throw XCTSkip("host did not start: \(s.phase)") }
+        guard s.phase == .ready else { throw EngineV3TestHost.unavailable("host did not start: \(s.phase)") }
         try await waitUntil("the first compile") { s.statusNote.hasPrefix("ok") && !s.compiling }
         return model
     }

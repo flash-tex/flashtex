@@ -1,0 +1,24 @@
+[package]
+name = "flashtex-xetex-teckit"
+version = "0.1.0"
+edition = "2021"
+# TeX Live 2026's TECkit 2.5.13, whose licence is "either the Common Public
+# License 0.5 (or later) or the GNU Lesser General Public License 2.1 (or
+# later)" (third_party/teckit/TECkit-src/license/LICENSING.txt). FlashTeX
+# uses it under LGPL-2.1-or-later, which is GPL-compatible; the CPL is not.
+# It is linked only into the GPL XeTeX port (docs/design/xetex/PLAN.md §3.1).
+# TeX Live's zlib (third_party/zlib) is under the zlib licence. This crate's
+# own code is GPL-2.0-or-later, like the port that links it. No Apache-2.0-only
+# code is vendored (third_party/teckit/README.md).
+license = "GPL-2.0-or-later AND LGPL-2.1-or-later AND Zlib"
+description = "TeX Live 2026's TECkit 2.5.13 conversion engine, vendored unmodified (third_party/teckit), built as TeX Live builds it, with raw FFI for the XeTeX port."
+publish = false
+build = "build.rs"
+links = "flashtex_xetex_teckit"
+
+[lib]
+name = "flashtex_xetex_teckit"
+path = "src/lib.rs"
+
+[build-dependencies]
+cc = "1"

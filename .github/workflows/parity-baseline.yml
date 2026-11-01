@@ -1,0 +1,90 @@
+# Re-record tools/parity/baseline-fixtures.json with the new engine (retirement
+# plan S5, PR #1849), by hand. It builds flashtex-initex and its formats from
+# MacTeX 2026 (scripts/engine-parity.sh build), runs the fixtures tier with
+# --write-baseline, and uploads the new baseline and the report as an artifact.
+# Nothing is committed here: a person or agent reviews the levels (against the
+# committed baseline, which this run also checks) and commits the file.
+#
+# `runner`: `hosted` is macos-15, the runner ci.yml's parity-fixtures-hosted
+# checks this baseline on while FLASHTEX_SELFHOSTED_MAC is off; `self-hosted`
+# is a team Mac (never the owner's, which the first step refuses). The
+# baseline's `host` field (#1848, RQ8) records which one it was.
+name: parity-baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "hosted (macos-15) or self-hosted (a team Mac, labels flashtex)"
+        type: choice
+        options: [hosted, self-hosted]
+        default: hosted
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: "re-record the fixtures baseline (new engine, ${{ inputs.runner }})"
+    # A dispatch only, so never a fork pull request (DESIGN §9.3).
+    runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted","macOS","ARM64","flashtex"]') || 'macos-15' }}
+    timeout-minutes: 90
+    steps:
+      - name: never on the owner's Mac
+        run: |
+          case "${RUNNER_NAME:-}" in
+            mac-m5pro-kabir*) echo "::error::$RUNNER_NAME is the owner's Mac: nothing recorded; re-run"; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: parity-engine
+      - name: TeX Live 2026 first on PATH, and qpdf
+        run: |
+          set -euo pipefail
+          if [ ! -x /Library/TeX/texbin/pdftex ] && [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ]; then
+            brew install --cask mactex-no-gui >/dev/null
+          fi
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH="/Library/TeX/texbin:$PATH"
+          command -v qpdf >/dev/null || brew install qpdf >/dev/null
+          pdftex --version | head -1
+      - name: build the new engine and its formats (release)
+        run: scripts/engine-parity.sh --work "$RUNNER_TEMP/W" build
+      - name: fixtures tier, writing the baseline
+        run: |
+          set -o pipefail
+          W="$RUNNER_TEMP/W"
+          mkdir -p "$RUNNER_TEMP/out"
+          cp tools/parity/baseline-fixtures.json "$RUNNER_TEMP/out/baseline-fixtures.before.json"
+          python3 tools/parity/parity.py --tier fixtures --raster none -j 3 \
+            --engine "$W/eng/flashtex-initex" --engine-env "FLASHTEX_FORMATS=$W/fmt" \
+            --engine-env "FLASHTEX_POOL=$W/eng/pdftex.pool" \
+            --out "$RUNNER_TEMP/out/parity" --work "$RUNNER_TEMP/parity-work" \
+            --write-baseline "$RUNNER_TEMP/out/baseline-fixtures.json"
+      - name: the new levels against the committed ones (report only)
+        if: always()
+        run: |
+          set -o pipefail
+          python3 - "$RUNNER_TEMP/out/baseline-fixtures.before.json" "$RUNNER_TEMP/out/baseline-fixtures.json" <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import collections, json, sys
+          old = json.load(open(sys.argv[1]))["levels"]
+          new = json.load(open(sys.argv[2]))["levels"]
+          print("before:", dict(collections.Counter(map(str, old.values()))))
+          print("after: ", dict(collections.Counter(map(str, new.values()))))
+          for k in sorted(set(old) | set(new)):
+              a, b = old.get(k), new.get(k)
+              if a != b:
+                  tag = "REGRESSION" if (a is not None and (b is None or b < a)) else "change"
+                  print(f"{tag} {k}: {a} -> {b}")
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-baseline-fixtures
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 30

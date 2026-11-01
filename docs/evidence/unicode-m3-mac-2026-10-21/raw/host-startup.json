@@ -1,0 +1,83 @@
+{
+ "host": "/private/tmp/claude-501/-Users-kubar-code-flashtex/440fe00e-c203-4f15-b706-f22dec3a333e/scratchpad/ubin/flashtex-host-unicode",
+ "size": 11935008,
+ "stripped_size": 10416360,
+ "sha256": "19af851e4a752a1cba3095cdb724351c13e921c17df0b1bcfff07fba1c610233",
+ "hello_ms_median": 69.2,
+ "hello_ms_min": 65.38,
+ "instructions_median": null,
+ "instructions_min": null,
+ "counter": "none",
+ "runs": [
+  {
+   "hello_ms": 67.78,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 69.03,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 69.46,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 68.16,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 65.38,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 69.46,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 69.37,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 71.22,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 68.66,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  },
+  {
+   "hello_ms": 70.94,
+   "kind": 65,
+   "exit": -15,
+   "instructions": null,
+   "hello": "{\"protocol\":\"display-list-v3\",\"version\":[3,3],\"server\":\"flashtex-host-unicode 0.1.0\",\"engine\":\"XeTeX 3.141592653-2.6-0.999998 (FlashTeX Unicode engine)\",\"capabilities\":[\"compile\",\"cancel\",\"diagnostics\",\"font-programs\",\"font-formats\",\"have-fonts\",\"export\",\"external-tools\",\"halt-on-error\",\"buffers\",\"e"
+  }
+ ]
+}

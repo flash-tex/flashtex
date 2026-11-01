@@ -205,6 +205,13 @@ fn persisted_s0_reopens() {
     let (ok, out) = host(&e, &a, &["open", s0]);
     assert!(ok, "{out}");
     assert!(out.contains("\"mode\":\"s0\""), "{out}");
+    // Unix: S0's pages are mapped into the word space, not copied
+    if cfg!(unix) {
+        assert!(
+            out.contains("\"mapped_pages\":") && !out.contains("\"mapped_pages\":0"),
+            "{out}"
+        );
+    }
     for (i, x) in ["pdf", "log", "aux"].iter().enumerate() {
         assert!(
             std::fs::read(a.join(format!("doc.{x}"))).unwrap() == before[i],

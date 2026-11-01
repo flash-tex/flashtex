@@ -71,11 +71,19 @@ pub struct Event {
     pub p: i32,
 }
 
-/// The first reads of a run, in order (see the module comment).
+/// The first reads of a run, in order (see the module comment), in
+/// segments: a new one begins where the run forgets which names it has
+/// read (`begin_segment`: at the `.aux` close, where L5's reads begin, and
+/// at a preamble restart's comparison point, `incr::PrePatch`), so that
+/// each name's first read after that point is logged again. `rs_seen` and
+/// `counts` hold the last segment's reads only.
 #[derive(Clone, Debug, Default)]
 pub struct ReadSet {
     pub events: Vec<Event>,
     counts: HashMap<u64, u32>,
+    /// Where each segment after the first begins (ascending, each below
+    /// the next and at most `events.len()`).
+    segs: Vec<usize>,
 }
 
 impl ReadSet {
@@ -96,9 +104,41 @@ impl ReadSet {
         self.counts.contains_key(&name)
     }
 
+    /// Where the last segment begins.
+    pub fn seg(&self) -> usize {
+        self.segs.last().copied().unwrap_or(0)
+    }
+
+    /// Whether a segment begins at event `n`.
+    pub fn segment_starts_at(&self, n: usize) -> bool {
+        n == 0 || self.segs.contains(&n)
+    }
+
+    /// A new segment from here on (`begin_rs_segment` forgets the names).
+    fn begin_segment(&mut self) {
+        if self.seg() < self.events.len() {
+            self.segs.push(self.events.len());
+            self.counts.clear();
+        }
+    }
+
     /// Back to the first `n` events (a restore to a checkpoint taken then).
     pub fn truncate(&mut self, n: usize) {
         if n >= self.events.len() {
+            return;
+        }
+        if self.segs.last().is_some_and(|&b| b > n) {
+            // (a segment begun after `n` goes: the counts are its
+            // predecessor's, up to `n`)
+            while self.segs.last().is_some_and(|&b| b > n) {
+                self.segs.pop();
+            }
+            self.events.truncate(n);
+            let mut counts: HashMap<u64, u32> = HashMap::new();
+            for e in &self.events[self.seg()..] {
+                *counts.entry(e.name).or_default() += 1;
+            }
+            self.counts = counts;
             return;
         }
         for e in &self.events[n..] {
@@ -114,11 +154,28 @@ impl ReadSet {
 
     /// A read-set holding `events`.
     pub fn from_events(events: Vec<Event>) -> ReadSet {
+        ReadSet::from_parts(events, vec![])
+    }
+
+    /// A read-set holding `events`, in segments beginning at `segs`.
+    pub fn from_parts(events: Vec<Event>, mut segs: Vec<usize>) -> ReadSet {
+        segs.retain(|&b| b > 0 && b <= events.len());
+        segs.dedup();
+        let from = segs.last().copied().unwrap_or(0);
         let mut counts: HashMap<u64, u32> = HashMap::new();
-        for e in &events {
+        for e in &events[from..] {
             *counts.entry(e.name).or_default() += 1;
         }
-        ReadSet { events, counts }
+        ReadSet {
+            events,
+            counts,
+            segs,
+        }
+    }
+
+    /// Where the segments after the first begin.
+    pub fn segments(&self) -> &[usize] {
+        &self.segs
     }
 
     /// The first event at or after `from` that reads one of `names`.
@@ -907,11 +964,29 @@ fn insert(g: &mut Globals, name: &Name) -> Result<i32, String> {
     Ok(p)
 }
 
-/// The key of the name of `eqtb` slot `p` in the live state.
+/// The key of the name of `eqtb` slot `p` in the live state: `View::name`'s
+/// name (`Name::Fixed(p)` for an empty hash slot) and `Name::key`, read from
+/// the live arrays directly, without building the name. The read-set records
+/// it at every first read, and `rebuild_seen` for every event at each restore
+/// of a checkpoint a convergence kept: tens of thousands of events on a book,
+/// where building each name was most of a restore (P6-HYPEROPT).
 fn name_key(g: &Globals, p: i32) -> u64 {
-    match View::live(g).ok().and_then(|v| v.name(p)) {
-        Some(n) => n.key(),
-        None => Name::Fixed(p).key(),
+    if p < SINGLE_BASE {
+        key(b'A', std::iter::once((p - 1) as u8))
+    } else if p < NULL_CS {
+        key(b'S', std::iter::once((p - SINGLE_BASE) as u8))
+    } else if p == NULL_CS {
+        key(b'N', std::iter::empty())
+    } else if !(FROZEN_CONTROL_SEQUENCE..=EQTB_SIZE).contains(&p) {
+        let t = g.hash[(p - HASH_BASE) as usize].rh();
+        if t > 0 {
+            let (a, b) = (g.str_start[t as usize], g.str_start[t as usize + 1]);
+            key(b'M', (a..b.max(a)).map(|k| g.str_pool[k as usize] as u8))
+        } else {
+            key(b'F', p.to_le_bytes().into_iter())
+        }
+    } else {
+        key(b'F', p.to_le_bytes().into_iter())
     }
 }
 
@@ -934,22 +1009,82 @@ pub fn rebuild_seen(g: &mut Globals) {
     // restore of a checkpoint that a convergence kept runs this (lane
     // P4-EDIT-LATENCY: 1.04 -> 0.93 ms at 8,419 events).
     let events = std::mem::take(&mut g.layer().rs.events);
-    let seen: Vec<usize> = {
-        let v = View::live(g).ok();
-        let key = |p: i32| match v.as_ref().and_then(|v| v.name(p)) {
-            Some(n) => n.key(),
-            None => Name::Fixed(p).key(),
-        };
-        events
-            .iter()
-            .filter(|e| e.p > 0 && (e.p as usize) < n && key(e.p) == e.name)
-            .map(|e| e.p as usize)
-            .collect()
-    };
+    let from = g.layer().rs.seg().min(events.len());
+    let seen: Vec<usize> = events[from..]
+        .iter()
+        .filter(|e| e.p > 0 && (e.p as usize) < n && name_key(g, e.p) == e.name)
+        .map(|e| e.p as usize)
+        .collect();
     g.layer().rs.events = events;
     for p in seen {
         g.rs_seen[p] = true;
     }
+}
+
+/// `rebuild_seen`, giving the bytes of `rs_seen` it changed from what the
+/// state held (slot, value): the restore of one checkpoint changes the same
+/// bytes every time, so the session keeps them (`incr::SeenMemo`).
+pub fn rebuild_seen_diff(g: &mut Globals) -> Vec<(u32, u8)> {
+    let n = g.rs_seen.len();
+    let off = g
+        .arena
+        .regions
+        .iter()
+        .find(|r| r.name == "rs_seen")
+        .map(|r| r.off);
+    let Some(off) = off else { return vec![] };
+    let events = std::mem::take(&mut g.layer().rs.events);
+    let from = g.layer().rs.seg().min(events.len());
+    let mut want = vec![0u8; n];
+    for e in &events[from..] {
+        if e.p > 0 && (e.p as usize) < n && name_key(g, e.p) == e.name {
+            want[e.p as usize] = 1;
+        }
+    }
+    g.layer().rs.events = events;
+    let diff: Vec<(u32, u8)> = g
+        .arena
+        .read(off, n)
+        .iter()
+        .zip(&want)
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .map(|(i, (_, &b))| (i as u32, b))
+        .collect();
+    apply_seen_diff(g, &diff);
+    diff
+}
+
+/// Write bytes of `rs_seen` (`rebuild_seen_diff`'s).
+pub fn apply_seen_diff(g: &mut Globals, diff: &[(u32, u8)]) {
+    for &(p, v) in diff {
+        g.rs_seen[p as usize] = v != 0;
+    }
+}
+
+/// Begin a new segment of the read-set (`ReadSet::begin_segment`): the
+/// names the last one read are forgotten (`rs_seen` cleared for each of
+/// its events: every name `rs_seen` marks is one of them), so that each
+/// one's next read is logged again.
+pub fn begin_rs_segment(g: &mut Globals) {
+    let n = g.rs_seen.len();
+    let slots: Vec<usize> = {
+        let rs = &g.layer().rs;
+        rs.events[rs.seg().min(rs.events.len())..]
+            .iter()
+            .filter(|e| e.p > 0 && (e.p as usize) < n)
+            .map(|e| e.p as usize)
+            .collect()
+    };
+    for p in slots {
+        g.rs_seen[p] = false;
+    }
+    g.layer().rs.begin_segment();
+}
+
+/// The read-set's events (`incr::SeenMemo` keys its rebuilds by them).
+pub fn events(g: &mut Globals) -> &[Event] {
+    &g.layer().rs.events
 }
 
 impl Globals {

@@ -1,0 +1,80 @@
+    17.78%  [.] <flashtex_engine::generated::globals::Globals>::macro_call                                                                                      
+    13.14%  [.] <flashtex_engine::generated::globals::Globals>::get_next_slow                                                                                   
+    11.36%  [.] <flashtex_engine::generated::globals::Globals>::expand                                                                                          
+     5.90%  [.] <flashtex_engine::generated::globals::Globals>::pass_text                                                                                       
+     4.85%  [.] <flashtex_engine::generated::globals::Globals>::scan_toks                                                                                       
+     4.57%  [.] <flashtex_engine::generated::globals::Globals>::dl_note_node                                                                                    
+     3.29%  [.] <flashtex_engine::generated::globals::Globals>::conditional                                                                                     
+     2.89%  [.] <flashtex_engine::generated::globals::Globals>::main_control                                                                                    
+     2.62%  [.] flashtex_engine::arena::pack_words                                                                                                              
+     2.41%  [.] <flashtex_engine::generated::globals::Globals>::id_lookup                                                                                       
+     2.33%  [.] <flashtex_engine::generated::globals::Globals>::prefixed_command                                                                                
+     1.86%  [.] <flashtex_engine::arena::Arena>::checkpoint                                                                                                     
+     1.52%  [.] <flashtex_engine::generated::globals::Globals>::get_node                                                                                        
+     1.39%  [.] <flashtex_engine::generated::globals::Globals>::eq_destroy                                                                                      
+     1.21%  [.] flashtex_engine::arena::get_half                                                                                                                
+     1.18%  [.] <hashbrown::map::HashMap<i32, flashtex_engine::diag::Def, core::hash::BuildHasherDefault<flashtex_engine::iso::FastHasher>>>::insert            
+     1.11%  [.] <flashtex_engine::generated::globals::Globals>::scan_int                                                                                        
+     1.11%  [.] <flashtex_engine::arena::Delta>::unpack                                                                                                         
+     1.05%  [.] <flashtex_engine::generated::globals::Globals>::copy_node_list                                                                                  
+     1.02%  [.] <flashtex_engine::generated::globals::Globals>::scan_keyword                                                                                    
+     1.00%  [.] <flashtex_engine::generated::globals::Globals>::scan_dimen                                                                                      
+     0.95%  [.] <std::thread::local::LocalKey<core::cell::RefCell<flashtex_engine::diag::St>>>::with::<flashtex_engine::diag::with<core::option::Option<u32>, <f
+     0.85%  [.] flashtex_engine::arena::merge_sealed                                                                                                            
+     0.80%  [.] <flashtex_engine::generated::globals::Globals>::eq_define                                                                                       
+     0.77%  [.] <std::thread::local::LocalKey<core::cell::RefCell<flashtex_engine::lineshift::St>>>::with::<flashtex_engine::lineshift::with<bool, <flashtex_eng
+     0.68%  [.] <flashtex_engine::generated::globals::Globals>::get_r_token                                                                                     
+     0.64%  [.] <flashtex_engine::generated::globals::Globals>::free_node                                                                                       
+     0.60%  [.] <flashtex_engine::generated::globals::Globals>::dg_def                                                                                          
+     0.51%  [.] <flashtex_engine::lineshift::ST::{K#0}::{closure#0} as core::ops::function::FnOnce<(core::option::Option<&mut core::option::Option<core::cell::R
+     0.51%  [.] <flashtex_engine::generated::globals::Globals>::str_toks                                                                                        
+     0.46%  [.] flashtex_engine::diag::with::<(), <flashtex_engine::generated::globals::Globals>::dg_def_begin::{closure#0}>                                    
+     0.42%  [.] <flashtex_engine::generated::globals::Globals>::scan_optional_equals                                                                            
+     0.41%  [.] <flashtex_engine::generated::globals::Globals>::conv_toks                                                                                       
+     0.40%  [.] <flashtex_engine::generated::globals::Globals>::unsave                                                                                          
+     0.39%  [.] <flashtex_engine::generated::globals::Globals>::the_toks                                                                                        
+     0.36%  [.] <flashtex_engine::generated::globals::Globals>::x_token                                                                                         
+     0.35%  [.] __memmove_avx512_unaligned_erms                                                                                                                 
+     0.30%  [.] <flashtex_engine::generated::globals::Globals>::dg_def_begin                                                                                    
+     0.26%  [.] <flashtex_engine::generated::globals::Globals>::print_char                                                                                      
+     0.25%  [.] <flashtex_engine::generated::globals::Globals>::ls_use_slow                                                                                     
+     0.24%  [.] <std::thread::local::LocalKey<core::cell::RefCell<flashtex_engine::boxmemo::Seen>>>::with::<<flashtex_engine::generated::globals::Globals>::flas
+     0.24%  [.] <flashtex_engine::generated::globals::Globals>::delete_sa_ref                                                                                   
+     0.23%  [.] <flashtex_engine::generated::globals::Globals>::eq_save                                                                                         
+     0.22%  [.] <flashtex_engine::generated::globals::Globals>::flashtex_bm_call                                                                                
+     0.19%  [.] <flashtex_engine::generated::globals::Globals>::bm_push_list                                                                                    
+     0.16%  [.] <flashtex_engine::generated::globals::Globals>::scan_something_internal                                                                         
+     0.15%  [.] <flashtex_engine::generated::globals::Globals>::print                                                                                           
+     0.15%  [.] <flashtex_engine::generated::globals::Globals>::ls_toks_done                                                                                    
+     0.15%  [.] <flashtex_engine::generated::globals::Globals>::ins_the_toks                                                                                    
+     0.15%  [.] <flashtex_engine::generated::globals::Globals>::flush_node_list                                                                                 
+     0.14%  [.] <flashtex_engine::generated::globals::Globals>::show_token_list                                                                                 
+     0.13%  [.] <flashtex_engine::displaylist::interp::Interp<flashtex_engine::displaylist::Recording>>::run                                                    
+     0.13%  [.] core::slice::sort::unstable::quicksort::quicksort::<(u32, *mut u64), <[(u32, *mut u64)]>::sort_unstable_by_key<u32, <flashtex_engine::arena::Cor
+     0.11%  [.] <flashtex_engine::pdftex::shared::Shared<flashtex_engine::pdftex::vfpacket::State> as core::ops::deref::DerefMut>::deref_mut                    
+     0.11%  [.] <flashtex_engine::generated::globals::Globals>::scan_general_text                                                                               
+     0.11%  [.] <flashtex_engine::generated::globals::Globals>::flashtex_id_read                                                                                
+     0.11%  [.] do_rallocx                                                                                                                                      
+     0.10%  [.] <flashtex_engine::generated::globals::Globals>::hpack                                                                                           
+     0.10%  [.] <flashtex_engine::generated::globals::Globals>::do_register_command                                                                             
+     0.09%  [.] <std::thread::local::LocalKey<core::cell::RefCell<flashtex_engine::lineshift::St>>>::with::<flashtex_engine::lineshift::with<usize, <flashtex_en
+     0.09%  [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&usize>                                                                 
+     0.09%  [.] <flashtex_engine::diag::ST::{K#0}::{closure#0} as core::ops::function::FnOnce<(core::option::Option<&mut core::option::Option<core::cell::RefCel
+     0.09%  [.] core::slice::sort::shared::smallsort::small_sort_general::<(u32, *mut u64), <[(u32, *mut u64)]>::sort_unstable_by_key<u32, <flashtex_engine::are
+     0.08%  [.] <std::thread::local::LocalKey<core::cell::RefCell<flashtex_engine::diag::St>>>::with::<flashtex_engine::diag::with<(), <flashtex_engine::generat
+     0.08%  [.] <flashtex_engine::displaylist::interp::Interp<flashtex_engine::displaylist::Recording>>::show                                                   
+     0.06%  [.] std::sys::backtrace::__rust_begin_short_backtrace::<<flashtex_engine::arena::Core>::rewind::{closure#3}::{closure#0}, ()>                       
+     0.06%  [.] <flashtex_engine::lineshift::ST::{K#0}::{closure#0} as core::ops::function::FnOnce<(core::option::Option<&mut core::option::Option<core::cell::R
+     0.06%  [.] <flashtex_engine::generated::globals::Globals>::new_save_level                                                                                  
+     0.06%  [.] <flashtex_engine::arena::Core>::save                                                                                                            
+     0.05%  [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32>                                                                   
+     0.05%  [.] _rjem_je_arena_ralloc                                                                                                                           
+     0.05%  [.] __memcmp_evex_movbe                                                                                                                             
+     0.05%  [.] <flashtex_engine::generated::globals::Globals>::scan_left_brace                                                                                 
+     0.05%  [.] <flashtex_engine::generated::globals::Globals>::pdf_print                                                                                       
+     0.05%  [.] <flashtex_engine::generated::globals::Globals>::pdf_hlist_out                                                                                   
+     0.05%  [.] <flashtex_engine::generated::globals::Globals>::input_ln                                                                                        
+     0.05%  [.] <flashtex_engine::generated::globals::Globals>::get_next_file                                                                                   
+     0.05%  [.] <flashtex_engine::generated::globals::Globals>::geq_define                                                                                      
+     0.05%  [.] flashtex_engine::diag::with::<core::option::Option<(u32, i32, i32)>, <flashtex_engine::generated::globals::Globals>::dg_def::{closure#0}>       
+     0.05%  [.] <core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write                                                            

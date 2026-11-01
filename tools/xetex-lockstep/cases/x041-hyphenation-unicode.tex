@@ -1,0 +1,11 @@
+% x041-hyphenation-unicode: \hyphenation and patterns with characters above 255
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\lccode`é=`é \lccode`ü=`ü
+\patterns{1b1 é1t}
+\hyphenation{über-wür-de}
+\font\x=cmr10 \x \hyphenchar\x=`- \hsize=1pt \parindent=0pt \pretolerance=-1 \hyphenpenalty=0
+\setbox0=\vbox{\noindent abab cbétb überwürde}
+\lsshipbox0
+\end

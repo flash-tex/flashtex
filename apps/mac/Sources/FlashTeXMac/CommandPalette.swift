@@ -8,8 +8,8 @@ import FlashTeXAccessibility
 /// keyboard. The table is the single source: a command that is not in it is
 /// not in the palette, and the palette can only run what a menu item or
 /// window already does (`CommandPaletteModel.perform`). Editor keys
-/// (completion, toggle comment, signature help, the preview click, ⌘G in the
-/// search window) are listed as hints and cannot be run from here.
+/// (completion, toggle comment, signature help, the preview click) are
+/// listed as hints and cannot be run from here.
 enum CommandPaletteModel {
     struct Row: Identifiable, Equatable {
         let entry: AccessibilityCommand.Entry
@@ -17,9 +17,9 @@ enum CommandPaletteModel {
         var runnable: Bool { CommandPaletteModel.isRunnable(entry.command) }
     }
 
-    /// Commands the palette cannot run: they are keys inside the editor, a
-    /// mouse action on the preview, or a key that only the search window has.
-    static let notRunnable: Set<AccessibilityCommand> = [.completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch]
+    /// Commands the palette cannot run: they are keys inside the editor or a
+    /// mouse action on the preview.
+    static let notRunnable: Set<AccessibilityCommand> = [.completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource]
 
     static func isRunnable(_ command: AccessibilityCommand) -> Bool { !notRunnable.contains(command) }
 
@@ -94,11 +94,6 @@ enum CommandPaletteModel {
         case .save: model.saveTexInteractive()
         case .saveAs: _ = model.saveTexAs()
         case .showInFinder: model.showActiveDocumentInFinder() // RevealInFinder.swift
-        case .openFixture: model.openFixturePanel()
-        case .reloadFixture: model.reloadFixture()
-        case .attachBuiltCompiler: _ = model.attachDiscoveredWorker()
-        case .attachRenderPipeline: _ = model.attachDiscoveredRenderPipeline()
-        case .attachWorker: model.attachWorkerPanel()
         case .compile: model.compileCommand()
         case .stopCompile: model.engineV3.stopCompile()
         case .exportPDF: model.exportPDF()
@@ -128,7 +123,7 @@ enum CommandPaletteModel {
         case .trimTrailingWhitespace: EditorLineCommandAction.trimTrailingWhitespace()
         case .reindentLines: EditorIndentationAction.reindentLines()
         case .reindentDocument: EditorIndentationAction.reindentDocument()
-        case .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource, .nextSearchMatch: return false
+        case .completion, .completionList, .toggleComment, .signatureHelp, .selectPreviewItemSource: return false
         case .goToMatching: model.goToMatching()
         case .goToDefinition: model.goToDefinition() // ShellModel+EditorNavigation.swift
         case .goToSymbol: model.editorNavigation.symbolPickerShown = true
@@ -153,9 +148,6 @@ enum CommandPaletteModel {
         case .copyDiagnosticsAsText: _ = model.copyDiagnosticsAsText(panel: model.problemsPanel)
         case .revealCaretInPreview: model.revealCaretInPreview()
         case .accessibilityHelp: openWindow(id: AccessibilityHelpView.windowID)
-        case .durableHistory: openWindow(id: EditHistoryPanel.windowID)
-        case .findInProject: openWindow(id: ProjectSearch.windowID)
-        case .renameCitation: openWindow(id: CitationRename.windowID)
         case .commandPalette: model.commandPaletteShown.toggle()
         case .toggleProblems: model.problemsVisible.toggle()
         case .toggleCaptures: model.captureInboxVisible.toggle() // CaptureInbox.swift
