@@ -4331,6 +4331,15 @@ impl Session {
                 }
             }
             v.push(("old_cache".into(), g.arena.old_cache_bytes() as i64));
+            for (name, n) in g.arena.chain_words_by_region() {
+                v.push((format!("logw_{name}"), n as i64));
+            }
+            for (k, c) in ["deadlog_all", "deadlog_mem", "deadlog_dead"]
+                .iter()
+                .zip(crate::checkpoint::DEADLOG.iter())
+            {
+                v.push((k.to_string(), c.load(std::sync::atomic::Ordering::Relaxed) as i64));
+            }
         }
         v.push(("pages".into(), self.pages.len() as i64));
         v.push((

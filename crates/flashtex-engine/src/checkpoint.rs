@@ -425,6 +425,14 @@ pub fn drop_spare_tails() {
 }
 
 /// Bytes the spare tail buffers hold (memory accounting).
+/// Measurement only (`Globals::deadlog_measure`): sealed words, those in
+/// `mem`, and those dead in the state their log restores.
+pub static DEADLOG: [std::sync::atomic::AtomicU64; 3] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+
 pub fn spare_tail_bytes() -> usize {
     SPARE_TAILS.with(|s| s.borrow().values().map(|v| v.capacity()).sum())
 }
@@ -1085,7 +1093,82 @@ impl Globals {
             *l.stats.dirty_by_region.entry(k).or_default() += v as u64;
         }
         l.records.push((id, ext));
+        self.deadlog_measure(id);
         Ok(id)
+    }
+
+    /// Measurement only (lane MEMORY, FLASHTEX_DEADLOG=1): of each sealed
+    /// log, how many words are `mem` words that were dead in the state it
+    /// restores (the interiors of the variable-size free blocks and the
+    /// unused zones; the free lists' own words are not counted).
+    fn deadlog_measure(&mut self, id: CheckpointId) {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var_os("FLASHTEX_DEADLOG").is_some()) {
+            return;
+        }
+        thread_local! {
+            static PREV: std::cell::RefCell<Option<(CheckpointId, Vec<u64>)>> =
+                const { std::cell::RefCell::new(None) };
+        }
+        let Some((off, bytes)) = self
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "mem")
+            .map(|r| (r.off, r.bytes))
+        else {
+            return;
+        };
+        PREV.with(|p| {
+            if let Some((pid, bits)) = p.borrow().as_ref() {
+                if let Some((a, i, d)) = self.arena.last_sealed_dead(*pid, off, bytes, bits) {
+                    DEADLOG[0].fetch_add(a as u64, std::sync::atomic::Ordering::Relaxed);
+                    DEADLOG[1].fetch_add(i as u64, std::sync::atomic::Ordering::Relaxed);
+                    DEADLOG[2].fetch_add(d as u64, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        });
+        let n = crate::generated::consts::mem_max as usize + 1;
+        let mut bits = vec![0u64; n.div_ceil(64)];
+        let set = |bits: &mut Vec<u64>, lo: usize, hi: usize| {
+            let hi = hi.min(n);
+            let mut q = lo;
+            while q < hi {
+                if q & 63 == 0 && q + 64 <= hi {
+                    bits[q >> 6] = u64::MAX;
+                    q += 64;
+                } else {
+                    bits[q >> 6] |= 1 << (q & 63);
+                    q += 1;
+                }
+            }
+        };
+        let rh = |w: u64| (w & 0xFFFF_FFFF) as u32 as i32;
+        let lh = |w: u64| (w >> 32) as u32 as i32;
+        let (rover, lo_max, hi_min, mem_end) = (self.rover, self.lo_mem_max, self.hi_mem_min, self.mem_end);
+        if rover > 0 {
+            let mut p = rover;
+            let mut steps = 0;
+            loop {
+                if p <= 0 || p >= lo_max || steps > n {
+                    break;
+                }
+                let w = self.mem[p as usize].to_bits();
+                let size = lh(w);
+                if rh(w) as u32 != 268_435_455 || size <= 0 || p + size > lo_max {
+                    break;
+                }
+                set(&mut bits, p as usize + 2, (p + size) as usize);
+                p = rh(self.mem[p as usize + 1].to_bits());
+                steps += 1;
+                if p == rover {
+                    break;
+                }
+            }
+        }
+        set(&mut bits, (lo_max + 1).max(0) as usize, hi_min.max(0) as usize);
+        set(&mut bits, (mem_end + 1).max(0) as usize, n);
+        PREV.with(|p| *p.borrow_mut() = Some((id, bits)));
     }
 
     /// Memory accounting (`crate::memstat`, lane P4-MEMORY): the word

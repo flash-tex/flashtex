@@ -2877,6 +2877,66 @@ impl Arena {
 
     /// The chunks the open log holds (written since the newest checkpoint),
     /// counted by the array each starts in, most first.
+    /// Measurement only (lane MEMORY): the live chain's sealed words by the
+    /// array each delta's chunk starts in.
+    pub fn chain_words_by_region(&self) -> Vec<(&'static str, usize)> {
+        let core = self.core();
+        let mut counts = vec![0usize; self.regions.len()];
+        for log in &core.logs {
+            for d in &log.deltas {
+                let at = (d.c as usize) << CHUNK_SHIFT;
+                let r = match self.regions.binary_search_by(|r| r.off.cmp(&at)) {
+                    Ok(i) => i,
+                    Err(i) => i.saturating_sub(1),
+                };
+                if let Some(n) = counts.get_mut(r) {
+                    *n += d.len();
+                }
+            }
+        }
+        let mut v: Vec<(&'static str, usize)> = counts
+            .iter()
+            .enumerate()
+            .filter(|(_, &n)| n > 0)
+            .map(|(r, &n)| (self.regions[r].name, n))
+            .collect();
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
+        v
+    }
+
+    /// Measurement only (lane MEMORY): of the sealed log just before the open
+    /// one, if its checkpoint is `id`: (its words, those in the `bytes` at
+    /// byte `off` of the space, and of those the words whose bit is set in
+    /// `dead`, indexed from `off` in words).
+    pub fn last_sealed_dead(&self, id: CheckpointId, off: usize, bytes: usize, dead: &[u64]) -> Option<(usize, usize, usize)> {
+        let core = self.core();
+        let n = core.logs.len();
+        if n < 2 || core.ids.get(n - 2) != Some(&id) {
+            return None;
+        }
+        let (mut all, mut inr, mut dd) = (0, 0, 0);
+        for d in &core.logs[n - 2].deltas {
+            let base = (d.c as usize) << CHUNK_SHIFT;
+            for (mi, &m) in d.mask.iter().enumerate() {
+                let mut m = m;
+                while m != 0 {
+                    let b = m.trailing_zeros() as usize;
+                    m &= m - 1;
+                    all += 1;
+                    let at = base + (mi * 64 + b) * 8;
+                    if at >= off && at < off + bytes {
+                        inr += 1;
+                        let p = (at - off) / 8;
+                        if dead.get(p >> 6).is_some_and(|w| w >> (p & 63) & 1 == 1) {
+                            dd += 1;
+                        }
+                    }
+                }
+            }
+        }
+        Some((all, inr, dd))
+    }
+
     pub fn open_log_by_region(&self) -> Vec<(&'static str, usize)> {
         let core = self.core();
         let mut counts = vec![0usize; self.regions.len()];

@@ -24,7 +24,7 @@ python3 tools/incr-bench/mkdocs.py >/dev/null
 python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null || echo "mkbook infdesc-x2 failed" >&2
 J=$OUT/prof.jsonl
 P=$S/prof.py
-DOCS=${DOCS:-"plain-1000 full-1000 infdesc-x2 metropolis arxiv"}
+DOCS=${DOCS:-"plain-1000 full-1000 infdesc-x2 metropolis arxiv"}; DOCS=${DOCS//,/ }
 for d in $DOCS; do
   case $d in
     plain-1000|full-1000)
@@ -33,6 +33,11 @@ for d in $DOCS; do
       ed=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("edit",""))' "$IB/docs/infdesc-x2/doc.json")
       python3 "$P" "$ENG" infdesc-x2 "$J" --src "$IB/docs/infdesc-x2" --edit "$ed" --pages 0,0 \
         --keys "${KEYS:-8}" || echo "infdesc-x2 failed" ;;
+    lowmem)
+      python3 "$P" "$ENG" full-1000 "$J" --pages 0,300,600,999 --keys "${KEYS:-8}" --profile low-memory || true
+      ed=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("edit",""))' "$IB/docs/infdesc-x2/doc.json")
+      python3 "$P" "$ENG" infdesc-x2 "$J" --src "$IB/docs/infdesc-x2" --edit "$ed" --pages 0,0 \
+        --keys "${KEYS:-8}" --profile low-memory || true ;;
     metropolis)
       python3 "$P" "$ENG" metropolis "$J" --src "$W/fixtures/beamer-v3/metropolis" --pages 0,2 \
         --keys "${KEYS:-8}" || echo "metropolis failed" ;;
