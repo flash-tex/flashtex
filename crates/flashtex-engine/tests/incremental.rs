@@ -6484,3 +6484,66 @@ fn a_link_broken_across_lines_does_not_stop_convergence() {
         runs[1]
     );
 }
+
+/// Lane REVIEW-INCR: a file the edit makes the run write, which the old run
+/// looked for later and did not find. A failed lookup leaves no read of a
+/// file in the journal, so the convergence test's barrier for a file the
+/// runs write (DESIGN.md §5.3) never saw it, and the lookups were checked
+/// only at the compile's start, before the new run wrote the file: a
+/// convergence before the lookup kept the old run's "missing" answer. (The
+/// file is named like a font loaded before it, `cmr12`: web2c's `end_name`
+/// then reuses that string, and the write leaves the pool as it was; a new
+/// name stays in the pool, and the states never meet again.) One pass, and
+/// every compile equals scratch runs.
+#[test]
+fn a_file_the_edit_writes_that_the_old_run_did_not_find_later() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("written-not-found");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // (a font loaded just after the write in both versions: the last file
+    // name packed, `name_of_file`, is the same again in both runs)
+    let doc = |write: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\newwrite\\w\n\\begin{document}\n");
+        for i in 0..120 {
+            if i == 4 {
+                s.push_str("\\font\\probefont=cmr12 at 13pt\\relax\n");
+                if write {
+                    s.push_str(
+                        "\\immediate\\openout\\w=cmr12.tex \\immediate\\write\\w{Data from the \
+                         write.}\\immediate\\closeout\\w\n",
+                    );
+                }
+                s.push_str("\\font\\probefontb=cmr10 at 15pt\\relax\n");
+            }
+            if i == 100 {
+                s.push_str("\\IfFileExists{cmr12.tex}{\\input{cmr12.tex}}{Missing data.}\n\n");
+            }
+            s.push_str(&para(i, "lorem"));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(false))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc(true))],
+        "a write added before a lookup that found nothing",
+    );
+    // (without the rule the first pass converged at page 2 with the old
+    // run's "Missing data." on page 5, streamed it, and a second pass, its
+    // lookups made again (`dirty`), put the page right)
+    assert_eq!(field(&r, "passes"), "1", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+}
