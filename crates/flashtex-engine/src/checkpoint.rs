@@ -2136,7 +2136,8 @@ impl Globals {
 
     /// `\pdffilesize` or `\pdffilemoddate` read `path` whole: in the body,
     /// with segment checkpoints on, one of the first `FILE_READ_POINTS`
-    /// such reads of one of the user's files asks for a `Point::FileRead`
+    /// such reads of one of the user's files, not one the engine writes
+    /// (`system::is_own_output`), asks for a `Point::FileRead`
     /// at the next `build_page` (LaTeX's `\input` and `\include` take a
     /// file's size once or twice, `\__file_seen_` aside; a document reading
     /// one size in a loop asks a few times only, so retention, which keeps
@@ -2145,6 +2146,7 @@ impl Globals {
         if self.ckpt_on_segment == REQ_SEGMENT
             && self.layer_ref().is_some_and(|l| l.s0.is_some())
             && system::is_user_file(path)
+            && !system::is_own_output(path)
             && system::whole_reads_of(path) <= FILE_READ_POINTS
         {
             self.layer().file_read_due = true;

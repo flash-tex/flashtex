@@ -145,7 +145,9 @@ page checkpoint before the `\input` and P1 is the end of the section's first pag
   (`thin`) keeps these checkpoints as it keeps the preamble's line checkpoints. Only the first
   `FILE_READ_POINTS` = 4 whole reads of a file ask for one (the journal, cut back at every
   restore, counts them), so a document that reads a size in a loop keeps a few per file; LaTeX
-  takes a file's size once or twice per `\input` or `\include`.
+  takes a file's size once or twice per `\input` or `\include`. The engine's own outputs (the
+  `.aux` and `.toc` that `\end{document}` and `\tableofcontents` read; `system::is_own_output`)
+  ask for none: what a run reads of one changes with every pass.
 - **The rule.** The candidates for P1 are, in order, the old run's read points between P0 and the
   page checkpoint, then the page checkpoint, as before. The first candidate for which the window
   P0..P1 covers the changed file's reads (P1 passes `consumed_nothing_changed` with it left out)
