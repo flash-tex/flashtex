@@ -3960,7 +3960,7 @@ impl Session {
                 let f = g.record_of(s0.id).and_then(|r0| {
                     let t = Instant::now();
                     let f = f?;
-                    f.check(&s0.key, &r0, clock, &first_line, stop_at)?;
+                    f.check(&s0.key, &r0, orep.gen, clock, &first_line, stop_at)?;
                     s1_ms.push(("check", ms(t)));
                     let t = Instant::now();
                     let reads = f.journal_reads()?;

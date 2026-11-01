@@ -979,6 +979,7 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
     }
     let mut head = vec![];
     MAGIC.to_vec().enc(&mut head);
+    new_generation().enc(&mut head);
     key.enc(&mut head);
     rec.enc(&mut head);
     outputs.enc(&mut head);
@@ -1155,6 +1156,7 @@ pub fn read_s0(
         if Vec::<u8>::dec(&mut r)? != MAGIC {
             return Err("not an S0 file".into());
         }
+        let gen = <[u64; 2]>::dec(&mut r)?;
         let key = Key::dec(&mut r)?;
         if key.build != engine_build() {
             return Err("S0 was saved by another engine build".into());
@@ -1258,6 +1260,7 @@ pub fn read_s0(
             total_s: t0.elapsed().as_secs_f64(),
             chunks: present.len(),
             mapped_pages,
+            gen,
         };
         Ok((g, S0 { id, key }, rep))
     }
@@ -1266,8 +1269,39 @@ pub fn read_s0(
 // (v4: the key's reads at the document's start, `Key::arm`; v5: the pages,
 // page-aligned, `S0_PAGE`; v6: the key's stat signatures hold the change
 // time, `StatSig::ctime_ns`; v7: the records hold READ-TRACK's counts,
-// `crate::dormant::Dorm`)
-const MAGIC: &[u8] = b"flashtex S0 v7";
+// `crate::dormant::Dorm`; v8: each save's generation, `new_generation`)
+const MAGIC: &[u8] = b"flashtex S0 v8";
+
+/// A new save's generation: 128 random bits (the system's generator; where
+/// it cannot be read, a hash of the process, the time and a counter). It
+/// follows S₀'s magic in its file, and an S₁ records the one of the S₀ file
+/// it was saved over (`s1::Head::s0_gen`): S₁ holds only the chunks that
+/// differ from that file, so over another save of S₀, even one under the
+/// same key, it is refused.
+fn new_generation() -> [u64; 2] {
+    use std::io::Read;
+    let mut b = [0u8; 16];
+    let random = std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut b))
+        .is_ok();
+    if random {
+        return [
+            u64::from_le_bytes(b[..8].try_into().unwrap()),
+            u64::from_le_bytes(b[8..].try_into().unwrap()),
+        ];
+    }
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let s = format!(
+        "{}.{t}.{}.{:?}",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        std::thread::current().id()
+    );
+    crate::persist::hash128(s.as_bytes())
+}
 
 /// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
 /// every supported system's page size divides (4 KB elsewhere).
@@ -1286,6 +1320,8 @@ pub struct OpenReport {
     pub chunks: usize,
     /// S₀'s pages mapped from the file (0: its chunks were copied).
     pub mapped_pages: usize,
+    /// The file's save ([`new_generation`]).
+    pub gen: [u64; 2],
 }
 
 impl OpenReport {

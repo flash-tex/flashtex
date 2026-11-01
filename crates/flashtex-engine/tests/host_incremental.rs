@@ -3802,7 +3802,7 @@ fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
                 // the key's build, after the header length, the magic and
                 // the S₀ tag (`host::s1::Head`)
                 let mut d = std::fs::read(&s1_file).unwrap();
-                let at = 8 + 8 + b"flashtex S1 v1".len() + 16;
+                let at = 8 + 8 + b"flashtex S1 v2".len() + 16;
                 d[at] ^= 1;
                 std::fs::write(&s1_file, d).unwrap();
             }
@@ -3863,6 +3863,85 @@ fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
         let _ = std::fs::remove_dir_all(&p2);
         let _ = std::fs::remove_dir_all(&o2);
     }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// S₁ holds only the chunks of the word space that differ from the S₀ file
+/// it was saved over, and named that S₀ by its key alone. Another save of
+/// S₀ under the same key (a preamble edit undone, then the S₁ save refused
+/// or cut off at exit; here a second host with the same pinned clock)
+/// replaced the file whose bytes S₁ left out, and a reopen loaded S₁ over
+/// it. Each S₀ save now has a generation of its own, which S₁ records: a
+/// reopen refuses S₁ over another save, opens S₀, and equals a scratch
+/// compile.
+#[test]
+fn a_stored_s1_is_refused_over_another_save_of_its_s0() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1-gen");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, c1, c2) = (
+        base.join("proj"),
+        base.join("out"),
+        base.join("s0"),
+        base.join("s0b"),
+    );
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    let pin = [("FLASHTEX_PIN_CLOCK", "1600000000.0")];
+    s1_store_env(&proj, &out, &c1, "g1", &pin);
+    // (from the same start: no output yet)
+    std::fs::remove_dir_all(&out).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    s1_store_env(&proj, &out, &c2, "g2", &pin);
+    let of = |d: &Path, ext: &str| {
+        std::fs::read_dir(d)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == ext))
+            .unwrap()
+    };
+    // the second save of S₀ (the same key, the same name) over the first
+    let s0 = of(&c1, "s0");
+    assert_eq!(s0.file_name(), of(&c2, "s0").file_name());
+    std::fs::copy(of(&c2, "s0"), &s0).unwrap();
+    let cache_env = [("FLASHTEX_S0_CACHE", c1.to_str().unwrap())];
+    let host = start_host_env("g3", &cache_env);
+    let scratch = start_host("g4");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let o = s1_compile_until_unchanged(&mut c, &mut view, &proj, &out, &mut id);
+    assert_eq!(o.done.str_field("mode"), Some("open"), "{}", o.done);
+    assert_eq!(
+        o.done.int_field("s1_pages"),
+        None,
+        "S1 used over another save of S0: {}",
+        o.done
+    );
+    let e = o.done.str_field("s1_error").unwrap_or_default();
+    assert!(
+        e.contains("another save of S0"),
+        "refused for another reason: {e:?}"
+    );
+    let (p2, o2) = snapshot(&base, &proj, &out, "x");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "S1 over another save of S0",
+    );
+    let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
 
