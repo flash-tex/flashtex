@@ -127,9 +127,12 @@ def compile_once(eng, extra, d, main, pre=()):
     elif not LINUX and os.path.exists('/usr/bin/time'):
         cmd = ['/usr/bin/time', '-l', '-o', stat] + cmd
     l1 = load1()
+    # (L6AB_STDERR=FILE in a variant: the engine's stderr appended there, e.g. FLASHTEX_BOXMEMO_DEBUG)
+    extra = dict(extra)
+    err = extra.pop('L6AB_STDERR', None)
     t0 = time.monotonic()
     p = subprocess.Popen(cmd, cwd=d, env=env_for(eng, extra), stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                         stdout=subprocess.DEVNULL, stderr=open(err, 'a') if err else subprocess.DEVNULL)
     _, status, ru = os.wait4(p.pid, 0)
     p.returncode = os.waitstatus_to_exitcode(status)
     wall = time.monotonic() - t0
