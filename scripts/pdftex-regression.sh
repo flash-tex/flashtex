@@ -34,7 +34,7 @@ if [ "${1:-}" = "--engine" ]; then
 fi
 if [ -z "$engine" ]; then
     (cd "$root" && cargo build --release --locked -p flashtex-engine)
-    engine=$root/target/release/flashtex-initex
+    engine=${CARGO_TARGET_DIR:-$root/target}/release/flashtex-initex
 fi
 
 work=${REGRESSION_WORK:-$(mktemp -d)}

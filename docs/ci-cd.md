@@ -266,6 +266,26 @@ do nothing" is one click, not an investigation.
 Target: a `merge_group` run's critical path **≤ 12 minutes when the group
 touches the engine, ≤ 5 minutes otherwise**.
 
+**On the NixOS PC, with a hosted fallback (2026-11-01).** The gate's jobs are
+minutes long but waited up to 64 minutes for GitHub-hosted runners (the org's
+free plan runs about ten at once, shared with every pull request). When
+`FLASHTEX_SELFHOSTED_LINUX` is 1 and neither the group's own pull request nor
+any pull request in the queue is cross-repository (§9.3; a failed lookup counts
+as a fork), `plan` sets `gate_route=pc`: `build`, `quick`, the checks' Linux leg
+and the engine's parity (three shards) run as `build-pc`, `quick-pc`,
+`checks-pc` and `engine-parity` on the PC's existing runners, each with a warm
+per-runner build directory (`scripts/ci/pc-gate-target.sh`). The hosted
+`gate-pc` job (`scripts/ci/gate-pc.py supervise`) watches them: all passed is
+the gate's result; one failed is red; one not picked up within **5 minutes**
+(`gate_pc_wait`) sends the whole gate to the `*-fallback` copies on hosted
+runners, and a PC job that starts later stands down in seconds. Why 5: a free PC
+runner starts a job in seconds (wait p50 0, p75 1.6 min), one still waiting at
+5 minutes is behind a lane's long job (p90 14), and a hosted job waits 1–3
+minutes at the median. `CI required` (the only required check) judges the PC
+jobs through `gate-pc`'s outputs, never through `needs`, so a PC job that is
+never picked up cannot hold the queue. To try it by hand:
+`gh workflow run ci.yml --ref <branch> -f gate_only=true -f gate_runner=pc [-f gate_pc_wait=0]`.
+
 | Job | Runner | What |
 |---|---|---|
 | `plan` | ubuntu | tier, deduplication, runner choice, path filters |
