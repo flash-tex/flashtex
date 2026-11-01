@@ -852,11 +852,14 @@ impl Engine {
     fn open(&mut self, job: Job) -> Result<(), String> {
         self.doc = None;
         std::env::set_current_dir(&job.root).map_err(|e| format!("{}: {e}", job.root.display()))?;
-        // (the document's own directories, which the host and the run write
-        // at every compile, are stat'ed at every check: `fswatch`)
-        for d in [job.root.clone(), job.root.join(&job.out_dir)] {
-            crate::fswatch::exclude(&d.to_string_lossy());
-            if let Ok(c) = std::fs::canonicalize(&d) {
+        // (the document's own files are watched like TeX Live's; the output
+        // directory, which the run writes at every compile, is stat'ed at
+        // every check, unless it is the document's directory: `fswatch`)
+        let out = job.root.join(&job.out_dir);
+        let out_c = std::fs::canonicalize(&out).ok();
+        if out_c.is_none() || out_c != std::fs::canonicalize(&job.root).ok() {
+            crate::fswatch::exclude(&out.to_string_lossy());
+            if let Some(c) = out_c {
                 crate::fswatch::exclude(&c.to_string_lossy());
             }
         }
