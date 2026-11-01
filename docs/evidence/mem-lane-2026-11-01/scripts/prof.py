@@ -164,6 +164,9 @@ def keys(page, n):
             last = {'mem': dict(h['mem']), 'pages': h.get('pages'), 'stages': h.get('stages')}
             if d.get('edited_page_ms') is not None:
                 ms.append(d['edited_page_ms'])
+            st = h.get('stages') or {}
+            if n:
+                INSTR.append((st.get('edited_instr_k'), st.get('instr_k')))
     if last is None:
         sys.stderr.write(f'{a.name}: page {page}: no DONE.mem\n{r.stderr[-2000:]}\n')
     return last, ms
@@ -186,6 +189,7 @@ rec['open'], _ = keys(0, 0)
 rec['open_s'] = round(time.time() - t0, 2)
 rec['open_proc'] = status(pid)
 ms_all = []
+INSTR = []
 last = rec['open']
 for p in (int(x) for x in a.pages.split(',')):
     if a.keys and host.poll() is None:
@@ -212,6 +216,7 @@ rec['killed'] = peak['killed']
 ms_all.sort()
 rec['edited_p50'] = ms_all[len(ms_all) // 2] if ms_all else None
 rec['edited_p95'] = ms_all[min(len(ms_all) - 1, int(0.95 * len(ms_all)))] if ms_all else None
+rec['instr'] = INSTR
 rec['seconds'] = round(time.time() - t0, 1)
 host.send_signal(signal.SIGTERM)
 try:
