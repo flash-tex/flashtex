@@ -1472,8 +1472,10 @@ impl Engine {
             // time in µs from the mark before (`os::phase_marks`; `a` the
             // compile's start, `p` the edits applied, `m` the spans moved,
             // `f` the restart point found, `r` the checkpoint restored, `k`
-            // the restore done, `b` the engine resumed, `e` the edited
-            // page's shipout, `d` the first page delivered), and the
+            // the restore done, `b` the engine resumed, `q` a revalidation's
+            // comparison begun, `v` made, `j` its reattach done, `e` the edited page's
+            // shipout, `d` the first page delivered), with the engine
+            // thread's instructions (thousands) where counted, and the
             // restore's steps (`checkpoint::take_restore_steps`)
             if !t.first_marks.is_empty() {
                 let m = &t.first_marks;
@@ -1487,6 +1489,12 @@ impl Engine {
                             Json::Int(b.user_us.saturating_sub(a.user_us) as i64),
                             match (a.sys_us, b.sys_us) {
                                 (Some(x), Some(y)) => Json::Int(y.saturating_sub(x) as i64),
+                                _ => Json::Null,
+                            },
+                            match (a.instr, b.instr) {
+                                (Some(x), Some(y)) => {
+                                    Json::Int((y.saturating_sub(x) / 1000) as i64)
+                                }
                                 _ => Json::Null,
                             },
                         ])

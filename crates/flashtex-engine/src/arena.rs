@@ -2092,6 +2092,23 @@ impl OldCache {
             .map(|&i| &w[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS])
     }
 
+    /// A comparison took chunks of `id`'s entry: it becomes the most
+    /// recently used, so that `put` makes room with the others first. A
+    /// READ-REVALIDATE comparison is made at the same old checkpoint
+    /// keystroke after keystroke, the convergence tests after it at new
+    /// ones: with recency counted from `put` only, the two tests of each
+    /// compile pushed the comparison's entry out every other keystroke,
+    /// and it rewound its 600 chunks through 300 logs again (1.7 ms on
+    /// Infinite Descent x2's late page; lane EDITED-PAGE).
+    fn touch(&mut self, id: CheckpointId, gen: u64) {
+        if let Some(k) = self.at.iter().position(|e| e.0 == id && e.1 == gen) {
+            if k + 1 < self.at.len() {
+                let e = self.at.remove(k);
+                self.at.push(e);
+            }
+        }
+    }
+
     /// Keep chunks `cs` (their values in `buf`, CHUNK_WORDS each) at `id`.
     fn put(&mut self, id: CheckpointId, gen: u64, cs: &[u32], buf: &[u64]) {
         self.at.retain(|e| e.1 == gen);
@@ -2961,19 +2978,70 @@ impl Arena {
         }
         let (in_old, at_r): (Vec<u32>, Vec<u32>) = cs.iter().partition(|c| redo_of.contains_key(c));
         let n = core.nchunks;
-        let Some(o) = rewound_until(n, &in_old, &|c| redo_of[&c], &b.logs[jj..], stop) else {
-            return Ok(None);
+        // The old values `OldCache` keeps at `old` are taken from there, as
+        // `diff_branch_inner` takes them: a convergence test or a
+        // READ-REVALIDATE comparison there rewound the side table's chunks
+        // with its own (`UNSTATED`), and this rewound them again, through
+        // every log of the old run's future (on Infinite Descent x2's late
+        // page: 25 chunks, 400 logs, 1.1 M entries, 18 M instructions a
+        // keystroke; lane EDITED-PAGE). The ones rewound here are kept too.
+        // With FLASHTEX_VERIFY_OLDCACHE the kept ones are rewound as well,
+        // and compared.
+        let gen = core.history_gen;
+        let verify = self.verify_old_cache;
+        let (cached, misses): (Vec<u32>, Vec<u32>) = {
+            let cache = self.old_cache.borrow();
+            in_old
+                .iter()
+                .partition(|&&c| cache.get(old, gen, c).is_some())
+        };
+        let rewind = if verify { &in_old } else { &misses };
+        // (nothing to rewind: no pass over the logs)
+        let o = if rewind.is_empty() {
+            Vec::new()
+        } else {
+            let Some(o) = rewound_until(n, rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+                return Ok(None);
+            };
+            o
         };
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let Some(a) = rewound_until(n, &at_r, &live, &core.logs[kr..], stop) else {
             return Ok(None);
         };
         let mut out = HashMap::with_capacity(cs.len());
-        for (i, &c) in in_old.iter().enumerate() {
+        for (i, &c) in rewind.iter().enumerate() {
             out.insert(c, o[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());
+        }
+        {
+            let cache = self.old_cache.borrow();
+            for &c in &cached {
+                let v = cache.get(old, gen, c).expect("a kept chunk");
+                if out.get(&c).is_some_and(|r| r[..] != v[..]) {
+                    // (a verify mode: loud, so that a sweep fails)
+                    eprintln!(
+                        "FLASHTEX_VERIFY_OLDCACHE: chunk {c} at checkpoint {old} differs from its rewind"
+                    );
+                    std::process::abort();
+                }
+                out.insert(c, v.to_vec());
+            }
         }
         for (i, &c) in at_r.iter().enumerate() {
             out.insert(c, a[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());
+        }
+        let mut cache = self.old_cache.borrow_mut();
+        cache.hits += cached.len() as u64;
+        cache.misses += misses.len() as u64;
+        if !cached.is_empty() {
+            cache.touch(old, gen);
+        }
+        if !misses.is_empty() {
+            let mut mb = Vec::with_capacity(misses.len() * CHUNK_WORDS);
+            for c in &misses {
+                mb.extend_from_slice(&out[c]);
+            }
+            cache.put(old, gen, &misses, &mb);
         }
         Ok(Some(out))
     }
@@ -3112,6 +3180,9 @@ impl Arena {
             let mut cache = self.old_cache.borrow_mut();
             cache.hits += cached.len() as u64;
             cache.misses += misses.len() as u64;
+            if !cached.is_empty() {
+                cache.touch(old, gen);
+            }
         }
         // (kept: the misses and the unstated ones rewound with them, none
         // kept yet)
@@ -4742,6 +4813,20 @@ mod tests {
         // another history: everything older goes
         c.put(100, 1, &[3], &[2u64; CHUNK_WORDS]);
         assert_eq!(c.at.len(), 1);
+        // (EDITED-PAGE) an entry used between the puts of others stays: the
+        // least recently used go first
+        let mut c = OldCache::default();
+        let one = vec![5u64; CHUNK_WORDS];
+        c.put(1, 0, &[7], &one);
+        for id in 2..20u64 {
+            c.put(id, 0, &[id as u32], &one);
+            assert!(
+                c.get(1, 0, 7).is_some(),
+                "the entry used at each step went at {id}"
+            );
+            c.touch(1, 0);
+        }
+        assert!(c.get(2, 0, 2).is_none(), "an entry nobody used stayed");
     }
 
     /// P4-TYPING-200WPM (b): a convergence test rewinds the `UNSTATED`
@@ -4925,6 +5010,70 @@ mod tests {
         a.checkpoint();
         let d = a.diff_branch(&br, ids[4]).unwrap();
         assert_eq!(d.old_word(&a, off), c4[1000]);
+        a.drop_branch(br);
+    }
+
+    /// EDITED-PAGE: the side table's old chunks a comparison rewound with
+    /// its own (`UNSTATED`, kept in `OldCache`) serve `branch_old_chunks`
+    /// at the same checkpoint, which rewinds nothing then, and they equal a
+    /// fresh rewind's word for word; what `branch_old_chunks` rewinds itself
+    /// is kept for the next call.
+    #[test]
+    fn the_side_tables_old_chunks_come_from_what_a_test_kept() {
+        let mut p = Plan::new(64);
+        let rt = p.reserve::<u64>("t", 150_000);
+        let ru = p.reserve::<u64>("dl_side", 50_000);
+        let mut a = p.build();
+        let mut t = a.arr(rt, 150_000);
+        let mut u = a.arr(ru, 50_000);
+        scribble(&mut t, 81, 5000);
+        scribble(&mut u, 82, 2000);
+        let mut ids = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            scribble(&mut t, 830 + k, 2000);
+            scribble(&mut u, 930 + k, 800);
+        }
+        let br = a.restore_branch(ids[3]).unwrap();
+        scribble(&mut t, 1830, 1500);
+        scribble(&mut u, 1831, 600);
+        a.checkpoint();
+        let j = 5;
+        let bits = a.branch_written(&br, ids[j], "dl_side").unwrap();
+        let cs: Vec<u32> = (0..bits.len() * 64)
+            .filter(|&c| bit(&bits, c))
+            .map(|c| c as u32)
+            .collect();
+        assert!(!cs.is_empty());
+        let fresh = a
+            .branch_old_chunks(&br, ids[j], &cs, &mut || false)
+            .unwrap()
+            .unwrap();
+        a.drop_old_cache();
+        drop(a.diff_branch(&br, ids[j]).unwrap());
+        let (h0, m0) = a.old_cache_counts();
+        let kept = a
+            .branch_old_chunks(&br, ids[j], &cs, &mut || false)
+            .unwrap()
+            .unwrap();
+        let (h1, m1) = a.old_cache_counts();
+        assert!(h1 > h0, "nothing the test kept was used");
+        assert_eq!(m1, m0, "a chunk the test kept was rewound again");
+        assert!(kept == fresh, "the kept values differ from a fresh rewind");
+        // its own rewinds are kept
+        a.drop_old_cache();
+        drop(
+            a.branch_old_chunks(&br, ids[j], &cs, &mut || false)
+                .unwrap()
+                .unwrap(),
+        );
+        let m2 = a.old_cache_counts().1;
+        let again = a
+            .branch_old_chunks(&br, ids[j], &cs, &mut || false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.old_cache_counts().1, m2, "rewound twice");
+        assert!(again == fresh);
         a.drop_branch(br);
     }
 
