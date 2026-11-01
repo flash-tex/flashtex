@@ -1,7 +1,7 @@
-# L6: E0 (main's profile) and E3 (MACRO-REPLAY's gate), 2026-11-01
+# L6: E0 (main's profile), E3 (MACRO-REPLAY's gate), lead 5 and E1, 2026-11-01
 
-Lane **L6** (kabir-claude-l6 under Commander kabir-claude). This directory holds two experiments of
-[`docs/design/engine-v2/L6.md`](../../design/engine-v2/L6.md). E2's evidence is
+Lane **L6** (kabir-claude-l6 under Commander kabir-claude). This directory holds E0, E3 (twice),
+lead 5 and E1 of [`docs/design/engine-v2/L6.md`](../../design/engine-v2/L6.md). E2's evidence is
 `docs/evidence/l6-csname-2026-11-01/` (#1952).
 
 ## Machine and method
@@ -81,8 +81,9 @@ anywhere, as it already records `\pdfstringdefPreHook` and `\pgf@parsefunc` (`RE
   redefinitions. So the measurement gives no case for its separate code (#1524–#1526) over
   BOX-MEMO's.
 
-**What would make it a win everywhere** (for the Commander and the BOX-MEMO lanes; this lane does
-not touch BOX-MEMO's recording rules):
+**What might make it a win everywhere** (for the Commander and the BOX-MEMO lanes; this lane does
+not touch BOX-MEMO's recording rules). The budget was tried after the Commander's go, and it
+does not work (§ "E3 with a recording budget" below):
 - the name in `RECORD_ANYWHERE`, with a per-name recording budget: stop recording a name whose
   hits fall below a threshold after N offers;
 - the budget is deterministic, since the counts are engine state;
@@ -96,7 +97,133 @@ document is at +0.5–1.5 %, the cost of BOX-MEMO's hooks.
   (BOX-MEMO.md §12.2): 226 offers, 163 hits and 63 recordings, at about 25 M instructions per
   call that siunitx fills.
 - **What to measure next.** If a host cold open shows the same, it is about 10 % of a
-  hyperref + siunitx cold open (lanes COLD-OPEN and BOX-MEMO).
+  hyperref + siunitx cold open (lanes COLD-OPEN and BOX-MEMO). Measured below (§ "Lead 5 in
+  the host").
+
+## E3 with a recording budget (the Commander's go)
+
+**The bar.** `\XC@col@rlet` joins `RECORD_ANYWHERE` with a per-name budget. It lands only if:
+- no measured document is slower by more than 0.5 % in instructions;
+- the wins hold;
+- the PDFs are identical.
+
+**The change tried.** Branch `agent/kabir-claude-l6/xc-anywhere`, `fdba6e296`, no PR; it is kept
+as a record.
+- Outside an edit's window, the name's offers and hits are counted.
+- After `OFFERS` offers, a hit rate below `RATE` stops it for the session: it is no longer
+  recorded or offered outside a window.
+- The counts are engine state, so the rule is deterministic. The setting is
+  `FLASHTEX_BOXMEMO_BUDGET=OFFERS:RATE` or `off`, and `FLASHTEX_BOXMEMO_BUDGET_TRACE` logs each
+  offer.
+
+**The run.** Run 41343036548 on the PC.
+- main `c5763d9b8` against `fdba6e296`;
+- cold command-line compiles, the median of 3 interleaved reps;
+- `FLASHTEX_BOXMEMO_NAMES` is the host's two names plus `XC@col@rlet`.
+
+Δ is instructions against main with the host's two names. The PDFs were identical everywhere.
+
+| document | no budget | 1024 : 0.70 | **2048 : 0.75** | 4096 : 0.80 |
+|---|---:|---:|---:|---:|
+| beamer-5 | −2.18 % | −0.22 % | −2.15 % | −2.19 % |
+| beamer-30 | −31.08 % | +1.24 % | +0.97 % | −0.18 % |
+| beamer-madrid (fixture) | +0.80 % | +3.86 % | +1.22 % | +0.78 % |
+| beamer-polish (fixture) | −4.43 % | +3.99 % | −0.04 % | −4.87 % |
+| beamer-overlays (fixture) | −11.71 % | +0.54 % | −11.65 % | −11.74 % |
+| beamer-blocks-columns (fixture) | +12.26 % | +5.32 % | +10.99 % | +12.26 % |
+| framed-tikz-theorems (fixture) | +3.08 % | +3.08 % | +3.08 % | +3.08 % |
+| plain-100, full-100 | ≤ +0.06 % | ≤ +0.06 % | ≤ +0.06 % | ≤ +0.06 % |
+| *Infinite Descent* | +5.24 % | +0.19 % | +0.30 % | +0.82 % |
+
+The first rule tried a budget by hits per recording (64 recordings, then 2–4 hits each; run
+41337596660, `raw/e3-budget/runs-41337596660.jsonl`). It stopped the name everywhere, and
+beamer-30 ended at +0.13 %.
+
+**Why no threshold works.** The source is `raw/e3-budget/traces/`, one line per offer: offers,
+hits, recordings, stopped.
+- **Early on, winners and losers look the same.** Hit rates over the first 1,024 offers:
+
+  | document | hit rate |
+  |---|---:|
+  | beamer-30 | 35 % |
+  | beamer-madrid | 35 % |
+  | beamer-blocks-columns | 34 % |
+  | *Infinite Descent* | 28 % |
+- **beamer-30 pays off late.** Its hit rate per 512 offers reaches 82 % only after 2,048 offers,
+  and 99 % after 16,384.
+- **beamer-blocks-columns pays early.** It has 2,112 offers in all, and 1,132 of its 1,173
+  recordings come in the first 2,048.
+- **What breaks even.** A fit over these runs gives about 0.71 M instructions per recording and
+  0.25 M saved per hit. That is about 2.9 hits per recording, a 74 % hit rate.
+- **So no rule meets the bar.** A rule that waits long enough to see beamer-30's rate has
+  already paid for blocks-columns' recordings, and one that decides earlier stops beamer-30.
+- **framed-tikz-theorems' +3.1 % comes from 192 offers,** too few for any budget to judge.
+
+**Verdict: E3 does not land.** No budget on offers and hits meets the bar.
+- What could change that is a cheaper recording for small expansion-only macros: about 0.7 M per
+  recording against 0.25 M per hit.
+- That is BOX-MEMO's recording machinery (the BOX-MEMO lanes), or MACRO-REPLAY's §9 replay if
+  its recordings cost less.
+- **Seen on the way, not chased.** On the command line's default configuration, the branch's
+  `c096d16b3` cost plain-100 +45 % (3.300 G against 2.274 G; the CLI rows of run 41337613821).
+  `FLASHTEX_BOXMEMO=off` was +0.08 %, and so were the runs with restricted names.
+
+  The cause was not chased because the branch does not land. Whoever revives it must find the
+  cause first.
+
+## Lead 5 in the host: `\pdfstringdefPreHook`
+
+**The run.** Run 41337613821 on the PC, main `32b875c40`.
+- **What it measures:** first opens through the socket host (`coldopen.py`, `l6ab.py
+  --host-docs`), the engine thread's instructions summed over the passes, the median of 2.
+- **The variants:**
+  - `def` is the host's configuration;
+  - `off` is `FLASHTEX_BOXMEMO=off`;
+  - `d9` is BOX-MEMO with every registered name except `\pdfstringdefPreHook`, so D9 takes the
+    hook.
+
+| document | passes | def | off | d9 |
+|---|---:|---:|---:|---:|
+| full-100 | 2 | 20.409 G | −8.56 % | **−8.34 %** |
+| full-300 | 3 | 71.487 G | +1.71 % | **+1.74 %** |
+| beamer-30 | 2 | 42.552 G | −3.11 % | +0.15 % |
+| beamer-blocks-columns (fixture) | 2 | 6.987 G | −1.19 % | +0.14 % |
+| beamer-madrid (fixture) | 2 | 10.441 G | −2.16 % | +0.21 % |
+| *Infinite Descent* | 3 | 793.887 G | −1.50 % | −0.31 % |
+
+What it shows:
+- **The lead is real on full-100.** BOX-MEMO owning the hook costs 8.6 % of the first open, and
+  handing it to D9 takes 8.3 % back.
+  - On the command line the gap is 10.2 % (run 41343123964): D9 replays 198 of 226 calls, while
+    BOX-MEMO hits 163.
+  - Each call run in full costs about 25–28 M instructions with siunitx.
+- **It reverses on full-300:** there BOX-MEMO's ownership saves 1.7 %. The reason has not been
+  analysed.
+- **Why BOX-MEMO misses** (`raw/lead5/boxmemo-misses-full-100.txt`):
+  - half the misses are a meaning the key read: `\reserved@a` and `\reserved@b`, LaTeX's scratch
+    macros;
+  - the other half are a register or `eqtb` entry, `\count255` and other counts;
+  - D9's guard does not depend on them.
+- **Also seen.** In the host, BOX-MEMO costs 1.2–3.1 % of a first open on the decks and 1.5 % on
+  the book (`off` against `def`). The keystroke wins it is there for are not measured here.
+
+**Not changed here.** Handing the hook to D9 would fail E3's 0.5 % bar on full-300 (+1.7 %). It
+would also give up BOX-MEMO.md §12.2's keystroke win, which this run does not measure. Two fixes
+would keep both, and both change BOX-MEMO's recording rules, so they belong to the Commander and
+the BOX-MEMO lanes:
+- a key that does not depend on those scratch macros and registers;
+- D9 owning the hook in cold passes and BOX-MEMO in edit windows. Today `owns()` allows one owner
+  per macro per session.
+
+## E1: PGO, not measured
+
+`l6-pgo.yml` on GitHub's M1 VMs (runs 41334149491 and 41339976306):
+- The PGO-instrumented `flashtex-initex` (`scripts/build-engine-dist.sh`) segfaults at once while
+  building the format.
+- That happens with an 8 MB stack and with a 64 MB one.
+
+That is two attempts, so the lane stops, as its bounds say. Run 41346722990 (queued) adds an
+lldb backtrace. There are no PGO numbers, so there is nothing to put to `release.yml`.
 
 ## Files
 
@@ -105,3 +232,8 @@ document is at +0.5–1.5 %, the cost of BOX-MEMO's hooks.
 - `boxmemo-stats/`: `FLASHTEX_BOXMEMO_STATS` per document and variant;
 - `macro-*.tsv`: macro profiles, top 80 rows by self time;
 - `perf-main-*.txt`: profiles.
+- `e3-budget/`: the budget runs (`runs-*.jsonl`, `summary-41343036548.md`), per-offer
+  `traces/` and `boxmemo-stats/`;
+- `lead5/`: the host first opens (`host-41337613821.jsonl`, `summary-41337613821.md`), and
+  the command-line debug run 41343123964 (its BOX-MEMO and D9 stats, and a digest of
+  `FLASHTEX_BOXMEMO_DEBUG`'s misses).
