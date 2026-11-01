@@ -201,6 +201,7 @@ final class EditLedgerClient {
     }
 
     func terminate() { core.terminate() }
+    func terminateAndWait(grace: TimeInterval = 2) async { await core.terminateAndWait(grace: grace) }
 
     func send<Req: Encodable, Rep: Decodable>(_ make: (String) -> Req, as replyType: Rep.Type, timeout: TimeInterval? = nil,
                                                completion: @escaping (Result<Rep, Failure>) -> Void) {
@@ -243,8 +244,8 @@ final class EditLedgerClient {
     func initialize(_ document: EditLedgerV1.Document) async throws -> EditLedgerV1.Document {
         try await request({ EditLedgerV1.InitializeRequest(id: $0, document: document) }, as: EditLedgerV1.DocumentReply.self).document
     }
-    func apply(_ edit: TransferV1.CaptureEdit) async throws -> EditLedgerV1.Applied {
-        try await request({ EditLedgerV1.ApplyRequest(id: $0, edit: edit) }, as: EditLedgerV1.Applied.self)
+    func apply(_ edit: TransferV1.CaptureEdit, timeout: TimeInterval? = nil) async throws -> EditLedgerV1.Applied {
+        try await request({ EditLedgerV1.ApplyRequest(id: $0, edit: edit) }, as: EditLedgerV1.Applied.self, timeout: timeout)
     }
     func replaceDocument(expectedRevision: Int, expectedSha256: String, text: String) async throws -> EditLedgerV1.Document {
         try await request({ EditLedgerV1.ReplaceRequest(id: $0, expectedRevision: expectedRevision, expectedSha256: expectedSha256, text: text) },

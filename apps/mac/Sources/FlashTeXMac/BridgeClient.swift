@@ -55,6 +55,7 @@ final class BridgeClient {
     }
 
     func terminate() { core.terminate() }
+    func terminateAndWait(grace: TimeInterval = 2) async { await core.terminateAndWait(grace: grace) }
 
     // MARK: requests
 
