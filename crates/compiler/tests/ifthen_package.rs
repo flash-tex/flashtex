@@ -61,6 +61,29 @@ fn ifthenelse_and_newif_in_the_body_are_supported() {
     assert!(errors.is_empty(), "error diagnostics remain: {errors:?} (all: {found:?})");
 }
 
+/// A plain `\newif` conditional next to an `\ifthenelse` using the infix
+/// `\AND`/`\OR`/`\NOT` grammar: the condition parser must stay inside the
+/// condition argument, so the `\newif` switch is still recognized (no
+/// "Extra \else." / "Extra \fi." errors).
+#[test]
+fn newif_alongside_ifthenelse_infix_ops_has_no_errors() {
+    let diags = compile(
+        "ifthen-infix-newif.tex",
+        "\\documentclass{article}\n\\usepackage{ifthen}\n\\begin{document}\n\\newcounter{c}\\setcounter{c}{3}\n\\newif\\ifmyflag\n\\myflagtrue\n\\ifthenelse{\\value{c}>2 \\AND \\value{c}<5}{yes}{no}\n\\ifthenelse{\\value{c}>10 \\OR \\value{c}<5}{yes}{no}\n\\ifthenelse{\\NOT \\value{c}>10}{yes}{no}\n\\ifmyflag Y\\else N\\fi\n\\end{document}\n",
+    );
+    let found = messages(&diags);
+    let unsupported: Vec<_> = found
+        .iter()
+        .filter(|(_, code, _)| code == "unsupported_feature")
+        .collect();
+    assert!(
+        unsupported.is_empty(),
+        "unsupported_feature diagnostics remain: {unsupported:?} (all: {found:?})"
+    );
+    let errors: Vec<_> = found.iter().filter(|(sev, _, _)| sev == "error").collect();
+    assert!(errors.is_empty(), "error diagnostics remain: {errors:?} (all: {found:?})");
+}
+
 #[test]
 fn ifthen_package_options_still_warn() {
     // `ifthen.sty` takes no options; an unknown one keeps the package warning.

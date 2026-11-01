@@ -8,6 +8,9 @@
 //! `IncrementalExpander::edit` call. Prints full-expansion time and
 //! p50/p95/max per-keystroke latency.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::manual_is_multiple_of, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use std::time::Instant;
 
 use flashtex_tex_expansion::{expand_str, Edit, IncrementalExpander, Limits};

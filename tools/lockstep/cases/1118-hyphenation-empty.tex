@@ -1,0 +1,11 @@
+% 1118-hyphenation-empty: verifies an empty \hyphenation{} list leaves hyphenation unchanged (tex.web § 934)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\hyphenation{}
+\message{1118 empty set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana\par\message{1118 with lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana\par\message{1118 without lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,861 @@
+"""DESIGN §1.1 gating tiers for the parity scoreboard.
+
+  P-T1  at every `\\shipout`, the box dump and the whole `\\tracingall` log
+        are identical to the pinned pdfTeX's, in PDF mode (the capture is
+        `capture.py`, which becomes tools/lockstep's).
+  P-T2  identical embedded font subsets, and identical page content streams
+        after `qpdf --qdf --normalize-content=y --object-streams=disable`,
+        with object numbers resolved away (every indirect reference is
+        compared by what it points to, never by its number).
+
+Expected data is only ever produced by the oracle pdfTeX (DESIGN §8); it is
+cached outside the repository by the SHA-256 of the source tree, the pdfTeX
+version and the capture settings, and never edited.
+
+qpdf runs as an external program (Apache-2.0). The PDF object parser is
+tools/visual-oracle/pdftext.py, which the scoreboard already uses.
+"""
+
+import collections
+import filecmp
+import glob
+import gzip
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import time
+import zlib
+
+import capture as pcapture
+import pdftext
+import pt1stream
+import run as rwc  # tools/real-world-corpus/run.py
+
+PINNED_PDFTEX = "1.40.29"
+DEFAULT_ORACLE = "/Library/TeX/texbin/pdftex"
+FMT = "pdflatex"
+PASSES = 6
+PASS_TIMEOUT = 300
+# --compress-streams=y: qpdf still decodes every stream it can (Flate, LZW, predictors) and
+# normalises the content streams, then writes them compressed again with its own Flate, so
+# the qdf copy stays about the size of the PDF; Graph decodes one stream at a time, and an
+# image as a stream (image_digest). Without it a 12.7 MB PDF became a 3.0 GB copy (#1621).
+# --recompress-flate: without it qpdf passes a stream that is already Flate through as it is,
+# PNG predictor included, and P-T2 would compare zlib's bytes instead of the samples (#1635
+# review: the same pixels at another zlib level failed); with it every Flate stream is
+# decoded (predictors undone) and written again with qpdf's own Flate.
+QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable", "--compress-streams=y",
+             "--recompress-flate"]
+# P-T2's normalised (qdf) copy of a PDF holds every stream decoded, and the comparison reads
+# it whole: a 12.7 MB PDF with large images (T4 2511.15561v1) became 3.0 GB and an OOM kill.
+# Over this size the document is a harness error (unmeasured; its tier reads partial), never
+# a pass or a fail, until the normaliser stops expanding images (P5-BOARD-T4 follow-up).
+PT2_MAX_QDF_BYTES = int(float(os.environ.get("FLASHTEX_PT2_MAX_QDF_MB", "1024")) * 1048576)
+
+
+class PT2TooLarge(Exception):
+    """A PDF whose P-T2 normalisation is over PT2_MAX_QDF_BYTES. Not a PdfError: compare_pt2
+    lets it through, and parity.score_safe records the document as a harness error."""
+TAG = re.compile(r"^[A-Z]{6}\+")
+SNIP = 200
+# What a run converts with \write18 (epstopdf.sty's `<name>-eps-converted-to.pdf`,
+# and the same suffix for its other rules). Ghostscript stamps each conversion
+# with the time and a fresh id, and pdfTeX copies those into the including PDF
+# (/PTEX.InfoDict) and prints the file's date in the log, so two engines that
+# each converted a figure differ in P-T1 and P-T2 for no typesetting reason.
+# The oracle's conversions are therefore cached and handed to the candidate
+# before its first pass (`seed`), with their times, so both runs see the same
+# files and neither converts again. That includes a conversion the source
+# ships but the run redid (epstopdf's `update` converts again when the EPS is
+# a second newer, and an unpacked e-print's times are its unpack times).
+GENERATED = re.compile(r"-converted-to\.pdf$")
+# Bumped when what keep_generated keeps can change: an entry made under an
+# older rule for a tree that ships a conversion is made again (`stale_entry`).
+# 2: a shipped conversion the run redid. 3: e-prints keep the archive's file
+# times (corpus.UNPACK_V), which decide whether a shipped conversion is redone;
+# the oracle key hashes content only, so it can't see that.
+GENERATED_V = 3
+# `<name>-<ext>-converted-to.pdf` was converted from `<name>.<ext>`
+CONVERTED_FROM = re.compile(r"-([A-Za-z0-9]+)-converted-to\.pdf$")
+# Why a traced pass has no complete log: the capture's time limit stopped it
+# (a harness limit), or the engine ended early by itself (a crash).
+TRACE_TIMEOUT = "the traced pass did not finish in the capture's {} s limit"
+TRACE_CRASH = "the traced pass crashed: its log stops before the end of the run ({} s)"
+TRACE_HARNESS = "harness error: {}"
+# A candidate's traced pass's time limit scales with the oracle's: at least
+# capture.TIMEOUT (--pt1-timeout), long enough to write the oracle's log at
+# PT1_MIN_RATE bytes per second (engines write 27-40 MiB/s traced; #2 comment
+# 5909471841), and PT1_ORACLE_SLACK times as long as the oracle's own traced
+# pass took, up to the oracle's own limit (the new engine's traced pass took
+# up to 2.2 times pdfTeX's on board run 37121600909: pgfmath-qr-example,
+# mhchem, forest-milsymb).
+PT1_MIN_RATE = 8 << 20
+PT1_ORACLE_SLACK = 3
+# The oracle's traced pass gets PT1_ORACLE_FACTOR times capture.TIMEOUT (7200 s
+# by default). Its entry is cached (`oracle`), so a long one costs once per
+# document and TeX tree, not every run; pdfTeX traced 2501.08663v2 and
+# chemfig-en for longer than 1800 s on the board host.
+PT1_ORACLE_FACTOR = 4
+
+
+def pt1_timeout(expected_bytes=0, oracle_seconds=0):
+    """A candidate's traced pass's limit in seconds, for an oracle whose
+    traced pass wrote about `expected_bytes` in `oracle_seconds`."""
+    return max(pcapture.TIMEOUT, int((expected_bytes or 0) / PT1_MIN_RATE) + 1,
+               min(int(PT1_ORACLE_SLACK * (oracle_seconds or 0)) + 1, oracle_pt1_timeout()))
+
+
+def oracle_pt1_timeout():
+    """The oracle's traced pass's limit in seconds."""
+    return PT1_ORACLE_FACTOR * pcapture.TIMEOUT
+
+
+def sha(b):
+    return hashlib.sha256(b if isinstance(b, bytes) else b.encode("utf-8")).hexdigest()
+
+
+def engine_version(exe):
+    code, out, _, _, _ = rwc.run([exe, "--version"], timeout=30)
+    lines = out.decode("utf-8", "replace").splitlines() if out else []
+    return lines[0].strip() if lines else ""
+
+
+def engine_kind(exe):
+    """`flashtex-cli` for the shipped `flashtex` command line, else `tex` (a
+    pdfTeX-compatible command line: pdfTeX itself, later the new engine)."""
+    return "flashtex-cli" if engine_version(exe).lower().startswith("flashtex") else "tex"
+
+
+def qpdf_version():
+    q = shutil.which("qpdf")
+    return engine_version(q) if q else None
+
+
+# ----------------------------------------------------------------------------
+# running a TeX engine to convergence, then one traced pass
+
+
+def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=False, timeout=None):
+    """Copy the source tree to `workdir`, run `engine -fmt=pdflatex` until the
+    PDF stops changing and the log asks for no rerun (at most PASSES), then,
+    with `trace`, one more pass through `capture.capture`. Every pass runs as
+    the capture does: through the `pdftex` link, with SHELL_ESCAPE, and with
+    `extra_env` (the candidate's alone; the oracle passes None). `seed`
+    ({relative path: file}) is copied into the tree first, times kept: the
+    oracle's conversions (GENERATED). `stream` and `timeout` go to the
+    capture (the traced pass's log as a named pipe; its time limit, default
+    capture.TIMEOUT). Returns (meta, Capture or None, pdf path or None)."""
+    shutil.rmtree(workdir, ignore_errors=True)
+    shutil.copytree(doc["dir"], workdir)
+    for rel, src in sorted((seed or {}).items()):
+        dst = os.path.join(workdir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
+    entry = doc["entry"]
+    stem = os.path.splitext(os.path.basename(entry))[0]
+    pdf, logp = os.path.join(workdir, stem + ".pdf"), os.path.join(workdir, stem + ".log")
+    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", pcapture.first_line(entry)]
+    meta = {"ok": False, "passes": 0, "traced": bool(trace)}
+    t0 = time.time()
+    previous = None
+    for _ in range(PASSES):
+        code, timed_out = pcapture.run_engine(engine, FMT, args, workdir, extra_env, timeout=PASS_TIMEOUT)
+        meta["passes"] += 1
+        if timed_out or code != 0 or not os.path.isfile(pdf):
+            txt = rwc.read_text(logp) if os.path.isfile(logp) else ""
+            m = re.search(r"^(! .*)$", txt, re.M)
+            meta["exit"] = code
+            meta["why"] = (f"exit {code}" + (" (timeout)" if timed_out else "") + (f": {m.group(1)[:160]}" if m else ""))
+            meta["seconds"] = round(time.time() - t0, 2)
+            return meta, None, None
+        cur = rwc.sha256_file(pdf)
+        if cur == previous and "Rerun to get" not in rwc.read_text(logp):
+            meta["ok"] = True
+            break
+        previous = cur
+    else:
+        meta["why"] = f"did not converge in {PASSES} passes"
+    meta["exit"] = 0
+    cap = None
+    if trace and meta["ok"]:
+        converged = pdf + ".converged"
+        shutil.copyfile(pdf, converged)
+        t1 = time.time()
+        limit = timeout or pcapture.TIMEOUT
+        meta["trace_timeout"] = limit
+        harness = None
+        try:
+            cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env,
+                                   stream=stream, timeout=limit)
+        except pt1stream.StreamError as e:
+            harness = str(e)
+        took = time.time() - t1
+        meta["trace_seconds"] = round(took, 2)
+        if cap is None or cap.timed_out or not (cap.complete if cap.log is None else trace_complete(cap.log)):
+            # stopped by the time limit, unreadable, or crashed mid-run: the log
+            # is cut short and the PDF may be partial; P-T1 can't be judged, and
+            # P-T2 uses the converged pass's PDF, which the traced pass only repeats
+            if harness:
+                meta["trace_incomplete"], meta["trace_harness_error"] = TRACE_HARNESS.format(harness), True
+            elif cap.timed_out:
+                meta["trace_incomplete"], meta["trace_timed_out"] = TRACE_TIMEOUT.format(limit), True
+            else:
+                meta["trace_incomplete"] = TRACE_CRASH.format(round(took, 1))
+            cap = None
+            os.replace(converged, pdf)
+        else:
+            os.remove(converged)
+            meta["ok"] = cap.pdf_path is not None
+            if not meta["ok"]:
+                meta["why"] = "the traced pass wrote no PDF"
+    meta["seconds"] = round(time.time() - t0, 2)
+    return meta, cap, (pdf if meta["ok"] else None)
+
+
+def trace_complete(log):
+    """Whether a traced log ran to its end: pdfTeX's last lines always include
+    `Output written on …` or `No pages of output.`."""
+    tail = log[-65536:]
+    return "\nOutput written on " in tail or "\nNo pages of output." in tail
+
+
+# Bumped whenever what an oracle cache entry holds changes, so an entry made
+# under the old rule is never reused: v5 keeps a conversion's run-written input
+# (keep_generated) and runs every pass after capture.SEED; v6 writes the run's
+# TEXMFVAR as `<TEXMFVAR>` (capture.workdir_subs), where a v5 log names the
+# directory of the run that made it, which no later run's TEXMFVAR matches.
+ORACLE_CACHE_V = 6
+
+
+def oracle_key(doc, version, trace, tree_hash, v=ORACLE_CACHE_V):
+    return sha(json.dumps({"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
+                           "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
+                           "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
+                           "seed": pcapture.SEED, "v": v}, sort_keys=True))
+
+
+# The oracle work directories (`work-<pid>`) this process is using. Every exit
+# path of `oracle` removes its own (parity.py's SIGTERM handler runs those
+# paths too); `sweep_stale_work` removes the ones whose process is gone.
+ACTIVE_WORK = set()
+FINGERPRINT = "fingerprint.json"
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # someone else's process
+    return True
+
+
+def sweep_stale_work(cache):
+    """Remove every `<cache>/pt-oracle/*/*/work-<pid>` and `<file>.<pid>.tmp`
+    whose process is not alive: what a worker killed mid-trace leaves
+    (SIGKILL runs no cleanup). Returns the paths removed."""
+    gone = []
+    entries = os.path.join(cache, "pt-oracle", "*", "*")
+    for d in sorted(glob.glob(os.path.join(entries, "work-*")) + glob.glob(os.path.join(entries, "*.tmp"))):
+        name = os.path.basename(d)
+        pid = name[len("work-"):] if name.startswith("work-") else name[:-len(".tmp")].rpartition(".")[2]
+        if pid.isdigit() and int(pid) != os.getpid() and not pid_alive(int(pid)):
+            if os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
+            else:
+                os.remove(d)
+            gone.append(d)
+    return gone
+
+
+def remove_active_work():
+    for w in list(ACTIVE_WORK):
+        shutil.rmtree(w, ignore_errors=True)
+        ACTIVE_WORK.discard(w)
+
+
+def ships_conversion(src):
+    """Whether the source tree already holds a GENERATED file."""
+    return any(GENERATED.search(name) for _, _, files in os.walk(src) for name in files)
+
+
+def embeds_type3(pdf):
+    """Whether `pdf` has a Type3 font, as pdfTeX embeds every PK font (True
+    when it can't be told: no qpdf, or qpdf fails). `--object-streams=disable`
+    writes each font dictionary as text."""
+    q = shutil.which("qpdf")
+    if not q or not os.path.isfile(pdf):
+        return True
+    try:
+        p = subprocess.run([q, "--object-streams=disable", "--stream-data=preserve", pdf, "-"],
+                           capture_output=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return p.returncode not in (0, 3) or re.search(rb"/Subtype\s*/Type3\b", p.stdout) is not None
+
+
+def stale_entry(meta, odir, src=None):
+    """Whether a cached oracle entry must be made again: a log that was over
+    the budget but has no fingerprint (cached before streaming) or one of
+    another pt1stream.V (a v1 one whose PDF embeds no Type3 font is kept and
+    made v2: see pt1stream.V), a traced pass stopped by a shorter time limit
+    than today's (`oracle_pt1_timeout`), or conversions kept under an older
+    keep_generated rule from a tree (`src`) that ships one."""
+    if meta.get("ok") and meta.get("generated_v") != GENERATED_V and src and ships_conversion(src):
+        return True
+    if meta.get("log_unread"):
+        fpp = os.path.join(odir, FINGERPRINT)
+        try:
+            with open(fpp, encoding="utf-8") as f:
+                fp = json.load(f)
+        except (OSError, ValueError):
+            return True
+        if fp.get("v") == 1 and not embeds_type3(os.path.join(odir, "reference.pdf")):
+            fp["v"] = pt1stream.V  # v1 -> v2 changed only a PK font's TEXMFVAR path, and it has none
+            write_json(fpp, fp)
+        if fp.get("v") != pt1stream.V:
+            return True
+    stopped = meta.get("trace_timed_out") or "did not finish in the capture's" in (meta.get("trace_incomplete") or "")
+    return bool(stopped and meta.get("trace_timeout", 600) < oracle_pt1_timeout())
+
+
+def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
+    """The P-T reference, cached: (meta, Capture or None, reference PDF path or None).
+    With `load_log=False` the traced log stays on disk (no Capture); its size
+    is `meta["log_chars"]` either way (see `log_chars`). The traced pass's
+    log is a named pipe (`capture(stream="pipe")`), so it never reaches the
+    disk; one over the budget is kept only as its fingerprint
+    (`oracle_fingerprint`)."""
+    version = engine_version(pdftex)
+    key = oracle_key(doc, version, trace, tree_hash)
+    odir = os.path.join(cache, "pt-oracle", key[:2], key)
+    meta_path = os.path.join(odir, "oracle.json")
+    pdf, logz = os.path.join(odir, "reference.pdf"), os.path.join(odir, "log.gz")
+    meta = None
+    if os.path.isfile(meta_path):
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        if stale_entry(meta, odir, doc["dir"]):
+            meta = None
+        elif meta.get("ok") and meta.get("generated_v") != GENERATED_V:
+            # not stale, so the tree ships no conversion: nothing more to keep, and no walk next time
+            meta["generated_v"] = GENERATED_V
+            write_json(meta_path, meta)
+    if meta is None:
+        work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
+        ACTIVE_WORK.add(work)
+        try:
+            meta, cap, produced = run_tex(doc, pdftex, work, trace=trace, stream="pipe",
+                                          timeout=oracle_pt1_timeout())
+            meta.update({"pdftex": version, "pinned": PINNED_PDFTEX in version, "key": key})
+            tmp = f".{os.getpid()}.tmp"
+            fpp = os.path.join(odir, FINGERPRINT)
+            if meta["ok"]:
+                meta["generated"] = keep_generated(doc["dir"], work, os.path.join(odir, "generated"))
+                meta["generated_v"] = GENERATED_V
+                shutil.copyfile(produced, pdf + tmp)
+                os.replace(pdf + tmp, pdf)
+                if cap is not None and cap.log is None:  # over capture.MAX_LOG_BYTES: streamed, never kept
+                    meta["log_chars"], meta["log_unread"] = cap.size, True
+                    write_json(fpp, cap.fingerprint)
+                    if os.path.exists(logz):
+                        os.remove(logz)  # an older entry's log
+                elif cap is not None:
+                    with gzip.open(logz + tmp, "wt", encoding="latin-1", compresslevel=3) as f:
+                        f.write(cap.log)
+                    os.replace(logz + tmp, logz)
+                    meta["log_chars"] = len(cap.log)
+                    if os.path.exists(fpp):
+                        os.remove(fpp)  # made from an older log
+            write_json(meta_path, meta)  # written last: its presence means the entry is complete
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+            ACTIVE_WORK.discard(work)
+        meta["cached"] = False
+    else:
+        meta["cached"] = True
+    if not meta.get("ok"):
+        return meta, None, None
+    cap = None
+    if trace and not meta.get("trace_incomplete") and "log_chars" not in meta:
+        meta["log_chars"] = log_chars(logz)  # an entry cached before the size was recorded
+    if trace and load_log and not meta.get("trace_incomplete") and not log_over_budget(meta):
+        with gzip.open(logz, "rt", encoding="latin-1") as f:  # size known before the read
+            log = f.read()
+        for a, b in pcapture.cached_log_subs():  # one cached with TEXMFVAR unset names it (pt1stream.V)
+            log = log.replace(a, b)
+        log = pcapture.ElapsedMask().text_in_pieces(log)  # one cached before the mask; a no-op on a masked one
+        cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)
+    return meta, cap, pdf
+
+
+def log_over_budget(meta):
+    """Whether the oracle's traced log is over the in-memory budget (capture.MAX_LOG_BYTES)."""
+    budget = pcapture.MAX_LOG_BYTES
+    return bool(meta.get("log_unread") or (budget and (meta.get("log_chars") or 0) > budget))
+
+
+def write_json(path, obj):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=1)
+    os.replace(tmp, path)
+
+
+def oracle_fingerprint(meta, cache):
+    """The oracle's P-T1 fingerprint (pt1stream): the one its streamed pass
+    left, or one read now from its cached log and kept beside it. None when
+    the entry has neither."""
+    odir = os.path.join(cache, "pt-oracle", meta["key"][:2], meta["key"])
+    path, logz = os.path.join(odir, FINGERPRINT), os.path.join(odir, "log.gz")
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            fp = json.load(f)
+        if fp.get("v") == pt1stream.V or not os.path.isfile(logz):
+            return fp
+    if not os.path.isfile(logz):
+        return None
+    fp = pt1stream.fingerprint_gz(logz)
+    write_json(path, fp)
+    return fp
+
+
+def same_file(a, b):
+    """Same bytes and the same modification time (epstopdf logs the date)."""
+    sa, sb = os.stat(a), os.stat(b)
+    return sa.st_mtime_ns == sb.st_mtime_ns and filecmp.cmp(a, b, shallow=False)
+
+
+def keep_generated(src, work, dest):
+    """Copy the files a run converted (GENERATED, absent from the source tree
+    `src` or not the same file there: a shipped conversion it redid) from
+    `work` to `dest`, times kept; returns their relative paths.
+    A conversion's input that the run wrote itself (`filecontents` writing
+    `a.eps`, then `a-eps-converted-to.pdf`: grfguide.tex) is kept with it,
+    since epstopdf logs the input's date."""
+    out = []
+    for root, _, files in os.walk(work):
+        for name in files:
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, work)
+            shipped = os.path.join(src, rel)
+            if GENERATED.search(name) and not (os.path.isfile(shipped) and same_file(shipped, path)):
+                keep = [rel]
+                m = CONVERTED_FROM.search(rel)
+                if m:
+                    source = rel[:m.start()] + "." + m.group(1)
+                    if os.path.isfile(os.path.join(work, source)) and not os.path.exists(os.path.join(src, source)):
+                        keep.append(source)
+                for r in keep:
+                    os.makedirs(os.path.dirname(os.path.join(dest, r)), exist_ok=True)
+                    shutil.copy2(os.path.join(work, r), os.path.join(dest, r))
+                    out.append(r)
+    return sorted(set(out))
+
+
+def oracle_seed(meta, cache):
+    """{relative path: cached file} of the oracle's conversions, for `run_tex(seed=)`."""
+    key = meta.get("key")
+    if not key or not meta.get("generated"):
+        return {}
+    base = os.path.join(cache, "pt-oracle", key[:2], key, "generated")
+    return {rel: os.path.join(base, rel) for rel in meta["generated"] if os.path.isfile(os.path.join(base, rel))}
+
+
+def log_chars(logz, chunk=1 << 24):
+    """Length of a gzipped latin-1 log (one byte per character), streamed, so
+    a multi-gigabyte log is measured without being held in memory. (The
+    gzip trailer's ISIZE is the length mod 2**32, so it can't be used.)"""
+    n = 0
+    with gzip.open(logz, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                return n
+            n += len(b)
+
+
+# ----------------------------------------------------------------------------
+# P-T1
+
+
+def first_line_diff(a, b):
+    """(1-based line number, line of a, line of b) of the first difference, or None."""
+    if a == b:
+        return None
+    la, lb = a.split("\n"), b.split("\n")
+    for i, (x, y) in enumerate(zip(la, lb)):
+        if x != y:
+            return i + 1, x[:SNIP], y[:SNIP]
+    n = min(len(la), len(lb))
+    return n + 1, (la[n][:SNIP] if n < len(la) else "<end of log>"), (lb[n][:SNIP] if n < len(lb) else "<end of log>")
+
+
+def compare_accounting(ref_acc, cand_acc):
+    """The non-gating accounting check: the lines P-T1 leaves out, compared."""
+    acc = {"lines": [len(ref_acc), len(cand_acc)], "equal": ref_acc == cand_acc}
+    if not acc["equal"]:
+        k = next((i for i, (x, y) in enumerate(zip(ref_acc, cand_acc)) if x != y), min(len(ref_acc), len(cand_acc)))
+        acc["first"] = {"oracle": ref_acc[k][:SNIP] if k < len(ref_acc) else "<none>",
+                        "candidate": cand_acc[k][:SNIP] if k < len(cand_acc) else "<none>"}
+    return acc
+
+
+def first_box_diff(ref_boxes, cand_boxes):
+    """Index of the first shipout whose box differs or is missing on one side, or None."""
+    bad = next((i for i, (x, y) in enumerate(zip(ref_boxes, cand_boxes)) if x != y), None)
+    if bad is None and len(ref_boxes) != len(cand_boxes):
+        bad = min(len(ref_boxes), len(cand_boxes))
+    return bad
+
+
+def compare_pt1(ref, cand):
+    """P-T1 passes when every shipout's box dump and the whole log are
+    identical once the ruled accounting is split off (`capture.split_accounting`).
+    The accounting lines are compared too, but only reported (`accounting`),
+    never gating; line numbers refer to the log with accounting removed."""
+    ref_boxes, cand_boxes = ref.boxes, cand.boxes  # box dumps hold no accounting: compared as they are
+    rec = {"shipouts": [len(ref_boxes), len(cand_boxes)]}
+    bad_box = first_box_diff(ref_boxes, cand_boxes)
+    rec["boxes_equal"] = bad_box is None
+    if bad_box is not None:
+        rec["first_shipout"] = bad_box + 1
+        if bad_box < len(ref_boxes) and bad_box < len(cand_boxes):
+            d = first_line_diff(ref_boxes[bad_box], cand_boxes[bad_box])
+            rec["box_line"] = {"line": d[0], "oracle": d[1], "candidate": d[2]}
+    ref_log, ref_acc = pcapture.split_accounting(ref.log)
+    cand_log, cand_acc = pcapture.split_accounting(cand.log)
+    d = first_line_diff(ref_log, cand_log)
+    rec["log_equal"] = d is None
+    if d:
+        rec["log_line"] = {"line": d[0], "oracle": d[1], "candidate": d[2]}
+    rec["ok"] = rec["boxes_equal"] and rec["log_equal"]
+    rec["accounting"] = compare_accounting(ref_acc, cand_acc)
+    masked = [ref.log.count(pcapture.ELAPSED), cand.log.count(pcapture.ELAPSED)]
+    if any(masked):
+        rec["elapsed_masked"] = masked  # values of \pdfelapsedtime masked (capture.ElapsedMask)
+    return rec
+
+
+def compare_pt1_streamed(ref, cand):
+    """`compare_pt1` on two fingerprints (pt1stream): the same `ok`,
+    `boxes_equal`, `log_equal`, `shipouts`, `first_shipout` and
+    `accounting`. Where the in-memory compare quotes the first differing
+    line, this gives the strict-log lines that hold it (`log_lines`: from
+    the start of the first differing segment to the end of it on either side)."""
+    rb, cb = ref["boxes"], cand["boxes"]
+    rec = {"streamed": True, "shipouts": [len(rb), len(cb)]}
+    bad_box = first_box_diff(rb, cb)
+    rec["boxes_equal"] = bad_box is None
+    if bad_box is not None:
+        rec["first_shipout"] = bad_box + 1
+    rs, cs = ref["strict"], cand["strict"]
+    rec["log_equal"] = rs["sha256"] == cs["sha256"] and rs["bytes"] == cs["bytes"]
+    if not rec["log_equal"]:
+        where = {"lines": [rs["lines"], cs["lines"]]}
+        if rs["segment_bytes"] == cs["segment_bytes"]:
+            a, b = rs["segments"], cs["segments"]
+            k = next((i for i, (x, y) in enumerate(zip(a, b)) if x[0] != y[0]), min(len(a), len(b)))
+            here = a[k:k + 1] or b[k:k + 1]
+            nxt = [s[1] for s in a[k + 1:k + 2] + b[k + 1:k + 2]]
+            where["from"] = here[0][1] if here else max(rs["lines"], cs["lines"])
+            where["to"] = max(nxt) if nxt else max(rs["lines"], cs["lines"])
+        rec["log_lines"] = where
+    rec["ok"] = rec["boxes_equal"] and rec["log_equal"]
+    rec["accounting"] = compare_accounting(ref["accounting"], cand["accounting"])
+    masked = [ref.get("elapsed_masked"), cand.get("elapsed_masked")]
+    if any(masked):
+        rec["elapsed_masked"] = masked  # values of \pdfelapsedtime masked (capture.ElapsedMask)
+        if None in masked and not rec["log_equal"]:
+            # one side's fingerprint predates the mask: a difference may be only that
+            rec["ok"] = False
+            rec["harness_error"] = ("a fingerprint made before the \\pdfelapsedtime mask "
+                                    "(capture.ElapsedMask) against one that masked values; make the oracle again")
+    return rec
+
+
+# ----------------------------------------------------------------------------
+# P-T2
+
+
+# Components per sample of an image's /ColorSpace (a name, or the family of an array).
+_COLOR_COMPONENTS = {"DeviceGray": 1, "CalGray": 1, "Indexed": 1, "Separation": 1, "Pattern": 1,
+                     "DeviceRGB": 3, "CalRGB": 3, "Lab": 3, "DeviceCMYK": 4}
+
+
+def image_components(doc, obj):
+    """Components per sample of an image XObject, or None when they cannot be told."""
+    if obj.get("ImageMask") is True:
+        return 1
+    cs = doc.resolve(obj.get("ColorSpace"))
+    if isinstance(cs, list) and cs:
+        fam = str(cs[0])
+        if fam == "ICCBased" and len(cs) > 1:
+            icc = doc.resolve(cs[1])
+            n = icc.get("N") if isinstance(icc, dict) else None
+            return n if isinstance(n, int) else None
+        if fam == "DeviceN" and len(cs) > 1:
+            names = doc.resolve(cs[1])
+            return len(names) if isinstance(names, list) else None
+        return _COLOR_COMPONENTS.get(fam)
+    return _COLOR_COMPONENTS.get(str(cs)) if cs is not None else None
+
+
+def clear_row_padding(doc, obj, data):
+    """An image's decoded samples with the unused low bits of each row's last byte
+    cleared (PDF 32000-1 8.9.3: each row starts on a byte boundary, and those bits are
+    not pixels).
+
+    pdfTeX writes whatever its row buffer held there: writepng.c's palette and grey
+    paths decode rows with libpng into an uninitialised xtalloc'd buffer, and
+    png_combine_row keeps the destination's bits past the last pixel. The same pdfTeX
+    1.40.29 on the same PNG wrote 0 on the Macs and 1101110 on the NixOS PC
+    (tcolorbox-example's Basilica_5.png, 977 px at 1 bit, P5-BOARD-T4, 2026-10-06):
+    heap contents, not output anyone can match. Every pixel is still compared."""
+    g = row_geometry(doc, obj)
+    if g is None:
+        return data
+    h, rowbytes, keep = g
+    if len(data) != h * rowbytes:  # still encoded (DCT, JPX), or not plain rows: as it is
+        return data
+    out = bytearray(data)
+    for i in range(rowbytes - 1, len(out), rowbytes):
+        out[i] &= keep
+    return bytes(out)
+
+
+def row_geometry(doc, obj):
+    """(height, bytes per row, mask of the last byte's pixel bits) of an image whose rows
+    end inside a byte, or None (not an image, rows ending on a byte, or unknown)."""
+    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image":
+        return None
+    w, h = obj.get("Width"), obj.get("Height")
+    bpc = 1 if obj.get("ImageMask") is True else obj.get("BitsPerComponent")
+    n = image_components(doc, obj)
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (w, h, bpc, n or 0)):
+        return None
+    bits = w * bpc * n
+    if bits % 8 == 0:
+        return None
+    return h, (bits + 7) // 8, (0xff << (8 - bits % 8)) & 0xff
+
+
+# Decoded bytes handled at a time when an image is hashed as a stream (image_digest).
+DIGEST_CHUNK = 8 << 20
+
+
+def image_digest(doc, obj, raw):
+    """sha256 (hex) of an image XObject's decoded samples with the row padding cleared
+    (clear_row_padding), computed as a stream in constant memory; None when the image is
+    not plain /FlateDecode (no /DecodeParms), which the caller decodes as before.
+
+    The same digest as sha(clear_row_padding(doc, obj, decode(...))), without holding
+    the image: T4's 2511.15561v1 holds 3.0 GB of decoded image data (#1621). Unlike
+    Graph.stream it does not fold font subset tags (ABCDEF+) in the samples: they name
+    fonts, and image data that happens to contain one is negligible."""
+    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image" or obj.get("DecodeParms"):
+        return None
+    filt = obj.get("Filter")
+    if not (filt == "FlateDecode" or (isinstance(filt, list) and len(filt) == 1 and filt[0] == "FlateDecode")):
+        return None
+    geo = row_geometry(doc, obj)
+    table = bytes(i & geo[2] for i in range(256)) if geo else None
+    plain, masked = hashlib.sha256(), hashlib.sha256()
+    z = zlib.decompressobj()
+    pos = 0
+
+    def take(buf):
+        nonlocal pos
+        if not buf:
+            return
+        plain.update(buf)
+        if geo:
+            rb = geo[1]
+            first = (rb - 1 - pos) % rb  # index in buf of the first row's last byte
+            out = bytearray(buf)
+            out[first::rb] = out[first::rb].translate(table)
+            masked.update(out)
+        pos += len(buf)
+
+    data = raw
+    while data:
+        take(z.decompress(data, DIGEST_CHUNK))
+        data = z.unconsumed_tail
+    take(z.flush())
+    if not z.eof:
+        raise zlib.error("incomplete or truncated stream")
+    use_masked = geo is not None and pos == geo[0] * geo[1]
+    return (masked if use_masked else plain).hexdigest()
+
+
+class Graph:
+    """Canonical, number-free view of a qpdf-normalised PDF. Every indirect
+    object is named by a hash of what it contains (its dictionary with each
+    reference replaced by the referent's hash, plus its decoded stream), so
+    two PDFs that differ only in object numbering produce the same hashes.
+    `/Parent` (a back edge) and `/Length` (a serialisation detail) are left
+    out; subset tags (`ABCDEF+`) are normalised in names and font programs."""
+
+    SKIP = {"Parent", "Length"}
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.memo = {}
+        self.fonts = []
+        self.tags = sorted({TAG.match(str(o[k])).group(0) for o, _ in doc.objects.values() if isinstance(o, dict)
+                            for k in ("BaseFont", "FontName") if k in o and TAG.match(str(o[k]))})
+
+    def stream(self, num):
+        obj, raw = self.doc.objects.get(num, (None, None))
+        if raw is None:
+            return b""
+        try:
+            data = clear_row_padding(self.doc, obj, self.doc.decode(obj, raw))
+        except (pdftext.PdfError, zlib.error):
+            data = raw  # a filter qpdf keeps (DCT, JPX, ...): compare the encoded bytes
+        for t in self.tags:
+            data = data.replace(t.encode("latin-1"), b"SUBSET+")
+        return data
+
+    def stream_digest(self, num, obj, raw):
+        """sha of the stream's compared bytes (`stream`); an image is hashed as a stream
+        (image_digest), so a large one is never held in memory."""
+        try:
+            d = image_digest(self.doc, obj, raw)
+        except zlib.error:
+            d = None
+        return d if d is not None else sha(self.stream(num))
+
+    def node(self, num):
+        if num in self.memo:
+            return self.memo[num]
+        self.memo[num] = "<cycle>"
+        obj, raw = self.doc.objects.get(num, (None, None))
+        s = self.canon(obj)
+        if raw is not None:
+            s += " stream " + self.stream_digest(num, obj, raw)
+        h = sha(s)[:40]
+        self.memo[num] = h
+        if isinstance(obj, dict) and obj.get("Type") == "Font":
+            self.fonts.append(self.font_key(obj))
+        return h
+
+    def canon(self, x):
+        if isinstance(x, pdftext.Ref):
+            return "@" + self.node(x[0])
+        if isinstance(x, dict):
+            return "<<" + " ".join(f"/{k} {self.canon(v)}" for k, v in sorted(x.items()) if k not in self.SKIP) + ">>"
+        if isinstance(x, list):
+            return "[" + " ".join(self.canon(v) for v in x) + "]"
+        if isinstance(x, pdftext.Name):
+            return "/" + TAG.sub("SUBSET+", str(x))
+        if isinstance(x, bytes):
+            return "(" + x.hex() + ")"
+        if isinstance(x, float) and x.is_integer():
+            return str(int(x))
+        return repr(x)
+
+    def font_key(self, f):
+        """(name without subset tag, subtype, hash of the embedded program)."""
+        r = self.doc.resolve
+        name = TAG.sub("", str(f.get("BaseFont", f.get("Name", ""))))
+        sub = str(f.get("Subtype", ""))
+        if sub == "Type3":
+            return name or "<Type3>", sub, sha(self.canon(f.get("CharProcs")) + self.canon(f.get("FontMatrix")))[:40]
+        desc = r(f.get("FontDescriptor"))
+        if desc is None and sub == "Type0":
+            kids = r(f.get("DescendantFonts")) or []
+            desc = r((r(kids[0]) or {}).get("FontDescriptor")) if kids else None
+        for k in ("FontFile", "FontFile2", "FontFile3"):
+            if isinstance(desc, dict) and k in desc:
+                return name, sub, self.canon(desc[k]).lstrip("@")
+        return name, sub, "not embedded"
+
+
+def normalise_pdf(pdf, out):
+    """`qpdf --qdf --normalize-content=y --object-streams=disable`; exit 3 is
+    qpdf's "succeeded with warnings"."""
+    q = shutil.which("qpdf")
+    if not q:
+        raise pdftext.PdfError("qpdf not found on PATH")
+    cap = PT2_MAX_QDF_BYTES
+
+    def limit():  # qpdf may not write more than the cap (SIGXFSZ), and dumps no core
+        import resource
+        resource.setrlimit(resource.RLIMIT_FSIZE, (cap + 1, cap + 1))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=300,
+                       preexec_fn=limit if cap > 0 else None)
+    size = os.path.getsize(out) if os.path.isfile(out) else 0
+    if cap > 0 and (p.returncode == -25 or size > cap):  # -25: SIGXFSZ
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        raise PT2TooLarge(f"P-T2 not measured: the qdf copy of {os.path.basename(pdf)} is over "
+                          f"{cap >> 20} MiB (FLASHTEX_PT2_MAX_QDF_MB), a harness limit")
+    if p.returncode not in (0, 3) or not os.path.isfile(out):
+        raise pdftext.PdfError(f"qpdf exit {p.returncode}: {p.stderr.decode('utf-8', 'replace')[:200]}")
+
+
+def signature(pdf, work, name):
+    """Pages (content bytes, resources hash, media box) and the font multiset."""
+    os.makedirs(work, exist_ok=True)
+    out = os.path.join(work, name + ".qdf.pdf")
+    normalise_pdf(pdf, out)
+    doc = pdftext.PdfDocument.load(out)
+    g = Graph(doc)
+    pages = []
+    for p in doc.pages():
+        c = doc.resolve(p.get("Contents"))
+        refs = c if isinstance(c, list) else [p.get("Contents")]
+        content = b"\n".join(g.stream(x[0]) for x in refs if isinstance(x, pdftext.Ref))
+        pages.append({"content": content, "resources": sha(g.canon(p.get("Resources"))),
+                      "mediabox": g.canon(doc.resolve(p.get("MediaBox")))})
+    os.remove(out)
+    return pages, collections.Counter(g.fonts)
+
+
+def compare_pt2(ref_pdf, cand_pdf, work):
+    """P-T2 on two PDFs; every sub-check is reported, `ok` only when all pass."""
+    try:
+        rp, rf = signature(ref_pdf, work, "oracle")
+    except (pdftext.PdfError, OSError, subprocess.SubprocessError) as e:
+        return {"ok": False, "why": f"oracle PDF: {e}"[:300]}
+    try:
+        cp, cf = signature(cand_pdf, work, "candidate")
+    except (pdftext.PdfError, OSError, subprocess.SubprocessError) as e:
+        return {"ok": False, "why": f"candidate PDF: {e}"[:300]}
+    rec = {"pages": [len(rp), len(cp)]}
+    by_name_r = {n: (s, h) for n, s, h in rf}
+    by_name_c = {n: (s, h) for n, s, h in cf}
+    rec["fonts"] = {"oracle": sum(rf.values()), "candidate": sum(cf.values()),
+                    "missing": sorted(set(by_name_r) - set(by_name_c))[:12],
+                    "extra": sorted(set(by_name_c) - set(by_name_r))[:12],
+                    "different_program": sorted(n for n in set(by_name_r) & set(by_name_c)
+                                                if by_name_r[n] != by_name_c[n])[:12]}
+    rec["fonts_equal"] = rf == cf
+    equal = 0
+    first = None
+    for i, (a, b) in enumerate(zip(rp, cp)):
+        what = [k for k in ("content", "resources", "mediabox") if a[k] != b[k]]
+        if not what:
+            equal += 1
+            continue
+        if first is None:
+            first = {"page": i + 1, "differs": what}
+            if "content" in what:
+                d = first_line_diff(a["content"].decode("latin-1"), b["content"].decode("latin-1"))
+                first["content_line"] = {"line": d[0], "oracle": d[1], "candidate": d[2]}
+    rec["pages_equal"] = equal
+    if first is None and len(rp) != len(cp):
+        first = {"page": min(len(rp), len(cp)) + 1, "differs": ["page count"]}
+    if first:
+        rec["first_page"] = first
+    rec["content_equal"] = len(rp) == len(cp) and equal == len(rp)
+    rec["ok"] = rec["fonts_equal"] and rec["content_equal"]
+    return rec

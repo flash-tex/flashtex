@@ -1,0 +1,8 @@
+\input prelude % Verifies \pdfmdfivesum of the empty string typeset as hex in the box.
+\font\f=cmr10
+\edef\e{\pdfmdfivesum{}}\edef\x{\pdfmdfivesum{x}}
+\setbox0=\hbox{\f \e}
+\lsshipbox0
+\setbox0=\hbox{\f \x}
+\lsshipbox0
+\end

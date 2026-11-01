@@ -1,0 +1,10 @@
+% 1015-true-units: verifies true dimensions shrink under nonzero \mag while plain ones do not (tex.web §457)
+\input prelude
+\mag=2000
+\dimen0=10 truept
+\dimen1=10pt
+\dimen2=1 truein
+\message{1015 vals=\the\dimen0,\the\dimen1,\the\dimen2}
+\setbox0=\hbox{\vrule width1015pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

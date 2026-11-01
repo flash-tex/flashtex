@@ -1,0 +1,8 @@
+% 1009-parshape-count: verifies \the\parshape gives the number of active parshape lines (tex.web §423)
+\input prelude
+\message{1009 none=\the\parshape}
+\parshape=2 10pt 100pt 20pt 80pt
+\message{1009 two=\the\parshape}
+\setbox0=\hbox{\vrule width1009pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

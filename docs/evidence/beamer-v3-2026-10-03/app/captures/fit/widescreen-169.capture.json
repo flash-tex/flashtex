@@ -1,0 +1,185 @@
+{
+  "appFootprintMaxBytes" : 82413952,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 2.2886473829383323,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0001.png",
+      "incomplete" : true,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.2886473829383323,
+      "reverseAtCentre" : "main.tex:8",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:8" : 57
+      },
+      "waitedMs" : 51.44000053405762
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.2886473829383323,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0002.png",
+      "incomplete" : true,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.2886473829383323,
+      "reverseAtCentre" : "main.tex:18",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:18" : 102
+      },
+      "waitedMs" : 52.52707004547119
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.2886473829383323,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0003.png",
+      "incomplete" : true,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.2886473829383323,
+      "reverseAtCentre" : "main.tex:18",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:18" : 102
+      },
+      "waitedMs" : 51.75590515136719
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.2886473829383323,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0004.png",
+      "incomplete" : false,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 2.2886473829383323,
+      "reverseAtCentre" : "main.tex:25",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:25" : 73
+      },
+      "waitedMs" : 50.140976905822754
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/widescreen-169\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 2125.845,
+      "mode" : "cold",
+      "ms" : 2999.912417,
+      "pages" : 4,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 8
+    }
+  ],
+  "firstPageMs" : 1614.985583,
+  "firstPixelsMs" : 256.597458,
+  "forward" : {
+    "18" : 2,
+    "25" : 4,
+    "8" : 1
+  },
+  "hostFootprintEndBytes" : 194971776,
+  "hostFootprintMaxBytes" : 194971776,
+  "incompletePages" : [
+    1,
+    2,
+    3
+  ],
+  "load" : [
+    8.7373046875,
+    14.1806640625,
+    24.91357421875
+  ],
+  "pages" : 4,
+  "settledMs" : 2999.912417,
+  "status" : "done"
+}

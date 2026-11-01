@@ -1,0 +1,364 @@
+#!/usr/bin/env bash
+# The P5 scoreboard, end to end (DESIGN §12 P5, §8): build both engines from
+# this checkout, run every tier's existing harness for each engine against the
+# oracle, then aggregate with tools/parity/scoreboard.py. The nightly workflow
+# runs exactly this; so can anyone with TeX Live 2026.
+#
+#   engines   new = crates/flashtex-engine's flashtex-initex (with its own
+#             pdflatex.fmt / pdftex.fmt, built as fmtutil does, like
+#             scripts/engine-parity.sh); old = v1, the flashtex CLI
+#   parity    tools/parity/parity.py on --tiers (default: fixtures arxiv
+#             templates, plus packages when its manifest exists), both engines
+#   t2        tools/latex-suites/run.py through this host's pdfTeX (the
+#             baseline) and through the new engine
+#   smoke     tools/package-smoke/run.py, new engine
+#   fonts     tools/font-census/census.py, new engine
+#   t4        not run here: pass --t4-new/--t4-old with nightly.py output
+#             directories (nightly.yml's corpus-t4 or corpus-t4-mac.yml's
+#             artifacts). They must be at this checkout's commit, with the same
+#             engine binaries and this host's oracle (texlive.tlpdb and pdftex
+#             sha256, OUT/oracle.json): any other run reads INVALID
+#
+# v1 cannot run t2, smoke, fonts or P-T1 (they need a pdfTeX-compatible
+# binary); the board says "old n/a" for those, with the reason.
+#
+# Usage: tools/parity/scoreboard-run.sh --out DIR [--work DIR] [--keep-work] [--jobs N]
+#          [--tiers "fixtures arxiv ..."] [--limit N] [--skip "t2 fonts ..."]
+#          [--t4-new DIR] [--t4-old DIR] [--sample-note TEXT] [--corpus-texmf DIR]
+#          [--build-engine] [--engine-dir DIR] [--v1 BIN] [--collect] [--no-board]
+#          [--] [scoreboard.py args...]
+# The new engine is the T4 run's own binary (and formats) when --t4-new names one that is on
+# this host with the sha256 its summary records; --build-engine (or no such run) builds it.
+# --engine-dir DIR: the new engine prebuilt (DIR/flashtex-initex, pdftex.pool, pdflatex.fmt,
+# pdftex.fmt), used as it is; --v1 BIN: v1 (the flashtex CLI) prebuilt. With neither, they are
+# built here (v1 only when the parity stage runs). A board split over several hosts (the
+# hosted route of p5-scoreboard.yml) passes one build to every part, so every run is of one
+# binary: scoreboard.py checks each run's engine sha256 against the parity run's.
+# --skip takes stage names: parity, t2 (or only one side of it: t2-ref, t2-new), smoke, fonts.
+# --collect: a skipped stage's outputs already in OUT (made by other runs of this script
+# at this commit, with the same engines: OUT/parity-new*/, OUT/parity-old*/, t2-*.txt,
+# smoke-new.txt, fonts-new/) go on the board, as if this run had made them.
+# --no-board: run the stages only, without the board (a part of a split board).
+# --corpus-texmf DIR: where the TeX Live tiers' documents (templates, packages) are
+# copied from, when this TeX Live has no doc files (the NixOS PC's is installed
+# without them): a tree with the manifests' pinned files at their texmf-dist paths,
+# each checked against its sha256 as usual. The oracle stays this host's TeX Live.
+# A corpus fetch that fails (a missing or changed file) no longer stops the board:
+# parity.py records those documents as unmeasured, so their tier reads partial.
+# --limit N runs the first N documents per parity tier and 20 T2 tests (a
+# sample; the board is then never all-green). Needs TeX Live 2026 first on
+# PATH, python3 and qpdf. Parity runs use -j N (default 2).
+#
+# Disk (P5-BOARD-DISK: the first Mac board, run 37113092020, died after 5 h
+# with "No space left on device"). Every harness writes under --work (default
+# OUT/work), its TMPDIR too, and what the script made there is removed on exit
+# unless --keep-work; parity.py removes a document's work directory as soon as
+# it is scored, and no traced log reaches the disk (its pt1_plan). A guard
+# reads the free space of OUT, WORK and the parity cache every
+# FLASHTEX_BOARD_DISK_POLL_S seconds (default 30) while a stage runs. Under
+# FLASHTEX_BOARD_MIN_FREE_GB (default 10) it stops that stage (SIGTERM to its
+# process tree, which the harnesses turn into their own cleanup; SIGKILL to
+# what is left after 60 s), starts no other, and still writes the board, whose
+# unfinished rows read missing or invalid: a ::error:: names the directory and
+# its free space, and the exit status is 1. It stops rather than pauses: a
+# pause would run into the harnesses' wall-clock time limits and turn into
+# harness errors.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+OUT="" WORK="" KEEP_WORK=0 JOBS=2 TIERS="" LIMIT=0 SKIP="" T4NEW="" T4OLD="" NOTE="" CORPUS_TEXMF="" BUILD_ENGINE=0
+ENGINE_DIR="" V1_BIN="" COLLECT=0 NO_BOARD=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) OUT="${2:?}"; shift 2 ;;
+    --work) WORK="${2:?}"; shift 2 ;;
+    --keep-work) KEEP_WORK=1; shift ;;
+    --jobs) JOBS="${2:?}"; shift 2 ;;
+    --tiers) TIERS="${2:?}"; shift 2 ;;
+    --limit) LIMIT="${2:?}"; shift 2 ;;
+    --skip) SKIP="${2:?}"; shift 2 ;;
+    --t4-new) T4NEW="${2:?}"; shift 2 ;;
+    --t4-old) T4OLD="${2:?}"; shift 2 ;;
+    --sample-note) NOTE="${2:?}"; shift 2 ;;
+    --corpus-texmf) CORPUS_TEXMF="${2:?}"; shift 2 ;;
+    --build-engine) BUILD_ENGINE=1; shift ;;
+    --engine-dir) ENGINE_DIR="${2:?}"; shift 2 ;;
+    --v1) V1_BIN="${2:?}"; shift 2 ;;
+    --collect) COLLECT=1; shift ;;
+    --no-board) NO_BOARD=1; shift ;;
+    -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --) shift; break ;;
+    *) echo "scoreboard-run.sh: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[[ -n "$OUT" ]] || { echo "scoreboard-run.sh: --out DIR is required" >&2; exit 2; }
+WORK="${WORK:-$OUT/work}"
+mkdir -p "$OUT" "$WORK"
+OUT="$(cd "$OUT" && pwd)"; WORK="$(cd "$WORK" && pwd)"
+skip() { [[ " $SKIP " == *" $1 "* ]]; }
+
+# ---- the disk guard (see the header) ---------------------------------------------
+MIN_FREE_GB="${FLASHTEX_BOARD_MIN_FREE_GB:-10}" DISK_POLL="${FLASHTEX_BOARD_DISK_POLL_S:-30}"
+GUARDED=("$OUT" "$WORK" "${FLASHTEX_PARITY_CACHE:-$HOME/.cache/flashtex-parity}")
+DISK_LOW=""
+exec 3>&2  # the guard's messages reach the job log while a stage writes to its own log
+low_disk() {  # "DIR FREE_GB" for the first guarded directory whose disk is under the floor
+  local d kb
+  for d in "${GUARDED[@]}"; do
+    [[ -d $d ]] || continue
+    kb=$(df -Pk "$d" | awk 'NR == 2 { print $4 }')  # POSIX columns on macOS and Linux
+    if ((kb < MIN_FREE_GB * 1048576)); then echo "$d $(awk -v k="$kb" 'BEGIN { printf "%.1f", k / 1048576 }')"; return 0; fi
+  done
+  return 1
+}
+disk_low() {  # disk_low STAGE "DIR FREE_GB"
+  DISK_LOW="only ${2##* } GB free on the disk of ${2% *} (the floor is $MIN_FREE_GB GB: FLASHTEX_BOARD_MIN_FREE_GB)"
+  echo "::error::scoreboard-run: $DISK_LOW; stopping $1 and starting no other stage: their rows read missing" >&3
+}
+tree_of() {  # PID and its descendants, as `ps` sees them now
+  ps -A -o pid= -o ppid= | awk -v root="$1" '
+    function walk(p,   n, a, i) { n = split(kids[p], a, " "); for (i = 1; i <= n; i++) walk(a[i]); print p }
+    { kids[$2] = kids[$2] " " $1 }
+    END { walk(root) }'
+}
+stop_tree() {  # SIGTERM to PID's whole tree (T2's l3build runs in a session of its own), then SIGKILL
+  local pids p pp i
+  pids=" $(tree_of "$1" | tr "\n" " ")"
+  # shellcheck disable=SC2086 # a list of pids
+  kill -TERM $pids 2>/dev/null || true
+  for ((i = 0; i < 60; i++)); do kill -0 "$1" 2>/dev/null || break; sleep 1; done
+  for p in $pids; do  # a survivor: still in the tree, or orphaned (ppid 1); never a reused pid
+    pp=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') || continue
+    if [[ $pp == 1 || "$pids" == *" $pp "* ]]; then kill -KILL "$p" 2>/dev/null || true; fi
+  done
+}
+guard() {  # guard STAGE CMD...: CMD in the background, stopped when the disk runs low; 125 = stopped
+  local name=$1 low pid rc i; shift
+  [[ -z $DISK_LOW ]] || return 125  # not started: note_fail says so
+  if low=$(low_disk); then disk_low "$name" "$low"; return 125; fi
+  "$@" 3>&- &
+  pid=$!
+  while :; do
+    for ((i = 0; i < DISK_POLL; i++)); do kill -0 "$pid" 2>/dev/null || break 2; sleep 1; done
+    if low=$(low_disk); then disk_low "$name" "$low"; stop_tree "$pid"; break; fi
+  done
+  rc=0; wait "$pid" || rc=$?
+  [[ -z $DISK_LOW ]] || return 125
+  return $rc
+}
+# What this script makes under WORK; removed on exit (--keep-work keeps it).
+cleanup() {
+  [[ $KEEP_WORK == 1 ]] && return
+  rm -rf "$WORK"/{eng,fmt,texmfvar,tmp,parity-new,parity-old}
+  rmdir "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
+if low=$(low_disk); then
+  echo "::error::scoreboard-run: only ${low##* } GB free on the disk of ${low% *} (the floor is $MIN_FREE_GB GB): not starting" >&2
+  exit 1
+fi
+
+PDFTEX="$(command -v pdftex)" || { echo "::error::no pdftex on PATH (TeX Live 2026 is the oracle)" >&2; exit 1; }
+TEXBIN="$(dirname "$PDFTEX")"
+TEXMF="$(kpsewhich -var-value TEXMFDIST)"
+"$PDFTEX" --version | sed -n 1p
+if [[ -z "$TIERS" ]]; then
+  TIERS="fixtures arxiv templates"
+  compgen -G "tools/parity/corpus/packages-*.json" >/dev/null && TIERS="$TIERS packages"
+fi
+# A scratch TEXMFVAR, so no run writes into the user's or the runner's own.
+export TEXMFVAR="$WORK/texmfvar"
+mkdir -p "$TEXMFVAR"
+
+# ---- engines -----------------------------------------------------------------
+TARGET="${CARGO_TARGET_DIR:-target}"
+ENG="$WORK/eng" FMT="$WORK/fmt"
+rm -rf "$ENG" "$FMT"; mkdir -p "$ENG" "$FMT"
+# The new engine is the T4 run's own binary when that run was measured on this host
+# (--t4-new: its summary names the binary, nightly.yml keeps it with its formats and pool
+# in ~/.cache/flashtex-nightly/engines/<key>/), checked against the sha256 the summary
+# records. Rebuilt, it differs: the engine's C sources (kpathsea, ...) are compiled from
+# the build's OUT_DIR and embed its path, so the same commit built in another target
+# directory is another binary (P5-BOARD-T4, 2026-10-07: board 5b96720eae04 against T4
+# 4d42a00d944d at ac58ecfc7, and 962848a5a20f / 36d246f0a490 in two scratch targets).
+# Without such a run the engine is built here, alone, as nightly.yml's corpus-t4 builds it.
+t4_engine_dir() {  # the T4 run's engine directory, if it is on this host and is that binary
+  [[ -n "$T4NEW" && -f "$T4NEW/summary.json" ]] || return 1
+  python3 - "$T4NEW/summary.json" <<'PY'
+import hashlib, json, os, sys
+e = json.load(open(sys.argv[1])).get("engine") or {}
+p, want = e.get("path"), e.get("sha256")
+d = os.path.dirname(p or "")
+ok = p and want and os.path.isfile(p) and all(os.path.isfile(os.path.join(d, f)) for f in ("pdftex.pool", "pdflatex.fmt", "pdftex.fmt"))
+if ok and hashlib.sha256(open(p, "rb").read()).hexdigest() == want:
+    print(d)
+else:
+    sys.exit(1)
+PY
+}
+if [[ -n $ENGINE_DIR ]]; then
+  for f in flashtex-initex pdftex.pool pdflatex.fmt pdftex.fmt; do
+    [[ -f $ENGINE_DIR/$f ]] || { echo "::error::scoreboard-run: --engine-dir $ENGINE_DIR has no $f" >&2; exit 2; }
+  done
+  echo "scoreboard-run: the new engine is the prebuilt one in $ENGINE_DIR"
+  cp "$ENGINE_DIR/flashtex-initex" "$ENGINE_DIR/pdftex.pool" "$ENG/"
+  cp "$ENGINE_DIR/pdflatex.fmt" "$ENGINE_DIR/pdftex.fmt" "$FMT/"
+  POOL="$ENG/pdftex.pool" INITEX="$ENG/flashtex-initex"
+elif [[ $BUILD_ENGINE == 0 ]] && T4ENG="$(t4_engine_dir)"; then
+  echo "scoreboard-run: the new engine is the T4 run's own, $T4ENG (sha256 checked)"
+  cp "$T4ENG/flashtex-initex" "$T4ENG/pdftex.pool" "$ENG/"
+  cp "$T4ENG/pdflatex.fmt" "$T4ENG/pdftex.fmt" "$FMT/"
+  POOL="$ENG/pdftex.pool" INITEX="$ENG/flashtex-initex"
+else
+  [[ -n "$T4NEW" ]] && echo "::notice::scoreboard-run: the T4 run's engine is not on this host (or --build-engine): building it; a T4 measured with another binary reads INVALID" >&2
+  # Built together with flashtex-cli in one cargo invocation, shared dependencies get
+  # unified features and the binary differs (mac-m5pro-dq222, 296c90197): alone, and
+  # copied out before the v1 build runs.
+  cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+  cp "$TARGET/release/flashtex-initex" "$ENG/"
+  cp crates/flashtex-engine/pdftex.pool "$ENG/pdftex.pool"
+  POOL="$ENG/pdftex.pool" INITEX="$ENG/flashtex-initex"
+  for f in pdflatex pdftex; do
+    ini=$f.ini; [[ $f == pdftex ]] && ini=pdfetex.ini
+    (cd "$FMT" && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL="$POOL" "$INITEX" -ini -jobname=$f \
+       -progname=$f -etex -translate-file=cp227.tcx "$ini" </dev/null >"$FMT/$f.out" 2>&1) && [[ -s "$FMT/$f.fmt" ]] ||
+      { tail -n 40 "$FMT/$f.out" >&2; echo "::error::the engine did not build $f.fmt" >&2; exit 1; }
+  done
+fi
+if [[ -n $V1_BIN ]]; then
+  cp "$V1_BIN" "$ENG/flashtex"
+elif ! skip parity; then
+  cargo build --release --locked -p flashtex-cli --bin flashtex
+  cp "$TARGET/release/flashtex" "$ENG/"
+fi
+V1="$ENG/flashtex"
+# The full commit: nightly.py records it too, and scoreboard.py marks a T4 run at any
+# other commit INVALID (a stale or foreign run).
+SHA="$(git rev-parse HEAD)"
+
+ARGS=(--sha "new=$SHA" --sha "old=$SHA" --out "$OUT/board")
+# The board's oracle, down to its texlive.tlpdb and pdftex binary (DESIGN §8): a T4
+# summary measured against any other reads INVALID (the version string alone is the
+# same on the PC and the Macs). The workflow writes OUT/oracle.json first.
+[[ -f "$OUT/oracle.json" ]] || python3 tools/parity/oracle_provenance.py --texbin "$TEXBIN" --json "$OUT/oracle.json"
+ARGS+=(--oracle "$OUT/oracle.json")
+[[ -n "$NOTE" ]] && ARGS+=(--sample-note "$NOTE")
+rc_all=0
+note_fail() {
+  if [[ $2 -eq 125 && -n $DISK_LOW ]]; then echo "::warning::$1 stopped or not started by the disk guard; its row reads missing or invalid" >&2
+  else echo "::warning::$1 did not complete (exit $2); its row reads missing or invalid" >&2; fi
+  rc_all=1
+}
+# Every harness's temporary files (T2's shims, package-smoke's runs) under WORK too.
+export TMPDIR="$WORK/tmp"
+mkdir -p "$TMPDIR"
+
+# ---- parity tiers, both engines ------------------------------------------------
+if ! skip parity; then
+  margs=()
+  for t in $TIERS; do
+    [[ $t == fixtures ]] && continue
+    for m in tools/parity/corpus/"$t"-*.json; do [[ -f $m ]] && margs+=(--manifest "$m"); done
+  done
+  if [[ ${#margs[@]} -gt 0 ]]; then
+    rc=0; guard "corpus fetch" python3 tools/parity/corpus.py --texmf "${CORPUS_TEXMF:-$TEXMF}" fetch "${margs[@]}" \
+      >"$OUT/corpus-fetch.log" 2>&1 || rc=$?
+    # a document that could not be fetched is parity.py's to report (unmeasured: its tier
+    # reads partial), not a reason to measure nothing
+    if [[ $rc -ne 0 ]]; then
+      grep -E "with problems|: (missing|sha256|fetch)" "$OUT/corpus-fetch.log" | head -n 20 >&2 || true
+      note_fail "corpus fetch" $rc
+    fi
+  fi
+  targs=(); for t in $TIERS; do targs+=(--tier "$t"); done
+  [[ $LIMIT -gt 0 ]] && targs+=(--limit "$LIMIT")
+  common=(--texbin "$TEXBIN" --oracle-pdftex "$PDFTEX" --texmf "$TEXMF" --raster none -j "$JOBS")
+  [[ -n $CORPUS_TEXMF ]] && common+=(--corpus-texmf "$CORPUS_TEXMF")
+  rc=0; guard "parity (new)" python3 tools/parity/parity.py "${targs[@]}" "${common[@]}" --engine "$INITEX" \
+    --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" \
+    --out "$OUT/parity-new" --work "$WORK/parity-new" >"$OUT/parity-new.log" 2>&1 || rc=$?
+  [[ $rc -eq 0 ]] || note_fail "parity (new)" $rc
+  [[ -f "$OUT/parity-new/scoreboard.json" ]] && ARGS+=(--parity "new=$OUT/parity-new")
+  rc=0; guard "parity (old)" python3 tools/parity/parity.py "${targs[@]}" "${common[@]}" --engine "$V1" \
+    --out "$OUT/parity-old" --work "$WORK/parity-old" >"$OUT/parity-old.log" 2>&1 || rc=$?
+  [[ $rc -eq 0 ]] || note_fail "parity (old)" $rc
+  [[ -f "$OUT/parity-old/scoreboard.json" ]] && ARGS+=(--parity "old=$OUT/parity-old")
+elif [[ $COLLECT == 1 ]]; then
+  for d in "$OUT"/parity-new*/ "$OUT"/parity-old*/; do
+    [[ -f $d/scoreboard.json ]] || continue
+    d=${d%/} lab=new; [[ ${d##*/} == parity-old* ]] && lab=old
+    echo "scoreboard-run: collected ${d##*/} ($lab)"
+    ARGS+=(--parity "$lab=$d")
+  done
+fi
+
+# ---- T2: this host's pdfTeX is the baseline ------------------------------------
+if ! skip t2 && ! { skip t2-ref && skip t2-new; }; then
+  rc=0; guard "T2 fetch" sh tools/latex-suites/fetch.sh >"$OUT/t2-fetch.log" 2>&1 || rc=$?
+  [[ $rc -eq 0 || $rc -eq 125 ]] || { tail -n 20 "$OUT/t2-fetch.log" >&2; exit $rc; }
+  if [[ $rc -eq 125 ]]; then
+    note_fail "T2" $rc  # no checkouts: nothing below can run
+  else
+    sargs=(--suite all)
+    if [[ $LIMIT -gt 0 ]]; then
+      # the first 20 latex2e/base tests (a glob, not `ls | head`: head's SIGPIPE
+      # would end the script under pipefail)
+      lvts=(tools/latex-suites/.cache/latex2e/base/testfiles/*.lvt)
+      names=(); for f in "${lvts[@]:0:20}"; do f=${f##*/}; names+=("${f%.lvt}"); done
+      tests=$(IFS=,; echo "${names[*]}")
+      sargs=(--suite base --tests "$tests")
+    fi
+    # The full-suite denominator, from the same checkouts: a run of fewer tests is partial.
+    python3 tools/latex-suites/run.py --engine "$PDFTEX" --suite all --list >"$OUT/t2-list.txt"
+    if ! skip t2-ref; then
+      rc=0; guard "T2 (pdfTeX reference)" python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" --allow-stale \
+        >"$OUT/t2-reference.txt" 2>&1 || rc=$?
+      [[ $rc -le 1 ]] || note_fail "T2 (pdfTeX reference)" $rc
+    fi
+    if ! skip t2-new; then
+      rc=0; guard "T2 (new)" python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-stale --allow-any-engine \
+        --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" >"$OUT/t2-new.txt" 2>&1 || rc=$?
+      [[ $rc -le 1 ]] || note_fail "T2 (new)" $rc
+    fi
+  fi
+fi
+# the T2 rows: this run's, or (--collect) another part's; one side alone is still a row
+# (scoreboard.py reads a missing reference or list as such)
+if [[ -f "$OUT/t2-new.txt" ]] && { ! skip t2 || [[ $COLLECT == 1 ]]; }; then
+  ARGS+=(--latex-suites "new=$OUT/t2-new.txt")
+  [[ -f "$OUT/t2-reference.txt" ]] && ARGS+=(--latex-suites-reference "$OUT/t2-reference.txt")
+  [[ -f "$OUT/t2-list.txt" ]] && ARGS+=(--latex-suites-list "$OUT/t2-list.txt")
+fi
+
+# ---- package-smoke --------------------------------------------------------------
+if ! skip smoke; then
+  rc=0; guard "package-smoke (new)" env FLASHTEX_FORMATS="$FMT" FLASHTEX_POOL="$POOL" \
+    python3 tools/package-smoke/run.py --candidate "$INITEX" --reference "$PDFTEX" >"$OUT/smoke-new.txt" 2>&1 || rc=$?
+  [[ $rc -le 1 ]] || note_fail "package-smoke (new)" $rc
+  ARGS+=(--package-smoke "new=$OUT/smoke-new.txt")
+elif [[ $COLLECT == 1 && -f "$OUT/smoke-new.txt" ]]; then
+  ARGS+=(--package-smoke "new=$OUT/smoke-new.txt")
+fi
+
+# ---- fonts ------------------------------------------------------------------------
+if ! skip fonts; then
+  rc=0; guard "font census (new)" python3 tools/font-census/census.py --engine "$INITEX" --pool "$POOL" --texbin "$TEXBIN" \
+    -j "$JOBS" --out "$OUT/fonts-new" >"$OUT/fonts-new.log" 2>&1 || rc=$?
+  [[ $rc -le 1 ]] || note_fail "font census (new)" $rc
+  [[ -f "$OUT/fonts-new/census.json" ]] && ARGS+=(--fonts "new=$OUT/fonts-new")
+elif [[ $COLLECT == 1 && -f "$OUT/fonts-new/census.json" ]]; then
+  ARGS+=(--fonts "new=$OUT/fonts-new")
+fi
+
+# ---- T4 (from the nightly corpus job) ------------------------------------------
+[[ -n "$T4NEW" && -f "$T4NEW/summary.json" ]] && ARGS+=(--nightly "new=$T4NEW")
+[[ -n "$T4OLD" && -f "$T4OLD/summary.json" ]] && ARGS+=(--nightly "old=$T4OLD")
+
+if [[ -n $DISK_LOW ]]; then
+  cleanup  # room for the board, which is small
+  echo "::error::scoreboard-run: the board is partial: $DISK_LOW" >&2
+fi
+[[ $NO_BOARD == 1 ]] || python3 tools/parity/scoreboard.py "${ARGS[@]}" "$@"
+exit $rc_all

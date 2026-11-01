@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{chngcntr}
+\counterwithin{figure}{section}
+\begin{document}
+\section{First}
+\begin{figure}\centering A placeholder figure.\caption{A figure}\label{fig:a}\end{figure}
+\section{Second}
+\begin{figure}\centering Another figure.\caption{Another}\label{fig:b}\end{figure}
+Figures~\ref{fig:a} and~\ref{fig:b} are numbered within sections.
+\end{document}

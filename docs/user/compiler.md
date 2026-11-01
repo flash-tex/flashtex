@@ -1,8 +1,10 @@
 # The `flashtex` command line, building from source, and supported LaTeX
 
 FlashTeX is a LaTeX engine first: `flashtex` is the compiler on the command
-line, and the Mac IDE is a complementary app that drives the same engine. No
-TeX distribution is involved anywhere — parsing, layout, fonts and the PDF
+line. The Mac app no longer drives it: since retirement stage S6 the app runs
+only the new pdfLaTeX-compatible engine, whose command line is
+[`flashtex-v3`](#the-new-engines-command-line-flashtex-v3). No TeX
+distribution is involved in `flashtex` — parsing, layout, fonts and the PDF
 writer are all original Rust code, linked into one binary.
 
 ```sh
@@ -14,6 +16,88 @@ flashtex supported                      # what LaTeX is implemented, with covera
 flashtex fonts                          # which fonts/metrics this binary resolves
 flashtex --version
 ```
+
+## The new engine's command line: `flashtex-v3`
+
+`flashtex` above is the old engine's command line, which is retired with
+that engine (DESIGN.md §10, row D5; retirement plan S7, RQ6). Its successor
+on the new engine is `flashtex-v3` (crates/flashtex-build, MIT). It never
+links the engine: it starts `flashtex-host` as a separate process and talks
+to it over the display-list-v3 socket, as the Mac app does. It needs a TeX
+Live, as the new engine does (D12).
+
+```sh
+flashtex-v3 build main.tex              # main.pdf next to it: the PDF pdflatex writes
+flashtex-v3 build paper -o out.pdf      # a directory: its one file with \documentclass, or main.tex
+flashtex-v3 build main.tex --no-tools   # without bibtex, biber and makeindex
+flashtex-v3 check main.tex [--json]     # TeX's diagnostics: file:line:col: severity: message; exit 1 on an error
+flashtex-v3 watch main.tex [--interval MS]
+flashtex-v3 build main.tex --no-progress   # no progress line (also: --progress, -q/--quiet)
+```
+
+- `build` compiles as latexmk would. It runs bibtex, biber and makeindex
+  when the document needs them, and as many passes as the `.aux` asks for.
+  It then writes the PDF of an `export` run, which is byte-identical to
+  pdflatex's apart from the dates and the document ID. Only the PDF goes
+  into the project: the `.aux`, `.log` and the rest go to a fresh private
+  directory under the system's temporary directory (mode 0700 on Unix),
+  removed at the end, so concurrent runs never share one.
+- `check` also reports the external tools: a failed bibtex, biber or
+  makeindex is an error (exit 1), a tool the document needs but that could
+  not run (its database is missing) a warning.
+- `watch` keeps one warm host for the session and builds again when a
+  source changes (settled for 200 ms); the PDF it writes is not a source.
+  A save made while a build runs is built next, and a host that crashes is
+  started again at the next build.
+- Ctrl-C or SIGTERM (Windows: Ctrl-C, Ctrl-Break, closing the console) stops
+  the host and removes the work directory. If `flashtex-v3` is killed
+  outright, the host it started (`--once`) notices its parent is gone, removes
+  its socket and exits, and the next run (Unix) removes the work directory
+  that was left behind.
+- The host is `--host PATH`, else `$FLASHTEX_HOST`, else `flashtex-host`
+  beside `flashtex-v3`, else on `PATH`. The engine's string pool is
+  `$FLASHTEX_POOL`, else beside the host.
+- Exit status: 0 on success, 1 on a TeX error or when no PDF was written, 2
+  for a usage error.
+
+### Progress
+
+When stderr is a terminal, `build`, `check` and `watch` show one status line
+on stderr, redrawn in place about ten times a second, and a summary at the end:
+
+```text
+    Starting the engine host  0.7s
+   Compiling thesis.tex  pass 2  [===========>                  ] 210/~541 pages  chapters/ch6.tex  8.8s  ETA 5.1s
+     Running bibtex thesis.aux
+     Writing thesis.pdf  [=====================>        ] 386/541 pages  19.6s  ETA 2.9s
+    Finished thesis.pdf — 541 pages, 2 passes, 21.7s
+```
+
+- **pass**: the engine's passes over the document, counting a further pass
+  for the `.aux` and the passes after bibtex, biber or makeindex (each tool
+  has a `Running` line of its own). **Writing** is the export run that
+  writes the PDF pdflatex writes.
+- **pages**: the pages the pass has shipped out, out of the last build's
+  count (`~541`, kept in `flashtex/progress/` in the user's cache
+  directory) or, for the export, the exact count. Without a last build, a
+  spinner and a count. The ETA is shown when the total is known.
+- **the file**: the innermost `\input`, `\include` or package TeX is reading,
+  relative to the project.
+- **Finished**: the pages, the passes and the time, and the number of
+  errors (printed above it) and warnings (`flashtex-v3 check` lists them).
+- The line fits the terminal's width (it drops the ETA, then the bar, then
+  shortens the file name). `NO_COLOR` turns the colour off; `TERM=dumb`
+  turns the line off.
+- **Not a terminal** (a pipe, CI, a script): no progress at all, so the
+  output is byte for byte what it was without it (one `flashtex-v3: wrote …`
+  line). `--progress` asks for plain lines there instead (`flashtex-v3:
+  pass 2`, at most one more every 5 s, and the tools and the export).
+  `--no-progress` turns it off on a terminal; `-q`/`--quiet` turns it off and
+  drops the line for a successful build (errors and warnings still print).
+- Progress never goes to stdout (where `check` prints its diagnostics) and
+  costs the build nothing measurable: it comes from the host's `progress-v1`
+  heartbeat (display-list-v3 §6.8), sent at page checkpoints at most every
+  250 ms, which `flashtex-v3` asks for only when it shows progress.
 
 ## Install
 
@@ -31,7 +115,8 @@ against that release's `SHA256SUMS` (refuses on a mismatch), and installs
 `flashtex` into `~/.local/bin` plus its fonts/metrics into
 `~/.local/share/flashtex`. Flags: `--prefix DIR` (e.g. `/usr/local`, may need
 sudo), `--version vX.Y.Z` (default: the latest release), `--uninstall`. For
-the Mac app instead (SwiftUI GUI, bundles this same CLI), see
+the Mac app instead (SwiftUI GUI on the new engine; it does not bundle this
+CLI), see
 [Getting started](README.md#install).
 
 Where it lives:
@@ -39,13 +124,13 @@ Where it lives:
 | Install | Path |
 |---|---|
 | `install-cli.sh`, or the CLI tarball extracted by hand (`flashtex-cli-<version>-<platform>.tar.gz` from [Releases](https://github.com/flash-tex/flashtex/releases)) | `bin/flashtex`, fonts and metrics in `share/flashtex/` — extract anywhere; `bin/flashtex install-cli` links it into `/usr/local/bin` |
-| Mac app | `/Applications/FlashTeX.app/Contents/MacOS/flashtex-cli` (uses the app's `Contents/Resources/{Fonts,texmf}`) |
 | Source build | `crates/flashtex-cli/target/release/flashtex` — add `--font-dir apps/mac/Fonts` and `FLASHTEX_TFM_DIRS=apps/mac/Fonts/texmf/fonts/tfm/public/lm`, or install the tarball layout ([Fonts](#fonts-and-metrics)) |
 
 The older helpers (`flashtex-render`, `flashtex-compiler`, `flashtex-pdf`,
 `flashtex-pdf-exact`) still ship next to it and are described
 [below](#helper-binaries); `flashtex` is the same engine with a proper front
-end, and its `worker` subcommand is byte-for-byte the protocol the IDE speaks.
+end, and its `worker` subcommand speaks the same JSON Lines protocol (the
+Mac app no longer uses it).
 Any editor or CI can drive that same JSON Lines protocol directly — see
 [Extending FlashTeX](../extensibility.md).
 
@@ -87,8 +172,7 @@ same root.
 The PDF is the **exact route** — the display list the engine produces is
 written by the pdf crate's exact writer: Latin Modern (and New Computer
 Modern Math) font programs embedded as glyph-id-preserving CFF subsets, the
-engine's own advances, typed rules, images and hyperlinks. It is the same
-output as *File › Export PDF* in the app. The file is written atomically
+engine's own advances, typed rules, images and hyperlinks. The file is written atomically
 (temporary sibling + rename), so a viewer never sees a torn PDF.
 
 | Flag | Meaning | Default |
@@ -96,7 +180,7 @@ output as *File › Export PDF* in the app. The file is written atomically
 | `-o`, `--output FILE` | The PDF to write | `<main>.pdf` next to the entry file, or in the manifest's `[project] output` directory when set |
 | `--project-root DIR` | Root that includes and images resolve under; the entry must be inside it | the manifest's directory, else the entry file's |
 | `--font-dir DIR` | Extra font directory, probed first (repeatable) | — |
-| `--v2 FILE` | Also write the rendering-v2 `display_list` envelope (images included) — the input of `flashtex-pdf-exact from-v2` and of *File › Open Display List (v2)…* | off |
+| `--v2 FILE` | Also write the rendering-v2 `display_list` envelope (images included) — the input of `flashtex-pdf-exact from-v2` | off |
 | `--timing` | One line on stderr: `render N ms (P passes), pdf N ms, total N ms` | off |
 | `-v`, `--verbose` | Also print the PDF route's notes: every embedded font, subset size, width adjustments | off |
 | `--strict` | Exit 1 when any **error** diagnostic was reported, even though the document rendered (`recovered`); the PDF is still written | off |
@@ -170,9 +254,9 @@ coverage table alone.
 The runtime-v1 JSON Lines worker: one `compile` request per stdin line, one
 `compile_result` per stdout line, followed by the `display_list` line when
 the client negotiated `display-list-v2`; a block cache across requests makes
-a keystroke retypeset only the paragraph it touched. This is what the IDE
-launches (`FLASHTEX_COMPILER` may point at `flashtex worker` or at
-`flashtex-render`; they share the loop). `--v2`/`--pdf` write the last
+a keystroke retypeset only the paragraph it touched. `flashtex worker` and
+`flashtex-render` share the loop. The Mac app no longer launches either
+(retirement stage S6); any editor can. `--v2`/`--pdf` write the last
 request's display list / exact PDF as side outputs. The wire format is
 [runtime-v1](../contracts/runtime-v1.md) and
 [runtime-v1-display-list-v2](../contracts/runtime-v1-display-list-v2.md).
@@ -189,7 +273,7 @@ set loads; exit 1 when either is missing. `--json` is the
 
 Creates the symlink `DIR/flashtex` (default `/usr/local/bin`) to the running
 binary — a link, not a copy, so the binary keeps finding its
-`share/flashtex` (tarball) or `Contents/Resources` (app) fonts. Refuses to
+`share/flashtex` fonts. Refuses to
 replace an unrelated file and explains when the directory needs `sudo`.
 
 ## Diagnostics and exit status
@@ -325,9 +409,9 @@ directories, so the embedded program is exactly the file the layout used.
 
 | Tool | What it is |
 |---|---|
-| `flashtex-render` | The engine as a bare runtime-v1 worker (`flashtex worker` is the same loop). `--tex FILE` is a one-shot mode: single file, no include resolution. `--v2 out.json` writes the display list of the last render — complete, with no reply-line limit. `--pdf out.pdf` writes that render through the exact route, the same bytes `flashtex build` and the Mac app's Export PDF produce. |
-| `flashtex-compiler` | The original FT-002 worker with Core-14 (Times) metrics and a smaller LaTeX subset; same wire protocol, no flags. `--supported [json|markdown|coverage]` prints the inventory (`flashtex supported` is the same data). *File › Attach Built Compiler* (⌘⇧K) attaches it. |
-| `flashtex-pdf` | `flashtex-pdf [INPUT.json] --out OUTPUT.pdf [--verify] [--embed-font PATH|auto] [--default-face embedded|lm|times]` — a PDF from a runtime-v1 `compile_result` (text items and rules); characters outside WinAnsi/Symbol/the embedded face become `?`. No longer reachable from the Mac app: the app's one export route is `flashtex-pdf-exact`. |
+| `flashtex-render` | The engine as a bare runtime-v1 worker (`flashtex worker` is the same loop). `--tex FILE` is a one-shot mode: single file, no include resolution. `--v2 out.json` writes the display list of the last render — complete, with no reply-line limit. `--pdf out.pdf` writes that render through the exact route, the same bytes `flashtex build` produces. |
+| `flashtex-compiler` | The original FT-002 worker with Core-14 (Times) metrics and a smaller LaTeX subset; same wire protocol, no flags. `--supported [json|markdown|coverage]` prints the inventory (`flashtex supported` is the same data). |
+| `flashtex-pdf` | `flashtex-pdf [INPUT.json] --out OUTPUT.pdf [--verify] [--embed-font PATH|auto] [--default-face embedded|lm|times]` — a PDF from a runtime-v1 `compile_result` (text items and rules); characters outside WinAnsi/Symbol/the embedded face become `?`. Not used by the Mac app. |
 | `flashtex-pdf-exact` | `from-v2 LIST.json --out OUT.pdf [--font-dir DIR]... [--project-root DIR]` is the exact route as a separate step (what `flashtex build` runs in-process); `reemit`, `classify` and `dump` are PDF-comparison utilities used by the fidelity tests. |
 
 ## Building from source
@@ -342,16 +426,20 @@ git clone https://github.com/flash-tex/flashtex.git && cd flashtex
 cargo build --release --manifest-path crates/flashtex-cli/Cargo.toml   # the CLI (links the engine)
 crates/flashtex-cli/target/release/flashtex build fixtures/real-world/hw1/HW1.tex \
   --font-dir apps/mac/Fonts -o /tmp/hw1.pdf --timing
-scripts/ci/build-helpers.sh                          # every helper the Mac app bundles, release mode
+scripts/ci/build-helpers.sh                          # the helpers the Mac app bundles (bridge, edit-ledger, project-files), release mode
+cargo build --release -p flashtex-engine --bin flashtex-host   # the app's engine host
 apps/mac/scripts/make-app.sh --install --open        # packages FlashTeX.app into ~/Applications
 scripts/ci/package-cli.sh 0.0.0-local macos-arm64 dist   # the tarball, from the built binaries
 ```
 
 `crates/flashtex-cli` depends on `crates/render-pipeline` by path, which
-builds against the pinned sibling mirrors under
-`crates/render-pipeline/vendor/` (see `vendor/VENDORING.md`). Binaries land
-in `crates/<crate>/target/release/`. `make-app.sh` bundles `flashtex` as
-`Contents/MacOS/flashtex-cli` alongside the helpers, verifies the bundled fonts
+depends on its live siblings (`../compiler`, `../pdf`, ...) the same way: every
+crate is a member of the root Cargo workspace, so binaries land in the
+repository's `target/release/`, not `crates/<crate>/target/release/`. Resolve
+the directory with `scripts/crate-target-dir.sh <crate-dir>` rather than
+hard-coding either. `make-app.sh` bundles the helpers in `Contents/MacOS`
+and the engine host in `Contents/Helpers` (it does not bundle `flashtex`;
+see [packaging](../../apps/mac/docs/packaging.md)), verifies the bundled fonts
 and metrics against a pinned manifest, and ad-hoc signs the bundle; add
 `--dmg` for a disk image. `cargo test --release` in `crates/flashtex-cli`
 builds HW1/HW2 and the multi-file fixture end to end (including a run with
@@ -366,7 +454,7 @@ The section below is generated from the compiler itself
 <!-- BEGIN GENERATED supported-latex: `flashtex-compiler --supported markdown`; do not edit by hand -->
 ## Supported LaTeX
 
-This compiler implements a finite LaTeX subset: 539 text-mode and 717 math-mode command entries, 92 environments and 43 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
+This compiler implements a finite LaTeX subset: 543 text-mode and 719 math-mode command entries, 93 environments and 44 layout-neutral packages. Every other command produces an explicit "not supported" diagnostic naming it, and every other environment or package a warning; nothing is dropped silently. Descriptions note approximations. Outstanding features with reproductions are in `crates/compiler/UNSUPPORTED.md`.
 
 Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test --test supported_latex` fails when this section is stale.
 
@@ -374,17 +462,17 @@ Regenerate with `crates/compiler/scripts/render_supported_latex.sh`; `cargo test
 
 | Canonical set | Commands supported | Environments supported |
 | --- | ---: | ---: |
-| kernel | 234/410 (57.1%) | 22/30 (73.3%) |
+| kernel | 234/410 (57.1%) | 23/30 (76.7%) |
 | amsmath | 59/102 (57.8%) | 17/21 (81.0%) |
 | amssymb | 225/229 (98.3%) | none defined |
 | enumitem | 1/17 (5.9%) | none defined |
 | geometry | 2/7 (28.6%) | none defined |
 | graphicx | 6/8 (75.0%) | none defined |
-| hyperref | 3/132 (2.3%) | 0/2 (0.0%) |
+| hyperref | 4/132 (3.0%) | 0/2 (0.0%) |
 | tikz | 1/43 (2.3%) | 0/2 (0.0%) |
 | xcolor | 14/71 (19.7%) | none defined |
 | siunitx | 21/240 (8.8%) | none defined |
-| **total** | **605/1314 (46.0%)** | |
+| **total** | **607/1314 (46.2%)** | |
 
 Generated by `flashtex-compiler --supported coverage` against `crates/compiler/supported/canonical-latex.tsv` (LaTeX2e reference-manual index and package sources, each name confirmed by pdfLaTeX; TeX Live 2026). The total row counts commands and environments together. Supported means handled without an unsupported diagnostic, not typographic parity.
 
@@ -514,6 +602,10 @@ Canonical sources:
 | `\reflectbox` | `{...}` | graphics.sty box mirrored left to right |
 | `\graphicspath` | `{{dir/}...}` | image search directories; no material |
 | `\hypersetup` | `{key=value,...}` | hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them |
+| `\pdfbookmark` | `[level]{text}{name}` | hyperref: a PDF outline entry and named destination, so nothing is typeset; the exact PDF route writes no outline yet |
+| `\currentpdfbookmark` | `{text}{name}` | hyperref: \pdfbookmark at the current level; nothing is typeset |
+| `\subpdfbookmark` | `{text}{name}` | hyperref: \pdfbookmark one level below the current one; nothing is typeset |
+| `\belowpdfbookmark` | `{text}{name}` | hyperref: \pdfbookmark one level below, without changing the current level; nothing is typeset |
 | `\lstset` | `{key=value,...}` | listings defaults, global from that point on; the key names are checked and nothing is typeset here |
 | `\usetikzlibrary` | `{libraries}` | TikZ library loading (the [libraries] form too); code, not material, so nothing is typeset and the libraries are not recorded |
 | `\usepgflibrary` | `{libraries}` | pgf library loading, as \usetikzlibrary |
@@ -539,11 +631,11 @@ Canonical sources:
 | `\hspace` | `{dimension}` | fixed horizontal space; starred form identical |
 | `\ensuremath` | `{math}` | the argument as inline math (latex.ltx: `$...$` when not already in math mode) |
 | `\hskip` | `<glue>` | TeX horizontal glue without braces: a dimension with optional plus/minus stretch and shrink, including fil/fill/filll (the expansion pass scans the glue with TeX's grammar: registers, \p@, \@plus, 0.5\textwidth, em of the current font) |
-| `\vskip` | `<glue>` | TeX vertical glue without braces (scanned like \hskip): ends the paragraph and adds the glue; an infinite stretch fills the page like \vfil |
+| `\vskip` | `<glue>` | TeX vertical glue without braces (scanned like \hskip): ends the paragraph and adds the glue; an infinite stretch (plus 1fil/fill/filll) takes the room left on the page or in a fixed-height minipage at its own order |
 | `\kern` | `<dimen>` | TeX kern (scanned like \hskip): a fixed horizontal space in a paragraph, vertical space between paragraphs |
 | `\hss` |  | infinite-stretch horizontal glue (0pt plus 1fil minus 1fil), as \hfil |
-| `\vfil` |  | vertical glue filling the rest of the page (same order as \vfill) |
-| `\vss` |  | vertical glue filling the rest of the page (0pt plus 1fil minus 1fil), as \vfil |
+| `\vfil` |  | vertical glue of order fil (0pt plus 1fil): takes the room left on the page or in a fixed-height minipage, shared with the other fil glue there (\newpage's own \vfil); a \vfill beats it |
+| `\vss` |  | vertical glue of order fil (0pt plus 1fil minus 1fil), as \vfil |
 | `\pdfgentounicode` |  | pdfTeX glyph-to-Unicode switch: accepted no-op, copy-paste metadata with no visible output |
 | `\pdfglyphtounicode` | `{name}{hex}` | pdfTeX glyph-to-Unicode mapping: accepted no-op, copy-paste metadata with no visible output |
 | `\strut` |  | zero-width strut box, 0.7/0.3 of the current baselineskip (latex.ltx \strutbox) |
@@ -577,7 +669,7 @@ Canonical sources:
 | `\bigskip` |  | ends the paragraph and adds 12pt of vertical space |
 | `\medskip` |  | ends the paragraph and adds 6pt of vertical space |
 | `\smallskip` |  | ends the paragraph and adds 3pt of vertical space |
-| `\vspace` | `{dimension}` | ends the paragraph and adds fixed vertical space |
+| `\vspace` | `{dimension}` | ends the paragraph and adds vertical space; \fill and \stretch{n} (0pt plus n fill) take the room left on the page or in a fixed-height minipage |
 | `\hrule` |  | full-measure horizontal rule |
 | `\newpage` |  | forces a page break |
 | `\clearpage` |  | forces a page break |
@@ -609,7 +701,7 @@ Canonical sources:
 | `\flushbottom` |  | pages are stretched to the text height |
 | `\enlargethispage` | `*{dimension}` | the current page's text height grows by the dimension (* also shrinks its glue); pt/cm/.../\baselineskip multiples |
 | `\hyphenation` | `{words}` | hyphenation exceptions: the hyphens mark each word's only break points |
-| `\vfill` |  | vertical glue filling the rest of the page |
+| `\vfill` |  | vertical glue of order fill (0pt plus 1fill): takes the room left on the page (before \newpage/\clearpage or at the end of a page) or in a fixed-height minipage |
 | `\columnbreak` | `[n]` | multicol: ends the current column of multicols (priority n, default 4) |
 | `\newcolumn` |  | multicol: ends the current column of multicols, filling it |
 | `\raggedcolumns` |  | multicol: columns keep their natural height |
@@ -1018,6 +1110,7 @@ Canonical sources:
 | `\xrightleftharpoons` | `[below]{above}` | mathtools extensible arrows stretched to their labels (\ext@arrow); needs mathtools |
 | `\substack` | `{a \\ b}` | amsmath centred script-style rows for limits |
 | `\sqrt` | `[index]{x}` | radical with optional raised index |
+| `\root` | `<index> \of {x}` | plain-TeX radical with a required index, terminated by \of |
 | `\binom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style |
 | `\dbinom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style |
 | `\tbinom` | `{n}{k}` | amsmath binomial: zero-thickness \genfrac in parentheses; d/t forms force the style |
@@ -1066,6 +1159,8 @@ Canonical sources:
 | `\impliedby` |  | long double arrow between thick (5mu) spaces |
 | `\mathellipsis` |  | the kernel's low ellipsis (\mathinner{\ldotp\ldotp\ldotp}), fontmath.ltx 512 |
 | `\bowtie` |  | \triangleright and \triangleleft joined by \joinrel as one relation, fontmath.ltx 366 |
+| `\doteq` |  | a text-size dot over `=` as one relation (\buildrel\textstyle.\over=), fontmath.ltx 365 |
+| `\models` |  | `\|` and `=` joined by \joinrel as one relation (\mathrel{\|}\joinrel\Relbar), fontmath.ltx 380 |
 | `\relbar` |  | the single/double arrow shaft as a relation (\mathrel{\smash-} / \mathrel{=}), fontmath.ltx 355-357 |
 | `\Relbar` |  | the single/double arrow shaft as a relation (\mathrel{\smash-} / \mathrel{=}), fontmath.ltx 355-357 |
 | `\joinrel` |  | \mathrel{\mkern-3mu}: the kern that joins two relations, fontmath.ltx 353 |
@@ -1214,7 +1309,7 @@ Canonical sources:
 
 ### Math symbols
 
-`\alpha` α, `\beta` β, `\gamma` γ, `\delta` δ, `\theta` θ, `\lambda` λ, `\mu` μ, `\pi` π, `\sigma` σ, `\phi` φ, `\omega` ω, `\epsilon` ϵ, `\varepsilon` ε, `\zeta` ζ, `\eta` η, `\vartheta` ϑ, `\iota` ι, `\kappa` κ, `\nu` ν, `\xi` ξ, `\varpi` ϖ, `\rho` ρ, `\varsigma` ς, `\tau` τ, `\upsilon` υ, `\varphi` ϕ, `\chi` χ, `\psi` ψ, `\Gamma` Γ, `\Delta` Δ, `\Theta` Θ, `\Lambda` Λ, `\Xi` Ξ, `\Pi` Π, `\Sigma` Σ, `\Upsilon` Υ, `\Phi` Φ, `\Psi` Ψ, `\Omega` Ω, `\le` ≤, `\ge` ≥, `\ne` ≠, `\equiv` ≡, `\sim` ∼, `\cong` ≅, `\propto` ∝, `\perp` ⊥, `\partial` ∂, `\nabla` ∇, `\prod` ∏, `\ast` ∗, `\prime` ′, `\cup` ∪, `\cap` ∩, `\sqcup` ⊔, `\sqcap` ⊓, `\subset` ⊂, `\subseteq` ⊆, `\sqsubseteq` ⊑, `\supset` ⊃, `\supseteq` ⊇, `\sqsupseteq` ⊒, `\notin` ∉, `\ni` ∋, `\emptyset` ∅, `\oplus` ⊕, `\otimes` ⊗, `\ominus` ⊖, `\oslash` ⊘, `\odot` ⊙, `\bigcirc` ◯, `\wedge` ∧, `\land` ∧, `\lor` ∨, `\to` →, `\rightarrow` →, `\leftarrow` ←, `\gets` ←, `\uparrow` ↑, `\downarrow` ↓, `\leftrightarrow` ↔, `\Leftarrow` ⇐, `\Leftrightarrow` ⇔, `\Uparrow` ⇑, `\Downarrow` ⇓, `\aleph` ℵ, `\Re` ℜ, `\Im` ℑ, `\wp` ℘, `\langle` ⟨, `\rangle` ⟩, `\times` ×, `\div` ÷, `\pm` ±, `\leq` ≤, `\geq` ≥, `\neq` ≠, `\not` ̸, `\approx` ≈, `\cdot` ⋅, `\infty` ∞, `\sum` ∑, `\int` ∫, `\in` ∈, `\forall` ∀, `\exists` ∃, `\vee` ∨, `\Rightarrow` ⇒, `\mid` ∣, `\setminus` ∖, `\Longrightarrow` ⟹, `\mp` ∓, `\ll` ≪, `\gg` ≫, `\simeq` ≃, `\vdots` ⋮, `\ddots` ⋱, `\lfloor` ⌊, `\rfloor` ⌋, `\lceil` ⌈, `\rceil` ⌉, `\oint` ∮, `\mapsto` ↦, `\ell` ℓ, `\circ` ∘, `\dagger` †, `\ddagger` ‡, `\mathsection` §, `\S` §, `\mathparagraph` ¶, `\P` ¶, `\parallel` ∥, `\coloneqq` ≔, `\hookrightarrow` ↪, `\models` ⊨, `\vdash` ⊢, `\dashv` ⊣, `\top` ⊤, `\Box` □, `\diamond` ⋄, `\Longleftrightarrow` ⟺, `\longrightarrow` ⟶, `\longleftarrow` ⟵, `\Longleftarrow` ⟸, `\longleftrightarrow` ⟷, `\triangle` △, `\bigtriangledown` ▽, `\varrho` ϱ, `\bullet` ∙, `\prec` ≺, `\succ` ≻, `\preceq` ⪯, `\succeq` ⪰, `\coprod` ∐, `\bigvee` ⋁, `\bigwedge` ⋀, `\biguplus` ⨄, `\bigcap` ⋂, `\bigcup` ⋃, `\bigotimes` ⨂, `\bigoplus` ⨁, `\bigodot` ⨀, `\bigsqcup` ⨆, `\longmapsto` ⟼, `\mathdollar` $, `\leftharpoonup` ↼, `\leftharpoondown` ↽, `\rightharpoonup` ⇀, `\rightharpoondown` ⇁, `\triangleright` ▷, `\triangleleft` ◁, `\ldotp` ., `\star` ⋆, `\flat` ♭, `\natural` ♮, `\sharp` ♯, `\smile` ⌣, `\frown` ⌢, `\imath` 𝚤, `\jmath` 𝚥, `\cdotp` ⋅, `\asymp` ≍, `\nearrow` ↗, `\searrow` ↘, `\nwarrow` ↖, `\swarrow` ↙, `\owns` ∋, `\varbigtriangleup` △, `\varbigtriangledown` ▽, `\lnot` ¬, `\neg` ¬, `\uplus` ⊎, `\arrowvert` ⏐, `\updownarrow` ↕, `\Updownarrow` ⇕, `\wr` ≀, `\amalg` ⨿, `\smallint` ∫, `\clubsuit` ♣, `\diamondsuit` ♢, `\heartsuit` ♡, `\spadesuit` ♠, `\lgroup` ⟮, `\rgroup` ⟯, `\bracevert` ⎪, `\ointop` ∮, `\intop` ∫, `\boxdot` ⊡, `\boxplus` ⊞, `\boxtimes` ⊠, `\square` □, `\blacksquare` ■, `\centerdot` ⬝, `\lozenge` ◊, `\blacklozenge` ⧫, `\circlearrowright` ↻, `\circlearrowleft` ↺, `\leftrightharpoons` ⇋, `\boxminus` ⊟, `\Vdash` ⊩, `\Vvdash` ⊪, `\vDash` ⊨, `\twoheadrightarrow` ↠, `\twoheadleftarrow` ↞, `\leftleftarrows` ⇇, `\rightrightarrows` ⇉, `\upuparrows` ⇈, `\downdownarrows` ⇊, `\upharpoonright` ↾, `\downharpoonright` ⇂, `\upharpoonleft` ↿, `\downharpoonleft` ⇃, `\rightarrowtail` ↣, `\leftarrowtail` ↢, `\leftrightarrows` ⇆, `\rightleftarrows` ⇄, `\Lsh` ↰, `\Rsh` ↱, `\rightsquigarrow` ⇝, `\leftrightsquigarrow` ↭, `\looparrowleft` ↫, `\looparrowright` ↬, `\circeq` ≗, `\succsim` ≿, `\gtrsim` ≳, `\gtrapprox` ⪆, `\multimap` ⊸, `\therefore` ∴, `\because` ∵, `\doteqdot` ≑, `\triangleq` ≜, `\precsim` ≾, `\lesssim` ≲, `\lessapprox` ⪅, `\eqslantless` ⪕, `\eqslantgtr` ⪖, `\curlyeqprec` ⋞, `\curlyeqsucc` ⋟, `\preccurlyeq` ≼, `\leqq` ≦, `\leqslant` ⩽, `\lessgtr` ≶, `\backprime` ‵, `\risingdotseq` ≓, `\fallingdotseq` ≒, `\succcurlyeq` ≽, `\geqq` ≧, `\geqslant` ⩾, `\gtrless` ≷, `\vartriangleright` ⊳, `\vartriangleleft` ⊲, `\trianglerighteq` ⊵, `\trianglelefteq` ⊴, `\bigstar` ★, `\between` ≬, `\blacktriangledown` ▾, `\blacktriangleright` ▶, `\blacktriangleleft` ◀, `\vartriangle` ▵, `\blacktriangle` ▴, `\triangledown` ▿, `\eqcirc` ≖, `\lesseqgtr` ⋚, `\gtreqless` ⋛, `\lesseqqgtr` ⪋, `\gtreqqless` ⪌, `\Rrightarrow` ⇛, `\Lleftarrow` ⇚, `\veebar` ⊻, `\barwedge` ⊼, `\doublebarwedge` ⩞, `\measuredangle` ∡, `\sphericalangle` ∢, `\varpropto` ∝, `\smallsmile` ⌣, `\smallfrown` ⌢, `\Subset` ⋐, `\Supset` ⋑, `\Cup` ⋓, `\Cap` ⋒, `\curlywedge` ⋏, `\curlyvee` ⋎, `\leftthreetimes` ⋋, `\rightthreetimes` ⋌, `\subseteqq` ⫅, `\supseteqq` ⫆, `\bumpeq` ≏, `\Bumpeq` ≎, `\lll` ⋘, `\ggg` ⋙, `\circledS` Ⓢ, `\pitchfork` ⋔, `\dotplus` ∔, `\backsim` ∽, `\backsimeq` ⋍, `\complement` ∁, `\intercal` ⊺, `\circledcirc` ⊚, `\circledast` ⊛, `\circleddash` ⊝, `\lvertneqq` ≨, `\gvertneqq` ≩, `\nleq` ≰, `\ngeq` ≱, `\nless` ≮, `\ngtr` ≯, `\nprec` ⊀, `\nsucc` ⊁, `\lneqq` ≨, `\gneqq` ≩, `\nleqslant` ⩽̸, `\ngeqslant` ⩾̸, `\lneq` ⪇, `\gneq` ⪈, `\npreceq` ⋠, `\nsucceq` ⋡, `\precnsim` ⋨, `\succnsim` ⋩, `\lnsim` ⋦, `\gnsim` ⋧, `\nleqq` ≦̸, `\ngeqq` ≧̸, `\precneqq` ⪵, `\succneqq` ⪶, `\precnapprox` ⪹, `\succnapprox` ⪺, `\lnapprox` ⪉, `\gnapprox` ⪊, `\nsim` ≁, `\ncong` ≇, `\diagup` ⟋, `\diagdown` ⟍, `\varsubsetneq` ⊊, `\varsupsetneq` ⊋, `\nsubseteqq` ⫅̸, `\nsupseteqq` ⫆̸, `\subsetneqq` ⫋, `\supsetneqq` ⫌, `\varsubsetneqq` ⫋, `\varsupsetneqq` ⫌, `\subsetneq` ⊊, `\supsetneq` ⊋, `\nsubseteq` ⊈, `\nsupseteq` ⊉, `\nparallel` ∦, `\nmid` ∤, `\nshortmid` ∤, `\nshortparallel` ∦, `\nvdash` ⊬, `\nVdash` ⊮, `\nvDash` ⊭, `\nVDash` ⊯, `\ntrianglerighteq` ⋭, `\ntrianglelefteq` ⋬, `\ntriangleleft` ⋪, `\ntriangleright` ⋫, `\nleftarrow` ↚, `\nrightarrow` ↛, `\nLeftarrow` ⇍, `\nRightarrow` ⇏, `\nLeftrightarrow` ⇎, `\nleftrightarrow` ↮, `\divideontimes` ⋇, `\nexists` ∄, `\Finv` Ⅎ, `\Game` ⅁, `\eth` ð, `\eqsim` ≂, `\beth` ℶ, `\gimel` ℷ, `\daleth` ℸ, `\lessdot` ⋖, `\gtrdot` ⋗, `\ltimes` ⋉, `\rtimes` ⋊, `\shortmid` ∣, `\shortparallel` ∥, `\smallsetminus` ∖, `\thicksim` ∼, `\thickapprox` ≈, `\approxeq` ≊, `\succapprox` ⪸, `\precapprox` ⪷, `\curvearrowleft` ↶, `\curvearrowright` ↷, `\digamma` ϝ, `\varkappa` ϰ, `\Bbbk` 𝕜, `\hslash` ℏ, `\backepsilon` ϶, `\ulcorner` ⌜, `\urcorner` ⌝, `\llcorner` ⌞, `\lrcorner` ⌟, `\rightleftharpoons` ⇌, `\angle` ∠, `\hbar` ℏ, `\sqsubset` ⊏, `\sqsupset` ⊐, `\mho` ℧, `\yen` ¥, `\checkmark` ✓, `\circledR` ®, `\maltese` ✠, `\restriction` ↾, `\Doteq` ≑, `\doublecup` ⋓, `\doublecap` ⋒, `\llless` ⋘, `\gggtr` ⋙.
+`\alpha` α, `\beta` β, `\gamma` γ, `\delta` δ, `\theta` θ, `\lambda` λ, `\mu` μ, `\pi` π, `\sigma` σ, `\phi` φ, `\omega` ω, `\epsilon` ϵ, `\varepsilon` ε, `\zeta` ζ, `\eta` η, `\vartheta` ϑ, `\iota` ι, `\kappa` κ, `\nu` ν, `\xi` ξ, `\varpi` ϖ, `\rho` ρ, `\varsigma` ς, `\tau` τ, `\upsilon` υ, `\varphi` ϕ, `\chi` χ, `\psi` ψ, `\Gamma` Γ, `\Delta` Δ, `\Theta` Θ, `\Lambda` Λ, `\Xi` Ξ, `\Pi` Π, `\Sigma` Σ, `\Upsilon` Υ, `\Phi` Φ, `\Psi` Ψ, `\Omega` Ω, `\le` ≤, `\ge` ≥, `\ne` ≠, `\equiv` ≡, `\sim` ∼, `\cong` ≅, `\propto` ∝, `\perp` ⊥, `\partial` ∂, `\nabla` ∇, `\prod` ∏, `\ast` ∗, `\prime` ′, `\cup` ∪, `\cap` ∩, `\sqcup` ⊔, `\sqcap` ⊓, `\subset` ⊂, `\subseteq` ⊆, `\sqsubseteq` ⊑, `\supset` ⊃, `\supseteq` ⊇, `\sqsupseteq` ⊒, `\notin` ∉, `\ni` ∋, `\emptyset` ∅, `\oplus` ⊕, `\otimes` ⊗, `\ominus` ⊖, `\oslash` ⊘, `\odot` ⊙, `\bigcirc` ◯, `\wedge` ∧, `\land` ∧, `\lor` ∨, `\to` →, `\rightarrow` →, `\leftarrow` ←, `\gets` ←, `\uparrow` ↑, `\downarrow` ↓, `\leftrightarrow` ↔, `\Leftarrow` ⇐, `\Leftrightarrow` ⇔, `\Uparrow` ⇑, `\Downarrow` ⇓, `\aleph` ℵ, `\Re` ℜ, `\Im` ℑ, `\wp` ℘, `\langle` ⟨, `\rangle` ⟩, `\times` ×, `\div` ÷, `\pm` ±, `\leq` ≤, `\geq` ≥, `\neq` ≠, `\not` ̸, `\approx` ≈, `\cdot` ⋅, `\infty` ∞, `\sum` ∑, `\int` ∫, `\in` ∈, `\forall` ∀, `\exists` ∃, `\vee` ∨, `\Rightarrow` ⇒, `\mid` ∣, `\setminus` ∖, `\Longrightarrow` ⟹, `\mp` ∓, `\ll` ≪, `\gg` ≫, `\simeq` ≃, `\vdots` ⋮, `\ddots` ⋱, `\lfloor` ⌊, `\rfloor` ⌋, `\lceil` ⌈, `\rceil` ⌉, `\oint` ∮, `\mapsto` ↦, `\ell` ℓ, `\circ` ∘, `\dagger` †, `\ddagger` ‡, `\mathsection` §, `\S` §, `\mathparagraph` ¶, `\P` ¶, `\parallel` ∥, `\coloneqq` ≔, `\hookrightarrow` ↪, `\vdash` ⊢, `\dashv` ⊣, `\top` ⊤, `\Box` □, `\diamond` ⋄, `\Longleftrightarrow` ⟺, `\longrightarrow` ⟶, `\longleftarrow` ⟵, `\Longleftarrow` ⟸, `\longleftrightarrow` ⟷, `\triangle` △, `\bigtriangledown` ▽, `\varrho` ϱ, `\bullet` ∙, `\prec` ≺, `\succ` ≻, `\preceq` ⪯, `\succeq` ⪰, `\coprod` ∐, `\bigvee` ⋁, `\bigwedge` ⋀, `\biguplus` ⨄, `\bigcap` ⋂, `\bigcup` ⋃, `\bigotimes` ⨂, `\bigoplus` ⨁, `\bigodot` ⨀, `\bigsqcup` ⨆, `\longmapsto` ⟼, `\mathdollar` $, `\leftharpoonup` ↼, `\leftharpoondown` ↽, `\rightharpoonup` ⇀, `\rightharpoondown` ⇁, `\triangleright` ▷, `\triangleleft` ◁, `\ldotp` ., `\star` ⋆, `\flat` ♭, `\natural` ♮, `\sharp` ♯, `\smile` ⌣, `\frown` ⌢, `\imath` 𝚤, `\jmath` 𝚥, `\cdotp` ⋅, `\asymp` ≍, `\nearrow` ↗, `\searrow` ↘, `\nwarrow` ↖, `\swarrow` ↙, `\owns` ∋, `\varbigtriangleup` △, `\varbigtriangledown` ▽, `\lnot` ¬, `\neg` ¬, `\uplus` ⊎, `\arrowvert` ⏐, `\updownarrow` ↕, `\Updownarrow` ⇕, `\wr` ≀, `\amalg` ⨿, `\smallint` ∫, `\clubsuit` ♣, `\diamondsuit` ♢, `\heartsuit` ♡, `\spadesuit` ♠, `\lgroup` ⟮, `\rgroup` ⟯, `\bracevert` ⎪, `\ointop` ∮, `\intop` ∫, `\boxdot` ⊡, `\boxplus` ⊞, `\boxtimes` ⊠, `\square` □, `\blacksquare` ■, `\centerdot` ⬝, `\lozenge` ◊, `\blacklozenge` ⧫, `\circlearrowright` ↻, `\circlearrowleft` ↺, `\leftrightharpoons` ⇋, `\boxminus` ⊟, `\Vdash` ⊩, `\Vvdash` ⊪, `\vDash` ⊨, `\twoheadrightarrow` ↠, `\twoheadleftarrow` ↞, `\leftleftarrows` ⇇, `\rightrightarrows` ⇉, `\upuparrows` ⇈, `\downdownarrows` ⇊, `\upharpoonright` ↾, `\downharpoonright` ⇂, `\upharpoonleft` ↿, `\downharpoonleft` ⇃, `\rightarrowtail` ↣, `\leftarrowtail` ↢, `\leftrightarrows` ⇆, `\rightleftarrows` ⇄, `\Lsh` ↰, `\Rsh` ↱, `\rightsquigarrow` ⇝, `\leftrightsquigarrow` ↭, `\looparrowleft` ↫, `\looparrowright` ↬, `\circeq` ≗, `\succsim` ≿, `\gtrsim` ≳, `\gtrapprox` ⪆, `\multimap` ⊸, `\therefore` ∴, `\because` ∵, `\doteqdot` ≑, `\triangleq` ≜, `\precsim` ≾, `\lesssim` ≲, `\lessapprox` ⪅, `\eqslantless` ⪕, `\eqslantgtr` ⪖, `\curlyeqprec` ⋞, `\curlyeqsucc` ⋟, `\preccurlyeq` ≼, `\leqq` ≦, `\leqslant` ⩽, `\lessgtr` ≶, `\backprime` ‵, `\risingdotseq` ≓, `\fallingdotseq` ≒, `\succcurlyeq` ≽, `\geqq` ≧, `\geqslant` ⩾, `\gtrless` ≷, `\vartriangleright` ⊳, `\vartriangleleft` ⊲, `\trianglerighteq` ⊵, `\trianglelefteq` ⊴, `\bigstar` ★, `\between` ≬, `\blacktriangledown` ▾, `\blacktriangleright` ▶, `\blacktriangleleft` ◀, `\vartriangle` ▵, `\blacktriangle` ▴, `\triangledown` ▿, `\eqcirc` ≖, `\lesseqgtr` ⋚, `\gtreqless` ⋛, `\lesseqqgtr` ⪋, `\gtreqqless` ⪌, `\Rrightarrow` ⇛, `\Lleftarrow` ⇚, `\veebar` ⊻, `\barwedge` ⊼, `\doublebarwedge` ⩞, `\measuredangle` ∡, `\sphericalangle` ∢, `\varpropto` ∝, `\smallsmile` ⌣, `\smallfrown` ⌢, `\Subset` ⋐, `\Supset` ⋑, `\Cup` ⋓, `\Cap` ⋒, `\curlywedge` ⋏, `\curlyvee` ⋎, `\leftthreetimes` ⋋, `\rightthreetimes` ⋌, `\subseteqq` ⫅, `\supseteqq` ⫆, `\bumpeq` ≏, `\Bumpeq` ≎, `\lll` ⋘, `\ggg` ⋙, `\circledS` Ⓢ, `\pitchfork` ⋔, `\dotplus` ∔, `\backsim` ∽, `\backsimeq` ⋍, `\complement` ∁, `\intercal` ⊺, `\circledcirc` ⊚, `\circledast` ⊛, `\circleddash` ⊝, `\lvertneqq` ≨, `\gvertneqq` ≩, `\nleq` ≰, `\ngeq` ≱, `\nless` ≮, `\ngtr` ≯, `\nprec` ⊀, `\nsucc` ⊁, `\lneqq` ≨, `\gneqq` ≩, `\nleqslant` ⩽̸, `\ngeqslant` ⩾̸, `\lneq` ⪇, `\gneq` ⪈, `\npreceq` ⋠, `\nsucceq` ⋡, `\precnsim` ⋨, `\succnsim` ⋩, `\lnsim` ⋦, `\gnsim` ⋧, `\nleqq` ≦̸, `\ngeqq` ≧̸, `\precneqq` ⪵, `\succneqq` ⪶, `\precnapprox` ⪹, `\succnapprox` ⪺, `\lnapprox` ⪉, `\gnapprox` ⪊, `\nsim` ≁, `\ncong` ≇, `\diagup` ⟋, `\diagdown` ⟍, `\varsubsetneq` ⊊, `\varsupsetneq` ⊋, `\nsubseteqq` ⫅̸, `\nsupseteqq` ⫆̸, `\subsetneqq` ⫋, `\supsetneqq` ⫌, `\varsubsetneqq` ⫋, `\varsupsetneqq` ⫌, `\subsetneq` ⊊, `\supsetneq` ⊋, `\nsubseteq` ⊈, `\nsupseteq` ⊉, `\nparallel` ∦, `\nmid` ∤, `\nshortmid` ∤, `\nshortparallel` ∦, `\nvdash` ⊬, `\nVdash` ⊮, `\nvDash` ⊭, `\nVDash` ⊯, `\ntrianglerighteq` ⋭, `\ntrianglelefteq` ⋬, `\ntriangleleft` ⋪, `\ntriangleright` ⋫, `\nleftarrow` ↚, `\nrightarrow` ↛, `\nLeftarrow` ⇍, `\nRightarrow` ⇏, `\nLeftrightarrow` ⇎, `\nleftrightarrow` ↮, `\divideontimes` ⋇, `\nexists` ∄, `\Finv` Ⅎ, `\Game` ⅁, `\eth` ð, `\eqsim` ≂, `\beth` ℶ, `\gimel` ℷ, `\daleth` ℸ, `\lessdot` ⋖, `\gtrdot` ⋗, `\ltimes` ⋉, `\rtimes` ⋊, `\shortmid` ∣, `\shortparallel` ∥, `\smallsetminus` ∖, `\thicksim` ∼, `\thickapprox` ≈, `\approxeq` ≊, `\succapprox` ⪸, `\precapprox` ⪷, `\curvearrowleft` ↶, `\curvearrowright` ↷, `\digamma` ϝ, `\varkappa` ϰ, `\Bbbk` 𝕜, `\hslash` ℏ, `\backepsilon` ϶, `\ulcorner` ⌜, `\urcorner` ⌝, `\llcorner` ⌞, `\lrcorner` ⌟, `\rightleftharpoons` ⇌, `\angle` ∠, `\hbar` ℏ, `\sqsubset` ⊏, `\sqsupset` ⊐, `\mho` ℧, `\yen` ¥, `\checkmark` ✓, `\circledR` ®, `\maltese` ✠, `\restriction` ↾, `\Doteq` ≑, `\doublecup` ⋓, `\doublecap` ⋒, `\llless` ⋘, `\gggtr` ⋙.
 
 ### Operator names
 
@@ -1249,6 +1344,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `exampleblock` | text | beamer example block: like block with the title in green; needs \documentclass{beamer} |
 | `columns` | text | beamer columns row: \column{width} or column environments set side by side across the paper width ([onlytextwidth]/[totalwidth=] across the text width), [c\|t\|T\|b] alignment; needs \documentclass{beamer} |
 | `column` | text | beamer column (environment form of \column): [c\|t\|T\|b]{width}; needs \documentclass{beamer} |
+| `minipage` | text | [pos][height][inner-pos]{width}: one box in the paragraph, its body set at the width (\linewidth and \textwidth inside are the box's) with zero \parindent/\parskip and its own \footnote foot; [t] puts the first line's baseline on the line, [b] the last one's, [c] (the default) centres the box on the math axis; a [height] box stretches its \vfill or puts its body at the [t]/[c]/[b] inner position ([s]: the body's own glue stretches); not inside a box argument such as \fbox or a tabular entry |
 | `frame` | text | rule-bordered box around its body (\fboxsep padding, \fboxrule rule in the current colour); under \documentclass{beamer} a slide: one page per frame (empty frames included), the [t]/[c]/[b] body placement, a {title}{subtitle} head or \frametitle in the body; overlay specs multiply the slides, [fragile] keeps verbatim/lstlisting bodies, [plain] drops the head/foot and [allowframebreaks] splits the body over pages with I/II/... title suffixes |
 | `uncoverenv` | text | beamer <overlay> environment: the body keeps its space and is not painted on the slides the spec does not select; needs \documentclass{beamer} |
 | `onlyenv` | text | beamer <overlay> environment: the body is typeset only on the slides the spec selects; needs \documentclass{beamer} |
@@ -1331,6 +1427,7 @@ Typeset as upright words: `\sin`, `\cos`, `\tan`, `\cot`, `\sec`, `\csc`, `\arcs
 | `amsmath` | `centertags, sumlimits, nointlimits, namelimits, reqno` | the align, gather, multline, split, aligned, gathered, cases and matrix families; \dfrac, \tfrac, \binom, \genfrac, \cfrac, \substack, \operatorname, \DeclareMathOperator, \boxed, \phantom, \overset/\underset, the extensible arrows, \text in math, \tag/\notag and \eqref, \sideset, with \lim-family, \sum and \prod display limits and amsmath's wider \colon. Its defaults are the accepted options; leqno, fleqn, tbtags, nosumlimits, intlimits and nonamelimits move real output and keep warning. \shoveleft, \mspace, \hdotsfor and \varinjlim are each diagnosed where they are used |
 | `amssymb` | `` | the full AMSa/AMSb (msam/msbm) inventory of amssymb.sty -- 203 names base LaTeX2e leaves undefined (\square, \nleq, ...) -- plus everything amsfonts declares; loading the package is what makes the names exist, and a name whose file was not loaded is diagnosed |
 | `amsfonts` | `` | amsfonts.sty's 22-name symbol subset (\ulcorner, \square, \yen, the dashed arrows) and the \mathbb and \mathfrak alphabets; the rest of amssymb stays undefined without \usepackage{amssymb} |
+| `mathtools` | `fixamsmath, disallowspaces` | loads amsmath; \coloneqq and the colon family, \mathllap/\mathrlap/\mathclap, the sixteen extensible arrows (\xmapsto, \xLongrightarrow, ...), dcases, \Aboxed and \shortintertext. Its defaults are the accepted options; the others change output and keep warning. \DeclarePairedDelimiter, \mathtoolsset, \prescript, \cramped, \smashoperator, \splitfrac, \adjustlimits, \overbracket, \lparen and multlined are each diagnosed where they are used |
 | `amsthm` | `` | \newtheorem, \theoremstyle and the proof environment |
 | `array` | `` | tabular >{} <{} !{} m b w columns, \newcolumntype and \extrarowheight |
 | `tabularx` | `` | the tabularx environment and its X column, splitting the table's leftover width evenly |
@@ -1474,7 +1571,7 @@ made by a macro the file calls, by an option's code, or by an
 `\AtEndOfPackage` hook is not. A diagnostic raised inside a package names the
 whole chain of files that loaded it, back to the document.
 
-Through `flashtex-render` (what the `flashtex` CLI and the app run), packages the
+Through `flashtex-render` (what the `flashtex` CLI runs), packages the
 render pipeline sets on the compiler's behalf are silent too, with any options:
 `amsmath`, `amssymb`, `amsfonts`, `lmodern`, `microtype`, `geometry`, `graphicx`
 and `tikz`. The same goes for `\pagestyle` in the preamble of a document with a
@@ -1483,8 +1580,7 @@ and `tikz`. The same goes for `\pagestyle` in the preamble of a document with a
 
 ## Troubleshooting
 
-Diagnostics appear on `flashtex`'s stderr, in the app's Problems panel and
-in `diagnostics[]`. The common codes and what to do about them:
+Diagnostics appear on `flashtex`'s stderr and in `diagnostics[]`. The common codes and what to do about them:
 
 | Code | Severity | Meaning | What you can do |
 |---|---|---|---|
@@ -1501,14 +1597,12 @@ in `diagnostics[]`. The common codes and what to do about them:
 | `unsupported_block` | error | Historical: a block-level construct without a layout. Current `flashtex-render` builds do not emit it (unknown environments come through as `compiler` warnings instead) | — |
 | `unsupported_script` | error | Text in a script the shaper does not handle (non-Latin); the segment was not drawn | Not supported yet |
 | `missing_glyph` | warning | A character has no glyph in the selected Latin Modern face; nothing was drawn for it | Use a supported character or `\text{}` with Latin text |
-| `font_unavailable` / `math_font_unavailable` | error | The Latin Modern text face (Times metrics substituted) or Latin Modern Math (no math typeset) could not be found | Check the font search path above; with the bundled app this indicates a broken install |
-| `tfm_missing` / `math_metrics_opentype` / `tfm_run_error` | warning | A `.tfm` metric file was not found (or its lig/kern program failed on a word), so OpenType advances were used for that face or word | Point `FLASHTEX_TFM_DIRS` at a Latin Modern `texmf/fonts/tfm/public/lm` directory, or use the bundled app, which ships the metrics for 5–17 pt roman, 5–12 pt bold and 7–12 pt italic |
+| `font_unavailable` / `math_font_unavailable` | error | The Latin Modern text face (Times metrics substituted) or Latin Modern Math (no math typeset) could not be found | Check the font search path above; with the tarball this indicates a broken install |
+| `tfm_missing` / `math_metrics_opentype` / `tfm_run_error` | warning | A `.tfm` metric file was not found (or its lig/kern program failed on a word), so OpenType advances were used for that face or word | Point `FLASHTEX_TFM_DIRS` at a Latin Modern `texmf/fonts/tfm/public/lm` directory, or use the tarball, which ships the metrics for 5–17 pt roman, 5–12 pt bold and 7–12 pt italic |
 | `required_metrics_unavailable` | error | The pinned required metric set (`ec-lmr12`, `rm-lmr12/8/6`, licence) is missing or altered; layout is not reference geometry | Reinstall; the bundle is verified at packaging time |
 | `labels_unstable` | warning (no source) | `\ref`/`\pageref` values did not converge within the pass limit; the last pass is shown | Check for labels whose value depends on their own page position |
-| `display_list_declined` | warning (no source) | The `display-list-v2` sibling would exceed the 16 MiB reply limit, so the app's v2 preview receives no frame for this revision (the v1 pages still render) | Split the project into `\input` files |
+| `display_list_declined` | warning (no source) | The `display-list-v2` sibling would exceed the 16 MiB reply limit, so the client receives no display list for this revision (the `compile_result` still arrives) | Split the project into `\input` files |
 | `payload_too_large`, `malformed_json`, `invalid_utf8`, `unsupported_protocol_version`, `unsupported_type` | `error` envelope | The request line itself was rejected (over 8 MiB, not JSON, …); no `compile_result` is produced and the worker keeps running | Fix the request; split very large documents |
 
 When a `compile_result` is `recovered`, the pages are real output rendered
-around the problem; when it is `failed` there are no pages and the app keeps
-the last good preview on screen, with the old underlines flagged as kept from
-the previous revision.
+around the problem; when it is `failed` there are no pages.

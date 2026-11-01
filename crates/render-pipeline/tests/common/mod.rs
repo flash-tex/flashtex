@@ -34,8 +34,18 @@ pub fn lm_available() -> bool {
 
 pub fn render_docs(docs: &[(&str, &str)], entry: &str) -> Rendered {
     let fonts = FontSet::with_default_dirs(&[]);
-    let sources: Vec<SourceDocument<'_>> = docs.iter().map(|(p, t)| SourceDocument { path: p, text: t }).collect();
-    render(&sources, entry, 7, "test-project", &fonts, &RenderOptions::default())
+    let sources: Vec<SourceDocument<'_>> = docs
+        .iter()
+        .map(|(p, t)| SourceDocument { path: p, text: t })
+        .collect();
+    render(
+        &sources,
+        entry,
+        7,
+        "test-project",
+        &fonts,
+        &RenderOptions::default(),
+    )
 }
 
 pub fn render_one(text: &str) -> Rendered {
@@ -45,8 +55,18 @@ pub fn render_one(text: &str) -> Rendered {
 /// [`render_one`] against a caller-supplied font set, for the controls that
 /// must not read `FLASHTEX_FONT_DIRS`.
 pub fn render_one_with(text: &str, fonts: &FontSet) -> Rendered {
-    let sources = [SourceDocument { path: "main.tex", text }];
-    render(&sources, "main.tex", 7, "test-project", fonts, &RenderOptions::default())
+    let sources = [SourceDocument {
+        path: "main.tex",
+        text,
+    }];
+    render(
+        &sources,
+        "main.tex",
+        7,
+        "test-project",
+        fonts,
+        &RenderOptions::default(),
+    )
 }
 
 pub fn v1_of(r: &Rendered, caps: Capabilities) -> V1Payload {
@@ -79,14 +99,17 @@ pub fn words_of(r: &Rendered) -> Vec<Word> {
     for page in &r.v2.pages {
         for it in page.resident_items() {
             if let flashtex_render_pipeline::display::Item::GlyphRun(run) = it {
-                let Some(first) = run.glyphs.first() else { continue };
+                let Some(first) = run.glyphs.first() else {
+                    continue;
+                };
                 let last = run.glyphs.last().expect("non-empty");
                 words.push(Word {
                     page: page.number,
                     text: run.text.clone(),
                     x: first.origin_x.to_bp(),
                     baseline: first.baseline_y.to_bp(),
-                    width: (last.origin_x.0 + last.advance_x.0 - first.origin_x.0) as f64 / flashtex_render_pipeline::display::TICKS_PER_BP,
+                    width: (last.origin_x.0 + last.advance_x.0 - first.origin_x.0) as f64
+                        / flashtex_render_pipeline::display::TICKS_PER_BP,
                 });
             }
         }
@@ -116,7 +139,9 @@ pub fn stage_faces_without(tag: &str, without: &[&str]) -> ControlDir {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("stage a control font directory");
     for src in real.dirs() {
-        let Ok(entries) = std::fs::read_dir(src) else { continue };
+        let Ok(entries) = std::fs::read_dir(src) else {
+            continue;
+        };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if !name.ends_with(".otf") || without.contains(&name.as_str()) {
@@ -151,7 +176,11 @@ impl ControlDir {
 
     /// A hermetic font set over the staged faces, then `extra` (so a test can
     /// add back the one face it is measuring), with explicit metric dirs.
-    pub fn font_set(&self, extra: &[std::path::PathBuf], tfm_dirs: Vec<std::path::PathBuf>) -> FontSet {
+    pub fn font_set(
+        &self,
+        extra: &[std::path::PathBuf],
+        tfm_dirs: Vec<std::path::PathBuf>,
+    ) -> FontSet {
         let mut dirs = vec![self.0.clone()];
         dirs.extend_from_slice(extra);
         FontSet::with_dirs(dirs, tfm_dirs)
@@ -171,14 +200,18 @@ pub type Rule = (f64, f64, f64, f64);
 /// Every `Item::Rule` of a render, per page, in the oracle's `(x, top,
 /// width, height)` bp form.
 pub fn rules_of(r: &Rendered) -> Vec<Vec<Rule>> {
-    r.v2
-        .pages
+    r.v2.pages
         .iter()
         .map(|p| {
             p.resident_items()
                 .iter()
                 .filter_map(|it| match it {
-                    flashtex_render_pipeline::display::Item::Rule(rule) => Some((rule.x.to_bp(), rule.top.to_bp(), rule.width.to_bp(), rule.height.to_bp())),
+                    flashtex_render_pipeline::display::Item::Rule(rule) => Some((
+                        rule.x.to_bp(),
+                        rule.top.to_bp(),
+                        rule.width.to_bp(),
+                        rule.height.to_bp(),
+                    )),
                     _ => None,
                 })
                 .collect()
@@ -225,7 +258,13 @@ impl RuleMatch {
 /// * two of our rules collapsing onto one reference rule is caught too: only
 ///   one of them can consume it, the other is `extra`.
 pub fn match_rules(want: &[Rule], got: &[Rule], tol_bp: f64) -> RuleMatch {
-    let dist = |a: &Rule, b: &Rule| (a.0 - b.0).abs().max((a.1 - b.1).abs()).max((a.2 - b.2).abs()).max((a.3 - b.3).abs());
+    let dist = |a: &Rule, b: &Rule| {
+        (a.0 - b.0)
+            .abs()
+            .max((a.1 - b.1).abs())
+            .max((a.2 - b.2).abs())
+            .max((a.3 - b.3).abs())
+    };
     let mut used = vec![false; got.len()];
     let mut out = RuleMatch::default();
     for r in want {
@@ -244,7 +283,12 @@ pub fn match_rules(want: &[Rule], got: &[Rule], tol_bp: f64) -> RuleMatch {
             None => out.missing.push(*r),
         }
     }
-    out.extra = got.iter().zip(&used).filter(|(_, u)| !**u).map(|(q, _)| *q).collect();
+    out.extra = got
+        .iter()
+        .zip(&used)
+        .filter(|(_, u)| !**u)
+        .map(|(q, _)| *q)
+        .collect();
     out
 }
 
@@ -253,10 +297,16 @@ pub fn match_rules(want: &[Rule], got: &[Rule], tol_bp: f64) -> RuleMatch {
 pub fn painted_glyphs(r: &Rendered) -> Vec<(String, f64, f64)> {
     let mut out = Vec::new();
     for item in r.v2.pages[0].resident_items() {
-        let flashtex_render_pipeline::display::Item::GlyphRun(run) = item else { continue };
+        let flashtex_render_pipeline::display::Item::GlyphRun(run) = item else {
+            continue;
+        };
         for g in &run.glyphs {
             let c = &run.clusters[g.cluster as usize];
-            out.push((run.text[c.text_start_byte..c.text_end_byte].to_string(), g.origin_x.to_bp(), g.baseline_y.to_bp()));
+            out.push((
+                run.text[c.text_start_byte..c.text_end_byte].to_string(),
+                g.origin_x.to_bp(),
+                g.baseline_y.to_bp(),
+            ));
         }
     }
     out
@@ -269,25 +319,31 @@ pub fn painted_glyphs(r: &Rendered) -> Vec<(String, f64, f64)> {
 /// first. The table is committed oracle evidence; pdflatex never runs here.
 pub fn assert_pdftex_glyphs(source: &str, expected: &[(&str, &str, f64, f64)], tol_bp: f64) {
     let r = render_one(source);
-    let errors: Vec<_> = r
-        .v2
-        .diagnostics
-        .iter()
-        .filter(|d| d.severity == flashtex_render_pipeline::display::Severity::Error)
-        .map(|d| d.message.clone())
-        .collect();
+    let errors: Vec<_> =
+        r.v2.diagnostics
+            .iter()
+            .filter(|d| d.severity == flashtex_render_pipeline::display::Severity::Error)
+            .map(|d| d.message.clone())
+            .collect();
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(r.v2.pages.len(), 1);
-    let mut actual: Vec<(String, f64, f64, bool)> = painted_glyphs(&r).into_iter().map(|(t, x, y)| (t, x, y, false)).collect();
+    let mut actual: Vec<(String, f64, f64, bool)> = painted_glyphs(&r)
+        .into_iter()
+        .map(|(t, x, y)| (t, x, y, false))
+        .collect();
     let mut misses = Vec::new();
     for &(text, font, x, y) in expected {
-        let near = |ax: f64, ay: f64, tol: f64| (ax - x).abs() <= tol && (y == 0.0 || (ay - y).abs() <= tol);
+        let near = |ax: f64, ay: f64, tol: f64| {
+            (ax - x).abs() <= tol && (y == 0.0 || (ay - y).abs() <= tol)
+        };
         let hit = actual
             .iter()
             .enumerate()
             .filter(|(_, (t, ax, ay, used))| !used && t == text && near(*ax, *ay, tol_bp))
             .min_by(|a, b| {
-                let d = |g: &(String, f64, f64, bool)| (g.1 - x).abs() + if y == 0.0 { 0.0 } else { (g.2 - y).abs() };
+                let d = |g: &(String, f64, f64, bool)| {
+                    (g.1 - x).abs() + if y == 0.0 { 0.0 } else { (g.2 - y).abs() }
+                };
                 d(a.1).total_cmp(&d(b.1))
             })
             .map(|(i, _)| i);
@@ -299,7 +355,9 @@ pub fn assert_pdftex_glyphs(source: &str, expected: &[(&str, &str, f64, f64)], t
                     .filter(|(_, ax, ay, _)| near(*ax, *ay, 8.0))
                     .map(|(t, ax, ay, _)| format!("{t:?} ({ax:.3}, {ay:.3})"))
                     .collect();
-                misses.push(format!("{text:?} ({font} at {x}, {y}): nearest {nearest:?}"));
+                misses.push(format!(
+                    "{text:?} ({font} at {x}, {y}): nearest {nearest:?}"
+                ));
             }
         }
     }

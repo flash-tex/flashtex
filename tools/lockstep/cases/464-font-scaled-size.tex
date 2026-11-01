@@ -1,0 +1,7 @@
+% Verifies a font loaded scaled 1440 scales quad and glyph widths without touching \mag.
+\input prelude
+\font\f=cmr10 \font\magf=cmr10 scaled 1440
+\message{464 quad10=\the\fontdimen6\f; quad1440=\the\fontdimen6\magf; wdA1440=\the\fontcharwd\magf`A}
+\setbox0=\hbox{\magf A}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 2506-pdfcreationdate: expansion of \pdfcreationdate under a fixed epoch (pdftex.web §§ 494, 495, 497)
+% new versus none: \pdfcreationdate is used by no pre-existing case
+\input prelude
+\message{2506 cdate=\pdfcreationdate}
+\edef\cdA{\pdfcreationdate\pdfcreationdate}
+\message{2506 double=\meaning\cdA}
+\setbox0=\hbox{\vrule width26pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

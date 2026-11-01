@@ -73,6 +73,30 @@ pub struct Token {
     pub control_symbol: bool,
 }
 
+impl Token {
+    /// The escaped character when this token is a backslash control symbol
+    /// (`\=` gives `'='`, `\&` gives `'&'`), `None` for every other token.
+    ///
+    /// This is the one place control-symbol identity is decided (#756,
+    /// #760). It reads the [`Token::control_symbol`] mark, never the span:
+    /// a token copied out of a macro body carries the invocation's span, so
+    /// a width test really measures the macro's name, and engine-built
+    /// control symbols (`\csname =\endcsname`) have no source bytes at all.
+    pub fn control_symbol_char(&self) -> Option<char> {
+        if !self.control_symbol {
+            return None;
+        }
+        let TokenKind::Word(word) = &self.kind else {
+            return None;
+        };
+        let mut chars = word.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) => Some(c),
+            _ => None,
+        }
+    }
+}
+
 fn is_special(c: char) -> bool {
     matches!(c, '\\' | '{' | '}' | '%' | '$' | '^' | '_')
 }

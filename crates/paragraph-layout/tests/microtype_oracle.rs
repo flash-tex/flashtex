@@ -7,6 +7,9 @@
 //! pdfTeX's. The dump parser and pdfTeX's `hlist_out` positions are the
 //! microtype crate's own test support, shared by path. No TeX is run.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::collapsible_if, clippy::needless_late_init, clippy::while_immutable_condition, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod mt_convert;
 
 use std::collections::BTreeMap;

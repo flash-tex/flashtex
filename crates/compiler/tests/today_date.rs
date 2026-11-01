@@ -18,6 +18,9 @@
 //!
 //! i.e. `<MonthName> <day>, <year>` with no zero padding on either number.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_borrows_for_generic_args, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_compiler::date::TodayDate;
 use flashtex_compiler::json::{self, Value};
 use flashtex_compiler::parser::{parse_project_with, Block, ParseOptions, SourceDocument};

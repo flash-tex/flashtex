@@ -10,8 +10,10 @@ parity claim, whole-PDF byte equality is not a goal, and pdflatex is an
 oracle only, never in the product path.**
 
 ```sh
-# pinned producer (build once; see tools/real-world-corpus/run.sh for the git-archive recipe)
-export FLASHTEX_RENDER=tools/real-world-corpus/target/render-pipeline-9aaec57a/crates/render-pipeline/target/release/flashtex-render
+# this checkout's producer (crates/render-pipeline/vendor/ is retired, so the
+# scratch archive of one directory is gone: build from the workspace)
+cargo build --release -p flashtex-render-pipeline --bin flashtex-render
+export FLASHTEX_RENDER="$(scripts/crate-target-dir.sh crates/render-pipeline)/release/flashtex-render"
 python3 tools/visual-oracle/rank.py                      # -> docs/evidence/visual-oracle-<UTC>/{report.md,report.json,thumbs/}
 python3 tools/visual-oracle/rank.py --only hw1 --thumbs 3 --out /tmp/vo
 # follow-up 1: the 18 visual-corpus harness fixtures under the pdflatex-lm preamble (fresh MacTeX references)
@@ -75,7 +77,7 @@ python3 -m unittest discover -s tools/visual-oracle -p 'test_*.py' -v   # 8 pure
    producer diagnostic whose source span overlaps the word's span decides
    (owner table of `tools/real-world-corpus/run.py:owner_for`); else a math
    font → `crates/math-layout`; else a delta equal to the page's median shift
-   → render-pipeline page builder / vendored document-style; else |dx| > 50 bp
+   → render-pipeline page builder / document-style; else |dx| > 50 bp
    → paragraph-layout line breaking; else an isolated layout delta. A page
    whose median shift exceeds 2 bp also gets a page-level owner line.
 9. **Thumbnails** (`thumbs.py`, follow-up 2): for the `--thumbs` worst

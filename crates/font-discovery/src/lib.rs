@@ -95,13 +95,23 @@ impl FontIndex {
     /// files. A directory that does not exist is skipped, not an error.
     /// The result is deterministic: entries are visited in sorted order.
     pub fn scan(dirs: &[PathBuf]) -> FontIndex {
+        FontIndex::scan_traced(dirs, &mut |_| {})
+    }
+
+    /// [`FontIndex::scan`], calling `on_dir` with every directory the scan
+    /// lists, just before it lists it (a root that does not exist too). A
+    /// caller that keeps a scan's result can tell from these directories
+    /// whether a new scan would visit the same files: it would while none
+    /// of them changed (an entry added, removed or renamed changes its
+    /// directory's modification time).
+    pub fn scan_traced(dirs: &[PathBuf], on_dir: &mut dyn FnMut(&Path)) -> FontIndex {
         let mut index = FontIndex::default();
         let mut seen = BTreeSet::new();
         let mut budget = MAX_FILES;
         for dir in dirs {
             let mtime = dir_mtime(dir);
             index.dirs.push((dir.clone(), mtime));
-            walk(dir, 0, &mut budget, &mut |path| {
+            walk(dir, 0, &mut budget, on_dir, &mut |path| {
                 if !seen.insert(path.to_path_buf()) {
                     return;
                 }
@@ -362,10 +372,11 @@ fn dir_mtime(dir: &Path) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn walk(dir: &Path, depth: usize, budget: &mut usize, visit: &mut dyn FnMut(&Path)) {
+fn walk(dir: &Path, depth: usize, budget: &mut usize, on_dir: &mut dyn FnMut(&Path), visit: &mut dyn FnMut(&Path)) {
     if depth > MAX_DEPTH || *budget == 0 {
         return;
     }
+    on_dir(dir);
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
@@ -381,7 +392,7 @@ fn walk(dir: &Path, depth: usize, budget: &mut usize, visit: &mut dyn FnMut(&Pat
         // casks, a project's `fonts -> ../shared`) is walked.
         let Ok(meta) = std::fs::metadata(&path) else { continue };
         if meta.is_dir() {
-            walk(&path, depth + 1, budget, visit);
+            walk(&path, depth + 1, budget, on_dir, visit);
         } else if meta.is_file() && is_font_file(&path) {
             *budget -= 1;
             visit(&path);
@@ -509,7 +520,7 @@ mod tests {
     #[test]
     fn scans_name_and_os2_tables_recursively() {
         let s = Staged::new("scan", &LM);
-        let index = FontIndex::scan(&[s.0.clone()]);
+        let index = FontIndex::scan(std::slice::from_ref(&s.0));
         assert_eq!(index.files().len(), 8, "{:?}", index.errors());
         assert_eq!(index.errors().len(), 1, "{:?}", index.errors());
         assert!(index.errors()[0].0.ends_with("broken.otf"));
@@ -530,7 +541,7 @@ mod tests {
     #[test]
     fn matching_is_case_insensitive_then_style_then_nearest_weight() {
         let s = Staged::new("match", &LM);
-        let index = FontIndex::scan(&[s.0.clone()]);
+        let index = FontIndex::scan(std::slice::from_ref(&s.0));
         let ps = |m: Option<Match<'_>>| m.map(|m| (m.file.info.postscript_name.clone(), m.exact_weight, m.exact_style));
         assert_eq!(ps(index.find_match("latin modern roman", 400, false)), Some(("LMRoman10-Regular".into(), true, true)));
         assert_eq!(ps(index.find_match("LATIN  Modern Roman", 700, true)), Some(("LMRoman10-BoldItalic".into(), true, true)));
@@ -552,7 +563,7 @@ mod tests {
     fn cache_round_trips_and_keys_on_directory_mtimes() {
         let s = Staged::new("cache", &LM[..3]);
         let cache = s.0.join("cache").join("index.json");
-        let a = FontIndex::scan_cached(&[s.0.clone()], &cache);
+        let a = FontIndex::scan_cached(std::slice::from_ref(&s.0), &cache);
         assert!(cache.is_file());
         let text = std::fs::read_to_string(&cache).unwrap();
         let parsed = FontIndex::from_cache_json(&text).unwrap();
@@ -560,7 +571,7 @@ mod tests {
         assert_eq!(parsed.dirs(), a.dirs());
         // Same stamps: the second call is served from the cache (the
         // scan's errors are not cached, which tells the two apart).
-        let b = FontIndex::scan_cached(&[s.0.clone()], &cache);
+        let b = FontIndex::scan_cached(std::slice::from_ref(&s.0), &cache);
         assert_eq!(b.files(), a.files());
         assert!(b.errors().is_empty() && !a.errors().is_empty());
         // Another directory list: rescanned and rewritten.
@@ -577,7 +588,8 @@ mod tests {
         let s = Staged::new("dirs", &[]);
         std::fs::create_dir_all(s.0.join("fonts")).unwrap();
         let dirs = scan_dirs(Some(&s.0));
-        assert_eq!(dirs.first(), Some(&s.0.join("fonts")).filter(|_| env_dirs().is_empty()).or(env_dirs().first()));
+        let (fonts, env) = (s.0.join("fonts"), env_dirs());
+        assert_eq!(dirs.first(), if env.is_empty() { Some(&fonts) } else { env.first() });
         assert!(dirs.contains(&s.0.join("fonts")));
         // Without a `fonts/` directory the project contributes nothing.
         assert!(!scan_dirs(Some(&s.0.join("nested"))).iter().any(|d| d.starts_with(&s.0)));

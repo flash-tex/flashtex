@@ -1,0 +1,3 @@
+# Lockstep expected logs are regenerated from the reference engine via
+# run.py --update-expected and are never committed.
+expected/

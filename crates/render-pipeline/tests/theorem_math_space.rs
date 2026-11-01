@@ -21,6 +21,9 @@
 //! the math arm never applied the theorem body's italic override that the
 //! text arm has (`compiler_weight`).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::doc_lazy_continuation, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

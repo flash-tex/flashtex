@@ -1,0 +1,62 @@
+{
+  "corpus": 577,
+  "kpathsea": "kpathsea version 6.4.2",
+  "texmfdist": "/usr/local/texlive/2026/texmf-dist",
+  "found_by_kpsewhich": 541,
+  "shell": {
+    "identical": 577,
+    "differences": [],
+    "setup_s": 0.05025475,
+    "first_pass_total_s": 0.018023119,
+    "first_pass_median_us": 25.625,
+    "steady_median_us": 24.083,
+    "steady_p99_us": 80.333,
+    "stderr": ""
+  },
+  "gui": {
+    "identical": 577,
+    "differences": [],
+    "setup_s": 0.052248292,
+    "first_pass_total_s": 0.01779542299999999,
+    "first_pass_median_us": 25.167,
+    "steady_median_us": 23.333,
+    "steady_p99_us": 79.958,
+    "stderr": ""
+  },
+  "empty": {
+    "identical": 577,
+    "differences": [],
+    "setup_s": 0.050973041,
+    "first_pass_total_s": 0.01593119900000001,
+    "first_pass_median_us": 25.5,
+    "steady_median_us": 23.416,
+    "steady_p99_us": 46.334,
+    "stderr": ""
+  },
+  "bundle": {
+    "files": 539,
+    "identical": 576,
+    "differences": [
+      [
+        "tex",
+        "texmf.cnf",
+        null,
+        "texmf.cnf"
+      ]
+    ],
+    "steady_median_us": 8.333
+  },
+  "kpsewhich_per_process_median_ms": 58.210333999999975,
+  "kpsewhich_batch_per_lookup_us": {
+    "bib": 10914.158399999962,
+    "bst": 4528.527750000085,
+    "cnf": 55675.082999997016,
+    "enc files": 3350.529411764652,
+    "fmt": 6760.614624999661,
+    "map": 5059.173666666676,
+    "tex": 160.5261391509564,
+    "tfm": 913.5000000000115,
+    "type1 fonts": 2525.7822272725407,
+    "vf": 4696.361083333637
+  }
+}

@@ -1,0 +1,10 @@
+% 902-setbox-boxgroup-local-global: verifies a local \setbox inside a box group is lost while \global\setbox survives it.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\setbox1=\vbox{\setbox0=\hbox{\vrule width20pt height8pt depth2pt}\copy0\hrule width40pt height6pt depth0pt}
+\message{902 after-local-wd0=\the\wd0}
+\setbox3=\vbox{\global\setbox0=\hbox{\vrule width30pt height8pt depth2pt}\copy0\hrule width40pt height6pt depth0pt}
+\message{902 after-global-wd0=\the\wd0}
+\lsshipbox1
+\lsshipbox3
+\end

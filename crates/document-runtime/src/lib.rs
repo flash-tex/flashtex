@@ -1177,7 +1177,7 @@ mod decode_cancellation_probe {
     #[test]
     #[ignore = "near-limit cancellation probe; run separately in a quiet window"]
     fn cancellation_during_entered_serde_invalidates_source_ownership() {
-        let mut command = std::process::Command::new("/usr/bin/python3");
+        let mut command = std::process::Command::new("python3");
         command.arg("-c").arg(r#"import sys,json
 r=json.loads(sys.stdin.readline());p=r['payload']
 v={'opaque':[''],'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}

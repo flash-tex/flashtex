@@ -1,0 +1,10 @@
+% 1835-max-spacefactor-glue: factor 32767 multiplies the stretch hugely and divides the shrink to a hair, unlike factor 2000 (tex.web §1044)
+\input prelude
+\font\myrm=cmr10
+\def\sp{ }
+\setbox0=\hbox{\myrm a\spacefactor=32767 \sp b}
+\message{1835 max-wd=\the\wd0}
+\setbox1=\hbox{\myrm a\spacefactor=2000 \sp b}
+\message{1835 plain-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

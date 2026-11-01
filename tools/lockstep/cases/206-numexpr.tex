@@ -1,0 +1,10 @@
+\input prelude
+\message{206 add=\the\numexpr 2+3*4\relax}
+\message{206 paren=\the\numexpr (2+3)*4\relax}
+\message{206 round=\the\numexpr 7/2\relax}
+\message{206 neground=\the\numexpr -7/2\relax}
+\count0=6
+\message{206 reg=\the\numexpr\count0*2+1\relax}
+\setbox0=\hbox{\vrule width14pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,15 @@
+\input prelude
+\immediate\openout1=ls172data.txt
+\immediate\write1{first line 172}
+\immediate\write1{second line 172}
+\immediate\closeout1
+\openin0=ls172data.txt
+\read0 to \lineA
+\read0 to \lineB
+\message{172 A=\meaning\lineA}
+\message{172 B=\meaning\lineB}
+\ifeof0\message{172 eof-after}\else\message{172 noteof-after}\fi
+\closein0
+\setbox0=\hbox{\vrule width172pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

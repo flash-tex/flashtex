@@ -1,0 +1,6 @@
+% Verifies that \tabskip glue can change per column inside the preamble.
+\input prelude
+\setbox0=\vbox{\tabskip=2pt\halign{#\hfil\tabskip=10pt&#\hfil\tabskip=2pt&#\hfil\cr\vrule width10pt height8pt depth2pt&\vrule width10pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr}}
+\message{506 wd=\the\wd0}
+\lsshipbox0
+\end

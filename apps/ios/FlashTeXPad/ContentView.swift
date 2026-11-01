@@ -21,17 +21,55 @@ enum Panel: String, CaseIterable, Identifiable {
     static let reference: [Panel] = [.diagnostics, .review]
 }
 
+/// Which panel is showing and how the split view is laid out.
+///
+/// The capture canvas is full-screen: in a regular-width window the sidebar
+/// starts hidden there (`columns = .detailOnly`) and the canvas's floating
+/// sidebar button shows it (`.all`); other panels keep the system's default
+/// split. In compact width (Slide Over, 1/3 Split View, a narrow Stage
+/// Manager window) the split view collapses into a stack and ignores
+/// `columns`, so the same button pops back to the sidebar through
+/// `compactColumn`.
+@MainActor
+final class PadNavigation: ObservableObject {
+    @Published var panel: Panel? = .capture {
+        didSet {
+            guard panel != oldValue else { return }
+            columns = (panel ?? .capture) == .capture ? .detailOnly : .automatic
+            compactColumn = .detail
+        }
+    }
+    @Published var columns: NavigationSplitViewVisibility = .detailOnly
+    @Published var compactColumn: NavigationSplitViewColumn = .detail
+
+    /// The canvas's sidebar button. A collapsed split view keeps the detail
+    /// pushed while the list has a selection, whatever `compactColumn` says,
+    /// so in compact width the selection is cleared too (tapping Capture in
+    /// the list pushes it again).
+    func showSidebar(compact: Bool) {
+        if compact { panel = nil }
+        columns = .all
+        compactColumn = .sidebar
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject var model: PadModel
-    @State private var panel: Panel? = .capture
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @StateObject private var nav: PadNavigation
     @State private var importingTex = false
+    @State private var importingFolder = false
     @State private var importingResult = false
 
     static let texType = UTType(filenameExtension: "tex") ?? .plainText
 
+    init(navigation: PadNavigation? = nil) {
+        _nav = StateObject(wrappedValue: navigation ?? PadNavigation())
+    }
+
     var body: some View {
-        NavigationSplitView {
-            List(selection: $panel) {
+        NavigationSplitView(columnVisibility: $nav.columns, preferredCompactColumn: $nav.compactColumn) {
+            List(selection: $nav.panel) {
                 Section("Capture companion") {
                     ForEach(Panel.primary) { p in
                         Label(p.rawValue, systemImage: p.symbol).tag(p).accessibilityIdentifier("panel.\(p.rawValue)")
@@ -46,8 +84,14 @@ struct ContentView: View {
             .navigationTitle("FlashTeXPad")
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Button { importingTex = true } label: { Label("Open .tex…", systemImage: "folder") }
+                    Button { importingTex = true } label: { Label("Open .tex…", systemImage: "doc") }
                         .accessibilityIdentifier("open.file")
+                    Button { importingFolder = true } label: { Label("Open folder…", systemImage: "folder") }
+                        .accessibilityIdentifier("open.folder")
+                        .accessibilityHint("Opens the folder's main .tex file and lets pasted images be saved in the folder")
+                        .fileImporter(isPresented: $importingFolder, allowedContentTypes: [.folder]) { r in
+                            if case .success(let url) = r { model.openFolder(url: url) }
+                        }
                     Button { model.openBundledSample() } label: { Label("Open bundled demo.tex", systemImage: "doc.badge.plus") }
                         .accessibilityIdentifier("open.sample")
                     Button { model.openReviewFixture() } label: { Label("Open review fixture", systemImage: "checkmark.seal") }
@@ -60,8 +104,8 @@ struct ContentView: View {
                 .background(.bar)
             }
         } detail: {
-            switch panel ?? .capture {
-            case .capture: CaptureView()
+            switch nav.panel ?? .capture {
+            case .capture: CaptureView(showSidebar: { withAnimation { nav.showSidebar(compact: sizeClass == .compact) } })
             case .editor: EditorPanel()
             case .diagnostics: DiagnosticsPanel(importing: $importingResult)
             case .review: ReviewPanel()
@@ -88,6 +132,7 @@ struct ContentView: View {
 /// it on ⌘E.
 struct EditorPanel: View {
     @EnvironmentObject var model: PadModel
+    @State private var pickingFolder = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -96,6 +141,18 @@ struct EditorPanel: View {
                     Text("\(d.path) · revision \(d.revision) · \(d.utf8Count) UTF-8 bytes · caret UTF-16 \(model.caretUTF16)")
                         .font(.footnote.monospaced()).foregroundStyle(.secondary)
                         .accessibilityIdentifier("editor.status")
+                    if let note = model.editorStatus {
+                        Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                            .accessibilityIdentifier("editor.note")
+                    }
+                    if let request = model.folderAccessRequest {
+                        Button { pickingFolder = true } label: {
+                            Label("Allow access to “\(request.folder.lastPathComponent)”", systemImage: "folder.badge.plus")
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .accessibilityHint("Choose this folder in Files so pasted images can be saved in it")
+                        .accessibilityIdentifier("editor.allowFolderAccess")
+                    }
                     Spacer()
                     Button { model.diagnosticsPanelVisible.toggle() } label: {
                         Label("\(model.diagnostics.count)", systemImage: "exclamationmark.triangle")
@@ -121,6 +178,13 @@ struct EditorPanel: View {
             }
         }
         .navigationTitle(model.documentTitle)
+        .fileImporter(isPresented: $pickingFolder, allowedContentTypes: [.folder]) { r in
+            if case .success(let url) = r { model.grantFolderAccess(url) }
+        }
+        .onChange(of: model.editorStatus) { _, note in
+            // The status note is not focused: VoiceOver hears it here.
+            if let note { UIAccessibility.post(notification: .announcement, argument: note) }
+        }
     }
 }
 

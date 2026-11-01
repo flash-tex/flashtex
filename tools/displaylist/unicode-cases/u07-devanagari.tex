@@ -1,0 +1,13 @@
+% u07-devanagari: Devanagari shaping (conjuncts, reordered matras) with system fonts and FreeSerif
+\documentclass{article}
+\usepackage{fontspec}
+\newfontfamily\deva{Devanagari Sangam MN}[Script=Devanagari]
+\newfontfamily\kohinoor{Kohinoor Devanagari}[Script=Devanagari]
+\newfontfamily\freeserif{FreeSerif.otf}[Script=Devanagari]
+\begin{document}
+{\deva नमस्ते दुनिया। क्षत्रिय ज्ञान श्री द्वार हिन्दी किताब।}
+
+{\kohinoor नमस्ते दुनिया। क्षत्रिय ज्ञान श्री द्वार हिन्दी किताब।}
+
+{\freeserif नमस्ते दुनिया। क्षत्रिय ज्ञान श्री द्वार हिन्दी किताब।}
+\end{document}

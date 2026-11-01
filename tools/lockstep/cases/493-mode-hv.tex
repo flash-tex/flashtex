@@ -1,0 +1,12 @@
+% Verifies \ifvmode, \ifhmode and \ifinner at top level, inside an \hbox and inside a \vbox.
+\input prelude
+\ifvmode\message{493 top-vmode}\fi
+\ifhmode\message{493 top-hmode}\else\message{493 top-not-hmode}\fi
+\ifinner\message{493 top-inner}\else\message{493 top-not-inner}\fi
+\setbox1=\hbox{\ifhmode\message{493 hbox-hmode}\fi\ifinner\message{493 hbox-inner}\fi\ifvmode\message{493 hbox-vmode}\else\message{493 hbox-not-vmode}\fi\vrule width2pt height6pt depth1pt}
+\setbox2=\vbox{\ifvmode\message{493 vbox-vmode}\fi\ifinner\message{493 vbox-inner}\fi\ifhmode\message{493 vbox-hmode}\else\message{493 vbox-not-hmode}\fi\vrule width2pt height6pt depth1pt}
+\lsshipbox1
+\lsshipbox2
+\setbox0=\hbox{\vrule width493pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

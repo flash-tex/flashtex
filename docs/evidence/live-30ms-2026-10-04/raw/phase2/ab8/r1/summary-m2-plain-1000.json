@@ -1,0 +1,228 @@
+{
+ "engine": "m2",
+ "doc": "plain-1000",
+ "phases": {
+  "mid-i150": {
+   "args": [
+    "--kind",
+    "letter",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 7374 (page 500), byte 2062400",
+   "n": 29,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 42.798916,
+    "p95": 124.24033299999999,
+    "max": 142.381166
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    229.63,
+    237.96
+   ],
+   "secs": 79.04716634750366
+  },
+  "start-i150": {
+   "args": [
+    "--kind",
+    "letter",
+    "--page",
+    "1",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 22 (page 1), byte 4723",
+   "n": 29,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 39.739667,
+    "p95": 93.700667,
+    "max": 220.236417
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    237.96,
+    238.39
+   ],
+   "secs": 13.452986001968384
+  },
+  "mid-i100": {
+   "args": [
+    "--kind",
+    "letter",
+    "--interval-ms",
+    "100",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 7374 (page 500), byte 2062400",
+   "n": 29,
+   "stages": {
+    "queue": {
+     "p50": 6.605,
+     "p95": 54.1,
+     "max": 54.1,
+     "n": 2
+    },
+    "apply": {
+     "p50": 0.369,
+     "p95": 0.402,
+     "max": 0.402,
+     "n": 2
+    },
+    "find": {
+     "p50": 8.911,
+     "p95": 18.69,
+     "max": 18.69,
+     "n": 2
+    },
+    "key": {
+     "p50": 0,
+     "p95": 17.219,
+     "max": 17.219,
+     "n": 2
+    },
+    "changes": {
+     "p50": 0,
+     "p95": 1.393,
+     "max": 1.393,
+     "n": 2
+    },
+    "restore": {
+     "p50": 13.812,
+     "p95": 20.677,
+     "max": 20.677,
+     "n": 2
+    },
+    "first_page": {
+     "p50": 99.263,
+     "p95": 99.263,
+     "max": 99.263,
+     "n": 1
+    },
+    "first_page_dl": {
+     "p50": 2.087,
+     "p95": 2.087,
+     "max": 2.087,
+     "n": 1
+    },
+    "test": {
+     "p50": 45.141,
+     "p95": 73.133,
+     "max": 73.133,
+     "n": 2
+    },
+    "tests": {
+     "p50": 1,
+     "p95": 1,
+     "max": 1,
+     "n": 2
+    },
+    "dl": {
+     "p50": 0,
+     "p95": 3.422,
+     "max": 3.422,
+     "n": 2
+    },
+    "send": {
+     "p50": 0,
+     "p95": 0.061,
+     "max": 0.061,
+     "n": 2
+    },
+    "cpu": {
+     "p50": 14.34,
+     "p95": 75.613,
+     "max": 75.613,
+     "n": 2
+    },
+    "instr_k": {
+     "p50": 95138,
+     "p95": 626582,
+     "max": 626582,
+     "n": 2
+    },
+    "cycles_k": {
+     "p50": 33765,
+     "p95": 182193,
+     "max": 182193,
+     "n": 2
+    },
+    "restore_instr_k": {
+     "p50": 41748,
+     "p95": 42172,
+     "max": 42172,
+     "n": 2
+    },
+    "test_instr_k": {
+     "p50": 116401,
+     "p95": 116516,
+     "max": 116516,
+     "n": 2
+    },
+    "first_page_instr_k": {
+     "p50": 108777,
+     "p95": 108777,
+     "max": 108777,
+     "n": 1
+    }
+   },
+   "edited_page_ms": {
+    "p50": 74.61920900000001,
+    "p95": 269.722625,
+    "max": 274.86170799999996
+   },
+   "done_ms": null,
+   "converged": 2,
+   "cancelled": 27,
+   "typeset_pages": [
+    0,
+    2
+   ],
+   "load": [
+    238.39,
+    239.8
+   ],
+   "secs": 3.64019513130188
+  }
+ },
+ "power": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   229.63,
+   234.48,
+   226.71
+  ],
+  "ncpu": 10
+ },
+ "rss_peak": 890011648,
+ "power_end": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   239.8,
+   236.41,
+   228.26
+  ],
+  "ncpu": 10
+ }
+}

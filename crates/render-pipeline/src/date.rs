@@ -10,11 +10,11 @@
 //! ## Why this type exists twice
 //!
 //! `crates/compiler` owns the real [`TodayDate`] and the `\today` formatting.
-//! This crate links `vendor/compiler`, a read-only pinned mirror
-//! (`vendor/VENDORING.md`); the pin now carries `flashtex_compiler::date` (see
-//! `vendor/compiler/src/date.rs`) and `request-date` is a **default** Cargo
-//! feature (`Cargo.toml`), so `RenderOptions::today` already reaches the real
-//! parser end to end. This module still exists as its own copy rather than a
+//! This crate links it live by path (it used to link a read-only pinned mirror
+//! under `vendor/`, now retired); `crates/compiler/src/date.rs` carries
+//! `flashtex_compiler::date` and `request-date` is a **default** Cargo feature
+//! (`Cargo.toml`), so `RenderOptions::today` reaches the real parser end to
+//! end. This module still exists as its own copy rather than a
 //! re-export — collapsing it is unfinished cleanup, not a functionality gap —
 //! see `RenderOptions::today`.
 

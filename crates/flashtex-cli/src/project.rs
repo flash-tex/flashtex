@@ -198,7 +198,7 @@ pub fn load(input: &Input, project_root: Option<&Path>) -> Result<Project, Strin
             start_byte: d.span.map(|s| s.start),
             end_byte: d.span.map(|s| s.end),
             error: d.severity == Severity::Error,
-            code: match d.kind {
+            code: match &d.kind {
                 DiagnosticKind::MissingFile { .. } => "missing_file",
                 DiagnosticKind::InvalidPath { .. } => "invalid_path",
                 DiagnosticKind::EscapesRootViaSymlink { .. } => "path_escapes_root",
@@ -207,6 +207,13 @@ pub fn load(input: &Input, project_root: Option<&Path>) -> Result<Project, Strin
                 DiagnosticKind::InvalidUtf8 { .. } => "not_utf8",
                 DiagnosticKind::ReadError { .. } => "read_error",
                 DiagnosticKind::DepthExceeded { .. } => "include_depth",
+                // `ProjectGraph::discover` never raises this one -- only
+                // `texinput_files` does, and its warnings reach `diagnostics`
+                // through the loops below with their own codes -- but the
+                // match is exhaustive over project-files' enum, so the arm
+                // uses those same two codes, keyed the same way.
+                DiagnosticKind::Manifest { key } if key.starts_with("project.texinputs[") => "manifest_texinputs",
+                DiagnosticKind::Manifest { .. } => "manifest_unknown_key",
             },
             message: d.message.clone(),
         })

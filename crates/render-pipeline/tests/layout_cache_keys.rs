@@ -14,6 +14,9 @@
 //! `no_two_item_kinds_share_a_tag` and `no_two_math_nucleus_kinds_share_a_tag`
 //! fail if any two kinds ever map to the same value.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::redundant_closure, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};

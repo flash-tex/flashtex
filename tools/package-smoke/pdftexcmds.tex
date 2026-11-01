@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{pdftexcmds}
+\makeatletter
+\begin{document}
+MD5 of hello: \pdf@mdfivesum{hello}.
+Escaped: \pdf@escapestring{A (B) C}.
+Hex: \pdf@escapehex{Hi!}.
+Compare: \pdf@strcmp{abc}{abd}.
+\end{document}

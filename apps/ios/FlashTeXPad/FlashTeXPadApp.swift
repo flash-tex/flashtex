@@ -4,6 +4,16 @@ import SwiftUI
 struct FlashTeXPadApp: App {
     @StateObject private var model = PadModel()
 
+    init() {
+        // UI tests: start from the default canvas gestures and a closed
+        // Captures panel whatever a previous run left in the defaults.
+        if ProcessInfo.processInfo.arguments.contains("-flashtexpad-canvas-defaults") {
+            for key in CanvasSettings.allKeys + [CaptureView.capturesPanelOpenKey] {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

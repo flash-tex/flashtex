@@ -1,0 +1,7 @@
+len     1 MB: vm_copy r=0 0.005 ms fp 1.9->1.9, after unmap src 0.9, rewrite 0.049 ms fp 1.9, tail 2.9 | memcpy 0.096 ms
+len     2 MB: vm_copy r=0 0.003 ms fp 2.9->2.9, after unmap src 0.9, rewrite 0.097 ms fp 2.9, tail 4.9 | memcpy 0.187 ms
+len     4 MB: vm_copy r=0 0.005 ms fp 4.9->4.9, after unmap src 0.9, rewrite 0.195 ms fp 4.9, tail 8.9 | memcpy 0.420 ms
+len     8 MB: vm_copy r=0 0.009 ms fp 8.9->8.9, after unmap src 0.9, rewrite 0.388 ms fp 8.9, tail 16.9 | memcpy 0.810 ms
+len    16 MB: vm_copy r=0 0.016 ms fp 16.9->16.9, after unmap src 0.9, rewrite 0.779 ms fp 16.9, tail 32.9 | memcpy 1.601 ms
+len    32 MB: vm_copy r=0 0.034 ms fp 32.9->32.9, after unmap src 0.9, rewrite 1.575 ms fp 32.9, tail 64.9 | memcpy 2.930 ms
+len    64 MB: vm_copy r=0 0.067 ms fp 64.9->64.9, after unmap src 0.9, rewrite 3.339 ms fp 64.9, tail 129.0 | memcpy 5.541 ms

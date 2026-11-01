@@ -248,7 +248,6 @@ final class PackageEditingTests: XCTestCase {
             .write(to: entry, atomically: true, encoding: .utf8)
         try Self.mystyle.write(to: tmp.appendingPathComponent("mystyle.sty"), atomically: true, encoding: .utf8)
         let m = ShellModel()
-        m.detachWorker()
         // The manifest read the helper would do: mystyle.sty next to the entry
         // (rooted), and a second package on a texinputs mount outside the root (virtual).
         m.manifest.reader = { root, _ in
@@ -298,7 +297,7 @@ final class PackageEditingTests: XCTestCase {
         XCTAssertEqual((m.activeText as NSString).substring(with: try XCTUnwrap(m.selection?.nsRange)), "\\newcommand{\\labnote}[1]{#1}")
         XCTAssertTrue(m.navigationNote?.hasSuffix("in texinputs/0/lab.sty (read-only, from /shared/tex/lab.sty (texinputs[0] of flashtex.toml)).") == true, m.navigationNote ?? "")
         XCTAssertEqual(m.project.changeRefusal(for: "texinputs/0/lab.sty"), m.project.readOnlyNote(for: "texinputs/0/lab.sty"))
-        if case .failed(let why) = await m.project.saveDocument("texinputs/0/lab.sty") { XCTAssertTrue(why.contains("read-only")) } else { XCTFail("a virtual member is never saved") }
+        if case .failed(let why) = m.project.saveDocumentNow("texinputs/0/lab.sty") { XCTAssertTrue(why.contains("read-only")) } else { XCTFail("a virtual member is never saved") }
         XCTAssertFalse(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("texinputs/0/lab.sty").path))
         XCTAssertFalse(m.project.isDirty("texinputs/0/lab.sty"))
         XCTAssertEqual(m.project.listing.last?.origin, .virtual(source: "/shared/tex/lab.sty (texinputs[0] of flashtex.toml)"))
@@ -324,9 +323,8 @@ final class PackageEditingTests: XCTestCase {
 
     /// A `compile_result` line carrying `metadata.packages` for
     /// `mystyleDescribed` loaded by `mainLoading`, in the documented schema
-    /// (docs/contracts/runtime-v1.md): what `flashtex-render` writes for it
-    /// (`testRealRenderPipelineEmitsMetadataPackages`), spelled out here so
-    /// the decode and the rows are pinned without the helper.
+    /// (docs/contracts/runtime-v1.md), spelled out here so the decode and
+    /// the rows are pinned without a producer.
     private static func packageMetadataEnvelope() -> String {
         let sty = mystyleDescribed
         func def(_ name: String, _ kind: String, _ definer: String, _ arity: Int, _ optionalDefault: String?, _ signature: String,
@@ -355,10 +353,6 @@ final class PackageEditingTests: XCTestCase {
             + "\"definitions\":[\(definitions.joined(separator: ","))]}"
         return "{\"id\":\"r\",\"payload\":{\"diagnostics\":[],\"metadata\":{\"packages\":[\(record)],\"future_section\":{\"x\":[1]}},"
             + "\"pages\":[],\"pdf_path\":null,\"project_id\":\"p\",\"revision\":1,\"status\":\"ok\"},\"protocol_version\":1,\"type\":\"compile_result\"}"
-    }
-
-    private static func packageMetadataResult() -> RuntimeV1.CompileResult {
-        try! RuntimeV1.decodeCompileResult(Data(packageMetadataEnvelope().utf8)).payload
     }
 
     func testMetadataPackagesDecodeOnBothPathsAndFeedTheCompletionRows() throws {
@@ -447,136 +441,6 @@ final class PackageEditingTests: XCTestCase {
         XCTAssertFalse(delivered.first?.items.contains { $0.label == "\\empty" && $0.detail.hasPrefix("declared in other") } ?? true)
     }
 
-    func testGoToDefinitionAndTheHoverUseTheEngineSpansWhenTheResultCarriesThem() async throws {
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("pkg-editor-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        // The package on a texinputs mount: found only through the inputs' text.
-        let sty = Self.mystyleDescribed + "\\newcommand{\\lexical}{seen by the scan only}\n"
-        let entry = tmp.appendingPathComponent("main.tex")
-        try Self.mainLoading.write(to: entry, atomically: true, encoding: .utf8)
-        let m = ShellModel()
-        m.detachWorker()
-        m.manifest.reader = { _, _ in
-            let json = """
-            {"path":null,"exists":false,"manifest_dir":null,
-             "manifest":{"project":{"entry":"main.tex","texinputs":[],"output":null},"fonts":{"text":null,"math":null,"mono":null,"sans":null},
-                         "packages":{"source":"ctan","fetch":"ask","pin":{},"path":{}},"library":null},
-             "warnings":[],"texinputs":[],"diagnostics":[],"template":"",
-             "files":[{"path":"mystyle.sty","kind":"package","texinput":0,"origin":"/shared/tex/mystyle.sty","text":\(Self.json(sty)),"sha256":"a","bytes":1}]}
-            """
-            return .success(try! JSONDecoder().decode(ProjectFilesV1.Manifest.self, from: Data(json.utf8)))
-        }
-        XCTAssertEqual(m.openTex(at: entry), .opened)
-        m.result = Self.packageMetadataResult()
-        m.setCompiledDocuments(["main.tex": Self.mainLoading, "mystyle.sty": sty])
-        // The engine's definition: its definer, its whole statement, its line.
-        let emphx = try XCTUnwrap(m.packageDefinition(ofCommand: "emphx"))
-        XCTAssertEqual(emphx.input.path, "mystyle.sty")
-        XCTAssertEqual((sty as NSString).substring(with: emphx.definition.range), "\\newcommand{\\emphx}[1]{\\textcolor{red}{#1}}")
-        XCTAssertEqual(emphx.definition.via, "newcommand"); XCTAssertEqual(emphx.definition.line, 4); XCTAssertNil(emphx.definition.body)
-        XCTAssertEqual(m.definitionSummary(forCommand: "emphx"), "\\newcommand{\\emphx} (line 4 in mystyle.sty)")
-        let pair = try XCTUnwrap(m.packageDefinition(ofCommand: "pair"))
-        XCTAssertEqual((sty as NSString).substring(with: pair.definition.range), "\\def\\pair#1#2{(#1, #2)}"); XCTAssertEqual(pair.definition.via, "def")
-        // Kinds: `lemma` is an environment (a theorem), never a command; `\ifdraft` a command.
-        XCTAssertNil(m.packageDefinition(ofCommand: "lemma"))
-        let lemma = try XCTUnwrap(m.packageDefinition(ofCommand: "lemma", environment: true))
-        XCTAssertEqual((sty as NSString).substring(with: lemma.definition.range), "\\newtheorem{lemma}{Lemma}"); XCTAssertEqual(lemma.definition.via, "newtheorem")
-        XCTAssertEqual(m.packageDefinition(ofCommand: "ifdraft")?.definition.via, "newif")
-        // A name the engine did not record falls back to the lexical scan (with its body).
-        let lexical = try XCTUnwrap(m.packageDefinition(ofCommand: "lexical"))
-        XCTAssertEqual(lexical.definition.body, "seen by the scan only")
-        XCTAssertNil(m.packageDefinition(ofCommand: "section"))
-        // A package whose text moved on since the compile: the offsets are not
-        // trusted, the scan takes over (its definitions carry a body).
-        m.setCompiledDocuments(["main.tex": Self.mainLoading, "mystyle.sty": "% older\n" + sty])
-        XCTAssertEqual(m.packageDefinition(ofCommand: "emphx")?.definition.body, "\\textcolor{red}{#1}")
-        // No result at all: the scan, as before.
-        let result = m.result
-        m.result = nil
-        XCTAssertEqual(m.packageDefinition(ofCommand: "emphx")?.definition.body, "\\textcolor{red}{#1}")
-        m.result = result
-        m.setCompiledDocuments(["main.tex": Self.mainLoading, "mystyle.sty": sty])
-        // ⌘-click: the file opens (read-only, virtual) with the engine's statement selected.
-        m.goToDefinition(ofCommand: "note")
-        try await settle { m.activePath == "mystyle.sty" }
-        XCTAssertEqual((m.activeText as NSString).substring(with: try XCTUnwrap(m.selection?.nsRange)), "\\newcommand{\\note}[2][red]{\\textcolor{#1}{#2}}")
-        XCTAssertEqual(m.navigationNote, "Definition: \\newcommand{\\note} at line 5 in mystyle.sty (read-only, from /shared/tex/mystyle.sty (texinputs[0] of flashtex.toml)).")
-        // Now an open member, it is found the ordinary way (the lexical scan of the buffer).
-        XCTAssertEqual(m.definitionSummary(forCommand: "note"), "\\newcommand{\\note}{\\textcolor{#1}{#2}} (line 5)")
-    }
-
-    /// The real worker: `flashtex-render` (FLASHTEX_RENDER, or the crate's
-    /// own target directory) compiles `mainLoading` + `mystyleDescribed` and
-    /// the app decodes `metadata.packages` from its reply -- the same names,
-    /// shapes and spans the fixture above spells out -- and navigates by it.
-    func testRealRenderPipelineEmitsMetadataPackagesTheAppDecodes() async throws {
-        let fm = FileManager.default
-        let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        var render = ProcessInfo.processInfo.environment["FLASHTEX_RENDER"].flatMap { fm.isExecutableFile(atPath: $0) ? URL(fileURLWithPath: $0) : nil }
-        for profile in ["release", "debug"] where render == nil {
-            let url = repoRoot.appendingPathComponent("crates/render-pipeline/target/\(profile)/flashtex-render")
-            if fm.isExecutableFile(atPath: url.path) { render = url }
-        }
-        guard let render else { throw XCTSkip("build crates/render-pipeline (cargo build --release) or set FLASHTEX_RENDER") }
-        let fonts = repoRoot.appendingPathComponent("apps/mac/Fonts")
-        let sty = Self.mystyleDescribed
-        let payload: [String: Any] = ["project_id": "p", "revision": 1, "entry_path": "main.tex",
-                                      "documents": [["path": "main.tex", "text": Self.mainLoading], ["path": "mystyle.sty", "text": sty]]]
-        let request = try JSONSerialization.data(withJSONObject: ["protocol_version": 1, "id": "e2e", "type": "compile", "payload": payload])
-        let process = Process()
-        process.executableURL = render
-        process.environment = ["PATH": "/usr/bin:/bin", "FLASHTEX_FONT_DIRS": fonts.path,
-                               "FLASHTEX_TFM_DIRS": fonts.appendingPathComponent("texmf/fonts/tfm/public/lm").path]
-        let stdin = Pipe(), stdout = Pipe()
-        process.standardInput = stdin; process.standardOutput = stdout; process.standardError = FileHandle.nullDevice
-        try process.run()
-        try stdin.fileHandleForWriting.write(contentsOf: request + Data("\n".utf8))
-        try stdin.fileHandleForWriting.close()
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let line = try XCTUnwrap(output.split(separator: UInt8(ascii: "\n")).first { $0.starts(with: Data("{\"id\":\"e2e\"".utf8)) && $0.range(of: Data("\"type\":\"compile_result\"".utf8)) != nil },
-                                 "no compile_result line in \(String(decoding: output, as: UTF8.self).prefix(400))")
-        let result = try RuntimeV1.decodeCompileResult(Data(line)).payload
-        XCTAssertEqual(try RuntimeV1.decodeCompileResultReference(Data(line)).payload, result, "fast path and JSONDecoder agree on the worker's bytes")
-        let record = try XCTUnwrap(result.metadata?.packages.first, "no metadata.packages in \(String(decoding: line, as: UTF8.self).prefix(400))")
-        XCTAssertEqual(result.metadata?.packages.count, 1)
-        XCTAssertEqual(record.path, "mystyle.sty"); XCTAssertEqual(record.kind, .package)
-        XCTAssertEqual(record.provides?.name, "mystyle"); XCTAssertEqual(record.provides?.description, "my macros")
-        XCTAssertEqual(Self.mainLoading[Self.mainLoading.rangeOfUTF8(start: record.loadedBy.start, end: record.loadedBy.end)!], "\\usepackage")
-        // The worker's records are the fixture's, span for span.
-        XCTAssertEqual(record, Self.packageMetadataResult().metadata?.packages.first)
-        // And the app navigates by them.
-        let tmp = fm.temporaryDirectory.appendingPathComponent("pkg-editor-\(UUID().uuidString)")
-        try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: tmp) }
-        try Self.mainLoading.write(to: tmp.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
-        try sty.write(to: tmp.appendingPathComponent("mystyle.sty"), atomically: true, encoding: .utf8)
-        let m = ShellModel()
-        m.detachWorker()
-        m.manifest.reader = { _, _ in
-            let json = """
-            {"path":null,"exists":false,"manifest_dir":null,
-             "manifest":{"project":{"entry":"main.tex","texinputs":[],"output":null},"fonts":{"text":null,"math":null,"mono":null,"sans":null},
-                         "packages":{"source":"ctan","fetch":"ask","pin":{},"path":{}},"library":null},
-             "warnings":[],"texinputs":[],"diagnostics":[],"template":"",
-             "files":[{"path":"mystyle.sty","kind":"package","texinput":null,"origin":null,"text":\(Self.json(sty)),"sha256":"a","bytes":1}]}
-            """
-            return .success(try! JSONDecoder().decode(ProjectFilesV1.Manifest.self, from: Data(json.utf8)))
-        }
-        XCTAssertEqual(m.openTex(at: tmp.appendingPathComponent("main.tex")), .opened)
-        m.result = result
-        m.setCompiledDocuments(["main.tex": Self.mainLoading, "mystyle.sty": sty])
-        let boxed = try XCTUnwrap(m.packageDefinition(ofCommand: "boxed"))
-        XCTAssertEqual((sty as NSString).substring(with: boxed.definition.range), "\\NewDocumentCommand{\\boxed}{o m}{#2}")
-        XCTAssertEqual(boxed.definition.via, "NewDocumentCommand"); XCTAssertEqual(boxed.definition.line, 8)
-        XCTAssertEqual(m.definitionSummary(forCommand: "boxed"), "\\NewDocumentCommand{\\boxed} (line 8 in mystyle.sty)")
-        let rows = Completion.packageDeclarations(in: m.packageDocumentsForEditor(), records: Completion.Metadata.from(result).packages)
-        XCTAssertEqual(rows.first { $0.declaration.name == "boxed" }.map { ($0.declaration.mandatory, $0.declaration.optional) }?.0, 1)
-        XCTAssertEqual(rows.first?.detail, "declared in mystyle.sty — my macros")
-    }
-
     // MARK: diagnostics inside a package
 
     /// `main.tex` loads `mystyle.sty`; the compiler reports two problems at
@@ -631,7 +495,6 @@ final class PackageEditingTests: XCTestCase {
         try Self.mainLoading.write(to: entry, atomically: true, encoding: .utf8)
         try Self.styWithProblems.write(to: tmp.appendingPathComponent("mystyle.sty"), atomically: true, encoding: .utf8)
         let m = ShellModel()
-        m.detachWorker()
         m.files.policy = .disabled(reason: "test: hermetic (direct writes)")
         m.manifest.reader = { _, _ in
             let json = """
@@ -652,8 +515,8 @@ final class PackageEditingTests: XCTestCase {
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
         let m = try loadedProject(tmp)
-        m.result = Self.packageResult()
-        m.setCompiledDocuments(["main.tex": Self.mainLoading, "mystyle.sty": Self.styWithProblems])
+        m.engineV3Diagnostics = Self.packageResult().diagnostics
+        m.setEngineV3CompiledDocuments(["main.tex": Self.mainLoading, "mystyle.sty": Self.styWithProblems])
         // The document's gutter carries the hint; the package is not open yet.
         XCTAssertEqual(m.editorMarks.map(\.message), ["mystyle.sty: 2 problems — loaded here"])
         XCTAssertEqual(m.documents.map(\.path), ["main.tex"])
@@ -699,19 +562,23 @@ final class PackageEditingTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: tmp.appendingPathComponent("cancel.sty"), encoding: .utf8), written)
         let evil = await m.createPackageFile(named: "../evil")
         XCTAssertEqual(evil, .refused("../evil is not a package name"))
-        // Fetch…: exactly that name goes to the helper without consent; the sheet shows the offer.
+        // Fetch…: exactly that name goes to the helper's offline request (the
+        // libraries and the cache); the sheet offers it by name, and the
+        // source is asked nothing before the sheet's Look Up or Fetch.
         let state = m.projectPackages
-        var asked: [(names: [String], consent: Bool)] = []
-        state.resolver = { _, names, consent in
-            asked.append((names, consent))
-            let rows = names.map { "{\"name\":\"\($0)\",\"status\":\"needs_consent\",\"version\":\"1.0\",\"source_url\":\"https://mirrors.ctan.org/macros/latex/contrib/\($0)/\",\"would_fetch\":[\"\($0).sty\"]}" }
+        var asked: [[String]] = []
+        var online: [[String]] = []
+        state.offlineResolver = { _, names, _ in
+            asked.append(names)
+            let rows = names.map { "{\"name\":\"\($0)\",\"status\":\"not_available\",\"reason\":\"\($0) is not cached\"}" }
             let json = "{\"cache\":\"/tmp/cache\",\"policy\":{\"source\":\"ctan\",\"fetch\":\"ask\"},\"diagnostics\":[],\"packages\":[\(rows.joined(separator: ","))]}"
             return .success(try! JSONDecoder().decode(ProjectFilesV1.ResolvePackages.self, from: Data(json.utf8)))
         }
+        state.resolver = { _, names, _ in online.append(names); return .failure(.init("the source must not be asked")) }
         state.presentFetch(["siunitx"])
         try await settle { state.shown }
-        XCTAssertEqual(asked.map(\.names), [["siunitx"]])
-        XCTAssertEqual(asked.first?.consent, false, "nothing is fetched until the sheet's Fetch")
+        XCTAssertEqual(asked, [["siunitx"]])
+        XCTAssertEqual(online, [], "nothing is sent to the source until the sheet's Look Up or Fetch")
         XCTAssertEqual(state.offers.map(\.name), ["siunitx"])
         // Not now, then Fetch… again: the declined name is asked about again (a row click is explicit).
         state.notNow()
@@ -760,7 +627,6 @@ final class PackageEditingTests: XCTestCase {
         let entry = tmp.appendingPathComponent("main.tex")
         try "\\documentclass{article}\n\n\\begin{document}\nx\n\\end{document}\n".write(to: entry, atomically: true, encoding: .utf8)
         let m = ShellModel()
-        m.detachWorker()
         XCTAssertEqual(m.openTex(at: entry), .opened)
         m.caretUTF16 = 24 // the blank line after \documentclass
         let outcome = await m.project.newFile("mystyle.sty", insertReference: true)

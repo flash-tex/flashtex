@@ -115,6 +115,12 @@ pub struct TextSink {
     /// quad at the text size, for `\quad` glue in math (`None`: unknown,
     /// the glue is measured in math quads).
     pub text_quad: Option<(f64, f64)>,
+    /// `(document, byte offset)` of every `\choose` in the formula's source.
+    /// The compiler spells `{n \choose k}` as a one-column parenthesised
+    /// `Matrix` at the `\choose` token; plain TeX's `\choose` is
+    /// `\atopwithdelims()`, a generalized fraction whose parts are set one
+    /// style smaller (script size in a text formula), which a grid is not.
+    pub choose_at: Vec<(usize, usize)>,
     /// Grid environments set as boxes inside the formula (see
     /// [`TextSink::grid_atom`]); each reserves a handle (an empty entry of
     /// `texts`).

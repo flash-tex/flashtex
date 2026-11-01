@@ -17,6 +17,9 @@
 //!   essentially no text, so these are fallout of a misparse, e.g. the
 //!   `=200` after an unmodelled `\tolerance`);
 //! - error diagnostics.
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_sort_by, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
 use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 

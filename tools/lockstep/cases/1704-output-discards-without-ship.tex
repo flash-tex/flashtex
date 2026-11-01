@@ -1,0 +1,11 @@
+% 1704-output-discards-without-ship: an \output routine that parks box 255 in another register ships nothing itself; it fires once at a forced break, drops the page, and the run ends with only the hand-shipped box (tex.web §§1025, 1026, 1028)
+% new versus 1226-output-deadcycle-no-ship: there the output puts the page back and fires again, raising \deadcycles; here the page is dropped with no reinsert and no shipout inside \output
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\setbox0=\box255}
+\hrule width80pt height40pt depth0pt
+\penalty-10000
+\setbox2=\hbox{\vrule width50pt height8pt depth0pt}
+\message{1704 dead=\the\deadcycles}
+\lsshipbox2
+\end

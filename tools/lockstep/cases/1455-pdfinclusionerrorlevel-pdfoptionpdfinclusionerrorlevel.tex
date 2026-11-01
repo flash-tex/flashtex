@@ -1,0 +1,6 @@
+% 1455-pdfinclusionerrorlevel-pdfoptionpdfinclusionerrorlevel: verifies \pdfinclusionerrorlevel and \pdfoptionpdfinclusionerrorlevel initials 0, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256)
+\input prelude
+\message{1455 initial=\the\pdfinclusionerrorlevel,\the\pdfoptionpdfinclusionerrorlevel}
+{\pdfinclusionerrorlevel=2\pdfoptionpdfinclusionerrorlevel=2\setbox0=\hbox{\hskip\pdfinclusionerrorlevel sp\hskip\pdfoptionpdfinclusionerrorlevel sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1455 restored=\the\pdfinclusionerrorlevel,\the\pdfoptionpdfinclusionerrorlevel}
+\end

@@ -788,13 +788,19 @@ fn compile(id: &str, payload: &Value) -> Value {
     // naming how many and why, because the issue is clear that silently skipped
     // pages are not acceptable. Partial output plus an explicit diagnostic is the
     // same contract the compiler already honours for malformed input.
-    let (pages_value, dropped) = bound_pages(pages, &paths, &capabilities.enabled);
+    //
+    // Issue #33: the frame is the consumer's. `preview-controller` passes its
+    // configured frame (less the newline) as `FLASHTEX_MAX_REPLY_BYTES`, the
+    // same variable `flashtex-render` honours; a fixed 8 MiB here cut a
+    // 12 MiB-frame preview short and would overrun a smaller frame.
+    let limit = max_result_bytes();
+    let (pages_value, dropped) = bound_pages(pages, &paths, &capabilities.enabled, limit);
     if dropped > 0 {
         diags.push(Diagnostic::error(
             format!(
                 "document produces more positioned output than the {} MiB transport frame allows; \
                  {dropped} of {} pages were not delivered",
-                MAX_RESULT_BYTES / (1024 * 1024),
+                limit.div_ceil(1024 * 1024),
                 pages.len()
             ),
             None,
@@ -876,11 +882,29 @@ fn metadata_json(packages: &[crate::package_definitions::PackageRecord], paths: 
     Some(metadata)
 }
 
-/// Largest reply this compiler will emit, matching the documented runtime frame.
+/// Largest reply this compiler will emit by default, matching the documented
+/// runtime frame (`document-runtime`'s default `max_frame`).
 pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 
-/// Keeps the leading pages that fit within [`MAX_RESULT_BYTES`], returning them
-/// and how many were dropped.
+/// Ceiling for `FLASHTEX_MAX_REPLY_BYTES`: the largest line the Mac reader
+/// accepts (`JSONLines.maxLineBytes`), as in `flashtex-render`.
+pub const MAX_RESULT_CEILING: usize = 16 * 1024 * 1024;
+
+/// The reply bound for this process: `FLASHTEX_MAX_REPLY_BYTES` when it is a
+/// positive integer (capped at [`MAX_RESULT_CEILING`]), else
+/// [`MAX_RESULT_BYTES`]. The consumer sets it to its own frame, so a larger
+/// configured frame gets every page that fits it and a smaller one is never
+/// overrun.
+pub fn max_result_bytes() -> usize {
+    std::env::var("FLASHTEX_MAX_REPLY_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .map_or(MAX_RESULT_BYTES, |v| v.min(MAX_RESULT_CEILING))
+}
+
+/// Keeps the leading pages that fit within `limit` (see
+/// [`max_result_bytes`]), returning them and how many were dropped.
 ///
 /// Measures the serialised size of each page rather than guessing from item
 /// counts, because item cost varies by an order of magnitude between a heading
@@ -896,9 +920,10 @@ fn bound_pages(
     pages: &[Page],
     paths: &[&str],
     capabilities: &AcceptedCapabilities,
+    limit: usize,
 ) -> (Value, usize) {
     // Reserve room for the envelope, diagnostics and the capability echo.
-    let budget = MAX_RESULT_BYTES.saturating_sub(64 * 1024);
+    let budget = limit.saturating_sub(64 * 1024);
     let mut used = 0usize;
     let mut kept = 0usize;
     let mut out = String::from("[");

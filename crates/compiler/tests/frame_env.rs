@@ -2,6 +2,9 @@
 //! The body is one `Inline::ColorBox` with an `\fboxrule` frame, sized to
 //! its content, and the environment no longer reports `unsupported_feature`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_lifetimes, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_compiler::parser::{parse, Block, Inline, Parsed};
 
 fn doc(preamble: &str, body: &str) -> Parsed {

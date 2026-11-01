@@ -1,0 +1,5 @@
+% 403-special-box: verifies a plain \special lands as a special node in the shipped box dump.
+\input prelude
+\setbox0=\hbox{\special{lockstep-probe}\vrule width30pt height8pt depth2pt}
+\lsshipbox0
+\end

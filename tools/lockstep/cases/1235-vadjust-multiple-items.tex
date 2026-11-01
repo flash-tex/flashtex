@@ -1,0 +1,7 @@
+% 1235-vadjust-multiple-items: verifies one \vadjust can carry glue, penalty and a rule out of a paragraph (tex.web §§1097, 1100-1101)
+\input prelude
+\hsize=200pt \parindent=0pt
+\setbox0=\vbox{\noindent\vrule width20pt height8pt depth2pt\vadjust{\vskip6pt\penalty300\vrule width30pt height4pt depth0pt}\vrule width20pt height8pt depth2pt\par}
+\message{1235 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

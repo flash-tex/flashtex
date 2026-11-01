@@ -1,0 +1,10 @@
+% 2546-pdfpkmode-group-restore: \pdfpkmode reads back and the outer mode returns after a group (pdftex.web §§248, 249)
+% new versus 1246-pdfpageattr-resources: that log shows two token assigns with changing/into lines and \the readbacks but no group; this log adds a group set with an in-group readback and a restoring line
+\input prelude
+\pdfpkmode{linemode}
+\message{2546 outer=\the\pdfpkmode}
+{\pdfpkmode{cxmode}\message{2546 inner=\the\pdfpkmode}}
+\message{2546 after=\the\pdfpkmode}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

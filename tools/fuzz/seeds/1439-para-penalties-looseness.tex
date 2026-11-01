@@ -1,0 +1,10 @@
+% 1439-para-penalties-looseness: paragraph breaking under \looseness, \linepenalty, hyphen penalties and \adjdemerits.
+\input prelude
+\font\lf=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\parskip=0pt\lf
+\looseness=1 \linepenalty=100 \hyphenpenalty=200 \exhyphenpenalty=300 \adjdemerits=5000
+alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi\par
+\message{1439 lines=\the\prevgraf}}
+\message{1439 ht=\the\ht0}
+\lsshipbox0
+\end

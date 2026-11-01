@@ -1,0 +1,9 @@
+% 1002-blank-line-par: verifies a blank source line emits \par and starts a new paragraph (tex.web §§350-351)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\myrm\everypar{\message{1002 fired}}first
+
+second\par}
+\message{1002 built}
+\lsshipbox0
+\end

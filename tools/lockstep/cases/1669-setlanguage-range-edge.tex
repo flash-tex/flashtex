@@ -1,0 +1,7 @@
+% 1669-setlanguage-range-edge: \setlanguage255 plants a language-255 whatsit while 256 clamps to language 0, both visible in the shipped hlist (tex.web §1377)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm a\setlanguage255 b}
+\setbox1=\hbox{\myrm a\setlanguage256 b}
+\lsshipbox0 \lsshipbox1
+\end

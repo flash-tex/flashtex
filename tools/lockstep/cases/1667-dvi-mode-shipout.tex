@@ -1,0 +1,9 @@
+% 1667-dvi-mode-shipout: with \pdfoutput=0 the engine takes the DVI shipout path, writing job.dvi while the same font box dump lands in the log (pdftex.web §§747, 791)
+\input prelude
+\pdfoutput=0
+\message{1667 mode=\the\pdfoutput}
+\font\f=cmr10
+\setbox0=\hbox{\f AV}
+\message{1667 wd=\the\wd0}
+\lsshipbox0
+\end

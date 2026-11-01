@@ -1,0 +1,7 @@
+% 1050-halign-to-shrinks-tabskip: verifies \halign to with tabskip shrink below natural width (tex.web §§ 804, 810)
+\input prelude
+\tabskip=0pt plus 2pt minus 5pt
+\setbox0=\vbox{\halign to 40pt{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1050 wd=\the\wd0}
+\lsshipbox0
+\end

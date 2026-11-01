@@ -1,0 +1,151 @@
+{
+  "appFootprintMaxBytes" : 58018112,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0001.png",
+      "incomplete" : false,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:24",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:24" : 152
+      },
+      "waitedMs" : 52.111029624938965
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/rw-beamer-sans-operators\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 1400.709,
+      "mode" : "cold",
+      "ms" : 2228.194125,
+      "pages" : 1,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 2
+    }
+  ],
+  "firstPageMs" : 1519.690958,
+  "firstPixelsMs" : 244.902583,
+  "forward" : {
+    "24" : 1
+  },
+  "hostFootprintEndBytes" : 186878016,
+  "hostFootprintMaxBytes" : 186878016,
+  "incompletePages" : [
+
+  ],
+  "load" : [
+    22.95751953125,
+    17.58154296875,
+    24.244140625
+  ],
+  "pages" : 1,
+  "settledMs" : 2228.194125,
+  "status" : "done"
+}

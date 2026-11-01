@@ -1,0 +1,14 @@
+% 1666-uccode-group-uppercase: a group-local \uccode change drives the \uppercase text shipped inside the group, while the outer mapping is restored afterwards (tex.web §§1230, 1285, 281)
+\input prelude
+\font\f=cmr10
+\uccode`a=`A \uccode`b=`B
+\setbox0=\hbox{\f\uppercase{ab}}
+\message{1666 outer-wd=\the\wd0}
+\begingroup\uccode`b=`I
+\setbox1=\hbox{\f\uppercase{ab}}
+\message{1666 inner-wd=\the\wd1}
+\endgroup
+\message{1666 restored-uccode=\the\uccode`b}
+\lsshipbox0
+\lsshipbox1
+\end

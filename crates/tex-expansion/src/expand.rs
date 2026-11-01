@@ -184,6 +184,23 @@ pub(crate) struct State {
     /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
     /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
     pub via_setlength: u8,
+    /// Control sequences a host prelude asked to watch (`\flashtex@watch
+    /// {<tokens>}`): every (re)definition of one inserts
+    /// `\flashtex@watchfired` into the input right after the assignment, so
+    /// the prelude can re-expand whatever depends on the name there (the
+    /// compiler's fancyhdr fields, which LaTeX expands only at shipout).
+    /// Restores at group end are silent. Part of the checkpointed state.
+    pub watched_macros: Rc<HashSet<String>>,
+    /// `\flashtex@watchcollecton` is in force: every macro expanded is
+    /// watched too, so a field that reaches `\topicshort` through
+    /// `\myhead` re-expands when `\topicshort` changes. Names with an `@`
+    /// (the kernel's scratch macros) are left out.
+    pub watch_collect: bool,
+    /// The group depth `\flashtex@watchbase` recorded (the document body's
+    /// own level). A local redefinition of a watched name deeper than that
+    /// also queues `\flashtex@watchfired` for the group's end, where TeX
+    /// restores the old meaning; one at this level lasts to the end.
+    pub watch_base_depth: usize,
 }
 
 impl State {
@@ -228,9 +245,15 @@ impl State {
             observed_registers,
             host_after_file,
             via_setlength,
+            watched_macros,
+            watch_collect,
+            watch_base_depth,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
+            && (Rc::ptr_eq(watched_macros, &new.watched_macros) || watched_macros == &new.watched_macros)
+            && *watch_collect == new.watch_collect
+            && *watch_base_depth == new.watch_base_depth
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
             && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
             && *pending_global == new.pending_global
@@ -260,6 +283,20 @@ impl State {
             && (Rc::ptr_eq(counter_children, &new.counter_children) || counter_children == &new.counter_children)
             && scopes.eq_mapped(&new.scopes, f, identity_bound)
     }
+}
+
+/// A group's `\aftergroup` tokens, with the `\flashtex@watchfired` a
+/// watched local redefinition queued (`Engine::define_cs_token`) moved to
+/// the group's closing token: what it produces stands where TeX restores
+/// the old meaning, not where the redefinition was.
+fn watch_fired_at(after: Vec<Token>, at: Span) -> Vec<Token> {
+    after
+        .into_iter()
+        .map(|t| match &t.kind {
+            TokenKind::ControlSequence(name) if name == "flashtex@watchfired" => Token::new(t.kind.clone(), at),
+            _ => t,
+        })
+        .collect()
 }
 
 const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
@@ -398,6 +435,10 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("flashtexsetlist", Primitive::FlashtexSetlist),
     ("flashtexhspace", Primitive::FlashtexHspace),
     ("flashtexvspace", Primitive::FlashtexVspace),
+    ("flashtex@watch", Primitive::FlashtexWatch),
+    ("flashtex@watchcollecton", Primitive::FlashtexWatchCollect(true)),
+    ("flashtex@watchcollectoff", Primitive::FlashtexWatchCollect(false)),
+    ("flashtex@watchbase", Primitive::FlashtexWatchBase),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
     // The package/class kernel (`latex_packages.rs`).
@@ -539,6 +580,11 @@ pub struct Engine {
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
     pub(crate) last_text_span: Option<Span>,
+    /// The whole-`\begin{name}` invocations `do_begin` has stamped as the
+    /// origin of a macro environment's begin code. A `\begin` read with one
+    /// of these as its origin comes from begin code (a wrapper opening
+    /// another environment), not from the document or a macro argument.
+    begin_origins: HashSet<Span>,
     /// The first `\global`/`\long`/`\outer`/`\protected` of the pending
     /// prefix run, where a recorded package definition's statement starts.
     /// Cleared with the prefixes.
@@ -592,6 +638,7 @@ impl Engine {
             opened_packages: Vec::new(),
             last_origin: None,
             last_text_span: None,
+            begin_origins: HashSet::new(),
             prefix_start: None,
             capture: None,
         }
@@ -1529,7 +1576,7 @@ impl Engine {
                         self.err("Too many }'s.", tok.span);
                         return Some(if self.st.emit_unbalanced_close { Step::Emit(tok.clone()) } else { Step::Continue });
                     }
-                    let after = self.st.scopes.pop_group();
+                    let after = watch_fired_at(self.st.scopes.pop_group(), tok.span);
                     self.push_tokens(after);
                     return Some(Step::Emit(tok.clone()));
                 }
@@ -1786,6 +1833,23 @@ impl Engine {
         match &name_tok.kind {
             TokenKind::ControlSequence(name) => {
                 self.st.scopes.assign_cs(name, meaning, global);
+                // A watched name (`\flashtex@watch`): let the prelude's
+                // `\flashtex@watchfired` run right after this assignment.
+                // The token carries the defined name's span (the
+                // invocation's, inside a macro), so what it produces is
+                // placed where the redefinition stands.
+                // Not while an `\edef`/`\csname` is being built: the
+                // inserted token would land inside it.
+                if self.st.watched_macros.contains(name.as_str()) && self.st.edef_depth == 0 && self.st.in_csname == 0 {
+                    let at = self.last_origin.unwrap_or(name_tok.span);
+                    let fired = Token::new(TokenKind::ControlSequence("flashtex@watchfired".into()), at);
+                    // A local assignment in a group inside the document
+                    // body is undone at the group's end: fire again there.
+                    if !global && self.st.scopes.depth() > self.st.watch_base_depth.max(1) {
+                        self.st.scopes.queue_aftergroup(fired.clone());
+                    }
+                    self.push_pending(vec![Pending { tok: fired, frozen: false, origin: Some(at) }]);
+                }
                 // The package kernel's `\ver@<name>.<ext>` record (made for
                 // a file it reads and for one it declines to the host
                 // alike): the host commands that file provides exist from
@@ -1805,6 +1869,13 @@ impl Engine {
     }
 
     fn call_macro(&mut self, call_tok: &Token, def: &Rc<MacroDef>) {
+        if self.st.watch_collect {
+            if let TokenKind::ControlSequence(name) = &call_tok.kind {
+                if !name.contains('@') && !self.st.watched_macros.contains(name.as_str()) {
+                    Rc::make_mut(&mut self.st.watched_macros).insert(name.clone());
+                }
+            }
+        }
         let origin = Some(self.last_origin.unwrap_or(call_tok.span));
         if !self.tick() {
             return;
@@ -2624,7 +2695,7 @@ impl Engine {
                     self.err("Extra \\endgroup.", tok.span);
                     return Step::Continue;
                 }
-                let after = self.st.scopes.pop_group();
+                let after = watch_fired_at(self.st.scopes.pop_group(), tok.span);
                 self.push_tokens(after);
                 Step::Emit(Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span))
             }
@@ -2959,6 +3030,31 @@ impl Engine {
             }
             Arabic | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol => {
                 let name = self.read_name_arg();
+                // A re-expansion the host watches (`\flashtex@watchcollecton`:
+                // the compiler's fancyhdr fields) reads a counter the host
+                // numbers: hand it back unevaluated, as
+                // `\flashtexfancycounter{<counter>}{<style>}`, for the page
+                // chrome to read when the page ships.
+                if self.st.watch_collect
+                    && matches!(name.as_str(), "part" | "chapter" | "section" | "subsection" | "subsubsection" | "page")
+                    && p != Fnsymbol
+                {
+                    let style = match p {
+                        Arabic => "arabic",
+                        RomanLower => "roman",
+                        RomanUpper => "Roman",
+                        AlphLower => "alph",
+                        _ => "Alph",
+                    };
+                    let mut out = vec![Token::new(TokenKind::ControlSequence("flashtexfancycounter".into()), tok.span)];
+                    for text in [name.as_str(), style] {
+                        out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                        out.extend(chars_as_other(text, tok.span));
+                        out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+                    }
+                    self.push_tokens(out);
+                    return Step::Continue;
+                }
                 let v = match self.counter_register(&name) {
                     Some(idx) => self.st.scopes.count(idx),
                     None => {
@@ -3023,6 +3119,31 @@ impl Engine {
             }
             FlashtexVspace => {
                 self.do_flashtex_space(tok, "flashtexvspacedone");
+                Step::Continue
+            }
+            FlashtexWatch => {
+                // `\flashtex@watch{<tokens>}`: watch every control sequence
+                // in the group, read without expansion.
+                let toks = self.read_undelimited_arg();
+                let names: Vec<std::string::String> = toks
+                    .iter()
+                    .filter_map(|t| match &t.kind {
+                        TokenKind::ControlSequence(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if !names.is_empty() {
+                    let watched = Rc::make_mut(&mut self.st.watched_macros);
+                    watched.extend(names);
+                }
+                Step::Continue
+            }
+            FlashtexWatchCollect(on) => {
+                self.st.watch_collect = on;
+                Step::Continue
+            }
+            FlashtexWatchBase => {
+                self.st.watch_base_depth = self.st.scopes.depth();
                 Step::Continue
             }
         }
@@ -3944,7 +4065,56 @@ impl Engine {
         self.emit_queue.push(Token::new(TokenKind::ControlSequence("begingroup".into()), tok.span));
         let cur = Meaning::Macro(Rc::new(MacroDef::simple(chars_as_other(&name, Span::synthetic()))));
         self.st.scopes.assign_cs("@currenvir", cur, false);
-        self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
+        // The `\name` call stands in for the whole `\begin{name}`
+        // invocation in one respect only: its origin. The token keeps
+        // the bare `\begin` span -- the converter detects a
+        // `\begin{name}` opener by reading the call token's own bytes
+        // (`real_text == "\\begin"`, and the exact `{name}` piece split
+        // starts at `real.end`), so a widened token span silently stops
+        // matching there and the environment never opens downstream.
+        // The origin runs through the name argument's closing `}`, when
+        // both come from the same source and the argument followed the
+        // command (the `emit_with_operand` pattern). A macro expanding
+        // from this call then stamps its replacement text -- the begin
+        // code -- with the whole invocation as origin (`call_macro`
+        // prefers `last_origin`), so downstream reads `\begin{name}`
+        // there -- with the bare `\begin` span it would read just
+        // `\begin`, which the typesetting layer mistakes for an amsthm
+        // theorem head and sets with an extra `\thm@headsep` before the
+        // body.
+        let invocation = match self.last_read_span {
+            Some(last)
+                if !tok.span.is_synthetic()
+                    && last.source_id == tok.span.source_id
+                    && last.end >= tok.span.end =>
+            {
+                Span { source_id: tok.span.source_id, start: tok.span.start, end: last.end }
+            }
+            _ => tok.span,
+        };
+        // Only a macro `\name` expands into begin-code tokens carrying
+        // this call's origin, so only then is the invocation stamped: a
+        // host or passthrough `\name` (an amsthm theorem, an undefined
+        // environment) keeps no origin, exactly as before, and
+        // downstream keeps reading its bare `\begin` bytes.
+        let expands_inline = self.st.scopes.meaning_ref(&name).is_some_and(resolves_to_macro);
+        if expands_inline {
+            // A `\begin{name}` read from another environment's begin code
+            // (a wrapper opening another wrapper) keeps that outer
+            // invocation -- the one the document shows -- rather than
+            // restamping the begin code with the bytes of a definition in
+            // the preamble. Any other `\begin{name}` (the document's own,
+            // or one passed through a macro argument, whose origin is the
+            // macro call) is stamped with its own invocation.
+            let origin = match self.last_origin {
+                Some(outer) if self.begin_origins.contains(&outer) => outer,
+                _ => invocation,
+            };
+            self.begin_origins.insert(origin);
+            self.push_tokens_with_origin(vec![Token::new(TokenKind::ControlSequence(name), tok.span)], Some(origin));
+        } else {
+            self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
+        }
     }
 
     fn do_end(&mut self, tok: &Token) {
@@ -6255,7 +6425,18 @@ impl Engine {
     fn eval_test_group(&mut self, test: Vec<Token>, span: Span) -> bool {
         self.prune_exhausted();
         let depth = self.sources.len();
-        self.push_tokens(test);
+        // A trailing `\relax` bounds the test parser to this argument: the
+        // infix/peek readers (`peek_ifthen_infix_op`, `scan_number`'s
+        // lookahead, ...) read one token past the last test token, and
+        // without the sentinel that read reaches the surrounding stream --
+        // the peeked token is then lost when this source is discarded,
+        // breaking whatever follows (e.g. a plain `\newif` conditional
+        // reported "Extra \else." / "Extra \fi."). `\relax` is unexpandable
+        // so every reader stops at it. Same sentinel `scan_counter_value_arg`
+        // uses for `scan_number`'s optional-space lookahead.
+        let mut toks = test;
+        toks.push(Token::synthetic(TokenKind::ControlSequence("relax".to_string())));
+        self.push_tokens(toks);
         let v = self.eval_ifthen_test(span);
         while self.sources.len() > depth {
             self.sources.pop();
@@ -6264,7 +6445,85 @@ impl Engine {
     }
 
     /// Evaluate one `\ifthenelse` test expression from the input.
+    ///
+    /// The grammar mirrors the `ifthen` package: `\AND`/`\OR` (and the
+    /// package's lowercase `\and`/`\or`) join tests infix with equal
+    /// precedence, evaluated left to right; `\NOT`/`\not` negates the
+    /// test that follows it; `\(...\)` groups; and an atomic test is
+    /// `\equal`, `\isodd`, `\isundefined`, `\lengthtest`, `\boolean` or
+    /// a bare `<number> <relation> <number>` comparison (so
+    /// `\value{c}>2` works). The historical braced-prefix forms
+    /// `\AND{a}{b}`, `\OR{a}{b}` and `\NOT{a}` keep working: when the
+    /// operator is directly followed by `{`, the braced groups are
+    /// evaluated as whole tests.
     fn eval_ifthen_test(&mut self, span: Span) -> bool {
+        // Historical braced-prefix `\AND{a}{b}` / `\OR{a}{b}`: the
+        // operator opens the test and is followed by a brace group (real
+        // `ifthen` syntax never puts `{` here, so there is no ambiguity).
+        if let Some(and) = self.at_braced_bool_op() {
+            let lhs = self.scan_braced_group(false);
+            let rhs = self.scan_braced_group(false);
+            let l = self.eval_test_group(lhs, span);
+            let r = self.eval_test_group(rhs, span);
+            return if and { l && r } else { l || r };
+        }
+        let mut v = self.eval_ifthen_unary(span);
+        loop {
+            match self.peek_ifthen_infix_op() {
+                Some(and) => {
+                    self.next_raw_token();
+                    let rhs = self.eval_ifthen_unary(span);
+                    v = if and { v && rhs } else { v || rhs };
+                }
+                None => break,
+            }
+        }
+        v
+    }
+
+    /// If the next non-space tokens are a boolean operator (`\AND`,
+    /// `\OR`, lowercase included) directly followed by `{`, consume the
+    /// operator and report which (`true` for AND). Otherwise the input is
+    /// left exactly as it was (only insignificant spaces may be gone).
+    fn at_braced_bool_op(&mut self) -> Option<bool> {
+        self.skip_spaces();
+        let op = self.peek_one()?;
+        let and = match &op.kind {
+            TokenKind::ControlSequence(n) if n == "AND" || n == "and" => true,
+            TokenKind::ControlSequence(n) if n == "OR" || n == "or" => false,
+            _ => return None,
+        };
+        self.next_raw_token();
+        self.skip_spaces();
+        match self.peek_one() {
+            Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) => Some(and),
+            _ => {
+                self.push_tokens(vec![op]);
+                None
+            }
+        }
+    }
+
+    /// The next non-space raw token when it is an infix `\AND`/`\OR`
+    /// (lowercase included): `Some(true)` for AND, `Some(false)` for OR.
+    /// The token is NOT consumed. The peek is raw, never expanding:
+    /// `\or` is an expandable engine primitive whose expansion here
+    /// would misfire.
+    fn peek_ifthen_infix_op(&mut self) -> Option<bool> {
+        self.skip_spaces();
+        match self.peek_one() {
+            Some(t) => match &t.kind {
+                TokenKind::ControlSequence(n) if n == "AND" || n == "and" => Some(true),
+                TokenKind::ControlSequence(n) if n == "OR" || n == "or" => Some(false),
+                _ => None,
+            },
+            None => None,
+        }
+    }
+
+    /// Evaluate one `\ifthenelse` unary test: prefix `\NOT`, a named test
+    /// form, a `\(...\)` group, or a bare numeric comparison.
+    fn eval_ifthen_unary(&mut self, span: Span) -> bool {
         loop {
             match self.peek_one_expanding() {
                 Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::Space)) => {
@@ -6286,34 +6545,59 @@ impl Engine {
                 return self.eval_test_group(if truth { t_branch } else { f_branch }, t.span);
             }
         }
-        let tok = match self.next_expanding_raw() {
-            Some(p) => p.tok,
+        let first = match self.next_expanding_raw() {
+            Some(p) => p,
             None => {
                 self.err("Missing test for \\ifthenelse.", span);
                 return false;
             }
         };
-        let name = match &tok.kind {
+        let name = match &first.tok.kind {
             TokenKind::ControlSequence(n) => n.clone(),
             _ => {
-                self.err("Missing test for \\ifthenelse.", tok.span);
-                return false;
+                // A bare number starts a `<number> <relation> <number>`
+                // comparison; anything else is not a test at all.
+                return self.eval_ifthen_numeric(first);
             }
         };
         match name.as_str() {
-            "NOT" => {
-                let arg = self.scan_braced_group(false);
-                !self.eval_test_group(arg, tok.span)
+            "NOT" | "not" => {
+                // Historical `\NOT{test}`: the braced group is the whole
+                // negated test (the package accepts this too); otherwise
+                // the negation applies to the test that follows.
+                self.skip_spaces();
+                match self.peek_one() {
+                    Some(t) if matches!(t.kind, TokenKind::Char(_, CatCode::BeginGroup)) => {
+                        let arg = self.scan_braced_group(false);
+                        !self.eval_test_group(arg, first.tok.span)
+                    }
+                    _ => !self.eval_ifthen_unary(first.tok.span),
+                }
             }
-            "AND" => {
-                let lhs = self.scan_braced_group(false);
-                let rhs = self.scan_braced_group(false);
-                self.eval_test_group(lhs, tok.span) && self.eval_test_group(rhs, tok.span)
+            "(" => {
+                let v = self.eval_ifthen_test(first.tok.span);
+                self.skip_spaces();
+                match self.next_expanding_raw() {
+                    Some(p) if p.tok.is_cs(")") => {}
+                    Some(p) => {
+                        let span = p.tok.span;
+                        self.push_pending(vec![p]);
+                        self.err("Missing `\\\\)' inserted for \\ifthenelse.", span);
+                    }
+                    None => {
+                        self.err("Missing `\\\\)' inserted for \\ifthenelse.", first.tok.span);
+                    }
+                }
+                v
             }
-            "OR" => {
-                let lhs = self.scan_braced_group(false);
-                let rhs = self.scan_braced_group(false);
-                self.eval_test_group(lhs, tok.span) || self.eval_test_group(rhs, tok.span)
+            "AND" | "OR" | "and" | "or" | ")" => {
+                // An infix operator (or a stray `\)`) where a test should
+                // start: unread it for the enclosing level to discard and
+                // fail this test, as the package's pending `\ifnum` does.
+                let span = first.tok.span;
+                self.push_pending(vec![first]);
+                self.err("Missing test for \\ifthenelse.", span);
+                false
             }
             "equal" => {
                 // Like the package's `\edef`-of-both-sides comparison:
@@ -6326,14 +6610,63 @@ impl Engine {
                 let n = self.eval_number_group();
                 n % 2 != 0
             }
-            "isundefined" => self.eval_isundefined(&tok),
+            "isundefined" => self.eval_isundefined(&first.tok),
             "lengthtest" => self.eval_lengthtest(),
-            "boolean" => self.eval_boolean(&tok),
+            "boolean" => self.eval_boolean(&first.tok),
             _ => {
-                self.err(format!("Unknown test `\\{name}' in \\ifthenelse."), tok.span);
-                false
+                // Maybe a `<number> <relation> <number>` comparison whose
+                // first operand needed expansion (`\value{c}` becomes the
+                // `\c@c` register, a user macro may yield digits):
+                // unread it and scan a number. Anything else keeps the
+                // historical diagnostic.
+                if self.ifthen_number_start(&first.tok) {
+                    self.eval_ifthen_numeric(first)
+                } else {
+                    self.err(format!("Unknown test `\\{name}' in \\ifthenelse."), first.tok.span);
+                    false
+                }
             }
         }
+    }
+
+    /// Whether an already-expanded token can start a `<number>` (the
+    /// first operand of a bare `\ifthenelse` comparison): a digit-like
+    /// character or an internal numeric quantity (a register, `\value`'s
+    /// `\c@...` expansion, `\count`, `\numexpr`, ...).
+    fn ifthen_number_start(&self, tok: &Token) -> bool {
+        match &tok.kind {
+            TokenKind::Char(c, _) => c.is_ascii_digit() || matches!(c, '+' | '-' | '\'' | '"' | '`'),
+            TokenKind::ControlSequence(_) | TokenKind::ActiveChar(_) => match self.meaning_of_token(tok) {
+                Meaning::RegisterAlias(RegisterKind::Count | RegisterKind::Dimen | RegisterKind::Skip, _) => true,
+                Meaning::CharDef(_) | Meaning::MathCharDef(_) => true,
+                Meaning::Primitive(p) => matches!(
+                    p,
+                    Primitive::Count
+                        | Primitive::Dimen
+                        | Primitive::Skip
+                        | Primitive::Numexpr
+                        | Primitive::Dimexpr
+                        | Primitive::Glueexpr
+                        | Primitive::Catcode
+                        | Primitive::Uccode
+                        | Primitive::Lccode
+                        | Primitive::IntPar(_)
+                ),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// A bare `<number> <relation> <number>` comparison (the package's
+    /// `\ifnum` test): `first` is already-read lookahead, unread so the
+    /// number scanner sees both operands and the relation whole.
+    fn eval_ifthen_numeric(&mut self, first: Pending) -> bool {
+        self.push_pending(vec![first]);
+        let a = self.scan_number();
+        let rel = self.scan_relation("ifnum");
+        let b = self.scan_number();
+        apply_relation(a, b, rel)
     }
 
     /// Read a `{...}` group and scan it as a `<number>` on a temporary
@@ -6631,6 +6964,20 @@ fn strip_let(m: Meaning) -> Meaning {
     }
 }
 
+/// Whether `do_begin`'s `\name` call expands inside the engine (so the
+/// begin code carries the call's origin): a macro, possibly behind
+/// `\let` aliases. Anything else -- a host command, a primitive, an
+/// undefined name -- passes through with no engine-side expansion.
+fn resolves_to_macro(mut m: &Meaning) -> bool {
+    loop {
+        match m {
+            Meaning::Macro(_) => return true,
+            Meaning::Let(inner) => m = inner,
+            _ => return false,
+        }
+    }
+}
+
 /// Does the first `{` of `toks` match the last `}` (so the whole list is
 /// one brace group)?
 fn encloses_whole(toks: &[Token]) -> bool {
@@ -6856,6 +7203,10 @@ fn primitive_name(p: Primitive) -> &'static str {
         DefineKey => "define@key",
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
+        FlashtexWatch => "flashtex@watch",
+        FlashtexWatchCollect(true) => "flashtex@watchcollecton",
+        FlashtexWatchCollect(false) => "flashtex@watchcollectoff",
+        FlashtexWatchBase => "flashtex@watchbase",
         FlashtexHspace => "flashtexhspace",
         FlashtexVspace => "flashtexvspace",
         Verb => "verb",
@@ -7288,7 +7639,8 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace | FlashtexWatch
+            | FlashtexWatchCollect(_) | FlashtexWatchBase
             | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
@@ -7470,6 +7822,9 @@ fn base_state(tex_only: bool) -> State {
         observed_registers: Rc::new(HashSet::new()),
         host_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
+        watched_macros: Rc::new(HashSet::new()),
+        watch_collect: false,
+        watch_base_depth: 0,
     }
 }
 

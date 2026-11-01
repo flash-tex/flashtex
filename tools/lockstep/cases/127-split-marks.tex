@@ -1,0 +1,8 @@
+\input prelude
+\splittopskip=10pt
+\setbox0=\vbox{\vskip5pt\mark{inner-one}\vrule width40pt height12pt depth0pt\vskip5pt\mark{inner-two}\vrule width40pt height12pt depth0pt}
+\setbox1=\vsplit0 to 25pt
+\message{127 first=\splitfirstmark;bot=\splitbotmark}
+\lsshipbox1
+\lsshipbox0
+\end

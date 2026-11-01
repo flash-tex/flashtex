@@ -1,0 +1,9 @@
+% 1230-pagestretch-fil: verifies infinite \vskip stretch leaves \pagestretch at zero order (tex.web §§982, 1004)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\hrule width80pt height30pt depth0pt
+\vskip10pt plus1fil
+\message{1230 stretch=\the\pagestretch; shrink=\the\pageshrink}
+\output={\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\end

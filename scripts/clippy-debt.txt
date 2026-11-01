@@ -1,0 +1,23 @@
+# CLIPPY DEBT -- crates that do not yet pass
+#
+#   cargo clippy -p <crate> --all-targets --no-deps -- -D warnings
+#
+# scripts/gate.sh and .github/workflows/ci.yml run clippy on the crates a branch
+# touches. A crate listed here still runs, and its findings are still printed,
+# but it does not fail the gate; when it starts passing the gate says so and the
+# line must be deleted. This is the same arrangement as
+# scripts/rust-test-exclude.txt, and the same rule applies:
+#
+# THE LIST MAY ONLY SHRINK. Do not add a crate to make a red gate green; fix it,
+# or add a scoped `#[allow(...)]` with a reason at the site.
+#
+# Emptied on 2026-10-03 when CI's stable moved to 1.99.0: every
+# root-workspace member passes
+#
+#   cargo clippy --workspace --all-targets --locked -- -D warnings
+#
+# on 1.99.0, 1.98.1 and nightly 2026-09-15. In the frozen old-engine crates
+# (D13) the findings are allowed with a crate-level or item-level
+# `#[allow(..., reason = ...)]` instead of refactored; elsewhere they were
+# fixed at the site. Keep the list empty: fix a new finding or allow it at
+# the site with a reason.

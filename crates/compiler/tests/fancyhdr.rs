@@ -184,8 +184,11 @@ fn positions_edges_and_empty_cases() {
     );
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
     // `[E]` filled no slot; the later `[R]` filled slot 2 alone -- head
-    // lines stream L, C, R, then the body, then the foot lines.
-    assert_eq!(page_words(&out), ["Side", "Text.", "Side"],);
+    // lines stream L, C, R, then the body, then the foot lines. fancyhdr's
+    // own default centre foot (`\rmfamily\thepage`, `\f@nch@initialise`)
+    // was never cleared: pdflatex (TeX Live 2026) prints `Side`, `Text.`,
+    // `1` at x 303.13bp and `Side` in the foot.
+    assert_eq!(page_words(&out), ["Side", "Text.", "1", "Side"],);
 
     // A footer field streams after the body and sits below it.
     let out = compile(

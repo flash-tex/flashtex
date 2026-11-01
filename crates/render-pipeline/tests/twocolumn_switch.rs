@@ -17,6 +17,9 @@
 //! not move). Anything beyond one bare switch at a block boundary keeps
 //! the limitation.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(dead_code, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

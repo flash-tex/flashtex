@@ -20,29 +20,15 @@ name = "flashtex-perf-bench"
 path = "src/main.rs"
 
 # The product path, so the harness measures exactly what the app runs. The
-# pipeline links its own pinned `vendor/compiler`, so a change under
-# `crates/compiler` is invisible here until vendor/ is re-pinned: measure that
-# change through `--worker crates/compiler/target/release/flashtex-compiler`
-# instead (see README.md, "Which compiler am I measuring?").
+# pipeline links the live `crates/compiler` (vendor/ is retired), so a change
+# under `crates/compiler` is measured here the moment it merges -- no
+# `--worker` detour and no re-pin (see README.md, "Which compiler am I
+# measuring?").
 [dependencies]
 flashtex-render-pipeline = { path = "../render-pipeline" }
-flashtex-compiler = { path = "../render-pipeline/vendor/compiler" }
-flashtex-font-engine = { path = "../render-pipeline/vendor/font-engine" }
+flashtex-compiler = { path = "../compiler" }
+flashtex-font-engine = { path = "../font-engine" }
 
-# Pinned to cargo's stock `release` values rather than left implicit, because
-# the report states the build profile and two runs are only comparable when it
-# matches. Changing anything here invalidates every committed baseline.
-[profile.release]
-opt-level = 3
-lto = false
-codegen-units = 16
-panic = "unwind"
-debug = false
-
-# `--profile perf` for flamegraphs: identical codegen, line tables kept so
-# symbols resolve. Never produce a committed baseline with it (the report
-# records the profile, and the gate refuses a cross-profile comparison).
-[profile.perf]
-inherits = "release"
-debug = 1
-strip = "none"
+# `[profile.release]` and `[profile.perf]`, which the committed baselines
+# depend on, live in the workspace root Cargo.toml: cargo ignores `[profile]`
+# in a non-root member, and this crate became one when vendor/ was retired.

@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{letltxmacro}
+\LetLtxMacro{\mysection}{\section}
+\LetLtxMacro{\mytextbf}{\textbf}
+\begin{document}
+\mysection*{Heading via a copied macro}
+Copied bold: \mytextbf{bold text here}.
+Copies made with \verb|\LetLtxMacro|.
+\end{document}

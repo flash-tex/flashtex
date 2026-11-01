@@ -978,7 +978,7 @@ pub fn paginate(
         if i < list.len() {
             nodes.push(match list[i] {
                 VItem::Box { .. } => N::V(i),
-                VItem::Glue { width, stretch, shrink, .. } if !matches!(list[i], VItem::Glue { fil: true, .. }) => N::Glue(width, stretch, shrink),
+                VItem::Glue { width, stretch, shrink, fil } if fil.is_none() => N::Glue(width, stretch, shrink),
                 VItem::Glue { .. } => N::V(i),
                 VItem::Penalty(pen) => N::Penalty(pen),
             });
@@ -1222,7 +1222,7 @@ pub fn paginate(
                                 total += depth + width;
                                 depth = 0.0;
                                 stretch += st;
-                                fil |= fl;
+                                fil |= !fl.is_none();
                                 shrink += sh;
                             }
                         }
@@ -1305,7 +1305,7 @@ pub fn paginate(
             match n {
                 N::FBox(f) => body.push(VItem::Box { height: boxes[*f].height, depth: 0.0, payload: (usize::MAX, *f) }),
                 N::V(j) => body.push(list[*j].clone()),
-                N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: false }),
+                N::Glue(w, st, sh) => body.push(VItem::Glue { width: *w, stretch: *st, shrink: *sh, fil: crate::pagebuild::Fil::NONE }),
                 N::Penalty(pen) => body.push(VItem::Penalty(*pen)),
                 N::Marker(_) => {}
             }

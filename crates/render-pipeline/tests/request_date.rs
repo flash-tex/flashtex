@@ -9,13 +9,13 @@
 //! accepted, validated, and refused when malformed, and a request that omits it
 //! is byte-identical to one that pins the epoch.
 //!
-//! The substitution into `\today` itself is behind the `request-date` cargo
-//! feature, because `vendor/compiler` is a read-only pin predating
-//! `parser::parse_project_with` (see `vendor/VENDORING.md` and
-//! `RenderOptions::today`). Until that re-pin lands, `\today` still renders the
-//! epoch here no matter what date the request carries — which is exactly what
-//! `a_supplied_date_is_accepted_but_does_not_yet_reach_today` records, so the
-//! gap is a failing-when-fixed assertion rather than an undocumented silence.
+//! The substitution into `\today` is behind the `request-date` cargo feature,
+//! which is **on by default** and whose precondition — the compiler's
+//! `parser::parse_project_with` — is met, because this crate links
+//! `crates/compiler` live rather than a frozen mirror. The gap the feature
+//! guarded is closed; `a_supplied_date_is_accepted_but_does_not_yet_reach_today`
+//! still asserts both arms so that a `--no-default-features` build is held to
+//! the behaviour it actually has.
 
 use flashtex_render_pipeline::date::TodayDate;
 use flashtex_render_pipeline::{FontSet, RenderOptions};
@@ -67,12 +67,14 @@ fn body(text: &str) -> String {
 /// `\today` reached through `\date{\today}\maketitle` rather than written
 /// bare in the body.
 ///
-/// Not a stylistic choice: bare `\today` in body text has **no dispatch arm**
-/// in `vendor/compiler`, so it falls to `P::unsupported`, whose
-/// `debug_assert!(!BUILT_INS.contains(&name))` fires and aborts a debug build.
-/// That is a real bug on the pipeline's shipped path, fixed upstream in
-/// `crates/compiler` (PR #220) and arriving here only with the vendor re-pin.
-/// The title route exercises the same substitution site without tripping it.
+/// Not a stylistic choice originally: bare `\today` in body text had **no
+/// dispatch arm** in the frozen `vendor/compiler` this crate used to link, so
+/// it fell to `P::unsupported`, whose
+/// `debug_assert!(!BUILT_INS.contains(&name))` fired and aborted a debug build.
+/// PR #220 fixed that in `crates/compiler`, which is now linked live, so the
+/// hazard is gone; the title route is kept because it exercises the same
+/// substitution site and every committed expectation here was recorded through
+/// it.
 fn today_via_title() -> String {
     body("\\title{T}\\author{A}\\date{\\today}\\maketitle")
 }
@@ -124,12 +126,11 @@ fn a_well_formed_date_is_accepted() {
     );
 }
 
-/// The honest record of where this stops today. `vendor/compiler` predates
-/// `parse_project_with`, so with `request-date` off the supplied date is
-/// validated and carried but `\today` still renders the epoch. When the vendor
-/// pin is refreshed and the feature turned on, this test's two arms swap — and
-/// it is written so that forgetting to update it fails loudly rather than
-/// quietly asserting the old behaviour forever.
+/// Both arms of the `request-date` feature. With it on -- the default, and the
+/// only configuration the crate still builds in -- the request's date reaches
+/// `\today`. With it off the date is validated and carried but `\today`
+/// renders the epoch. The test asserts whichever arm the build selected, so
+/// neither can rot unnoticed.
 #[test]
 fn a_supplied_date_is_accepted_but_does_not_yet_reach_today() {
     let out = handle(&today_via_title(), Some("2026-09-13"));

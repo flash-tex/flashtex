@@ -16,6 +16,7 @@
 //! returns [`PictureText`] placements for the caller to paint as glyphs.
 
 pub mod expr;
+mod axis;
 mod interp;
 pub mod text;
 pub mod xcolor;

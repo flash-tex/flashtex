@@ -14,7 +14,7 @@ proposal that the Mac user approves. iPad **simulator only**; no device run.
 |---|---|---|---|
 | Pairing with the Mac's code (HKDF → TLS-PSK → `hello`/`hello_ack`, `pair_psk` stored) | **Yes** | nearby-v1 §2/§4 | `Packages/FlashTeXPadKit/Sources/NearbyClient` (symlink to `apps/mac/tools/nearby-client`), `MacLink.swift` |
 | Current pinned destination (`hello_ack.destination`, `destination_query`) | **Yes** | nearby-v1 §4 | `MacLink.swift`, shown on the Capture screen |
-| Apple Pencil canvas (PencilKit `PKCanvasView`, tool picker, finger allowed) → PNG | local | — | `CaptureView.swift` (`PencilCanvas`) |
+| Apple Pencil canvas (PencilKit `PKCanvasView`, tool picker, finger allowed), full screen, undo gestures → PNG cropped to the ink, light on white | local | — | `CaptureCanvas.swift` (`PencilCanvas`, `CanvasController`), `CanvasGestures.swift` |
 | Photo picker (`PhotosPicker`) and bundled sample image (`sample-capture.png`) → PNG | local | — | `CaptureView.swift` (camera does not exist in the simulator) |
 | Instruction text (≤ 4096 bytes) | local | transfer-v1 `capture_submit.instructions` | `CaptureQueue.validate` |
 | **Send to Mac**: `capture_submit {capture_id, destination_id, base_revision, image{png}, instructions}` → `capture_received {capture_id, durable, has_proposal, applied}` | **Yes** | transfer-v1 over nearby-v1, exactly as the reference client | `CaptureQueue.send` |
@@ -24,7 +24,8 @@ proposal that the Mac user approves. iPad **simulator only**; no device run.
 | Recovery when the Mac's per-pairing acknowledgement memory lost the id (`unknown_capture`) | **Yes** — the iPad re-delivers the saved envelope (same capture_id / destination / base_revision / bytes; the Mac and bridge de-duplicate) and asks again | nearby-v1 §6a | `CaptureQueue.redeliver`, test `testUnknownCaptureAfterMacRestartIsRecoveredByRedelivery` |
 | QR pairing | **Yes** for the payload path: VisionKit `DataScannerViewController` on hardware that supports it, paste-the-URL fallback everywhere; the Mac is found by Bonjour `fp`, or by typed host/port (simulator: no camera, no advertising listener in tests) | Mac `PairingQR.swift` payload `flashtex-nearby://pair?v=1&code&salt&fp&name` parsed by the reference client's `NearbyBootstrapPayload` (fp must derive from salt) | `PairingScanner.swift`, `MacLinkPanel` "Pair by QR", `PadModel.pair(bootstrapText:host:port:)` |
 | Persistence | **Yes** — pairing in the Keychain (`kSecClassGenericPassword`, one item per Mac fp, `ThisDeviceOnly`); drafts (PNG as sent) + receipts + outcomes in `Application Support/FlashTeXPad/captures.json` + `captures/<id>.png`; restored on relaunch (an interrupted send comes back retryable with the same id) | — | `PadStore.swift` (`KeychainPairStore`, `CaptureStore`), tests `testPairingSurvivesInTheKeychainAndCapturesOnDisk`, UI `testRelaunchRestoresCapturesAndPairing` |
-| **LaTeX editor** (lane `lane-ipad-editor`): syntax colouring, auto-close with type-over and pair deletion, the Return key's environment rules (`\item ` templates, `\end{…}`), bracket/`$` match highlight, completion from the compiler's inventory with one-line docs and Tab-stop snippets, hardware key commands (⌃Space, Esc, Tab, ⌘/, ⌘] ⌘[, ⌘⇧B, ⌘I, ⌘E), an accessory bar over the on-screen keyboard | local — the same rules as the Mac editor, from the shared `FlashTeXEditorCore` target (`apps/mac/Sources/FlashTeXEditorCore`, symlinked into `FlashTeXPadKit`) | the bundled `Resources/supported-latex.json` is byte-identical to the Mac's and the compiler's (`apps/mac/scripts/sync-supported-latex.sh --check`, CI) | `EditorController.swift` (delegate: auto-close, Return, match, commands, accessory bar), `EditorTextStorage.swift` (incremental colouring), `EditorTheme.swift`, `EditorAccessoryBar.swift`, `EditorView.swift`; `FlashTeXPadKit/LocalCompletion.swift`; tests `EditorControllerTests`, `EditorHighlightTests`, `EditorCompletionTests` |
+| **LaTeX editor** (lane `lane-ipad-editor`): syntax colouring, auto-close with type-over and pair deletion, the Return key's environment rules (`\item ` templates, `\end{…}`), bracket/`$` match highlight, linked `\begin{…}`/`\end{…}` name editing (typing, paste, deletion, IME and an accepted completion rename both ends as one undo step), completion from the compiler's inventory with one-line docs and Tab-stop snippets, hardware key commands (⌃Space, Esc, Tab, ⌘/, ⌘] ⌘[, ⌘⇧B, ⌘I, ⌘E), an accessory bar over the on-screen keyboard | local — the same rules as the Mac editor, from the shared `FlashTeXEditorCore` target (`apps/mac/Sources/FlashTeXEditorCore`, symlinked into `FlashTeXPadKit`) | the bundled `Resources/supported-latex.json` is byte-identical to the Mac's and the compiler's (`apps/mac/scripts/sync-supported-latex.sh --check`, CI) | `EditorController.swift` (delegate: auto-close, Return, match, linked environment names, commands, accessory bar), `EditorTextStorage.swift` (incremental colouring), `EditorTheme.swift`, `EditorAccessoryBar.swift`, `EditorView.swift`; `FlashTeXPadKit/LocalCompletion.swift`; tests `EditorControllerTests`, `EditorHighlightTests`, `EditorCompletionTests`, `LinkedEnvironmentRenameTests` |
+| **Paste an image** (IMAGE-DROP-IPAD, IPAD-FOLDER-ACCESS): an image with nothing text-like on the pasteboard is converted off the main thread (HEIC, TIFF, GIF → PNG with its orientation applied; 50 MB cap, as on the Mac), saved into the document folder's `figures/` (the document's `\graphicspath` wins) under `NSFileCoordinator`, and inserted as the Mac's figure snippet in one undo step. A `.tex` opened on its own grants only that file, so the first paste into its folder offers **Allow access to “folder”** (a folder picker); the grant is kept as a security-scoped bookmark (UserDefaults, by folder path, stale bookmarks made again) and the paste runs again. **Open folder…** grants a project folder up front and opens its main `.tex`. The status note clears after 6 s or on the next edit | local | the folder must lie inside the project before and after `figures/` is created | `EditorController.pasteImage`, `PadModel.imagePasteHost`/`grantFolderAccess`/`openFolder`; `FlashTeXPadKit/PadImagePaste.swift`, `PadFolderAccess.swift`; tests `FolderAccessTests` (simulator) and FlashTeXPadKit's `PadFolderAccessTests` (`swift test` in `Packages/FlashTeXPadKit`); a real iPad's sandbox refusal and file-provider folders are checked on hardware only |
 | Diagnostics / reviewed-proposal gate | local, **reference only** | runtime-v1 / assistant-context shapes | sidebar section "Reference (Mac contracts; not the product)"; tested, small, not the product |
 
 What the iPad still cannot do: approve, reject or edit the proposal (the Mac
@@ -32,6 +33,57 @@ user does; `latex` is read-only here), receive a push from the Mac (the iPad
 polls), run the conversion itself, or compile: the editor edits a local `.tex`
 buffer (opened from Files or the bundled `demo.tex`) and does not sync it to
 the Mac — transfer-v1 carries captures, not documents.
+
+## The capture canvas
+
+The canvas fills the whole screen, edge to edge, in portrait, landscape,
+Split View and Stage Manager windows; the sidebar starts hidden on Capture
+(the floating sidebar button, top-left, brings it back). In compact width
+(Slide Over, 1/3 Split View, a narrow Stage Manager window) the split view is
+a stack: Capture keeps its navigation bar and back button there, and the
+sidebar button pops back to the panel list (`PadNavigation`). Every control floats
+over the canvas inside the safe area: the connection status top-left; undo,
+redo, tools, image sources, clear, the Captures panel and the canvas settings
+top-right (image sources fold into one menu when the window is narrow); the
+instruction + Send composer under them; the Captures panel at the trailing
+edge (a sheet in compact width, opened automatically after a send). The
+controls fade while a stroke is being drawn and the chevron collapses them.
+PencilKit's tool picker keeps the bottom edge.
+
+Strokes live in the canvas's content coordinates, anchored top-left, so a
+rotation or window resize never moves them. The canvas grows downward as
+the ink approaches the bottom, and sideways when ink drawn in a wider window
+lies past the right edge after a rotation or a narrower window, so every
+stroke that Send will transmit can be scrolled to (two fingers, or one when
+finger drawing is off). Send renders only the ink plus a 32 pt margin (at least
+320 × 200 pt, 2×, longest side ≤ 4096 px), always in the light appearance on
+opaque white, so a capture drawn in dark mode still reaches the Mac as dark
+ink on paper.
+
+Undo and redo (`CanvasGestures.swift`; each switchable in the canvas
+settings popover, the gear):
+
+| Gesture | Default | Notes |
+|---|---|---|
+| Two-finger double-tap | Undo | Notability / GoodNotes convention; shows an "Undo" toast and a VoiceOver announcement |
+| Three-finger double-tap | Redo | the canvas opts out of the system three-finger editing gestures (`editingInteractionConfiguration = .none`), which would otherwise undo on the same gesture |
+| Apple Pencil double-tap | Undo | setting *Apple Pencil double-tap*: **Undo** (default) or **System setting** |
+| Toolbar buttons (top-right) | Undo / Redo | ⌘Z / ⇧⌘Z also work while the canvas is first responder (its own undo manager) |
+
+Apple Pencil double-tap defaults to **Undo** because that is what the owner
+asked for and the system default (switch to the eraser) is what nearly every
+iPad has, so "follow the system" would never undo. The system setting is
+still honoured two ways: if double-tap is **Off** in Settings › Apple Pencil,
+it does nothing here in either mode; and *System setting* mode applies the
+preferred action (switch to eraser, switch to the last tool, show the
+palette). PencilKit's own tool picker applies the system action while it is
+visible, so in Undo mode a tool switch the picker makes within 0.35 s of the
+tap is reverted (`ToolRestoreGuard`); this path needs a real Pencil and is
+unit-tested only.
+
+The canvas keeps its own undo history, separate from the instruction
+field's, so an undo gesture never undoes typing. Clear is one undoable step;
+a successful send empties the canvas and its history.
 
 ## The editor
 
@@ -66,12 +118,14 @@ apps/ios/
     Sources/FlashTeXEditorCore -> ../../../../mac/Sources/FlashTeXEditorCore         (symlink; the shared editor logic — owned by both apps, tested by both)
     Sources/FlashTeXPadKit/   CaptureQueue (product: send, outcome polling, re-delivery), MacLink, PadStore (Keychain pairings, on-disk captures), PadDocument, ReviewedProposal, ReviewSession, LocalCompletion, Diagnostics
   FlashTeXPad/                      SwiftUI app: Capture (primary), Mac link, reference .tex panels
-    CaptureView.swift               PencilKit canvas, PhotosPicker, sample image, instruction, Prepare/Discard/Send, status + outcome list (LaTeX read-only)
+    CaptureView.swift               full-screen capture screen: floating controls, PhotosPicker, sample image, instruction, Send, status + outcome list (LaTeX read-only)
+    CaptureCanvas.swift             PencilKit canvas (full screen, growing, own undo history), tool picker, gesture + Pencil wiring, PNG rendering
+    CanvasGestures.swift            gesture → undo/redo rules, settings, tool-restore guard, canvas geometry (view-free, unit-tested)
     PairingScanner.swift            VisionKit DataScannerViewController wrapper for the Mac's pairing QR (paste fallback in ContentView)
     Resources/sample-capture.png    320×240 sketch (triangle with a right-angle mark), generated
     Resources/demo.tex, review-workflow.json, compile-result.json   reference-panel fixtures
-  FlashTeXPadTests/                 XCTest hosted in the app: FakeMac (+ scripted capture_status) + CaptureQueueTests + FinishTests + AcceptanceSliceTests
-  FlashTeXPadUITests/               XCUITest: CaptureFlowUITests (runner hosts FakeMac), FlashTeXPadUITests (.tex reference)
+  FlashTeXPadTests/                 XCTest hosted in the app: FakeMac (+ scripted capture_status) + CaptureQueueTests + FinishTests + AcceptanceSliceTests + CanvasGestureTests
+  FlashTeXPadUITests/               XCUITest: CaptureFlowUITests (runner hosts FakeMac), CanvasUITests (full screen, undo gestures), FlashTeXPadUITests (.tex reference)
 ```
 
 ## Build and test (Xcode 26.3, iOS 26.3 simulator runtime)

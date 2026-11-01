@@ -1,0 +1,8 @@
+% 2330-lastbox-blocked-by-disc: \lastbox takes nothing when the tail box belongs to a discretionary replace list, leaving the list whole (tex.web §§1080, 1081)
+% new versus 2106-lastbox-kern-tail-void: 2106 prints a rule plus a kept kern with void=yes; here the tail is a box yet void=yes, and the log keeps the discretionary plus its replace hbox
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm a\discretionary{}{}{\hbox{\myrm b}}\global\setbox1=\lastbox}
+\message{2330 void=\ifvoid1 yes\else no\fi}
+\lsshipbox0
+\end

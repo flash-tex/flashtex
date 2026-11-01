@@ -13,9 +13,12 @@
 //! 'See' 133.768  '(†).' 151.476  'for' 170.853       y 164.653
 //! ```
 //!
-//! Until `vendor/compiler` is re-pinned past the `\dagger` table entry the
-//! compiler reports `unknown_command` for it; the test says so and skips
-//! rather than asserting a placement the pinned compiler cannot produce.
+//! This used to skip itself when the compiler reported `unknown_command` for
+//! `\dagger`, because `render-pipeline` built against a frozen
+//! `vendor/compiler` that predated the symbol's table entry. `vendor/` is
+//! retired and `crates/compiler` carries `\dagger`, so the placements below
+//! are asserted unconditionally; a regression that loses the symbol now fails
+//! here instead of quietly skipping.
 #![cfg(feature = "compiler-node-surface")]
 
 mod common;
@@ -34,10 +37,11 @@ fn dagger_tag_and_eqref_match_pdflatex() {
         return;
     }
     let r = render_one(DAGGER_TAG);
-    if r.v2.diagnostics.iter().any(|d| d.code == "unknown_command" && d.message.contains("\\dagger")) {
-        eprintln!("SKIP tag_dagger_label: vendor/compiler predates the \\dagger math symbol (re-pin needed)");
-        return;
-    }
+    assert!(
+        !r.v2.diagnostics.iter().any(|d| d.code == "unknown_command" && d.message.contains("\\dagger")),
+        "crates/compiler must know \\dagger: {:?}",
+        r.v2.diagnostics
+    );
     let words = words_of(&r);
     let at = |text: &str, x: f64, y: f64| {
         words

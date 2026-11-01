@@ -1,0 +1,40 @@
+12.64% [.] <flashtex_engine::arena::Arena>::checkpoint - - 
+11.84% [.] <flashtex_engine::generated::globals::Globals>::macro_call - - 
+5.50% [.] <flashtex_engine::generated::globals::Globals>::copy_node_list - - 
+5.13% [.] <flashtex_engine::displaylist::interp::Interp<flashtex_engine::displaylist::WidthEnv>>::show - - 
+4.96% [.] <flashtex_engine::generated::globals::Globals>::get_next_slow - - 
+4.28% [.] <flashtex_engine::generated::globals::Globals>::dl_note_node - - 
+3.92% [.] <flashtex_engine::generated::globals::Globals>::expand - - 
+2.64% [.] <flashtex_engine::generated::globals::Globals>::main_control - - 
+2.37% [.] <flashtex_engine::generated::globals::Globals>::scan_toks - - 
+2.17% [.] <flashtex_engine::generated::globals::Globals>::get_node - - 
+2.04% [.] __memmove_avx512_unaligned_erms - - 
+1.63% [.] <flashtex_engine::generated::globals::Globals>::replay - - 
+1.59% [.] core::slice::sort::unstable::quicksort::quicksort::<(u32, *mut u64), <[(u32, *mut u64)]>::sort_unstable_by_key<u32, <flashtex_engine::arena:
+1.56% [.] <flashtex_engine::generated::globals::Globals>::flush_node_list - - 
+1.50% [.] <flashtex_engine::displaylist::interp::Interp<flashtex_engine::displaylist::WidthEnv>>::run - - 
+1.24% [.] <flashtex_engine::displaylist::fixed::Fx>::viewer_f64 - - 
+1.06% [.] <flashtex_engine::generated::globals::Globals>::free_node - - 
+1.05% [.] <flashtex_engine::generated::globals::Globals>::conditional - - 
+1.02% [.] <flashtex_engine::generated::globals::Globals>::try_break - - 
+1.02% [.] <flashtex_engine::generated::globals::Globals>::pass_text - - 
+0.99% [.] <flashtex_engine::generated::globals::Globals>::id_lookup - - 
+0.96% [.] flashtex_display_list::sha256::compress_x86 - - 
+0.78% [.] <flashtex_engine::generated::globals::Globals>::eq_destroy - - 
+0.71% [.] <flashtex_engine::generated::globals::Globals>::divide_scaled - - 
+0.68% [.] <flashtex_engine::generated::globals::Globals>::holds - - 
+0.67% [.] <flashtex_display_list::page::Page>::enc_items - - 
+0.66% [.] <flashtex_engine::arena::Core>::save - - 
+0.64% [.] <flashtex_engine::generated::globals::Globals>::pdf_hlist_out - - 
+0.62% [.] <flashtex_engine::generated::globals::Globals>::hpack - - 
+0.62% [.] <flashtex_engine::generated::globals::Globals>::flashtex_intr_touch - - 
+0.60% [.] <flashtex_engine::displaylist::fixed::Mat>::then - - 
+0.58% [.] <flashtex_engine::generated::globals::Globals>::get_next_file - - 
+0.56% [.] <flashtex_engine::generated::globals::Globals>::scan_general_text - - 
+0.56% [.] <flashtex_engine::generated::globals::Globals>::line_break - - 
+0.54% [.] <flashtex_engine::generated::globals::Globals>::input_ln - - 
+0.54% [.] __divti3 - - 
+0.52% [.] <std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> - - 
+0.51% [.] _int_malloc - - 
+0.51% [.] <flashtex_engine::generated::globals::Globals>::pdf_begin_string - - 
+0.48% [.] <std::thread::local::LocalKey<core::cell::RefCell<core::option::Option<alloc::boxed::Box<flashtex_engine::displaylist::State>>>>>::with::<fl

@@ -1,0 +1,8 @@
+﻿% x024-utf8-bom: a UTF-8 byte order mark is skipped
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\setbox0=\hbox{bom ä}
+\lsshipbox0
+\end

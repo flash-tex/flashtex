@@ -1,0 +1,227 @@
+{
+  "appFootprintMaxBytes" : 77515136,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0001.png",
+      "incomplete" : true,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:26",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:26" : 51
+      },
+      "waitedMs" : 50.909996032714844
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0002.png",
+      "incomplete" : true,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "source" : "pane",
+      "sourceLines" : {
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:1" : 7,
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:2" : 12,
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:3" : 8,
+        "main.tex:28" : 34
+      },
+      "waitedMs" : 50.84109306335449
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0003.png",
+      "incomplete" : true,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:41",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:41" : 204
+      },
+      "waitedMs" : 51.41305923461914
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0004.png",
+      "incomplete" : true,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "source" : "pane",
+      "sourceLines" : {
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:1" : 7,
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:2" : 12,
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:3" : 8,
+        "main.tex:43" : 34
+      },
+      "waitedMs" : 51.9489049911499
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0005.png",
+      "incomplete" : false,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:54",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:54" : 150
+      },
+      "waitedMs" : 52.1240234375
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0006.png",
+      "incomplete" : true,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "source" : "pane",
+      "sourceLines" : {
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:1" : 7,
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:2" : 12,
+        "\/tmp\/bva\/cache\/projects\/802cf1598c398d8e-14777-1\/out\/main.toc:3" : 8,
+        "main.tex:56" : 34
+      },
+      "waitedMs" : 51.22196674346924
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0007.png",
+      "incomplete" : false,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:62",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:62" : 126
+      },
+      "waitedMs" : 52.18005180358887
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/rw-beamer-visuals\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 2039.357,
+      "mode" : "cold",
+      "ms" : 2888.803584,
+      "pages" : 7,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 14
+    }
+  ],
+  "firstPageMs" : 1519.759375,
+  "firstPixelsMs" : 253.3615,
+  "forward" : {
+    "26" : 1,
+    "28" : 2,
+    "41" : 3,
+    "43" : 4,
+    "54" : 5,
+    "56" : 6,
+    "62" : 7
+  },
+  "hostFootprintEndBytes" : 193972288,
+  "hostFootprintMaxBytes" : 193972288,
+  "incompletePages" : [
+    1,
+    2,
+    3,
+    4,
+    6
+  ],
+  "load" : [
+    20.7412109375,
+    17.32958984375,
+    24.0361328125
+  ],
+  "pages" : 7,
+  "settledMs" : 2888.803584,
+  "status" : "done"
+}

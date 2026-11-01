@@ -1,2 +1,0 @@
-Paragraph ended before \zz was complete.
-Too many }'s.

@@ -1,0 +1,14 @@
+% 1257-pdfadjustspacing-fontexpand: verifies \pdffontexpand with autoexpand under \pdfadjustspacing 0, 1 and 2 (pdftex.web §§705, 1027)
+\input prelude
+\font\myrm=cmr10
+\pdffontexpand\myrm 30 20 10 autoexpand
+\hsize=200pt \parindent=0pt
+\pdfadjustspacing=0
+\setbox0=\vbox{\myrm This is a small test paragraph for font expansion and it must break into lines again. \par\message{1257 plain=\the\prevgraf}}
+\pdfadjustspacing=1
+\setbox2=\vbox{\myrm This is a small test paragraph for font expansion and it must break into lines again. \par\message{1257 mid=\the\prevgraf}}
+\pdfadjustspacing=2
+\setbox4=\vbox{\myrm This is a small test paragraph for font expansion and it must break into lines again. \par\message{1257 full=\the\prevgraf}}
+\setbox0=\vbox{\box0\box2\box4}
+\lsshipbox0
+\end

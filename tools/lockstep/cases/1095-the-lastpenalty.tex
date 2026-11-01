@@ -1,0 +1,8 @@
+% 1095-the-lastpenalty: verifies \lastpenalty rereads the last penalty, or zero when none (tex.web §424).
+\input prelude
+\setbox0=\vbox{\hrule height8pt depth2pt width40pt\penalty125\penalty\lastpenalty\hrule height4pt depth0pt width40pt}
+\setbox1=\vbox{\hrule height8pt depth2pt width40pt\penalty\lastpenalty}
+\message{1095 done}
+\lsshipbox0
+\lsshipbox1
+\end

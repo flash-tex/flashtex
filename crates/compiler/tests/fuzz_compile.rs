@@ -9,6 +9,12 @@
 //! `fuzz_support`). For long runs use the example:
 //! `cargo run --release --example fuzz_compile`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::manual_repeat_n,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 mod fuzz_support;
 
 use std::process::Command;

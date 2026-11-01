@@ -1,0 +1,10 @@
+% 613-hbadness-mid-threshold: verifies \hbadness=100 silences a badness-12 box but still reports a badness-800 box.
+\input prelude
+\hbadness=100
+\setbox0=\hbox to 50pt{\vrule width10pt height8pt depth2pt\hskip 20pt plus 20pt\vrule width10pt height8pt depth2pt}
+\message{613 small-badness=\the\badness}
+\setbox1=\hbox to 80pt{\vrule width10pt height8pt depth2pt\hskip 20pt plus 20pt\vrule width10pt height8pt depth2pt}
+\message{613 big-badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

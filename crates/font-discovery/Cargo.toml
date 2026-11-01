@@ -9,7 +9,7 @@ publish = false
 name = "flashtex_font_discovery"
 path = "src/lib.rs"
 
-# No dependencies: like class-geometry, this crate is depended on by path
-# from render-pipeline (not vendored), so a `git archive` of that directory
-# plus this one builds.
+# No dependencies: like class-geometry, this crate is depended on by path from
+# render-pipeline, which is how every sibling is depended on since
+# crates/render-pipeline/vendor/ was retired.
 [dependencies]

@@ -1,0 +1,9 @@
+% 914-club-widowpenalties-array: verifies the e-TeX \clubpenalties and \widowpenalties arrays combine per break across a long paragraph, unlike the zero-penalty control.
+\input prelude
+\font\myrm=cmr10
+\def\para{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega\par}
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\clubpenalties=3 1000 2000 3000 \widowpenalties=3 10 20 30\myrm \para}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\interlinepenalty=0 \clubpenalty=0 \widowpenalty=0\myrm \para}
+\message{914 done}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% 357-discretionary-pre-post: verifies an explicit \discretionary carries its pre-break, post-break and replace lists into the shipped hlist.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\message{357 hyphenchar=\the\hyphenchar\myrm}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm man\discretionary{u-}{a}{nu}script man\discretionary{u-}{a}{nu}script\par\message{357 lines=\the\prevgraf}}
+\lsshipbox0
+\end

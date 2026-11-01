@@ -1,0 +1,37 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\title{Drifting Floats: Top- and Bottom-Placed Figures}
+\author{FlashTeX Fixtures Team}
+\date{}
+\begin{document}
+\maketitle
+\listoffigures
+\section{First observations}
+\label{sec:first}
+The meadow survey begins here. The trap layout is Figure~\ref{fig:traps} on page~\pageref{fig:traps}, the river transect is Figure~\ref{fig:transect} on page~\pageref{fig:transect}, and the hill plots are Figure~\ref{fig:hill} on page~\pageref{fig:hill}; all three are discussed in Section~\ref{sec:later} on page~\pageref{sec:later}. Morning counts were higher near the treeline, and the afternoon counts reversed that pattern after the wind shifted. Evening counts matched the morning ones within sampling noise, which suggests the wind rather than the hour explains the difference.
+\begin{figure}[t]
+\centering
+\rule{0.7\textwidth}{2.5cm}
+\caption{Trap layout across the meadow grid, with bait stations marked and checked twice weekly}
+\label{fig:traps}
+\end{figure}
+A second week of counts confirmed the pattern, and the trap-by-trap breakdown is archived with the station log. Volunteers recorded weather, time, and trap state for every visit without exception, and the coordinator checked each sheet before filing it away in the cabinet.
+\begin{figure}[b]
+\centering
+\rule{0.7\textwidth}{2.5cm}
+\caption{River transect with depth markers, sampled at the near bank, midstream, and far bank}
+\label{fig:transect}
+\end{figure}
+The hill plots were added late in the season, after the fence was repaired and the upper gate would open again. Counts there ran lower than in the meadow, which matches the thinner cover and the stronger wind on the ridge.
+\begin{figure}[t]
+\centering
+\rule{0.7\textwidth}{2.5cm}
+\caption{Hill plots above the fence line, added late in the season after the upper gate reopened}
+\label{fig:hill}
+\end{figure}
+Rain interrupted the third week twice, and the missed days were made up the following weekend with double rounds. The makeup counts ran high, possibly because the traps were unbaited for two days and the bait was fresh, so the coordinator flagged those sheets and the analysis below uses the unflagged rounds only. This filtering is documented in the station log alongside the weather notes. The flagged sheets are kept in a separate folder rather than discarded, so that next season's coordinator can re-examine the exclusion decision with fresh eyes and a fuller dataset. The folder is stored with the weather notes so that rainfall and exclusions can be matched up later without hunting through the cabinet. The 2024 season was the first to use the new flagging system, and the coordinator's report recommends keeping it with minor changes to the flag colors. Training for new volunteers now includes a full afternoon on the flagging rules before anyone is allowed to handle the traps unsupervised. The coordinator's full report, including the flagged-sheet folder, the rainfall tables, and the revised flag-color assignments, is filed with the station log for review before next season opens.
+\section{Later analysis}
+\label{sec:later}
+As foreshadowed in Section~\ref{sec:first}, the three layouts tell complementary stories: Figure~\ref{fig:traps} on page~\pageref{fig:traps} captures the spatial spread, Figure~\ref{fig:transect} on page~\pageref{fig:transect} captures the depth profile, and Figure~\ref{fig:hill} on page~\pageref{fig:hill} captures the altitude gradient. Together they explain why the treeline counts diverged, and they fix the protocol for next season.
+\end{document}

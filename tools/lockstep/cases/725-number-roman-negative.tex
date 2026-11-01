@@ -1,0 +1,21 @@
+% Verifies \number on negatives including the minimum integer, and that \romannumeral of a negative is empty.
+\input prelude
+\font\f=cmr10
+\count0=-17
+\message{725 neg-reg=\number\count0}
+\message{725 neg-lit=\number-99}
+\message{725 dbl-neg=\number--5}
+\count1=-2147483647 \advance\count1 by-1
+\message{725 minint=\number\count1}
+\edef\rneg{\romannumeral-99}
+\message{725 rneg-empty=[\meaning\rneg]}
+\edef\rnegB{\romannumeral\count0}
+\message{725 rnegB-empty=[\meaning\rnegB]}
+\setbox0=\hbox{\f[\romannumeral-99]}
+\setbox1=\hbox{\f[\romannumeral\count0]}
+\setbox2=\hbox{\f\number\count1}
+\message{725 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

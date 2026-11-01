@@ -1,0 +1,7 @@
+% 340-splitfirstmarks: verifies \splitfirstmarks and \splitbotmarks report the first and last class-1 marks in the split-off box.
+\input prelude
+\setbox0=\vbox{\marks1{m1-a}\hrule width60pt height10pt depth0pt\marks1{m1-b}\hrule width60pt height10pt depth0pt\marks1{m1-c}\hrule width60pt height10pt depth0pt}
+\setbox1=\vsplit0 to 25pt
+\message{340 sfirst=\splitfirstmarks1; sbot=\splitbotmarks1}
+\lsshipbox1
+\end

@@ -1,0 +1,31 @@
+{
+  "schema": "flashtex-retirement-stages/1",
+  "source": "docs/design/engine-v2/retirement-plan.md §0 stage table (PR #1236, revision 3, measured on 317f1349d; a proposal; DESIGN.md §10, §12 and modes/PROPOSAL.md Q1 govern)",
+  "note": "status is recorded by hand when a stage lands; scoreboard.py evaluates the scoreboard part of each precondition and, where a stage has app_parity_gate, its app-parity rows (app_parity_rows.py). Everything else in a precondition is listed, not checked. Decision 3: no soak; S7 deletes the old engine at once, after the Unicode mode's M3 gate (modes Q1).",
+  "stages": [
+    {"id": "S0", "name": "vendor/ retired", "status": "done (#1183)", "scoreboard_gate": null,
+     "other_preconditions": "none"},
+    {"id": "S1", "name": "Decouple, no behaviour change (paragraph-layout tests, MIT features table, bundle verifier, check E)", "status": "done (#1400, cba6c3470)", "scoreboard_gate": null,
+     "other_preconditions": "none; supported-latex.json excluded until the owner rules (RQ5)"},
+    {"id": "S1b", "name": "S1 follow-ups (check E false negatives, baseline host field, stale probes, review-workflow.json path, S1(c) after RQ5)", "status": "partly (check E false negatives and CI self-tests, stale probes, review-workflow.json field, RQ8 host field done; S1(c) open)", "scoreboard_gate": null,
+     "other_preconditions": "S1; RQ5 for S1(c)"},
+    {"id": "S2", "name": "No-consumer crates deleted (ruling 1): 9 crates, collaboration-core kept", "status": "done (#1610, 28855c698)", "scoreboard_gate": null,
+     "other_preconditions": "S1 landed; #1120 closed; every live reference fixed in the same PR; the reference check with its named allowlist; packaging-selftest.sh; revert check (plan §4.3)"},
+    {"id": "S3", "name": "Per-document engine choice (#1421, #1427)", "status": "partly landed (#1421, #1427)", "scoreboard_gate": ["fixtures:P-T2"],
+     "other_preconditions": "none"},
+    {"id": "S3r", "name": "S3 remainder: capture features per engine, engine labels in logs and attribution tools", "status": "done (#1611, e75c6be5e)", "scoreboard_gate": ["fixtures:P-T2"],
+     "other_preconditions": "S3"},
+    {"id": "S4", "name": "Gates P5 needs (board hosted fallback and complete run, T4 on the board, T2 green on main, no-TeX-Live gate scheduled and green, T7 reference run, parity fixtures on the engine, the app row -> test check)", "status": "done (merged: #1461, #1563, #1574, #1336, #1598, #1605, #1609; #1846 made the hosted T4 fetch reliable; 3 complete green boards on main, 39350717288, 39365978113 and 39388695484, ruled on #1319; the no-TeX-Live gate green on main 0995a0676, run 39537366166; the T7 reference run #1876 on main 58d6d773f, 120 of 120 gated rows, on battery under the owner's ruling)", "scoreboard_gate": null,
+     "other_preconditions": "none (Q1 and Q3 decided)"},
+    {"id": "S5", "name": "Flip: new documents default to the new engine (existing documents never switch silently)", "status": "done (#1849)", "scoreboard_gate": "all", "app_parity_gate": "S5",
+     "other_preconditions": "decision 3 gate as confirmed (Q3): P-T2 >= 99% and P-T1 >= 98% on arXiv and T4, zero crashes on T4, new >= old on every tier; T2 clean; no-TeX-Live gate green; the S5 app-parity rows of docs/evidence/app-parity-2026-10-05 (plan §4.4; app_parity_gate: tools/parity/app-parity-rows.json, its tests passing, not skipped, on mac-app and the host leg); T1 (lockstep) has 0 new differences, which this board does not measure; §1.2 latency targets met on a T7 reference run; one shipped release carries #1421/#1427 records (met: v0.2.0, 2026-10-20, tag commit 6316bc14d); the modes lane's fontspec fallback; S3, S3r and S4 landed"},
+    {"id": "S6a", "name": "Shared v2 pieces the v3 pane uses moved into v3 files (no behaviour change)", "status": "done (#1877)", "scoreboard_gate": null,
+     "other_preconditions": "S5; swift build and the EngineV3Links, EngineV3Accessibility, EngineV3Search and EngineV3MathHover tests pass, not skipped"},
+    {"id": "S6", "name": "App old route out", "status": "done (#1881)", "scoreboard_gate": "all", "app_parity_gate": "S6",
+     "other_preconditions": "S5 and S6a landed (no soak); the S6 app-parity rows (plan §4.4), each test passing and not skipped on S6's tip with the old helpers absent; the Unicode mode's M3 gate (modes Q1); source offer and §3 legal review (RQ19); RQ6, RQ7 and RQ20 ruled; revert check"},
+    {"id": "S7", "name": "Old engine deleted at once (compiler, render-pipeline, the old flashtex-cli, perf-bench, orphans)", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "S6 landed, queued immediately; T7 gating for >= 10 runs; RQ5 ruled; 0 open old-path PRs; revert check"},
+    {"id": "S8", "name": "Oracles to tests/, final sweep", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "S7 landed; revert check"}
+  ]
+}

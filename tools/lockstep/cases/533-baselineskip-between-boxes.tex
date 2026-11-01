@@ -1,0 +1,5 @@
+% 533-baselineskip-between-boxes: verifies \baselineskip glue fills baseline distance minus depth and height.
+\input prelude
+\setbox0=\vbox{\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\parskip=0pt\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}\message{533 prevdepth=\the\prevdepth}}
+\lsshipbox0
+\end

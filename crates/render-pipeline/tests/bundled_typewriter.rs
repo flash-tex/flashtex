@@ -15,6 +15,9 @@
 //! behaves the same with and without the packaging environment (the
 //! render-pipeline suite deliberately runs with no `FLASHTEX_*` exports).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::cloned_ref_to_slice_refs, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use std::path::PathBuf;
 
 use flashtex_compiler::parser::SourceDocument;

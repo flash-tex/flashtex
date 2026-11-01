@@ -261,7 +261,7 @@ fn a_diagnostic_in_an_included_file_names_that_file() {
     let diags = report.get("diagnostics").unwrap().as_arr().unwrap();
     let inner = diags
         .iter()
-        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("undefinedmacro")))
+        .find(|d| d.get("message").and_then(|m| m.as_str()).is_some_and(|m| m.contains("undefinedmacro")))
         .unwrap_or_else(|| panic!("the unsupported command is reported: {}", stdout(&o)));
     assert_eq!(inner.get("path").and_then(|p| p.as_str()), Some("sections/a.tex"), "{}", stdout(&o));
     assert_eq!(inner.get("line").and_then(|l| l.as_i64()), Some(2), "{}", stdout(&o));
@@ -289,7 +289,7 @@ fn check_json_has_the_stable_schema_and_writes_nothing() {
     let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
     let undefined = diags
         .iter()
-        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("undefinedmacro")))
+        .find(|d| d.get("message").and_then(|m| m.as_str()).is_some_and(|m| m.contains("undefinedmacro")))
         .unwrap_or_else(|| panic!("an unsupported-command diagnostic: {}", stdout(&o)));
     for key in ["path", "line", "column", "start_byte", "end_byte", "severity", "code", "message", "recovery"] {
         assert!(undefined.get(key).is_some(), "diagnostic lacks {key}");
@@ -359,7 +359,7 @@ fn diagnostics_full_shows_the_source_line_and_carets() {
     // `json` is `--json` (the report carries wall time, so compare its shape).
     let as_json = json(&stdout(&check(&["--diagnostics=json"])));
     assert_eq!(as_json.get("schema").and_then(|s| s.as_str()), Some("flashtex-check/1"));
-    assert!(as_json.get("diagnostics").and_then(|d| d.as_arr()).map_or(false, |d| !d.is_empty()));
+    assert!(as_json.get("diagnostics").and_then(|d| d.as_arr()).is_some_and(|d| !d.is_empty()));
     let bad = check(&["--diagnostics=long"]);
     assert_eq!(bad.status.code(), Some(2), "{}", stderr(&bad));
     assert_eq!(check(&["--color", "sometimes"]).status.code(), Some(2));
@@ -775,7 +775,7 @@ fn typo_alpah_json_includes_suggestion() {
     let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
     let alpah = diags
         .iter()
-        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("\\alpah")))
+        .find(|d| d.get("message").and_then(|m| m.as_str()).is_some_and(|m| m.contains("\\alpah")))
         .unwrap_or_else(|| panic!("alpah diagnostic: {}", stdout(&o)));
     assert_eq!(alpah.get("suggestion").and_then(|v| v.as_str()), Some("\\alpha"), "{}", stdout(&o));
     let profile = diags.iter().find(|d| d.get("code").and_then(|c| c.as_str()) == Some("math_resource_profile"));
@@ -853,7 +853,7 @@ fn check_fix_skips_an_ambiguous_typo_and_still_fixes_alpah() {
     let diags = r.get("diagnostics").unwrap().as_arr().unwrap();
     let igl = diags
         .iter()
-        .find(|d| d.get("message").and_then(|m| m.as_str()).map_or(false, |m| m.contains("\\igl")))
+        .find(|d| d.get("message").and_then(|m| m.as_str()).is_some_and(|m| m.contains("\\igl")))
         .unwrap_or_else(|| panic!("igl diagnostic: {}", stdout(&j)));
     assert!(igl.get("suggestion").is_none(), "ambiguous typo must not carry suggestion: {}", stdout(&j));
     let fixed = check(&ambiguous, &["--fix"]);

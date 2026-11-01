@@ -1,0 +1,17 @@
+% Verifies \uppercase and \lowercase leave control sequences untouched while mapping neighboring letters.
+\input prelude
+\uccode`x=`X \uccode`y=`Y \lccode`X=`x \lccode`Y=`y
+\def\foo{xy}
+\uppercase{\def\feat{x\foo y}}
+\message{720 feat=\meaning\feat}
+\lowercase{\def\featB{X\foo Y}}
+\message{720 featB=\meaning\featB}
+\def\ctl{x\foo y}
+\message{720 ctl=\meaning\ctl}
+\font\f=cmr10
+\setbox0=\hbox{\f\feat}
+\setbox1=\hbox{\f\ctl}
+\message{720 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

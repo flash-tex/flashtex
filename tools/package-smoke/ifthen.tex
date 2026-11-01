@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{ifthen}
+\newcounter{loopcount}
+\begin{document}
+\ifthenelse{\equal{apple}{apple}}{Equal strings match.}{No match here.}
+\ifthenelse{\lengthtest{2pt < 5pt}}{Two points is less than five.}{Never shown.}
+\whiledo{\value{loopcount} < 3}{\stepcounter{loopcount}\arabic{loopcount} }
+\end{document}

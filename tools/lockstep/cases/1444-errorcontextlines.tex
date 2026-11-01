@@ -1,0 +1,6 @@
+% 1444-errorcontextlines: verifies \errorcontextlines starts at the prelude value, grouped assignment and restore, and glue in shipped box (tex.web §§237, 238)
+\input prelude
+\message{1444 initial=\the\errorcontextlines}
+{\errorcontextlines=5\setbox0=\hbox{\hskip\errorcontextlines sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1444 restored=\the\errorcontextlines}
+\end

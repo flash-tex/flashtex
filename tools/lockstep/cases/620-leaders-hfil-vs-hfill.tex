@@ -1,0 +1,9 @@
+% 620-leaders-hfil-vs-hfill: verifies the same leaders rule takes fil order with \hfil but fill order with \hfill.
+\input prelude
+\setbox0=\hbox to 100pt{\leaders\hrule height4pt depth0pt\hfil}
+\message{620 hfil-wd=\the\wd0}
+\setbox1=\hbox to 100pt{\leaders\hrule height4pt depth0pt\hfill}
+\message{620 hfill-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

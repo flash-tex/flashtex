@@ -1,0 +1,5693 @@
+//! The system-dependent part: everything web2c supplies through `tex.ch`.
+//!
+//! Deliberately small (DESIGN.md §4.1: "the system-dependent behaviour web2c
+//! adds ... is re-specified by us"). It holds
+//!
+//!   * Pascal's lazy text-file and binary-file model (`f^`, `get`, `put`,
+//!     `eof`, `eoln`, `read`, `read_ln`, `write`, `break`),
+//!   * the fourteen routines of `tex.web` §§27-28, 31 and 37 that open, close
+//!     and read files by name, and
+//!   * the two non-local `goto`s out of the main program.
+//!
+//! The date and time come from `date_and_time` (src/pdftex/utils.rs), which
+//! follows web2c: `SOURCE_DATE_EPOCH` with `FORCE_SOURCE_DATE=1`, else the
+//! clock. (The trip test's tex.web build keeps tex.web §241's own pinned
+//! date.)
+
+use crate::generated::types::memory_word;
+use crate::generated::Globals;
+use crate::resolver::{FileResolver, Format};
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+// ---------------------------------------------------------------------------
+// Pascal text files
+// ---------------------------------------------------------------------------
+
+enum TextIn {
+    Stdin,
+    File(BufReader<File>),
+    /// `\input|command` (texmfmp.c's `open_in_or_pipe`).
+    Pipe(BufReader<std::process::ChildStdout>),
+    /// Lines handed to the engine before stdin is consulted, i.e. the command
+    /// line, which is how INITEX is normally driven.
+    Pre(Vec<Vec<u8>>, usize),
+}
+
+/// Where a text file's output goes: a file, whose position a checkpoint
+/// records (`AlphaFile::snapshot`), or a pipe (`\openout|`), which cannot
+/// be checkpointed.
+pub trait OutSink: Write + Send {
+    /// The position of the next byte written (`None`: a pipe).
+    fn position(&mut self) -> Option<u64>;
+}
+
+impl OutSink for File {
+    fn position(&mut self) -> Option<u64> {
+        use std::io::Seek;
+        self.stream_position().ok()
+    }
+}
+
+impl OutSink for std::process::ChildStdin {
+    fn position(&mut self) -> Option<u64> {
+        None
+    }
+}
+
+/// An output file the engine writes: every write that reaches the file
+/// first checks that nobody else changed it since the engine's last write
+/// (`note_foreign`), then stamps what the file holds now as the engine's
+/// (`stamp_output`, from the descriptor). A file another program rewrites
+/// while the engine holds it open (an `export` of the same job, which the
+/// host runs beside the resident engine) stays marked, so that no restore
+/// keeps its bytes as the run's (#1294).
+pub struct Tracked {
+    f: File,
+    path: String,
+    /// The file has bytes past its logical end ([`LOGICAL`]): each write
+    /// keeps the old bytes it covers first and moves the logical end.
+    logical: bool,
+}
+
+impl Tracked {
+    pub fn new(f: File, path: &str) -> Tracked {
+        Tracked {
+            f,
+            path: path.to_string(),
+            logical: false,
+        }
+    }
+
+    /// The stream pdfTeX's stdio makes of this file, with its `FILE`'s
+    /// buffer (`os::stdio_buffer_size`, #1557). A text file's one-byte
+    /// writes then reach the disk where pdfTeX's `putc`s do; the PDF
+    /// writer's `fwrite`s of whole chunks flush differently in each C
+    /// library, which is not mirrored (the PDF's bytes differ anyway).
+    fn stdio(self) -> BufWriter<Tracked> {
+        let m = self.f.metadata().ok();
+        BufWriter::with_capacity(crate::os::stdio_buffer_size(m.as_ref()), self)
+    }
+
+    /// `stdio`, as a text file's sink.
+    fn stdio_text(self) -> BufWriter<Box<dyn OutSink>> {
+        let m = self.f.metadata().ok();
+        BufWriter::with_capacity(
+            crate::os::stdio_buffer_size(m.as_ref()),
+            Box::new(self) as Box<dyn OutSink>,
+        )
+    }
+}
+
+impl Write for Tracked {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        crate::os::io_time(crate::os::io::WRITE, || self.write_timed(b))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.f.flush()
+    }
+}
+
+impl Tracked {
+    fn write_timed(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        note_foreign(&self.path);
+        let at = if self.logical {
+            use std::io::Seek;
+            let at = self.f.stream_position()?;
+            before_write(&self.path, at + b.len() as u64);
+            Some(at)
+        } else {
+            None
+        };
+        let n = self.f.write(b)?;
+        if let Some(at) = at {
+            after_write(&self.path, at + n as u64);
+        }
+        if let Ok(m) = self.f.metadata() {
+            set_stamp(&self.path, stamp_of(&m));
+        }
+        Ok(n)
+    }
+}
+
+impl std::io::Seek for Tracked {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.f.seek(pos)
+    }
+}
+
+impl OutSink for Tracked {
+    fn position(&mut self) -> Option<u64> {
+        use std::io::Seek;
+        self.f.stream_position().ok()
+    }
+}
+
+// ---- output files longer than their logical end ------------------------
+//
+// A restore used to read the old run's tail of each output file open at its
+// target (a `checkpoint::Tail`, for a jump back or an abandon) and cut the
+// file back to the target's length. On a 1,000-page document that is 12 MB
+// of PDF read and freed at every keystroke, before the edited page: 1.2 and
+// 1.6 ms on the NixOS PC (lane P4-PAGE-COST). Instead the file keeps its
+// bytes: the restore records the file's logical end (the length the cut
+// would have left), the new run writes on from there, and before a write
+// covers old bytes of the kept tail it keeps them ([`Logical::keep`]). The
+// file is cut to its logical end only where that is off the keystroke's
+// path: when its stream is closed (the run's end), by a jump back (which
+// writes the old run's later bytes after the new run's), or by an abandon
+// (which puts the old bytes back).
+//
+// What another program reading the file meanwhile sees (a viewer that
+// reloads the PDF): never a zero-filled hole, so no length is cut and then
+// extended again -- bytes are written in place and the length is set once,
+// at the end. And never a file that looks complete but is not: a file past
+// its logical end has its last `BLANK_END` bytes blanked (the old run's
+// `%%EOF` and cross-reference offset; [`Keep::end`] keeps them), so that it
+// reads as the truncated file a cut would have left.
+
+/// How many of the last bytes of a file longer than its logical end are
+/// blanked (a PDF reader looks for `%%EOF` in the last 1,024).
+const BLANK_END: u64 = 1024;
+
+/// An output file whose bytes past `len` are stale, or whose old tail a
+/// pending restore keeps.
+struct Logical {
+    /// The file's length as the engine's streams have it (`None`: the
+    /// file's own length).
+    len: Option<u64>,
+    /// The old run's tail a pending restore keeps.
+    keep: Option<Keep>,
+}
+
+/// The old run's bytes `base..old_len` of a file: the first `saved.len()`
+/// in `saved` (the new run has written over them since, or the file was
+/// cut), the rest still on disk, except the last `end.len()`, which are
+/// blanked on disk (`BLANK_END`).
+struct Keep {
+    base: u64,
+    old_len: u64,
+    saved: Vec<u8>,
+    end: Vec<u8>,
+    /// The file, open for reading (`keep_tail`'s descriptor): each write
+    /// over the kept tail reads the old bytes it covers first, which opened
+    /// the file again every time (open, seek, read, close; lane
+    /// T7-HEADROOM).
+    file: Option<File>,
+}
+
+impl Keep {
+    fn saved_to(&self) -> u64 {
+        self.base + self.saved.len() as u64
+    }
+
+    /// Where the blanked bytes start.
+    fn end_at(&self) -> u64 {
+        self.old_len - self.end.len() as u64
+    }
+
+    /// `buf`, read from disk at `from`: the old bytes where it holds the
+    /// blanked ones.
+    fn unblank(&self, from: u64, buf: &mut [u8]) {
+        let to = from + buf.len() as u64;
+        let (lo, hi) = (from.max(self.end_at()), to.min(self.old_len));
+        if lo < hi {
+            let e = (lo - self.end_at()) as usize..(hi - self.end_at()) as usize;
+            buf[(lo - from) as usize..(hi - from) as usize].copy_from_slice(&self.end[e]);
+        }
+    }
+
+    /// Keep the old bytes from `saved_to` up to `to` (read from disk now).
+    fn save_to(&mut self, path: &str, to: u64) -> std::io::Result<()> {
+        let (from, to) = (self.saved_to(), to.min(self.old_len));
+        if to <= from {
+            return Ok(());
+        }
+        if self.file.is_none() {
+            self.file = Some(File::open(path)?);
+        }
+        let n = self.saved.len();
+        let mut saved = std::mem::take(&mut self.saved);
+        saved.resize(n + (to - from) as usize, 0);
+        let r = match &self.file {
+            Some(f) => crate::os::read_exact_at(f, &mut saved[n..], from),
+            None => Ok(()),
+        };
+        if r.is_ok() {
+            self.unblank(from, &mut saved[n..]);
+        } else {
+            saved.truncate(n);
+        }
+        self.saved = saved;
+        r
+    }
+}
+
+/// Blank bytes `from..to` of `path` (spaces), written in place, and return
+/// what they held.
+fn blank(path: &str, from: u64, to: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Seek;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    f.seek(std::io::SeekFrom::Start(from))?;
+    let mut old = vec![0u8; to.saturating_sub(from) as usize];
+    f.read_exact(&mut old)?;
+    f.seek(std::io::SeekFrom::Start(from))?;
+    f.write_all(&vec![b' '; old.len()])?;
+    Ok(old)
+}
+
+thread_local! {
+    /// By `out_key`.
+    static LOGICAL: std::cell::RefCell<std::collections::HashMap<String, Logical>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The logical length of `path`, if its file is longer than that.
+pub fn logical_len(path: &str) -> Option<u64> {
+    LOGICAL.with(|m| m.borrow().get(&out_key(path)).and_then(|l| l.len))
+}
+
+/// A restore keeps the old run's tail of `path` from `base` on: the file's
+/// logical end becomes `base`, and nothing is read or cut. The tail's old
+/// bytes come from [`kept_tail`] while the restore is pending.
+pub fn keep_tail(path: &str, base: u64) -> Result<(), String> {
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    // One open, and the descriptor's `stat` before and after the blank: a
+    // call by path for each step took ten a file, and on the M5 Pro the
+    // restore's output files 0.4-0.8 ms of a beamer keystroke (lane
+    // T7-HEADROOM).
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(e)?;
+    let m = f.metadata().map_err(e)?;
+    let old_len = logical_len(path).unwrap_or(m.len());
+    if old_len < base {
+        return Err(format!("{path} holds {old_len} bytes, fewer than {base}"));
+    }
+    // (blanked: the old run's end; the restore checked that the file is
+    // the engine's, `checkpoint::changed_outside`)
+    if let Some(why) = why_changed_as(path, true, Some(stamp_of(&m))) {
+        return Err(why);
+    }
+    let end_at = old_len.saturating_sub(BLANK_END).max(base);
+    let mut end = vec![0u8; (old_len - end_at) as usize];
+    crate::os::read_exact_at(&f, &mut end, end_at).map_err(e)?;
+    crate::os::write_all_at(&f, &vec![b' '; end.len()], end_at).map_err(e)?;
+    // (`stamp_output`, from the descriptor)
+    if let Ok(m) = f.metadata() {
+        set_stamp(path, stamp_of(&m));
+    }
+    FOREIGN.with(|f| f.borrow_mut().remove(&out_key(path)));
+    file_trace(|| format!("keep_tail {path} base {base} old_len {old_len} blank {end_at}"));
+    LOGICAL.with(|m| {
+        m.borrow_mut().insert(
+            out_key(path),
+            Logical {
+                len: Some(base),
+                keep: Some(Keep {
+                    base,
+                    old_len,
+                    saved: Vec::new(),
+                    end,
+                    file: Some(f),
+                }),
+            },
+        )
+    });
+    Ok(())
+}
+
+/// The kept tail of `path` from `base + skip` on.
+pub fn kept_tail(path: &str, base: u64, skip: u64) -> Result<Vec<u8>, String> {
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    LOGICAL.with(|m| {
+        let mut m = m.borrow_mut();
+        let k = m
+            .get_mut(&out_key(path))
+            .and_then(|l| l.keep.as_mut())
+            .filter(|k| k.base == base)
+            .ok_or_else(|| format!("{path}: no tail kept from {base}"))?;
+        let mut out = k
+            .saved
+            .get(skip as usize..)
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
+        let from = k.saved_to().max(base + skip);
+        if from < k.old_len {
+            if k.file.is_none() {
+                k.file = Some(File::open(path).map_err(e)?);
+            }
+            let n = out.len();
+            out.resize(n + (k.old_len - from) as usize, 0);
+            if let Some(f) = &k.file {
+                crate::os::read_exact_at(f, &mut out[n..], from).map_err(e)?;
+            }
+            k.unblank(from, &mut out[n..]);
+        }
+        Ok(out)
+    })
+}
+
+/// The pending restore no longer keeps the tail of `path` (the file's
+/// stale bytes stay until its stream is closed).
+pub fn drop_kept_tail(path: &str) {
+    LOGICAL.with(|m| {
+        if let Some(l) = m.borrow_mut().get_mut(&out_key(path)) {
+            l.keep = None;
+        }
+    });
+}
+
+/// Keep every old byte the kept tail of `path` still has on disk (before
+/// the file is cut or truncated).
+fn save_kept(path: &str) {
+    LOGICAL.with(|m| {
+        if let Some(k) = m
+            .borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.keep.as_mut())
+        {
+            let to = k.old_len;
+            if let Err(e) = k.save_to(path, to) {
+                file_trace(|| format!("save_kept {path}: {e}"));
+            }
+        }
+    });
+}
+
+/// Before a write of `path` up to `end`: keep the old bytes it covers.
+fn before_write(path: &str, end: u64) {
+    LOGICAL.with(|m| {
+        if let Some(k) = m
+            .borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.keep.as_mut())
+        {
+            if end > k.saved_to() {
+                if let Err(e) = k.save_to(path, end) {
+                    file_trace(|| format!("before_write {path}: {e}"));
+                }
+            }
+        }
+    });
+}
+
+fn after_write(path: &str, end: u64) {
+    LOGICAL.with(|m| {
+        if let Some(n) = m
+            .borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.len.as_mut())
+        {
+            *n = (*n).max(end);
+        }
+    });
+}
+
+/// Cut `path` to its logical end, keeping the old bytes a pending restore
+/// needs first; the file's length is its logical one from then on (while
+/// a restore is pending, its kept tail is all in memory).
+pub fn cut_to_logical(path: &str) {
+    let k = out_key(path);
+    let Some(len) = logical_len(path) else {
+        return;
+    };
+    save_kept(path);
+    let cut = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.set_len(len));
+    file_trace(|| format!("cut_to_logical {path} {len}: {cut:?}"));
+    stamp_output(path);
+    LOGICAL.with(|m| {
+        let mut m = m.borrow_mut();
+        if let Some(l) = m.get_mut(&k) {
+            l.len = None;
+            if l.keep.is_none() {
+                m.remove(&k);
+            }
+        }
+    });
+}
+
+/// `path`'s bytes up to its logical end (all of them for a file whose
+/// logical end is not tracked).
+pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
+    let mut d = std::fs::read(path)?;
+    if let Some(n) = logical_len(path) {
+        d.truncate(n as usize);
+    }
+    Ok(d)
+}
+
+/// `hash128(&read_logical(path)?)`, without reading the file into memory
+/// (`persist::hash128_file`); a file this process does not write is hashed
+/// once while it is unchanged (`crate::hashcache`).
+pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
+    hash_logical_from(path, None)
+}
+
+/// [`hash_logical`], with `m` a `stat` of `path` just made, if there is one.
+fn hash_logical_from(path: &str, m: Option<&std::fs::Metadata>) -> std::io::Result<[u64; 2]> {
+    match (logical_len(path), m) {
+        (None, Some(m)) => crate::hashcache::hash_file_from(path, m),
+        (None, None) => crate::hashcache::hash_file(path),
+        (len, _) => crate::persist::hash128_file(path, len).map(|(h, _)| h),
+    }
+}
+
+thread_local! {
+    /// The `stat` `note_file` made of the file it noted last, for the open
+    /// that follows it (`take_last_stat`).
+    static LAST_STAT: std::cell::RefCell<Option<(String, std::fs::Metadata)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The `stat` `note_file` just made of `path`, if it was the last file it
+/// noted (once).
+fn take_last_stat(path: &str) -> Option<std::fs::Metadata> {
+    LAST_STAT.with(|l| {
+        let mut l = l.borrow_mut();
+        match l.take() {
+            Some((p, m)) if p == path => Some(m),
+            _ => None,
+        }
+    })
+}
+
+/// A binary input file's bytes: on disk, or the ones `hashcache` keeps of
+/// a font metric file (`hashcache::kept_bytes`), which are what reading it
+/// gives while its identity is unchanged.
+enum InFile {
+    Disk(File),
+    Kept(std::io::Cursor<std::sync::Arc<[u8]>>),
+}
+
+impl Read for InFile {
+    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            InFile::Disk(f) => f.read(b),
+            InFile::Kept(c) => c.read(b),
+        }
+    }
+}
+
+impl std::io::Seek for InFile {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        match self {
+            InFile::Disk(f) => f.seek(to),
+            InFile::Kept(c) => c.seek(to),
+        }
+    }
+}
+
+/// Open `path` to read its bytes: from `hashcache`'s copy when it keeps
+/// one under the file's identity now (taken from the `stat` `note_file`
+/// just made, else here), else from disk.
+fn open_bytes(path: &str) -> std::io::Result<InFile> {
+    let m = take_last_stat(path);
+    if let Some(b) = crate::hashcache::kept_bytes(path, m.as_ref()) {
+        return Ok(InFile::Kept(std::io::Cursor::new(b)));
+    }
+    File::open(path).map(InFile::Disk)
+}
+
+/// A new engine: no file's logical end is known any more. Each file still
+/// longer than its logical end is cut to it first, as the old engine's
+/// runs left it (the new run may not open it for output again), unless
+/// another program has written it since (an export: its bytes stay).
+pub fn forget_logical() {
+    let paths: Vec<String> = LOGICAL.with(|m| {
+        m.borrow()
+            .iter()
+            .filter(|(_, l)| l.len.is_some())
+            .map(|(k, _)| k.clone())
+            .collect()
+    });
+    for p in paths {
+        if outside_change(&p).is_none() && std::path::Path::new(&p).exists() {
+            cut_to_logical(&p);
+        }
+    }
+    LOGICAL.with(|m| m.borrow_mut().clear());
+}
+
+/// `path` was written whole to its logical end (a jump back, an abandon):
+/// its length is its logical one.
+pub fn logical_settled(path: &str) {
+    LOGICAL.with(|m| m.borrow_mut().remove(&out_key(path)));
+}
+
+/// An abandon puts the old run's tail of `path` back where the new run has
+/// not truncated the file: only the old bytes the new run wrote over and
+/// the blanked end, in place, then the file's length set to the old run's
+/// (the rest are still on disk). `false`: no tail kept from `base`.
+pub fn put_back_kept(path: &str, base: u64) -> Result<bool, String> {
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    let k = out_key(path);
+    let Some(kp) = LOGICAL.with(|m| {
+        m.borrow_mut()
+            .get_mut(&k)
+            .and_then(|l| l.keep.take())
+            .filter(|kp| kp.base == base)
+    }) else {
+        return Ok(false);
+    };
+    let (end_at, old_len, saved) = (kp.end_at(), kp.old_len, &kp.saved);
+    use std::io::Seek;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(e)?;
+    // (the end last: until the old bytes before it are back, a reader sees
+    // no `%%EOF` after the new run's bytes; where `saved` covers the end,
+    // it holds the same)
+    f.seek(std::io::SeekFrom::Start(base)).map_err(e)?;
+    f.write_all(saved).map_err(e)?;
+    f.seek(std::io::SeekFrom::Start(end_at)).map_err(e)?;
+    f.write_all(&kp.end).map_err(e)?;
+    if disk_len(path) != Some(old_len) {
+        f.set_len(old_len).map_err(e)?;
+    }
+    drop(f);
+    file_trace(|| {
+        format!(
+            "put_back_kept {path} base {base} saved {} old_len {old_len}",
+            saved.len()
+        )
+    });
+    logical_settled(path);
+    stamp_output(path);
+    Ok(true)
+}
+
+/// `packed file of char`.
+#[derive(Default)]
+pub struct AlphaFile {
+    /// Pascal's buffer variable `f^`.
+    pub buf: u8,
+    input: Option<TextIn>,
+    output: Option<BufWriter<Box<dyn OutSink>>>,
+    /// The command of a pipe, waited for when the file is closed (`pclose`).
+    child: Option<std::process::Child>,
+    to_stdout: bool,
+    line: Vec<u8>,
+    pos: usize,
+    have_line: bool,
+    /// Pascal's `erstat`: 0 means the last open succeeded.
+    err: i32,
+    /// The file opened, for a checkpoint's host-state record.
+    path: Option<String>,
+}
+
+impl AlphaFile {
+    /// The file opened, as the run opened it (`crate::lineshift`).
+    pub fn opened_path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+
+    /// How far an input file has been read (what a checkpoint records as
+    /// its offset); `None` for anything else.
+    pub fn read_offset(&mut self) -> Option<u64> {
+        match self.input.as_mut() {
+            Some(TextIn::File(r)) => {
+                use std::io::Seek;
+                r.stream_position().ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// The line of an input file `input_ln` copied last, when all of it
+    /// is (`crate::midline`).
+    pub fn read_line(&self) -> Option<&[u8]> {
+        match self.input {
+            Some(TextIn::File(_)) if self.have_line && self.pos == self.line.len() => {
+                Some(&self.line)
+            }
+            _ => None,
+        }
+    }
+
+    /// `crate::midline`'s refill: this input file reopened at `at`, the
+    /// start of a line, with that line read and all of it consumed, as
+    /// `input_ln` leaves it: the line and the offset after it.
+    pub fn reread_line(&mut self, path: &str, at: u64) -> Result<(Vec<u8>, u64), String> {
+        use std::io::Seek;
+        let mut r = reopen_in(path, at)?;
+        let mut line = vec![];
+        if !read_tex_line(&mut r, &mut line) {
+            return Err(format!("{path}: no line at {at}"));
+        }
+        let end = r.stream_position().map_err(|e| format!("{path}: {e}"))?;
+        let err = self.err;
+        PasFile::close(self);
+        *self = AlphaFile {
+            line: line.clone(),
+            pos: line.len(),
+            have_line: true,
+            err,
+            input: Some(TextIn::File(r)),
+            path: Some(path.to_string()),
+            ..AlphaFile::default()
+        };
+        self.refresh();
+        Ok((line, end))
+    }
+
+    fn refresh(&mut self) {
+        self.buf = if !self.have_line {
+            b' '
+        } else if self.pos < self.line.len() {
+            self.line[self.pos]
+        } else {
+            b' ' // reading the line separator yields a blank
+        };
+    }
+    fn next_line(&mut self) -> bool {
+        self.line.clear();
+        self.pos = 0;
+        match self.input.as_mut() {
+            Some(TextIn::Pre(lines, i)) => {
+                if *i < lines.len() {
+                    self.line = lines[*i].clone();
+                    *i += 1;
+                    return true;
+                }
+                self.input = Some(TextIn::Stdin);
+                self.next_line()
+            }
+            Some(TextIn::Stdin) => read_tex_line(&mut std::io::stdin().lock(), &mut self.line),
+            Some(TextIn::File(r)) => read_tex_line(r, &mut self.line),
+            Some(TextIn::Pipe(r)) => read_tex_line(r, &mut self.line),
+            None => false,
+        }
+    }
+    fn put_byte(&mut self, b: u8) {
+        if self.to_stdout {
+            if !terminal_capture_byte(b) {
+                let _ = std::io::stdout().write_all(&[b]);
+            }
+        } else if let Some(w) = self.output.as_mut() {
+            let _ = w.write_all(&[b]);
+        }
+    }
+}
+
+/// One line as texmfmp.c's `input_line` reads it: up to a LF, a CR or a CR
+/// LF; false at the end of the file when nothing was read.
+pub(crate) fn read_tex_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
+    line.clear();
+    let mut got_any = false;
+    loop {
+        let buf = match r.fill_buf() {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return got_any,
+        };
+        if buf.is_empty() {
+            return got_any;
+        }
+        got_any = true;
+        match buf.iter().position(|&c| c == b'\n' || c == b'\r') {
+            Some(i) => {
+                let cr = buf[i] == b'\r';
+                line.extend_from_slice(&buf[..i]);
+                r.consume(i + 1);
+                if cr {
+                    // If the next character is the LF of a CR LF, read it.
+                    if let Ok(b) = r.fill_buf() {
+                        if b.first() == Some(&b'\n') {
+                            r.consume(1);
+                        }
+                    }
+                }
+                return true;
+            }
+            None => {
+                let n = buf.len();
+                line.extend_from_slice(buf);
+                r.consume(n);
+            }
+        }
+    }
+}
+
+/// `packed file of eight_bits`.
+#[derive(Default)]
+pub struct ByteFile {
+    pub buf: i32,
+    input: Option<BufReader<InFile>>,
+    output: Option<BufWriter<Tracked>>,
+    at_eof: bool,
+    err: i32,
+    /// The file opened, for a checkpoint's host-state record.
+    path: Option<String>,
+}
+
+/// `file of memory_word`.
+#[derive(Default)]
+pub struct WordFile {
+    pub buf: memory_word,
+    input: Option<BufReader<File>>,
+    output: Option<BufWriter<File>>,
+    at_eof: bool,
+    err: i32,
+    /// The file opened, for a checkpoint's host-state record.
+    path: Option<String>,
+}
+
+impl WordFile {
+    /// The file opened.
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Pascal built-ins the generated code calls
+// ---------------------------------------------------------------------------
+
+pub trait PasFile {
+    fn erstat(&self) -> i32;
+    fn at_eof(&self) -> bool;
+    fn flush(&mut self);
+    fn close(&mut self);
+}
+
+impl PasFile for AlphaFile {
+    fn erstat(&self) -> i32 {
+        self.err
+    }
+    fn at_eof(&self) -> bool {
+        !self.have_line
+    }
+    fn flush(&mut self) {
+        if self.to_stdout {
+            if !terminal_captured() {
+                let _ = std::io::stdout().flush();
+            }
+        } else if let Some(w) = self.output.as_mut() {
+            let _ = w.flush();
+        }
+    }
+    fn close(&mut self) {
+        self.flush();
+        if self.output.take().is_some() {
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+                cut_to_logical(p);
+            }
+        }
+        self.input = None;
+        self.have_line = false;
+        self.path = None;
+        // `pclose`: the command has its end of file, and is waited for.
+        if let Some(mut c) = self.child.take() {
+            let _ = c.wait();
+        }
+    }
+}
+impl PasFile for ByteFile {
+    fn erstat(&self) -> i32 {
+        self.err
+    }
+    fn at_eof(&self) -> bool {
+        self.at_eof
+    }
+    fn flush(&mut self) {
+        if let Some(w) = self.output.as_mut() {
+            let _ = w.flush();
+        }
+    }
+    fn close(&mut self) {
+        self.flush();
+        if self.output.take().is_some() {
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+                cut_to_logical(p);
+            }
+        }
+        self.input = None;
+    }
+}
+impl PasFile for WordFile {
+    fn erstat(&self) -> i32 {
+        self.err
+    }
+    fn at_eof(&self) -> bool {
+        self.at_eof
+    }
+    fn flush(&mut self) {
+        if let Some(w) = self.output.as_mut() {
+            let _ = w.flush();
+        }
+    }
+    fn close(&mut self) {
+        self.flush();
+        self.output = None;
+        self.input = None;
+    }
+}
+
+pub fn erstat<F: PasFile>(f: &F) -> i32 {
+    f.erstat()
+}
+pub fn eof<F: PasFile>(f: &F) -> bool {
+    f.at_eof()
+}
+pub fn close<F: PasFile>(f: &mut F) {
+    f.close();
+}
+pub fn break_out<F: PasFile>(f: &mut F) {
+    f.flush();
+}
+pub fn break_in(_f: &mut AlphaFile, _discard: bool) {}
+
+pub fn eoln(f: &AlphaFile) -> bool {
+    f.have_line && f.pos >= f.line.len()
+}
+
+pub fn get_char(f: &mut AlphaFile) {
+    if !f.have_line {
+        return;
+    }
+    if f.pos < f.line.len() {
+        f.pos += 1;
+    } else {
+        f.have_line = f.next_line();
+    }
+    f.refresh();
+}
+
+pub fn read_char(f: &mut AlphaFile) -> u8 {
+    let c = f.buf;
+    get_char(f);
+    c
+}
+
+pub fn read_ln(f: &mut AlphaFile) {
+    if f.have_line {
+        f.have_line = f.next_line();
+    }
+    f.refresh();
+}
+
+pub fn get_byte(f: &mut ByteFile) {
+    let mut b = [0u8; 1];
+    match f.input.as_mut().map(|r| r.read_exact(&mut b)) {
+        Some(Ok(())) => f.buf = b[0] as i32,
+        _ => {
+            f.at_eof = true;
+            f.buf = 0;
+        }
+    }
+}
+pub fn put_byte(f: &mut ByteFile) {
+    let v = f.buf as u8;
+    write_byte(f, v as i32);
+}
+pub fn write_byte(f: &mut ByteFile, v: i32) {
+    if let Some(w) = f.output.as_mut() {
+        let _ = w.write_all(&[v as u8]);
+    }
+}
+pub fn read_byte(f: &mut ByteFile) -> i32 {
+    get_byte(f);
+    f.buf
+}
+
+impl ByteFile {
+    /// C's `fwrite` on a binary output file (the PDF writer, `writepdf` and
+    /// `writezip`): whether all bytes were written.
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> bool {
+        match self.output.as_mut() {
+            Some(w) => w.write_all(bytes).is_ok(),
+            None => false,
+        }
+    }
+
+    /// C's `fseeko(f, offset, SEEK_SET)` on a binary output file
+    /// (`writestreamlength` patches a stream's `/Length`).
+    pub fn seek_to(&mut self, offset: u64) -> bool {
+        use std::io::Seek;
+        match self.output.as_mut() {
+            Some(w) => w.seek(std::io::SeekFrom::Start(offset)).is_ok(),
+            None => false,
+        }
+    }
+}
+
+// The word straight from the reader's buffer when it holds one, which is
+// every word of a format but those at a buffer's end: the same bytes
+// `read_exact` copies, without depending on how the compiler inlines it into
+// the 3,000 calls of `load_fmt_file`, which a change elsewhere in the crate
+// moved (READ-TRACK measured 16-52 M more instructions of a cold compile,
+// up to 5.5 %, with the same code).
+#[inline]
+pub fn get_word(f: &mut WordFile) {
+    if let Some(r) = f.input.as_mut() {
+        if let Some(w) = r.buffer().get(..8) {
+            let w = u64::from_le_bytes(w.try_into().expect("8 bytes"));
+            r.consume(8);
+            f.buf = memory_word::from_bits(w);
+            return;
+        }
+    }
+    get_word_slow(f);
+}
+
+#[inline(never)]
+fn get_word_slow(f: &mut WordFile) {
+    let mut b = [0u8; 8];
+    let ok = match f.input.as_mut() {
+        Some(r) => match r.read_exact(&mut b) {
+            Ok(()) => true,
+            Err(e) => {
+                drop(e);
+                false
+            }
+        },
+        None => false,
+    };
+    if ok {
+        f.buf = memory_word::from_bits(u64::from_le_bytes(b));
+    } else {
+        f.at_eof = true;
+        f.buf = memory_word::default();
+    }
+}
+pub fn put_word(f: &mut WordFile) {
+    let v = f.buf;
+    write_word(f, v);
+}
+pub fn write_word(f: &mut WordFile, v: memory_word) {
+    if let Some(w) = f.output.as_mut() {
+        let _ = w.write_all(&v.to_bits().to_le_bytes());
+    }
+}
+pub fn read_word(f: &mut WordFile) -> memory_word {
+    get_word(f);
+    f.buf
+}
+
+pub fn wr_char(f: &mut AlphaFile, c: u8) {
+    f.put_byte(c);
+}
+pub fn wr_str(f: &mut AlphaFile, s: &str) {
+    for b in s.bytes() {
+        f.put_byte(b);
+    }
+}
+pub fn wr_ln(f: &mut AlphaFile) {
+    f.put_byte(b'\n');
+    if f.to_stdout {
+        f.flush();
+    }
+}
+pub fn wr_bool(f: &mut AlphaFile, v: bool) {
+    wr_str(f, if v { "TRUE" } else { "FALSE" });
+}
+pub fn wr_int(f: &mut AlphaFile, v: i32, width: i32) {
+    let s = v.to_string();
+    for _ in s.len() as i32..width {
+        f.put_byte(b' ');
+    }
+    wr_str(f, &s);
+}
+pub fn wr_real(f: &mut AlphaFile, v: f64, width: i32) {
+    let s = format!("{v}");
+    for _ in s.len() as i32..width {
+        f.put_byte(b' ');
+    }
+    wr_str(f, &s);
+}
+
+/// Assign a Pascal string to a `packed array [1..n] of char`, blank-padded.
+pub fn copy_str<const N: usize>(dst: &mut [u8; N], s: &str) {
+    dst.fill(b' ');
+    for (i, b) in s.bytes().take(N).enumerate() {
+        dst[i] = b;
+    }
+}
+
+/// Pascal's `round` as TeX Live compiles it: web2c's `cpascal.h` maps
+/// `round(x)` to `zround((double)(x))` (texk/web2c/lib/zround.c), which
+/// adds 0.5 and truncates. That is not `f64::round`: for
+/// 0.49999999999999994 (the largest double below 0.5) `r + 0.5` rounds to
+/// 1.0, so `zround` gives 1 where `f64::round` gives 0. pdfTeX's glue
+/// rounding in `hlist_out` (`cur_g:=round(glue_temp)`) reaches exactly that
+/// value with tiny glue settings, e.g. under font expansion. The clamps are
+/// zround's too, including -2147483647 (not `i32::MIN`) at the low end.
+pub fn pas_round(r: f64) -> i32 {
+    if r > 2147483647.0 {
+        2147483647
+    } else if r < -2147483647.0 {
+        -2147483647
+    } else if r >= 0.0 {
+        (r + 0.5) as i32
+    } else {
+        (r - 0.5) as i32
+    }
+}
+
+/// `t_open_out` — `rewrite(term_out,'TTY:','/O')`.
+pub fn rewrite_char(f: &mut AlphaFile, _name: &str, _mode: &str) {
+    *f = AlphaFile::default();
+    f.to_stdout = true;
+    f.err = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Opening files by name
+// ---------------------------------------------------------------------------
+
+/// The extra lines INITEX should see before stdin, i.e. the command line.
+static FIRST_LINES: Mutex<Option<Vec<Vec<u8>>>> = Mutex::new(None);
+/// Guards `close_files_and_terminate` against being re-entered by a second
+/// `goto end_of_TEX` raised from inside it.
+static TERMINATING: AtomicBool = AtomicBool::new(false);
+
+/// The command line as TeX's first line (texmfmp.c's `topenin`), for a
+/// caller that drives the engine without `configure`.
+pub fn set_command_line(lines: Vec<Vec<u8>>) {
+    *FIRST_LINES.lock().unwrap() = Some(lines);
+}
+
+fn take_command_line() -> Option<Vec<Vec<u8>>> {
+    FIRST_LINES.lock().unwrap().take()
+}
+
+// ---------------------------------------------------------------------------
+// The run's options: texmfmp.c's `parse_options` and `maininit`
+// ---------------------------------------------------------------------------
+
+/// `-interaction`, numbered as tex.ch numbers the modes (`unspecified_mode`
+/// is 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interaction {
+    Batch = 0,
+    Nonstop = 1,
+    Scroll = 2,
+    ErrorStop = 3,
+    Unspecified = 4,
+}
+
+/// The shell-escape switches of the command line (texmfmp.c's
+/// `shellenabledp` before `init_shell_escape`: 0, 1 or -1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shell {
+    /// No option given: texmf.cnf's `shell_escape` decides.
+    Unset,
+    /// `-no-shell-escape`.
+    Off,
+    /// `-shell-escape`.
+    On,
+    /// `-shell-restricted`: only texmf.cnf's `shell_escape_commands`.
+    Restricted,
+}
+
+/// What the command line says, before texmf.cnf is consulted.
+#[derive(Clone, Debug)]
+pub struct RunOptions {
+    /// `kpse_invocation_name`: `argv[0]` as given, which the C parts print
+    /// in their messages (`pdfTeX warning: /path/pdftex: ...`).
+    pub invocation_name: String,
+    /// The program name `argv[0]` implies (see `program_name_from_argv0`).
+    pub argv0_program: String,
+    pub ini: bool,
+    pub etex: bool,
+    /// `-fmt`.
+    pub dump_name: Option<String>,
+    /// `-progname`.
+    pub user_progname: Option<String>,
+    pub interaction: Interaction,
+    pub halt_on_error: bool,
+    /// 1 on, -1 off, 0 texmf.cnf's `file_line_error_style`.
+    pub file_line_error: i32,
+    /// 1 on, -1 off, 0 texmf.cnf's `parse_first_line`.
+    pub parse_first_line: i32,
+    pub job_name: Option<String>,
+    pub output_directory: Option<String>,
+    pub translate_filename: Option<String>,
+    pub default_translate_filename: Option<String>,
+    pub eight_bit: bool,
+    pub shell: Shell,
+    pub recorder: bool,
+    /// `-output-format`: `\pdfoutput` 0 (dvi) or 2 (pdf).
+    pub output_format: Option<i32>,
+    pub draftmode: bool,
+    pub output_comment: Option<Vec<u8>>,
+    pub cnf_lines: Vec<String>,
+    /// The arguments after the options (`argv[optind..]`).
+    pub args: Vec<String>,
+    /// `argv[1]`, which texmfmp.c checks for `&fmt`.
+    pub first_arg: Option<String>,
+}
+
+impl RunOptions {
+    pub fn new(argv0: &str) -> RunOptions {
+        RunOptions {
+            invocation_name: argv0.to_string(),
+            argv0_program: program_name_from_argv0(argv0),
+            ini: false,
+            etex: false,
+            dump_name: None,
+            user_progname: None,
+            interaction: Interaction::Unspecified,
+            halt_on_error: false,
+            file_line_error: 0,
+            parse_first_line: 0,
+            job_name: None,
+            output_directory: None,
+            translate_filename: None,
+            default_translate_filename: None,
+            eight_bit: false,
+            shell: Shell::Unset,
+            recorder: false,
+            output_format: None,
+            draftmode: false,
+            output_comment: None,
+            cnf_lines: vec![],
+            args: vec![],
+            first_arg: None,
+        }
+    }
+}
+
+/// The run as configured: the command line plus texmf.cnf, the state the
+/// generated code reads through `changes/web2c-run.ch`.
+#[derive(Clone, Debug)]
+pub struct Run {
+    pub invocation_name: String,
+    /// `kpse_program_name`: selects the search paths.
+    pub program_name: String,
+    pub ini: bool,
+    pub etex: bool,
+    /// `dump_name`: the default format.
+    pub dump_name: String,
+    pub interaction_option: i32,
+    pub halt_on_error: bool,
+    pub file_line_error: bool,
+    pub parse_first_line: bool,
+    /// A `%&format` first line named the format.
+    pub dump_line: bool,
+    pub job_name: Option<String>,
+    pub output_directory: Option<String>,
+    pub translate_filename: Option<String>,
+    pub eight_bit: bool,
+    pub shell_enabled: bool,
+    pub restricted_shell: bool,
+    /// texmf.cnf's `shell_escape_commands`, for restricted shell escape.
+    pub shell_commands: Vec<String>,
+    pub recorder: bool,
+    pub output_format: Option<i32>,
+    pub draftmode: bool,
+    pub output_comment: Option<Vec<u8>>,
+}
+
+impl Default for Run {
+    /// A process that drives the engine without `configure` (the tests of
+    /// the library, the trip test): INITEX, program name `pdftex` (or
+    /// `FLASHTEX_PROGNAME`), nothing from texmf.cnf.
+    fn default() -> Run {
+        let prog = std::env::var("FLASHTEX_PROGNAME").unwrap_or_else(|_| "pdftex".into());
+        Run {
+            invocation_name: "pdftex".into(),
+            program_name: prog.clone(),
+            ini: true,
+            etex: false,
+            dump_name: prog,
+            interaction_option: Interaction::Unspecified as i32,
+            halt_on_error: false,
+            file_line_error: false,
+            parse_first_line: false,
+            dump_line: false,
+            job_name: None,
+            output_directory: None,
+            translate_filename: None,
+            eight_bit: false,
+            shell_enabled: false,
+            restricted_shell: false,
+            shell_commands: vec![],
+            recorder: false,
+            output_format: None,
+            draftmode: false,
+            output_comment: None,
+        }
+    }
+}
+
+static RUN: Mutex<Option<Run>> = Mutex::new(None);
+
+/// The run's configuration (the default one until `configure` is called).
+pub fn run() -> Run {
+    RUN.lock().unwrap().get_or_insert_with(Run::default).clone()
+}
+
+/// `run().output_directory`, without copying the rest.
+pub fn output_directory() -> Option<String> {
+    with_run(|r| r.output_directory.clone())
+}
+
+fn with_run<T>(f: impl FnOnce(&mut Run) -> T) -> T {
+    f(RUN.lock().unwrap().get_or_insert_with(Run::default))
+}
+
+/// The program name web2c derives from `argv[0]`. Invoked under one of
+/// pdfTeX's names (`pdflatex`, `pdfinitex`, ... through a link), the engine
+/// behaves as pdfTeX invoked under it; under its own name it is `pdftex`.
+pub fn program_name_from_argv0(argv0: &str) -> String {
+    // kpathsea's `xbasename`: `\\` and a drive's `:` separate too on Windows,
+    // where `.exe` is matched in any case.
+    let base = argv0
+        .rsplit(|c| c == '/' || (cfg!(windows) && (c == '\\' || c == ':')))
+        .next()
+        .unwrap_or(argv0);
+    let base = match base.len().checked_sub(4) {
+        Some(k)
+            if cfg!(windows)
+                && base.is_char_boundary(k)
+                && base[k..].eq_ignore_ascii_case(".exe") =>
+        {
+            &base[..k]
+        }
+        _ => base.strip_suffix(".exe").unwrap_or(base),
+    };
+    if base.is_empty() || base.starts_with("flashtex") {
+        "pdftex".into()
+    } else {
+        base.to_string()
+    }
+}
+
+/// texmfmp.c's `normalize_quotes`: quote a name only if it has a space, and
+/// then as `"name"`; `None` for unbalanced quotes.
+pub fn normalize_quotes(name: &str) -> Option<String> {
+    let must_quote = name.contains(' ');
+    let mut quoted = false;
+    let mut out = String::with_capacity(name.len() + 2);
+    if must_quote {
+        out.push('"');
+    }
+    for c in name.chars() {
+        if c == '"' {
+            quoted = !quoted;
+        } else {
+            out.push(c);
+        }
+    }
+    if must_quote {
+        out.push('"');
+    }
+    (!quoted).then_some(out)
+}
+
+/// kpathsea's `kpathsea_cnf_line_env_progname` (cnf.c `do_line` with
+/// `env_progname`): a `-cnf-line` sets `VAR` and `VAR_progname` (or the
+/// `.prog` it names) in the environment, where kpathsea looks first.
+fn cnf_line_env_progname(line: &str, program_name: &str, invocation: &str) {
+    let line = line.trim_start_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
+    if line.is_empty() || line.starts_with('%') || line.starts_with('#') {
+        return;
+    }
+    // A trailing comment is a % or # preceded by whitespace.
+    let bytes = line.as_bytes();
+    let mut end = bytes.len();
+    let mut i = bytes.len();
+    while i > 1 {
+        i -= 1;
+        if (bytes[i] == b'%' || bytes[i] == b'#') && bytes[i - 1].is_ascii_whitespace() {
+            end = i;
+        }
+    }
+    let line = line[..end].trim_end();
+    let is_space = |c: char| c.is_ascii_whitespace();
+    let var_end = line
+        .find(|c: char| is_space(c) || c == '=' || c == '.')
+        .unwrap_or(line.len());
+    let var = &line[..var_end];
+    let warn = |msg: &str| {
+        eprintln!("warning: {invocation}: command line (kpathsea): {msg} in argument: {line}");
+    };
+    if var.is_empty() {
+        return warn("No cnf variable name");
+    }
+    let mut rest = line[var_end..].trim_start_matches(is_space);
+    let mut prog: Option<&str> = None;
+    if let Some(r) = rest.strip_prefix('.') {
+        let r = r.trim_start_matches(is_space);
+        let n = r.find(|c: char| is_space(c) || c == '=').unwrap_or(r.len());
+        let p = &r[..n];
+        if p.is_empty() {
+            return warn("Empty program name qualifier");
+        }
+        if let Some(c) = p
+            .chars()
+            .find(|&c| matches!(c, '$' | '{' | '}' | ':' | ';'))
+        {
+            return warn(&format!("Unlikely character {c} in program name"));
+        }
+        prog = Some(p);
+        rest = &r[n..];
+    }
+    let rest = rest.trim_start_matches(is_space);
+    let rest = rest
+        .strip_prefix('=')
+        .unwrap_or(rest)
+        .trim_start_matches(is_space);
+    let value = rest.trim_end_matches(is_space);
+    if value.is_empty() {
+        return warn("No cnf value");
+    }
+    // Unix separators: `;` in a value means `:` (kpathsea's cnf.c, except
+    // on WIN32, where `;` is the separator).
+    let value = if cfg!(windows) {
+        value.to_string()
+    } else {
+        value.replace(';', ":")
+    };
+    crate::os::set_env(var, &value);
+    crate::os::set_env(&format!("{var}_{}", prog.unwrap_or(program_name)), &value);
+}
+
+/// texmfmp.c's `maininit` after `parse_options`: settle the program name,
+/// the format, the first line and everything texmf.cnf decides, in its
+/// order. Called by the binary before `tex_body`.
+pub fn configure(mut o: RunOptions) {
+    // parse_options: -output-directory is exported for \write18's children,
+    // and TEXMF_OUTPUT_DIRECTORY stands in for it.
+    if let Some(d) = &o.output_directory {
+        crate::os::set_env("TEXMF_OUTPUT_DIRECTORY", d);
+    } else if let Some(d) = std::env::var("TEXMF_OUTPUT_DIRECTORY")
+        .ok()
+        .filter(|d| !d.is_empty())
+    {
+        o.output_directory = Some(d);
+    }
+    // "If -progname was not specified, default to the dump name", else the
+    // name we were invoked under.
+    let mut program_name = o
+        .user_progname
+        .clone()
+        .or_else(|| o.dump_name.clone())
+        .unwrap_or_else(|| o.argv0_program.clone());
+    for l in &o.cnf_lines {
+        cnf_line_env_progname(l, &program_name, &o.invocation_name);
+    }
+    *RUN.lock().unwrap() = Some(Run {
+        invocation_name: o.invocation_name.clone(),
+        program_name: program_name.clone(),
+        ..Run::default()
+    });
+    reset_resolver(&program_name, o.cnf_lines.is_empty());
+
+    // get_input_file_name: a plain file name as the first argument.
+    let mut main_input_file = None;
+    if let Some(a) = o.args.first().cloned() {
+        if !a.starts_with('&') && !a.starts_with('\\') {
+            let Some(name) = normalize_quotes(&a) else {
+                eprintln!("! Unbalanced quotes in argument {a}");
+                std::process::exit(1);
+            };
+            let bare = name
+                .strip_prefix('"')
+                .and_then(|n| n.strip_suffix('"'))
+                .unwrap_or(&name);
+            main_input_file = resolve(bare, Format::Tex);
+            o.args[0] = name;
+        }
+    }
+
+    // file:line:error and %&-line parsing: the command line, else texmf.cnf.
+    let file_line_error = match o.file_line_error {
+        n if n < 0 => false,
+        0 => texmf_yesno("file_line_error_style"),
+        _ => true,
+    };
+    let parse_first_line = match o.parse_first_line {
+        n if n < 0 => false,
+        0 => texmf_yesno("parse_first_line"),
+        _ => true,
+    };
+    let mut dump_line = false;
+    if parse_first_line && (o.dump_name.is_none() || o.translate_filename.is_none()) {
+        if let Some(f) = &main_input_file {
+            parse_first_line_of(
+                f,
+                &mut o.dump_name,
+                &mut o.translate_filename,
+                &mut program_name,
+                &mut dump_line,
+            );
+        }
+    }
+    if o.translate_filename.is_none() {
+        o.translate_filename = o.default_translate_filename.clone();
+    }
+    // The program name can make the run INITEX, or name the format.
+    let mut ini = o.ini;
+    let mut vir = false;
+    if program_name.eq_ignore_ascii_case("pdfinitex") || program_name.eq_ignore_ascii_case("initex")
+    {
+        ini = true;
+    } else if program_name.eq_ignore_ascii_case("pdfvirtex")
+        || program_name.eq_ignore_ascii_case("virtex")
+    {
+        vir = true;
+    }
+    if main_input_file.is_none() {
+        if let Some(f) = o.first_arg.as_deref().and_then(|a| a.strip_prefix('&')) {
+            o.dump_name = Some(f.to_string());
+        }
+    }
+    let dump_name = o.dump_name.clone().unwrap_or_else(|| {
+        if vir {
+            "plain".into()
+        } else {
+            program_name.clone()
+        }
+    });
+    if !ini && o.etex {
+        eprintln!("-etex only works with -ini");
+    }
+    // The trip test's tex.web build is always INITEX, as tex.web itself is.
+    if cfg!(feature = "tex82") && o.dump_name.is_none() {
+        ini = true;
+    }
+
+    // init_shell_escape. With no option texmf.cnf's `shell_escape` decides,
+    // as in web2c: TeX Live ships `p`, restricted (DESIGN.md 4.5), and the
+    // bundle resolver carries TeX Live's values (resolver.rs).
+    let (shell_enabled, restricted_shell) = match o.shell {
+        Shell::Off => (false, false),
+        Shell::On => (true, false),
+        Shell::Restricted => (true, true),
+        Shell::Unset => match texmf_var("shell_escape").and_then(|v| v.bytes().next()) {
+            Some(b't' | b'y' | b'1') => (true, false),
+            Some(b'p') => (true, true),
+            _ => (false, false),
+        },
+    };
+    let mut shell_commands = vec![];
+    if shell_enabled && restricted_shell {
+        if let Some(v) = texmf_var("shell_escape_commands") {
+            // mk_shellcmdlist: comma-separated, an empty last item dropped.
+            let mut items: Vec<String> = v.split(',').map(str::to_string).collect();
+            if items.last().is_some_and(|s| s.is_empty()) {
+                items.pop();
+            }
+            shell_commands = items;
+        }
+    }
+    let output_comment = o
+        .output_comment
+        .clone()
+        .or_else(|| texmf_var("output_comment").map(String::into_bytes));
+
+    // topenin: the arguments, each followed by a space, trailing spaces,
+    // CRs and LFs removed.
+    if !o.args.is_empty() {
+        let mut line: Vec<u8> = vec![];
+        for a in &o.args {
+            line.extend_from_slice(a.as_bytes());
+            line.push(b' ');
+        }
+        while matches!(line.last(), Some(b' ' | b'\r' | b'\n')) {
+            line.pop();
+        }
+        set_command_line(vec![line]);
+    }
+
+    let program_changed = program_name != run().program_name;
+    let prog = program_name.clone();
+    *RUN.lock().unwrap() = Some(Run {
+        invocation_name: o.invocation_name.clone(),
+        program_name,
+        ini,
+        etex: o.etex,
+        dump_name,
+        interaction_option: o.interaction as i32,
+        halt_on_error: o.halt_on_error,
+        file_line_error,
+        parse_first_line,
+        dump_line,
+        job_name: o.job_name.clone(),
+        output_directory: o.output_directory.clone(),
+        translate_filename: o.translate_filename.clone(),
+        eight_bit: o.eight_bit,
+        shell_enabled,
+        restricted_shell,
+        shell_commands,
+        recorder: o.recorder,
+        output_format: o.output_format,
+        draftmode: o.draftmode,
+        output_comment,
+    });
+    if program_changed {
+        reset_resolver(&prog, false);
+    }
+    // kpathsea's `kpse_make_tex_discard_errors` starts false in every run;
+    // a resolver kept from an earlier run forgets that run's `\batchmode`.
+    set_mktex_discard(false);
+}
+
+/// Set kpathsea's `kpse_make_tex_discard_errors` (tex.ch [49.1265]): for
+/// the resolver there is now, if any, and for any kpathsea started later
+/// (a resolver made later, or one whose kpathsea starts at its first
+/// lookup). Making no resolver, it costs nothing where none is needed yet.
+pub fn set_mktex_discard(discard: bool) {
+    crate::resolver::set_kpathsea_make_tex_discard_errors(discard);
+    if let Some(r) = RESOLVER.lock().unwrap().as_mut() {
+        r.set_make_tex_discard_errors(discard);
+    }
+}
+
+/// texmfmp.c's `parse_first_line`: a first line `%&fmt --translate-file=tcx`
+/// names the format (if it can be found, and none was given) and the TCX
+/// file (if none was given).
+fn parse_first_line_of(
+    path: &str,
+    dump_name: &mut Option<String>,
+    translate_filename: &mut Option<String>,
+    program_name: &mut String,
+    dump_line: &mut bool,
+) {
+    let Ok(f) = File::open(path) else { return };
+    let mut first = vec![];
+    if BufReader::new(f).read_until(b'\n', &mut first).is_err() {
+        return;
+    }
+    while matches!(first.last(), Some(b'\n' | b'\r')) {
+        first.pop();
+    }
+    let Some(rest) = first.strip_prefix(b"%&") else {
+        return;
+    };
+    let rest = String::from_utf8_lossy(rest).into_owned();
+    let rest = rest.trim_start_matches([' ', '\t']);
+    // At most three space-separated parts.
+    let mut parts: Vec<&str> = vec![];
+    let mut s = rest;
+    while !s.is_empty() && parts.len() != 3 {
+        let n = s.find(' ').unwrap_or(s.len());
+        parts.push(&s[..n]);
+        s = s[n..].trim_start_matches(' ');
+    }
+    let mut parse = parts.as_slice();
+    if let Some(first) = parse.first() {
+        if !first.starts_with('-') {
+            if dump_name.is_none() {
+                let f_name = format!("{first}.fmt");
+                if find_format(&f_name).is_some() {
+                    *dump_name = Some(first.to_string());
+                    *program_name = first.to_string();
+                    with_run(|r| r.program_name = program_name.clone());
+                    reset_resolver(program_name, false);
+                    *dump_line = true;
+                }
+            }
+            parse = &parse[1..];
+        }
+    }
+    if let Some(p) = parse.first() {
+        if translate_filename.is_some() {
+            return;
+        }
+        let s = if *p == "--translate-file" || *p == "-translate-file" {
+            parse.get(1).copied()
+        } else {
+            p.strip_prefix("--translate-file=")
+                .or_else(|| p.strip_prefix("-translate-file="))
+        };
+        if let Some(s) = s.filter(|s| !s.is_empty()) {
+            *translate_filename = Some(s.to_string());
+        }
+    }
+}
+
+/// pdfTeX's `BANNER` (pdftexextra.h), the same text as pdftex.web's
+/// `banner`.
+pub const BANNER: &str = "This is pdfTeX, Version 3.141592653-2.6-1.40.29";
+
+/// web2c's `versionstring` (`WEB2CVERSION`) for the TeX Live 2026 sources
+/// this engine is translated from and links (third_party/pdftex,
+/// third_party/kpathsea).
+pub const WEB2C_VERSION: &str = " (TeX Live 2026)";
+
+/// `-help` (texmfmp-help.h's PDFTEXHELP).
+pub const HELP: &str = "\
+Usage: pdftex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
+   or: pdftex [OPTION]... \\FIRST-LINE
+   or: pdftex [OPTION]... &FMT ARGS
+  Run pdfTeX on TEXNAME, usually creating TEXNAME.pdf.
+  Any remaining COMMANDS are processed as pdfTeX input, after TEXNAME is read.
+  If the first line of TEXNAME is %&FMT, and FMT is an existing .fmt file,
+  use it.  Else use `NAME.fmt', where NAME is the program invocation name,
+  most commonly `pdftex'.
+
+  Alternatively, if the first non-option argument begins with a backslash,
+  interpret all non-option arguments as a line of pdfTeX input.
+
+  Alternatively, if the first non-option argument begins with a &, the
+  next word is taken as the FMT to read, overriding all else.  Any
+  remaining arguments are processed as above.
+
+  If no arguments or options are specified, prompt for input.
+
+-cnf-line=STRING        parse STRING as a configuration file line
+-draftmode              switch on draft mode (generates no output PDF)
+-etex                   enable e-TeX extensions
+[-no]-file-line-error   disable/enable file:line:error style messages
+-fmt=FMTNAME            use FMTNAME instead of program name or a %& line
+-halt-on-error          stop processing at the first error
+-ini                    be pdfinitex, for dumping formats; this is implicitly
+                          true if the program name is `pdfinitex'
+-interaction=STRING     set interaction mode (STRING=batchmode/nonstopmode/
+                          scrollmode/errorstopmode)
+-jobname=STRING         set the job name to STRING
+-output-comment=STRING  use STRING for DVI file comment instead of date
+                          (no effect for PDF)
+-output-directory=DIR   use existing DIR as the directory to write files in
+-output-format=FORMAT   use FORMAT for job output; FORMAT is `dvi' or `pdf'
+[-no]-parse-first-line  disable/enable parsing of first line of input file
+-progname=STRING        set program (and fmt) name to STRING
+-recorder               enable filename recorder
+[-no]-shell-escape      disable/enable \\write18{SHELL COMMAND}
+-shell-restricted       enable restricted \\write18
+-translate-file=TCXNAME use the TCX file TCXNAME
+-8bit                   make all characters printable by default
+-help                   display this help and exit
+-version                output version information and exit
+
+Not implemented by this engine yet: -enc, -ipc, -ipc-start, -kpathsea-debug,
+-mktex, -no-mktex, -mltex, -src-specials, -synctex.
+";
+
+/// `-version` (printversion.c's layout): pdfTeX's version, and what this
+/// program is.
+pub fn version_text() -> String {
+    "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)\n\
+     FlashTeX's engine is a translation of pdfTeX 1.40.29's pdftex.web\n\
+     (TeX Live 2026) by tools/web2rust, with kpathsea from TeX Live.\n\
+     Copyright 2026 Han The Thanh (pdfTeX) et al.\n\
+     There is NO warranty.  Redistribution of this software is\n\
+     covered by the terms of the GNU General Public License,\n\
+     version 2 or (at your option) any later version.\n"
+        .to_string()
+}
+
+/// `TEX_format_default` (maininit's `DUMP_VAR`): `dump_name`, with `.fmt`
+/// added unless it is already there.
+fn default_format_file() -> String {
+    let d = run().dump_name;
+    if d.len() > 4 && d[d.len() - 4..].eq_ignore_ascii_case(".fmt") {
+        d
+    } else {
+        format!("{d}.fmt")
+    }
+}
+
+/// The process's file resolver (see `resolver.rs`). kpathsea keeps its state
+/// in the environment, so there is one per process; `set_resolver` replaces
+/// the default chosen on first use.
+static RESOLVER: Mutex<Option<Box<dyn FileResolver>>> = Mutex::new(None);
+
+pub fn set_resolver(r: Box<dyn FileResolver>) {
+    crate::lookupproof::resolver_changed();
+    *RESOLVER.lock().unwrap() = Some(r);
+}
+
+/// The program name the current default resolver was made for.
+static RESOLVER_PROG: Mutex<Option<String>> = Mutex::new(None);
+
+/// kpathsea's `kpse_reset_program_name`: the next lookup starts a resolver
+/// for the current program name. A resident host that configures the
+/// process again for the same program name (and no `-cnf-line`) keeps the
+/// resolver it has: kpathsea's start-up (texmf.cnf, the `ls-R` databases)
+/// is most of a fresh process's time to a first page (DESIGN.md §1.2's
+/// reopen target).
+fn reset_resolver(prog: &str, keep_allowed: bool) {
+    let mut p = RESOLVER_PROG.lock().unwrap();
+    if keep_allowed && p.as_deref() == Some(prog) && RESOLVER.lock().unwrap().is_some() {
+        return;
+    }
+    *p = Some(prog.to_string());
+    crate::lookupproof::resolver_changed();
+    *RESOLVER.lock().unwrap() = None;
+}
+
+/// The engine name kpathsea sees (`$engine` in texmf.cnf), which selects the
+/// format directory `web2c/$engine`. Formats of this engine are not pdfTeX's,
+/// so they live apart from pdfTeX's `web2c/pdftex`.
+pub const ENGINE_NAME: &str = "flashtex";
+
+/// A host's start-up (host/server.rs `prepare`): the process's resolver for
+/// program name `prog`, started now if it is not running, and `f` run with
+/// it. It is the resolver the first compile run as `prog` keeps
+/// (`reset_resolver(prog, true)` in `configure`), so kpathsea's start-up
+/// (texmf.cnf, the `ls-R` databases) happens once per process, not once
+/// to describe it and again for the first compile.
+pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
+    reset_resolver(prog, true);
+    let mut g = RESOLVER.lock().unwrap();
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(prog, ENGINE_NAME)
+    });
+    crate::lookupproof::process_resolver(r.as_ref());
+    f(r.as_mut())
+}
+
+pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
+    let prog = run().program_name;
+    let mut g = RESOLVER.lock().unwrap();
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(&prog, ENGINE_NAME)
+    });
+    crate::lookupproof::process_resolver(r.as_ref());
+    f(r.as_mut())
+}
+
+/// The disk as it is now for the lookups that follow: the resolver forgets
+/// what it cached of directories that changed since the last time
+/// (`FileResolver::refresh_disk_dirs`: kpathsea's `//` expansions of the
+/// trees no ls-R covers). Every compile starts with it, so that a resident
+/// host searches a directory made since its start (a TEXMFHOME
+/// subdirectory, a TEXINPUTS `dir//` whose `dir` was missing) as a fresh
+/// pdfTeX would (#1493).
+pub fn refresh_disk_dirs() {
+    if RESOLVER.lock().unwrap().is_some() {
+        with_resolver(|r| r.refresh_disk_dirs());
+    }
+}
+
+/// `kpse_invocation_name`: what pdfTeX's C parts name the program in their
+/// warnings, `argv[0]` as the program was invoked (a path, if it was run by
+/// its path).
+pub fn invocation_name() -> String {
+    run().invocation_name
+}
+
+/// `kpse_var_value`: a texmf.cnf variable, the environment first. Where
+/// the resolver has no texmf.cnf (the trip tests), only the environment,
+/// as kpathsea reads it (`VAR_progname`, then `VAR`).
+pub fn texmf_var(var: &str) -> Option<String> {
+    if let Some(v) = with_resolver(|r| r.config_var(var)) {
+        return Some(v);
+    }
+    let prog = run().program_name;
+    std::env::var(format!("{var}_{prog}"))
+        .or_else(|_| std::env::var(var))
+        .ok()
+}
+
+/// texmf.cnf's yes/no settings as web2c's `texmf_yesno` reads them: true
+/// if the value starts with `1`, `y` or `t`.
+pub fn texmf_yesno(var: &str) -> bool {
+    matches!(
+        texmf_var(var).and_then(|v| v.bytes().next()),
+        Some(b'1' | b'y' | b't')
+    )
+}
+
+/// tex.ch's `setup_bound_var` (lib/setupvar.c): texmf.cnf's value for
+/// `name`, else `default`; a negative value, or 0 where the default is
+/// positive, is refused with a warning.
+pub fn setup_bound_var(name: &str, default: i32) -> i32 {
+    let Some(v) = texmf_var(name) else {
+        return default;
+    };
+    // atoi: leading blanks, a sign, digits.
+    let t = v.trim_start();
+    let (neg, t) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let mut n: i64 = digits.parse().unwrap_or(0);
+    if neg {
+        n = -n;
+    }
+    let n = n.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    if n < 0 || (n == 0 && default > 0) {
+        eprintln!(
+            "{}: Bad value ({n}) in environment or texmf.cnf for {name}, keeping {default}.",
+            invocation_name()
+        );
+        return default;
+    }
+    n
+}
+
+// ---------------------------------------------------------------------------
+// Read confinement (FLASHTEX_CONFINE_READS)
+// ---------------------------------------------------------------------------
+
+/// With `FLASHTEX_CONFINE_READS=1` in the environment (the app sets it for a
+/// host that compiles other people's text: a Live Share session, see
+/// docs/design/live-collab/PROPOSAL.md §6.2), every file the engine looks up
+/// or opens for the job is confined, at the two places all of them go
+/// through: the resolver's lookups (`resolve`, `resolve_ex`: `\input`,
+/// `\openin`, `\font` and its TFM/VF/map/encoding/font files, `\pdfmapfile`,
+/// `\pdfmapline`, images, the file primitives) and `open_input`'s own
+/// output-directory shortcut (`input_path`, `find_input`, which also serve
+/// `\pdfobj file` and the other byte reads). Two rules (`confined_found_ok`):
+///
+/// - the name asked for may not be absolute, start with `~`, contain `$`
+///   (kpathsea expands both) or have a `..` component;
+/// - what was found, followed through every symbolic link, must lie in an
+///   allowed root (the job's directory, the output directory, and the
+///   colon-separated `FLASHTEX_CONFINE_ROOTS`: the real project folder), or
+///   be a search-path hit with no link anywhere in its path (a TeX tree
+///   file). So a project file that is a link to `~/.ssh/id_rsa` is refused.
+///
+/// The format and the string pool are the host's own (its command line),
+/// not the document's, and are not confined. kpathsea's `openin_any = p`
+/// does none of this: its paranoid mode confines output names only (pdfTeX
+/// in TeX Live 2026 reads `/etc/hosts`, `~/x` and `../x` through `\openin`
+/// with it set). Without the variable nothing changes, so pdfTeX parity is
+/// untouched.
+pub fn input_name_confined_ok(name: &str) -> bool {
+    !reads_confined() || confined_name_ok(name)
+}
+
+fn reads_confined() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_CONFINE_READS").is_some_and(|v| v == "1"))
+}
+
+/// The roots a confined read may resolve into besides the job's directory
+/// and the output directory (`FLASHTEX_CONFINE_ROOTS`), with links resolved.
+fn confine_roots() -> &'static [std::path::PathBuf] {
+    static ROOTS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        std::env::var("FLASHTEX_CONFINE_ROOTS")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| std::fs::canonicalize(s).ok())
+            .collect()
+    })
+}
+
+/// Both confinement rules for a lookup of `name` that found `found` (see
+/// `input_name_confined_ok`); true when confinement is off. `searched`: the
+/// resolver found it along its search paths (only such a hit may be a TeX
+/// tree file; the output-directory shortcut never is).
+pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
+    if !reads_confined() || format == Format::Fmt {
+        return true;
+    }
+    if !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    if let Ok(cwd) = std::env::current_dir().and_then(std::fs::canonicalize) {
+        roots.push(cwd);
+    }
+    if let Some(dir) = run().output_directory {
+        if let Ok(d) = std::fs::canonicalize(&dir) {
+            roots.push(d);
+        }
+    }
+    confined_path_ok(Path::new(found), &roots, searched)
+}
+
+/// The confinement rules for a file a tool the engine runs in-process
+/// (makeindex, bibtex) is about to read: `name` as the tool has it, `path`
+/// where it resolves. An absolute name is allowed only as the answer of a
+/// search (`searched`, a style or database kpathsea found), which must then
+/// be a TeX tree file or lie in a root; `tool_dir` (the scratch directory
+/// the host copied the tool's inputs into) is a root too. True when
+/// confinement is off.
+pub(crate) fn tool_read_ok(
+    name: &str,
+    path: &Path,
+    searched: bool,
+    tool_dir: Option<&Path>,
+) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !searched && !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    if let Ok(cwd) = std::env::current_dir().and_then(std::fs::canonicalize) {
+        roots.push(cwd);
+    }
+    if let Some(dir) = run().output_directory {
+        if let Ok(d) = std::fs::canonicalize(&dir) {
+            roots.push(d);
+        }
+    }
+    if let Some(d) = tool_dir.and_then(|d| std::fs::canonicalize(d).ok()) {
+        roots.push(d);
+    }
+    confined_path_ok(path, &roots, searched)
+}
+
+/// The second rule on its own (tests call it directly).
+pub(crate) fn confined_path_ok(found: &Path, roots: &[std::path::PathBuf], searched: bool) -> bool {
+    let Ok(real) = std::fs::canonicalize(found) else {
+        return false;
+    };
+    if roots.iter().any(|r| real.starts_with(r)) {
+        return true;
+    }
+    // A search-path hit (an absolute path kpathsea built from its trees)
+    // with no link anywhere in it is a TeX tree file.
+    searched && found.is_absolute() && real == found
+}
+
+/// The rule itself (tests call it directly).
+pub(crate) fn confined_name_ok(name: &str) -> bool {
+    let name = name.trim_matches('"');
+    !(name.starts_with('/')
+        || name.starts_with('~')
+        || name.contains('$')
+        || name.split(['/', '\\']).any(|c| c == ".."))
+}
+
+/// `kpse_find_tex(name)`, for the C parts' `find_input_file`
+/// (`kpse_find_file(name, kpse_tex_format, true)`).
+pub fn find_input(name: &str) -> Option<String> {
+    if !input_name_confined_ok(name) {
+        return None;
+    }
+    // texmfmp.c's `find_input_file` looks in -output-directory first, for
+    // a name that is not absolute (so `\pdffilesize{\jobname.aux}`, which
+    // LaTeX's `\IfFileExists` asks, finds the `.aux` a previous run wrote
+    // there).
+    if let Some(dir) = run().output_directory {
+        if !name.starts_with('/') {
+            let p = format!("{dir}/{name}");
+            if Path::new(&p).is_file() && confined_found_ok(name, &p, Format::Tex, false) {
+                note_file(&p);
+                read_set_open(&p);
+                return Some(p);
+            }
+        }
+    }
+    let p = resolve_ex(name, Format::Tex, true);
+    if let Some(p) = &p {
+        read_set_open(p);
+    }
+    p
+}
+
+/// `kpse_find_file(name, format)`, for the C parts (font map files, ...).
+pub fn find_file(name: &str, format: Format) -> Option<String> {
+    let p = resolve(name, format);
+    if let Some(p) = &p {
+        read_set_open(p);
+    }
+    p
+}
+
+/// A format file: the resolver's search path first (`TEXFORMATS`, which
+/// starts with the current directory, so a format a build made for itself
+/// wins, as with pdfTeX), then `FLASHTEX_FORMATS` (a colon-separated list
+/// of directories where a caller keeps this engine's formats, standing in
+/// for `$TEXMF/web2c/flashtex`).
+///
+/// Where neither has it, the format cache (`crate::formats`, DESIGN.md
+/// 4.4) builds it from the files the resolver sees, as TeX Live's mktexfmt
+/// would build it with fmtutil, unless `FLASHTEX_FORMAT_CACHE=off`.
+fn find_format(name: &str) -> Option<String> {
+    if let Some(p) = resolve(name, Format::Fmt) {
+        return Some(p);
+    }
+    if name.contains('/') {
+        return None;
+    }
+    if let Ok(dirs) = std::env::var("FLASHTEX_FORMATS") {
+        if let Some(p) = dirs
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(|d| Path::new(d).join(name))
+            .find(|p| p.is_file())
+        {
+            return Some(p.to_string_lossy().into_owned());
+        }
+    }
+    #[cfg(feature = "distribution")]
+    if !run().ini && crate::formats::cache_enabled() {
+        let fmt = name.strip_suffix(".fmt")?;
+        let prog = run().program_name;
+        return match with_resolver(|r| crate::formats::ensure_format(fmt, &prog, r)) {
+            Ok(p) => Some(p.to_string_lossy().into_owned()),
+            Err(crate::formats::FormatError::NotInFmtutil(_)) => None,
+            Err(e) => {
+                eprintln!("{}: {e}", invocation_name());
+                None
+            }
+        };
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// The read set, for the format cache (`crate::formats`)
+// ---------------------------------------------------------------------------
+
+/// With `FLASHTEX_READ_SET=<file>`, every lookup the engine makes and every
+/// file it opens for reading are appended to that file, one per line:
+/// `lookup\t<format>\t<name>\t<path, or nothing>` and `open\t<path>`. The
+/// format cache runs its INITEX builds with it to learn exactly what a
+/// format was made from. Without the variable it costs one check per file.
+static READ_SET: Mutex<Option<Option<File>>> = Mutex::new(None);
+
+fn read_set_note(line: &str) {
+    let mut g = READ_SET.lock().unwrap();
+    let f = g.get_or_insert_with(|| {
+        std::env::var_os("FLASHTEX_READ_SET").and_then(|p| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .ok()
+        })
+    });
+    if let Some(f) = f.as_mut() {
+        let _ = f.write_all(format!("{line}\n").as_bytes());
+    }
+}
+
+fn read_set_lookup(name: &str, format: Format, must_exist: bool, found: Option<&str>) {
+    read_set_note(&format!(
+        "lookup\t{}\t{}\t{name}\t{}",
+        format.kpse_name(),
+        must_exist as u8,
+        found.unwrap_or("")
+    ));
+}
+
+fn read_set_open(path: &str) {
+    read_set_note(&format!("open\t{path}"));
+}
+
+/// C's `getc` on a binary file opened by `tex_b_openin` or `vf_b_open_in`:
+/// the next byte, or -1 at the end. As for every `ByteFile`, `f.buf` holds
+/// the byte Pascal's `f^` would show and `eof(f)` is true after the last one.
+pub fn getc(f: &mut ByteFile) -> i32 {
+    if f.at_eof {
+        return -1;
+    }
+    let c = f.buf;
+    get_byte(f);
+    c
+}
+
+/// `kpse_find_file(name, format, must_exist)` as web2c's `open_input` asks
+/// it; a file an mktex script made is recorded as an external effect.
+fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
+    // Confined: a refused name is not even looked up (no mktex script runs
+    // for it), and what is found must pass too.
+    if reads_confined() && format != Format::Fmt && !confined_name_ok(name) {
+        return None;
+    }
+    let (found, made, deps) = with_resolver(|r| {
+        let (found, made) = r.find_ex(name, format, must_exist);
+        // (a file an mktex script made is a barrier: nothing to depend on)
+        let deps = (recording_reads() && !made)
+            .then(|| r.lookup_dirs(name, format, Some(must_exist), found.as_deref()));
+        (found, made, deps)
+    });
+    let found = found
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|p| confined_found_ok(name, p, format, true));
+    read_set_lookup(name, format, must_exist, found.as_deref());
+    if made {
+        record_effect("mktex", name.as_bytes());
+    }
+    note_lookup(name, format, Some(must_exist), found.as_deref(), deps);
+    found
+}
+
+/// pdftex.web's `kpse_init_prog('PDFTEX', dpi, mode, nil)` and
+/// `kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile)`.
+pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
+    with_resolver(|r| r.init_pk("PDFTEX", dpi, mode));
+}
+
+/// writet3.c's `kpse_find_pk(name, dpi, &font_ret)` (see
+/// `FileResolver::find_pk`). The file found is recorded as read
+/// (`recorder_record_input`); a file mktexpk made is an external effect.
+pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    let g = with_resolver(|r| r.find_pk(name, dpi, true));
+    let path = g.as_ref().map(|g| g.path.to_string_lossy().into_owned());
+    read_set_lookup(
+        &format!("{name}.{dpi}pk"),
+        Format::Pk,
+        true,
+        path.as_deref(),
+    );
+    if let Some(g) = &g {
+        if g.made {
+            record_effect("mktex", format!("{name}.{dpi}pk").as_bytes());
+        }
+        let p = path.unwrap_or_default();
+        read_set_open(&p);
+        record_file("INPUT", &p);
+    }
+    g
+}
+
+/// `find_pk` without mktexpk and without recording anything: a look at
+/// what is there (the display-list writer's).
+pub fn find_pk_quietly(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    with_resolver(|r| r.find_pk(name, dpi, false))
+}
+
+thread_local! {
+    /// openclose.c's `fullnameoffile`: the path the last `open_input` (or
+    /// `open_in_or_pipe`) opened, before `./` is taken off `nameoffile`.
+    static FULL_NAME_OF_FILE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// tex.ch's `tex_input_type`: 1 while `\input` opens a file, 0 for
+/// `\openin`; `open_input` asks kpathsea with `must_exist` for the first.
+static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
+
+fn resolve(name: &str, format: Format) -> Option<String> {
+    // Confined (`input_name_confined_ok`): refused names are not looked up.
+    if reads_confined() && format != Format::Fmt && !confined_name_ok(name) {
+        return None;
+    }
+    // kpathsea's program name selects the search paths (`TEXINPUTS.pdflatex`
+    // finds latex.ltx, `TEXINPUTS.pdftex` does not); the engine name selects
+    // the format directory.
+    let found = with_resolver(|r| {
+        let found = r
+            .find(name, format)
+            .map(|p| p.to_string_lossy().into_owned());
+        if std::env::var_os("FLASHTEX_DEBUG_FILES").is_some() {
+            eprintln!(
+                "[resolve] {} {:?} {:?} -> {:?}",
+                r.describe(),
+                format,
+                name,
+                found
+            );
+        }
+        read_set_lookup(name, format, false, found.as_deref());
+        let deps = recording_reads()
+            .then(|| r.lookup_dirs(name, format, None, found.as_deref().map(Path::new)));
+        (found, deps)
+    });
+    let (found, deps) = found;
+    let found = found.filter(|p| confined_found_ok(name, p, format, true));
+    note_lookup(name, format, None, found.as_deref(), deps);
+    found
+}
+
+// ---------------------------------------------------------------------------
+// The recorder (lib/openclose.c) and the shell (texmfmp.c)
+// ---------------------------------------------------------------------------
+
+struct Recorder {
+    name: String,
+    file: File,
+}
+
+static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
+
+/// `recorder_record_input`/`recorder_record_output`: with `-recorder`, each
+/// file opened is listed in `<program><pid>.fls` (renamed to
+/// `<jobname>.fls` when the log file opens), after a `PWD` line.
+fn record_file(prefix: &str, name: &str) {
+    if prefix == "INPUT" {
+        // a file the run wrote, read back: as a cut would have left it
+        if logical_len(name).is_some() {
+            cut_to_logical(name);
+        }
+        note_file(name);
+    } else {
+        note_output(name);
+    }
+    let r = run();
+    if !r.recorder {
+        return;
+    }
+    let mut g = RECORDER.lock().unwrap();
+    if g.is_none() {
+        let mut fname = format!("{}{}.fls", r.program_name, std::process::id());
+        if let Some(d) = &r.output_directory {
+            fname = format!("{d}/{fname}");
+        }
+        let Ok(mut file) = File::create(&fname) else {
+            eprintln!("{}: fopen({fname}) failed", r.invocation_name);
+            std::process::exit(1);
+        };
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let _ = writeln!(file, "PWD {cwd}");
+        *g = Some(Recorder { name: fname, file });
+    }
+    if let Some(rec) = g.as_mut() {
+        let _ = writeln!(rec.file, "{prefix} {name}");
+        let _ = rec.file.flush();
+    }
+}
+
+/// `recorder_change_filename`.
+fn recorder_change_filename(new_name: &str) {
+    let mut g = RECORDER.lock().unwrap();
+    let Some(rec) = g.as_mut() else { return };
+    let mut new_name = new_name.to_string();
+    if let Some(d) = run().output_directory {
+        new_name = format!("{d}/{new_name}");
+    }
+    if std::fs::rename(&rec.name, &new_name).is_ok() {
+        rec.name = new_name;
+    }
+}
+
+/// texmfmp.c's `shell_cmd_is_allowed` for restricted shell escape: -1 for
+/// a quoting error, 0 if the command is not in `shell_escape_commands`, 2
+/// with the command re-quoted (every argument in `'...'`, or `"..."` on
+/// Windows, as texmfmp.c's `QUOTE` is) if it is.
+fn shell_cmd_is_allowed(cmd: &[u8], commands: &[String]) -> (i32, Vec<u8>) {
+    let is_space = |c: u8| c == b' ' || c == b'\t';
+    let start = cmd.iter().position(|&c| !is_space(c)).unwrap_or(cmd.len());
+    let end = cmd[start..]
+        .iter()
+        .position(|&c| is_space(c))
+        .map_or(cmd.len(), |n| start + n);
+    let cmdname = &cmd[start..end];
+    if !commands.iter().any(|c| c.as_bytes() == cmdname) {
+        return (0, vec![]);
+    }
+    const QUOTE: u8 = crate::os::SHELL_QUOTE;
+    let mut d: Vec<u8> = cmdname.to_vec();
+    let mut s = end;
+    let mut pre = true;
+    while s < cmd.len() {
+        let c = cmd[s];
+        if c == b'\'' {
+            return (-1, vec![]);
+        }
+        if c == b'"' {
+            // `--format="a b"` becomes `'--format=''a b'` on Unix and
+            // `"--format"="a b"` on WIN32.
+            if !pre {
+                if cfg!(windows) && cmd[s - 1] == b'=' {
+                    *d.last_mut().unwrap() = QUOTE;
+                    d.push(b'=');
+                } else {
+                    d.push(QUOTE);
+                }
+            }
+            pre = false;
+            d.push(QUOTE);
+            s += 1;
+            while s < cmd.len() && cmd[s] != b'"' {
+                if cmd[s] == b'\'' {
+                    return (-1, vec![]);
+                }
+                d.push(cmd[s]);
+                s += 1;
+            }
+            if s >= cmd.len() {
+                return (-1, vec![]);
+            }
+            s += 1;
+            if s < cmd.len() && !is_space(cmd[s]) {
+                return (-1, vec![]);
+            }
+        } else if pre && !is_space(c) {
+            pre = false;
+            d.push(QUOTE);
+            d.push(c);
+            s += 1;
+        } else if !pre && is_space(c) {
+            pre = true;
+            d.push(QUOTE);
+            d.push(c);
+            s += 1;
+        } else {
+            d.push(c);
+            s += 1;
+        }
+    }
+    if !pre {
+        d.push(QUOTE);
+    }
+    (2, d)
+}
+
+fn shell_command(cmd: &[u8]) -> std::process::Command {
+    crate::os::shell_command(cmd)
+}
+
+/// A command the run executed: `\write18` (`runsystem`), the command
+/// behind `\input|cmd` or an `\openout` to `|cmd` (`runpopen`), or the
+/// editor (`calledit`). Each is an
+/// effect outside the engine's state, which an incremental rerun cannot
+/// replay from a snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalEffect {
+    /// `write18`, `pipe-in`, `pipe-out`, `edit` (the editor command of `E`
+    /// at an error prompt), or `mktex` (a file an mktex script such as
+    /// `mktextfm` made; `command` is then the file's name).
+    pub kind: &'static str,
+    /// The command as executed (after restricted-mode quoting).
+    pub command: Vec<u8>,
+}
+
+static EXTERNAL_EFFECTS: Mutex<Vec<ExternalEffect>> = Mutex::new(Vec::new());
+
+/// Every command this run has executed, in order.
+pub fn external_effects() -> Vec<ExternalEffect> {
+    EXTERNAL_EFFECTS.lock().unwrap().clone()
+}
+
+/// Record an executed command; with `FLASHTEX_EXTERNAL_EFFECTS=<file>` also
+/// append it there as one line, `<kind> <command>`, for a caller outside
+/// the process.
+/// A read of something no re-run reproduces (`\pdfelapsedtime`): an
+/// external effect, which the incremental engine treats as a barrier
+/// (DESIGN.md §5.3).
+pub fn note_nondeterministic(kind: &'static str) {
+    record_effect(kind, b"");
+}
+
+fn record_effect(kind: &'static str, command: &[u8]) {
+    note_barrier(kind);
+    EXTERNAL_EFFECTS.lock().unwrap().push(ExternalEffect {
+        kind,
+        command: command.to_vec(),
+    });
+    if let Some(p) = std::env::var_os("FLASHTEX_EXTERNAL_EFFECTS") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+        {
+            let mut line = kind.as_bytes().to_vec();
+            line.push(b' ');
+            line.extend_from_slice(command);
+            line.push(b'\n');
+            let _ = f.write_all(&line);
+        }
+    }
+}
+
+/// texmfmp.c's `runsystem`, for `\write18`: 0 if not allowed, 1 if run
+/// (any command allowed), 2 if run as an allowed restricted command, -1
+/// for a quoting error. The command's exit status is only reported.
+pub fn runsystem(cmd: &[u8]) -> i32 {
+    let r = run();
+    if !r.shell_enabled {
+        return 0;
+    }
+    let (allow, safecmd) = if r.restricted_shell {
+        shell_cmd_is_allowed(cmd, &r.shell_commands)
+    } else {
+        (1, cmd.to_vec())
+    };
+    if allow == 2 && safecmd.contains(&b'|') {
+        return 0;
+    }
+    if allow == 1 || allow == 2 {
+        let _ = std::io::stdout().flush();
+        record_effect("write18", &safecmd);
+        let status = match in_process_tool(&safecmd, allow == 2) {
+            Some(status) => status,
+            None => shell_command(&safecmd)
+                .status()
+                .map(|s| s.code().unwrap_or(-1))
+                .unwrap_or(127),
+        };
+        if status != 0 {
+            // system(3)'s status is the wait status: the code times 256.
+            eprintln!("system returned with code {}", status * 256);
+        }
+    }
+    allow
+}
+
+/// A `\write18` command the engine runs itself instead of through the
+/// shell: makeindex (`crate::makeindex`, unless
+/// `FLASHTEX_MAKEINDEX=external`) and bibtex (`crate::bibtex`, unless
+/// `FLASHTEX_BIBTEX=external`). Its exit status, as the shell's would be;
+/// `None` to use the shell.
+#[allow(unused_variables)]
+fn in_process_tool(cmd: &[u8], restricted: bool) -> Option<i32> {
+    #[cfg(feature = "makeindex")]
+    if crate::makeindex::in_process() {
+        if let Some(args) = crate::makeindex::command_args(cmd, restricted) {
+            return Some(crate::makeindex::run_in_process(&args));
+        }
+    }
+    #[cfg(feature = "bibtex")]
+    if crate::bibtex::in_process() {
+        if let Some(args) = crate::bibtex::command_args(cmd, restricted) {
+            return Some(crate::bibtex::run_in_process(&args));
+        }
+    }
+    None
+}
+
+/// The command `runpopen` works on. On WIN32, texmfmp.c's `runpopen` first
+/// turns every `'` of the command into `"`, in place, before the restricted
+/// check or `popen` sees it (TeX Live 2026, `texk/web2c/lib/texmfmp.c`
+/// lines 678-684 at commit 6a300188053b8f2ded89dbd52293732a706b9c0e):
+///
+/// ```c
+/// #ifdef WIN32
+///   char *pp;
+///
+///   for (pp = cmd; *pp; pp++) {
+///     if (*pp == '\'') *pp = '"';
+///   }
+/// #endif
+/// ```
+///
+/// So on Windows `\input|"kpsewhich 'a b'"` runs where elsewhere the `'`
+/// is a quotation error. Elsewhere the command is unchanged.
+fn popen_command(cmd: &str, win32: bool) -> std::borrow::Cow<'_, str> {
+    if win32 && cmd.contains('\'') {
+        cmd.replace('\'', "\"").into()
+    } else {
+        cmd.into()
+    }
+}
+
+/// texmfmp.c's `runpopen`: the command behind `\input|cmd` (reading) or
+/// `\openout` to `|cmd` (writing), subject to the same restrictions as
+/// `\write18`.
+fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
+    // Every message below shows the command as rewritten, as texmfmp.c's do.
+    let cmd = &*popen_command(cmd, crate::os::POPEN_QUOTES_TO_DOUBLE);
+    let r = run();
+    let (allow, safecmd) = if r.restricted_shell {
+        shell_cmd_is_allowed(cmd.as_bytes(), &r.shell_commands)
+    } else {
+        (1, cmd.as_bytes().to_vec())
+    };
+    match allow {
+        1 | 2 => {
+            record_effect(if read { "pipe-in" } else { "pipe-out" }, &safecmd);
+            let mut c = shell_command(&safecmd);
+            if read {
+                c.stdout(std::process::Stdio::piped());
+            } else {
+                c.stdin(std::process::Stdio::piped());
+            }
+            c.spawn().ok()
+        }
+        -1 => {
+            eprintln!("\nrunpopen quotation error in command line: {cmd}");
+            None
+        }
+        _ => {
+            let name = cmd.split([' ', '\t']).find(|w| !w.is_empty()).unwrap_or("");
+            eprintln!("\nrunpopen command not allowed: {name}");
+            None
+        }
+    }
+}
+
+impl Globals {
+    /// `name_of_file`, trimmed. `name_length` is authoritative when set, but
+    /// §51 opens the pool file without setting it.
+    /// Its bytes are the file system's (UTF-8 names come out as they went
+    /// in); a name that is not UTF-8 is read with replacement characters.
+    fn raw_file_name(&self) -> String {
+        let raw: &[u8] = if self.name_length > 0 {
+            &self.name_of_file[..self.name_length as usize]
+        } else {
+            &self.name_of_file[..]
+        };
+        String::from_utf8_lossy(raw).trim().to_string()
+    }
+
+    /// Split off a `tex.web` device name (§§514, 520: `TeXinputs:`,
+    /// `TeXfonts:`, `TeXformats:`); never a drive letter or a URL.
+    fn split_area(s: &str) -> (&str, &str) {
+        match s.find(':') {
+            Some(i) if i > 1 && s[..i].chars().all(|c| c.is_ascii_alphabetic()) => {
+                (&s[..i], &s[i + 1..])
+            }
+            _ => ("", s),
+        }
+    }
+
+    /// Where to open an input file (lib/openclose.c's `open_input`): a
+    /// relative name in `-output-directory` first, as it is, else looked up
+    /// by the resolver in the format its device name implies. As web2c
+    /// does, the path found is written back into `name_of_file`, so
+    /// `a_make_name_string` -- and therefore the `(` line in the log --
+    /// shows `./story.tex` exactly as pdfTeX's does.
+    fn input_path(&mut self, default: Format, must_exist: bool) -> Option<String> {
+        crate::os::io_time(crate::os::io::LOOKUP, || {
+            self.input_path_timed(default, must_exist)
+        })
+    }
+
+    fn input_path_timed(&mut self, default: Format, must_exist: bool) -> Option<String> {
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = None);
+        // (only a `stat` made by this lookup may stand for the file when
+        // it is opened next: `open_bytes`)
+        LAST_STAT.with(|l| *l.borrow_mut() = None);
+        let s = self.raw_file_name();
+        // tex.web's device names (§§514, 520: `TeXinputs:`, `TeXfonts:`,
+        // `TeXformats:`). Pure tex.web (`tex82`: Knuth's trip test) parses
+        // `:` as an area delimiter and itself prepends `TEX_area` and
+        // `TEX_font_area` (§§537, 563), so there a device name means its
+        // device, as tripman.tex expects. Under web2c's change files (the
+        // product, etrip) an area ends only at `/` and a device name
+        // survives only as the spelling of web2c's own defaults: the format
+        // `w_open_in` opens (`TEX_format_default`, §524) and INITEX's string
+        // pool (§51, before `ready_already`). Any other name is the
+        // document's and is literal, as in web2c: pdfTeX answers
+        // `\input TeXformats:/etc/hosts` with "I can't find file
+        // `TeXformats:/etc/hosts'", and the name must never select the
+        // format search (whose files are not confined).
+        let tex82 = cfg!(feature = "tex82");
+        let (area, base) = if tex82 || default == Format::Fmt {
+            Self::split_area(&s)
+        } else {
+            ("", s.as_str())
+        };
+        if (tex82 || self.ready_already != 314159)
+            && Self::split_area(&s).1.eq_ignore_ascii_case("TEX.POOL")
+        {
+            let p = pool_path();
+            read_set_open(&p);
+            return Some(p);
+        }
+        let format = match area {
+            "TeXfonts" if tex82 => Format::Tfm,
+            "TeXformats" if tex82 => Format::Fmt,
+            "TeXinputs" if tex82 => Format::Tex,
+            "" | "TeXformats" => default,
+            _ => return None, // web2c: no other device holds a format
+        };
+        let mut found = None;
+        if let Some(dir) = run().output_directory {
+            if !base.starts_with('/') {
+                let p = format!("{dir}/{base}");
+                if Path::new(&p).is_file() && confined_found_ok(base, &p, format, false) {
+                    found = Some(p);
+                }
+            }
+        }
+        let (found, searched) = match found {
+            Some(p) => (p, false),
+            None if format == Format::Fmt => (find_format(base)?, true),
+            None => (resolve_ex(base, format, must_exist)?, true),
+        };
+        // openclose.c: `fullnameoffile` is the path found; `nameoffile`
+        // loses the `./` kpathsea puts in front of a file in the current
+        // directory, unless the name asked for had it too.
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = Some(found.clone()));
+        let shown = match found.strip_prefix("./") {
+            Some(rest) if searched && !rest.is_empty() && !s.starts_with("./") => rest,
+            _ => found.as_str(),
+        };
+        self.set_name_of_file(shown);
+        record_file("INPUT", &found);
+        read_set_open(&found);
+        Some(found)
+    }
+
+    /// lib/openclose.c's `open_input(&f, format, FOPEN_RBIN_MODE)` for
+    /// the C parts (writet3.c's `.pgc` files, writettf.c's font files): the
+    /// path of the file named in `name_of_file`, or None. The path is
+    /// `nameoffile + 1` after the call: without the `./` kpathsea puts in
+    /// front of a file in the current directory, unless the name asked
+    /// for had it too (openclose.c: "it looks dumb").
+    pub fn open_input_path(&mut self, format: Format) -> Option<String> {
+        let asked = self.raw_file_name();
+        let found = self.input_path(format, true)?;
+        Some(match found.strip_prefix("./") {
+            Some(rest) if !rest.is_empty() && !asked.starts_with("./") => rest.to_string(),
+            _ => found,
+        })
+    }
+
+    /// `open_input` of file `name` (a C string the C parts put in
+    /// `name_of_file` with `set_cur_file_name`'s `packfilename`).
+    pub fn open_input_named(&mut self, name: &[u8], format: Format) -> Option<String> {
+        let n = name.len().min(self.name_of_file.len());
+        self.name_of_file.fill(b' ');
+        self.name_of_file[..n].copy_from_slice(&name[..n]);
+        self.name_length = n as i32;
+        self.open_input_path(format)
+    }
+
+    /// Replace `name_of_file` by `name`, as web2c does after opening a file.
+    fn set_name_of_file(&mut self, name: &str) {
+        let n = name.len();
+        if n <= self.name_of_file.len() {
+            self.name_of_file.fill(b' ');
+            self.name_of_file[..n].copy_from_slice(name.as_bytes());
+            self.name_length = n as i32;
+        }
+    }
+
+    /// lib/openclose.c's `open_output`: a relative name goes into
+    /// `-output-directory`; if it cannot be created there, into texmf.cnf's
+    /// `TEXMFOUTPUT`. The name opened is written back into `name_of_file`.
+    fn open_output_file(&mut self) -> Option<(File, String)> {
+        // Under web2c a document's name is literal (`\openout1=TeXinputs:x`
+        // writes a file of that name, as pdfTeX does); pure tex.web
+        // (`tex82`, trip) parses the device off, as `input_path` does.
+        let s = self.raw_file_name();
+        let name = if cfg!(feature = "tex82") {
+            Self::split_area(&s).1.to_string()
+        } else {
+            s.clone()
+        };
+        let absolute = name.starts_with('/');
+        let mut fname = name.clone();
+        if let Some(dir) = run().output_directory {
+            if !absolute {
+                fname = format!("{dir}/{name}");
+            }
+        }
+        file_trace(|| format!("openout {fname} disk {:?}", disk_len(&fname)));
+        before_truncate(&fname);
+        let mut f = File::create(&fname).ok();
+        if f.is_none() && !absolute {
+            if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
+                fname = format!("{out}/{name}");
+                before_truncate(&fname);
+                f = File::create(&fname).ok();
+            }
+        }
+        if f.is_some() {
+            OPENS.with(|o| o.borrow_mut().push(out_key(&fname)));
+            opens_changed();
+            stamp_output(&fname);
+            if fname != s {
+                self.set_name_of_file(&fname);
+            }
+            record_file("OUTPUT", &fname);
+        }
+        f.map(|f| (f, fname))
+    }
+
+    /// A pipe instead of a file (texmfmp.c's `open_in_or_pipe`): with shell
+    /// escape enabled, a name `|command` reads the command's output.
+    fn open_in_pipe(&mut self, f: &mut AlphaFile) -> Option<bool> {
+        let s = self.raw_file_name();
+        let cmd = s.strip_prefix('|')?;
+        if !run().shell_enabled {
+            return None;
+        }
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = Some(s.clone()));
+        record_file("INPUT", cmd);
+        let child = run_popen(cmd, true)?;
+        f.input = Some(TextIn::Pipe(BufReader::new(child.stdout?)));
+        f.have_line = f.next_line();
+        f.refresh();
+        f.err = 0;
+        Some(true)
+    }
+
+    pub fn a_open_in(&mut self, f: &mut AlphaFile) -> bool {
+        crate::os::io_time(crate::os::io::TEXT, || self.a_open_in_timed(f))
+    }
+
+    fn a_open_in_timed(&mut self, f: &mut AlphaFile) -> bool {
+        *f = AlphaFile::default();
+        f.err = 1;
+        if let Some(ok) = self.open_in_pipe(f) {
+            return ok;
+        }
+        // open_input: must_exist unless this is \openin.
+        let must_exist = TEX_INPUT_TYPE.load(Ordering::SeqCst);
+        let Some(name) = self.input_path(Format::Tex, must_exist) else {
+            return false;
+        };
+        match File::open(&name) {
+            Ok(h) => {
+                #[cfg(not(feature = "tex82"))]
+                if self.arena.extra.is_some() && name.ends_with(".aux") {
+                    self.note_aux_open(&name);
+                }
+                f.input = Some(TextIn::File(BufReader::new(h)));
+                f.path = Some(name);
+                f.have_line = f.next_line();
+                f.refresh();
+                f.err = 0;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn a_open_out(&mut self, f: &mut AlphaFile) -> bool {
+        *f = AlphaFile::default();
+        f.err = 1;
+        // texmfmp.c's `open_out_or_pipe`: `|command` writes to the command;
+        // a `.tex` TeX added is dropped when the command is one word.
+        let s = self.raw_file_name();
+        if let Some(full) = s.strip_prefix('|').filter(|_| run().shell_enabled) {
+            let cmd = if !full.contains(' ') && !full.contains('>') {
+                full.strip_suffix(".tex").unwrap_or(full)
+            } else {
+                full
+            };
+            let child = run_popen(cmd, false);
+            // texmfmp.c records `fname + 1` after `runpopen`: the whole
+            // name, its `.tex` put back (`OUTPUT cat.tex` for `|cat`, as
+            // pdfTeX's .fls shows), with `runpopen`'s WIN32 rewrite of `'`.
+            record_file(
+                "OUTPUT",
+                &popen_command(full, crate::os::POPEN_QUOTES_TO_DOUBLE),
+            );
+            let Some(mut child) = child else {
+                return false;
+            };
+            let Some(stdin) = child.stdin.take() else {
+                return false;
+            };
+            let m = crate::os::pipe_metadata(&stdin);
+            f.output = Some(BufWriter::with_capacity(
+                crate::os::stdio_buffer_size(m.as_ref()),
+                Box::new(stdin),
+            ));
+            f.child = Some(child);
+            f.err = 0;
+            return true;
+        }
+        match self.open_output_file() {
+            Some((h, name)) => {
+                f.output = Some(Tracked::new(h, &name).stdio_text());
+                f.path = Some(name);
+                f.err = 0;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn b_open_in(&mut self, f: &mut ByteFile) -> bool {
+        crate::os::io_time(crate::os::io::TFM, || self.b_open_in_timed(f))
+    }
+
+    fn b_open_in_timed(&mut self, f: &mut ByteFile) -> bool {
+        *f = ByteFile::default();
+        f.err = 1;
+        let Some(name) = self.input_path(Format::Tfm, true) else {
+            return false;
+        };
+        match open_bytes(&name) {
+            Ok(h) => {
+                f.input = Some(BufReader::new(h));
+                f.path = Some(name);
+                f.err = 0;
+                // Pascal's `reset` leaves `f^` holding the first component:
+                // `read_sixteen` (§565) reads `fbyte` before its first `fget`.
+                get_byte(f);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Is this INITEX? (changes/virtex.ch)
+    pub fn ini_version(&mut self) -> bool {
+        run().ini
+    }
+
+    /// Was `-etex` given? (changes/virtex.ch)
+    pub fn etex_p(&mut self) -> bool {
+        run().etex
+    }
+
+    /// The default format's name, on the terminal (tex.ch's banner).
+    pub fn wterm_dump_name(&mut self) {
+        wr_str(&mut self.term_out, &run().dump_name);
+    }
+
+    /// The default format's file name into `name_of_file` (tex.ch's
+    /// `TEX_format_default`).
+    pub fn pack_default_format_name(&mut self) {
+        let name = default_format_file();
+        let n = name.len().min(self.name_of_file.len());
+        self.name_of_file.fill(b' ');
+        self.name_of_file[..n].copy_from_slice(&name.as_bytes()[..n]);
+        self.name_length = n as i32;
+    }
+
+    /// `fputs(name_of_file + 1, stdout)` (tex.ch [29.524]).
+    pub fn wterm_name_of_file(&mut self) {
+        let n = self.raw_file_name();
+        wr_str(&mut self.term_out, &n);
+    }
+
+    /// `fputs(TEX_format_default + 1, stdout)` (tex.ch [29.524]).
+    pub fn wterm_format_default(&mut self) {
+        wr_str(&mut self.term_out, &default_format_file());
+    }
+
+    /// tex.ch's `texmf_yesno('log_openout')`: is each `\openout` logged?
+    pub fn texmf_yesno_log_openout(&mut self) -> bool {
+        texmf_yesno("log_openout")
+    }
+
+    /// tex.ch [29.530]'s `print_c_string(prompt_file_name_help_msg)`:
+    /// cpascal.h's C string, printed with `print_char` so that it reaches
+    /// the log too, and not in the string pool.
+    pub fn print_prompt_file_name_help_msg(&mut self) {
+        let msg: &[u8] = if cfg!(windows) {
+            b"(Press Enter to retry, or Control-Z to exit"
+        } else {
+            b"(Press Enter to retry, or Control-D to exit"
+        };
+        for &c in msg {
+            self.print_char(c as _);
+        }
+    }
+
+    /// `open_input(&f, kpse_tex_format, FOPEN_RBIN_MODE)` (pdftex.h's
+    /// `texbopenin`): a TeX input file read as bytes (`\pdfobj file`).
+    pub fn tex_b_openin(&mut self, f: &mut ByteFile) -> bool {
+        self.byte_open_in(f, Format::Tex)
+    }
+
+    /// `open_input(&f, kpse_vf_format, FOPEN_RBIN_MODE)` (pdftex.h's
+    /// `vfbopenin`).
+    pub fn vf_b_open_in(&mut self, f: &mut ByteFile) -> bool {
+        self.byte_open_in(f, Format::Vf)
+    }
+
+    fn byte_open_in(&mut self, f: &mut ByteFile, format: Format) -> bool {
+        *f = ByteFile::default();
+        f.err = 1;
+        // open_input: must_exist except for VF files and \openin.
+        let must_exist = format != Format::Vf
+            && (format != Format::Tex || TEX_INPUT_TYPE.load(Ordering::SeqCst));
+        let Some(name) = self.input_path(format, must_exist) else {
+            return false;
+        };
+        match File::open(&name) {
+            Ok(h) => {
+                f.input = Some(BufReader::new(InFile::Disk(h)));
+                f.path = Some(name);
+                f.err = 0;
+                get_byte(f);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn b_open_out(&mut self, f: &mut ByteFile) -> bool {
+        *f = ByteFile::default();
+        match self.open_output_file() {
+            Some((h, name)) => {
+                f.output = Some(Tracked::new(h, &name).stdio());
+                f.path = Some(name);
+                f.err = 0;
+                true
+            }
+            None => {
+                f.err = 1;
+                false
+            }
+        }
+    }
+
+    pub fn w_open_in(&mut self, f: &mut WordFile) -> bool {
+        *f = WordFile::default();
+        f.err = 1;
+        let Some(name) = self.input_path(Format::Fmt, true) else {
+            return false;
+        };
+        match File::open(&name) {
+            Ok(h) => {
+                f.input = Some(BufReader::new(h));
+                f.path = Some(name);
+                f.err = 0;
+                // As for `b_open_in`: §1307 reads `fmt_file^.int` before the
+                // first `undump_wd`, which itself starts with a `get`.
+                get_word(f);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn w_open_out(&mut self, f: &mut WordFile) -> bool {
+        *f = WordFile::default();
+        match self.open_output_file() {
+            Some((h, name)) => {
+                f.output = Some(BufWriter::new(h));
+                f.path = Some(name);
+                f.err = 0;
+                true
+            }
+            None => {
+                f.err = 1;
+                false
+            }
+        }
+    }
+
+    pub fn a_close(&mut self, f: &mut AlphaFile) {
+        if let Some(TextIn::File(r)) = f.input.as_mut() {
+            if let Ok((p, off)) = in_offset(r, &f.path) {
+                note_close(&p, off);
+            }
+        }
+        #[cfg(not(feature = "tex82"))]
+        if self.arena.extra.is_some() {
+            if let Some(p) = f.path.clone() {
+                if p.ends_with(".aux") {
+                    self.note_aux_close(&p);
+                }
+            }
+            self.note_input_close();
+        }
+        f.close();
+    }
+    pub fn b_close(&mut self, f: &mut ByteFile) {
+        f.close();
+    }
+    pub fn w_close(&mut self, f: &mut WordFile) {
+        f.close();
+    }
+
+    pub fn a_make_name_string(&mut self, _f: &mut AlphaFile) -> i32 {
+        self.make_name_string()
+    }
+    pub fn b_make_name_string(&mut self, _f: &mut ByteFile) -> i32 {
+        self.make_name_string()
+    }
+    pub fn w_make_name_string(&mut self, _f: &mut WordFile) -> i32 {
+        self.make_name_string()
+    }
+
+    /// `tex.web` §31, with the system-dependent lookahead done by `AlphaFile`.
+    pub fn input_ln(&mut self, f: &mut AlphaFile, bypass_eoln: bool) -> bool {
+        #[cfg(not(feature = "tex82"))]
+        if self.arena.extra.is_some() {
+            self.maybe_request_timed_checkpoint();
+        }
+        if bypass_eoln && !eof(f) {
+            get_char(f);
+        }
+        self.last = self.first;
+        if eof(f) {
+            return false;
+        }
+        let mut last_nonblank = self.first;
+        while !eoln(f) {
+            // texmfmp.c's `input_line` reads while `last < bufsize`; a line
+            // that reaches `buffer[bufsize-1]` stops it before it sees the
+            // line's end, and it gives up: two lines on stderr and
+            // `uexit(1)`, without TeX's error machinery.
+            #[cfg(not(feature = "tex82"))]
+            if self.last >= crate::generated::consts::buf_size - 1 {
+                let text = format!(
+                    "Unable to read an entire line---bufsize={}.",
+                    crate::generated::consts::buf_size
+                );
+                let help = "Please increase buf_size in texmf.cnf.";
+                eprintln!("! {text}");
+                eprintln!("{help}");
+                // A resident host's compile reports it too (diag-v1).
+                self.dg_input_line_overflow(text.as_bytes(), help.as_bytes());
+                exit_process(self, 1);
+            }
+            if self.last >= self.max_buf_stack {
+                self.max_buf_stack = self.last + 1;
+                #[cfg(feature = "tex82")]
+                if self.max_buf_stack == crate::generated::consts::buf_size {
+                    self.buffer_overflow();
+                }
+            }
+            let c = f.buf;
+            self.buffer[self.last as usize] = self.xord[c as usize];
+            get_char(f);
+            self.last += 1;
+            if self.buffer[(self.last - 1) as usize] != b' ' as i32 {
+                last_nonblank = self.last;
+            }
+        }
+        self.last = last_nonblank;
+        true
+    }
+
+    /// The number of the pool string TANGLE wrote for `text` (the system
+    /// layer is not tangled, so it cannot write `"buffer size"` itself).
+    #[cfg(feature = "tex82")]
+    fn pool_string_number(&self, text: &[u8]) -> i32 {
+        for s in 256..self.str_ptr {
+            let (a, b) = (
+                self.str_start[s as usize] as usize,
+                self.str_start[s as usize + 1] as usize,
+            );
+            if self.str_pool[a..b]
+                .iter()
+                .map(|&c| c as u8)
+                .eq(text.iter().copied())
+            {
+                return s;
+            }
+        }
+        0
+    }
+
+    /// `tex.web` §35, "Report overflow of the input buffer, and abort".
+    #[cfg(feature = "tex82")]
+    fn buffer_overflow(&mut self) {
+        if self.format_ident == 0 {
+            eprintln!("Buffer size exceeded!");
+            final_end(self);
+        } else {
+            self.cur_input.loc_field = self.first;
+            self.cur_input.limit_field = self.last - 1;
+            // `overflow("buffer size", buf_size)`.
+            let s = self.pool_string_number(b"buffer size");
+            self.overflow(s, crate::generated::consts::buf_size);
+        }
+    }
+
+    /// `tex.web` §37 (`function init_terminal:boolean`). The command line, if
+    /// any, stands in for the first `**` line, which is how INITEX is driven in
+    /// practice.
+    pub fn init_terminal(&mut self) -> bool {
+        let mut term = ::core::mem::take(&mut self.term_in);
+        let r = self.init_terminal_inner(&mut term);
+        self.term_in = term;
+        r
+    }
+
+    fn init_terminal_inner(&mut self, f: &mut AlphaFile) -> bool {
+        *f = AlphaFile::default();
+        f.input = Some(match take_command_line() {
+            Some(lines) if !lines.is_empty() => TextIn::Pre(lines, 0),
+            _ => TextIn::Stdin,
+        });
+        f.have_line = f.next_line();
+        f.refresh();
+        loop {
+            if !matches!(f.input, Some(TextIn::Pre(..))) {
+                print!("**");
+                let _ = std::io::stdout().flush();
+            }
+            // `input_ln(term_in, true)` would skip the line we just loaded.
+            self.last = self.first;
+            if eof(f) {
+                println!("\n! End of file on the terminal... why?");
+                return false;
+            }
+            let mut last_nonblank = self.first;
+            while !eoln(f) {
+                let c = f.buf;
+                self.buffer[self.last as usize] = self.xord[c as usize];
+                get_char(f);
+                self.last += 1;
+                if self.buffer[(self.last - 1) as usize] != b' ' as i32 {
+                    last_nonblank = self.last;
+                }
+            }
+            self.last = last_nonblank;
+            self.cur_input.loc_field = self.first;
+            while self.cur_input.loc_field < self.last
+                && self.buffer[self.cur_input.loc_field as usize] == b' ' as i32
+            {
+                self.cur_input.loc_field += 1;
+            }
+            if self.cur_input.loc_field < self.last {
+                return true;
+            }
+            println!("Please type the name of your input file.");
+            read_ln(f);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The routines changes/web2c-run.ch declares
+// ---------------------------------------------------------------------------
+
+/// texmfmp.c's `find_suffix`: the extension of the last path component.
+fn has_suffix(name: &str) -> bool {
+    let base = name.rsplit('/').next().unwrap_or(name);
+    base.contains('.')
+}
+
+/// texmfmp.c's `tcx_get_num`: `strtol(start, post, 0)`, i.e. leading
+/// blanks, a sign, then hexadecimal after `0x`, octal after `0`, else
+/// decimal; -1 (with a warning unless the rest is blank) when there is no
+/// number or it is out of `0..=upb`.
+fn tcx_get_num(upb: i64, line_no: usize, s: &[u8], file: &str) -> (i64, usize) {
+    let mut i = 0;
+    while i < s.len() && s[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let mut neg = false;
+    if i < s.len() && (s[i] == b'+' || s[i] == b'-') {
+        neg = s[i] == b'-';
+        i += 1;
+    }
+    let (radix, mut j) = if s.len() > i + 1
+        && s[i] == b'0'
+        && (s[i + 1] == b'x' || s[i + 1] == b'X')
+        && s.get(i + 2).is_some_and(|c| c.is_ascii_hexdigit())
+    {
+        (16, i + 2)
+    } else if s.get(i) == Some(&b'0') {
+        (8, i)
+    } else {
+        (10, i)
+    };
+    let digits_start = j;
+    let mut v: i64 = 0;
+    while j < s.len() && (s[j] as char).is_digit(radix) {
+        v = v
+            .saturating_mul(radix as i64)
+            .saturating_add((s[j] as char).to_digit(radix).unwrap() as i64);
+        j += 1;
+    }
+    if j == digits_start {
+        // Could not get a number. If blank line, fine. Else complain.
+        let rest = s;
+        if rest.iter().any(|c| !c.is_ascii_whitespace()) {
+            eprintln!(
+                "{file}:{line_no}: Expected numeric constant, not `{}'.",
+                String::from_utf8_lossy(rest)
+            );
+        }
+        return (-1, 0);
+    }
+    if neg {
+        v = -v;
+    }
+    if v < 0 || v > upb {
+        eprintln!("{file}:{line_no}: Destination charcode {v} <0 or >{upb}.");
+        return (-1, j);
+    }
+    (v, j)
+}
+
+#[cfg(not(feature = "tex82"))]
+impl Globals {
+    /// tex.ch's `setup_bound_var` calls for the values that are variables
+    /// here (their defaults are tex.ch's).
+    pub fn setup_bound_vars(&mut self) {
+        self.error_line = setup_bound_var("error_line", 79);
+        self.half_error_line = setup_bound_var("half_error_line", 50);
+        self.max_print_line = setup_bound_var("max_print_line", 79);
+        self.expand_depth = setup_bound_var("expand_depth", 10000);
+    }
+    pub fn web2c_interaction_option(&mut self) -> i32 {
+        run().interaction_option
+    }
+    pub fn web2c_file_line_error_style_p(&mut self) -> bool {
+        run().file_line_error
+    }
+    pub fn web2c_halt_on_error_p(&mut self) -> bool {
+        run().halt_on_error
+    }
+    pub fn web2c_parse_first_line_p(&mut self) -> bool {
+        run().parse_first_line
+    }
+    pub fn web2c_dump_line(&mut self) -> bool {
+        run().dump_line
+    }
+    pub fn web2c_eight_bit_p(&mut self) -> bool {
+        run().eight_bit
+    }
+    pub fn web2c_translate_filename_p(&mut self) -> bool {
+        run().translate_filename.is_some()
+    }
+    pub fn web2c_shellenabledp(&mut self) -> bool {
+        run().shell_enabled
+    }
+    pub fn web2c_restrictedshell(&mut self) -> bool {
+        run().restricted_shell
+    }
+    /// The length of texmfmp.c's `outputcomment` (`-output-comment`, else
+    /// texmf.cnf's `output_comment`), which tex.ch [32.617] writes as the
+    /// DVI comment; -1 if there is none.
+    pub fn web2c_output_comment_length(&mut self) -> i32 {
+        with_run(|r| r.output_comment.as_ref().map_or(-1, |c| c.len() as i32))
+    }
+    /// Its byte `i`, counting from 0.
+    pub fn web2c_output_comment_char(&mut self, i: i32) -> i32 {
+        with_run(|r| {
+            r.output_comment
+                .as_ref()
+                .map_or(0, |c| c[i as usize] as i32)
+        })
+    }
+    /// tex.ch [49.1265]'s `kpse_make_tex_discard_errors := ...`, which the
+    /// engine also keeps in its own global of that name, so that a
+    /// checkpoint carries it (`fill_scalars` sets it again).
+    pub fn kpse_set_make_tex_discard_errors(&mut self, discard: bool) {
+        set_mktex_discard(discard);
+    }
+    /// texmfmp.c's `pdfoutputoption`/`pdfoutputvalue` (`-output-format`)
+    /// and `pdfdraftmodeoption`/`pdfdraftmodevalue` (`-draftmode`).
+    pub fn web2c_pdf_options(
+        &mut self,
+        o_opt: &mut i32,
+        o_val: &mut i32,
+        d_opt: &mut i32,
+        d_val: &mut i32,
+    ) {
+        let r = run();
+        (*o_opt, *o_val) = match r.output_format {
+            Some(v) => (1, v),
+            None => (0, 0),
+        };
+        (*d_opt, *d_val) = if r.draftmode { (1, 1) } else { (0, 0) };
+    }
+
+    /// web2c's `versionstring` after the banner, on the terminal.
+    pub fn wterm_version_string(&mut self) {
+        wr_str(&mut self.term_out, WEB2C_VERSION);
+    }
+
+    /// The same in the log.
+    pub fn wlog_version_string(&mut self) {
+        wr_str(&mut self.log_file, WEB2C_VERSION);
+    }
+
+    /// utils.c's `makepdftexbanner`: `pdftex_banner` becomes the string
+    /// `BANNER versionstring kpathsea_version_string`, once per run. (C's
+    /// `static boolean pdftexbanner_init` lives as long as the process,
+    /// which is one run; a resident host makes many runs in one process, so
+    /// the flag is the engine's own `pdftex_banner`, nonzero once made.)
+    pub fn make_pdftex_banner(&mut self) {
+        if self.pdftex_banner != 0 {
+            return;
+        }
+        let s = format!(
+            "{BANNER}{WEB2C_VERSION} {}",
+            crate::resolver::kpathsea_version()
+        );
+        for b in s.bytes() {
+            self.str_pool[self.pool_ptr as usize] = b as _;
+            self.pool_ptr += 1;
+        }
+        self.pdftex_banner = self.make_string();
+    }
+
+    /// The TCX file's name, as found, into the log (`fputs` in tex.ch).
+    pub fn wlog_translate_filename(&mut self) {
+        if let Some(t) = run().translate_filename {
+            for b in t.bytes() {
+                wr_char(&mut self.log_file, b);
+            }
+        }
+    }
+
+    /// The same on the terminal (tex.ch [5.61]).
+    pub fn wterm_translate_filename(&mut self) {
+        if let Some(t) = run().translate_filename {
+            wr_str(&mut self.term_out, &t);
+        }
+    }
+
+    /// texmfmp.c's `readtcxfile`: the TCX file named by `-translate-file`
+    /// (`.tcx` added if it has no extension), found along the web2c path,
+    /// updates `xord`, `xchr` and `xprn`. Its full name replaces the one
+    /// given, and is what the log shows.
+    pub fn read_tcx_file(&mut self) {
+        let Some(mut name) = run().translate_filename else {
+            return;
+        };
+        if !has_suffix(&name) {
+            name.push_str(".tcx");
+        }
+        let Some(found) = resolve(&name, Format::Web2c) else {
+            with_run(|r| r.translate_filename = Some(name.clone()));
+            eprintln!(
+                "{}: warning: Could not open char translation file `{name}'.",
+                invocation_name()
+            );
+            return;
+        };
+        with_run(|r| r.translate_filename = Some(found.clone()));
+        read_set_open(&found);
+        let Ok(f) = File::open(&found) else {
+            eprintln!("{}: fopen({found}) failed", invocation_name());
+            std::process::exit(1);
+        };
+        let mut r = BufReader::new(f);
+        let mut line = vec![];
+        let mut line_no = 0;
+        while read_tex_line(&mut r, &mut line) {
+            if let Some(i) = line.iter().position(|&c| c == b'%') {
+                line.truncate(i);
+            }
+            line_no += 1;
+            let (first, p1) = tcx_get_num(255, line_no, &line, &found);
+            if first < 0 {
+                continue;
+            }
+            let rest = &line[p1..];
+            let (second, p2) = tcx_get_num(255, line_no, rest, &found);
+            let (second, printable) = if second >= 0 {
+                self.xord[first as usize] = second as _;
+                self.xchr[second as usize] = first as _;
+                let (mut printable, _) = tcx_get_num(1, line_no, &rest[p2..], &found);
+                if printable == -1 {
+                    printable = 1;
+                }
+                if (32..=126).contains(&second) {
+                    printable = 1;
+                }
+                (second, printable)
+            } else {
+                (first, 1)
+            };
+            self.xprn[second as usize] = printable != 0;
+        }
+    }
+
+    /// tex.ch's `do_final_end`.
+    pub fn do_final_end(&mut self) {
+        final_end(self)
+    }
+
+    /// texmfmp.c's `makefullnamestring`: `maketexstring(fullnameoffile)`,
+    /// or the empty string `""` (`getnullstr`) when there is none.
+    pub fn make_full_name_string(&mut self) -> i32 {
+        let full = FULL_NAME_OF_FILE
+            .with(|f| f.borrow().clone())
+            .unwrap_or_default();
+        if full.is_empty() {
+            let mut s = 256;
+            while s < self.str_ptr && self.str_start[s as usize + 1] != self.str_start[s as usize] {
+                s += 1;
+            }
+            return s;
+        }
+        for b in full.bytes() {
+            self.str_pool[self.pool_ptr as usize] = b as _;
+            self.pool_ptr += 1;
+        }
+        self.make_string()
+    }
+
+    /// texmfmp.c's `getjobname`: `-jobname`, else `s`.
+    pub fn get_job_name(&mut self, s: i32) -> i32 {
+        match run().job_name {
+            Some(j) => {
+                for b in j.bytes() {
+                    self.str_pool[self.pool_ptr as usize] = b as _;
+                    self.pool_ptr += 1;
+                }
+                self.make_string()
+            }
+            None => s,
+        }
+    }
+
+    /// `recorder_change_filename(name_of_file)`.
+    pub fn recorder_change_filename(&mut self) {
+        let n = self.raw_file_name();
+        recorder_change_filename(&n);
+    }
+
+    /// tex.ch's `tex_input_type:=1` (`\input`) or `:=0` (`\openin`).
+    pub fn set_tex_input_type(&mut self, input: bool) {
+        TEX_INPUT_TYPE.store(input, Ordering::SeqCst);
+    }
+
+    pub fn kpse_in_name_ok(&mut self) -> bool {
+        let n = self.raw_file_name();
+        input_name_confined_ok(&n) && with_resolver(|r| r.name_ok(&n, false))
+    }
+
+    pub fn kpse_out_name_ok(&mut self) -> bool {
+        let n = self.raw_file_name();
+        with_resolver(|r| r.name_ok(&n, true))
+    }
+
+    /// texmfmp.c's `runsystem` on `str_pool[s..s+l-1]`.
+    pub fn runsystem(&mut self, s: i32, l: i32) -> i32 {
+        let cmd: Vec<u8> = (s..s + l)
+            .map(|k| self.str_pool[k as usize] as u8)
+            .collect();
+        runsystem(&cmd)
+    }
+
+    /// texmfmp.c's `calledit` (tex.ch [51.1333]), after `E` at an error
+    /// prompt: the editor command of `TEXEDIT` (the environment or
+    /// texmf.cnf, else web2c's default `vi +%d '%s'`), its `%s` the file
+    /// name `str_pool[s..s+l-1]` and its `%d` the line `n`, run by the
+    /// shell; then the program ends with status 1, whatever the editor did.
+    /// The input files need not be closed first, as `calledit` does: they
+    /// are only read, and the process ends.
+    pub fn call_edit(&mut self, s: i32, l: i32, n: i32) {
+        let name: Vec<u8> = (s..s + l)
+            .map(|k| self.xchr[self.str_pool[k as usize] as usize])
+            .collect();
+        let edit = texmf_var("TEXEDIT").unwrap_or_else(|| "vi +%d '%s'".into());
+        match edit_command(edit.as_bytes(), &name, n) {
+            Ok(cmd) => {
+                let _ = std::io::stdout().flush();
+                record_effect("edit", &cmd);
+                if c_system(&cmd) != 0 {
+                    eprintln!("! Trouble executing `{}'.", String::from_utf8_lossy(&cmd));
+                }
+            }
+            // kpathsea's FATAL: `%s: fatal: ` and `.\n` around the message.
+            Err(twice) => eprintln!(
+                "{}: fatal: call_edit: `%%{twice}' appears twice in editor command.",
+                invocation_name()
+            ),
+        }
+        exit_process(self, 1)
+    }
+}
+
+/// C's `system(3)`, as `calledit` calls it: `/bin/sh -c cmd` (the command
+/// ends at a NUL, as a C string does), with SIGINT and SIGQUIT ignored and
+/// SIGCHLD blocked in this process while it waits, and both signals back to
+/// their defaults in the child, so that Ctrl-C in the editor does not end
+/// the program before the editor does. Its result is the wait status (0
+/// when the command exited with 0).
+///
+/// `system` passes an ignored signal on to the command, and Rust's runtime
+/// ignores SIGPIPE in this program where pdfTeX leaves it at its default;
+/// so SIGPIPE is set to its default around the call and put back after it.
+/// (Only `SIG_IGN` or `SIG_DFL` is ever there, which `signal` restores
+/// exactly.)
+#[cfg(unix)]
+fn c_system(cmd: &[u8]) -> i32 {
+    use std::ffi::{c_char, c_int};
+    extern "C" {
+        fn system(command: *const c_char) -> c_int;
+        fn signal(sig: c_int, handler: usize) -> usize;
+    }
+    const SIGPIPE: c_int = 13; // the same on Linux, macOS and the BSDs
+    const SIG_DFL: usize = 0;
+    const SIG_ERR: usize = usize::MAX; // `(void (*)(int))-1`
+    let end = cmd.iter().position(|&b| b == 0).unwrap_or(cmd.len());
+    let c = std::ffi::CString::new(&cmd[..end]).expect("no NUL before `end`");
+    // SAFETY: `signal` with a valid signal number and `SIG_DFL`, then the
+    // disposition it returned; `system` gets a NUL-terminated string that
+    // outlives the call and keeps no pointer to it.
+    unsafe {
+        let old = signal(SIGPIPE, SIG_DFL);
+        let status = system(c.as_ptr());
+        if old != SIG_ERR {
+            signal(SIGPIPE, old);
+        }
+        status
+    }
+}
+
+/// Where there is no `/bin/sh` and no POSIX `system` (Windows, WASI): the
+/// shell `\write18` uses; a command that cannot start is a failure.
+#[cfg(not(unix))]
+fn c_system(cmd: &[u8]) -> i32 {
+    match shell_command(cmd).status() {
+        Ok(s) if s.success() => 0,
+        _ => 1,
+    }
+}
+
+/// `calledit`'s editor command: `%s` becomes `name`, `%d` the line `n`,
+/// each at most once (else `Err` names the letter), a `%` at the end stays,
+/// and `%` before anything else stays with what follows it.
+fn edit_command(edit: &[u8], name: &[u8], n: i32) -> Result<Vec<u8>, char> {
+    let (mut sdone, mut ddone) = (false, false);
+    let mut cmd = Vec::with_capacity(edit.len() + name.len() + 11);
+    let mut it = edit.iter().copied();
+    while let Some(c) = it.next() {
+        if c != b'%' {
+            cmd.push(c);
+            continue;
+        }
+        match it.next() {
+            Some(b'd') => {
+                if ddone {
+                    return Err('d');
+                }
+                cmd.extend_from_slice(n.to_string().as_bytes());
+                ddone = true;
+            }
+            Some(b's') => {
+                if sdone {
+                    return Err('s');
+                }
+                cmd.extend_from_slice(name);
+                sdone = true;
+            }
+            Some(c) => cmd.extend_from_slice(&[b'%', c]),
+            None => cmd.push(b'%'),
+        }
+    }
+    Ok(cmd)
+}
+
+// ---------------------------------------------------------------------------
+// The non-local gotos of the main program
+// ---------------------------------------------------------------------------
+
+/// `goto final_end` (label 9999): `ready_already:=0; end.`
+pub fn final_end(g: &mut Globals) -> ! {
+    g.ready_already = 0;
+    let code = if g.history > 1 { 1 } else { 0 };
+    exit_process(g, code)
+}
+
+/// C's `exit(code)`, which every way out of web2c's pdfTeX ends in: all
+/// stdio streams are flushed first -- the terminal (tex.ch's
+/// `update_terminal`), the log, the `\write` files and the DVI or PDF file
+/// -- so a run that stops early (`pdftex_fail`, `-halt-on-error`) leaves
+/// complete files behind.
+pub fn exit_process(g: &mut Globals, code: i32) -> ! {
+    #[cfg(not(feature = "tex82"))]
+    {
+        g.flashtex_prof_finish();
+        g.flashtex_intr_finish();
+        g.flashtex_bm_finish();
+    }
+    // FLASHTEX_BOXMEMO_VERIFY_FAIL: a BOX-MEMO verification difference
+    // makes the run fail (exit status 3), for the gates
+    #[cfg(not(feature = "tex82"))]
+    let code = if crate::boxmemo::fail_on_difference() {
+        3
+    } else {
+        code
+    };
+    let _ = std::io::stdout().flush();
+    g.log_file.flush();
+    for f in g.write_file.iter_mut() {
+        f.flush();
+    }
+    g.dvi_file.flush();
+    #[cfg(not(feature = "tex82"))]
+    g.pdf_file.flush();
+    #[cfg(feature = "bench-count-writes")]
+    {
+        let v = g.arena.write_counts_by_region();
+        let total: u64 = v.iter().map(|x| x.1).sum();
+        eprintln!(
+            "writes: {total}; same chunk as the array's previous write: {}",
+            crate::arena::SAME_CHUNK_AS_LAST.load(std::sync::atomic::Ordering::Relaxed)
+        );
+        for (k, n) in v.iter().take(25) {
+            eprintln!("  {k:24} {n:12} {:5.1}%", *n as f64 * 100.0 / total as f64);
+        }
+    }
+    if RESIDENT.with(|r| r.get()) {
+        // A resident engine (src/host/) outlives the run: unwind to the
+        // host instead of ending the process. `resume_unwind` does not call
+        // the panic hook, so nothing is printed.
+        TERMINATING.store(false, Ordering::SeqCst);
+        std::panic::resume_unwind(Box::new(EngineExit(code)));
+    }
+    std::process::exit(code)
+}
+
+/// `goto end_of_TEX` (label 9998), reached from `jump_out` (§81): run
+/// `close_files_and_terminate` and then fall into `final_end`.
+#[allow(non_snake_case)] // WEB's label name, kept on purpose
+pub fn end_of_TEX(g: &mut Globals) -> ! {
+    if !TERMINATING.swap(true, Ordering::SeqCst) {
+        g.close_files_and_terminate();
+    }
+    final_end(g)
+}
+
+/// The string pool web2rust wrote (crates/flashtex-engine/pdftex.pool):
+/// `FLASHTEX_POOL`, else (feature `distribution`) the copy compiled into
+/// this program, else `pdftex.pool` beside the executable, else in the
+/// working directory. It is ours, not TeX Live's, so it never goes through the
+/// resolver.
+fn pool_path() -> String {
+    if let Ok(p) = std::env::var("FLASHTEX_POOL") {
+        return p;
+    }
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    if let Some(p) = embedded_pool::path() {
+        return p;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let c = exe.with_file_name("pdftex.pool");
+        if c.exists() {
+            return c.to_string_lossy().into_owned();
+        }
+    }
+    "pdftex.pool".into()
+}
+
+/// The pool compiled into the program, so that a standalone engine or host
+/// (no TeX Live, no `pdftex.pool` beside it, nothing in the environment)
+/// can still build its format. It is the pool of this very translation, so
+/// it can never be another build's. INITEX reads it as a file (§§51-53), so
+/// it is written into the per-user format cache (`formats::cache_dir`),
+/// `<cache>/pool/pdftex-<sha256, 16 digits>.pool`, in a directory only the
+/// user owns and may write (0700 on Unix, owned by the euid; one that is not is refused), written
+/// atomically and read back before its path is given out. Never a shared
+/// directory such as the temporary one: without a cache directory there is
+/// no embedded pool (and `pdftex.pool` beside the program, or none).
+#[cfg(all(feature = "distribution", not(feature = "tex82")))]
+mod embedded_pool {
+    use sha2::{Digest, Sha256};
+    use std::path::Path;
+
+    pub const POOL: &[u8] = include_bytes!("../pdftex.pool");
+
+    /// `d` exists, is a directory (not a link to one), belongs to this
+    /// process's effective user, and only its owner may write it.
+    fn private_dir(d: &Path) -> bool {
+        if std::fs::create_dir_all(d).is_err() {
+            return false;
+        }
+        let Ok(m) = std::fs::symlink_metadata(d) else {
+            return false;
+        };
+        if !m.is_dir() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            extern "C" {
+                fn geteuid() -> u32;
+            }
+            // SAFETY: geteuid has no preconditions and cannot fail.
+            if m.uid() != unsafe { geteuid() } {
+                return false; // someone else's directory
+            }
+            if m.permissions().mode() & 0o777 != 0o700
+                && std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)).is_err()
+            {
+                return false;
+            }
+            std::fs::symlink_metadata(d).is_ok_and(|m| m.permissions().mode() & 0o077 == 0)
+        }
+        #[cfg(not(unix))]
+        true
+    }
+
+    pub fn path() -> Option<String> {
+        let d = crate::formats::cache_dir()?.join("pool");
+        if !private_dir(&d) {
+            return None;
+        }
+        let p = d.join(format!(
+            "pdftex-{}.pool",
+            &crate::formats::hex(&Sha256::digest(POOL))[..16]
+        ));
+        let good = |p: &Path| {
+            std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file())
+                && std::fs::read(p).is_ok_and(|b| b == POOL)
+        };
+        if !good(&p) && crate::formats::write_atomic(&p, POOL).is_err() {
+            return None;
+        }
+        good(&p).then(|| p.to_string_lossy().into_owned())
+    }
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::private_dir;
+        use std::os::unix::fs::PermissionsExt;
+
+        /// A loose directory of ours is tightened to 0700; a link to a
+        /// directory and a file are refused. (Another user's directory is
+        /// refused by owner, which a test cannot set up without root.)
+        #[test]
+        fn private_dir_tightens_ours_and_refuses_links() {
+            let base = std::env::temp_dir().join(format!(
+                "flashtex-pooldir-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let d = base.join("pool");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777)).unwrap();
+            assert!(private_dir(&d));
+            let mode = std::fs::metadata(&d).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+            let link = base.join("link");
+            std::os::unix::fs::symlink(&d, &link).unwrap();
+            assert!(!private_dir(&link), "a symlink to a directory");
+            let file = base.join("file");
+            std::fs::write(&file, b"x").unwrap();
+            assert!(!private_dir(&file), "a file");
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Resident runs and checkpoints (src/checkpoint.rs, src/host/)
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// The engine runs inside a host that outlives the run.
+    static RESIDENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The terminal, captured instead of written to stdout.
+    static TERMINAL: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    /// The run's read-set, while one is being recorded.
+    static READS: std::cell::RefCell<Option<ReadLog>> = const { std::cell::RefCell::new(None) };
+    /// Every file opened for output (truncated), in order: which output
+    /// files a run began again after a checkpoint (`crate::checkpoint`).
+    /// Restored with the checkpoints, like the terminal.
+    static OPENS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Bumped by every change to `OPENS`: `REWRITTEN` is for one value.
+    static OPENS_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// `rewritten_at`'s index of `OPENS` at generation `.0`: the open
+    /// positions where some file has an output open before and after,
+    /// as sorted disjoint ranges `lo..=hi`, each with an open of such a
+    /// file.
+    static REWRITTEN: std::cell::RefCell<(u64, Vec<RewrittenRange>)> =
+        const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
+    /// Output files whose content, when an `\openout` is about to truncate
+    /// one, is kept first (`guard_outputs`): the checkpoint layer holds
+    /// only the part beyond a checkpoint's length of each.
+    static GUARD: std::cell::RefCell<Vec<(String, Option<Vec<u8>>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How many files have been opened for output so far (`OPENS`).
+pub fn opens_len() -> usize {
+    OPENS.with(|o| o.borrow().len())
+}
+
+/// The files opened for output after the first `n`.
+pub fn opens_since(n: usize) -> Vec<String> {
+    OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
+}
+
+/// Open positions `lo..=hi` where a file has an output open before and
+/// after, with the position of one of its opens (`rewritten_at`).
+type RewrittenRange = (usize, usize, usize);
+
+fn opens_changed() {
+    OPENS_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+}
+
+/// A file opened for output before the `n`-th output open and opened for
+/// output again at or after it (`crate::checkpoint`'s `rewritten_since`
+/// for a checkpoint taken after `n` opens), if any. Each file's first and
+/// last opens give the range of `n` it covers, `first + 1 ..= last`; the
+/// ranges are merged once per change to the opens, so that a question is
+/// a binary search (the restart point asks it for one checkpoint after
+/// another).
+pub fn rewritten_at(n: usize) -> Option<String> {
+    let gen = OPENS_GEN.with(|g| g.get());
+    REWRITTEN.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.0 != gen {
+            *r = (gen, rewritten_ranges());
+        }
+        let ranges = &r.1;
+        let i = ranges.partition_point(|&(_, hi, _)| hi < n);
+        let &(lo, _, at) = ranges.get(i)?;
+        (lo <= n).then(|| OPENS.with(|o| o.borrow()[at].clone()))
+    })
+}
+
+fn rewritten_ranges() -> Vec<RewrittenRange> {
+    OPENS.with(|o| {
+        let o = o.borrow();
+        let mut span: std::collections::HashMap<&str, (usize, usize)> = Default::default();
+        for (i, p) in o.iter().enumerate() {
+            // (a persisted checkpoint's opens this process has not seen are
+            // empty placeholders: no file)
+            if p.is_empty() {
+                continue;
+            }
+            span.entry(p.as_str())
+                .and_modify(|s| s.1 = i)
+                .or_insert((i, i));
+        }
+        let mut v: Vec<RewrittenRange> = span
+            .into_values()
+            .filter(|&(a, b)| b > a)
+            .map(|(a, b)| (a + 1, b, a))
+            .collect();
+        v.sort_unstable();
+        let mut out: Vec<RewrittenRange> = Vec::with_capacity(v.len());
+        for (lo, hi, at) in v {
+            match out.last_mut() {
+                Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
+                _ => out.push((lo, hi, at)),
+            }
+        }
+        out
+    })
+}
+
+/// Put the output opens back to their first `n` (restoring a checkpoint;
+/// a persisted one from another process may name more than this process
+/// has seen: those are placeholders).
+pub fn truncate_opens(n: usize) {
+    OPENS.with(|o| {
+        let mut o = o.borrow_mut();
+        o.truncate(n);
+        o.resize(n, String::new());
+    });
+    opens_changed();
+}
+
+/// Append output opens (the old run's, after a convergence jump).
+pub fn append_opens(v: &[String]) {
+    OPENS.with(|o| o.borrow_mut().extend_from_slice(v));
+    opens_changed();
+}
+
+/// From now on, keep the content of each of `paths` that an output open
+/// is about to truncate (replacing the previous set, and what it kept).
+pub fn guard_outputs(paths: Vec<String>) {
+    GUARD.with(|g| *g.borrow_mut() = paths.into_iter().map(|p| (p, None)).collect());
+}
+
+/// From now on (`on`), keep every output file's content as it was before
+/// the first output open that truncates it -- a run from the format or a
+/// stored S₀, which a newer compile may stop (`crate::incr`'s
+/// `settle_paused` puts it back) -- or stop keeping it. Returns what was
+/// kept, by `out_key` (`None`: nothing was being kept).
+pub fn guard_every_output(on: bool) -> Option<GuardedAll> {
+    GUARD_ALL.with(|g| std::mem::replace(&mut *g.borrow_mut(), on.then(Default::default)))
+}
+
+/// What `guard_every_output` kept: each output file's content before its
+/// first truncation (`None`: the file did not exist).
+pub type GuardedAll = std::collections::HashMap<String, Option<std::sync::Arc<Vec<u8>>>>;
+
+thread_local! {
+    static GUARD_ALL: std::cell::RefCell<Option<GuardedAll>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The content `path` had when an output open first truncated it since
+/// `guard_outputs` named it.
+pub fn guarded(path: &str) -> Option<Vec<u8>> {
+    let k = out_key(path);
+    GUARD.with(|g| {
+        g.borrow()
+            .iter()
+            .find(|(p, _)| out_key(p) == k)
+            .and_then(|(_, b)| b.clone())
+    })
+}
+
+thread_local! {
+    /// Output files open for output whose bytes on disk may be ahead of a
+    /// run from scratch's (by `out_key`): a checkpoint flushed the stream
+    /// while its buffer held output that pdfTeX's `fprintf` keeps buffered
+    /// (`AlphaFile::flush_output`), or restored the stream, whose record
+    /// does not say what its buffer held then (`AlphaFile::restore`). A
+    /// close writes everything out, as from scratch: it takes the file off.
+    static AHEAD: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The first such file the run read (or looked up: `\pdffilesize`) while
+    /// it was open for output and ahead (issue #1550: a `\closeout` lost to a
+    /// typo, the file `\input` four paragraphs later read the line a
+    /// checkpoint had flushed, where pdfTeX reads an empty file).
+    static AHEAD_READ: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// Files never flushed ahead of a run from scratch (`no_flush`).
+    static NO_FLUSH: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A checkpoint flushed, or a restore reopened, an output stream on `path`
+/// (`AHEAD`). A file that is `no_flush` is never ahead: every checkpoint
+/// since it became so found its buffer empty.
+pub fn mark_ahead(path: &str) {
+    if no_flush(path) {
+        return;
+    }
+    let k = out_key(path);
+    AHEAD.with(|a| {
+        let mut a = a.borrow_mut();
+        if !a.contains(&k) {
+            a.push(k);
+        }
+    });
+}
+
+/// An output stream on `path` was closed: a run from scratch has written
+/// it all out too.
+fn unmark_ahead(path: &str) {
+    let k = out_key(path);
+    AHEAD.with(|a| a.borrow_mut().retain(|p| *p != k));
+}
+
+/// No stream is open (a new engine, or a restore about to reopen them).
+pub fn clear_ahead() {
+    AHEAD.with(|a| a.borrow_mut().clear());
+}
+
+/// A read or lookup of `path`: noted if it is open for output and ahead.
+fn note_ahead_read(path: &str) {
+    if AHEAD.with(|a| a.borrow().is_empty()) {
+        return;
+    }
+    let k = out_key(path);
+    if AHEAD.with(|a| a.borrow().contains(&k)) {
+        AHEAD_READ.with(|r| {
+            r.borrow_mut().get_or_insert_with(|| {
+                file_trace(|| format!("read while ahead: {k}"));
+                k
+            });
+        });
+    }
+}
+
+/// The file the run read while it was open for output and ahead (and
+/// forget it): the run is not what a run from scratch does, and is redone
+/// with that file `no_flush` (`crate::incr`).
+pub fn take_ahead_read() -> Option<String> {
+    AHEAD_READ.with(|r| r.borrow_mut().take())
+}
+
+/// From now on, a checkpoint is not taken while an output stream on `path`
+/// holds buffered output (`crate::checkpoint`'s `capture_ext`), so that no
+/// checkpoint writes out what a run from scratch has not, and a restore
+/// gives the stream exactly as it was (its buffer empty).
+pub fn set_no_flush(path: &str) {
+    let k = out_key(path);
+    NO_FLUSH.with(|n| {
+        let mut n = n.borrow_mut();
+        if !n.contains(&k) {
+            n.push(k);
+        }
+    });
+}
+
+/// Whether `set_no_flush` named `path`.
+pub fn no_flush(path: &str) -> bool {
+    if NO_FLUSH.with(|n| n.borrow().is_empty()) {
+        return false;
+    }
+    let k = out_key(path);
+    NO_FLUSH.with(|n| n.borrow().contains(&k))
+}
+
+/// An output file as the engine last left it: length, modification time,
+/// inode.
+type Stamp = (u64, Option<std::time::SystemTime>, u64);
+
+thread_local! {
+    /// The resident session keeps what a fatal run removes (`set_keep_removed`).
+    static KEEP_REMOVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Output files a fatal run removed, set aside (`remove_output`).
+    static REMOVED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Where `remove_output` sets `path` aside.
+fn aside_path(path: &str) -> String {
+    format!("{path}.flashtex-removed")
+}
+
+/// The resident, incremental session (`crate::incr::Session`) turns this on:
+/// an output file the run removes (pdfTeX deletes its unfinished PDF after a
+/// fatal error, `removepdffile`) is set aside instead, so that a later
+/// compile restoring a checkpoint taken while the file was open can put it
+/// back (`revive_removed_outputs`) instead of compiling from scratch.
+pub fn set_keep_removed(on: bool) {
+    KEEP_REMOVED.with(|k| k.set(on));
+}
+
+/// Removes output file `path`, as pdfTeX does (it is gone from its name
+/// either way). With `set_keep_removed`, a file all of whose bytes are the
+/// engine's is renamed aside: renaming keeps its length, modification time
+/// and inode, the stamp `outside_change` compares.
+pub fn remove_output(path: &str) {
+    let k = out_key(path);
+    let ours = KEEP_REMOVED.with(|k| k.get())
+        && STAMPS.with(|m| m.borrow().contains_key(&k))
+        && !FOREIGN.with(|f| f.borrow().contains(&k));
+    if ours && std::fs::rename(path, aside_path(path)).is_ok() {
+        file_trace(|| format!("set aside {path}"));
+        REMOVED.with(|r| r.borrow_mut().push(path.to_string()));
+        return;
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+/// Before a restore relies on output files (`checkpoint::changed_outside`):
+/// puts back those of `need` a fatal run set aside (`remove_output`), unless
+/// something else has taken the name since (then the aside copy goes).
+/// Only a restore whose checkpoint had the file open puts it back: a
+/// compile that restores nothing, or restores to before the file was
+/// opened, leaves it gone, as pdfTeX left it. What it holds is what the
+/// engine wrote and closed, so it is stamped as the engine's; a later run
+/// that opened the file again is caught by `rewritten_at`.
+pub fn revive_removed<'a>(need: impl IntoIterator<Item = &'a String>) {
+    let need: Vec<String> = need.into_iter().map(|p| out_key(p)).collect();
+    if need.is_empty() || REMOVED.with(|r| r.borrow().is_empty()) {
+        return;
+    }
+    let back: Vec<String> = REMOVED.with(|r| {
+        let mut r = r.borrow_mut();
+        let (back, keep): (Vec<String>, Vec<String>) =
+            r.drain(..).partition(|p| need.contains(&out_key(p)));
+        *r = keep;
+        back
+    });
+    for path in back {
+        let aside = aside_path(&path);
+        if std::fs::metadata(&path).is_err() && std::fs::rename(&aside, &path).is_ok() {
+            file_trace(|| format!("put back {path}"));
+            stamp_output(&path);
+        } else {
+            let _ = std::fs::remove_file(&aside);
+        }
+    }
+}
+
+/// A run from the format writes its outputs afresh: what fatal runs set
+/// aside is no longer needed.
+pub fn forget_removed() {
+    for path in REMOVED.with(|r| std::mem::take(&mut *r.borrow_mut())) {
+        let _ = std::fs::remove_file(aside_path(&path));
+    }
+}
+
+thread_local! {
+    /// Every output file's stamp after the engine's last write to it: a
+    /// write by another program since (an `export` run of the same job in
+    /// the same directory, the user's pdflatex) changes it.
+    static STAMPS: std::cell::RefCell<std::collections::HashMap<String, Stamp>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Output files another program changed while the engine had them open
+    /// and then wrote more (`note_foreign`): their bytes are not all the
+    /// run's, until the engine writes one whole again.
+    static FOREIGN: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+fn stamp_of(m: &std::fs::Metadata) -> Stamp {
+    let ino = crate::os::file_id(m);
+    (m.len(), m.modified().ok(), ino)
+}
+
+fn disk_stamp(path: &str) -> Option<Stamp> {
+    std::fs::metadata(path).ok().map(|m| stamp_of(&m))
+}
+
+fn set_stamp(path: &str, st: Stamp) {
+    STAMPS.with(|m| m.borrow_mut().insert(out_key(path), st));
+}
+
+/// The host's copy of a file it wrote in this compile (the editor's text:
+/// the host writes each edit through, `host::resident::apply_changes`), by
+/// canonical path, with the file's stat signature right after the write.
+struct Known {
+    path: std::path::PathBuf,
+    sig: StatSig,
+    data: std::sync::Arc<Vec<u8>>,
+    /// The edit that made `data`: bytes `at..at + del` of the copy `pre`
+    /// replaced by `ins` bytes ([`note_known_edit`]).
+    edit: Option<(std::sync::Arc<Vec<u8>>, usize, usize, usize)>,
+}
+
+/// The copies [`known_content`] may stand for the files with. Only within
+/// the compile whose `apply_changes` wrote them (the host clears them when
+/// a compile starts and ends, [`clear_known_content`]): between the host's
+/// write and the compile's change check, nothing but the host writes the
+/// editor's file, as `apply_changes` itself assumes. Across compiles another
+/// program may have rewritten it within the file system's mtime tick, with
+/// the same length and time (review of #1606), so the file is read then
+/// (lane P4-PAGE-COST: within the compile, the 4 MB of a 1,000-page source
+/// are read once less).
+static KNOWN: Mutex<Vec<Known>> = Mutex::new(Vec::new());
+
+/// Note the host's copy of `path`, which it has just written (see
+/// [`KNOWN`]); `None` forgets it.
+pub fn note_known_content(path: &Path, held: Option<(StatSig, std::sync::Arc<Vec<u8>>)>) {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return;
+    };
+    let mut k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    k.retain(|e| e.path != path);
+    if let Some((sig, data)) = held {
+        k.push(Known {
+            path,
+            sig,
+            data,
+            edit: None,
+        });
+    }
+}
+
+/// The host's copy of `path` ([`note_known_content`], just noted) is the
+/// copy `pre` with bytes `at..at + del` replaced by `ins` bytes.
+pub fn note_known_edit(
+    path: &Path,
+    pre: std::sync::Arc<Vec<u8>>,
+    at: usize,
+    del: usize,
+    ins: usize,
+) {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return;
+    };
+    let mut k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(e) = k.iter_mut().find(|e| e.path == path) {
+        e.edit = Some((pre, at, del, ins));
+    }
+}
+
+/// The edit (`at`, `del`, `ins`) by which the host made its copy `new` of `path`
+/// out of `old` itself (the same allocation: `Arc::ptr_eq`), if it did.
+pub fn known_edit(
+    path: &str,
+    old: &std::sync::Arc<Vec<u8>>,
+    new: &std::sync::Arc<Vec<u8>>,
+) -> Option<(usize, usize, usize)> {
+    let k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if !k.iter().any(|e| e.edit.is_some()) {
+        return None;
+    }
+    let path = std::fs::canonicalize(path).ok()?;
+    k.iter().find(|e| e.path == path).and_then(|e| {
+        let (pre, at, del, ins) = e.edit.as_ref()?;
+        (std::sync::Arc::ptr_eq(pre, old) && std::sync::Arc::ptr_eq(&e.data, new))
+            .then_some((*at, *del, *ins))
+    })
+}
+
+/// Forget every copy: a compile starts or has ended.
+pub fn clear_known_content() {
+    KNOWN.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// The host's copy of `path`'s bytes, if this compile wrote the file and it
+/// is as the host left it.
+pub fn known_content(path: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+    let k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if k.is_empty() {
+        return None;
+    }
+    let path = std::fs::canonicalize(path).ok()?;
+    let now = StatSig::of(&path.to_string_lossy())?;
+    k.iter()
+        .find(|e| e.path == path && e.sig.same_fields(&now))
+        .map(|e| e.data.clone())
+}
+
+/// The engine has written `path` whole (created it, put back its content,
+/// or cut it back to a checkpoint's length after checking it was the
+/// run's): what it holds now is the engine's.
+pub fn stamp_output(path: &str) {
+    if let Some(st) = disk_stamp(path) {
+        set_stamp(path, st);
+    }
+    FOREIGN.with(|f| f.borrow_mut().remove(&out_key(path)));
+}
+
+/// Before the engine writes more to `path` (`Tracked`): if another program
+/// changed it since the engine's last write, it stays marked.
+fn note_foreign(path: &str) {
+    if why_changed(path, false).is_some() {
+        FOREIGN.with(|f| f.borrow_mut().insert(out_key(path)));
+    }
+}
+
+/// One name per output file: the journal has `./main.aux` where the stream
+/// that wrote it has `main.aux`, and `\openout ./x` names `x` too.
+/// On Windows `\` separates as `/` does (kpathsea normalises it so there),
+/// so `C:\d\.\x` is `C:/d/x`.
+pub fn out_key(path: &str) -> String {
+    let mut p = if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    };
+    while let Some(rest) = p.strip_prefix("./") {
+        p = rest.to_string();
+    }
+    while p.contains("/./") {
+        p = p.replace("/./", "/");
+    }
+    p
+}
+
+/// Why the content of output file `path` is not all the engine's (`None`:
+/// it is, or the engine has not written it in this process): another
+/// program changed it since the engine's last write, or it is gone (a run
+/// that fails removes its PDF).
+pub fn outside_change(path: &str) -> Option<String> {
+    why_changed(path, true)
+}
+
+fn why_changed(path: &str, foreign_too: bool) -> Option<String> {
+    why_changed_as(path, foreign_too, None)
+}
+
+/// [`why_changed`] with the file's stamp now, when the caller has it.
+fn why_changed_as(path: &str, foreign_too: bool, now: Option<Stamp>) -> Option<String> {
+    let k = out_key(path);
+    if foreign_too && FOREIGN.with(|f| f.borrow().contains(&k)) {
+        return Some(format!("{path} was changed by another program"));
+    }
+    let st = STAMPS.with(|m| m.borrow().get(&k).copied())?;
+    let now = now.or_else(|| disk_stamp(path));
+    if now == Some(st) {
+        return None;
+    }
+    file_trace(|| format!("changed_outside {path}: {st:?}, now {now:?}"));
+    Some(match now {
+        None => format!("{path} is gone (a run that fails removes its PDF)"),
+        Some(_) => format!("{path} was changed by another program"),
+    })
+}
+
+fn before_truncate(path: &str) {
+    let k = out_key(path);
+    // (what the file holds: its bytes up to its logical end)
+    let content = || {
+        std::fs::read(path).ok().map(|mut d| {
+            if let Some(n) = logical_len(path) {
+                d.truncate(n as usize);
+            }
+            d
+        })
+    };
+    GUARD_ALL.with(|g| {
+        if let Some(m) = g.borrow_mut().as_mut() {
+            m.entry(k.clone())
+                .or_insert_with(|| content().map(std::sync::Arc::new));
+        }
+    });
+    GUARD.with(|g| {
+        for (p, b) in g.borrow_mut().iter_mut() {
+            if out_key(p) == k && b.is_none() {
+                *b = Some(content().unwrap_or_default());
+            }
+        }
+    });
+    // the truncation cuts the kept tail's old bytes off: keep them first
+    save_kept(path);
+    // (the file is the new stream's own from here on)
+    LOGICAL.with(|m| {
+        let mut m = m.borrow_mut();
+        if let Some(l) = m.get_mut(&k) {
+            l.len = None;
+            if l.keep.is_none() {
+                m.remove(&k);
+            }
+        }
+    });
+}
+
+/// How a resident run ends: the exit status `final_end` would have given
+/// the process.
+pub struct EngineExit(pub i32);
+
+/// Make the ends of a run unwind to the caller (`EngineExit`) instead of
+/// exiting the process.
+pub fn set_resident(on: bool) {
+    RESIDENT.with(|r| r.set(on));
+}
+
+/// Forget that a run was terminating (a new run in the same process).
+pub fn reset_run_flags() {
+    TERMINATING.store(false, Ordering::SeqCst);
+}
+
+/// Capture the terminal into memory from now on (`Some`) or write it to
+/// stdout again (`None`); returns what was captured.
+pub fn capture_terminal(on: bool) -> Option<Vec<u8>> {
+    TERMINAL.with(|t| std::mem::replace(&mut *t.borrow_mut(), on.then(Vec::new)))
+}
+
+fn terminal_captured() -> bool {
+    TERMINAL.with(|t| t.borrow().is_some())
+}
+
+fn terminal_capture_byte(b: u8) -> bool {
+    TERMINAL.with(|t| match t.borrow_mut().as_mut() {
+        Some(v) => {
+            v.push(b);
+            true
+        }
+        None => false,
+    })
+}
+
+/// Bytes captured from the terminal so far.
+pub fn terminal_len() -> usize {
+    TERMINAL.with(|t| t.borrow().as_ref().map_or(0, |v| v.len()))
+}
+
+/// The captured terminal.
+pub fn terminal_bytes() -> Vec<u8> {
+    TERMINAL.with(|t| t.borrow().clone().unwrap_or_default())
+}
+
+/// The captured terminal's bytes `from..to` (clamped; empty when the
+/// terminal is not captured).
+pub fn terminal_slice(from: usize, to: usize) -> Vec<u8> {
+    TERMINAL.with(|t| {
+        t.borrow()
+            .as_ref()
+            .map(|v| {
+                let to = to.min(v.len());
+                v[from.min(to)..to].to_vec()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// Cut the captured terminal back to `n` bytes (restoring a checkpoint).
+pub fn truncate_terminal(n: usize) {
+    TERMINAL.with(|t| {
+        if let Some(v) = t.borrow_mut().as_mut() {
+            v.truncate(n);
+        }
+    })
+}
+
+/// Append to the captured terminal (restoring a persisted snapshot).
+pub fn append_terminal(b: &[u8]) {
+    TERMINAL.with(|t| {
+        if let Some(v) = t.borrow_mut().as_mut() {
+            v.extend_from_slice(b);
+        }
+    })
+}
+
+/// Number of external effects (`\write18`, pipes, mktex) so far.
+pub fn external_effects_len() -> usize {
+    EXTERNAL_EFFECTS.lock().unwrap().len()
+}
+
+/// Forget the external effects after the first `n` (restoring).
+pub fn truncate_external_effects(n: usize) {
+    EXTERNAL_EFFECTS.lock().unwrap().truncate(n);
+}
+
+pub fn tex_input_type() -> bool {
+    TEX_INPUT_TYPE.load(Ordering::SeqCst)
+}
+
+pub fn set_tex_input_type_flag(v: bool) {
+    TEX_INPUT_TYPE.store(v, Ordering::SeqCst);
+}
+
+// ---- the read-set ----------------------------------------------------------
+
+// `StatSig`, `RACY_NS` and `racy_ns` are the shared runtime's
+// (crates/flashtex-runtime/src/statsig.rs), under their paths here.
+pub(crate) use flashtex_runtime::statsig::racy_ns;
+pub use flashtex_runtime::statsig::{StatSig, RACY_NS};
+
+/// A file the run read, with its content hash when it was opened.
+#[derive(Clone, Debug)]
+pub struct FileRead {
+    pub path: String,
+    pub hash: [u64; 2],
+    pub stat: StatSig,
+    /// The content when it was opened, for the user's files (a relative
+    /// path or one under the working directory): an edit is located by
+    /// comparing it with the file now (`crate::incr`).
+    pub content: Option<std::sync::Arc<Vec<u8>>>,
+    /// `Some(n)`: not a read but the close of one (an incremental journal
+    /// lists those for the user's files), after which the run had consumed
+    /// the file's first `n` bytes (up to its lookahead). An earlier read
+    /// of a file, now closed, may have seen an edit a restart point is
+    /// before (`crate::incr`).
+    pub closed_at: Option<u64>,
+    /// The run had opened the file for output before this read: what it
+    /// read, it wrote itself (beamer's `.vrb`), so it is not an input a
+    /// further pass would see changed (`crate::incr`'s passes).
+    pub written_before: bool,
+    /// A read (the first or a later one) of a file the run had opened for
+    /// output before it: the hash of what the file held when this read
+    /// opened it (`content_hash`). The other fields of a later read are the
+    /// first read's; this one is its own. The convergence test compares it
+    /// with the file now: a file both runs wrote and closed, read again by
+    /// the old run's future (*Infinite Descent* ×2 reads the hints the
+    /// first copy wrote at the end of each copy), reads the same bytes when
+    /// the hashes agree (`crate::incr`'s `reread_same`). `None` otherwise,
+    /// and for a close.
+    pub seen: Option<[u64; 2]>,
+    /// A whole read whose result was the file's modification time
+    /// (`\pdffilemoddate`: `note_stamp`), in seconds as the run read it: a
+    /// file whose time changed, its content the same, has changed for
+    /// that read (`crate::incr`'s `changes`, `host::make_key`).
+    pub stamp: Option<i64>,
+    /// A whole read whose result was the file's length (`\pdffilesize`:
+    /// `note_size_read`), as the run read it: the same length, the read is
+    /// the same (`crate::incr`'s check of the reads at `\document`'s start).
+    pub size: Option<u64>,
+}
+
+/// Whether `path` is one of the user's files rather than the TeX
+/// distribution's.
+pub fn is_user_file(path: &str) -> bool {
+    if !path.starts_with('/') {
+        return true;
+    }
+    crate::os::cwd()
+        .ok()
+        .is_some_and(|d| std::path::Path::new(path).starts_with(d))
+}
+
+/// A lookup the run made: the name, and the file it found or `None`. A
+/// file that did not exist then and exists now changes the run as surely
+/// as a changed file does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lookup {
+    pub name: String,
+    pub format: Format,
+    /// `find_ex`'s flag, or `None` for a plain `find`.
+    pub must_exist: Option<bool>,
+    pub found: Option<String>,
+}
+
+/// Everything a run read from outside the engine (DESIGN.md §5.1): the
+/// files, the lookups, and whether it did anything whose result no key can
+/// capture (a shell command, a pipe, a font made by mktex).
+#[derive(Clone, Debug, Default)]
+pub struct ReadLog {
+    /// (The files and lookups are shared between a log and its clones
+    /// until one changes them, as `seen` is below: a journal is cloned at
+    /// every pass and restore, and a clone of thousands of entries was a
+    /// quarter of the host's work before a beamer keystroke's restore, lane
+    /// T7-MARGIN. `files_mut`, `lookups_mut` change them.)
+    pub files: std::sync::Arc<Vec<FileRead>>,
+    pub lookups: std::sync::Arc<Vec<Lookup>>,
+    pub barriers: Vec<String>,
+    /// Files opened for output, in order (a file the preamble writes and
+    /// closes is part of what S₀ stands for).
+    pub outputs: Vec<String>,
+    /// (This and the two maps below are shared between a log and its
+    /// clones until one changes them: a journal is cloned several times a
+    /// compile, and a beamer preamble's listings hold thousands of names.)
+    seen: std::sync::Arc<std::collections::HashSet<String>>,
+    /// Keep the content of the user's files read (`FileRead::content`).
+    pub keep_content: bool,
+    /// The directories lookups depended on, each with its stat signature
+    /// the first time (`host::Key::dirs`), and what else they depended on
+    /// ([`dep_sig`]: [`DEP_UNKNOWN`], [`DEP_READABLE`]).
+    pub dirs: Vec<(String, StatSig)>,
+    /// The directories `note_lookup_dirs` listed, each once a run: their
+    /// entries' names, lower-cased (`lookupproof::folded_listing`) and
+    /// sorted (`None`: not listable).
+    listings: std::sync::Arc<std::collections::HashMap<String, Option<Vec<String>>>>,
+    /// Where `note_dep` put each entry of `dirs` (a hint: `dirs` is public
+    /// and may have been replaced since, so a position is used only where
+    /// it still holds the entry; an entry it does not know is added again,
+    /// which only makes the check stricter).
+    dir_at: std::sync::Arc<std::collections::HashMap<String, usize>>,
+}
+
+impl ReadLog {
+    /// `dir`'s entries, lower-cased (case-folded: `lookupproof::fold`) and
+    /// sorted, listed once (a directory listed under the same signature
+    /// before, by this run or an earlier one, is not listed again:
+    /// `lookupproof::folded_listing`).
+    fn listing(&mut self, dir: &str) -> Option<&Vec<String>> {
+        if !self.listings.contains_key(dir) {
+            let l = crate::lookupproof::folded_listing(dir);
+            std::sync::Arc::make_mut(&mut self.listings).insert(dir.to_string(), l);
+        }
+        self.listings.get(dir)?.as_ref()
+    }
+
+    /// The files, to change (copied first if a clone shares them).
+    pub fn files_mut(&mut self) -> &mut Vec<FileRead> {
+        std::sync::Arc::make_mut(&mut self.files)
+    }
+
+    /// The lookups, to change (copied first if a clone shares them).
+    pub fn lookups_mut(&mut self) -> &mut Vec<Lookup> {
+        std::sync::Arc::make_mut(&mut self.lookups)
+    }
+
+    /// A log that keeps the content of the user's files it notes.
+    pub fn keeping_content() -> ReadLog {
+        let mut l = ReadLog {
+            keep_content: true,
+            ..ReadLog::default()
+        };
+        l.note_cwd();
+        l
+    }
+
+    /// Note the working directory's signature now (before the run can add
+    /// a file to it).
+    pub fn note_cwd(&mut self) {
+        if !self.dirs.iter().any(|(d, _)| d == ".") {
+            self.dirs
+                .push((".".into(), StatSig::of(".").unwrap_or_default()));
+        }
+    }
+
+    /// Mark `path` as already noted (a journal carried over from an earlier
+    /// run segment, `crate::incr`).
+    pub fn mark_seen(&mut self, path: &str) {
+        std::sync::Arc::make_mut(&mut self.seen).insert(path.to_string());
+    }
+}
+
+/// Start recording into `log` (a run that continues an earlier one's
+/// journal), returning the log that was being recorded.
+pub fn record_reads_into(log: Option<ReadLog>) -> Option<ReadLog> {
+    READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), log))
+}
+
+/// Make `dst` a copy of `src` sharing its blocks (APFS `clonefile`, O(1));
+/// false where the file system cannot (the caller copies instead).
+pub fn clone_file(src: &str, dst: &str) -> bool {
+    crate::os::clone_file(src, dst)
+}
+
+/// The files opened for output after the first `n` the log lists.
+pub fn outputs_since(n: usize) -> Vec<String> {
+    READS.with(|r| {
+        r.borrow()
+            .as_ref()
+            .map(|l| l.outputs.get(n..).unwrap_or(&[]).to_vec())
+            .unwrap_or_default()
+    })
+}
+
+/// How many files, lookups and outputs the log holds so far.
+pub fn reads_len() -> (usize, usize, usize) {
+    READS.with(|r| {
+        r.borrow().as_ref().map_or((0, 0, 0), |l| {
+            (l.files.len(), l.lookups.len(), l.outputs.len())
+        })
+    })
+}
+
+/// Start recording the read-set (or stop, returning it).
+pub fn record_reads(on: bool) -> Option<ReadLog> {
+    READS.with(|r| {
+        std::mem::replace(
+            &mut *r.borrow_mut(),
+            on.then(|| {
+                let mut l = ReadLog::default();
+                l.note_cwd();
+                l
+            }),
+        )
+    })
+}
+
+/// A copy of the read-set recorded so far.
+pub fn reads_so_far() -> Option<ReadLog> {
+    READS.with(|r| r.borrow().clone())
+}
+
+/// Whether a read-set is being recorded (`record_reads`).
+fn recording_reads() -> bool {
+    READS.with(|r| r.borrow().is_some())
+}
+
+use flashtex_runtime::lookupproof::DEP_READABLE;
+pub use flashtex_runtime::lookupproof::{dep_sig, DEP_UNKNOWN};
+
+/// `entry` among `log.dirs`, signed now if it is new.
+fn note_dep(log: &mut ReadLog, entry: &str) {
+    // (a TFM lookup depends on every directory of a `//` subtree, 60 with
+    // mktextfm's `TEXMFVAR`: a scan of `dirs` for each was quadratic)
+    let known = log
+        .dir_at
+        .get(entry)
+        .is_some_and(|&i| log.dirs.get(i).is_some_and(|(x, _)| x == entry));
+    if !known && !log.dirs.iter().any(|(x, _)| x == entry) {
+        let sig = dep_sig(entry).unwrap_or_default();
+        let at = log.dirs.len();
+        std::sync::Arc::make_mut(&mut log.dir_at).insert(entry.to_string(), at);
+        log.dirs.push((entry.to_string(), sig));
+    }
+}
+
+/// What a lookup's answer depends on (`FileResolver::lookup_dirs`), in
+/// `log.dirs` (#1562): every directory it searched on disk, signed; the
+/// answer, if found in one of them, which must stay readable; and
+/// [`DEP_UNKNOWN`] where the dependencies are not known, or an entry
+/// kpathsea tries in one of those directories is not the answer (a
+/// dangling link or an unreadable file it passed over, which can become
+/// readable with the listing unchanged).
+fn note_lookup_dirs(
+    log: &mut ReadLog,
+    name: &str,
+    deps: Result<crate::resolver::LookupDirs, &'static str>,
+    found: Option<&str>,
+) {
+    let d = match deps {
+        Ok(d) => d,
+        Err(why) => {
+            file_trace(|| format!("lookup {name}: dependencies not known ({why})"));
+            note_dep(log, DEP_UNKNOWN);
+            return;
+        }
+    };
+    for a in &d.above {
+        note_dep(log, a);
+    }
+    let found = found.map(Path::new);
+    let found_dir = found.and_then(Path::parent);
+    let found_base = found
+        .and_then(Path::file_name)
+        .map(|b| b.to_string_lossy().to_ascii_lowercase());
+    let tries: Vec<String> = d.tries.iter().map(|t| t.to_ascii_lowercase()).collect();
+    let mut passed_over = false;
+    let mut in_listed = false;
+    for dir in &d.listed {
+        // (signed before it is listed: a change after that is a change)
+        note_dep(log, dir);
+        // (the last component first: a TFM lookup lists 60 directories)
+        let here = found_dir.is_some_and(|f| {
+            Path::new(dir).file_name() == f.file_name()
+                && Path::new(dir).components().eq(f.components())
+        });
+        in_listed |= here;
+        if passed_over {
+            continue;
+        }
+        let Some(entries) = log.listing(dir) else {
+            passed_over = true;
+            continue;
+        };
+        for t in &tries {
+            // (kpathsea also matches case-insensitively: the entries are
+            // kept lower-cased; the answer is one of them, once)
+            let n = entries.partition_point(|e| e < t);
+            let m = entries[n..].iter().take_while(|e| *e == t).count();
+            let mine = (here && found_base.as_deref() == Some(t.as_str())) as usize;
+            if m > mine {
+                passed_over = true;
+            }
+        }
+    }
+    if passed_over {
+        file_trace(|| format!("lookup {name}: an entry kpathsea tries is not the answer"));
+        note_dep(log, DEP_UNKNOWN);
+    }
+    if let (Some(f), true) = (found, in_listed) {
+        note_dep(log, &format!("{DEP_READABLE}{}", f.to_string_lossy()));
+    }
+}
+
+fn note_lookup(
+    name: &str,
+    format: Format,
+    must_exist: Option<bool>,
+    found: Option<&str>,
+    deps: Option<Result<crate::resolver::LookupDirs, &'static str>>,
+) {
+    READS.with(|r| {
+        if let Some(log) = r.borrow_mut().as_mut() {
+            if let Some(deps) = deps {
+                note_lookup_dirs(log, name, deps, found);
+            }
+            let l = Lookup {
+                name: name.to_string(),
+                format,
+                must_exist,
+                found: found.map(str::to_string),
+            };
+            // An incremental journal lists every lookup, as it lists every
+            // read: a run that converges keeps the old run's later pages,
+            // and a lookup they make again must be seen there, not only at
+            // its first occurrence (#1502: `\pdffilesize` early, the same
+            // file tested pages later). Other read-sets keep the first.
+            if log.keep_content || !log.lookups.contains(&l) {
+                log.lookups_mut().push(l);
+            }
+            // The directory whose listing decides this lookup, as it was
+            // the first time one depended on it (`host::Key::dirs`): the
+            // found user file's, or the working directory's.
+            let dir = match found {
+                Some(p) if is_user_file(p) => Some(
+                    std::path::Path::new(p)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .filter(|d| !d.is_empty())
+                        .unwrap_or_else(|| ".".into()),
+                ),
+                Some(_) => None,
+                // (an absolute name not found: its own directory, where a
+                // file appearing changes the answer -- not the working one)
+                None => Some(
+                    std::path::Path::new(name)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .filter(|d| !d.is_empty())
+                        .unwrap_or_else(|| ".".into()),
+                ),
+            };
+            // An absolute name found outside the working directory: its
+            // directory too (the file may go again).
+            let dir = match (dir, found) {
+                (None, Some(p)) if name.starts_with('/') => std::path::Path::new(p)
+                    .parent()
+                    .map(|d| d.to_string_lossy().into_owned())
+                    .filter(|d| !d.is_empty()),
+                (d, _) => d,
+            };
+            // A relative name not found is looked for in the output
+            // directory too (`-output-directory`, as texmfmp.c's
+            // `open_input` does): a file the run writes there (the `.aux`
+            // on a first run) is found by the next, so its listing decides
+            // the lookup as well.
+            let out_dir = match (found, run().output_directory) {
+                (None, Some(od)) if !name.starts_with('/') => Some(
+                    std::path::Path::new(&od)
+                        .join(name)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .unwrap_or(od),
+                ),
+                _ => None,
+            };
+            for d in dir.into_iter().chain(out_dir) {
+                if !log.dirs.iter().any(|(x, _)| *x == d) {
+                    let sig = StatSig::of(&d).unwrap_or_default();
+                    log.dirs.push((d, sig));
+                }
+            }
+        }
+    });
+    if let Some(p) = found {
+        note_file(p);
+    }
+}
+
+/// The run opened `path` for reading: the read journal's entry (its
+/// content's hash and stat signature when it was opened). The engines' own
+/// file opens call it (the Unicode engine's, `crates/flashtex-xetex`, for
+/// what it finds without the resolver); a lookup that finds a file notes it.
+pub fn note_file(path: &str) {
+    crate::os::io_time(crate::os::io::NOTE, || note_file_timed(path))
+}
+
+fn note_file_timed(path: &str) {
+    note_ahead_read(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if log.seen.contains(path) {
+            // Read again (a `.toc` at every \tableofcontents, a file \input
+            // twice): an incremental journal lists every read, since a run
+            // that converges keeps the old run's later reads (`crate::incr`
+            // must know that the old future reads a file that changed).
+            if log.keep_content {
+                if let Some(mut again) = log.files.iter().find(|f| f.path == path).cloned() {
+                    // (what it holds now, for a file the run wrote)
+                    again.seen = written_by(log, path).then(|| content_hash(path)).flatten();
+                    log.files_mut().push(again);
+                }
+            }
+            return;
+        }
+        std::sync::Arc::make_mut(&mut log.seen).insert(path.to_string());
+        // (one `stat` for the signature, the hash's identity and the open
+        // that follows: `LAST_STAT`)
+        let meta = crate::os::metadata_and_change_time(path);
+        let stat = meta
+            .as_ref()
+            .map(|(m, c)| StatSig::of_metadata(m, *c, racy_ns()))
+            .unwrap_or_default();
+        // A file whose bytes are kept is read whole; any other (the format,
+        // the font map, TeX Live's files) only hashed, through a buffer.
+        let (hash, content) = if log.keep_content && is_user_file(path) {
+            let data = read_logical(path).ok();
+            let hash = data
+                .as_deref()
+                .map(crate::persist::hash128)
+                .unwrap_or([0, 0]);
+            (hash, data.map(std::sync::Arc::new))
+        } else {
+            let m = meta.as_ref().map(|(m, _)| m);
+            (hash_logical_from(path, m).unwrap_or([0, 0]), None)
+        };
+        if let Some((m, _)) = meta {
+            LAST_STAT.with(|l| *l.borrow_mut() = Some((path.to_string(), m)));
+        }
+        let written_before = written_by(log, path);
+        log.files_mut().push(FileRead {
+            path: path.to_string(),
+            hash,
+            stat,
+            content,
+            closed_at: None,
+            written_before,
+            seen: written_before.then(|| content_hash(path)).flatten(),
+            stamp: None,
+            size: None,
+        });
+    })
+}
+
+/// The hash of `path`'s logical content now (`FileRead::seen`): read
+/// whole, never from `crate::hashcache` (a file the run writes, rewritten
+/// within one stat signature).
+pub fn content_hash(path: &str) -> Option<[u64; 2]> {
+    read_logical(path).ok().map(|d| crate::persist::hash128(&d))
+}
+
+/// Whether the run `log` records had opened `path` for output.
+fn written_by(log: &ReadLog, path: &str) -> bool {
+    let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+    log.outputs.iter().any(|o| norm(o) == norm(path))
+}
+
+/// A user's input file closed after its first `consumed` bytes were read
+/// (see `FileRead::closed_at`).
+fn note_close(path: &str, consumed: u64) {
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if !log.keep_content || !is_user_file(path) {
+            return;
+        }
+        let Some(first) = log.files.iter().find(|f| f.path == path) else {
+            return;
+        };
+        let mut e = first.clone();
+        e.closed_at = Some(consumed);
+        e.seen = None;
+        log.files_mut().push(e);
+    })
+}
+
+/// A C part read the whole of `path` at once (`\pdfmdfivesum file`,
+/// `\pdffiledump`: texmfmp.c's `getmd5sum`, `getfiledump`), not as an input
+/// stream: for the incremental journal, a read of the file and a close after
+/// all of it. Without the close, a restart point after this read and before
+/// a later `\input` of the file that has consumed only the unchanged prefix
+/// looked sound, and kept the old content's digest: biblatex takes the
+/// `.bbl`'s MD5 (`\pdf@filemdfivesum`) just before it inputs the `.bbl`,
+/// and wrote the old `.bbl`'s MD5 to the `.aux` after biber changed it
+/// (`crate::incr`'s `restart_point`; lane P5-EXTERNAL-TOOLS).
+pub fn note_whole_read(path: &str) {
+    note_file(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        let Some(first) = log.files.iter().find(|f| f.path == path) else {
+            return;
+        };
+        let mut e = first.clone();
+        e.closed_at = Some(u64::MAX);
+        e.seen = None;
+        e.stamp = None;
+        e.size = None;
+        log.files_mut().push(e);
+    })
+}
+
+/// `\pdffilesize` of `path` (texmfmp.c's `getfilesize`): the result is a
+/// function of the content, so for the incremental journal it is a read of
+/// the whole file (`note_whole_read`), not only the lookup that found it
+/// (a letter added to the main file changed `\pdffilesize{\jobname.tex}`,
+/// and a restart after the read kept the old size).
+pub fn note_size_read(path: &str) {
+    note_whole_read(path);
+    let len = std::fs::metadata(path).ok().map(|m| m.len());
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files_mut()
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.size = len;
+        }
+    })
+}
+
+/// `\pdffilemoddate` of `path` (texmfmp.c's `getfilemoddate`): a read of
+/// the whole file (its content changing changes nothing, but a run from the
+/// start reads the time again), and of its modification time in seconds,
+/// `mtime` (`FileRead::stamp`): the time changing alone changes the read.
+pub fn note_stamp(path: &str, mtime: i64) {
+    note_whole_read(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files_mut()
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.stamp = Some(mtime);
+        }
+    })
+}
+
+/// A file's modification time in whole seconds, as `\pdffilemoddate` reads
+/// it (`FileRead::stamp`).
+pub fn mtime_secs(path: &str) -> Option<i64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+}
+
+/// The run opened `path` for output (the read journal's `outputs`).
+pub fn note_output(path: &str) {
+    READS.with(|r| {
+        if let Some(log) = r.borrow_mut().as_mut() {
+            if !log.outputs.iter().any(|p| p == path) {
+                log.outputs.push(path.to_string());
+            }
+        }
+    })
+}
+
+fn note_barrier(kind: &str) {
+    READS.with(|r| {
+        if let Some(log) = r.borrow_mut().as_mut() {
+            log.barriers.push(kind.to_string());
+        }
+    })
+}
+
+/// `lookup_again`, and what its answer depends on now, as `note_lookup`
+/// records it (#1562). A lookup made again that finds the same may now
+/// depend on more than when the run made it: a directory searched that
+/// has appeared, an entry kpathsea now passes over (a dangling link put
+/// next to where it looked). Its dependencies are watched from then on.
+pub fn lookup_again_deps(l: &Lookup) -> (Option<String>, Vec<(String, StatSig)>) {
+    let found = lookup_again(l);
+    let deps = with_resolver(|r| {
+        r.lookup_dirs(
+            &l.name,
+            l.format,
+            l.must_exist,
+            found.as_deref().map(Path::new),
+        )
+    });
+    let od = output_directory();
+    crate::lookupproof::note(
+        &l.name,
+        l.format,
+        l.must_exist,
+        found.as_deref(),
+        &deps,
+        od.as_deref(),
+    );
+    let mut log = ReadLog::default();
+    note_lookup_dirs(&mut log, &l.name, deps, found.as_deref());
+    (found, log.dirs)
+}
+
+/// Look `name` up again, exactly as the run did: `open_input` tries a
+/// relative name in `-output-directory` before the resolver, and records a
+/// lookup only when it is not there, so a lookup that now finds the file
+/// there finds something else.
+pub fn lookup_again(l: &Lookup) -> Option<String> {
+    if let Some(dir) = run().output_directory {
+        if !l.name.starts_with('/') {
+            let p = format!("{dir}/{}", l.name);
+            if Path::new(&p).is_file() {
+                return Some(p);
+            }
+        }
+    }
+    let found = with_resolver(|r| match l.must_exist {
+        Some(m) => r.find_ex(&l.name, l.format, m).0,
+        None => r.find(&l.name, l.format),
+    });
+    found.map(|p| p.to_string_lossy().into_owned())
+}
+
+// ---- files in a checkpoint ---------------------------------------------------
+
+/// What the generated `Globals::visit_files` calls for each file global.
+pub trait FileVisit {
+    fn alpha(&mut self, f: &mut AlphaFile);
+    fn byte(&mut self, f: &mut ByteFile);
+    fn word(&mut self, f: &mut WordFile);
+}
+
+/// Where a file global's stream is, at a checkpoint.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Stream {
+    None,
+    Stdin,
+    /// The command line standing in for the terminal's first lines.
+    Pre(Vec<Vec<u8>>, usize),
+    /// Reading `path`; `offset` is the next byte the engine has not read.
+    In {
+        path: String,
+        offset: u64,
+    },
+    /// Writing `path`, which holds `len` bytes; this stream's next byte
+    /// goes at `at` (`len`, unless another stream truncated the file
+    /// since, or the stream seeked). A checkpoint flushes every output
+    /// stream before it records any (`Globals::capture_ext`), so that
+    /// streams on the same file record the same `len`.
+    Out {
+        path: String,
+        len: u64,
+        at: u64,
+    },
+    /// The terminal (stdout, or the host's capture).
+    Terminal,
+}
+
+/// A file global at a checkpoint: its Pascal state and its stream.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileSnap {
+    pub buf: u64,
+    pub line: Vec<u8>,
+    pub pos: usize,
+    pub have_line: bool,
+    pub at_eof: bool,
+    pub err: i32,
+    pub stream: Stream,
+}
+
+/// An output stream's file length and position, after flushing it.
+fn out_state<W: Write>(
+    w: &mut BufWriter<W>,
+    path: &str,
+    position: impl FnOnce(&mut W) -> Option<u64>,
+) -> Result<(u64, u64), String> {
+    w.flush().map_err(|e| format!("{path}: {e}"))?;
+    let at = position(w.get_mut()).ok_or_else(|| format!("{path}: no position"))?;
+    let len = match logical_len(path) {
+        Some(n) => n,
+        None => std::fs::metadata(path)
+            .map(|m| m.len())
+            .map_err(|e| format!("{path}: {e}"))?,
+    };
+    Ok((len, at))
+}
+
+fn in_offset<R: std::io::Seek>(r: &mut R, path: &Option<String>) -> Result<(String, u64), String> {
+    let p = path
+        .clone()
+        .ok_or("an input file without a name cannot be checkpointed")?;
+    let off = r.stream_position().map_err(|e| format!("{p}: {e}"))?;
+    Ok((p, off))
+}
+
+pub use flashtex_runtime::trace::file_trace;
+
+/// The length of `path` on disk now (`None`: no such file).
+pub fn disk_len(path: &str) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|m| m.len())
+}
+
+/// Open `path` for output again as a checkpoint recorded it: `len` bytes
+/// long (what the file holds beyond is the abandoned run's), the next
+/// byte at `at`. Idempotent for several streams on one file, which all
+/// recorded the same `len`.
+fn reopen_out(path: &str, len: u64, at: u64) -> Result<Tracked, String> {
+    use std::io::Seek;
+    file_trace(|| {
+        format!(
+            "reopen_out {path} len {len} at {at} disk {:?}",
+            disk_len(path)
+        )
+    });
+    // Never extend: the first `len` bytes must still be what the run
+    // wrote (a file cut shorter since -- a failed run removes its PDF --
+    // would come back zero-filled, issue #1294).
+    let disk = disk_len(path).unwrap_or(0);
+    if disk < len || at > len {
+        return Err(format!(
+            "{path} holds {disk} bytes, not the {len} of the checkpoint (at {at})"
+        ));
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|e| format!("{path}: {e}"))?;
+    // A file whose logical end is known keeps its bytes past it (see
+    // `Logical`): its stream writes on from `at` and the cut comes later.
+    // So does a longer one (its first `len` bytes are the checkpoint's),
+    // its end blanked: cut now and written on, a reader could see the
+    // length cut and then a hole.
+    let mut logical = LOGICAL.with(|m| {
+        m.borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.len.as_mut())
+            .map(|n| *n = len)
+    });
+    if logical.is_none() && disk > len {
+        blank(path, disk.saturating_sub(BLANK_END).max(len), disk)
+            .map_err(|e| format!("{path}: {e}"))?;
+        LOGICAL.with(|m| {
+            m.borrow_mut().insert(
+                out_key(path),
+                Logical {
+                    len: Some(len),
+                    keep: None,
+                },
+            )
+        });
+        logical = Some(());
+    }
+    f.seek(std::io::SeekFrom::Start(at))
+        .map_err(|e| format!("{path}: {e}"))?;
+    stamp_output(path);
+    let mut t = Tracked::new(f, path);
+    t.logical = logical.is_some();
+    Ok(t)
+}
+
+fn reopen_in(path: &str, offset: u64) -> Result<BufReader<File>, String> {
+    use std::io::Seek;
+    let mut f = File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    f.seek(std::io::SeekFrom::Start(offset))
+        .map_err(|e| format!("{path}: {e}"))?;
+    Ok(BufReader::new(f))
+}
+
+impl AlphaFile {
+    /// This file at a checkpoint. Pipes cannot be checkpointed.
+    pub fn snapshot(&mut self) -> Result<FileSnap, String> {
+        if self.child.is_some() {
+            return Err("a pipe is open (\\input|, \\openout|)".into());
+        }
+        let stream = if self.to_stdout {
+            Stream::Terminal
+        } else if let Some(w) = self.output.as_mut() {
+            let path = self.path.clone().ok_or("an output file without a name")?;
+            let (len, at) = out_state(w, &path, |s| s.position())?;
+            Stream::Out { path, len, at }
+        } else {
+            match self.input.as_mut() {
+                None => Stream::None,
+                Some(TextIn::Stdin) => Stream::Stdin,
+                Some(TextIn::Pre(lines, i)) => Stream::Pre(lines.clone(), *i),
+                Some(TextIn::File(r)) => {
+                    let (path, offset) = in_offset(r, &self.path)?;
+                    Stream::In { path, offset }
+                }
+                Some(TextIn::Pipe(_)) => return Err("a pipe is open (\\input|)".into()),
+            }
+        };
+        Ok(FileSnap {
+            buf: self.buf as u64,
+            line: self.line.clone(),
+            pos: self.pos,
+            have_line: self.have_line,
+            at_eof: false,
+            err: self.err,
+            stream,
+        })
+    }
+
+    /// Flush the output buffer (a checkpoint flushes every output stream
+    /// before it records any, `Globals::capture_ext`). What it writes out
+    /// a run from scratch still holds in its buffer: the file is ahead
+    /// (`mark_ahead`).
+    pub fn flush_output(&mut self) {
+        if let Some(p) = self.pending_output() {
+            mark_ahead(&p);
+        }
+        if let Some(w) = self.output.as_mut() {
+            let _ = w.flush();
+        }
+    }
+
+    /// The file of this output stream if its buffer holds output not
+    /// written out yet.
+    pub fn pending_output(&self) -> Option<String> {
+        let w = self.output.as_ref()?;
+        if w.buffer().is_empty() {
+            return None;
+        }
+        self.path.clone()
+    }
+
+    /// Put this file back as `s` recorded it: an output file is cut back to
+    /// its length then, an input file reopened at its offset. What the
+    /// state left has not flushed yet is dropped: it is that state's
+    /// output, and flushing it now would write it into the file restored
+    /// by then (by another stream on it, or the old run's put back).
+    pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
+        if let Some(w) = self.output.take() {
+            let _ = w.into_parts();
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
+        }
+        PasFile::close(self);
+        let mut f = AlphaFile {
+            buf: s.buf as u8,
+            line: s.line.clone(),
+            pos: s.pos,
+            have_line: s.have_line,
+            err: s.err,
+            ..AlphaFile::default()
+        };
+        match &s.stream {
+            Stream::None => {}
+            Stream::Terminal => f.to_stdout = true,
+            Stream::Stdin => f.input = Some(TextIn::Stdin),
+            Stream::Pre(lines, i) => f.input = Some(TextIn::Pre(lines.clone(), *i)),
+            Stream::In { path, offset } => {
+                f.input = Some(TextIn::File(reopen_in(path, *offset)?));
+                f.path = Some(path.clone());
+            }
+            Stream::Out { path, len, at } => {
+                f.output = Some(reopen_out(path, *len, *at)?.stdio_text());
+                f.path = Some(path.clone());
+                // (the record does not say whether its buffer held output)
+                mark_ahead(path);
+            }
+        }
+        *self = f;
+        Ok(())
+    }
+}
+
+impl ByteFile {
+    pub fn snapshot(&mut self) -> Result<FileSnap, String> {
+        let stream = if let Some(w) = self.output.as_mut() {
+            let path = self.path.clone().ok_or("an output file without a name")?;
+            let (len, at) = out_state(w, &path, |f| {
+                use std::io::Seek;
+                f.stream_position().ok()
+            })?;
+            Stream::Out { path, len, at }
+        } else if let Some(r) = self.input.as_mut() {
+            let (path, offset) = in_offset(r, &self.path)?;
+            Stream::In { path, offset }
+        } else {
+            Stream::None
+        };
+        Ok(FileSnap {
+            buf: self.buf as u32 as u64,
+            line: vec![],
+            pos: 0,
+            have_line: false,
+            at_eof: self.at_eof,
+            err: self.err,
+            stream,
+        })
+    }
+
+    /// Flush the output buffer (see `AlphaFile::flush_output`).
+    pub fn flush_output(&mut self) {
+        if let Some(p) = self.pending_output() {
+            mark_ahead(&p);
+        }
+        if let Some(w) = self.output.as_mut() {
+            let _ = w.flush();
+        }
+    }
+
+    /// See `AlphaFile::pending_output`.
+    pub fn pending_output(&self) -> Option<String> {
+        let w = self.output.as_ref()?;
+        if w.buffer().is_empty() {
+            return None;
+        }
+        self.path.clone()
+    }
+
+    pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
+        if let Some(w) = self.output.take() {
+            let _ = w.into_parts();
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
+        }
+        PasFile::close(self);
+        let mut f = ByteFile {
+            buf: s.buf as u32 as i32,
+            at_eof: s.at_eof,
+            err: s.err,
+            ..ByteFile::default()
+        };
+        match &s.stream {
+            Stream::None => {}
+            Stream::In { path, offset } => {
+                f.input = Some(BufReader::new(InFile::Disk(
+                    reopen_in(path, *offset)?.into_inner(),
+                )));
+                f.path = Some(path.clone());
+            }
+            Stream::Out { path, len, at } => {
+                f.output = Some(reopen_out(path, *len, *at)?.stdio());
+                f.path = Some(path.clone());
+                mark_ahead(path);
+            }
+            other => return Err(format!("a binary file cannot be {other:?}")),
+        }
+        *self = f;
+        Ok(())
+    }
+}
+
+impl WordFile {
+    pub fn snapshot(&mut self) -> Result<FileSnap, String> {
+        if self.output.is_some() || self.input.is_some() {
+            return Err("the format file is open".into());
+        }
+        Ok(FileSnap {
+            buf: self.buf.to_bits(),
+            line: vec![],
+            pos: 0,
+            have_line: false,
+            at_eof: self.at_eof,
+            err: self.err,
+            stream: Stream::None,
+        })
+    }
+
+    pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
+        PasFile::close(self);
+        *self = WordFile {
+            buf: memory_word::from_bits(s.buf),
+            at_eof: s.at_eof,
+            err: s.err,
+            ..WordFile::default()
+        };
+        Ok(())
+    }
+}
+
+impl crate::persist::Codec for Stream {
+    fn enc(&self, w: &mut Vec<u8>) {
+        match self {
+            Stream::None => w.push(0),
+            Stream::Stdin => w.push(1),
+            Stream::Pre(l, i) => {
+                w.push(2);
+                l.enc(w);
+                i.enc(w);
+            }
+            Stream::In { path, offset } => {
+                w.push(3);
+                path.enc(w);
+                offset.enc(w);
+            }
+            Stream::Out { path, len, at } => {
+                w.push(4);
+                path.enc(w);
+                len.enc(w);
+                at.enc(w);
+            }
+            Stream::Terminal => w.push(5),
+        }
+    }
+    fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
+        use crate::persist::Codec;
+        Ok(match r.take(1)?[0] {
+            0 => Stream::None,
+            1 => Stream::Stdin,
+            2 => Stream::Pre(Codec::dec(r)?, Codec::dec(r)?),
+            3 => Stream::In {
+                path: Codec::dec(r)?,
+                offset: Codec::dec(r)?,
+            },
+            4 => Stream::Out {
+                path: Codec::dec(r)?,
+                len: Codec::dec(r)?,
+                at: Codec::dec(r)?,
+            },
+            5 => Stream::Terminal,
+            t => return Err(format!("bad stream tag {t}")),
+        })
+    }
+}
+
+crate::codec_struct!(FileSnap {
+    buf,
+    line,
+    pos,
+    have_line,
+    at_eof,
+    err,
+    stream
+});
+
+#[cfg(test)]
+#[path = "system_output_tests.rs"]
+mod output_restore_tests;
+
+#[cfg(test)]
+#[path = "system_rewritten_tests.rs"]
+mod rewritten_at_tests;
+
+/// The two places where web2c's behaviour depends on the OS (texmfmp.c's
+/// `QUOTE`, kpathsea's `xbasename`), on each OS the test runs on.
+#[cfg(test)]
+mod os_dependent_tests {
+    use super::*;
+
+    #[test]
+    fn program_name_from_argv0_per_os() {
+        assert_eq!(program_name_from_argv0("/usr/bin/pdflatex"), "pdflatex");
+        assert_eq!(program_name_from_argv0("pdftex.exe"), "pdftex");
+        assert_eq!(program_name_from_argv0("/x/flashtex-initex"), "pdftex");
+        if cfg!(windows) {
+            assert_eq!(
+                program_name_from_argv0(r"C:\tl\bin\pdflatex.exe"),
+                "pdflatex"
+            );
+            assert_eq!(program_name_from_argv0(r"D:pdftex.EXE"), "pdftex");
+            assert_eq!(program_name_from_argv0(r"C:\b\flashtex-host.exe"), "pdftex");
+        }
+    }
+
+    #[test]
+    fn restricted_shell_quoting_per_os() {
+        let allowed = vec!["kpsewhich".to_string()];
+        let cmd = br#"kpsewhich --format="other text files" config"#;
+        let (r, q) = shell_cmd_is_allowed(cmd, &allowed);
+        assert_eq!(r, 2);
+        // texmfmp.c's own comment gives both forms.
+        let want: &[u8] = if cfg!(windows) {
+            br#"kpsewhich "--format"="other text files" "config""#
+        } else {
+            br#"kpsewhich '--format=''other text files' 'config'"#
+        };
+        assert_eq!(q, want, "{}", String::from_utf8_lossy(&q));
+        assert_eq!(shell_cmd_is_allowed(b"kpsewhich 'x'", &allowed).0, -1);
+        assert_eq!(shell_cmd_is_allowed(b"rm -rf x", &allowed).0, 0);
+    }
+
+    #[test]
+    fn runpopen_turns_single_quotes_into_double_on_win32() {
+        assert_eq!(crate::os::POPEN_QUOTES_TO_DOUBLE, cfg!(windows));
+        let cmd = "kpsewhich 'a b' x";
+        assert_eq!(popen_command(cmd, true), r#"kpsewhich "a b" x"#);
+        assert_eq!(popen_command(cmd, false), cmd);
+        // So `\input|"kpsewhich 'a b'"` passes the restricted check on
+        // WIN32, where elsewhere its `'` is a quotation error.
+        let allowed = vec!["kpsewhich".to_string()];
+        let check = |win32| shell_cmd_is_allowed(popen_command(cmd, win32).as_bytes(), &allowed).0;
+        assert_eq!(check(true), 2);
+        assert_eq!(check(false), -1);
+    }
+
+    /// A pipe's command as cmd.exe runs it, after `runpopen`'s rewrite.
+    #[cfg(windows)]
+    #[test]
+    fn runpopen_command_through_cmd_exe() {
+        let cmd = popen_command("echo 'a b'", crate::os::POPEN_QUOTES_TO_DOUBLE);
+        let out = shell_command(cmd.as_bytes()).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), r#""a b""#);
+    }
+
+    /// The restricted shell escape's quoting as cmd.exe passes it on: a
+    /// program (here `where.exe`, as it would be `kpsewhich.exe`) gets each
+    /// argument with the added quotes removed.
+    #[cfg(windows)]
+    #[test]
+    fn restricted_quoting_through_cmd_exe() {
+        let allowed = vec!["where".to_string()];
+        let (r, q) = shell_cmd_is_allowed(b"where cmd.exe", &allowed);
+        assert_eq!(r, 2);
+        assert_eq!(q, br#"where "cmd.exe""#);
+        let out = shell_command(&q).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let found = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(found.contains(r"\system32\cmd.exe"), "{found}");
+    }
+
+    /// docs/dev/engine-windows.md's caveat, as TeX Live has it: cmd.exe expands
+    /// `%VAR%` even inside the `"..."` the restricted quoting adds.
+    #[cfg(windows)]
+    #[test]
+    fn cmd_exe_expands_percent_variables_inside_quotes() {
+        let allowed = vec!["echo".to_string()];
+        let (r, q) = shell_cmd_is_allowed(br#"echo "%OS%""#, &allowed);
+        assert_eq!(r, 2);
+        assert_eq!(q, br#"echo "%OS%""#);
+        let out = shell_command(&q).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim_end(),
+            r#""Windows_NT""#
+        );
+    }
+}
+
+#[cfg(test)]
+mod confined_read_tests {
+    use super::confined_name_ok;
+
+    /// The names a Live Share guest could use to read the host's files are
+    /// refused; ordinary project and TeX tree names are not.
+    #[test]
+    fn confined_names() {
+        for bad in [
+            "/etc/hosts",
+            "/etc/hosts.tex",
+            "~/.ssh/id_rsa",
+            "~alice/notes.tex",
+            "$HOME/secret.tex",
+            "../secret.tex",
+            "chapters/../../x.tex",
+            "a\\..\\b.tex",
+            "\"/etc/hosts\"",
+        ] {
+            assert!(!confined_name_ok(bad), "{bad}");
+        }
+        for ok in [
+            "main.tex",
+            "chapters/one.tex",
+            "article.cls",
+            "figures/a.pdf",
+            "./local.sty",
+            "a..b.tex",
+        ] {
+            assert!(confined_name_ok(ok), "{ok}");
+        }
+    }
+
+    /// What was found must resolve, through every link, into an allowed
+    /// root; a link-free absolute hit (a TeX tree file) is fine.
+    #[cfg(unix)]
+    #[test]
+    fn confined_paths() {
+        use super::confined_path_ok;
+        let base = std::env::temp_dir().join(format!("flashtex-confine-{}", std::process::id()));
+        let project = base.join("project");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(project.join("main.tex"), "x").unwrap();
+        std::fs::write(outside.join("secret.tex"), "s").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.tex"), project.join("evil.tex")).unwrap();
+        std::os::unix::fs::symlink("../outside", project.join("linked")).unwrap();
+        let roots = vec![std::fs::canonicalize(&project).unwrap()];
+        assert!(confined_path_ok(&project.join("main.tex"), &roots, false));
+        assert!(
+            !confined_path_ok(&project.join("evil.tex"), &roots, true),
+            "a link to a file outside"
+        );
+        assert!(
+            !confined_path_ok(&project.join("linked/secret.tex"), &roots, true),
+            "a relative link to a folder outside"
+        );
+        let real_outside = std::fs::canonicalize(outside.join("secret.tex")).unwrap();
+        assert!(
+            confined_path_ok(&real_outside, &roots, true),
+            "a link-free search hit is a tree file"
+        );
+        assert!(
+            !confined_path_ok(&real_outside, &roots, false),
+            "but never one from the output-directory shortcut"
+        );
+        assert!(!confined_path_ok(
+            &project.join("missing.tex"),
+            &roots,
+            true
+        ));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod statsig_tests {
+    use super::*;
+
+    /// A signature taken within the time granularity of the file's
+    /// modification or change time equals none, not even itself; an older
+    /// one equals its twin. (Putting the modification time back moves the
+    /// change time, so that signature is racy until the change time is old
+    /// too; flashtex-runtime's `statsig` tests cover the window on each
+    /// time, a time far ahead, and a rewrite with the time put back.)
+    #[test]
+    fn racy_signatures_equal_nothing() {
+        let d = std::env::temp_dir().join(format!("flashtex-statsig-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("f.tex");
+        std::fs::write(&f, "abc").unwrap();
+        let p = f.to_str().unwrap();
+        let fresh = StatSig::of(p).unwrap();
+        assert!(fresh.racy);
+        assert!(fresh != fresh, "a racy signature equals itself");
+        assert!(fresh.same_fields(&fresh));
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let a = StatSig::of(p).unwrap();
+        assert!(a.racy || a.ctime_ns == 0, "the change time has just moved");
+        let a = StatSig::of_within(p, 0).unwrap();
+        let b = StatSig::of_within(p, 0).unwrap();
+        assert!(!a.racy && a == b);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod known_content_tests {
+    use super::*;
+
+    /// The host's copy stands for the file while the file is the one it
+    /// wrote, and not once anything else has written it.
+    #[test]
+    fn the_hosts_copy_stands_while_the_file_is_unchanged() {
+        let d = std::env::temp_dir().join(format!("flashtex-known-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("known-main.tex");
+        let path = p.to_string_lossy().into_owned();
+        std::fs::write(&p, b"abc\n").unwrap();
+        let data = std::sync::Arc::new(b"abc\n".to_vec());
+        note_known_content(&p, Some((StatSig::of(&path).unwrap(), data.clone())));
+        let got = known_content(&path).expect("the copy");
+        assert!(std::sync::Arc::ptr_eq(&got, &data));
+        // another program writes it (another length)
+        std::fs::write(&p, b"abcd\n").unwrap();
+        assert!(known_content(&path).is_none());
+        note_known_content(&p, None);
+        assert!(known_content(&path).is_none());
+        // a file of the same name elsewhere is another file
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        let q = d.join("sub").join("known-main.tex");
+        std::fs::write(&q, b"abc\n").unwrap();
+        std::fs::write(&p, b"abc\n").unwrap();
+        note_known_content(&p, Some((StatSig::of(&path).unwrap(), data.clone())));
+        assert!(known_content(&q.to_string_lossy()).is_none());
+        // the next compile does not trust it
+        clear_known_content();
+        assert!(known_content(&path).is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

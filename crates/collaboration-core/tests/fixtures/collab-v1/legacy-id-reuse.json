@@ -1,0 +1,73 @@
+{
+  "format": "collab-v1-fixture/1",
+  "name": "legacy-id-reuse",
+  "description": "id_reuse_divergence.rs in collab-v1: ids reused with different content (scalar, delete target, insert vs delete, file op, file id) are refused, identical replays are duplicates; forward orders only",
+  "generator": "rust oracle (crates/collaboration-core)",
+  "frames": [
+    "2300000005010100011d00011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d0100086d61696e2e746578",
+    "1e000000050201011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d01011d00000003616263",
+    "1e000000050301011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d01011d00000003615863",
+    "1b000000050401011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d01021d011d0001",
+    "1b000000050501011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d01021d031d0102",
+    "1b000000050601011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d01021d041d0001",
+    "1c000000050701011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d01011d0300000171",
+    "2400000005080100011e00011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d0100096f746865722e746578",
+    "2400000005090100011d00011d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d0100096d61696e322e746578"
+  ],
+  "orders": [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8]
+  ],
+  "expected": {
+    "project_digest": "ad83fd93819284ec",
+    "filemap_digest": "2b8fa0958edfda51",
+    "files": [
+      {
+        "file": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d",
+        "path": "main.tex",
+        "kind": "text",
+        "text": "a",
+        "digest": "df56dba9285f7563"
+      }
+    ],
+    "rejected": [
+      {
+        "doc": "files",
+        "replica": "000000000000001d",
+        "counter": 0,
+        "kind": "id_conflict"
+      },
+      {
+        "doc": "files",
+        "replica": "000000000000001e",
+        "counter": 0,
+        "kind": "id_conflict"
+      },
+      {
+        "doc": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d",
+        "replica": "000000000000001d",
+        "counter": 0,
+        "kind": "id_conflict"
+      },
+      {
+        "doc": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d",
+        "replica": "000000000000001d",
+        "counter": 1,
+        "kind": "id_conflict"
+      },
+      {
+        "doc": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d",
+        "replica": "000000000000001d",
+        "counter": 3,
+        "kind": "id_conflict"
+      },
+      {
+        "doc": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d",
+        "replica": "000000000000001d",
+        "counter": 4,
+        "kind": "id_conflict"
+      }
+    ],
+    "pending": 0
+  }
+}

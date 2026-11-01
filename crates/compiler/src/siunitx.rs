@@ -371,17 +371,20 @@ impl Settings {
 }
 
 /// Raw source of a token list: control words spelled `\name `, control
-/// symbols `\,` (a one-character word spanning two bytes), braces kept.
+/// symbols (`\,`, `\%`, …) with their backslash, braces kept.
 pub fn raw_text<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
     let mut out = String::new();
     for token in tokens {
         match &token.kind {
             TokenKind::Word(word) => {
-                let bytes = token.span.end.saturating_sub(token.span.start);
-                if word.chars().count() == 1
-                    && bytes == word.len() + 1
-                    && !word.chars().all(char::is_alphanumeric)
-                {
+                // A control symbol lexes as a one-character word; its escaped
+                // identity comes from the lexer's `control_symbol` mark, never
+                // from span byte length (issue #760: a `\,` copied out of
+                // `\newcommand{\tss}{...}` carries the invocation's span, so
+                // `bytes == word.len() + 1` measured the macro's name length —
+                // a long-named macro lost the backslash while a plain `,`
+                // inside a two-byte `\q` spuriously gained one).
+                if token.control_symbol {
                     out.push('\\');
                 }
                 out.push_str(word);

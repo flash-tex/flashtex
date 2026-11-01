@@ -45,6 +45,9 @@
 //! oracle, where the box grows with cmr12's quad of 11.74988pt (width 7.024,
 //! height 7.902) rather than with the nominal 12 pt.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::into_iter_on_ref, clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

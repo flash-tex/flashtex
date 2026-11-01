@@ -10,6 +10,38 @@ use std::{
     thread,
     time::Duration,
 };
+/// The helper under test, in a process group of its own, so that killing the
+/// group also kills the fake compilers it starts: they share its group, and
+/// a gated one left behind busy-waits for a release file in a temp dir that
+/// is already gone (#1221, #1329).
+fn controller() -> Command {
+    use std::os::unix::process::CommandExt;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_flashtex-preview-controller"));
+    command.process_group(0);
+    command
+}
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+/// SIGKILL to the process group [`controller`] made for `pid`. Harmless when
+/// the group is already empty (ESRCH).
+fn kill_group(pid: u32) {
+    // SAFETY: kill(2) with a negative pid signals that process group only.
+    unsafe {
+        kill(-(pid as i32), 9);
+    }
+}
+/// Kills a [`controller`] group when dropped, also on a failed assertion,
+/// for the tests that drive the helper without a [`Client`].
+struct GroupGuard(u32);
+impl Drop for GroupGuard {
+    fn drop(&mut self) {
+        kill_group(self.0);
+    }
+}
+/// Upper bound for one expected helper message. Generous because CI runs the
+/// workspace tests in parallel; a healthy reply arrives in milliseconds.
+const RECV_WAIT: Duration = Duration::from_secs(30);
 struct Client {
     child: Child,
     input: Option<ChildStdin>,
@@ -323,10 +355,7 @@ fn invalid_display_transport_is_rejected_before_source_import() {
             .unwrap(),
         )
         .unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_flashtex-preview-controller"))
-            .arg(&config)
-            .output()
-            .unwrap();
+        let output = controller().arg(&config).output().unwrap();
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr)
             .contains("display_transport must be value or raw-prototype"));
@@ -340,7 +369,7 @@ fn python3() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("FLASHTEX_TEST_PYTHON") {
         return path.into();
     }
-    let system = std::path::PathBuf::from("/usr/bin/python3");
+    let system = std::path::PathBuf::from("python3");
     if system.is_file() {
         return system;
     }
@@ -411,7 +440,7 @@ impl Client {
     fn configured_stderr(root: &std::path::Path, value: Value, stderr: Stdio) -> Self {
         let config = root.join("config.json");
         std::fs::write(&config, serde_json::to_vec(&value).unwrap()).unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-preview-controller"))
+        let mut child = controller()
             .arg(config)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -464,7 +493,7 @@ impl Client {
             reader_thread: Some(reader_thread),
         };
         assert_eq!(
-            client.output.recv_timeout(Duration::from_secs(3)).unwrap()["type"],
+            client.output.recv_timeout(RECV_WAIT).unwrap()["type"],
             "ready"
         );
         client
@@ -476,7 +505,7 @@ impl Client {
     }
     fn reply(&self, id: &str) -> Value {
         loop {
-            let event = self.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = self.output.recv_timeout(RECV_WAIT).unwrap();
             if event["id"] == id {
                 return event;
             }
@@ -485,6 +514,8 @@ impl Client {
 }
 impl Drop for Client {
     fn drop(&mut self) {
+        // The whole group: the helper and every compiler it started.
+        kill_group(self.child.id());
         let _ = self.child.kill();
         let _ = self.child.wait();
         if let Some(reader) = self.reader_thread.take() {
@@ -610,7 +641,7 @@ fn helper_streams_original_compiler_result_for_latest_durable_edit() {
             assert_eq!(ack["payload"]["document"]["text"], source);
         }
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             if event["type"] == "update"
                 && event["payload"]["kind"] == "preview"
                 && event["payload"]["source_versions"]["main.tex"] == 2
@@ -728,13 +759,14 @@ fn slow_but_progressing_reader_survives_a_reply_far_longer_than_the_watchdog() {
         .unwrap(),
     )
     .unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-preview-controller"))
+    let mut child = controller()
         .arg(config)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    let _group = GroupGuard(child.id());
     let mut stdout = child.stdout.take().unwrap();
     let mut input = child.stdin.take().unwrap();
     // Drain the short `ready` frame at ordinary speed, byte-by-byte so no
@@ -809,7 +841,7 @@ fn stalled_reader(requests: usize) {
     }
     let config = dir.path().join("config.json");
     std::fs::write(&config,serde_json::to_vec(&json!({"session_id":"session1","project_id":"p","entry_path":"main.tex","store_paths":[path]})).unwrap()).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-preview-controller"))
+    let mut child = controller()
         .arg(config)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1097,18 +1129,22 @@ fn negotiated_history_echoes_original_token_and_restart_requires_renegotiation()
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let compiler = dir.path().join("gated.py");
-    std::fs::write(&compiler, script(r#"import json,sys,pathlib,time
+    std::fs::write(&compiler, script(r#"import json,sys,pathlib,time,os
 root=pathlib.Path(__file__).parent
+P=os.getppid()
+def orphaned():
+ # Never outlive the helper or the test's temp dir (#1221, #1329).
+ if os.getppid()!=P or not root.exists(): sys.exit(1)
 for line in sys.stdin:
  r=json.loads(line);p=r['payload'];revision=p['revision']
  (root/('started'+str(revision))).touch()
- while revision>1 and not (root/('release'+str(revision))).exists(): time.sleep(.001)
+ while revision>1 and not (root/('release'+str(revision))).exists(): time.sleep(.001); orphaned()
  print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':revision,'status':'ok','pages':[],'diagnostics':[]}}),flush=True)
 "#)).unwrap();
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut client = Client::with_compiler(dir.path(), Some(&compiler));
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "completed_snapshot");
         if event["payload"]["kind"] == "preview" {
             break;
@@ -1126,7 +1162,7 @@ for line in sys.stdin:
         json!({"source_binding_token":"editor-A:α\nopaque"}),
     );
     assert_eq!(client.reply("a")["type"], "result");
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while !dir.path().join("started2").exists() {
         assert!(std::time::Instant::now() < deadline);
         thread::sleep(Duration::from_millis(1));
@@ -1137,7 +1173,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("b")["payload"]["document"]["revision"], 2);
     std::fs::write(dir.path().join("release2"), b"ok").unwrap();
     let historical = loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         if event["payload"]["kind"] == "completed_snapshot" {
             break event["payload"].clone();
         }
@@ -1153,7 +1189,7 @@ for line in sys.stdin:
     assert_eq!(historical["result"]["payload"]["revision"], 2);
     std::fs::write(dir.path().join("release3"), b"ok").unwrap();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         if event["payload"]["kind"] == "preview" {
             assert_eq!(event["payload"]["source_versions"]["main.tex"], 2);
             break;
@@ -1163,7 +1199,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("restart")["type"], "result");
     std::fs::write(dir.path().join("release4"), b"ok").unwrap();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "completed_snapshot");
         if event["payload"]["kind"] == "preview" {
             break;
@@ -1175,7 +1211,7 @@ for line in sys.stdin:
         json!({"source_binding_token":"must-not-enroll"}),
     );
     assert_eq!(client.reply("after-restart-a")["type"], "result");
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while !dir.path().join("started5").exists() {
         assert!(std::time::Instant::now() < deadline);
         thread::sleep(Duration::from_millis(1));
@@ -1188,7 +1224,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("after-restart-b")["type"], "result");
     std::fs::write(dir.path().join("release5"), b"ok").unwrap();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "completed_snapshot");
         if event["payload"]["kind"] == "stale" {
             assert_eq!(event["payload"]["compile_revision"], 5);
@@ -1497,7 +1533,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("enable")["payload"]["enabled"], true);
     let mut seen_v1 = Vec::new();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         if event["payload"]["kind"] == "preview" {
             seen_v1.push((
                 event["payload"]["request_id"].clone(),
@@ -1550,7 +1586,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("restart")["type"], "result");
     // A restart resets both negotiated optional modes. The fallback still arrives.
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "display_candidate");
         if event["payload"]["kind"] == "preview" {
             break;
@@ -1572,7 +1608,7 @@ for line in sys.stdin:
         capability
     );
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "failed");
         if event["payload"]["kind"] == "display_candidate" {
             break;
@@ -1586,16 +1622,20 @@ fn display_failure_fixture(root: &std::path::Path, mode: &str) -> std::path::Pat
     let path = root.join("display-failure.py");
     // Deliberately minimal transport fixture; never presented as renderer-valid.
     let script = r#"#!/usr/bin/env python3
-import json,sys,hashlib,time,pathlib
+import json,sys,hashlib,time,pathlib,os
 mode='MODE'
 held=False
+P=os.getppid()
+def orphaned():
+ # Never outlive the helper or the test's temp dir (#1221, #1329).
+ if os.getppid()!=P or not pathlib.Path(__file__).parent.exists(): sys.exit(1)
 for line in sys.stdin:
  r=json.loads(line);p=r['payload'];caps=p.get('layout_capabilities',[])
  print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[],'layout_capabilities':caps}}),flush=True)
  if 'display-list-v2' not in caps:continue
  if mode=='hold' and not held:
   held=True
-  while not pathlib.Path(__file__+'.release').exists():time.sleep(.002)
+  while not pathlib.Path(__file__+'.release').exists():time.sleep(.002); orphaned()
  docs=[{'path':d['path'],'revision':p['revision'],'sha256':hashlib.sha256(d['text'].encode()).hexdigest(),'byte_length':len(d['text'].encode())} for d in p['documents']]
  if mode=='hash':docs[0]['sha256']='0'*64
  wire=json.dumps({'protocol_version':2,'type':'display_list','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'render_format':'display-list-v2','documents':docs}})
@@ -1635,7 +1675,7 @@ fn stale_display_sibling_after_durable_edit_never_reaches_optional_output() {
         let mut client = Client::with_transport(dir.path(), Some(&compiler), raw);
         enable_display_transport(&mut client, raw);
         let old_generation = loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             let p = &event["payload"];
             if p["kind"] == "preview"
                 && p["result"]["payload"]["layout_capabilities"]
@@ -1656,7 +1696,7 @@ fn stale_display_sibling_after_durable_edit_never_reaches_optional_output() {
         )
         .unwrap();
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             let p = &event["payload"];
             assert_ne!(p["kind"], "failed", "{event}");
             if p["kind"] == "display_candidate" {
@@ -1681,7 +1721,7 @@ fn corrupt_display_hash_fails_preview_but_preserves_durable_edit_and_reopen() {
         let mut client = Client::with_transport(dir.path(), Some(&compiler), raw);
         enable_display_transport(&mut client, raw);
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             assert_ne!(event["payload"]["kind"], "display_candidate");
             if event["payload"]["kind"] == "failed" {
                 break;
@@ -1806,7 +1846,7 @@ fn stalled_optional_display_write_triggers_watchdog_with_no_source_loss() {
         .unwrap(),
     )
     .unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-preview-controller"))
+    let mut child = controller()
         .arg(config)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1967,7 +2007,7 @@ for line in sys.stdin:
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut client = Client::with_compiler(dir.path(), Some(&compiler));
     loop {
-        if client.output.recv_timeout(Duration::from_secs(3)).unwrap()["payload"]["kind"]
+        if client.output.recv_timeout(RECV_WAIT).unwrap()["payload"]["kind"]
             == "preview"
         {
             break;
@@ -1985,7 +2025,7 @@ for line in sys.stdin:
         assert!(payload["compile_request_id"].is_string());
         assert_ne!(payload["compile_revision"], payload["document"]["revision"]);
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             if event["payload"]["kind"] == "preview"
                 && event["payload"]["request_id"] == payload["compile_request_id"]
             {
@@ -2005,16 +2045,20 @@ fn grouped_retry_retains_command_identity_but_admits_current_source_compile() {
     for mode in ["full", "metadata"] {
         let dir = tempfile::tempdir().unwrap();
         let compiler = dir.path().join("group-gated.py");
-        std::fs::write(&compiler, script(r#"import json,sys,pathlib,time
+        std::fs::write(&compiler, script(r#"import json,sys,pathlib,time,os
 root=pathlib.Path(__file__).parent
+P=os.getppid()
+def orphaned():
+ # Never outlive the helper or the test's temp dir (#1221, #1329).
+ if os.getppid()!=P or not root.exists(): sys.exit(1)
 for line in sys.stdin:
  r=json.loads(line);p=r['payload'];(root/'started').touch()
- while not (root/'release').exists(): time.sleep(.001)
+ while not (root/'release').exists(): time.sleep(.001); orphaned()
  print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)
 "#)).unwrap();
         std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut client = Client::with_compiler(dir.path(), Some(&compiler));
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
         while !dir.path().join("started").exists() {
             assert!(std::time::Instant::now() < deadline);
             thread::sleep(Duration::from_millis(2));
@@ -2048,7 +2092,7 @@ for line in sys.stdin:
         );
         std::fs::write(dir.path().join("release"), "").unwrap();
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             if event["payload"]["kind"] == "preview"
                 && event["payload"]["request_id"] == payload["compile_request_id"]
             {
@@ -2081,7 +2125,7 @@ for line in sys.stdin:
 #[cfg(unix)]
 fn next_preview(client: &Client) -> Value {
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(5)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["type"], "error", "{event}");
         assert_ne!(event["payload"]["kind"], "failed", "{event}");
         if event["payload"]["kind"] == "preview" {

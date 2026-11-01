@@ -207,6 +207,37 @@ fn overlapping_and_alternative_phases_are_excluded_from_coverage() {
     assert!(Phases::NAMES.contains(&"typeset"));
 }
 
+/// Cases left out by `--only` are not this run's: the per-PR job in perf.yml
+/// measures a 15-case subset on every run, so counting exclusions would fail
+/// the gate by construction. Only a selected case that produced no valid
+/// timing (a refusal) fails the gate without `--allow-unmeasured`.
+#[test]
+fn the_unmeasured_gate_ignores_only_excluded_cases() {
+    let s = |x: &str| x.to_string();
+    // A full run: nothing excluded, nothing refused.
+    assert!(crate::unmeasured_gate_error(&[], &[]).is_none());
+    // A subset run with every selected case measured: the excluded cases
+    // are ignored, not named, and the gate passes.
+    assert!(crate::unmeasured_gate_error(&[s("hw2"), s("tikz-heavy")], &[]).is_none());
+    // A refused measurement fails the gate too, even with no --only, and
+    // the error names the refused case and points at the flag.
+    let err = crate::unmeasured_gate_error(&[], &[("refused".into(), "font diagnostics".into())]).expect("refused case must fail the gate");
+    assert!(err.contains("refused"), "refused cases must be named: {err}");
+    assert!(err.contains("--allow-unmeasured"), "the error must point at the acknowledgement flag: {err}");
+    // A refusal inside a subset run still fails, naming the refused case.
+    let err = crate::unmeasured_gate_error(&[s("hw2")], &[("refused".into(), "font diagnostics".into())]).expect("refused case must fail the gate");
+    assert!(err.contains("refused"), "refused cases must be named: {err}");
+}
+
+#[test]
+fn excluded_ids_is_the_corpus_minus_the_selection() {
+    let s = |x: &str| x.to_string();
+    let all = vec![s("hw1"), s("hw2"), s("tikz-heavy")];
+    assert!(crate::excluded_ids(&all, &all).is_empty(), "selecting everything excludes nothing");
+    assert_eq!(crate::excluded_ids(&all, &[s("hw1")]), vec![s("hw2"), s("tikz-heavy")]);
+    assert!(crate::excluded_ids(&[], &[]).is_empty());
+}
+
 /// `unicode-accents` opens with multi-byte characters in its first prose line.
 /// An anchor computed as "ten bytes into the line" landed inside one of them
 /// and `String::insert_str` panicked, taking the whole suite down with it.

@@ -1,0 +1,7 @@
+% Verifies \fontcharic reads italic corrections and matches the kern that \/ inserts.
+\input prelude
+\font\f=cmr10 \font\ti=cmti10
+\message{448 ic-f=\the\fontcharic\f`f; ic-A=\the\fontcharic\f`A; ic-ti-f=\the\fontcharic\ti`f}
+\setbox0=\hbox{\f f\/}
+\lsshipbox0
+\end

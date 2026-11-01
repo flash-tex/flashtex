@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{calc}
+\newlength{\mytestlen}
+\newcounter{mytestcount}
+\begin{document}
+\setlength{\mytestlen}{2cm + 10pt - 1pt}
+A length computed by calc: \the\mytestlen.
+\setcounter{mytestcount}{3 * 4 + 1}
+A counter computed by calc: \themytestcount.
+\end{document}

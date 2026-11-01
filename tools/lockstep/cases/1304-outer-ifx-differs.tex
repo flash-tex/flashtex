@@ -1,0 +1,10 @@
+% 1304-outer-ifx-differs: \ifx declares an \outer macro different from a plain macro with the same text (tex.web §507).
+\input prelude
+\outer\def\om{Q}
+\def\pm{Q}
+\message{1304 outer=\meaning\om}
+\message{1304 plain=\meaning\pm}
+\ifx\om\pm \dimen0=304pt \else \dimen0=1304pt \fi
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -19,7 +19,9 @@
 //  something. On a shared runner an overrun prints a `perf(non-gating)` line
 //  -- greppable in swift-test.log, and visible to anyone who wonders whether
 //  something got slower -- instead of failing the build. Locally and on the
-//  owner's Mac the budget is enforced exactly as before.
+//  owner's Mac the budget is enforced exactly as before, unless the 1-minute
+//  load average exceeds the core count: a Mac saturated by other lanes'
+//  builds is as uncontrolled as a shared runner, and says so in the line.
 //
 //  This applies ONLY to "how fast is this machine" assertions. Invariants that
 //  hold at any speed stay gating everywhere: a main thread that stalls for
@@ -33,6 +35,25 @@ enum TimingBudget {
     /// GitHub Actions sets `CI=1` for the mac job (.github/workflows/ci.yml).
     static var isSharedRunner: Bool {
         ProcessInfo.processInfo.environment["CI"] == "1"
+    }
+
+    /// The 1-minute load average, or nil when the kernel does not say.
+    static var loadAverage1: Double? {
+        var l = [0.0, 0.0, 0.0]
+        return getloadavg(&l, 3) >= 1 ? l[0] : nil
+    }
+
+    /// More runnable work than cores: the owner's Mac with other lanes
+    /// building (load 20-60 is routine) times the scheduler, not the code.
+    static func isLoaded(load: Double?, cores: Int) -> Bool {
+        guard let load else { return false }
+        return load > Double(max(cores, 1))
+    }
+
+    /// Whether a budget overrun here says anything about the code: not on a
+    /// shared runner, not on a saturated machine.
+    static var speedIsUncontrolled: Bool {
+        isSharedRunner || isLoaded(load: loadAverage1, cores: ProcessInfo.processInfo.activeProcessorCount)
     }
 
     /// What a measurement does, kept separate from measuring so the policy
@@ -52,6 +73,11 @@ enum TimingBudget {
         return sharedRunner ? .reported : .failed
     }
 
+    private static var uncontrolledReason: String {
+        if isSharedRunner { return "shared CI runner" }
+        return String(format: "1-minute load %.1f on %d cores", loadAverage1 ?? -1, ProcessInfo.processInfo.activeProcessorCount)
+    }
+
     private static func report(_ line: String) {
         print(line)
         // Also on stderr: the CI step pipes stdout through `tail -n 400`, and
@@ -66,9 +92,9 @@ enum TimingBudget {
         let over = measured > budget
         let overshoot = budget > 0 ? (measured / budget - 1) * 100 : 0
         let summary = String(format: "%@: %.3f %@ against a %.3f %@ budget", what, measured, unit, budget, unit)
-        switch outcome(met: !over, sharedRunner: isSharedRunner) {
+        switch outcome(met: !over, sharedRunner: speedIsUncontrolled) {
         case .met: report("perf: " + summary)
-        case .reported: report(String(format: "perf(non-gating on a shared CI runner): %@ — over by %.1f%%", summary, overshoot))
+        case .reported: report(String(format: "perf(non-gating: %@): %@ — over by %.1f%%", uncontrolledReason, summary, overshoot))
         case .failed: XCTFail(summary + " — over budget", file: file, line: line)
         }
     }
@@ -78,9 +104,9 @@ enum TimingBudget {
     static func assertAtLeast(_ measured: Int, _ floor: Int, _ what: String,
                               file: StaticString = #filePath, line: UInt = #line) {
         let summary = "\(what): \(measured) against a required \(floor)"
-        switch outcome(met: measured >= floor, sharedRunner: isSharedRunner) {
+        switch outcome(met: measured >= floor, sharedRunner: speedIsUncontrolled) {
         case .met: report("perf: " + summary)
-        case .reported: report("perf(non-gating on a shared CI runner): " + summary + " — short")
+        case .reported: report("perf(non-gating: \(uncontrolledReason)): " + summary + " — short")
         case .failed: XCTFail(summary + " — short", file: file, line: line)
         }
     }
@@ -101,6 +127,14 @@ final class TimingBudgetTests: XCTestCase {
                        "a shared runner's clock is not evidence of a regression")
         XCTAssertEqual(TimingBudget.outcome(met: false, sharedRunner: false), .failed,
                        "on known hardware the budget is still a gate")
+    }
+
+    /// A saturated machine is as uncontrolled as a shared runner; an idle one
+    /// (or one that will not report its load) still gates.
+    func testALoadedMachineIsTreatedLikeASharedRunner() {
+        XCTAssertTrue(TimingBudget.isLoaded(load: 24, cores: 10))
+        XCTAssertFalse(TimingBudget.isLoaded(load: 6, cores: 10))
+        XCTAssertFalse(TimingBudget.isLoaded(load: nil, cores: 10))
     }
 
     func testSharedRunnerFollowsTheCIVariableTheWorkflowSets() {

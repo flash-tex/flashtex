@@ -1,0 +1,6 @@
+% 194-parshape-single: verifies a one-line \parshape spec indents and narrows every line of the boxed paragraph.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=200pt\parshape=1 40pt 100pt\message{194 parshape=\the\parshape}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\lsshipbox0
+\end

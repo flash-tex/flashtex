@@ -1,0 +1,12 @@
+% Verifies conditionals copied with \let obey their new true/false meaning including the \else branch.
+\input prelude
+\let\myif=\iftrue
+\myif\message{485 t-branch}\fi
+\let\myif=\iffalse
+\myif\message{485 SHOULD-NOT}\else\message{485 else-branch}\fi
+\let\myif=\ifnum
+\count0=2
+\myif\count0=2\message{485 num-true}\else\message{485 num-false}\fi
+\setbox0=\hbox{\vrule width485pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

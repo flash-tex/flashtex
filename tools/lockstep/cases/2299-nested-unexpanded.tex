@@ -1,0 +1,13 @@
+% 2299-nested-unexpanded: an inner \unexpanded survives an outer one inside \edef, freezing the macro call two layers deep (pdftex.web §1686)
+% new versus 731-edef-unexpanded: 731 freezes one level (macro:->\foo \bar !7 against FOOBAR!7); here the inner \unexpanded survives (macro:->\unexpanded {\foo })
+\input prelude
+\font\myrm=cmr10
+\def\foo{FOO}
+\edef\eA{\unexpanded{\unexpanded{\foo}}}
+\edef\eB{a\unexpanded{\foo}b}
+\message{2299 A=\meaning\eA}
+\message{2299 B=\meaning\eB}
+\setbox0=\hbox{\myrm\meaning\eA}
+\setbox1=\hbox{\myrm\meaning\eB}
+\lsshipbox0 \lsshipbox1
+\end

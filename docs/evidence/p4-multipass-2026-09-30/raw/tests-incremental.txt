@@ -1,0 +1,17 @@
+   Compiling flashtex-engine v0.1.0 (/Users/dqi26/flashtex/.claude/worktrees/agent-a9b0d190d583b912c/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 0.58s
+     Running tests/incremental.rs (/Users/dqi26/flashtex-wt/target-d1/release/deps/incremental-f85534ca7431762a)
+
+running 9 tests
+test a_file_written_then_read_is_a_barrier ... ok
+test a_failed_run_then_a_revert ... ok
+test edits_equal_scratch_runs ... ok
+test elapsed_time_is_a_barrier ... ok
+test l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs ... ok
+test interleaved_edits_equal_scratch_runs ... ok
+test oscillating_labels_stop_on_a_repeated_state ... ok
+test random_numbers_and_dates_equal_scratch_runs ... ok
+test structural_edits_equal_scratch_runs ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.88s
+

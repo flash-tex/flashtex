@@ -1,0 +1,42 @@
+\input prelude
+\def\da{outer-A}\def\db{inner-B}
+\let\lb=\da
+\message{239 let-outer=\meaning\lb}
+\begingroup
+\let\lb=\db
+\message{239 let-in=\meaning\lb}
+\global\let\gb=\db
+\def\da{inner-A}
+\message{239 def-in=\meaning\da}
+\endgroup
+\message{239 let-restored=\meaning\lb}
+\message{239 def-restored=\meaning\da}
+\message{239 glet-survives=\meaning\gb}
+% code assignments restore locally, survive globally
+\message{239 cat-out=\the\catcode`Q}
+\message{239 lcc-out=\the\lccode`Q}
+\message{239 math-out=\the\mathcode`Q}
+\begingroup
+\catcode`Q=12 \lccode`Q=`q \mathcode`Q="0041
+\message{239 cat-in=\the\catcode`Q}
+\message{239 lcc-in=\the\lccode`Q}
+\message{239 math-in=\the\mathcode`Q}
+\global\catcode`Z=12
+\endgroup
+\message{239 cat-back=\the\catcode`Q}
+\message{239 lcc-back=\the\lccode`Q}
+\message{239 math-back=\the\mathcode`Q}
+\message{239 gcat-survives=\the\catcode`Z}
+% font definitions are local like \def: restored unless \global
+\font\fa=cmr10
+\begingroup
+\font\fb=cmr10
+\message{239 font-in=\fontname\fb}
+\global\font\fc=cmr10
+\endgroup
+\message{239 font-top=\fontname\fa}
+\message{239 gfont-survives=\fontname\fc}
+\ifx\fb\fa \message{239 font-leaked} \else \message{239 font-local} \fi
+\setbox0=\hbox{\vrule width239pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

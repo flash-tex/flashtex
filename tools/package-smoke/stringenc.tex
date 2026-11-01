@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{stringenc}
+\begin{document}
+\StringEncodingConvert{\first}{Hello World}{ascii}{utf8}
+ASCII to UTF-8: \texttt{\meaning\first}.
+
+\StringEncodingConvert{\second}{Hello World}{utf8}{pdfdoc}
+UTF-8 to PDFDoc: \texttt{\meaning\second}.
+
+\StringEncodingConvertTest{\third}{abc}{ascii}{utf8}{Test passed.}{Test failed.}
+\end{document}

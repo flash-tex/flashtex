@@ -1,0 +1,21 @@
+[package]
+name = "flashtex-engine-build-id"
+version = "0.1.0"
+edition = "2021"
+# Part of the engine (crates/flashtex-engine, GPL-2.0-or-later; see its
+# LICENSE). It holds no engine code: it hashes the engine's sources.
+license = "GPL-2.0-or-later"
+description = "The flashtex-engine build id: a SHA-256 of every source that can affect a format's contents."
+publish = false
+
+# Its own crate so that its build script can rerun on every change to the
+# engine's sources without rerunning the engine's build script, which
+# compiles kpathsea, zlib and the image libraries with `cc`.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+sha2 = "0.10"
+
+[build-dependencies]
+sha2 = "0.10"

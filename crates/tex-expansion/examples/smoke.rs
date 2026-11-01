@@ -12,6 +12,9 @@
 //! line, e.g. dumped from LuaTeX's `tex.primitives()`) are primitives this
 //! crate does not model; the rest are macros no loaded code defined
 //! (class/package commands).
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_sort_by, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;

@@ -1,0 +1,6 @@
+% Verifies word-edge ligatures form inverted marks while edge hyphens stay hyphens.
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f !` ?` -x x-}
+\lsshipbox0
+\end

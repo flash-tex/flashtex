@@ -1,0 +1,12 @@
+% 1823-spacefactor-sizes-glue-1999-3000: factor 1999 scales font glue without extra space, while 2000 and 3000 add it with doubled and tripled stretch (tex.web §§1043, 1044)
+\input prelude
+\font\myrm=cmr10
+\def\sp{ }
+\setbox0=\hbox{\myrm a\spacefactor=1999 \sp b}
+\message{1823 wd1999=\the\wd0}
+\setbox1=\hbox{\myrm a\spacefactor=2000 \sp b}
+\message{1823 wd2000=\the\wd1}
+\setbox2=\hbox{\myrm a\spacefactor=3000 \sp b}
+\message{1823 wd3000=\the\wd2}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

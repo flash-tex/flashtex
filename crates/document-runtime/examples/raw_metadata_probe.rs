@@ -12,7 +12,7 @@ fn main() {
         4,
         "document count, identity bytes, captured output file"
     );
-    let mut command = Command::new("/usr/bin/python3");
+    let mut command = Command::new("python3");
     command.arg("-c").arg(r#"import sys,json,hashlib
 r=json.loads(sys.stdin.readline());p=r['payload'];n=int(sys.argv[1]);length=int(sys.argv[2])
 v1={'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[],'layout_capabilities':['display-list-v2']}}

@@ -1,0 +1,6 @@
+% 1755-empty-cells-row: verifies a row of bare & cells adds unset boxes but no size (tex.web §§ 796, 799)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr&\cr}}
+\message{1755 ht=\the\ht0 wd=\the\wd0}
+\lsshipbox0
+\end

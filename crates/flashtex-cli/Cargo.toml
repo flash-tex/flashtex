@@ -11,21 +11,21 @@ name = "flashtex"
 path = "src/main.rs"
 
 # The engine is linked, never spawned: `flashtex build` is the render
-# pipeline in-process plus the pdf sibling's exact route. The pdf,
-# project-files and compiler paths point at the pipeline's pinned vendor
-# mirrors on purpose: they must be the very package instances
-# `flashtex-render-pipeline` links (Cargo refuses two path packages with
-# the same name and version in one lockfile), and `vendor/pdf` is pinned to
-# main's `crates/pdf` (see crates/render-pipeline/vendor/VENDORING.md).
+# pipeline in-process plus the pdf sibling's exact route. pdf, project-files
+# and compiler are the live sibling crates, which are the very package
+# instances `flashtex-render-pipeline` links now that it depends on them by
+# `../<name>` too (Cargo refuses two path packages with the same name and
+# version in one lockfile, which is why these pointed at the pipeline's
+# vendor/ mirrors until it was retired).
 [dependencies]
 flashtex-render-pipeline = { path = "../render-pipeline" }
-flashtex-pdf = { path = "../render-pipeline/vendor/pdf" }
-flashtex-project-files = { path = "../render-pipeline/vendor/project-files" }
-flashtex-compiler = { path = "../render-pipeline/vendor/compiler" }
+flashtex-pdf = { path = "../pdf" }
+flashtex-project-files = { path = "../project-files" }
+flashtex-compiler = { path = "../compiler" }
 # The optional `flashtex.toml` (docs/user/project-manifest.md): entry,
 # texinputs, output. Platform-free and network-free, so it links here like
-# the engine does; the reads it implies go through the vendored rooted
-# primitives above.
+# the engine does; the reads it implies go through the rooted primitives
+# above.
 flashtex-project-manifest = { path = "../project-manifest" }
 # Package resolution (docs/user/project-manifest.md `[packages]`): local
 # libraries, the per-user cache and consent-gated fetches. The one place

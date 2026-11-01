@@ -1,0 +1,6 @@
+% 1201-output-overfull-active: verifies an overfull box built inside \output reports "while \output is active" (tex.web §§663, 1025)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \topskip=10pt
+\output={\setbox0=\hbox to 10pt{\vrule width50pt height8pt depth0pt}\lsshipbox255}
+\hrule width100pt height30pt depth0pt
+\end

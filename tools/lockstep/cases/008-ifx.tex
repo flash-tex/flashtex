@@ -1,0 +1,12 @@
+\input prelude
+\def\a{hello}
+\def\b{hello}
+\def\c{bye}
+\ifx\a\b \message{008 ab-same} \else \message{008 ab-diff} \fi
+\ifx\a\c \message{008 ac-same} \else \message{008 ac-diff} \fi
+\ifx\a\undefinedzzz \message{008 undef-same} \else \message{008 undef-diff} \fi
+\count0=1 \count1=1
+\ifx\count0\count1 \message{008 counts-same} \else \message{008 counts-diff} \fi
+\setbox0=\hbox{\vrule width8pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

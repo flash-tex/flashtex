@@ -1,0 +1,8 @@
+\input prelude
+\def\later{\message{158 later-fired c0=\the\count0}}
+\afterassignment\later
+\count0=42
+\message{158 after=\the\count0}
+\setbox0=\hbox{\vrule width158pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

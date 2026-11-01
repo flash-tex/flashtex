@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{expl3}
+\begin{document}
+\ExplSyntaxOn
+\tl_new:N \l_demo_tl
+\tl_set:Nn \l_demo_tl { Hello,~expl3! }
+\tl_use:N \l_demo_tl
+\int_new:N \l_demo_int
+\int_set:Nn \l_demo_int { 6 * 7 }
+\par The~answer~is~\int_use:N \l_demo_int.
+\ExplSyntaxOff
+\end{document}

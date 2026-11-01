@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{tikz}
+\usepackage{tikz-3dplot}
+\begin{document}
+\tdplotsetmaincoords{60}{120}
+\begin{tikzpicture}[tdplot_main_coords]
+\draw[thick,->] (0,0,0) -- (3,0,0) node[anchor=north east]{$x$};
+\draw[thick,->] (0,0,0) -- (0,3,0) node[anchor=north]{$y$};
+\draw[thick,->] (0,0,0) -- (0,0,3) node[anchor=south]{$z$};
+\end{tikzpicture}
+\end{document}

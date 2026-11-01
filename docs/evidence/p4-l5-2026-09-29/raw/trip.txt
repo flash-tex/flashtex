@@ -1,0 +1,4 @@
+PASS trip.fot: identical after the accepted differences (1 echoed input line(s) removed; final newline dropped)
+PASS trip.typ: identical after DVItype's banner line
+work dir: /tmp/p4l5/trip-fin6
+exit 0

@@ -1,0 +1,4 @@
+\input prelude % Verifies \pdfliteral page emits a page-level content whatsit.
+\setbox0=\hbox{\pdfliteral page{0.5 g}\vrule width10pt height5pt\pdfliteral page{q 2 w Q}\vrule width10pt height5pt}
+\lsshipbox0
+\end

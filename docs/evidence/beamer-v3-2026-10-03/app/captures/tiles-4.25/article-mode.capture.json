@@ -1,0 +1,182 @@
+{
+  "appFootprintMaxBytes" : 104352256,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0001.png",
+      "incomplete" : false,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:10" : 61,
+        "main.tex:12" : 5,
+        "main.tex:13" : 5,
+        "main.tex:15" : 31,
+        "main.tex:19" : 17,
+        "main.tex:20" : 42,
+        "main.tex:23" : 36,
+        "main.tex:26" : 31,
+        "main.tex:7" : 31,
+        "main.tex:8" : 17
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 3366,
+        "gridWidth" : 2601,
+        "held" : 9,
+        "image" : "page-0001-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 135.187029838562,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 50.845980644226074
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/article-mode\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 980.209,
+      "mode" : "cold",
+      "ms" : 2081.813208,
+      "pages" : 1,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 2
+    }
+  ],
+  "firstPageMs" : 1619.068958,
+  "firstPixelsMs" : 274.36775,
+  "forward" : {
+    "10" : 1,
+    "12" : 1,
+    "13" : 1,
+    "15" : 1,
+    "19" : 1,
+    "20" : 1,
+    "23" : 1,
+    "26" : 1,
+    "7" : 1,
+    "8" : 1
+  },
+  "hostFootprintEndBytes" : 144869376,
+  "hostFootprintMaxBytes" : 144869376,
+  "incompletePages" : [
+
+  ],
+  "load" : [
+    30.53955078125,
+    22.72705078125,
+    24.47412109375
+  ],
+  "pages" : 1,
+  "settledMs" : 2081.813208,
+  "status" : "done"
+}

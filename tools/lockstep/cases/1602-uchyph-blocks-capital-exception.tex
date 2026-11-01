@@ -1,0 +1,10 @@
+% 1602-uchyph-blocks-capital-exception: verifies \uchyph=0 blocks even a \hyphenation exception on a capitalized word (no discretionaries), while \uchyph=1 lets the same exception break Fantastic twice (tex.web §§ 896, 934)
+\input prelude
+\font\myrm=cmr10 \hyphenchar\myrm=`\-
+\language=0 \patterns{q1}
+\hyphenation{fan-tas-tic}
+\message{1602 exc set}
+\setbox0=\vbox{\hsize=80pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\uchyph=0\myrm Fantastic Fantastic Fantastic\par\message{1602 uc0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=80pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\uchyph=1\myrm Fantastic Fantastic Fantastic\par\message{1602 uc1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

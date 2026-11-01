@@ -1,0 +1,16 @@
+\input prelude
+\setbox0=\hbox{\vrule width40pt height8pt depth2pt}
+\message{243 outer-wd=\the\wd0}
+\begingroup
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\message{243 inner-wd=\the\wd0}
+\endgroup
+\message{243 restored-wd=\the\wd0}
+\begingroup
+\global\setbox0=\hbox{\vrule width25pt height8pt depth2pt}
+\endgroup
+\message{243 global-wd=\the\wd0}
+\ifvoid0 \message{243 void} \else \message{243 not-void} \fi
+\setbox2=\copy0
+\lsshipbox2
+\end

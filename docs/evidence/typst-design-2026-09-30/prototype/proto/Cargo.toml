@@ -1,0 +1,28 @@
+[package]
+name = "tbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+# Standalone workspace: never part of the repository's root workspace
+# (DESIGN.md §15), so it has its own Cargo.lock and target/.
+[workspace]
+
+[dependencies]
+typst = "=0.15.1"
+typst-layout = "=0.15.1"
+typst-pdf = "=0.15.1"
+typst-render = "=0.15.1"
+typst-svg = "=0.15.1"
+typst-ide = "=0.15.1"
+typst-timing = "=0.15.1"
+typst-eval = "=0.15.1"
+typst-kit = { version = "=0.15.1", features = ["embedded-fonts", "scan-fonts"] }
+typst-assets = { version = "=0.15.1", features = ["fonts"] }
+comemo = "0.5.1"
+libc = "0.2"
+serde_json = "1"
+
+[profile.release]
+debug = 1

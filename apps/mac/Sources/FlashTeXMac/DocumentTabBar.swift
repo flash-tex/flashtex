@@ -129,6 +129,12 @@ private struct DocumentTab: View {
                 Button("Save \(doc.path)") { Task { await model.saveDocumentInteractive(doc.path) } }
                     .disabled(model.documentURL == nil)
             }
+            // Chapter focus (EngineV3FocusChapter.swift): an `\include`d file only.
+            if model.engineV3.focus.chapters.contains(where: { $0.path == doc.path }) {
+                Button("Show Whole Document in Preview") { model.showWholeDocument() }
+            } else if model.focusChapter(for: doc.path) != nil {
+                Button("Focus Preview on This Chapter") { model.focusPreview(on: doc.path) }
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(doc.path)\(doc.role == .entry ? ", entry" : "")\(doc.isDirty ? ", edited" : "")")
@@ -144,7 +150,6 @@ private struct DocumentTab: View {
         case .included(let from): s += " — included from \(from)"
         case .opened: s += " — opened by path"
         }
-        if let r = doc.durableRevision { s += " · durable r\(r)" }
         if doc.isDirty { s += " · edited" }
         return s
     }
@@ -218,7 +223,6 @@ struct ProjectMenu: View {
                 }
                 .help("Session only: " + ProjectDocuments.detachScopeNote)
             }
-            DocumentKindsMenuSection() // DocumentKinds.swift: declare/undeclare bibliography sources
         } label: {
             Label("Project", systemImage: "doc.on.doc")
         }

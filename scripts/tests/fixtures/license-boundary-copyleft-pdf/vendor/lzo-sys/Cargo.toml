@@ -1,0 +1,11 @@
+# Stub of the crates.io crate lzo-sys 1.1.0 (GPL-2.0), for check D3's
+# self-test: served through .cargo/config.toml's directory source, so cargo
+# reports it as a crates.io package. It contains no code.
+[package]
+name = "lzo-sys"
+version = "1.1.0"
+edition = "2021"
+license = "GPL-2.0"
+
+[lib]
+path = "src/lib.rs"

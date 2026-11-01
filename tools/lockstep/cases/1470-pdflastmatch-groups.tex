@@ -1,0 +1,8 @@
+% 1470-pdflastmatch-groups: \pdflastmatch0/1 read the whole match and first group after \pdfmatch; both feed a box (pdftex.web §497)
+\input prelude
+\font\f=cmr10
+\edef\m{\pdfmatch{a(b*)c}{xxabcxx}}
+\edef\w{\pdflastmatch0}\edef\g{\pdflastmatch1}
+\setbox0=\hbox{\f \m:\w/\g}
+\lsshipbox0
+\end

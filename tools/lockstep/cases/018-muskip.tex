@@ -1,0 +1,12 @@
+\input prelude
+\muskip0=10mu plus2mu
+\message{018 base=\the\muskip0}
+\advance\muskip0 by 5mu
+\message{018 adv=\the\muskip0}
+\multiply\muskip0 by 3
+\message{018 mul=\the\muskip0}
+\muskipdef\mm=0
+\message{018 mm=\the\mm}
+\setbox0=\hbox{\vrule width18pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

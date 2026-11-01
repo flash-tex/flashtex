@@ -1,0 +1,10 @@
+% 1317-csname-iffalse: a conditional built by \csname acts as that conditional and takes its \else branch (tex.web §372).
+\input prelude
+\csname iffalse\endcsname
+\dimen0=317pt
+\else
+\dimen0=1317pt
+\fi
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

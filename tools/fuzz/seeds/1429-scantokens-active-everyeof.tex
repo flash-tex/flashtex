@@ -1,0 +1,10 @@
+% 1429-scantokens-active-everyeof: \scantokens with an active character and \everyeof tokens.
+\input prelude
+\catcode`!=13
+\def!{\message{1429 bang}}
+\everyeof={\message{1429 eof}}
+\scantokens{\count9=7 !}
+\message{1429 c9=\the\count9}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

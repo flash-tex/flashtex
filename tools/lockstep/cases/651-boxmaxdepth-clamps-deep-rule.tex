@@ -1,0 +1,11 @@
+% 651-boxmaxdepth-clamps-deep-rule: verifies \boxmaxdepth clamps a \vbox ending in a deep rule, unlike the wide-open setting.
+\input prelude
+\boxmaxdepth=5pt
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip4pt\hrule width40pt height6pt depth20pt}
+\message{651 clamp-dp=\the\dp0}
+\boxmaxdepth=16383pt
+\setbox1=\vbox{\hrule width40pt height6pt depth0pt\vskip4pt\hrule width40pt height6pt depth20pt}
+\message{651 free-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

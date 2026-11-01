@@ -1,0 +1,677 @@
+//! The engine's state outside the word space (docs/design/xetex/PLAN.md
+//! §4.7): what TeX Live's XeTeX keeps in C globals and C pointers.
+//!
+//! `Globals::host` (web2rust's `--host-state`) holds one [`Host`] per
+//! engine; this crate has no process-wide mutable state (`static`,
+//! `thread_local!`). The runtime it shares with the pdfTeX engine still has
+//! some (`flashtex_engine::system`'s run configuration, resolver, recorder
+//! and external-effect log): those move into per-engine state with the
+//! shared runtime crate in phase S3 (PLAN.md §3.3), so until then one
+//! process runs one XeTeX engine at a time.
+//!
+//! `Globals` is `Send` (the pdfTeX engine's `Arena` is), so a host may move
+//! an engine to another thread: the objects behind handles are `Arc`s of
+//! `Send + Sync` values (`tests/send.rs`).
+//!
+//! The C pointers `xetex.web` keeps in `mem` and in its font arrays (a
+//! native word node's glyph-info array, a font's layout engine and TECkit
+//! mapping, an OpenType assembly, a picture's path; `changes/ext.ch`) are
+//! integer handles into [`Handles`], which a checkpoint saves with the word
+//! space ([`Globals::checkpoint`]): restoring one gives back the objects the
+//! `mem` words it restores refer to, and the allocator's counter and free
+//! list, so that a run continued from a checkpoint allocates the same
+//! handles as the run that made it.
+
+use crate::generated::Globals;
+use flashtex_engine::arena::CheckpointId;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// An object a handle refers to. Objects are immutable once allocated (a
+/// change is a new object), so a checkpoint shares them with the live
+/// engine and copies only the table.
+#[derive(Clone)]
+pub enum Object {
+    /// A native word node's glyph-info array (XeTeX_ext.c's
+    /// `native_glyph_info_ptr`: the glyphs' positions, then their ids).
+    GlyphInfo(Arc<GlyphInfo>),
+    /// A picture's path (XeTeX_pic.c's `pic_path`), until `pic_path_to_mem`
+    /// copies it into `mem`.
+    PicPath(Arc<[u8]>),
+    /// An object of a later phase (a font's layout engine, a TECkit
+    /// mapping, an OpenType assembly), held as `Arc<dyn Any + Send + Sync>` so that the
+    /// table and its checkpoints need not know its type.
+    Other(Arc<dyn std::any::Any + Send + Sync>),
+}
+
+/// XeTeX_ext.c's glyph-info array of a native word node: for each glyph its
+/// position (`FixedPoint`, x and y in scaled points) and its glyph id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GlyphInfo {
+    pub locations: Vec<(i32, i32)>,
+    pub ids: Vec<u16>,
+}
+
+/// The handle allocator of `changes/ext.ch`: a counter and a free list, and
+/// the table behind them. Handle 0 is C's null pointer and never refers to
+/// an object.
+///
+/// Glyph-info arrays, made and freed with every native word, are numbered
+/// apart from the other objects (from [`OTHER_BASE`] on: layout engines,
+/// mappings, features, pictures' paths), so that the others' handles
+/// depend only on the order they are made in, not on how many words were
+/// set before: two runs that load the same fonts in the same order give
+/// them the same handles (the convergence test, `crate::conv`, compares
+/// the font arrays that hold them word for word). No handle's value is
+/// ever printed or written out.
+#[derive(Clone, Default)]
+pub struct Handles {
+    /// Slot `h - 1` holds the object of handle `h`, `None` once freed.
+    table: Vec<Option<Object>>,
+    /// Freed handles, reused last freed first.
+    free: Vec<i32>,
+    /// The other objects: slot `h - OTHER_BASE`.
+    other: Vec<Option<Object>>,
+    other_free: Vec<i32>,
+}
+
+/// How a persisted S₀ writes an object of the table (`crate::s0file`).
+pub(crate) type EncObject<'a> = dyn FnMut(&Object, &mut Vec<u8>) -> Result<(), String> + 'a;
+
+/// The first handle of the objects other than glyph-info arrays.
+pub const OTHER_BASE: i32 = 1 << 30;
+
+impl Handles {
+    /// A new handle for `o`: the last one freed, else the next unused one.
+    pub fn alloc(&mut self, o: Object) -> i32 {
+        if !matches!(o, Object::GlyphInfo(_)) {
+            if let Some(h) = self.other_free.pop() {
+                self.other[(h - OTHER_BASE) as usize] = Some(o);
+                return h;
+            }
+            self.other.push(Some(o));
+            let n = i32::try_from(self.other.len()).expect("handle table overflow");
+            return OTHER_BASE + n - 1;
+        }
+        if let Some(h) = self.free.pop() {
+            self.table[(h - 1) as usize] = Some(o);
+            return h;
+        }
+        self.table.push(Some(o));
+        let h = i32::try_from(self.table.len()).expect("handle table overflow");
+        assert!(h < OTHER_BASE, "handle table overflow");
+        h
+    }
+
+    /// The slot of handle `h`.
+    fn slot(&self, h: i32) -> Option<&Option<Object>> {
+        if h >= OTHER_BASE {
+            self.other.get((h - OTHER_BASE) as usize)
+        } else if h > 0 {
+            self.table.get((h - 1) as usize)
+        } else {
+            None
+        }
+    }
+
+    /// The object of handle `h`, if `h` refers to one.
+    pub fn get(&self, h: i32) -> Option<&Object> {
+        self.slot(h)?.as_ref()
+    }
+
+    /// Free handle `h` (C's `free`); 0 and a handle already free are
+    /// ignored, as `free(NULL)` is.
+    pub fn free(&mut self, h: i32) {
+        if h <= 0 {
+            return;
+        }
+        let (slot, free) = if h >= OTHER_BASE {
+            (
+                self.other.get_mut((h - OTHER_BASE) as usize),
+                &mut self.other_free,
+            )
+        } else {
+            (self.table.get_mut((h - 1) as usize), &mut self.free)
+        };
+        if let Some(slot) = slot {
+            if slot.take().is_some() {
+                free.push(h);
+            }
+        }
+    }
+
+    /// Every handle that refers to an object, with it.
+    pub fn objects(&self) -> impl Iterator<Item = (i32, &Object)> {
+        let glyphs = self
+            .table
+            .iter()
+            .enumerate()
+            .filter_map(|(i, o)| o.as_ref().map(|o| (i as i32 + 1, o)));
+        let other = self
+            .other
+            .iter()
+            .enumerate()
+            .filter_map(|(i, o)| o.as_ref().map(|o| (OTHER_BASE + i as i32, o)));
+        glyphs.chain(other)
+    }
+
+    /// Write the table for a persisted S₀ (`crate::s0file`), each object
+    /// by `obj`.
+    pub(crate) fn enc_with(&self, w: &mut Vec<u8>, obj: &mut EncObject) -> Result<(), String> {
+        use flashtex_engine::persist::Codec;
+        for v in [&self.table, &self.other] {
+            v.len().enc(w);
+            for o in v {
+                match o {
+                    None => 0u8.enc(w),
+                    Some(o) => {
+                        1u8.enc(w);
+                        obj(o, w)?;
+                    }
+                }
+            }
+        }
+        self.free.enc(w);
+        self.other_free.enc(w);
+        Ok(())
+    }
+
+    /// A table as [`enc_with`](Self::enc_with) wrote it, each object made
+    /// again by `obj`.
+    pub(crate) fn dec_with(
+        r: &mut flashtex_engine::persist::Reader,
+        obj: &mut dyn FnMut(&mut flashtex_engine::persist::Reader) -> Result<Object, String>,
+    ) -> Result<Handles, String> {
+        use flashtex_engine::persist::Codec;
+        let mut slots =
+            |r: &mut flashtex_engine::persist::Reader| -> Result<Vec<Option<Object>>, String> {
+                let n = usize::dec(r)?;
+                let mut v = Vec::with_capacity(n.min(1 << 20));
+                for _ in 0..n {
+                    v.push(match u8::dec(r)? {
+                        0 => None,
+                        _ => Some(obj(r)?),
+                    });
+                }
+                Ok(v)
+            };
+        let table = slots(r)?;
+        let other = slots(r)?;
+        Ok(Handles {
+            table,
+            other,
+            free: Vec::dec(r)?,
+            other_free: Vec::dec(r)?,
+        })
+    }
+
+    /// How many handles refer to an object.
+    pub fn live(&self) -> usize {
+        self.table
+            .iter()
+            .chain(&self.other)
+            .filter(|s| s.is_some())
+            .count()
+    }
+
+    /// Whether every handle below [`OTHER_BASE`] refers to an equal
+    /// glyph-info array here and in `other`, or to none in both: what the
+    /// convergence test's walk asks of a native word's handle (`crate::iso`,
+    /// `glyphs`), for every handle at once (`crate::conv`: the states'
+    /// words are equal, so a native word holds the same handle in both).
+    pub fn same_glyphs(&self, other: &Handles) -> bool {
+        fn glyphs(s: Option<&Option<Object>>) -> Result<Option<&Arc<GlyphInfo>>, ()> {
+            match s {
+                None | Some(None) => Ok(None),
+                Some(Some(Object::GlyphInfo(g))) => Ok(Some(g)),
+                Some(Some(_)) => Err(()),
+            }
+        }
+        (0..self.table.len().max(other.table.len())).all(|i| {
+            match (glyphs(self.table.get(i)), glyphs(other.table.get(i))) {
+                (Ok(None), Ok(None)) => true,
+                (Ok(Some(x)), Ok(Some(y))) => Arc::ptr_eq(x, y) || **x == **y,
+                _ => false,
+            }
+        })
+    }
+
+    /// The glyph-info array of handle `h`.
+    pub fn glyph_info(&self, h: i32) -> Option<&Arc<GlyphInfo>> {
+        match self.get(h)? {
+            Object::GlyphInfo(g) => Some(g),
+            _ => None,
+        }
+    }
+}
+
+/// The state of one engine outside the word space.
+#[derive(Default)]
+pub struct Host {
+    /// The first line, from the command line (texmfmp.c's `topenin`), as the
+    /// raw bytes of the arguments, each followed by a space.
+    pub first_line: Option<Vec<u8>>,
+    /// `-no-pdf` (xetexextra.c's `nopdfoutput`). Phase S0-S1 always write
+    /// XDV, so [`Host::default`] sets it.
+    pub no_pdf: NoPdf,
+    /// Guards `close_files_and_terminate` against being re-entered.
+    pub terminating: bool,
+    /// tex.ch's `tex_input_type`: true while `\input` opens a file.
+    pub tex_input_type: bool,
+    /// openclose.c's `fullnameoffile`: the path the last `open_input`
+    /// opened, before `./` is taken off `nameoffile`.
+    pub full_name_of_file: Option<String>,
+    /// texmfmp.c's `start_time` and `start_time_str`, set once per run.
+    pub start: Option<(i64, Vec<u8>)>,
+    /// hz.cpp's `leftProt` and `rightProt`: character protrusion codes by
+    /// (font, character or glyph, side), for every font (`\lpcode`,
+    /// `\rpcode`).
+    pub protrusion: Protrusion,
+    /// The objects of `changes/ext.ch`'s handles.
+    pub handles: Handles,
+    /// XeTeX's font manager (`XeTeXFontMgr::GetFontManager`), made on the
+    /// first lookup by name. What it has cached changes later answers, so
+    /// a checkpoint keeps it (copied on write).
+    pub font_mgr: Option<std::sync::Arc<crate::fontmgr::FontMgr>>,
+    /// XeTeXFontMgr's `sReqEngine`: the renderer the last font name asked
+    /// for (`/AAT`, `/OT` or `/ICU`, `/GR`), or 0.
+    pub req_engine: u8,
+    /// XeTeX_ext.c's `brkIter` (the rules of the line break iterator,
+    /// `crate::native::linebreak`) and `brkLocaleStrNum` (the string number
+    /// of the locale it was opened for). Which iterator is open decides
+    /// later answers, so a checkpoint saves both.
+    pub brk_iter: Option<crate::native::linebreak::Rules>,
+    pub brk_locale_str_num: i32,
+    /// READ-TRACK (`crate::dormant`): the run's counts, never restored.
+    pub dorm: flashtex_engine::dormant::Counts,
+    /// The iterator's text, as the boundaries `ubrk_next` returns for it, and
+    /// how many it has returned. `do_locale_linebreaks` reads them all
+    /// within one command, so a checkpoint does not save them.
+    pub brk_boundaries: Vec<i32>,
+    pub brk_next: usize,
+    /// XeTeX_ext.c's `saved_mapping_name`: the `:mapping=` of the TFM font
+    /// being loaded, from `check_for_tfm_font_mapping` to
+    /// `load_tfm_font_mapping`, both within one `\font`. Each check
+    /// replaces it before it is used, so a checkpoint does not save it.
+    pub saved_mapping_name: Option<Vec<u8>>,
+    /// XeTeX_ext.c's `applymapping`'s `static UInt32 outLength`: the size
+    /// of the output buffer handed to TECkit, in bytes, which only grows. It
+    /// decides how often a conversion is retried, never its result, so a
+    /// checkpoint does not save it.
+    pub mapping_out_length: u32,
+    /// XeTeX_ext.c's `apply_normalization`'s `static normalizers[2]`: the
+    /// TECkit NFC and NFD converters, made on first use. They hold no state
+    /// between conversions, so a checkpoint does not save them.
+    pub normalizers: [Option<Arc<crate::xetex_ext::Mapping>>; 2],
+    /// The host state at each retained checkpoint of the word space. Each
+    /// copies the handle table and the protrusion codes (the objects
+    /// themselves are shared): O(live handles) per checkpoint, to be made
+    /// persistent when S3 brings checkpoints into the Unicode host.
+    checkpoints: HashMap<flashtex_engine::arena::CheckpointId, Saved>,
+    /// FreeType (XeTeXFontInst.cpp's `gFreeTypeLibrary`), made on first
+    /// use; each font keeps it alive.
+    pub ft_library: Option<std::sync::Arc<crate::native::font_inst::FtLibrary>>,
+    /// PDF mode's output (`crate::out`): the display list and the PDF.
+    /// Not saved at a checkpoint yet: the Unicode host's checkpoints
+    /// (phase S3) will restore it with the pages it holds.
+    pub out: Option<Box<crate::out::Output>>,
+    /// The paths `find_pic_file` found, for the output (`crate::out`), which
+    /// takes them from here at each page.
+    pub pictures: std::collections::BTreeSet<String>,
+    /// The display list's source map (`crate::dlsource`): node positions,
+    /// spans and the markers of the page being shipped.
+    pub dl: crate::dlsource::DlSource,
+    /// A hot spare's go-ahead (`crate::host::spare`): the descriptor the
+    /// run waits on after the format is loaded, taken at that wait. `None`
+    /// for every other run.
+    pub spare_go: Option<i32>,
+    /// What the host that started this run asked of it (`crate::host::spare`).
+    #[cfg(unix)]
+    pub child_env: crate::host::spare::ChildEnv,
+    /// The clock pinned for the run (seconds, microseconds since the
+    /// epoch): a resident engine's session clock, or `FLASHTEX_PIN_CLOCK`.
+    /// `\time`, `\day`, `\month`, `\year`, the start time, the PDF's
+    /// dates and (through the run's first `seconds_and_micros`) the random
+    /// seed read it (DESIGN.md §4.5).
+    pub clock: Option<(i64, i32)>,
+    /// The run's first `seconds_and_micros` is still to come: it reads
+    /// `clock`; later ones (`\pdfelapsedtime`) read the system's clock.
+    pub seed_pending: bool,
+    /// A run of a resident engine (`crate::resident`): its exits return to
+    /// the host, its terminal is captured.
+    /// `None` for a run that is a process of its own.
+    pub resident: Option<Box<crate::resident::Resident>>,
+    /// The side table bytes only checkpoints held, and the side table's
+    /// copy count, at the last [`Globals::kept_bytes`].
+    pub kept_walk: (usize, usize),
+}
+
+/// `-no-pdf`, true unless set otherwise.
+#[derive(Clone, Copy)]
+pub struct NoPdf(pub bool);
+
+impl Default for NoPdf {
+    fn default() -> Self {
+        NoPdf(true)
+    }
+}
+
+/// A protrusion code by (font, character or glyph, side).
+pub type Protrusion = HashMap<(i32, u32, i32), i32>;
+
+/// What a checkpoint saves of [`Host`]: the state that the word space's
+/// words refer to or that decides what the run does next. The first line
+/// and `-no-pdf` are the run's configuration, `terminating` and
+/// `tex_input_type` are only true inside one command, and the start time
+/// is the run's: none of them changes between checkpoints.
+#[derive(Clone)]
+struct Saved {
+    font_mgr: Option<std::sync::Arc<crate::fontmgr::FontMgr>>,
+    full_name_of_file: Option<String>,
+    protrusion: Protrusion,
+    handles: Handles,
+    /// The display list's source map (`crate::dlsource`): its side table
+    /// is indexed like `mem`, so it goes back with the word space.
+    dl: crate::dlsource::DlSnap,
+    brk_iter: Option<crate::native::linebreak::Rules>,
+    brk_locale_str_num: i32,
+}
+
+impl Globals {
+    /// A checkpoint of the whole engine: the scalar globals spilled into
+    /// the word space, the word space's checkpoint, and the host state the
+    /// word space refers to (the handle tables, protrusion codes) saved with
+    /// it (PLAN.md §4.7, DESIGN.md §5.2). Valid between commands.
+    pub fn checkpoint(&mut self) -> flashtex_engine::arena::CheckpointId {
+        self.spill_scalars();
+        let id = self.arena.checkpoint();
+        let saved = Saved {
+            font_mgr: self.host.font_mgr.clone(),
+            full_name_of_file: self.host.full_name_of_file.clone(),
+            protrusion: self.host.protrusion.clone(),
+            handles: self.host.handles.clone(),
+            dl: self.host.dl.snapshot(),
+            brk_iter: self.host.brk_iter,
+            brk_locale_str_num: self.host.brk_locale_str_num,
+        };
+        self.host.checkpoints.insert(id, saved);
+        id
+    }
+
+    /// Put checkpoint `id` back: the word space, the scalar globals and the
+    /// host state saved with it. Later checkpoints are dropped.
+    pub fn restore(&mut self, id: flashtex_engine::arena::CheckpointId) -> Result<(), String> {
+        let saved = self
+            .host
+            .checkpoints
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| format!("no host state saved with checkpoint {id:?}"))?;
+        self.arena.restore_discard(id)?;
+        self.fill_scalars();
+        // (another run from here on: `crate::dormant`)
+        self.host.dorm.new_epoch();
+        let kept: Vec<_> = self.arena.checkpoint_ids().to_vec();
+        self.host.checkpoints.retain(|k, _| kept.contains(k));
+        self.host.font_mgr = saved.font_mgr;
+        self.host.full_name_of_file = saved.full_name_of_file;
+        self.host.protrusion = saved.protrusion;
+        self.host.handles = saved.handles;
+        self.host.dl.restore(&saved.dl);
+        self.host.brk_iter = saved.brk_iter;
+        self.host.brk_locale_str_num = saved.brk_locale_str_num;
+        Ok(())
+    }
+
+    /// Put checkpoint `id` back as [`restore`](Self::restore) does, keeping
+    /// the run it leaves as a detached branch of the word space (its later
+    /// checkpoints and its latest state), for the convergence test and jump
+    /// (`crate::conv`). The host states saved with the branch's checkpoints
+    /// stay.
+    pub fn restore_branch(
+        &mut self,
+        id: flashtex_engine::arena::CheckpointId,
+    ) -> Result<flashtex_engine::arena::Branch, String> {
+        let saved = self
+            .host
+            .checkpoints
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| format!("no host state saved with checkpoint {id:?}"))?;
+        let b = self.arena.restore_branch(id)?;
+        self.fill_scalars();
+        self.host.dorm.new_epoch();
+        self.host.font_mgr = saved.font_mgr;
+        self.host.full_name_of_file = saved.full_name_of_file;
+        self.host.protrusion = saved.protrusion;
+        self.host.handles = saved.handles;
+        self.host.dl.restore(&saved.dl);
+        Ok(b)
+    }
+
+    /// The host state saved with checkpoint `id` (a persisted S₀,
+    /// `crate::s0file`): the font manager, `full_name_of_file`, the
+    /// protrusion codes, the handle table and the source map.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn saved_at(
+        &self,
+        id: CheckpointId,
+    ) -> Option<(
+        Option<&crate::fontmgr::FontMgr>,
+        &Option<String>,
+        &Protrusion,
+        &Handles,
+        &crate::dlsource::DlSnap,
+    )> {
+        let s = self.host.checkpoints.get(&id)?;
+        Some((
+            s.font_mgr.as_deref(),
+            &s.full_name_of_file,
+            &s.protrusion,
+            &s.handles,
+            &s.dl,
+        ))
+    }
+
+    /// How many checkpoints' host states are kept.
+    pub(crate) fn saved_len(&self) -> usize {
+        self.host.checkpoints.len()
+    }
+
+    /// What the checkpoints hold, counted exactly: the word space's undo
+    /// and redo logs, and the source map's side table copies that only
+    /// checkpoints hold (a walk of their tables, a few milliseconds).
+    pub(crate) fn kept_bytes(&mut self) -> usize {
+        let held = self
+            .host
+            .dl
+            .held_bytes(self.host.checkpoints.values().map(|s| &s.dl));
+        self.host.kept_walk = (held, self.host.dl.copied);
+        self.arena.log_bytes() + held
+    }
+
+    /// [`kept_bytes`](Self::kept_bytes) without the walk: an upper bound
+    /// (every side table copy made since the last walk counts as held).
+    pub(crate) fn kept_estimate(&self) -> usize {
+        let (held, copied) = self.host.kept_walk;
+        self.arena.log_bytes() + held + self.host.dl.copied.saturating_sub(copied)
+    }
+
+    /// Drop every checkpoint of the word space's live chain that `keep`
+    /// rejects (but the newest; their logs merge into their predecessors',
+    /// `Arena::retain`), and the host state saved with each.
+    pub(crate) fn retain_checkpoints(
+        &mut self,
+        keep: &dyn Fn(flashtex_engine::arena::CheckpointId) -> bool,
+    ) {
+        let before = self.arena.checkpoint_ids().to_vec();
+        self.arena.retain(keep);
+        let after: std::collections::HashSet<_> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        for id in before {
+            if !after.contains(&id) {
+                self.host.checkpoints.remove(&id);
+            }
+        }
+    }
+
+    /// Forget the host state of every checkpoint not in the word space's
+    /// live chain (a dropped branch's).
+    pub(crate) fn prune_saved(&mut self) {
+        let ids: std::collections::HashSet<_> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        self.host.checkpoints.retain(|k, _| ids.contains(k));
+    }
+
+    /// Whether the host state of checkpoint `id` is kept.
+    pub(crate) fn has_saved(&self, id: flashtex_engine::arena::CheckpointId) -> bool {
+        self.host.checkpoints.contains_key(&id)
+    }
+
+    /// What checkpoint `id` saved outside the word space that the live
+    /// state has otherwise (the convergence test, `crate::conv`): `Err`
+    /// names it. With it, the checkpoint's handles and source map.
+    pub(crate) fn host_vs(
+        &self,
+        id: flashtex_engine::arena::CheckpointId,
+    ) -> Result<(&Handles, &crate::dlsource::DlSnap), String> {
+        let s = self
+            .host
+            .checkpoints
+            .get(&id)
+            .ok_or("no host state saved with the old checkpoint")?;
+        // (the font manager is made from the font directories, which S₀'s
+        // key watches: two runs' managers made from the same ones answer
+        // alike, whichever made its own)
+        if s.font_mgr.is_some() != self.host.font_mgr.is_some() {
+            return Err("the font manager differs".into());
+        }
+        if s.full_name_of_file != self.host.full_name_of_file {
+            return Err("full_name_of_file differs".into());
+        }
+        if s.protrusion != self.host.protrusion {
+            return Err("the protrusion codes differ".into());
+        }
+        // XeTeX_ext.c's open line-break iterator and the locale's string
+        // number it was opened for: `linebreak_start` keeps the iterator
+        // while the string number is the same, so which one is open decides
+        // later breaks
+        if s.brk_iter != self.host.brk_iter || s.brk_locale_str_num != self.host.brk_locale_str_num
+        {
+            return Err("the line-break iterator differs".into());
+        }
+        Ok((&s.handles, &s.dl))
+    }
+
+    /// Copy the scalar globals into the word space's scalar region, through
+    /// the barrier (as the pdfTeX engine's `spill_scalars`).
+    pub fn spill_scalars(&mut self) {
+        let mut sp = flashtex_engine::arena::Spill {
+            buf: Vec::with_capacity(crate::generated::globals::SCALAR_BYTES),
+        };
+        self.visit_scalars(&mut sp);
+        assert_eq!(sp.buf.len(), crate::generated::globals::SCALAR_BYTES);
+        self.arena.write_through(0, &sp.buf);
+    }
+
+    /// Read the scalar globals back from the scalar region.
+    pub fn fill_scalars(&mut self) {
+        let img = self
+            .arena
+            .read(0, crate::generated::globals::SCALAR_BYTES)
+            .to_vec();
+        let mut f = flashtex_engine::arena::Fill { src: &img, pos: 0 };
+        self.visit_scalars(&mut f);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gi(n: u16) -> Object {
+        Object::GlyphInfo(Arc::new(GlyphInfo {
+            locations: vec![(i32::from(n), 0)],
+            ids: vec![n],
+        }))
+    }
+
+    #[test]
+    fn handles_are_reused_last_freed_first_and_zero_is_none() {
+        let mut h = Handles::default();
+        assert!(h.get(0).is_none());
+        let (a, b, c) = (h.alloc(gi(1)), h.alloc(gi(2)), h.alloc(gi(3)));
+        assert_eq!((a, b, c), (1, 2, 3));
+        h.free(a);
+        h.free(c);
+        h.free(c); // a second free is ignored, as free(NULL) is
+        h.free(0);
+        assert_eq!(h.live(), 1);
+        assert_eq!(h.alloc(gi(4)), 3);
+        assert_eq!(h.alloc(gi(5)), 1);
+        assert_eq!(h.alloc(gi(6)), 4);
+        assert_eq!(h.glyph_info(1).unwrap().ids, vec![5]);
+    }
+
+    /// `same_glyphs` (READ-TRACK-2, the convergence test of an equal state):
+    /// equal arrays behind every glyph-info handle, shared or remade, and a
+    /// free slot free in both; a free slot, a longer table or another array
+    /// in one of them is a difference; the other objects are not compared.
+    #[test]
+    fn same_glyphs_compares_every_glyph_info_handle() {
+        let mut a = Handles::default();
+        let (x, _y) = (a.alloc(gi(1)), a.alloc(gi(2)));
+        a.alloc(Object::PicPath(Arc::from(&b"p"[..])));
+        let mut b = a.clone();
+        assert!(a.same_glyphs(&b));
+        // (remade: another Arc, equal arrays)
+        b.free(x);
+        assert_eq!(b.alloc(gi(1)), x);
+        assert!(a.same_glyphs(&b) && b.same_glyphs(&a));
+        // (other objects aside)
+        b.alloc(Object::PicPath(Arc::from(&b"q"[..])));
+        assert!(a.same_glyphs(&b));
+        let mut c = b.clone();
+        c.free(x);
+        assert!(!a.same_glyphs(&c) && !c.same_glyphs(&a));
+        c.alloc(gi(7));
+        assert!(!a.same_glyphs(&c));
+        let mut d = b.clone();
+        let z = d.alloc(gi(3));
+        assert!(!a.same_glyphs(&d) && !d.same_glyphs(&a));
+        // (a slot freed in both is the same)
+        d.free(z);
+        assert!(a.same_glyphs(&d) && d.same_glyphs(&a));
+    }
+
+    /// A checkpoint saves the handle table with the word space: after a
+    /// restore, the handle a `mem` word holds refers to the object it
+    /// referred to at the checkpoint, and the allocator hands out the same
+    /// handles as the run that made the checkpoint.
+    #[test]
+    fn checkpoint_restores_handles_with_the_word_space() {
+        use crate::generated::types::memory_word;
+        let mut g = Globals::new();
+        let w = 1000usize;
+        let a = g.host.handles.alloc(gi(7));
+        g.mem[w] = memory_word::from_bits(a as u64);
+        g.set_cp_code(1, 65, 0, 50);
+        let id = g.checkpoint();
+        let next_at_checkpoint = g.host.handles.clone().alloc(gi(0));
+
+        // The run goes on: the node is freed, its handle reused for another
+        // array, the word overwritten, a protrusion code changed.
+        g.host.handles.free(a);
+        let b = g.host.handles.alloc(gi(9));
+        assert_eq!(b, a);
+        g.mem[w] = memory_word::from_bits(b as u64 + 1);
+        g.set_cp_code(1, 65, 0, 80);
+
+        g.restore(id).unwrap();
+        let h = g.mem[w].to_bits() as i32;
+        assert_eq!(h, a);
+        assert_eq!(g.host.handles.glyph_info(h).unwrap().ids, vec![7]);
+        assert_eq!(g.get_cp_code(1, 65, 0), 50);
+        assert_eq!(g.host.handles.alloc(gi(1)), next_at_checkpoint);
+    }
+}

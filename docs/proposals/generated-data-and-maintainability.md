@@ -27,7 +27,7 @@ is a belief from reading the code.
 | # | Item | Serves | Kind | Size | First slice |
 |---|---|---|---|---|---|
 | 1 | One node-stream contract: the compiler's tree is the only input to layout; the adapter stops re-scanning source bytes; float/multicol byte-masking goes away | P0 (macros, `.sty` execution, #760/#949/#846), P2 | **REWRITE** of the compiler→pipeline boundary, in slices | 4–8 lane-weeks | §3.1 |
-| 2 | Delete `crates/render-pipeline/vendor/*`; one Cargo workspace; CI tests all 38 crates | P2, unblocks 1 and 3 | structural, mechanical | 2–4 days | §3.2 |
+| 2 | Delete `crates/render-pipeline/vendor/*`; one Cargo workspace; CI tests all 38 crates — **done** except the pin-survival features (§3.2) | P2, unblocks 1 and 3 | structural, mechanical | 2–4 days | §3.2 |
 | 3 | Boxes and modes in the expansion engine (`tex-boxes` as `\setbox`/`\hbox`/`\wd`/`\ht`/`\dp`, `BoxMeasurer`, `\ifhmode`…) | P0 (#448/449/450, `.sty` execution) | additive | 2–3 lane-weeks | §3.3 |
 | 4 | Run the real `.sty` for the "state-only" packages instead of Rust models, behind a preamble-state snapshot | P0, P2; P1 neutral (measured) | replaces hand ports one at a time | 1–2 days per package after 3 | §3.4 |
 | 5 | Generate class/size data (`article/report/book.cls`, `size1x.clo`, `bk1x.clo`, amsart, beamer, KOMA) into `class-geometry`; pipeline reads it; delete the 3 duplicate copies | P0 (#796), P2 | generated data + drift test | 1–2 weeks | §3.5 |
@@ -199,14 +199,15 @@ text changes.
    `article_leftmargin_em`; `class-geometry`'s footnote parameters are computed
    for every class and never read. A maintainer fixing a pdflatex mismatch in
    `compiler::layout` changes nothing the PDF shows.
-2. **Vendoring** (§1.2). The stated reason — "so the visual-oracle harness can
-   build from a `git archive` of this directory alone" — is a harness
-   convenience that costs a re-pin per feature, a runbook
-   (`docs/integration/repin-runbook.md`), a pin-integrity script nobody runs
-   in CI, seven pin-survival features, and an inert-fix failure mode that has
-   already happened (#840/#839/#836 TAB catcode; #936 provenance). `class-geometry`
-   and `font-discovery` are already consumed live by path, proving the
-   alternative works.
+2. **Vendoring** (§1.2). **Done** — `crates/render-pipeline/vendor/` is
+   deleted (engine-v2 `DESIGN.md` §9.4, §12 P0). The stated reason — "so the
+   visual-oracle harness can build from an archive of this directory alone" —
+   was a harness convenience that cost a re-pin per feature, a re-pin runbook,
+   a pin-integrity script nobody ran in CI, seven pin-survival features, and an
+   inert-fix failure mode that had already happened (#840/#839/#836 TAB
+   catcode; #936 provenance). `class-geometry` and `font-discovery` were
+   already consumed live by path, which proved the alternative worked; all
+   fourteen siblings now are.
 3. **Mac vs iPad**: the shared core is real symlinks (`FlashTeXProtocol` 6.5k
    LOC, `FlashTeXEditorCore` 2.0k). Genuine duplicates outside it: the syntax
    palette (`apps/mac/.../SyntaxHighlighter.swift:15–40` vs
@@ -338,17 +339,23 @@ pdflatex diff attached):
 **Dependencies.** §3.2 first (otherwise every slice is also a re-pin). Runs
 in parallel with §3.3. Size 4–8 lane-weeks total; Opus/high per slice.
 
-### 3.2 Delete `vendor/`; one workspace; CI on all crates (P2, unblocks 1 and 3)
+### 3.2 Delete `vendor/`; one workspace; CI on all crates (P2, unblocks 1 and 3) — DONE except slice 2's feature cleanup
 
 **Slices:**
 1. Root `Cargo.toml` workspace with all 38 members and one `Cargo.lock`;
    `ci.yml` runs `cargo test --workspace --release` (replaces the 12-crate
    matrix). Half a day plus whatever fails in the 26 crates that have never
    run on a PR (report, don't hide).
-2. `render-pipeline/Cargo.toml`: every `vendor/<name>` → `../<name>`; delete
-   `vendor/`, `VENDORING.md`, `scripts/check-vendor-pins.sh`,
-   `docs/integration/repin-runbook.md`; move the seven pin-survival features
-   into `default` and then delete them and their `#[cfg]` arms.
+2. **Done.** `render-pipeline/Cargo.toml`: every `vendor/<name>` → `../<name>`,
+   and the same for `flashtex-cli` and `perf-bench`; all three became workspace
+   members and their lockfiles were folded into the root `Cargo.lock`;
+   `vendor/`, `VENDORING.md`, `scripts/check-vendor-pins.sh` and the re-pin
+   runbook are deleted, and the `gates` CI job no longer checks pins. **Still
+   open:** the pin-survival features. Those already in `default` are now
+   mandatory (the crate does not compile without them), and the ones still off
+   are off because promoting one *changes output*, so each needs its own parity
+   and perf-digest evidence. Deleting them and their `#[cfg]` arms is a
+   follow-up.
 3. `tools/visual-oracle` builds from the repository (it already has the
    checkout) instead of a `git archive` of one directory; document in its
    README.

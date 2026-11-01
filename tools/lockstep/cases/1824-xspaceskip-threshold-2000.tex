@@ -1,0 +1,11 @@
+% 1824-xspaceskip-threshold-2000: xspaceskip is ignored at factor 1999 but used as-is, labeled, at factor 2000 (tex.web §1043)
+\input prelude
+\font\myrm=cmr10
+\def\sp{ }
+\xspaceskip=10pt plus1pt minus1pt
+\setbox0=\hbox{\myrm a\spacefactor=1999 \sp b}
+\message{1824 wd1999=\the\wd0}
+\setbox1=\hbox{\myrm a\spacefactor=2000 \sp b}
+\message{1824 wd2000=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

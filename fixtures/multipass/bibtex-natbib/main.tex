@@ -1,0 +1,31 @@
+\documentclass[11pt]{report}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage[authoryear,round]{natbib}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+
+\title{Author--Year Citations in a Short Report}
+\author{P. Novak}
+\date{}
+
+\begin{document}
+\maketitle
+
+\chapter{Citation styles}
+
+Textual citations name the author in the sentence flow, as when
+\citet{plass81} introduced optimal-fit line breaking. Parenthetical
+citations instead tuck the source aside, for example the claim that
+incremental recomputation composes across editor blocks \citep{adapton}.
+
+\section{Further reading}
+
+\citet{knuth84} remains the reference for the box-and-glue model, while the
+dissertation record \citep{plass-thesis} documents the early pagination
+experiments. Taken together, \citep{plass81, adapton} connect batch
+optimality with interactive reuse.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+\end{document}

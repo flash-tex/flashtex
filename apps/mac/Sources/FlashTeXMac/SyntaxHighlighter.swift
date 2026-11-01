@@ -7,12 +7,16 @@ import AppKit
 
 // MARK: - theme
 
-/// Semantic colours for the runs. Every colour is a dynamic `NSColor`
-/// resolved per drawing appearance (light and dark variants; the system
-/// accent colour for references), so an appearance change needs no repaint.
-/// Restraint on purpose: plain text keeps the text view's colour, braces and
-/// brackets are only slightly dimmed.
+/// Semantic colours for the runs, from the selected editor theme
+/// (EditorThemes.swift, Settings > Themes). Every colour is a stable dynamic
+/// `NSColor` that resolves against the current theme and the drawing
+/// appearance, so neither an appearance change nor a theme change needs a
+/// repaint — only a redraw. Restraint on purpose in the default theme: plain
+/// text keeps the text view's colour, braces and brackets are only slightly
+/// dimmed.
 struct SyntaxTheme: Sendable {
+    typealias Role = EditorColorTheme.Role
+
     static func dynamic(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> NSColor {
         NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -21,41 +25,38 @@ struct SyntaxTheme: Sendable {
         }
     }
 
-    // JetBrains' code vocabulary (IntelliJ Light / the New Dark theme), not
-    // Xcode's: commands are keywords (blue / soft orange), references are
-    // strings (green), math is the constant purple — the palette that makes
-    // the editor read as a JetBrains-class IDE pane
-    // (context/PROMPT-appearance-overhaul.md).
-    static let command = dynamic(light: (0, 51, 179), dark: (207, 142, 109))           // keyword
-    static let mathCommand = dynamic(light: (0, 98, 122), dark: (42, 172, 184))        // built-in
-    static let environment = dynamic(light: (0, 98, 122), dark: (86, 168, 245))        // declaration
-    static let math = dynamic(light: (135, 16, 148), dark: (199, 125, 187))            // constant
-    static let mathDelimiter = dynamic(light: (135, 16, 148), dark: (199, 125, 187))
-    static let number = dynamic(light: (23, 80, 235), dark: (42, 172, 184))            // number
-    static let comment = dynamic(light: (140, 140, 140), dark: (122, 126, 133))        // comment
-    static let brace = DS.Palette.textSecondary
-    static let reference = dynamic(light: (6, 125, 23), dark: (106, 171, 115))         // string
-    static let file = dynamic(light: (6, 125, 23), dark: (106, 171, 115))
-    static let definition = dynamic(light: (158, 136, 13), dark: (179, 174, 96))       // metadata
-    static let currentLine = DS.Palette.editorCurrentLine
-    static let gutterText = DS.Palette.editorLineNumber
-    static let gutterCurrentText = DS.Palette.editorLineNumberActive
+    static var command: NSColor { EditorThemeRuntime.color(.command) }
+    static var mathCommand: NSColor { EditorThemeRuntime.color(.mathCommand) }
+    static var environment: NSColor { EditorThemeRuntime.color(.environment) }
+    static var math: NSColor { EditorThemeRuntime.color(.math) }
+    static var mathDelimiter: NSColor { EditorThemeRuntime.color(.mathDelimiter) }
+    static var number: NSColor { EditorThemeRuntime.color(.number) }
+    static var comment: NSColor { EditorThemeRuntime.color(.comment) }
+    static var brace: NSColor { EditorThemeRuntime.color(.brace) }
+    static var reference: NSColor { EditorThemeRuntime.color(.reference) }
+    static var file: NSColor { EditorThemeRuntime.color(.file) }
+    static var definition: NSColor { EditorThemeRuntime.color(.definition) }
+    static var error: NSColor { EditorThemeRuntime.color(.error) }
+    static var warning: NSColor { EditorThemeRuntime.color(.warning) }
+    // Chrome.
+    static var background: NSColor { EditorThemeRuntime.color(.background) }
+    static var foreground: NSColor { EditorThemeRuntime.color(.foreground) }
+    static var gutterBackground: NSColor { EditorThemeRuntime.color(.gutterBackground) }
+    static var currentLine: NSColor { EditorThemeRuntime.color(.currentLine) }
+    static var selection: NSColor { EditorThemeRuntime.color(.selection) }
+    static var caret: NSColor { EditorThemeRuntime.color(.caret) }
+    static var bracketMatch: NSColor { EditorThemeRuntime.color(.bracketMatch) }
+    static var invisibles: NSColor { EditorThemeRuntime.color(.invisibles) }
+    static var gutterText: NSColor { EditorThemeRuntime.color(.gutterText) }
+    static var gutterCurrentText: NSColor { EditorThemeRuntime.color(.gutterActiveText) }
+    /// Symbols hybrid conceal draws for math (α, ≤, ℝ; HybridConcealDisplay.swift).
+    static var conceal: NSColor { EditorThemeRuntime.color(.conceal) }
 
+    /// The run colour for `kind`: every kind, `verbatim` included, gets its
+    /// role's dynamic colour (a role the theme leaves out resolves to the
+    /// text colour), so a theme switch never changes which runs are painted.
     static func color(for kind: SyntaxHighlighter.Kind) -> NSColor? {
-        switch kind {
-        case .command: command
-        case .mathCommand: mathCommand
-        case .environment: environment
-        case .math: math
-        case .mathDelimiter: mathDelimiter
-        case .number: number
-        case .comment: comment
-        case .brace, .bracket: brace
-        case .reference: reference
-        case .file: file
-        case .definition: definition
-        case .verbatim: nil // plain
-        }
+        EditorThemeRuntime.color(Role(kind: kind))
     }
 }
 
@@ -97,6 +98,9 @@ final class SyntaxPainter {
             reset()
         }
     }
+    /// Hybrid conceal follows the same edits, windows and repaints
+    /// (HybridConcealDisplay.swift); nil while it is not attached.
+    weak var conceal: ConcealController?
     private weak var textView: NSTextView?
     private var observer: NSObjectProtocol?
     private var flushScheduled = false
@@ -127,8 +131,9 @@ final class SyntaxPainter {
         highlighter.reset(tv.textStorage?.string as NSString? ?? "")
         painted = []
         pendingDirty = nil
-        guard enabled else { return }
+        guard enabled else { conceal?.didReset(); return }
         extend(to: Self.window(for: tv))
+        conceal?.didReset()
     }
 
     func clear() {
@@ -136,7 +141,10 @@ final class SyntaxPainter {
         let whole = NSRange(location: 0, length: tv.textStorage?.length ?? 0)
         for range in painted {
             let r = NSIntersectionRange(range, whole)
-            if r.length > 0 { lm.removeTemporaryAttribute(Self.key, forCharacterRange: r) }
+            if r.length > 0 {
+                lm.removeTemporaryAttribute(Self.key, forCharacterRange: r)
+                for key in ConcealController.styleKeys { lm.removeTemporaryAttribute(key, forCharacterRange: r) }
+            }
         }
         painted = []
     }
@@ -183,6 +191,7 @@ final class SyntaxPainter {
             DispatchQueue.main.async { [weak self] in self?.resetScheduled = false; self?.reset() }
             return
         }
+        conceal?.textEdited(range: range, replacementLength: replacementLength) // before the edit: it reads the old line table
         let dirty = highlighter.edit(range: range, replacementLength: replacementLength, text: text)
         lastEditLinesLexed = highlighter.lastEditLinesLexed
         shiftPainted(edit: range, replacementLength: replacementLength)
@@ -243,9 +252,11 @@ final class SyntaxPainter {
             guard r.length > 0 else { continue }
             lm.removeTemporaryAttribute(Self.key, forCharacterRange: r)
             count += paint(highlighter.runs(in: r, text: text), layoutManager: lm)
+            conceal?.paintStyles(in: r, layoutManager: lm)
         }
         paints += 1
         runsPainted += count
+        conceal?.linesRelexed(dirty) // re-lays out only lines whose concealment changed
     }
 
     /// `r` after replacing `edit` with `replacementLength` characters. An edit
@@ -286,6 +297,7 @@ final class SyntaxPainter {
             let r = NSIntersectionRange(gap, whole)
             guard r.length > 0 else { continue }
             count += paint(highlighter.runs(in: r, text: text), layoutManager: lm)
+            conceal?.paintStyles(in: r, layoutManager: lm)
         }
         if count > 0 { paints += 1; runsPainted += count }
         painted = Self.merged(painted + [window])

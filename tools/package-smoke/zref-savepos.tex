@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{zref-savepos}
+\begin{document}
+\zsavepos{here}This mark sits at (\zposx{here}, \zposy{here}) in scaled points.
+The page height is \the\pdfpageheight\ and the mark moves with the text.
+\zsavepos{there}Another mark here gives a second saved position.
+\end{document}

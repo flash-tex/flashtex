@@ -64,6 +64,9 @@
 //! \hbox{\texttt{a\textbackslash{} b}}                  \hbox(7.5+2.5)x20.74988  (\glue 5.24995 after the OMS n)
 //! ```
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

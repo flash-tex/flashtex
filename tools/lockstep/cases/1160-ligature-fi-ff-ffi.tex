@@ -1,0 +1,13 @@
+% 1160-ligature-fi-ff-ffi: cmr10 fi ff ffi form single ligature glyphs, unlike fj (tex.web §1040)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm fi}
+\message{1160 fi=\the\wd0}
+\setbox1=\hbox{\myrm ff}
+\message{1160 ff=\the\wd1}
+\setbox2=\hbox{\myrm ffi}
+\message{1160 ffi=\the\wd2}
+\setbox3=\hbox{\myrm fj}
+\message{1160 fj=\the\wd3}
+\lsshipbox0 \lsshipbox1 \lsshipbox2 \lsshipbox3
+\end

@@ -1,0 +1,15 @@
+% Verifies \let copies an active character's current meaning, freezing it against later redefinition.
+\input prelude
+\font\f=cmr10
+\catcode`!=13
+\def!{BANG-BANG}
+\let\alias=!
+\def!{Q}
+\message{717 alias=\meaning\alias bang=\meaning!}
+\ifx\alias!\message{717 ifx-same}\else\message{717 ifx-diff}\fi
+\setbox0=\hbox{\f\alias}
+\setbox1=\hbox{\f!}
+\message{717 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

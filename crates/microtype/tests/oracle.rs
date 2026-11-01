@@ -3,6 +3,9 @@
 //! the reference pdfTeX line breaker in `tests/common` on top of the crate's
 //! primitives. No TeX is run.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::collapsible_if, clippy::needless_late_init, clippy::while_immutable_condition, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use std::fs;

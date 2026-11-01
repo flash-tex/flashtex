@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small,numbers=left,language=C}
+\begin{document}
+A short C program shown with the listings package:
+\begin{lstlisting}
+#include <stdio.h>
+int main(void) {
+    printf("hello\n");
+    return 0;
+}
+\end{lstlisting}
+Inline code looks like \lstinline|x = x + 1| in text.
+\end{document}

@@ -1,0 +1,10 @@
+% 1664-current-font-group-restore: selecting a font inside a group restores the outer current font when the group ends, logged by a restoring trace line (tex.web §§230, 281)
+\input prelude
+\font\fa=cmr10 \font\fb=cmti10
+\fa
+\message{1664 outer=\the\font}
+{\fb \message{1664 inner=\the\font}}
+\message{1664 restored=\the\font}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

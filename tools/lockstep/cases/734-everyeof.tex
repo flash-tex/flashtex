@@ -1,0 +1,15 @@
+% 734-everyeof: verifies e-TeX \everyeof tokens run at the end of a \scantokens pseudo-file: box0 typesets the marker set by the firing list, box1 the unset marker under an empty control.
+\input prelude
+\font\myrm=cmr10
+\def\markA{UNSET}\def\markB{UNSET}
+\everyeof{\def\markA{HIT734}}
+\scantokens{\def\foo{bar}}
+\message{734 A=\markA}
+\everyeof{}
+\scantokens{\def\baz{qux}}
+\message{734 B=\markB\ empty=\the\everyeof}
+\setbox0=\hbox{\myrm A=\markA}
+\setbox1=\hbox{\myrm B=\markB}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,360 @@
+{
+ "schema": "flashtex-parity/1",
+ "meta": {
+  "date": "2026-09-29",
+  "started_utc": "2026-09-29T10:18:51Z",
+  "flashtex": "target/p3work/engine.sh",
+  "flashtex_version": "pdfTeX-compatible flashtex-engine (test wrapper)",
+  "engine_kind": "tex",
+  "engine_version": "pdfTeX-compatible flashtex-engine (test wrapper)",
+  "oracle_pdftex": "/Library/TeX/texbin/pdftex",
+  "oracle_pdftex_version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "pt": "pt2",
+  "capture": "tools/parity/capture.py (stand-in until tools/lockstep lands)",
+  "qpdf": "qpdf version 12.4.2",
+  "flashtex_sha256": "7765e4f92021a5809a93c6f557222bc53e0477e16fc583ec15a02587cda6aec2",
+  "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "rasterizer": "pdftoppm",
+  "font_dirs": "<repo>/apps/mac/Fonts",
+  "tfm_dirs": "<repo>/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:<repo>/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/euler:<repo>/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols:<repo>/apps/mac/Fonts/texmf/fonts/tfm/public/cm:<repo>/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
+  "host": "Kabirs-MacBook-Pro.local",
+  "platform": "Darwin 25.6.0 arm64",
+  "wall_seconds": 5.9,
+  "jobs": 8,
+  "command": "python3 tools/parity/parity.py --tier fixtures --engine target/p3work/engine.sh --pt pt2 --raster none -j 8 --out target/p3work/parity2",
+  "levels": {
+   "pos_tol_bp": 0.5,
+   "raster_delta": 64,
+   "raster_fraction": 0.0002,
+   "dpi": 144
+  }
+ },
+ "tiers": {
+  "fixtures": {
+   "summary": {
+    "documents": 82,
+    "measured": 82,
+    "excluded": {},
+    "pt": {
+     "excluded": {},
+     "P-T1": {
+      "evaluated": 0,
+      "passed": 0,
+      "percent": null,
+      "not_evaluated": "not run (--pt pt2)"
+     },
+     "P-T2": {
+      "evaluated": 82,
+      "passed": 75,
+      "percent": 91.5,
+      "not_evaluated": null
+     }
+    },
+    "headline_L3_percent": 90.2,
+    "at_least": {
+     "L0": {
+      "documents": 75,
+      "percent": 91.5
+     },
+     "L1": {
+      "documents": 75,
+      "percent": 91.5
+     },
+     "L2": {
+      "documents": 75,
+      "percent": 91.5
+     },
+     "L3": {
+      "documents": 74,
+      "percent": 90.2
+     },
+     "L4": {
+      "documents": null,
+      "percent": null
+     }
+    },
+    "independent_checks": {
+     "L0": {
+      "evaluated": 82,
+      "passed": 75
+     },
+     "L1": {
+      "evaluated": 82,
+      "passed": 75
+     },
+     "L2": {
+      "evaluated": 82,
+      "passed": 75
+     },
+     "L3": {
+      "evaluated": 82,
+      "passed": 74
+     },
+     "L4": {
+      "evaluated": 0,
+      "passed": 0
+     }
+    },
+    "glyph_error_bp": {
+     "n": 84503,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 1.3059
+    },
+    "glyph_error_bp_same_page_count": {
+     "n": 84503,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 1.3059
+    },
+    "within_0_5bp_percent": 99.95,
+    "glyphs_placed_percent": 99.95,
+    "first_diverging_page": {
+     "1": 1
+    },
+    "level_histogram": {
+     "below L0": 7,
+     "L3": 74,
+     "L2": 1
+    }
+   },
+   "missing": [],
+   "causes": [
+    {
+     "rank": 1,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 74,
+     "sole": 74,
+     "share": 74.0,
+     "next_level": {
+      "L4": 74
+     },
+     "tiers": {
+      "fixtures": 74
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/article-twocolumn",
+      "real-world/enumitem-worksheet",
+      "real-world/cv",
+      "real-world/inline-math"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "engine: failed without output",
+     "documents": 7,
+     "sole": 7,
+     "share": 7.0,
+     "next_level": {
+      "L0": 7
+     },
+     "tiers": {
+      "fixtures": 7
+     },
+     "owner": "crates/render-pipeline (worker robustness)",
+     "examples": [
+      "real-world/beamer-blocks-columns",
+      "real-world/beamer-fragile",
+      "real-world/beamer-overlays",
+      "real-world/beamer-default"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "placement: first divergence in unlocalised",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    }
+   ],
+   "constructs": [
+    {
+     "rank": 1,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 74,
+     "sole": 74,
+     "share": 74.0,
+     "next_level": {
+      "L4": 74
+     },
+     "tiers": {
+      "fixtures": 74
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/article-twocolumn",
+      "real-world/enumitem-worksheet",
+      "real-world/cv",
+      "real-world/inline-math"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "engine: failed without output",
+     "documents": 7,
+     "sole": 7,
+     "share": 7.0,
+     "next_level": {
+      "L0": 7
+     },
+     "tiers": {
+      "fixtures": 7
+     },
+     "owner": "crates/render-pipeline (worker robustness)",
+     "examples": [
+      "real-world/beamer-blocks-columns",
+      "real-world/beamer-fragile",
+      "real-world/beamer-overlays",
+      "real-world/beamer-default"
+     ]
+    },
+    {
+     "rank": 3,
+     "cause": "placement: first divergence in unlocalised",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    }
+   ]
+  }
+ },
+ "causes": [
+  {
+   "rank": 1,
+   "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+   "documents": 74,
+   "sole": 74,
+   "share": 74.0,
+   "next_level": {
+    "L4": 74
+   },
+   "tiers": {
+    "fixtures": 74
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "real-world/article-twocolumn",
+    "real-world/enumitem-worksheet",
+    "real-world/cv",
+    "real-world/inline-math"
+   ]
+  },
+  {
+   "rank": 2,
+   "cause": "engine: failed without output",
+   "documents": 7,
+   "sole": 7,
+   "share": 7.0,
+   "next_level": {
+    "L0": 7
+   },
+   "tiers": {
+    "fixtures": 7
+   },
+   "owner": "crates/render-pipeline (worker robustness)",
+   "examples": [
+    "real-world/beamer-blocks-columns",
+    "real-world/beamer-fragile",
+    "real-world/beamer-overlays",
+    "real-world/beamer-default"
+   ]
+  },
+  {
+   "rank": 3,
+   "cause": "placement: first divergence in unlocalised",
+   "documents": 1,
+   "sole": 1,
+   "share": 1.0,
+   "next_level": {
+    "L3": 1
+   },
+   "tiers": {
+    "fixtures": 1
+   },
+   "owner": "crates/render-pipeline (page/paragraph layout)",
+   "examples": [
+    "real-world/hw2"
+   ]
+  }
+ ],
+ "constructs": [
+  {
+   "rank": 1,
+   "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+   "documents": 74,
+   "sole": 74,
+   "share": 74.0,
+   "next_level": {
+    "L4": 74
+   },
+   "tiers": {
+    "fixtures": 74
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "real-world/article-twocolumn",
+    "real-world/enumitem-worksheet",
+    "real-world/cv",
+    "real-world/inline-math"
+   ]
+  },
+  {
+   "rank": 2,
+   "cause": "engine: failed without output",
+   "documents": 7,
+   "sole": 7,
+   "share": 7.0,
+   "next_level": {
+    "L0": 7
+   },
+   "tiers": {
+    "fixtures": 7
+   },
+   "owner": "crates/render-pipeline (worker robustness)",
+   "examples": [
+    "real-world/beamer-blocks-columns",
+    "real-world/beamer-fragile",
+    "real-world/beamer-overlays",
+    "real-world/beamer-default"
+   ]
+  },
+  {
+   "rank": 3,
+   "cause": "placement: first divergence in unlocalised",
+   "documents": 1,
+   "sole": 1,
+   "share": 1.0,
+   "next_level": {
+    "L3": 1
+   },
+   "tiers": {
+    "fixtures": 1
+   },
+   "owner": "crates/render-pipeline (page/paragraph layout)",
+   "examples": [
+    "real-world/hw2"
+   ]
+  }
+ ]
+}

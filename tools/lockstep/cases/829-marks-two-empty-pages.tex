@@ -1,0 +1,15 @@
+\input prelude % Verifies marks survive two visibly empty pages: the last page still sees them in \topmark.
+\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \message{829 page=\the\count1; top=\topmark; first=\firstmark; bot=\botmark}\lsshipbox255}
+\mark{alpha}
+\hrule width80pt height30pt depth0pt
+\penalty-10000
+\mark{beta}
+\hrule height0pt width0pt depth0pt
+\penalty-10000
+\mark{gamma}
+\hrule height0pt width0pt depth0pt
+\penalty-10000
+\hrule width80pt height30pt depth0pt
+\end

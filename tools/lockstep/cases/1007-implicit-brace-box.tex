@@ -1,0 +1,8 @@
+% 1007-implicit-brace-box: verifies \setbox accepts implicit braces from \bgroup\egroup (tex.web §403)
+\input prelude
+\let\bgroup={\let\egroup=}
+\setbox0=\hbox\bgroup\vrule width1007pt height8pt depth2pt\hskip10pt\egroup
+\setbox1=\vbox\bgroup\hrule width1007pt height8pt depth2pt\egroup
+\lsshipbox0
+\lsshipbox1
+\end

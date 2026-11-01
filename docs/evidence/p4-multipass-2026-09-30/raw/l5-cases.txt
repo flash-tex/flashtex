@@ -1,0 +1,22 @@
+== engine base (base = #1296 fdc3cf723); 2031: depth 5 -> 6 -> 5 -> 6
+5 ['cold', 'cold'] []
+5 ['unchanged'] []
+6 ['incremental', 'incremental'] ['pass 2: re-read from the .aux point: besides 1 changed entries: 4 differs outside what the structural comparison reads: max_save_stack: 0x20 -> 0x22']
+5 ['incremental', 'incremental'] ['pass 2: re-read from the .aux point: besides 1 changed entries: 4 differs outside what the structural comparison reads: max_save_stack: 0x22 -> 0x20']
+6 ['incremental', 'incremental'] ['pass 2: re-read from the .aux point: besides 1 changed entries: 4 differs outside what the structural comparison reads: max_save_stack: 0x20 -> 0x22']
+== engine base; 2030: toggle @firstoftwo -> @secondoftwo -> @firstoftwo
+5 ['cold', 'cold'] []
+5 ['unchanged'] []
+5 ['incremental', 'incremental'] ['pass 2: re-read from the .aux point: besides 1 changed entries: structures differ: token list reference count differs (2 vs 1) (walking Some((Tok, 4997616, 4997616)))']
+5 ['incremental', 'incremental'] ['pass 2: re-read from the .aux point: besides 1 changed entries: structures differ: token list reference count differs (4 vs 3) (walking Some((Tok, 4997612, 4997612)))']
+== engine v3 (base = #1296 fdc3cf723); 2031: depth 5 -> 6 -> 5 -> 6
+5 ['cold', 'cold'] []
+5 ['unchanged'] []
+6 ['incremental', 'incremental'] ['pass 2: 1 entries changed (\\depthmark), first read at event Some(1341); restart at page 1 (14.0 ms to find)']
+5 ['incremental', 'incremental'] ['pass 2: 1 entries changed (\\depthmark), first read at event Some(1341); restart at page 1 (1.1 ms to find)']
+6 ['incremental', 'incremental'] ['pass 2: 1 entries changed (\\depthmark), first read at event Some(1341); restart at page 1 (10.8 ms to find)']
+== engine v3; 2030: toggle @firstoftwo -> @secondoftwo -> @firstoftwo
+5 ['cold', 'cold'] []
+5 ['unchanged'] []
+5 ['incremental', 'incremental'] ['pass 2: 1 entries changed (\\flagA), first read at event Some(1340); restart at page 1 (5.4 ms to find)']
+5 ['incremental', 'incremental'] ['pass 2: 1 entries changed (\\flagA), first read at event Some(1340); restart at page 1 (1.0 ms to find)']

@@ -1,0 +1,8 @@
+% Verifies \accent centers differently in cmtt10 than in cmr10 in the box dump.
+\input prelude
+\font\f=cmr10 \font\tt=cmtt10
+\setbox0=\hbox{\f \accent18 e}
+\setbox1=\hbox{\tt \accent18 e}
+\lsshipbox0
+\lsshipbox1
+\end

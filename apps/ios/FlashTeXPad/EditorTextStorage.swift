@@ -48,11 +48,24 @@ final class EditorTextStorage: NSTextStorage {
 
     override var length: Int { backing.length }
 
+    /// The backing UTF-16 units, O(1) per `character(at:)` and never a copy
+    /// (`string` materialises a Swift `String` after every edit). Read it
+    /// synchronously; it changes with the next edit.
+    var units: NSString { backing.mutableString }
+
     override func attributes(at location: Int, effectiveRange range: NSRangePointer?) -> [NSAttributedString.Key: Any] {
         backing.attributes(at: location, effectiveRange: range)
     }
 
+    /// Called before every character edit, with the storage still holding
+    /// the pre-edit text, whatever routed the edit (a keyboard, paste,
+    /// dictation, marked text, `UITextInput`, undo): the editor's linked
+    /// `\begin`/`\end` names need the pre-edit buffer, and not every path
+    /// asks the text view's delegate first.
+    var willReplaceCharacters: ((_ range: NSRange, _ replacement: String) -> Void)?
+
     override func replaceCharacters(in range: NSRange, with str: String) {
+        willReplaceCharacters?(range, str)
         beginEditing()
         backing.replaceCharacters(in: range, with: str)
         cachedString = nil

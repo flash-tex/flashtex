@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{xargs}
+\newcommandx{\greet}[3][1=Hello, 2=world, 3={!}]{#1 #2#3}
+\begin{document}
+\greet
+
+\greet[Hi]
+
+\greet[Hi][Alice][.]
+
+\renewcommandx{\greet}[3][1=Bye, 2=world, 3={!}]{#1 #2#3}
+\greet
+\end{document}

@@ -1,0 +1,6 @@
+% 1443-defaultskewchar: verifies \defaultskewchar initial 0, grouped assignment and restore, and glue in shipped box (tex.web §§237, 238)
+\input prelude
+\message{1443 initial=\the\defaultskewchar}
+{\defaultskewchar=45\setbox0=\hbox{\hskip\defaultskewchar sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1443 restored=\the\defaultskewchar}
+\end

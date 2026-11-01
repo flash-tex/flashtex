@@ -1,0 +1,10 @@
+% biblatex with backend=bibtex
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyrepagella}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage[backend=bibtex,style=numeric]{biblatex}
+\addbibresource{refs.bib}
+\begin{document}
+Literate programming \cite{knuth1984}, \LaTeX{} \cite{lamport1994}, XeTeX \cite{kew2005}.
+\printbibliography
+\end{document}

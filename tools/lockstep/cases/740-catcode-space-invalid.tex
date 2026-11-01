@@ -1,0 +1,15 @@
+% 740-catcode-space-invalid: verifies a catcode-10 character acts as a space and a catcode-15 assignment sticks: box0 typesets spaced text with the recorded 15, box1 the literal control.
+\input prelude
+\font\myrm=cmr10
+\def\txtA{\myrm a|b}
+\setbox1=\hbox{\txtA}
+\catcode`\|=10
+\catcode`!=15
+\edef\bangcat{\the\catcode33}
+\catcode33=12
+\def\txtB{\myrm a|b}
+\message{740 bangcat=\bangcat}
+\setbox0=\hbox{\txtB\myrm\ bang=\bangcat!}
+\lsshipbox0
+\lsshipbox1
+\end

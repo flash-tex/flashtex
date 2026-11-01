@@ -1,0 +1,115 @@
+# The Type 1 writer's differential sweep and fuzzing (lane IDIOMATIC-REWRITE,
+# docs/design/engine-v2/REWRITE.md §5 item 5; review of #1501).
+#
+# tools/rewrite/type1_sweep.py embeds TeX Live's Type 1 fonts (every font
+# file in pdftex.map, slanted and extended entries, a tenth of the
+# re-encodings; as subsets and whole) and fuzzed fonts (cmr10/cmti10/cmbx10
+# mutated as PFB and PFA by tools/fuzz/parsers/type1.py) through:
+#   * this tree's engine and TeX Live's pdftex: font streams, exit status and
+#     fatal errors must agree;
+#   * on a pull request, also the engine of its merge base with main: PDF and
+#     log byte-identical on the sweep, and no fuzzed font on which this tree
+#     moves away from pdfTeX (a difference that brings it TO pdfTeX is a fix).
+#
+# WHEN. Nightly (the whole sweep, 1,000 fuzzed fonts), by hand, and on pull
+# requests that touch the Type 1 writer (every tenth sweep entry, 300 fuzzed
+# fonts). It is not part of `CI required` and not in scripts/gate.sh pr: the
+# full sweep takes about an hour on four cores.
+#
+# WHERE. GitHub-hosted Ubuntu with TeX Live 2026 pinned by digest, the same
+# tree as ci.yml's engine-parity-hosted job. Hosted, so a pull request may run
+# it (DESIGN.md §9.3 keeps self-hosted runners off pull_request).
+name: writet1 sweep
+
+on:
+  schedule:
+    - cron: '43 9 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'crates/flashtex-engine/src/pdftex/writet1/**'
+      - 'tools/rewrite/type1_sweep.py'
+      - '.github/workflows/writet1-sweep.yml'
+
+concurrency:
+  group: writet1-sweep-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: "writet1: Type 1 sweep and differential fuzzing"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      # texlive/texlive:latest-medium as of 2026-09-27 (TeX Live 2026, pdfTeX
+      # 1.40.29), as in ci.yml's engine-parity-hosted. See
+      # .github/actions/texlive-2026.
+      TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+      PR: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: writet1-sweep
+      - name: this tree's engine
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+          new="$RUNNER_TEMP/eng-new"; mkdir -p "$new"
+          cp target/release/flashtex-initex crates/flashtex-engine/pdftex.pool "$new/"
+          ln -sf "$new/flashtex-initex" "$new/pdftex"
+      - name: the merge base's engine (pull requests)
+        if: env.PR == 'true'
+        run: |
+          set -euo pipefail
+          base="$(git merge-base origin/main HEAD)"
+          git worktree add "$RUNNER_TEMP/base-src" "$base"
+          (cd "$RUNNER_TEMP/base-src" &&
+           CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" \
+             cargo build --release --locked -p flashtex-engine --bin flashtex-initex)
+          old="$RUNNER_TEMP/eng-old"; mkdir -p "$old"
+          cp "$RUNNER_TEMP/base-target/release/flashtex-initex" \
+             "$RUNNER_TEMP/base-src/crates/flashtex-engine/pdftex.pool" "$old/"
+          ln -sf "$old/flashtex-initex" "$old/pdftex"
+      - name: sweep
+        run: |
+          set -euo pipefail
+          every=1; [[ "$PR" == true ]] && every=10
+          s=tools/rewrite/type1_sweep.py; out="$RUNNER_TEMP/sweep"; mkdir -p "$out"
+          python3 $s record --engine "$RUNNER_TEMP/eng-new" --out "$out/new.jsonl" -j 4 --every $every
+          python3 $s record --pdftex "$(command -v pdftex)" --out "$out/pdftex.jsonl" -j 4 --every $every
+          rc=0
+          python3 $s compare "$out/pdftex.jsonl" "$out/new.jsonl" --streams-only || rc=1
+          if [[ "$PR" == true ]]; then
+            python3 $s record --engine "$RUNNER_TEMP/eng-old" --out "$out/old.jsonl" -j 4 --every $every
+            python3 $s compare "$out/old.jsonl" "$out/new.jsonl" || rc=1
+          fi
+          exit $rc
+      - name: differential fuzzing
+        if: always()
+        run: |
+          set -euo pipefail
+          n=1000; engines=(--engine "$RUNNER_TEMP/eng-new")
+          if [[ "$PR" == true ]]; then
+            n=300; engines=(--engine "$RUNNER_TEMP/eng-old" --engine "$RUNNER_TEMP/eng-new")
+          fi
+          python3 tools/rewrite/type1_sweep.py fuzz "${engines[@]}" --pdftex "$(command -v pdftex)" \
+            --iterations $n --seed "${GITHUB_RUN_ID}" --out "$RUNNER_TEMP/fuzz" -j 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: writet1-sweep
+          path: |
+            ${{ runner.temp }}/sweep/
+            ${{ runner.temp }}/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14

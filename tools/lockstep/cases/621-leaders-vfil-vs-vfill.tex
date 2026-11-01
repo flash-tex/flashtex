@@ -1,0 +1,9 @@
+% 621-leaders-vfil-vs-vfill: verifies vertical leaders take fil order with \vfil but fill order with \vfill.
+\input prelude
+\setbox0=\vbox to 60pt{\leaders\hrule width30pt height4pt depth0pt\vfil}
+\message{621 vfil-ht=\the\ht0}
+\setbox1=\vbox to 60pt{\leaders\hrule width30pt height4pt depth0pt\vfill}
+\message{621 vfill-ht=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

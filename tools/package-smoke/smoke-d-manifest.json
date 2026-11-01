@@ -1,0 +1,101 @@
+{
+ "packages": [
+  {
+   "file": "pdfescape.tex",
+   "package": "pdfescape",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "pdftexcmds.tex",
+   "package": "pdftexcmds",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "ltxcmds.tex",
+   "package": "ltxcmds",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "infwarerr.tex",
+   "package": "infwarerr",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "kvoptions.tex",
+   "package": "kvoptions",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "letltxmacro.tex",
+   "package": "letltxmacro",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "hopatch.tex",
+   "package": "hopatch",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "atbegshi.tex",
+   "package": "atbegshi",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "atveryend.tex",
+   "package": "atveryend",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "bitset.tex",
+   "package": "bitset",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "bigintcalc.tex",
+   "package": "bigintcalc",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "intcalc.tex",
+   "package": "intcalc",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "gettitlestring.tex",
+   "package": "gettitlestring",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "rerunfilecheck.tex",
+   "package": "rerunfilecheck",
+   "pages": 1,
+   "passes": 2
+  },
+  {
+   "file": "uniquecounter.tex",
+   "package": "uniquecounter",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "refcount.tex",
+   "package": "refcount",
+   "pages": 1,
+   "passes": 2
+  }
+ ],
+ "skipped": []
+}

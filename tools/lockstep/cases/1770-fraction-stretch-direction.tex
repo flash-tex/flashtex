@@ -1,0 +1,12 @@
+% 1770-fraction-stretch-direction: the narrower side of a fraction is padded with hss glue on both sides, so a narrow numerator pads the top box while a narrow denominator pads the bottom one; closest 1141, which nests a fraction instead of swapping sides (tex.web §§743, 715).
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161 \mathcode`w="7177
+\setbox0=\hbox{${a\over ww}$}
+\message{1770 numstretched wd=\the\wd0 ht=\the\ht0}
+\setbox1=\hbox{${ww\over a}$}
+\message{1770 denomstretched wd=\the\wd1 ht=\the\ht1}
+\lsshipbox0 \lsshipbox1
+\end

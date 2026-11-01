@@ -1,0 +1,9 @@
+\input prelude % Verifies a 10000 penalty holds while a later -10000 forces the page break.
+\hsize=345pt \vsize=30pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\lsshipbox255}
+\hrule width100pt height20pt depth0pt
+\penalty10000
+\hrule width100pt height20pt depth0pt
+\penalty-10000
+\hrule width100pt height20pt depth0pt
+\end

@@ -1,0 +1,12 @@
+% 335-interactionmode: verifies \interactionmode reads 1 (nonstopmode), switches to scrollmode 2 and back, reporting each value, and the run ships a box without blocking.
+\input prelude
+\message{335 mode=\the\interactionmode}
+\interactionmode=2
+\message{335 scroll=\the\interactionmode}
+\interactionmode=1
+\message{335 back=\the\interactionmode}
+\count0=2 \multiply\count0 by21
+\message{335 calc=\the\count0}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

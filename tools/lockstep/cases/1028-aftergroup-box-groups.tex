@@ -1,0 +1,12 @@
+% 1028-aftergroup-box-groups: verifies \aftergroup tokens queued in \hbox and \vbox groups fire at the box end (tex.web §§265,274,281)
+\input prelude
+\def\fA{\message{1028 firedA-cnt=\the\count0}}
+\def\fB{\message{1028 firedB-cnt=\the\count0}}
+\count0=10
+\setbox0=\hbox{\aftergroup\fA\count0=20\vrule width5pt height5pt depth0pt}
+\message{1028 after-hbox}
+\setbox1=\vbox{\aftergroup\fB\count0=30\hrule width5pt height5pt depth0pt}
+\message{1028 after-vbox}
+\lsshipbox0
+\lsshipbox1
+\end

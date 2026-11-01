@@ -1,0 +1,121 @@
+warning: binary `corpus_augment` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../corpus_augment
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `corpus-augment`, convert the file stem
+  |
+1 - src/bin/corpus_augment.rs
+1 + src/bin/corpus-augment.rs
+  |
+warning: `flashtex-bridge` (manifest) generated 1 warning
+warning: binary `edit_latency_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../edit_latency_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `edit-latency-bench`, convert the file stem
+  |
+1 - src/bin/edit_latency_bench.rs
+1 + src/bin/edit-latency-bench.rs
+  |
+warning: binary `fixture_digest` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../fixture_digest
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `fixture-digest`, convert the file stem
+  |
+1 - src/bin/fixture_digest.rs
+1 + src/bin/fixture-digest.rs
+  |
+warning: binary `incremental_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../incremental_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `incremental-bench`, convert the file stem
+  |
+1 - src/bin/incremental_bench.rs
+1 + src/bin/incremental-bench.rs
+  |
+warning: binary `large_doc_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../large_doc_bench
+  |                                                                                       ^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `large-doc-bench`, convert the file stem
+  |
+1 - src/bin/large_doc_bench.rs
+1 + src/bin/large-doc-bench.rs
+  |
+warning: binary `scaling_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../scaling_bench
+  |                                                                                       ^^^^^^^^^^^^^
+  |
+help: to change the binary name to `scaling-bench`, convert the file stem
+  |
+1 - src/bin/scaling_bench.rs
+1 + src/bin/scaling-bench.rs
+  |
+warning: binary `ttfb_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../ttfb_bench
+  |                                                                                       ^^^^^^^^^^
+  |
+help: to change the binary name to `ttfb-bench`, convert the file stem
+  |
+1 - src/bin/ttfb_bench.rs
+1 + src/bin/ttfb-bench.rs
+  |
+warning: `flashtex-compiler` (manifest) generated 6 warnings
+   Compiling flashtex-engine v0.1.0 (/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 3.05s
+     Running tests/display_list_host.rs (target/release/build/flashtex-engine/67e1a2209fb32e47/out/display_list_host-67e1a2209fb32e47)
+
+running 1 test
+test host_compiles_a_fixture_and_streams_every_page ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.65s
+
+     Running tests/host_incremental.rs (target/release/build/flashtex-engine/dba21f80131b1b47/out/host_incremental-dba21f80131b1b47)
+
+running 8 tests
+test every_fixture_edits_equal_scratch_compiles ... ignored
+test an_image_drawn_again_after_a_restore_names_its_file ... ok
+test an_edit_that_changes_no_page_still_sends_the_pages_it_typesets ... ok
+test export_runs_the_engine_as_a_child ... ok
+test an_export_in_the_same_directory_leaves_the_next_compile_exact ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_article ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc ... ok
+test a_newer_compile_preempts_the_running_one ... ok
+
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 18.46s
+
+     Running tests/incremental.rs (target/release/build/flashtex-engine/060dfb146ecc52dc/out/incremental-060dfb146ecc52dc)
+
+running 17 tests
+test a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf ... ok
+test a_restart_after_a_toc_write_keeps_the_toc ... ok
+test a_file_written_then_read_is_a_barrier ... ok
+test destinations_under_a_matrix_equal_scratch_runs ... ok
+test a_reverted_label_removal_interrupted_in_the_aux_pass ... ok
+test a_longer_longest_line_converges ... ok
+test elapsed_time_is_a_barrier ... ok
+test a_restore_after_several_convergences_equals_scratch_runs ... ok
+test a_failed_run_then_a_revert ... ok
+test edits_equal_scratch_runs ... ok
+test random_numbers_and_dates_equal_scratch_runs ... ok
+test oscillating_labels_stop_on_a_repeated_state ... ok
+test l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs ... ok
+test intrinsics_recorded_after_an_edit_converge ... ok
+test l5_shared_bodies_in_the_hash_extra_region_equal_scratch_runs ... ok
+test interleaved_edits_equal_scratch_runs ... ok
+test structural_edits_equal_scratch_runs ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 49.54s
+
+tests exit 0

@@ -1,0 +1,10 @@
+% 1353-page-penalties-club-widow-broken-interline: breaking after the discretionary first line reports interline plus club plus broken penalty, and after the second-to-last line interline plus widow penalty; raising \brokenpenalty moves the break (tex.web §890)
+\input prelude
+\font\myrm=cmr10
+\hsize=114pt \vsize=13pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\baselineskip=12pt \lineskiplimit=0pt \lineskip=1pt
+\parfillskip=0pt plus1fil \linepenalty=10 \tolerance=200
+\clubpenalty=50 \widowpenalty=60 \interlinepenalty=10 \brokenpenalty=0
+\output={\message{1353 outpen=\the\outputpenalty}\lsshipbox255}
+\myrm AA AA AA AA AA AA\vadjust{\vskip0pt plus30pt minus10pt}\discretionary{(-}{(+)}{}EE FF GG HH II JJ KK LL\par
+\end

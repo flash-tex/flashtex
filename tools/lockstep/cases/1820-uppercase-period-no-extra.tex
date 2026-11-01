@@ -1,0 +1,11 @@
+% 1820-uppercase-period-no-extra: a period after an uppercase letter (built-in sfcode 999) drops the factor to 1000 instead of 3000, so the next space stays narrow (tex.web §§232, 1034)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000
+\message{1820 sfcode-A=\the\sfcode`A}
+\setbox0=\hbox{\myrm A. b}
+\message{1820 upper-wd=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1820 lower-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

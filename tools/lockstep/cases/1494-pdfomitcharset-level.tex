@@ -1,0 +1,8 @@
+% 1494-pdfomitcharset-level: verifies \pdfomitcharset assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfomitcharset=1
+{\pdfomitcharset=0}
+\message{1494 v=\the\pdfomitcharset}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

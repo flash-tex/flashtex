@@ -1,0 +1,10 @@
+% 342-splitdiscards: verifies \splitdiscards recovers the glue and penalty discarded by \vsplit into a shipped box.
+\input prelude
+\savingvdiscards=1
+\setbox0=\vbox{\hrule width60pt height10pt depth0pt\vskip5pt\penalty300\vskip7pt\hrule width60pt height10pt depth0pt}
+\setbox1=\vsplit0 to 12pt
+\setbox2=\vbox{\splitdiscards}
+\message{342 disc-wd=\the\wd2,ht=\the\ht2,dp=\the\dp2}
+\lsshipbox1
+\lsshipbox2
+\end

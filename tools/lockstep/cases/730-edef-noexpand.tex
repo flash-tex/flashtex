@@ -1,0 +1,12 @@
+% 730-edef-noexpand: verifies \edef with \noexpand freezes a macro while neighbours still expand: box0 typesets the frozen meaning, box1 the fully expanded control meaning.
+\input prelude
+\font\myrm=cmr10
+\def\foo{FOO}
+\edef\e{\noexpand\foo\foo}
+\edef\c{\foo\foo}
+\message{730 e=\meaning\e\ c=\meaning\c}
+\setbox0=\hbox{\myrm\meaning\e}
+\setbox1=\hbox{\myrm\meaning\c}
+\lsshipbox0
+\lsshipbox1
+\end

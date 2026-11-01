@@ -1,0 +1,8 @@
+% 540-topskip-vs-prevdepth-page: verifies \topskip leads the page while \baselineskip joins later boxes.
+\input prelude
+\hsize=345pt \vsize=200pt \parindent=0pt \parskip=0pt \topskip=20pt \maxdepth=4pt \baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt
+\output={\lsshipbox255}
+\message{540 topskip=\the\topskip}
+\hbox{\vrule width80pt height5pt depth0pt}
+\hbox{\vrule width80pt height5pt depth0pt}
+\end

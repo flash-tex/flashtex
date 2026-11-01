@@ -117,9 +117,13 @@ final class BridgeClient {
             return bundled
         }
         guard let root = ShellModel.locateRepoRoot() else { return nil }
+        // The workspace builds every member into ./target (Cargo.toml); a
+        // crate-local target is what a standalone build left.
         for profile in ["release", "debug"] {
-            let url = root.appendingPathComponent("crates/\(crate)/target/\(profile)/\(name)")
-            if fm.isExecutableFile(atPath: url.path) { return url }
+            for dir in ["target/\(profile)", "crates/\(crate)/target/\(profile)"] {
+                let url = root.appendingPathComponent("\(dir)/\(name)")
+                if fm.isExecutableFile(atPath: url.path) { return url }
+            }
         }
         return nil
     }

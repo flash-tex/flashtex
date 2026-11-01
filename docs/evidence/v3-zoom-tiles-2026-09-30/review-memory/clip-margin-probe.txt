@@ -1,0 +1,27 @@
+12:59  up 19 days, 11:52, 2 users, load averages: 12.13 76.16 82.91
+== margin 0
+	 Executed 1 test, with 30 failures (0 unexpected) in 14.493 (14.493) seconds
+	 Executed 1 test, with 30 failures (0 unexpected) in 14.493 (14.493) seconds
+	 Executed 1 test, with 30 failures (0 unexpected) in 14.493 (14.494) seconds
+tile sweep (checked in): 440 page×scale, 8267 tiles, 39 differing
+== margin 4
+	 Executed 1 test, with 23 failures (0 unexpected) in 13.163 (13.163) seconds
+	 Executed 1 test, with 23 failures (0 unexpected) in 13.163 (13.164) seconds
+	 Executed 1 test, with 23 failures (0 unexpected) in 13.163 (13.165) seconds
+tile sweep (checked in): 440 page×scale, 8267 tiles, 32 differing
+== margin 16
+	 Executed 1 test, with 10 failures (0 unexpected) in 15.058 (15.058) seconds
+	 Executed 1 test, with 10 failures (0 unexpected) in 15.058 (15.058) seconds
+	 Executed 1 test, with 10 failures (0 unexpected) in 15.058 (15.059) seconds
+tile sweep (checked in): 440 page×scale, 8267 tiles, 11 differing
+== margin 64
+	 Executed 1 test, with 9 failures (0 unexpected) in 14.351 (14.351) seconds
+	 Executed 1 test, with 9 failures (0 unexpected) in 14.351 (14.351) seconds
+	 Executed 1 test, with 9 failures (0 unexpected) in 14.351 (14.352) seconds
+tile sweep (checked in): 440 page×scale, 8267 tiles, 10 differing
+== margin 256
+	 Executed 1 test, with 4 failures (0 unexpected) in 14.037 (14.037) seconds
+	 Executed 1 test, with 4 failures (0 unexpected) in 14.037 (14.037) seconds
+	 Executed 1 test, with 4 failures (0 unexpected) in 14.037 (14.039) seconds
+tile sweep (checked in): 440 page×scale, 8267 tiles, 5 differing
+EXIT

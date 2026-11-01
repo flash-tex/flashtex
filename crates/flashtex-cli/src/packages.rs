@@ -50,6 +50,7 @@ pub struct Question<'a> {
     pub name: &'a str,
     pub version: Option<&'a str>,
     pub source_url: &'a str,
+    #[allow(dead_code, reason = "filled by callers; the prompt does not list the files yet")]
     pub files: &'a [String],
 }
 

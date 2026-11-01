@@ -26,6 +26,9 @@
 //! `NODE_STREAM_DUMP=<dir>` writes each pair's documents under
 //! `<dir>/<test>/{direct,macro}/` for the pdflatex cross-check.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use flashtex_compiler::parser::SourceDocument;

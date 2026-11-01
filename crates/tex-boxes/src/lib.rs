@@ -12,6 +12,9 @@
 //!
 //! See `CONTRACT.md` for the adoption plan.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::collapsible_if, clippy::manual_clamp, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 pub mod display;
 pub mod engine;
 pub mod latex;

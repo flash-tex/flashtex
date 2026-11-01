@@ -1,0 +1,151 @@
+# new2-_2__0_-plain-1000-editor-{2}+0
+load_before { 29.12 24.80 35.92 }
+load_after { 37.54 27.26 36.43 }
+bench: typed 200 painted 0 coalesced 0 paints 0 | k2p p50 - p95 - max - | compile p50 - p95 - | result->paint p50 - p95 -
+
+0 painted v2 revisions in /tmp/appperf/runs/new2-_2__0_-plain-1000-editor-{2}+0/app.log
+stage            n   p50     p95     max
+
+## signposts
+braceHighlight n   200  p50    10.51  p95    12.15  max    13.13  total    1530.8 ms   4.06..10.03 s
+bufferCopy     n   200  p50     4.25  p95     4.74  max     6.20  total     801.5 ms   4.05..10.02 s
+commitUserChange n   200  p50    14.88  p95    16.83  max    23.52  total    2359.8 ms   4.05..10.03 s
+editorChange   n   200  p50    15.10  p95    17.05  max    23.74  total    2405.2 ms   4.05..10.03 s
+modelUpdate    n   200  p50     0.07  p95     0.11  max     0.31  total      15.7 ms   4.05..10.02 s
+syntaxFlush    n   200  p50     0.09  p95     0.12  max     0.51  total      19.9 ms   4.05..10.01 s
+
+## hangs (>250 ms): 0
+0
+
+samples 9233, total 9233 ms (thread=main, window None..None s, focus=None)
+
+## innermost app frame (inclusive of what it called)
+     4032 ms  43.7%  <no app frame>
+     3470 ms  37.6%  static FlashTeXMacApp.$main()
+      670 ms   7.3%  CompletingTextView.draw(_:)
+      137 ms   1.5%  LineNumberGutter.drawHashMarksAndLabels(in:)
+       96 ms   1.0%  specialized static EditorNavigation.forEachEnvironmentUse(in:_:)
+       90 ms   1.0%  CompletingTextView.didChangeText()
+       86 ms   0.9%  _stringCompare(_:_:expecting:)
+       52 ms   0.6%  LineNumberGutter.numberFont.getter
+       49 ms   0.5%  CompletingTextView.setNeedsDisplay(_:avoidAdditionalLayout:)
+       43 ms   0.5%  specialized closure #1 in static DS.Palette.dynamic(light:dark:lightAlpha:darkAlpha:)
+       41 ms   0.4%  specialized __RawDictionaryStorage.find<A>(_:)
+       38 ms   0.4%  CompletingTextView.setSelectedRanges(_:affinity:stillSelecting:)
+       35 ms   0.4%  closure #1 in static SourceEditorView.nativeText(of:)
+       33 ms   0.4%  TypingBenchDriver.tick()
+       20 ms   0.2%  LineNumberGutter.layoutIfNeeded(lineCount:)
+       16 ms   0.2%  SourceEditorView.Coordinator.currentText(of:)
+       16 ms   0.2%  protocol witness for Hashable._rawHashValue(seed:) in conformance String
+       13 ms   0.1%  CompletingTextView.shouldChangeText(in:replacementString:)
+        9 ms   0.1%  closure #1 in static SyntaxTheme.dynamic(light:dark:)
+        9 ms   0.1%  SyntaxPainter.paint(_:layoutManager:)
+        9 ms   0.1%  specialized String.init<A>(unsafeUninitializedCapacity:initializingUTF8With:)
+        8 ms   0.1%  specialized static EditorNavigation.environmentPair(at:in:)
+        7 ms   0.1%  WordCountStatusItem.body.getter
+        6 ms   0.1%  String.UTF8View.count.getter
+        6 ms   0.1%  SyntaxPainter.flush()
+        6 ms   0.1%  closure #5 in closure #2 in FlashTeXMacApp.body.getter
+        6 ms   0.1%  ProjectDocuments.projectRoot.getter
+        6 ms   0.1%  specialized Dictionary.subscript.modify
+        5 ms   0.1%  specialized static FlashTeXLog.write(_:)
+        5 ms   0.1%  closure #3 in closure #2 in FlashTeXMacApp.body.getter
+
+## self (leaf)
+      294 ms   3.2%  objc_msgSend
+      142 ms   1.5%  <deduplicated_symbol>
+      102 ms   1.1%  _platform_memmove
+       76 ms   0.8%  _xzm_free
+       49 ms   0.5%  AG::Graph::propagate_dirty(AG::AttributeID)
+       46 ms   0.5%  swift_release
+       45 ms   0.5%  AG::Graph::UpdateStack::update()
+       36 ms   0.4%  __CF_IS_OBJC
+       36 ms   0.4%  swift::MetadataCacheKey::operator==(swift::MetadataCacheKey const&) const
+       35 ms   0.4%  __CFStringHash
+       35 ms   0.4%  expression_merge
+       34 ms   0.4%  swift_retain
+       32 ms   0.3%  _platform_memset
+       32 ms   0.3%  vars_index
+       32 ms   0.3%  _NSLayoutTreeMoveToGlyphIndex
+       28 ms   0.3%  TRunGlue::FocusOnIndex(long) const
+       28 ms   0.3%  DYLD-STUB$$protocol witness for OptionSet.init(rawValue:) in conformance DisplayList.Properties
+       28 ms   0.3%  _CFRelease
+       24 ms   0.3%  -[__NSCFString isEqual:]
+       24 ms   0.3%  objc_release
+       23 ms   0.2%  _xzm_xzone_malloc
+       23 ms   0.2%  0x185a7f3f4
+       23 ms   0.2%  AG::Subgraph::update(unsigned int)
+       22 ms   0.2%  _NSLayoutTreeLineFragmentRectForGlyphAtIndex
+       22 ms   0.2%  NSBitSetAddIndex
+       22 ms   0.2%  AutoreleasePoolPage::add(objc_object*)
+       22 ms   0.2%  __kdebug_trace64
+       21 ms   0.2%  objc_retain
+       21 ms   0.2%  __CFStringEqual
+       21 ms   0.2%  NSISSparseVectorMapFind
+
+## inclusive (any binary)
+     5200 ms  56.3%  _BlockUntilNextEventMatchingListInMode
+     5200 ms  56.3%  -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:]
+     5200 ms  56.3%  -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:]
+     5200 ms  56.3%  runApp<A>(_:)
+     5200 ms  56.3%  NSApplicationMain
+     5200 ms  56.3%  _DPSBlockUntilNextEventMatchingListInMode
+     5200 ms  56.3%  -[NSApplication run]
+     5200 ms  56.3%  _DPSNextEvent
+     5200 ms  56.3%  specialized runApp(_:)
+     5200 ms  56.3%  static App.main()
+     5200 ms  56.3%  start
+     5200 ms  56.3%  static FlashTeXMacApp.$main()
+     5200 ms  56.3%  ReceiveNextEventCommon
+     5200 ms  56.3%  main
+     5198 ms  56.3%  RunCurrentEventLoopInMode
+     5197 ms  56.3%  _CFRunLoopRunSpecificWithOptions
+     4126 ms  44.7%  __CFRunLoopRun
+     2400 ms  26.0%  UC::DriverCore::continueProcessing()
+     2370 ms  25.7%  CA::Transaction::commit()
+     2063 ms  22.3%  __CFRunLoopDoObservers
+     2061 ms  22.3%  __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+     2009 ms  21.8%  stepTransactionFlush
+     1995 ms  21.6%  CA::Transaction::flush_as_runloop_observer(bool)
+     1990 ms  21.6%  <deduplicated_symbol>
+     1815 ms  19.7%  0x1866f1518
+     1815 ms  19.7%  0x1866f14f0
+     1763 ms  19.1%  __CFRunLoopDoSources0
+     1763 ms  19.1%  __CFRunLoopDoSource0
+     1762 ms  19.1%  __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__
+     1415 ms  15.3%  GraphHost.flushTransactions()
+
+## all threads
+samples 9950, total 9950 ms (thread=all, window None..None s, focus=None)
+
+## innermost app frame (inclusive of what it called)
+     4730 ms  47.5%  <no app frame>
+     3470 ms  34.9%  static FlashTeXMacApp.$main()
+      670 ms   6.7%  CompletingTextView.draw(_:)
+      137 ms   1.4%  LineNumberGutter.drawHashMarksAndLabels(in:)
+       96 ms   1.0%  specialized static EditorNavigation.forEachEnvironmentUse(in:_:)
+       90 ms   0.9%  CompletingTextView.didChangeText()
+       86 ms   0.9%  _stringCompare(_:_:expecting:)
+       52 ms   0.5%  LineNumberGutter.numberFont.getter
+       49 ms   0.5%  CompletingTextView.setNeedsDisplay(_:avoidAdditionalLayout:)
+       43 ms   0.4%  specialized closure #1 in static DS.Palette.dynamic(light:dark:lightAlpha:darkAlpha:)
+       41 ms   0.4%  specialized __RawDictionaryStorage.find<A>(_:)
+       38 ms   0.4%  CompletingTextView.setSelectedRanges(_:affinity:stillSelecting:)
+       35 ms   0.4%  closure #1 in static SourceEditorView.nativeText(of:)
+       33 ms   0.3%  TypingBenchDriver.tick()
+       20 ms   0.2%  LineNumberGutter.layoutIfNeeded(lineCount:)
+       16 ms   0.2%  SourceEditorView.Coordinator.currentText(of:)
+       16 ms   0.2%  protocol witness for Hashable._rawHashValue(seed:) in conformance String
+       13 ms   0.1%  CompletingTextView.shouldChangeText(in:replacementString:)
+        9 ms   0.1%  closure #1 in static SyntaxTheme.dynamic(light:dark:)
+        9 ms   0.1%  SyntaxPainter.paint(_:layoutManager:)
+        9 ms   0.1%  specialized String.init<A>(unsafeUninitializedCapacity:initializingUTF8With:)
+        8 ms   0.1%  specialized static EditorNavigation.environmentPair(at:in:)
+        7 ms   0.1%  WordCountStatusItem.body.getter
+        6 ms   0.1%  String.UTF8View.count.getter
+        6 ms   0.1%  SyntaxPainter.flush()
+        6 ms   0.1%  @nonobjc NSFileHandle.__allocating_init(forWritingTo:)
+        6 ms   0.1%  closure #5 in closure #2 in FlashTeXMacApp.body.getter
+        6 ms   0.1%  ProjectDocuments.projectRoot.getter
+        6 ms   0.1%  specialized Dictionary.subscript.modify
+        5 ms   0.1%  specialized static FlashTeXLog.write(_:)

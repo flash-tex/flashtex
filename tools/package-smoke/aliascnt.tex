@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{aliascnt}
+\newaliascnt{myeq}{equation}
+\aliascntresetthe{myeq}
+\begin{document}
+\stepcounter{myeq}
+Equation alias value: \themyeq.
+\end{document}

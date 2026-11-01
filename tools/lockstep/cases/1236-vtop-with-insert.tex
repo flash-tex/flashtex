@@ -1,0 +1,7 @@
+% 1236-vtop-with-insert: verifies an \insert node stays inside a \vtop with its material counted (tex.web §§1085-1086, 1097)
+\input prelude
+\count254=1000 \skip254=12pt \dimen254=200pt
+\setbox0=\vtop{\hrule width40pt height6pt depth0pt\insert254{\vskip4pt\vrule width30pt height6pt depth0pt}\hrule width40pt height8pt depth0pt}
+\message{1236 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

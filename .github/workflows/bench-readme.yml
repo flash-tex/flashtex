@@ -1,0 +1,265 @@
+# README.md's benchmarks (lane BENCH-README), on GitHub-hosted macOS: the new engine against
+# pdflatex/latexmk and, in Unicode mode, against xelatex/latexmk -xelatex; first page after open and
+# reopen; peak RSS per performance mode. The machine is a hosted runner, "GitHub-hosted M1 VM
+# (macos-15, 3 vCPU, 7 GB)": shared hardware, so the figures are this class's, never the P4 reference
+# (T7 runs on the owner's M1 Max: t7-reference.yml).
+#
+#   gh workflow run bench-readme.yml -f ref=<branch|sha> [-f shards=cold-small,unicode] [-f reps=7]
+#
+# A push to a branch named bench-readme/** runs it on that commit too (a new workflow file cannot be
+# dispatched before it is on the default branch); bench-readme/only-A+B runs shards A and B.
+#
+# Jobs: `build` builds the release binaries once per SHA (flashtex-host, flashtex-initex, the dl3
+# clients, flashtex-v3, flashtex-host-unicode) and keeps them in the Actions cache by SHA; each
+# `bench` shard downloads them, installs TeX Live 2026 (MacTeX 2026 through Homebrew's
+# mactex-no-gui cask, which pins the package's SHA-256; the hosted image has no TeX), makes the
+# documents (mkdocs.py, mkbook.py), runs its part and uploads its JSONL and tables as the
+# `bench-<shard>` artifact. `summary` joins the tables into one artifact and the run summary.
+#
+#   cold-small   hw1, hw2, plain-100, plain-300, full-100, beamer-5, beamer-30
+#   cold-1000    plain-1000, full-1000
+#   cold-infdesc Infinite Descent (592 pages)
+#   cold-x2      Infinite Descent ×2 (1,142 pages), killed and recorded above 6 GB (a 7 GB runner)
+#   unicode      b01-b04 (tools/incr-bench/unicode-corpus) against xelatex, and keystrokes (unicode.py)
+#   open         coldopen.py: the first open, and the reopen from the persisted S0 (--keep-aux --keep-s0)
+#   modes        modes.sh: peak RSS and instructions per keystroke, low-memory/balanced/high-performance
+#
+# Fork safety: workflow_dispatch and push only, `contents: read`, no secrets, checkouts without
+# persisted credentials.
+name: bench-readme
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "branch, tag or SHA to measure"
+        required: true
+        default: main
+      shards:
+        description: "comma-separated shards (empty: all)"
+        required: false
+        default: ""
+      reps:
+        description: "timed runs per document and engine (median and p95 over them)"
+        required: false
+        default: "7"
+  push:
+    branches: ["bench-readme/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-readme-${{ inputs.ref || github.sha }}
+  cancel-in-progress: false
+
+env:
+  REF: ${{ inputs.ref || github.sha }}
+  REPS: ${{ inputs.reps || '7' }}
+  # (/tmp: the hosts' socket paths must fit in 104 bytes)
+  INCR_BENCH_DIR: /tmp/ib
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    name: build (release, once per SHA)
+    runs-on: macos-15
+    timeout-minutes: 90
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          persist-credentials: false
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: bin
+        with:
+          path: ${{ runner.temp }}/bin
+          key: bench-readme-bin-macos-15-${{ steps.sha.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.bin.outputs.cache-hit != 'true'
+      - name: build
+        if: steps.bin.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine -p flashtex-display-list -p flashtex-build
+          (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode)
+          mkdir -p "$RUNNER_TEMP/bin"
+          for b in flashtex-host flashtex-initex dl3-keys dl3-client dl3-dump dl3-coldopen flashtex-v3; do
+            cp "target/release/$b" "$RUNNER_TEMP/bin/"
+          done
+          cp crates/flashtex-xetex/target/release/flashtex-host-unicode "$RUNNER_TEMP/bin/"
+          { rustc --version; cargo --version; git rev-parse HEAD; } > "$RUNNER_TEMP/bin/BUILD"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-bin
+          path: ${{ runner.temp }}/bin
+          retention-days: 7
+
+  bench:
+    name: ${{ matrix.shard }}
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [cold-small, cold-1000, cold-infdesc, cold-x2, unicode, open, modes]
+    env:
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - name: selected?
+        id: on
+        env:
+          SHARDS: ${{ inputs.shards || '' }}
+        run: |
+          # a push to bench-readme/only-A+B runs shards A and B
+          case "$GITHUB_REF_NAME" in bench-readme/only-*) SHARDS="${GITHUB_REF_NAME#bench-readme/only-}"; SHARDS="${SHARDS//+/,}" ;; esac
+          if [ -z "$SHARDS" ] || [[ ",$SHARDS," == *",$SHARD,"* ]]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.on.outputs.run == 'true'
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: steps.on.outputs.run == 'true'
+        with:
+          name: bench-bin
+          path: target/release
+      - name: machine
+        if: steps.on.outputs.run == 'true'
+        run: |
+          echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/out"
+          {
+            echo "shard $SHARD, commit $(git rev-parse HEAD), $(date -u +%FT%TZ)"
+            sw_vers | tr '\n' ' '; echo
+            sysctl -n hw.model machdep.cpu.brand_string hw.ncpu hw.memsize | tr '\n' ' '; echo
+            sysctl -n vm.loadavg
+            df -h / | tail -1
+            cat target/release/BUILD
+          } | tee "$RUNNER_TEMP/out/machine-$SHARD.txt"
+      - name: TeX Live 2026 (MacTeX 2026, mactex-no-gui), qpdf
+        if: steps.on.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          brew install --cask mactex-no-gui >/dev/null
+          brew install qpdf >/dev/null
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH=/Library/TeX/texbin:$PATH
+          {
+            brew info --cask mactex-no-gui 2>/dev/null | sed -n 1,3p
+            pdftex --version | head -1; xetex --version | head -1; latexmk -v | sed -n 2p
+            kpsewhich pdflatex.ini xelatex.ini
+          } | tee -a "$OUT/machine-$SHARD.txt"
+      - uses: actions/setup-python@v5
+        if: steps.on.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+      - name: python packages (tools/xetex-pdfparity)
+        if: steps.on.outputs.run == 'true'
+        run: python3 -m pip install -q fonttools pillow
+      - uses: actions/cache@v4
+        if: steps.on.outputs.run == 'true'
+        with:
+          path: /tmp/ib/cache
+          key: bench-readme-books-${{ hashFiles('tools/parity/corpus/books.json') }}
+      - name: the engine, its format, the documents
+        if: steps.on.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          chmod +x target/release/*
+          cp crates/flashtex-engine/pdftex.pool target/release/ 2>/dev/null || true
+          tools/incr-bench/mkeng.sh ref
+          python3 tools/incr-bench/mkdocs.py >/dev/null
+          python3 tools/incr-bench/mkbook.py infdesc infdesc-x2
+          echo "FLASHTEX_V3=$PWD/target/release/flashtex-v3" >> "$GITHUB_ENV"
+          echo "FLASHTEX_HOST_UNICODE=$PWD/target/release/flashtex-host-unicode" >> "$GITHUB_ENV"
+          echo "BENCH_WORK=/tmp/ib/bench-readme" >> "$GITHUB_ENV"
+      - name: run
+        if: steps.on.outputs.run == 'true'
+        run: |
+          set -uo pipefail
+          B=tools/incr-bench
+          case "$SHARD" in
+            cold-small)
+              python3 $B/bench_readme.py "$OUT/cold-small.jsonl" --reps "$REPS" \
+                --docs hw1,hw2,plain-100,plain-300,full-100,beamer-5,beamer-30 ;;
+            cold-1000)
+              python3 $B/bench_readme.py "$OUT/cold-1000.jsonl" --reps "$REPS" --docs plain-1000,full-1000 ;;
+            cold-infdesc)
+              python3 $B/bench_readme.py "$OUT/cold-infdesc.jsonl" --reps "$REPS" --docs infdesc ;;
+            cold-x2)
+              BENCH_RSS_LIMIT_GB=6 python3 $B/bench_readme.py "$OUT/cold-x2.jsonl" --reps "$REPS" --docs infdesc-x2 ;;
+            unicode)
+              python3 $B/bench_readme.py "$OUT/cold-unicode.jsonl" --set unicode --reps "$((REPS + 2))"
+              for f in b01-article b02-georgia b03-unicode-math b04-fontspec-11pages; do
+                python3 $B/unicode.py "$FLASHTEX_HOST_UNICODE" "$B/unicode-corpus/$f.tex" --keys 40 \
+                  --out "$OUT/unicode-keys-$f.jsonl" 2>&1 | tail -4
+              done ;;
+            open)
+              for spec in hw1:fixtures/real-world/hw1:HW1.tex plain-100:$INCR_BENCH_DIR/docs/plain-100:main.tex \
+                          plain-1000:$INCR_BENCH_DIR/docs/plain-1000:main.tex full-1000:$INCR_BENCH_DIR/docs/full-1000:main.tex \
+                          beamer-30:$INCR_BENCH_DIR/docs/beamer-30:main.tex infdesc:$INCR_BENCH_DIR/docs/infdesc:main.tex \
+                          infdesc-x2:$INCR_BENCH_DIR/docs/infdesc-x2:main.tex; do
+                IFS=: read -r n d m <<<"$spec"
+                python3 $B/coldopen.py "$INCR_BENCH_DIR/ref" "$d" "$m" "$OUT/open-$n.jsonl" --reps "$REPS" --tag open 2>&1 | tail -2
+                python3 $B/coldopen.py "$INCR_BENCH_DIR/ref" "$d" "$m" "$OUT/reopen-$n.jsonl" --reps "$((REPS + 1))" \
+                  --keep-aux --keep-s0 --tag reopen 2>&1 | tail -2
+              done ;;
+            modes)
+              MODES_INFDESC=$INCR_BENCH_DIR/docs/infdesc-x2 MODES_LIMIT_GB=6 $B/modes.sh ref 2>&1 | tee "$OUT/modes.txt"
+              cp "$INCR_BENCH_DIR"/mem/*-mode-ref-*.jsonl "$OUT/" 2>/dev/null || true ;;
+          esac
+          code=$?
+          sysctl -n vm.loadavg >> "$OUT/machine-$SHARD.txt"
+          exit $code
+      - name: tables
+        if: always() && steps.on.outputs.run == 'true'
+        run: |
+          set -uo pipefail
+          B=tools/incr-bench
+          {
+            echo "## $SHARD"; echo
+            ls "$OUT"/cold-*.jsonl >/dev/null 2>&1 && python3 $B/bench_readme_table.py cold "$OUT"/cold-*.jsonl
+            ls "$OUT"/open-*.jsonl >/dev/null 2>&1 && python3 $B/bench_readme_table.py open "$OUT"/open-*.jsonl "$OUT"/reopen-*.jsonl
+            [ -f "$OUT/modes.txt" ] && { echo '```'; tail -40 "$OUT/modes.txt"; echo '```'; }
+            for f in "$OUT"/unicode-keys-*.jsonl; do [ -f "$f" ] && { echo "$(basename "$f"):"; tail -1 "$f" | cut -c1-600; echo; }; done
+            echo '```'; cat "$OUT/machine-$SHARD.txt"; echo '```'
+          } > "$OUT/table-$SHARD.md" 2>&1 || true
+          cat "$OUT/table-$SHARD.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.on.outputs.run == 'true'
+        with:
+          name: bench-${{ matrix.shard }}
+          path: ${{ runner.temp }}/out
+          retention-days: 30
+
+  summary:
+    needs: bench
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bench-*
+          path: all
+      - name: one artifact, one summary
+        run: |
+          rm -rf all/bench-bin
+          cat all/*/table-*.md > tables.md 2>/dev/null || echo "no tables" > tables.md
+          cat tables.md >> "$GITHUB_STEP_SUMMARY"
+          tar -czf bench-readme-raw.tgz all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-readme
+          path: |
+            tables.md
+            bench-readme-raw.tgz
+          retention-days: 90

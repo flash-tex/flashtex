@@ -1,0 +1,12 @@
+% 1080-string-active-char: verifies \string and \meaning of other and active-character tokens (tex.web §§263, 471, 472).
+\input prelude
+\message{1080 string-other=[\string~]}
+\message{1080 meaning-other=[\meaning~]}
+\catcode`\~=13
+\message{1080 meaning-active-undef=[\meaning~]}
+\def~{\vrule width13pt height8pt depth2pt}
+\message{1080 string-active=[\string~]}
+\message{1080 meaning-active=[\meaning~]}
+\setbox0=\hbox{~\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

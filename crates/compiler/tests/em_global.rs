@@ -5,6 +5,12 @@
 //! not derived: TeX's `em` and `ex` are the current font's `\fontdimen6` and
 //! `\fontdimen5`, which differ from the point size for Computer Modern's
 //! optical designs (cmr12's quad is 11.74988pt).
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::type_complexity,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{self, Font, LayoutConstraints};
 use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument};
@@ -332,7 +338,8 @@ fn global_setlength_assigns_engine_registers_globally() {
 #[test]
 fn fbox_lengths_accept_global_assignments_in_the_body() {
     // `\fboxsep` is kept by the parser and scoped; `\parskip` in the body is
-    // reported like `\setlength{\parskip}` there instead of being unknown.
+    // the `\parskip` of the paragraphs that start after it
+    // (`ParStart::parskip_sp`), and leaves the preamble's value alone.
     let parsed = parse(
         r"\documentclass{article}\begin{document}{\global\fboxsep=1pt \fboxrule=2pt}x\end{document}",
     );
@@ -341,13 +348,13 @@ fn fbox_lengths_accept_global_assignments_in_the_body() {
     let parsed =
         parse(r"\documentclass{article}\begin{document}\global\parskip=1pt x\end{document}");
     assert_eq!(parsed.parskip_pt, None);
-    assert!(
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    assert_eq!(
         parsed
-            .diagnostics
-            .iter()
-            .any(|d| d.message == "\\parskip assignment is recognised but not implemented here"),
-        "{:?}",
-        parsed.diagnostics
+            .block_par_starts
+            .last()
+            .and_then(|start| start.parskip_sp),
+        Some((65536, 0, 0))
     );
 }
 

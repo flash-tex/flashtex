@@ -2345,11 +2345,10 @@ final class CompletionScheduler {
         /// environment skeletons are built with them.
         var indentUnit: String = ""
         var environmentRules: EnvironmentEditingRules = .conventional
-        /// The built `flashtex-render` (`ShellModel.locateRenderPipeline`),
-        /// asked on the main thread: its `--list-fonts` is what
-        /// `\setmainfont{` offers, run by the job off-main once per launch
-        /// (`InstalledFonts`). Nil offers no families.
-        var renderPipeline: URL? = nil
+        /// The engine whose `--list-fonts` is what `\setmainfont{` offers
+        /// (`InstalledFonts.lister`), asked on the main thread and run by
+        /// the job off-main once per launch. Nil offers no families.
+        var fontLister: URL? = nil
         /// The author is writing a package or class (a `.sty`/`.cls` buffer,
         /// or the caret inside `\makeatletter`): the kernel vocabulary leads
         /// (`Completion.suggestions(packageMode:)`). Decided on the main
@@ -2453,7 +2452,7 @@ final class CompletionScheduler {
                 case .word(_, _, _, .graphics)?:
                     if let root = request.graphicsRoot { graphics = Completion.graphicsFiles(under: root) }
                 case .word(_, _, _, .font)?:
-                    fontFamilies = InstalledFonts.families(renderPipeline: request.renderPipeline)
+                    fontFamilies = InstalledFonts.families(tool: request.fontLister)
                 case .word(_, _, _, .citation)?:
                     if let sources = request.bibliography { bibliographyEntries = BibScanner.entries(for: sources, cancelled: { job.isCancelled }) }
                 case .command?:
@@ -2512,7 +2511,7 @@ final class CompletionScheduler {
         pending = nil
     }
 
-    /// Head-of-run-loop delivery (see `WorkerClient.deliver`): a plain
+    /// Head-of-run-loop delivery: a plain
     /// `DispatchQueue.main.async` waits for AppKit to reach the dispatch port.
     nonisolated private static func onMain(_ block: @escaping @Sendable () -> Void) {
         CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue, block)
@@ -3085,6 +3084,27 @@ extension Completion.Kind {
 /// list. Rust metadata (`compileResult`, `accept(projectIndex:)`) is used only
 /// when bound to `editorRevision`, which the owner sets on every update.
 final class CompletingTextView: NSTextView {
+    /// Live Share: the session's typing undo step ends where AppKit's does
+    /// (a capture insertion, an auto-closed pair's own step).
+    override func breakUndoCoalescing() {
+        super.breakUndoCoalescing()
+        (delegate as? SourceEditorView.Coordinator)?.liveShareBreakUndoCoalescing()
+    }
+
+    /// Live Share: the session file's local-only undo stack. The text view's
+    /// own undo is off in a session (`allowsUndo`, which makes `undoManager`
+    /// nil, so AppKit registers no typing undo anywhere); ⌘Z and Edit ▸ Undo
+    /// reach the session's stack through `undo:`/`redo:` below. Outside a
+    /// session neither is answered here and everything is AppKit's.
+    var liveShareUndoManager: UndoManager? { (delegate as? SourceEditorView.Coordinator)?.liveShare.link?.undoManager }
+    @objc func undo(_ sender: Any?) { liveShareUndoManager?.undo() }
+    @objc func redo(_ sender: Any?) { liveShareUndoManager?.redo() }
+    /// Only a session answers `undo:`/`redo:` here; otherwise they travel
+    /// the responder chain as before.
+    override func responds(to aSelector: Selector!) -> Bool {
+        if aSelector == #selector(undo(_:)) || aSelector == #selector(redo(_:)) { return liveShareUndoManager != nil }
+        return super.responds(to: aSelector)
+    }
     var compileResult: RuntimeV1.CompileResult? {
         didSet { resultMetadata = compileResult.map(Completion.Metadata.from) }
     }
@@ -3095,10 +3115,10 @@ final class CompletingTextView: NSTextView {
     /// on the main thread when the list is requested; nil (a bare text view,
     /// an unsaved buffer) offers none.
     var graphicsRoot: () -> URL? = { nil }
-    /// The built `flashtex-render` whose `--list-fonts` fills `\setmainfont{`
-    /// (`InstalledFonts`), asked on the main thread when the list is
+    /// The engine whose `--list-fonts` fills `\setmainfont{`
+    /// (`InstalledFonts.lister`), asked on the main thread when the list is
     /// requested; nil (a bare text view) offers no families.
-    var renderPipeline: () -> URL? = { nil }
+    var fontLister: () -> URL? = { nil }
     /// The project's other open documents, asked on the main thread when the
     /// list is requested (`ShellModel.editorHoverContext`'s texts); their
     /// macros are offered as declared. A bare text view has none.
@@ -3113,9 +3133,19 @@ final class CompletingTextView: NSTextView {
     /// included file that declares no class itself. A bare text view has no
     /// project, and nil gates nothing.
     var projectDocumentClass: () -> String? = { nil }
+    /// The project for TeXpand (root file, packages, config); nil in a bare view.
+    var texpandProject: () -> TeXpandProject? = { nil }
     /// Accepted commands and environments, ranked first on the next open. A
     /// bare text view keeps its own; the hosted editor installs the shared one.
-    var recentlyUsed = Completion.RecentlyUsed()
+    ///
+    /// `lazy`, as `folds` and `scheduler` are: `NSTextView.init(frame:)`
+    /// calls `init(frame:textContainer:)`, and each of the two Swift
+    /// initializers runs this class's property initializers, so an object
+    /// made by an initializer expression was made twice and the first one
+    /// was never released (leaks(1): one RecentlyUsed, EditorFoldStore and
+    /// CompletionScheduler with its dispatch queue per editor). A lazy
+    /// property's storage starts empty, so nothing is made until first use.
+    lazy var recentlyUsed = Completion.RecentlyUsed()
     /// Whether the caret is in math mode, answered by the owner from its
     /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
     /// line's lexing. Unwired — a bare text view in a test — it answers nil:
@@ -3137,7 +3167,53 @@ final class CompletingTextView: NSTextView {
     /// macros are offered as declared in that file. A bare text view has none.
     var packageDocuments: () -> [Completion.SourceDocument] = { [] }
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
-    let folds = EditorFoldStore()
+    private(set) lazy var folds = EditorFoldStore() // lazy: see `recentlyUsed`
+
+    // MARK: paste an image (PasteImage.swift)
+
+    /// Handles Paste when the pasteboard holds an image rather than text:
+    /// the owner (`SourceEditorView.Coordinator.pasteImage`) saves it into
+    /// the project and inserts a figure, returning true. False (no image, the
+    /// feature off, an unsaved document) lets the ordinary paste run, so a
+    /// plain-text paste is exactly AppKit's. Unwired (a bare text view): nil.
+    var imagePasteHandler: ((NSPasteboard) -> Bool)?
+    /// The pasteboard Paste reads; tests substitute a private named one so a
+    /// run never touches the user's clipboard.
+    var imagePasteboard: () -> NSPasteboard = { .general }
+
+    override func paste(_ sender: Any?) {
+        if isEditable, let handler = imagePasteHandler, handler(imagePasteboard()) { return }
+        super.paste(sender)
+    }
+
+    /// Handles a drop of image files (from Finder) at a character index: the
+    /// owner (`SourceEditorView.Coordinator.dropImages`) saves and inserts
+    /// them like a paste, returning true. False — text, any non-image file,
+    /// the feature off — lets AppKit's ordinary drop run unchanged.
+    var imageDropHandler: ((NSPasteboard, Int) -> Bool)?
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if isEditable, let handler = imageDropHandler, sender.draggingSource == nil,
+           PasteImage.droppedImageFiles(on: sender.draggingPasteboard) != nil {
+            let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+            if handler(sender.draggingPasteboard, index) { return true }
+        }
+        return super.performDragOperation(sender)
+    }
+
+    /// A plain-text view disables Paste for a pasteboard with no text on it;
+    /// an image the image paste would take enables it.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        // Live Share: Edit ▸ Undo/Redo name and enable the session's stack.
+        if let m = liveShareUndoManager, item.action == #selector(undo(_:)) || item.action == #selector(redo(_:)) {
+            let undo = item.action == #selector(undo(_:))
+            (item as? NSMenuItem)?.title = undo ? m.undoMenuItemTitle : m.redoMenuItemTitle
+            return undo ? m.canUndo : m.canRedo
+        }
+        if item.action == #selector(paste(_:)), isEditable, imagePasteHandler != nil,
+           PasteImage.wouldHandle(imagePasteboard()) { return true }
+        return super.validateUserInterfaceItem(item)
+    }
 
     /// Whether a mechanical fix hint is showing at the caret (the owner
     /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
@@ -3153,11 +3229,17 @@ final class CompletingTextView: NSTextView {
     /// still being filled in, in Tab order (the last one is the snippet's
     /// end); empty when no snippet is active. Kept aligned with edits.
     private(set) var snippetStops: [Int] = []
+    /// Placeholder length at each stop (parallel to `snippetStops`): Tab
+    /// selects the placeholder so typing replaces it (TeXpand's defaults).
+    /// Kept aligned with edits: typing inside a placeholder grows it.
+    private(set) var snippetStopLengths: [Int] = []
     /// Index into `snippetStops` of the placeholder the caret last jumped to
     /// (-1: still at the snippet's caret position).
     private(set) var snippetStopIndex = -1
     /// Start of the active snippet (edits before it shift everything).
     private var snippetStart = 0
+    /// Length of the placeholder at the snippet's caret position.
+    private var snippetStartLength = 0
     var isSnippetActive: Bool { !snippetStops.isEmpty }
 
     /// Moves the caret to the next (`delta` 1) or previous (-1) placeholder;
@@ -3170,10 +3252,11 @@ final class CompletingTextView: NSTextView {
         guard next < snippetStops.count else { endSnippet(); return true }
         snippetStopIndex = next
         let target = next == -1 ? snippetStart : snippetStops[next]
+        let selected = next == -1 ? snippetStartLength : (next < snippetStopLengths.count ? snippetStopLengths[next] : 0)
         let length = (string as NSString).length
-        guard target <= length else { endSnippet(); return true }
+        guard target + selected <= length else { endSnippet(); return true }
         applyingCompletion = true
-        setSelectedRange(NSRange(location: target, length: 0))
+        setSelectedRange(NSRange(location: target, length: selected))
         lastCaret = selectedRange()
         applyingCompletion = false
         if next == snippetStops.count - 1 { endSnippet() } // the end stop: the snippet is done
@@ -3182,7 +3265,23 @@ final class CompletingTextView: NSTextView {
 
     func endSnippet() {
         snippetStops = []
+        snippetStopLengths = []
         snippetStopIndex = -1
+    }
+
+    /// Whether `selection` is exactly the placeholder of a snippet stop
+    /// (Tab selected it), which keeps the snippet going.
+    private func isSelectedPlaceholder(_ selection: NSRange) -> Bool {
+        if selection == NSRange(location: snippetStart, length: snippetStartLength) { return true }
+        return snippetStops.indices.contains { k in
+            selection == NSRange(location: snippetStops[k], length: k < snippetStopLengths.count ? snippetStopLengths[k] : 0)
+        }
+    }
+
+    /// TeXpand's commit (TeXpandEditor.swift): the expansion replaces the
+    /// literal abbreviation as one undo step and starts the snippet session.
+    func insertTeXpandSnippet(_ snippet: LaTeXSnippet, replacing range: NSRange) {
+        insertSnippet(snippet, replacing: range, kind: .command, actionName: "Expand Abbreviation")
     }
 
     /// Edits shift the stops after them (typing at a placeholder keeps the
@@ -3197,18 +3296,30 @@ final class CompletingTextView: NSTextView {
             return
         }
         if range.location < snippetStart { endSnippet(); return }
+        // An edit inside a placeholder (typing over its selection, or more
+        // after it) resizes it, so ⇧Tab selects what was typed there. A
+        // bare stop (length 0, the completion snippets') stays a caret.
+        func resized(_ stop: Int, _ length: Int) -> Int {
+            length > 0 && range.location >= stop && NSMaxRange(range) <= stop + length ? max(0, length + delta) : length
+        }
+        snippetStartLength = resized(snippetStart, snippetStartLength)
         var shifted: [Int] = []
-        for stop in snippetStops {
-            if NSMaxRange(range) < stop || (range.length > 0 && NSMaxRange(range) == stop) { shifted.append(stop + delta) }
-            else if range.location >= stop { shifted.append(stop) }
+        var lengths: [Int] = []
+        for (k, stop) in snippetStops.enumerated() {
+            let length = k < snippetStopLengths.count ? snippetStopLengths[k] : 0
+            if NSMaxRange(range) < stop || (range.length > 0 && NSMaxRange(range) == stop) { shifted.append(stop + delta); lengths.append(length) }
+            else if range.location >= stop { shifted.append(stop); lengths.append(resized(stop, length)) }
             else { endSnippet(); return }
         }
         snippetStops = shifted
+        snippetStopLengths = lengths
     }
 
     override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
         let ok = super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
         if ok { shiftSnippetStops(edit: affectedCharRange, replacementLength: (replacementString as NSString?)?.length ?? 0) }
+        if ok { texpandEditor?.willChange(affectedCharRange, replacement: replacementString) } // the exact edit TeXpand sees (TeXpandEditor.swift)
+        if ok { editTailWillChange(affectedCharRange, replacement: replacementString) } // EditorEditTail.swift
         return ok
     }
 
@@ -3325,7 +3436,7 @@ final class CompletingTextView: NSTextView {
     }
 
     /// Replaceable so tests can inject a manual executor.
-    var scheduler = CompletionScheduler()
+    lazy var scheduler = CompletionScheduler() // lazy: see `recentlyUsed`
     private(set) var session: CompletionSession?
     var isCompletionActive: Bool { session != nil }
 
@@ -3368,6 +3479,9 @@ final class CompletingTextView: NSTextView {
     /// A programmatic replacement (a document switch, the owner's paste) is
     /// not a key event and never opens the list.
     private var typingKey = false
+    /// Whether the text change in progress is a keystroke the user typed
+    /// (TeXpand arms only on typed characters).
+    var isTypingKeystroke: Bool { typingKey || typingThroughSession }
     /// UTF-16 start of the token Esc dismissed the list for. Typing more of
     /// that same token must not bring it back; any other token, or a caret
     /// move, re-arms the automatic open. ⌃Space and Esc always work.
@@ -3404,6 +3518,7 @@ final class CompletingTextView: NSTextView {
     private func scheduleAutomaticCompletion() {
         cancelAutomaticCompletion()
         guard EditorPreferences.shared.completionPopup, !hasMarkedText() else { return }
+        guard texpandEditor?.isCapturing != true else { return } // TeXpand's preview replaces the list (PLAN §9.1)
         let token = caretToken
         if escapeSuppressedTokenStart != nil, escapeSuppressedTokenStart != token?.startUTF16 {
             escapeSuppressedTokenStart = nil // a different token: Esc's dismissal is spent
@@ -3482,13 +3597,18 @@ final class CompletingTextView: NSTextView {
         super.draw(dirtyRect)
         foregroundDecorator?(dirtyRect)
         folds.drawPlaceholders(in: dirtyRect, textView: self)
+        texpandEditor?.draw(dirtyRect) // capture region and expansion preview (TeXpandEditor.swift)
+        MainThreadProbe.editorDrew() // key → glyph drawn (EditorInstantTests); one Bool test when off
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`
     /// but with this subclass as the document view.
     static func scrollable() -> NSScrollView {
         let scroll = scrollableTextView()
-        if scroll.documentView is CompletingTextView { return scroll }
+        if let tv = scroll.documentView as? CompletingTextView {
+            EditTailLayoutManager.install(in: tv) // EditorEditTail.swift
+            return scroll
+        }
         // Fallback if AppKit did not instantiate the subclass.
         let tv = CompletingTextView(frame: scroll.contentView.bounds)
         tv.autoresizingMask = [.width]
@@ -3498,6 +3618,7 @@ final class CompletingTextView: NSTextView {
         tv.textContainer?.widthTracksTextView = true
         tv.textContainer?.containerSize = NSSize(width: scroll.contentView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
         scroll.documentView = tv
+        EditTailLayoutManager.install(in: tv)
         return scroll
     }
 
@@ -3562,7 +3683,7 @@ final class CompletingTextView: NSTextView {
                                                   projectClass: projectDocumentClass(),
                                                   indentUnit: EditorPreferences.shared.indentString,
                                                   environmentRules: EditorPreferences.shared.environmentRules,
-                                                  renderPipeline: renderPipeline(),
+                                                  fontLister: fontLister(),
                                                   packageMode: packageContext.packageMode, atLetter: packageContext.atLetter,
                                                   projectPackageFiles: projectPackageFiles(), packageDocuments: packageDocuments())
         // The engine's definitions when the last result carried them, whatever
@@ -3659,7 +3780,16 @@ final class CompletingTextView: NSTextView {
         }
         applyingCompletion = true
         let range = rangeConsumingStaleCloser(s.range, inserting: item.snippet?.text ?? item.insertText)
-        if let snippet = item.snippet {
+        if item.kind == .environment, let name = renamedEnvironmentSpan(for: s.range) {
+            // Inside the name of an existing `\begin{…}` … `\end{…}` pair: the
+            // accepted name replaces the whole name (not only the typed prefix),
+            // without the body skeleton or a second `}`; linked editing renames
+            // the partner in the same undo step (EditorChangeEnvironment.swift).
+            breakUndoCoalescing()
+            insertText(item.label, replacementRange: name)
+            undoManager?.setActionName("Rename Environment")
+            breakUndoCoalescing()
+        } else if let snippet = item.snippet {
             insertSnippet(snippet, replacing: range, kind: item.kind)
         } else if range.length != s.range.length {
             // AppKit's `insertCompletion` recomputes the range it replaces from
@@ -3675,6 +3805,18 @@ final class CompletingTextView: NSTextView {
         recentlyUsed.record(item)
         scheduler.cancel()
         close(.accepted)
+    }
+
+    /// The name span of a balanced `\begin{name}` … `\end{name}` pair that
+    /// holds the completion range `range`, when there is one: accepting an
+    /// environment there renames it rather than opening a new one. A name
+    /// whose `}` this editor auto-inserted is being typed right now (a nested
+    /// `\begin{itemize` can pair with the outer `\end{itemize}`): that one
+    /// still gets its skeleton.
+    private func renamedEnvironmentSpan(for range: NSRange) -> NSRange? {
+        LinkedEnvironmentEditing.completionRenameSpan(for: range, in: string as NSString) {
+            isPendingCloser?($0) == true
+        }
     }
 
     /// The session range, grown by one unit when an auto-inserted closer sits
@@ -3710,24 +3852,41 @@ final class CompletingTextView: NSTextView {
 
     /// One undo step: the typed partial token is closed off first so ⌘Z
     /// removes exactly the snippet and restores the token.
-    private func insertSnippet(_ snippet: Completion.Snippet, replacing range: NSRange, kind: Completion.Kind) {
+    private func insertSnippet(_ snippet: Completion.Snippet, replacing range: NSRange, kind: Completion.Kind, actionName: String? = nil) {
         breakUndoCoalescing()
         guard shouldChangeText(in: range, replacementString: snippet.text) else { return }
         textStorage?.replaceCharacters(in: range, with: snippet.text)
         didChangeText() // registers the undo step, fires textDidChange
-        undoManager?.setActionName(kind == .environment ? "Insert Environment" : "Insert Snippet")
+        undoManager?.setActionName(actionName ?? (kind == .environment ? "Insert Environment" : "Insert Snippet"))
         let caret = range.location + snippet.caretUTF16
-        setSelectedRange(NSRange(location: caret, length: 0))
-        breakUndoCoalescing()
-        // Tab stops (absolute) for the placeholders after the caret's.
-        snippetStart = range.location + snippet.caretUTF16
+        // Tab stops (absolute) for the placeholders after the caret's; set
+        // before the selection so a selected first placeholder keeps them.
+        snippetStart = caret
+        snippetStartLength = snippet.caretLength
         snippetStops = snippet.stops.map { range.location + $0 }
+        snippetStopLengths = snippet.stops.indices.map { snippet.stopLength($0) }
         snippetStopIndex = -1
+        let wasApplying = applyingCompletion
+        applyingCompletion = true
+        setSelectedRange(NSRange(location: caret, length: snippet.caretLength))
+        applyingCompletion = wasApplying
+        breakUndoCoalescing()
         lastCaret = selectedRange()
         refreshSignatureHelp(open: true) // `\frac{|}{}`: the argument pattern is useful right away
         if let offset = EditorKeyHandling.programmaticCloser(in: snippet.text, insertedAt: range.location, caretUTF16: caret) {
             onCloserInserted?(offset) // e.g. `\section{}`'s `}` overtypes instead of doubling
         }
+    }
+
+    // MARK: TeXpand (TeXpandEditor.swift)
+
+    /// Created on the first keystroke; nil in a view nobody has typed in.
+    private(set) var texpandEditor: TeXpandEditor?
+    var texpand: TeXpandEditor {
+        if let t = texpandEditor { return t }
+        let t = TeXpandEditor(textView: self)
+        texpandEditor = t
+        return t
     }
 
     // MARK: Vim keybindings (VimMode.swift)
@@ -3742,6 +3901,19 @@ final class CompletingTextView: NSTextView {
     var vimEnabledOverride: Bool? { didSet { applyVimPreference(isVimEnabled) } }
     var isVimEnabled: Bool { vimEnabledOverride ?? EditorPreferences.shared.vimKeybindings }
     private var vimActive = false
+    /// The edit in progress whose redraw below the edited paragraph is
+    /// deferred (EditorEditTail.swift).
+    var editTail: EditTailState?
+    /// Edits whose deferred redraw below the paragraph was dropped (tests, evidence).
+    var editTailDroppedCount = 0
+    /// Every rect passed on to be redrawn (tests).
+    var onInvalidate: ((NSRect) -> Void)?
+    /// The line-number gutter, redrawn when the edit in progress turns out to
+    /// have moved lines (SourceEditorView's textDidChange; EditorEditTail.swift).
+    weak var gutterAfterEdit: LineNumberGutter?
+    /// Depth of `needsDisplay`/`setNeedsDisplay(_:)` calls: invalidations
+    /// that did not come from the layout manager are never deferred.
+    private(set) var externalInvalidations = 0
 
     /// The preference changed (EditorPreferences.apply): enter normal mode, or drop back to plain editing.
     func applyVimPreference(_ on: Bool) {
@@ -3776,7 +3948,32 @@ final class CompletingTextView: NSTextView {
         }
     }
 
+    // MARK: edit tail (EditorEditTail.swift)
+
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            externalInvalidations += 1
+            defer { externalInvalidations -= 1 }
+            super.needsDisplay = newValue
+        }
+    }
+
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        externalInvalidations += 1
+        defer { externalInvalidations -= 1 }
+        super.setNeedsDisplay(invalidRect)
+    }
+
+    override func viewWillDraw() {
+        editTailFlush() // an edit that never reached didChangeText: redraw what it deferred
+        super.viewWillDraw()
+    }
+
     override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        let rect = editTailFilter(rect)
+        guard !rect.isNull else { return }
+        onInvalidate?(rect)
         var r = rect
         if vimActive, vim.wantsBlockCaret { r.size.width += vimBlockWidth() }
         super.setNeedsDisplay(r, avoidAdditionalLayout: flag)
@@ -3808,6 +4005,7 @@ final class CompletingTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        _ = texpand // TeXpand watches edits from the first keystroke (off: it only checks the switch)
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
         if vimActive, let key = VimMode.Key(event: event), vim.handle(key) { return } // VimMode.swift: normal/visual keys, Esc in insert
         if event.modifierFlags.contains(.control), event.charactersIgnoringModifiers == " " {
@@ -3834,6 +4032,10 @@ final class CompletingTextView: NSTextView {
         }
         guard session != nil else {
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
+            // TeXpand (PLAN §9.5): a capture takes Tab before snippet stops,
+            // the caret fix and indentation; Esc ends a capture first.
+            if plain, event.keyCode == 48, !event.modifierFlags.contains(.shift), texpand.tab() { return }
+            if plain, event.keyCode == 53, texpand.escape() { return }
             if plain, event.keyCode == 48, isSnippetActive { // Tab / ⇧Tab between snippet placeholders
                 moveSnippetStop(by: event.modifierFlags.contains(.shift) ? -1 : 1)
                 return
@@ -3898,7 +4100,9 @@ final class CompletingTextView: NSTextView {
             typingThroughSession = true
             super.keyDown(with: event)
             typingThroughSession = false
-            if session != nil { requestCompletion() }
+            if session != nil {
+                if texpandEditor?.isCapturing == true { close(.textChanged) } else { requestCompletion() }
+            }
         }
     }
 
@@ -3907,7 +4111,8 @@ final class CompletingTextView: NSTextView {
         if vimActive, !stillSelectingFlag { vim.selectionDidChange(selectedRange()) } // a mouse selection enters visual mode
         guard !typingThroughSession, !applyingCompletion else { return }
         let caret = selectedRange()
-        if isSnippetActive, caret.length != 0 || caret.location < snippetStart || caret.location > (snippetStops.last ?? 0) { endSnippet() }
+        if isSnippetActive, (caret.length != 0 && !isSelectedPlaceholder(caret)) || caret.location < snippetStart || caret.location > (snippetStops.last ?? 0) { endSnippet() }
+        if !stillSelectingFlag { texpandEditor?.selectionChanged() }
         if isSignatureHelpVisible { refreshSignatureHelp(open: false) }
         if !typingKey {
             // Moving the caret (click, arrow, Find) abandons a pending open and
@@ -3925,6 +4130,32 @@ final class CompletingTextView: NSTextView {
         super.didChangeText()
         textChanged()
         signatureHelpAfterTextChange()
+        texpandEditor?.applyPendingCommit() // an instant atom, ligature or auto fraction the keystroke completed
+        editTailDidChange() // EditorEditTail.swift: the text below the paragraph is redrawn only if it changed
+    }
+
+    /// TeXpand's auto-preamble (M6): `\usepackage` lines at `location`. The
+    /// caller groups it with the expansion's undo step.
+    func insertTeXpandPreamble(_ text: String, at location: Int) {
+        let range = NSRange(location: location, length: 0)
+        guard shouldChangeText(in: range, replacementString: text) else { return }
+        textStorage?.replaceCharacters(in: range, with: text)
+        didChangeText()
+    }
+
+    /// TeXpand's inline commit (instant atoms, ligatures): replace `range`
+    /// as its own undo step and keep the caret where it was, shifted.
+    func replaceTeXpandText(_ range: NSRange, with text: String, actionName: String) {
+        let caret = selectedRange()
+        breakUndoCoalescing()
+        guard shouldChangeText(in: range, replacementString: text) else { return }
+        textStorage?.replaceCharacters(in: range, with: text)
+        didChangeText()
+        undoManager?.setActionName(actionName)
+        let delta = (text as NSString).length - range.length
+        let location = caret.location >= NSMaxRange(range) ? caret.location + delta : min(caret.location, range.location + (text as NSString).length)
+        setSelectedRange(NSRange(location: location, length: 0))
+        breakUndoCoalescing()
     }
 
     /// A `{` or `[` just typed after a command name opens the help; any other
@@ -3981,27 +4212,33 @@ final class CompletingTextView: NSTextView {
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
         if ok, session != nil { scheduler.cancel(); close(.resignedFirstResponder) }
-        if ok { cancelAutomaticCompletion(); hideSignatureHelp() }
+        if ok { cancelAutomaticCompletion(); hideSignatureHelp(); texpandEditor?.focusLost() }
         return ok
     }
 }
 
 /// The installed font families `\setmainfont{` completes with, as the
-/// engine's own index sees them (`flashtex-render --list-fonts`, over
-/// `crates/font-discovery`): the same names the document resolves against,
-/// so what the list offers is what the render finds. AppKit's font panel
-/// would list Core Text's view of the machine instead, which differs for
-/// project-local and `FLASHTEX_FONT_DIRS` fonts. Listed once per launch
-/// (~30 ms warm, ~250 ms cold) by the completion job, off-main, the first
-/// time the caret is in a font argument; nil or a missing binary offers
-/// nothing.
+/// new engine's own catalog sees them (`flashtex-host-unicode
+/// --list-fonts`, the catalog Unicode mode's `\setmainfont{…}` and
+/// `[fonts]` resolve against, crates/flashtex-xetex
+/// `FontCatalog::family_names`; app-parity row A9), so what the list offers
+/// is what the compile finds. AppKit's font panel would list Core Text's
+/// view of the machine instead, which differs for `FLASHTEX_FONT_DIRS` and
+/// a bundle's fonts. Listed once per launch by the completion job, off-main,
+/// the first time the caret is in a font argument; nil or a missing binary
+/// offers nothing.
 enum InstalledFonts {
+    /// The program that lists the families: Unicode mode's host.
+    @MainActor static func lister() -> URL? {
+        EngineV3.locateHost(mode: .unicode)
+    }
+
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cached: (URL, [String])?
     nonisolated(unsafe) private static var cachedMath: (URL, [String])?
 
-    nonisolated static func families(renderPipeline: URL?) -> [String] {
-        guard let tool = renderPipeline else { return [] }
+    nonisolated static func families(tool: URL?) -> [String] {
+        guard let tool else { return [] }
         lock.lock(); defer { lock.unlock() }
         if let (url, names) = cached, url == tool { return names }
         let names = list(tool: tool, flag: "--list-fonts")
@@ -4012,8 +4249,8 @@ enum InstalledFonts {
     /// The families with a face carrying an OpenType `MATH` table
     /// (`--list-math-fonts`): what the Fonts sheet's Math row offers
     /// (ProjectFonts.swift). Same caching as `families`.
-    nonisolated static func mathFamilies(renderPipeline: URL?) -> [String] {
-        guard let tool = renderPipeline else { return [] }
+    nonisolated static func mathFamilies(tool: URL?) -> [String] {
+        guard let tool else { return [] }
         lock.lock(); defer { lock.unlock() }
         if let (url, names) = cachedMath, url == tool { return names }
         let names = list(tool: tool, flag: "--list-math-fonts")
@@ -4031,7 +4268,7 @@ enum InstalledFonts {
         p.standardOutput = stdout
         p.standardError = FileHandle.nullDevice
         // The drain publishes under a lock: the bounded waits below can
-        // expire while it is still reading (see ExactPDFExport.run).
+        // expire while it is still reading.
         let drained = Drained()
         let group = DispatchGroup()
         group.enter(); DispatchQueue.global().async { drained.put(stdout.fileHandleForReading.readDataToEndOfFile()); group.leave() }

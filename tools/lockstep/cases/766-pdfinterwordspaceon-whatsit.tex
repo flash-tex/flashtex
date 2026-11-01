@@ -1,0 +1,7 @@
+\input prelude % Verifies \pdfinterwordspaceon leaves a whatsit in the shipped vertical list.
+\font\f=cmr10
+\setbox0=\vbox{\pdfinterwordspaceon\f ab\par}
+\lsshipbox0
+\setbox0=\vbox{\pdfinterwordspaceoff\f ab\par}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 652-vbox-depth-glue-end-zero: verifies a \vbox ending in glue has zero depth, unlike one ending in a deep box.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip4pt}
+\message{652 glueend-dp=\the\dp0 glueend-ht=\the\ht0}
+\boxmaxdepth=16383pt
+\setbox1=\vbox{\hrule width40pt height6pt depth0pt\vskip4pt\hbox{\vrule width40pt height8pt depth20pt}}
+\message{652 deepend-dp=\the\dp1 deepend-ht=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

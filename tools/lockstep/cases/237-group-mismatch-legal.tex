@@ -1,0 +1,23 @@
+\input prelude
+% -ini has no plain.tex aliases, so provide them (plain.tex does the same)
+\let\bgroup={\let\egroup=}
+\count0=0
+% mismatches that do NOT error: the whole implicit-brace family is one kind
+% { closed by \egroup
+{\count0=1\message{237 open-brace=\the\count0}\egroup
+\message{237 after-egroup=\the\count0}
+% \bgroup closed by }
+\bgroup\count0=2\message{237 open-bgroup=\the\count0}}
+\message{237 after-brace=\the\count0}
+% \bgroup closed by \egroup
+\bgroup\count0=3\message{237 bgroup-in=\the\count0}\egroup
+\message{237 bgroup-out=\the\count0}
+% mixed nesting still balances within the simple-group family
+{\bgroup\count0=4\message{237 nest-in=\the\count0}\egroup}
+\message{237 nest-out=\the\count0}
+% semi-simple group correctly nested inside braces is fine
+{\begingroup\count0=5\message{237 semi-in=\the\count0}\endgroup}
+\message{237 semi-out=\the\count0}
+\setbox0=\hbox{\vrule width237pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

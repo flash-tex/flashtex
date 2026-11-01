@@ -1,0 +1,4 @@
+{"phase":"table","layout":"mem768k","chunks":921,"arc_table_clone_ns":10250.000000,"id_table_memcpy_ns":42.000000,"id_table_plus_refcount_ns":292.000000,"reps":50,"load1":4.347656}
+{"phase":"table","layout":"mem5M","chunks":2988,"arc_table_clone_ns":99458.000000,"id_table_memcpy_ns":166.000000,"id_table_plus_refcount_ns":875.000000,"reps":50,"load1":4.347656}
+{"phase":"table","layout":"total64MB","chunks":4096,"arc_table_clone_ns":175416.000000,"id_table_memcpy_ns":167.000000,"id_table_plus_refcount_ns":1167.000000,"reps":50,"load1":4.347656}
+{"phase":"table","layout":"total200MB","chunks":12800,"arc_table_clone_ns":666667.000000,"id_table_memcpy_ns":750.000000,"id_table_plus_refcount_ns":3958.000000,"reps":50,"load1":4.347656}

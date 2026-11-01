@@ -1,0 +1,10 @@
+\input prelude
+\def\a{x}
+\def\b{y}
+\ifcat\a\b \message{010 cs-cs} \else \message{010 no-cs-cs} \fi
+\ifcat a\a \message{010 letter-cs} \else \message{010 no-letter-cs} \fi
+\ifcat12 \message{010 digit-digit} \else \message{010 no-digit-digit} \fi
+\ifcat a1 \message{010 letter-digit} \else \message{010 no-letter-digit} \fi
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

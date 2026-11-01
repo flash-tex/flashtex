@@ -1,0 +1,322 @@
+[incr] restart point: 436 of 7010 checkpoints, 0 walked back, 0.445 ms
+[ckpt] restore 513: drop pending 0.08, output tails 2.61, terminal and spill 0.09, undo 68.13 (514 logs), host state 3.51 ms
+[incr] restart point: 436 of 1343 checkpoints, 0 walked back, 1.030 ms
+[ckpt] restore 513: drop pending 0.72, output tails 5.94, terminal and spill 0.03, undo 8.56 (514 logs), host state 1.12 ms
+[incr] prepared the restore to 513: false, 17.19 ms
+[incr] prepared the restore to 513: false, 12.08 ms
+[incr] restart point: 3122 of 6346 checkpoints, 0 walked back, 0.259 ms
+[ckpt] restore 15716: drop pending 0.07, output tails 3.27, terminal and spill 0.02, undo 19.25 (3200 logs), host state 5.00 ms
+[arena] diff: 1611 candidates (1611 in the old run, rewound through 3215 logs, 4580599 entries: 26.67 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1611 chunks differ, 27.42 ms
+[incr] restart point: 3122 of 3145 checkpoints, 0 walked back, 0.178 ms
+[incr] restart point: 6345 of 6346 checkpoints, 0 walked back, 0.212 ms
+[ckpt] restore 15716: drop pending 0.08, output tails 3.78, terminal and spill 0.02, undo 20.27 (3200 logs), host state 5.81 ms
+[incr] restart point: 3122 of 3145 checkpoints, 0 walked back, 0.185 ms
+[incr] restart point: 3122 of 6346 checkpoints, 0 walked back, 0.883 ms
+[ckpt] restore 15716: drop pending 0.07, output tails 3.41, terminal and spill 0.02, undo 15.35 (3200 logs), host state 3.18 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 3215 logs, 4580599 entries: 26.87 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 27.60 ms
+[incr] restart point: 3122 of 3144 checkpoints, 0 walked back, 0.179 ms
+[incr] restart point: 6345 of 6346 checkpoints, 0 walked back, 0.207 ms
+[ckpt] restore 15716: drop pending 0.08, output tails 3.66, terminal and spill 0.02, undo 16.79 (3200 logs), host state 3.42 ms
+[arena] diff: 1819 candidates (1819 in the old run, rewound through 3201 logs, 4563366 entries: 26.77 ms; 0 at the restart point through 22 logs: 0.04 ms)
+[incr] diff: 0 of 1819 chunks differ, 27.61 ms
+[arena] diff: 3393 candidates (3393 in the old run, rewound through 3201 logs, 4563366 entries: 49.05 ms; 0 at the restart point through 22 logs: 0.05 ms)
+[incr] restart point: 3122 of 5756 checkpoints, 0 walked back, 0.230 ms
+[incr] restart point: 3122 of 5756 checkpoints, 0 walked back, 0.242 ms
+[ckpt] restore 15716: drop pending 0.05, output tails 2.87, terminal and spill 0.02, undo 13.93 (3200 logs), host state 3.21 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 2626 logs, 3896490 entries: 22.74 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 23.45 ms
+[arena] diff: 1820 candidates (1820 in the old run, rewound through 2613 logs, 3880035 entries: 22.91 ms; 0 at the restart point through 23 logs: 0.05 ms)
+[incr] diff: 1413 of 1820 chunks differ, 29.06 ms
+[incr] restart point: 3122 of 3145 checkpoints, 0 walked back, 0.181 ms
+[incr] restart point: 5755 of 5756 checkpoints, 0 walked back, 0.219 ms
+[ckpt] restore 15716: drop pending 0.06, output tails 2.68, terminal and spill 0.01, undo 11.78 (3200 logs), host state 3.06 ms
+[arena] diff: 1818 candidates (1818 in the old run, rewound through 2613 logs, 3880035 entries: 23.00 ms; 0 at the restart point through 22 logs: 0.04 ms)
+[incr] diff: 0 of 1818 chunks differ, 23.79 ms
+[arena] diff: 3392 candidates (3392 in the old run, rewound through 2613 logs, 3880035 entries: 41.65 ms; 0 at the restart point through 22 logs: 0.04 ms)
+[incr] restart point: 3122 of 5757 checkpoints, 0 walked back, 0.235 ms
+[incr] restart point: 3122 of 5757 checkpoints, 0 walked back, 0.240 ms
+[ckpt] restore 15716: drop pending 0.05, output tails 2.77, terminal and spill 0.02, undo 20.95 (3200 logs), host state 4.88 ms
+[arena] diff: 1610 candidates (1610 in the old run, rewound through 2627 logs, 3896490 entries: 49.30 ms; 0 at the restart point through 11 logs: 0.03 ms)
+[incr] diff: 1292 of 1610 chunks differ, 50.13 ms
+[incr] restart point: 3122 of 3146 checkpoints, 0 walked back, 0.194 ms
+[incr] restart point: 5756 of 5757 checkpoints, 0 walked back, 0.207 ms
+[ckpt] restore 15716: drop pending 0.07, output tails 4.09, terminal and spill 0.02, undo 18.07 (3200 logs), host state 4.10 ms
+[arena] diff: 1818 candidates (1818 in the old run, rewound through 2614 logs, 3880035 entries: 22.77 ms; 0 at the restart point through 25 logs: 0.05 ms)
+[incr] diff: 0 of 1818 chunks differ, 23.60 ms
+[arena] diff: 3392 candidates (3392 in the old run, rewound through 2614 logs, 3880035 entries: 41.71 ms; 0 at the restart point through 25 logs: 0.04 ms)
+[incr] restart point: 3122 of 5761 checkpoints, 0 walked back, 0.237 ms
+[incr] restart point: 3122 of 5761 checkpoints, 0 walked back, 0.256 ms
+[ckpt] restore 15716: drop pending 0.06, output tails 3.10, terminal and spill 0.02, undo 13.84 (3200 logs), host state 4.05 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 2630 logs, 3897789 entries: 22.87 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 23.60 ms
+[arena] diff: 1818 candidates (1818 in the old run, rewound through 2615 logs, 3880035 entries: 22.69 ms; 0 at the restart point through 22 logs: 0.04 ms)
+[incr] diff: 1413 of 1818 chunks differ, 23.52 ms
+[incr] restart point: 3122 of 3144 checkpoints, 0 walked back, 0.177 ms
+[incr] restart point: 5760 of 5761 checkpoints, 0 walked back, 0.186 ms
+[ckpt] restore 15716: drop pending 0.07, output tails 2.75, terminal and spill 0.01, undo 12.39 (3200 logs), host state 3.37 ms
+[arena] diff: 1819 candidates (1819 in the old run, rewound through 2615 logs, 3880035 entries: 22.92 ms; 0 at the restart point through 22 logs: 0.05 ms)
+[incr] diff: 0 of 1819 chunks differ, 23.78 ms
+[arena] diff: 3393 candidates (3393 in the old run, rewound through 2615 logs, 3880035 entries: 43.11 ms; 0 at the restart point through 22 logs: 0.05 ms)
+[incr] prepared the restore to 15716: true, 70.15 ms
+[incr] prepared the restore to 15716: false, 8.59 ms
+[incr] restart point: 3122 of 6335 checkpoints, 0 walked back, 0.271 ms
+[ckpt] restore 15716: drop pending 0.08, output tails 5.18, terminal and spill 0.02, undo 19.03 (3200 logs), host state 5.24 ms
+[arena] diff: 1611 candidates (1611 in the old run, rewound through 3205 logs, 4575959 entries: 27.59 ms; 0 at the restart point through 10 logs: 0.03 ms)
+[incr] diff: 1292 of 1611 chunks differ, 32.51 ms
+[arena] diff: 1826 candidates (1826 in the old run, rewound through 3192 logs, 4559176 entries: 28.65 ms; 0 at the restart point through 24 logs: 0.05 ms)
+[incr] diff: 1413 of 1826 chunks differ, 29.53 ms
+[arena] diff: 1927 candidates (1927 in the old run, rewound through 3175 logs, 4540410 entries: 28.24 ms; 0 at the restart point through 37 logs: 0.06 ms)
+[incr] diff: 1455 of 1927 chunks differ, 29.15 ms
+[arena] diff: 1945 candidates (1945 in the old run, rewound through 3156 logs, 4510688 entries: 31.47 ms; 0 at the restart point through 57 logs: 0.09 ms)
+[incr] diff: 1518 of 1945 chunks differ, 32.88 ms
+[arena] diff: 1994 candidates (1994 in the old run, rewound through 3119 logs, 4458119 entries: 26.49 ms; 0 at the restart point through 92 logs: 0.12 ms)
+[incr] diff: 1500 of 1994 chunks differ, 27.71 ms
+[arena] diff: 2683 candidates (2682 in the old run, rewound through 3028 logs, 4321851 entries: 29.15 ms; 1 at the restart point through 188 logs: 0.24 ms)
+[incr] diff: 1568 of 2683 chunks differ, 40.27 ms
+[arena] diff: 2719 candidates (2718 in the old run, rewound through 2866 logs, 4093261 entries: 27.75 ms; 1 at the restart point through 352 logs: 0.44 ms)
+[incr] diff: 1557 of 2719 chunks differ, 30.11 ms
+[arena] diff: 2829 candidates (2827 in the old run, rewound through 2573 logs, 3662137 entries: 25.13 ms; 2 at the restart point through 649 logs: 0.82 ms)
+[incr] diff: 1625 of 2829 chunks differ, 29.01 ms
+[arena] diff: 3013 candidates (3011 in the old run, rewound through 1986 logs, 2776078 entries: 19.23 ms; 2 at the restart point through 1232 logs: 1.56 ms)
+[incr] diff: 1643 of 3013 chunks differ, 25.41 ms
+[arena] diff: 3135 candidates (3133 in the old run, rewound through 1330 logs, 1853397 entries: 13.75 ms; 2 at the restart point through 1877 logs: 2.37 ms)
+[incr] diff: 1647 of 3135 chunks differ, 22.80 ms
+[arena] diff: 3452 candidates (3448 in the old run, rewound through 808 logs, 1035334 entries: 8.78 ms; 4 at the restart point through 679 logs: 1.23 ms)
+[incr] diff: 1714 of 3452 chunks differ, 16.71 ms
+[incr] prepared the restore to 15716: true, 37.32 ms
+[incr] restart point: 378 of 1841 checkpoints, 0 walked back, 0.219 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 1841 vs 1841)
+[ckpt] restore 15716: drop pending 0.09, output tails 2.45, terminal and spill 0.02, undo 1.05 (379 logs), host state 2.91 ms
+[arena] diff: 1611 candidates (1611 in the old run, rewound through 1454 logs, 2379264 entries: 14.21 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1611 chunks differ, 15.13 ms
+[arena] diff: 1827 candidates (1827 in the old run, rewound through 1440 logs, 2362137 entries: 14.45 ms; 0 at the restart point through 23 logs: 0.04 ms)
+[incr] diff: 1413 of 1827 chunks differ, 15.30 ms
+[arena] diff: 1928 candidates (1928 in the old run, rewound through 1427 logs, 2343506 entries: 14.23 ms; 0 at the restart point through 36 logs: 0.06 ms)
+[incr] diff: 1455 of 1928 chunks differ, 15.22 ms
+[arena] diff: 1946 candidates (1946 in the old run, rewound through 1407 logs, 2313343 entries: 14.06 ms; 0 at the restart point through 56 logs: 0.09 ms)
+[incr] diff: 1518 of 1946 chunks differ, 15.08 ms
+[arena] diff: 1994 candidates (1994 in the old run, rewound through 1372 logs, 2262361 entries: 13.92 ms; 0 at the restart point through 91 logs: 0.15 ms)
+[incr] diff: 1500 of 1994 chunks differ, 15.17 ms
+[arena] diff: 2685 candidates (2685 in the old run, rewound through 1276 logs, 2124451 entries: 14.77 ms; 0 at the restart point through 188 logs: 0.26 ms)
+[incr] diff: 1568 of 2685 chunks differ, 16.59 ms
+[arena] diff: 2722 candidates (2722 in the old run, rewound through 1260 logs, 2073547 entries: 20.58 ms; 0 at the restart point through 352 logs: 0.51 ms)
+[incr] diff: 1557 of 2722 chunks differ, 23.45 ms
+[arena] diff: 2830 candidates (2830 in the old run, rewound through 1228 logs, 1972132 entries: 14.10 ms; 0 at the restart point through 651 logs: 0.85 ms)
+[incr] diff: 1625 of 2830 chunks differ, 17.26 ms
+[arena] diff: 3014 candidates (3013 in the old run, rewound through 1164 logs, 1766576 entries: 12.71 ms; 1 at the restart point through 1229 logs: 1.63 ms)
+[incr] diff: 1643 of 3014 chunks differ, 17.90 ms
+[arena] diff: 3136 candidates (3135 in the old run, rewound through 1100 logs, 1562573 entries: 11.45 ms; 1 at the restart point through 1872 logs: 2.32 ms)
+[incr] diff: 1647 of 3136 chunks differ, 18.34 ms
+[arena] diff: 3455 candidates (3453 in the old run, rewound through 785 logs, 1021561 entries: 8.15 ms; 2 at the restart point through 2398 logs: 3.08 ms)
+[incr] diff: 1714 of 3455 chunks differ, 17.29 ms
+[incr] prepared the restore to 15716: true, 69.46 ms
+[incr] restart point: 378 of 3572 checkpoints, 0 walked back, 0.251 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3572 vs 3572)
+[ckpt] restore 15716: drop pending 0.09, output tails 1.92, terminal and spill 0.02, undo 1.01 (379 logs), host state 2.78 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 3186 logs, 4576439 entries: 26.88 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 27.66 ms
+[arena] diff: 1820 candidates (1820 in the old run, rewound through 3172 logs, 4559225 entries: 26.85 ms; 0 at the restart point through 22 logs: 0.05 ms)
+[incr] diff: 1413 of 1820 chunks differ, 27.72 ms
+[arena] diff: 1921 candidates (1921 in the old run, rewound through 3159 logs, 4540457 entries: 26.80 ms; 0 at the restart point through 35 logs: 0.06 ms)
+[incr] diff: 1455 of 1921 chunks differ, 27.72 ms
+[arena] diff: 1945 candidates (1945 in the old run, rewound through 3139 logs, 4509121 entries: 26.88 ms; 0 at the restart point through 55 logs: 0.10 ms)
+[incr] diff: 1518 of 1945 chunks differ, 27.98 ms
+[arena] diff: 1994 candidates (1994 in the old run, rewound through 3104 logs, 4457572 entries: 26.58 ms; 0 at the restart point through 92 logs: 0.14 ms)
+[incr] diff: 1500 of 1994 chunks differ, 27.84 ms
+[arena] diff: 2672 candidates (2672 in the old run, rewound through 3007 logs, 4316848 entries: 29.03 ms; 0 at the restart point through 186 logs: 0.31 ms)
+[incr] diff: 1568 of 2672 chunks differ, 30.91 ms
+[arena] diff: 2710 candidates (2710 in the old run, rewound through 2843 logs, 4088386 entries: 28.11 ms; 0 at the restart point through 350 logs: 0.47 ms)
+[incr] diff: 1557 of 2710 chunks differ, 30.76 ms
+[arena] diff: 2830 candidates (2830 in the old run, rewound through 2544 logs, 3655798 entries: 24.47 ms; 0 at the restart point through 643 logs: 0.83 ms)
+[incr] diff: 1625 of 2830 chunks differ, 28.26 ms
+[arena] diff: 3014 candidates (3014 in the old run, rewound through 1966 logs, 2772613 entries: 19.23 ms; 0 at the restart point through 1226 logs: 1.63 ms)
+[incr] diff: 1643 of 3014 chunks differ, 25.75 ms
+[arena] diff: 3139 candidates (3137 in the old run, rewound through 1323 logs, 1855483 entries: 13.59 ms; 2 at the restart point through 1895 logs: 2.44 ms)
+[incr] diff: 1647 of 3139 chunks differ, 23.64 ms
+[arena] diff: 3457 candidates (3454 in the old run, rewound through 797 logs, 1033024 entries: 8.57 ms; 3 at the restart point through 2430 logs: 3.14 ms)
+[incr] diff: 1714 of 3457 chunks differ, 20.12 ms
+[incr] prepared the restore to 15716: true, 254.24 ms
+[incr] restart point: 378 of 3671 checkpoints, 0 walked back, 0.282 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3671 vs 3671)
+[ckpt] restore 15716: drop pending 0.07, output tails 1.85, terminal and spill 0.02, undo 3.13 (379 logs), host state 2.97 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 3285 logs, 4618460 entries: 126.15 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 137.11 ms
+[arena] diff: 1826 candidates (1826 in the old run, rewound through 3272 logs, 4602120 entries: 44.28 ms; 0 at the restart point through 24 logs: 0.06 ms)
+[incr] diff: 1413 of 1826 chunks differ, 53.59 ms
+[arena] diff: 1927 candidates (1927 in the old run, rewound through 3259 logs, 4583489 entries: 61.04 ms; 0 at the restart point through 37 logs: 0.11 ms)
+[incr] diff: 1455 of 1927 chunks differ, 63.57 ms
+[arena] diff: 1946 candidates (1946 in the old run, rewound through 3239 logs, 4553278 entries: 27.04 ms; 0 at the restart point through 58 logs: 0.09 ms)
+[incr] diff: 1518 of 1946 chunks differ, 28.10 ms
+[arena] diff: 1995 candidates (1995 in the old run, rewound through 3202 logs, 4501207 entries: 26.82 ms; 0 at the restart point through 95 logs: 0.15 ms)
+[incr] diff: 1500 of 1995 chunks differ, 28.11 ms
+[arena] diff: 2671 candidates (2671 in the old run, rewound through 3108 logs, 4362810 entries: 29.17 ms; 0 at the restart point through 193 logs: 0.28 ms)
+[incr] diff: 1568 of 2671 chunks differ, 30.94 ms
+[arena] diff: 2707 candidates (2707 in the old run, rewound through 2944 logs, 4133237 entries: 91.48 ms; 0 at the restart point through 366 logs: 0.50 ms)
+[incr] diff: 1557 of 2707 chunks differ, 94.06 ms
+[arena] diff: 2832 candidates (2831 in the old run, rewound through 2651 logs, 3701554 entries: 78.33 ms; 1 at the restart point through 693 logs: 2.75 ms)
+[incr] diff: 1625 of 2832 chunks differ, 85.47 ms
+[arena] diff: 3015 candidates (3014 in the old run, rewound through 2068 logs, 2817144 entries: 76.75 ms; 1 at the restart point through 1317 logs: 1.80 ms)
+[incr] diff: 1643 of 3015 chunks differ, 104.58 ms
+[arena] diff: 3137 candidates (3136 in the old run, rewound through 1399 logs, 1884749 entries: 13.74 ms; 1 at the restart point through 1999 logs: 2.55 ms)
+[incr] diff: 1647 of 3137 chunks differ, 23.21 ms
+[arena] diff: 3459 candidates (3456 in the old run, rewound through 864 logs, 1063486 entries: 8.45 ms; 3 at the restart point through 2585 logs: 3.31 ms)
+[incr] diff: 1714 of 3459 chunks differ, 20.52 ms
+[incr] prepared the restore to 15716: true, 72.52 ms
+[incr] restart point: 378 of 3887 checkpoints, 0 walked back, 0.254 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3887 vs 3887)
+[ckpt] restore 15716: drop pending 0.07, output tails 3.05, terminal and spill 0.02, undo 2.66 (379 logs), host state 4.21 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 3501 logs, 4817961 entries: 106.34 ms; 0 at the restart point through 10 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 107.40 ms
+[arena] diff: 1842 candidates (1842 in the old run, rewound through 3486 logs, 4800233 entries: 29.46 ms; 0 at the restart point through 30 logs: 0.05 ms)
+[incr] diff: 1413 of 1842 chunks differ, 30.37 ms
+[arena] diff: 1943 candidates (1943 in the old run, rewound through 3473 logs, 4781465 entries: 74.03 ms; 0 at the restart point through 43 logs: 5.63 ms)
+[incr] diff: 1455 of 1943 chunks differ, 80.74 ms
+[arena] diff: 1960 candidates (1960 in the old run, rewound through 3452 logs, 4749464 entries: 83.67 ms; 0 at the restart point through 63 logs: 0.18 ms)
+[incr] diff: 1518 of 1960 chunks differ, 85.32 ms
+[arena] diff: 2010 candidates (2010 in the old run, rewound through 3415 logs, 4695855 entries: 106.92 ms; 0 at the restart point through 98 logs: 0.16 ms)
+[incr] diff: 1500 of 2010 chunks differ, 108.20 ms
+[arena] diff: 2687 candidates (2687 in the old run, rewound through 3317 logs, 4552423 entries: 32.24 ms; 0 at the restart point through 199 logs: 0.30 ms)
+[incr] diff: 1568 of 2687 chunks differ, 34.31 ms
+[arena] diff: 2722 candidates (2722 in the old run, rewound through 3144 logs, 4314529 entries: 33.46 ms; 0 at the restart point through 368 logs: 0.54 ms)
+[incr] diff: 1557 of 2722 chunks differ, 36.65 ms
+[arena] diff: 2832 candidates (2832 in the old run, rewound through 2817 logs, 3852011 entries: 27.23 ms; 0 at the restart point through 665 logs: 0.94 ms)
+[incr] diff: 1625 of 2832 chunks differ, 31.64 ms
+[arena] diff: 3015 candidates (3015 in the old run, rewound through 2193 logs, 2921308 entries: 27.29 ms; 0 at the restart point through 1265 logs: 1.92 ms)
+[incr] diff: 1643 of 3015 chunks differ, 34.24 ms
+[arena] diff: 3137 candidates (3137 in the old run, rewound through 1511 logs, 1969885 entries: 14.73 ms; 0 at the restart point through 1955 logs: 2.72 ms)
+[incr] diff: 1647 of 3137 chunks differ, 24.73 ms
+[arena] diff: 3457 candidates (3455 in the old run, rewound through 925 logs, 1092209 entries: 8.73 ms; 2 at the restart point through 2496 logs: 3.24 ms)
+[incr] diff: 1714 of 3457 chunks differ, 20.68 ms
+[incr] prepared the restore to 15716: true, 71.45 ms
+[incr] restart point: 378 of 3711 checkpoints, 0 walked back, 0.259 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3711 vs 3711)
+[ckpt] restore 15716: drop pending 0.06, output tails 2.92, terminal and spill 0.02, undo 1.19 (379 logs), host state 3.46 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 3324 logs, 4651914 entries: 27.52 ms; 0 at the restart point through 10 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 28.31 ms
+[arena] diff: 1842 candidates (1842 in the old run, rewound through 3304 logs, 4631163 entries: 27.38 ms; 0 at the restart point through 25 logs: 0.06 ms)
+[incr] diff: 1413 of 1842 chunks differ, 28.23 ms
+[arena] diff: 1944 candidates (1944 in the old run, rewound through 3291 logs, 4612532 entries: 27.42 ms; 0 at the restart point through 38 logs: 0.07 ms)
+[incr] diff: 1455 of 1944 chunks differ, 28.43 ms
+[arena] diff: 1960 candidates (1960 in the old run, rewound through 3271 logs, 4582260 entries: 27.49 ms; 0 at the restart point through 58 logs: 0.10 ms)
+[incr] diff: 1518 of 1960 chunks differ, 28.65 ms
+[arena] diff: 2009 candidates (2009 in the old run, rewound through 3236 logs, 4531146 entries: 27.11 ms; 0 at the restart point through 95 logs: 0.14 ms)
+[incr] diff: 1500 of 2009 chunks differ, 28.55 ms
+[arena] diff: 2687 candidates (2687 in the old run, rewound through 3135 logs, 4388277 entries: 29.84 ms; 0 at the restart point through 192 logs: 0.31 ms)
+[incr] diff: 1568 of 2687 chunks differ, 31.72 ms
+[arena] diff: 2720 candidates (2720 in the old run, rewound through 2966 logs, 4156256 entries: 27.93 ms; 0 at the restart point through 356 logs: 0.56 ms)
+[incr] diff: 1557 of 2720 chunks differ, 30.53 ms
+[arena] diff: 2827 candidates (2827 in the old run, rewound through 2669 logs, 3721222 entries: 25.38 ms; 0 at the restart point through 653 logs: 0.89 ms)
+[incr] diff: 1625 of 2827 chunks differ, 29.48 ms
+[arena] diff: 3013 candidates (3012 in the old run, rewound through 2069 logs, 2820221 entries: 19.86 ms; 1 at the restart point through 1254 logs: 1.91 ms)
+[incr] diff: 1643 of 3013 chunks differ, 26.90 ms
+[arena] diff: 3135 candidates (3134 in the old run, rewound through 1379 logs, 1876958 entries: 13.77 ms; 1 at the restart point through 1912 logs: 3.00 ms)
+[incr] diff: 1647 of 3135 chunks differ, 23.69 ms
+[arena] diff: 3450 candidates (3449 in the old run, rewound through 838 logs, 1046356 entries: 8.43 ms; 1 at the restart point through 2455 logs: 3.79 ms)
+[incr] diff: 1714 of 3450 chunks differ, 21.72 ms
+[incr] prepared the restore to 15716: true, 125.40 ms
+[incr] restart point: 378 of 3691 checkpoints, 0 walked back, 0.264 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3691 vs 3691)
+[ckpt] restore 15716: drop pending 0.06, output tails 3.57, terminal and spill 0.02, undo 1.34 (379 logs), host state 2.91 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 3304 logs, 4639900 entries: 27.87 ms; 0 at the restart point through 9 logs: 0.03 ms)
+[incr] diff: 1292 of 1604 chunks differ, 28.74 ms
+[arena] diff: 1819 candidates (1819 in the old run, rewound through 3289 logs, 4621897 entries: 29.87 ms; 0 at the restart point through 24 logs: 0.05 ms)
+[incr] diff: 1413 of 1819 chunks differ, 30.82 ms
+[arena] diff: 1921 candidates (1921 in the old run, rewound through 3276 logs, 4603129 entries: 27.79 ms; 0 at the restart point through 37 logs: 0.07 ms)
+[incr] diff: 1455 of 1921 chunks differ, 28.75 ms
+[arena] diff: 1940 candidates (1940 in the old run, rewound through 3256 logs, 4572675 entries: 27.07 ms; 0 at the restart point through 58 logs: 0.09 ms)
+[incr] diff: 1518 of 1940 chunks differ, 28.17 ms
+[arena] diff: 2009 candidates (2009 in the old run, rewound through 3219 logs, 4519899 entries: 27.38 ms; 0 at the restart point through 95 logs: 0.18 ms)
+[incr] diff: 1500 of 2009 chunks differ, 28.67 ms
+[arena] diff: 2686 candidates (2686 in the old run, rewound through 3122 logs, 4379930 entries: 29.65 ms; 0 at the restart point through 193 logs: 0.28 ms)
+[incr] diff: 1568 of 2686 chunks differ, 31.51 ms
+[arena] diff: 2720 candidates (2720 in the old run, rewound through 2958 logs, 4150947 entries: 28.01 ms; 0 at the restart point through 360 logs: 0.48 ms)
+[incr] diff: 1557 of 2720 chunks differ, 30.48 ms
+[arena] diff: 2827 candidates (2827 in the old run, rewound through 2661 logs, 3719550 entries: 25.16 ms; 0 at the restart point through 658 logs: 0.85 ms)
+[incr] diff: 1625 of 2827 chunks differ, 29.23 ms
+[arena] diff: 3015 candidates (3013 in the old run, rewound through 2060 logs, 2823655 entries: 19.92 ms; 2 at the restart point through 1252 logs: 1.76 ms)
+[incr] diff: 1643 of 3015 chunks differ, 26.89 ms
+[arena] diff: 3139 candidates (3136 in the old run, rewound through 1402 logs, 1898703 entries: 14.51 ms; 3 at the restart point through 1922 logs: 2.61 ms)
+[incr] diff: 1647 of 3139 chunks differ, 24.42 ms
+[arena] diff: 3452 candidates (3449 in the old run, rewound through 859 logs, 1065618 entries: 8.94 ms; 3 at the restart point through 2456 logs: 4.19 ms)
+[incr] diff: 1714 of 3452 chunks differ, 22.59 ms
+[incr] prepared the restore to 15716: true, 101.72 ms
+[incr] restart point: 378 of 3739 checkpoints, 0 walked back, 0.296 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3739 vs 3739)
+[ckpt] restore 15716: drop pending 0.06, output tails 4.04, terminal and spill 0.02, undo 4.16 (379 logs), host state 4.01 ms
+[arena] diff: 1611 candidates (1611 in the old run, rewound through 3353 logs, 4654170 entries: 28.50 ms; 0 at the restart point through 10 logs: 0.03 ms)
+[incr] diff: 1292 of 1611 chunks differ, 29.33 ms
+[arena] diff: 1826 candidates (1826 in the old run, rewound through 3338 logs, 4636298 entries: 35.31 ms; 0 at the restart point through 23 logs: 0.05 ms)
+[incr] diff: 1413 of 1826 chunks differ, 36.24 ms
+[arena] diff: 1928 candidates (1928 in the old run, rewound through 3325 logs, 4617667 entries: 36.26 ms; 0 at the restart point through 36 logs: 0.07 ms)
+[incr] diff: 1455 of 1928 chunks differ, 38.01 ms
+[arena] diff: 1959 candidates (1959 in the old run, rewound through 3304 logs, 4586856 entries: 36.04 ms; 0 at the restart point through 57 logs: 0.09 ms)
+[incr] diff: 1518 of 1959 chunks differ, 37.21 ms
+[arena] diff: 2009 candidates (2009 in the old run, rewound through 3267 logs, 4534810 entries: 28.19 ms; 0 at the restart point through 93 logs: 0.14 ms)
+[incr] diff: 1500 of 2009 chunks differ, 29.54 ms
+[arena] diff: 2686 candidates (2686 in the old run, rewound through 3169 logs, 4394819 entries: 31.10 ms; 0 at the restart point through 191 logs: 0.32 ms)
+[incr] diff: 1568 of 2686 chunks differ, 33.03 ms
+[arena] diff: 2721 candidates (2721 in the old run, rewound through 3002 logs, 4164677 entries: 77.09 ms; 0 at the restart point through 367 logs: 0.61 ms)
+[incr] diff: 1557 of 2721 chunks differ, 79.91 ms
+[arena] diff: 2830 candidates (2828 in the old run, rewound through 2704 logs, 3730537 entries: 26.89 ms; 2 at the restart point through 675 logs: 1.14 ms)
+[incr] diff: 1625 of 2830 chunks differ, 31.27 ms
+[arena] diff: 3019 candidates (3016 in the old run, rewound through 2110 logs, 2837768 entries: 21.09 ms; 3 at the restart point through 1288 logs: 2.14 ms)
+[incr] diff: 1643 of 3019 chunks differ, 29.18 ms
+[arena] diff: 3143 candidates (3140 in the old run, rewound through 1440 logs, 1905682 entries: 51.92 ms; 3 at the restart point through 1995 logs: 2.57 ms)
+[incr] diff: 1647 of 3143 chunks differ, 61.79 ms
+[arena] diff: 3461 candidates (3456 in the old run, rewound through 906 logs, 1081740 entries: 9.83 ms; 5 at the restart point through 2562 logs: 3.67 ms)
+[incr] diff: 1714 of 3461 chunks differ, 23.59 ms
+[incr] prepared the restore to 15716: true, 78.24 ms
+[incr] restart point: 378 of 3846 checkpoints, 0 walked back, 0.336 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3846 vs 3846)
+[ckpt] restore 15716: drop pending 0.10, output tails 8.43, terminal and spill 0.02, undo 8.71 (379 logs), host state 4.61 ms
+[arena] diff: 1611 candidates (1611 in the old run, rewound through 3459 logs, 4736729 entries: 31.34 ms; 0 at the restart point through 10 logs: 0.03 ms)
+[incr] diff: 1292 of 1611 chunks differ, 32.13 ms
+[arena] diff: 1826 candidates (1826 in the old run, rewound through 3446 logs, 4720265 entries: 37.99 ms; 0 at the restart point through 25 logs: 0.05 ms)
+[incr] diff: 1413 of 1826 chunks differ, 38.98 ms
+[arena] diff: 1928 candidates (1928 in the old run, rewound through 3433 logs, 4701645 entries: 42.12 ms; 0 at the restart point through 38 logs: 0.11 ms)
+[incr] diff: 1455 of 1928 chunks differ, 43.55 ms
+[arena] diff: 1959 candidates (1959 in the old run, rewound through 3412 logs, 4670771 entries: 41.27 ms; 0 at the restart point through 59 logs: 0.10 ms)
+[incr] diff: 1518 of 1959 chunks differ, 42.42 ms
+[arena] diff: 2009 candidates (2009 in the old run, rewound through 3376 logs, 4618520 entries: 45.11 ms; 0 at the restart point through 97 logs: 0.15 ms)
+[incr] diff: 1500 of 2009 chunks differ, 47.12 ms
+[arena] diff: 2691 candidates (2689 in the old run, rewound through 3278 logs, 4479134 entries: 33.02 ms; 2 at the restart point through 200 logs: 0.28 ms)
+[incr] diff: 1568 of 2691 chunks differ, 38.95 ms
+[arena] diff: 2727 candidates (2723 in the old run, rewound through 3102 logs, 4244005 entries: 35.17 ms; 4 at the restart point through 384 logs: 0.68 ms)
+[incr] diff: 1557 of 2727 chunks differ, 39.39 ms
+[arena] diff: 2836 candidates (2832 in the old run, rewound through 2794 logs, 3804528 entries: 25.98 ms; 4 at the restart point through 693 logs: 0.94 ms)
+[incr] diff: 1625 of 2836 chunks differ, 30.31 ms
+[arena] diff: 3021 candidates (3017 in the old run, rewound through 2181 logs, 2899000 entries: 20.51 ms; 4 at the restart point through 1289 logs: 2.17 ms)
+[incr] diff: 1643 of 3021 chunks differ, 28.29 ms
+[arena] diff: 3144 candidates (3140 in the old run, rewound through 1474 logs, 1947339 entries: 14.56 ms; 4 at the restart point through 1979 logs: 2.83 ms)
+[incr] diff: 1647 of 3144 chunks differ, 24.83 ms
+[arena] diff: 3460 candidates (3456 in the old run, rewound through 907 logs, 1085619 entries: 9.15 ms; 4 at the restart point through 2538 logs: 3.53 ms)
+[incr] diff: 1714 of 3460 chunks differ, 22.87 ms
+[incr] prepared the restore to 15716: true, 77.73 ms
+[incr] restart point: 378 of 3772 checkpoints, 0 walked back, 0.267 ms
+[arena] prepared for 15716 (gen 0 vs 0, same ids true: 3772 vs 3772)
+[ckpt] restore 15716: drop pending 0.06, output tails 2.66, terminal and spill 0.02, undo 1.03 (379 logs), host state 2.79 ms
+[arena] diff: 1604 candidates (1604 in the old run, rewound through 3385 logs, 4673148 entries: 29.56 ms; 0 at the restart point through 9 logs: 0.04 ms)
+[incr] diff: 1292 of 1604 chunks differ, 30.52 ms
+[arena] diff: 1822 candidates (1822 in the old run, rewound through 3370 logs, 4655458 entries: 29.76 ms; 0 at the restart point through 24 logs: 0.06 ms)
+[incr] diff: 1413 of 1822 chunks differ, 30.81 ms
+[arena] diff: 1925 candidates (1925 in the old run, rewound through 3357 logs, 4636949 entries: 29.34 ms; 0 at the restart point through 37 logs: 0.06 ms)
+[incr] diff: 1455 of 1925 chunks differ, 30.38 ms
+[arena] diff: 1944 candidates (1944 in the old run, rewound through 3336 logs, 4606185 entries: 27.55 ms; 0 at the restart point through 57 logs: 0.11 ms)
+[incr] diff: 1518 of 1944 chunks differ, 28.77 ms
+[arena] diff: 2008 candidates (2008 in the old run, rewound through 3298 logs, 4553780 entries: 29.25 ms; 0 at the restart point through 95 logs: 0.16 ms)
+[incr] diff: 1500 of 2008 chunks differ, 30.65 ms
+[arena] diff: 2690 candidates (2690 in the old run, rewound through 3195 logs, 4410325 entries: 32.03 ms; 0 at the restart point through 195 logs: 0.31 ms)
+[incr] diff: 1568 of 2690 chunks differ, 34.29 ms
+[arena] diff: 2726 candidates (2726 in the old run, rewound through 3011 logs, 4170774 entries: 29.49 ms; 0 at the restart point through 365 logs: 0.76 ms)
+[incr] diff: 1557 of 2726 chunks differ, 32.77 ms
+[arena] diff: 2835 candidates (2835 in the old run, rewound through 2702 logs, 3730841 entries: 26.83 ms; 0 at the restart point through 674 logs: 1.27 ms)
+[incr] diff: 1625 of 2835 chunks differ, 31.36 ms
+[arena] diff: 3018 candidates (3018 in the old run, rewound through 2106 logs, 2838097 entries: 21.01 ms; 0 at the restart point through 1272 logs: 1.71 ms)
+[incr] diff: 1643 of 3018 chunks differ, 27.64 ms
+[arena] diff: 3141 candidates (3141 in the old run, rewound through 1416 logs, 1897662 entries: 14.13 ms; 0 at the restart point through 1955 logs: 2.44 ms)
+[incr] diff: 1647 of 3141 chunks differ, 24.23 ms
+[arena] diff: 3453 candidates (3453 in the old run, rewound through 857 logs, 1055585 entries: 8.43 ms; 0 at the restart point through 2490 logs: 3.28 ms)
+[incr] diff: 1714 of 3453 chunks differ, 20.41 ms
+[incr] prepared the restore to 15716: true, 68.99 ms

@@ -451,7 +451,7 @@ def geometry_page(ref_words, cand_words, diags, top_n):
     })
     if abs(mdx) > 2.0 or abs(mdy) > 2.0:
         rec["page_owner"] = (f"page-wide shift ({mdx:+.2f}, {mdy:+.2f}) bp shared by the median word: "
-                             "crates/render-pipeline (mac-claude-a) page builder / vendored document-style"
+                             "crates/render-pipeline (mac-claude-a) page builder / document-style"
                              + (" — a diagnostic names an unimplemented class/package/environment in this document"
                                 if any(re.search(r"not implemented|not supported", d.get("message", "")) for d in diags) else ""))
     ranked = sorted(deltas, key=lambda d: max(abs(d[0]), abs(d[1])), reverse=True)

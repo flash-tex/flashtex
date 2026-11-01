@@ -1,0 +1,7 @@
+# Fixture for scripts/tests/check-license-boundary.test.sh (check C).
+# mit-viewer (MIT) reaches mupdf-sys through a path dependency: must fire.
+# gpl-tool (GPL) uses poppler-rs: allowed. mit-pdfium (MIT) uses
+# pdfium-render (BSD/Apache): allowed. The stubs contain no code.
+[workspace]
+resolver = "2"
+members = ["crates/*"]

@@ -58,6 +58,9 @@
 //!
 //! pdflatex is an oracle only and never runs in the product path.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use flashtex_compiler::parser::SourceDocument;

@@ -116,7 +116,6 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("kernel-composites", "mapsto", "composite: pdfTeX builds it from pieces the engine draws differently"),
     ("kernel-composites", "mathellipsis", "composite: pdfTeX builds it from pieces the engine draws differently"),
     ("kernel-composites", "mathsterling", "composite: pdfTeX builds it from pieces the engine draws differently"),
-    ("kernel-composites", "models", "composite: pdfTeX builds it from pieces the engine draws differently"),
     ("kernel-composites", "ne", "composite: pdfTeX builds it from pieces the engine draws differently"),
     ("kernel-composites", "neq", "composite: pdfTeX builds it from pieces the engine draws differently"),
     ("kernel-composites", "notin", "composite: pdfTeX builds it from pieces the engine draws differently"),

@@ -22,6 +22,9 @@
 //! pdflatex baseline-to-baseline gaps for the two documents below:
 //! short-then-tall **18.6009bp**, tall-then-short **19.1875pt**.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use flashtex_compiler::parser::SourceDocument;

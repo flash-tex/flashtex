@@ -44,6 +44,9 @@
 //! -- which is why a fix that inserted only a thin space would still be
 //! 0.057 pt short.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

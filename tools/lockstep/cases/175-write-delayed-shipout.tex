@@ -1,0 +1,10 @@
+\input prelude
+\immediate\openout1=ls175data.txt
+\setbox0=\hbox{\vrule width175pt height8pt depth2pt\write1{delayed line 175}}
+\lsshipbox0
+\immediate\closeout1
+\openin0=ls175data.txt
+\read0 to \gotback
+\message{175 back=\meaning\gotback}
+\closein0
+\end

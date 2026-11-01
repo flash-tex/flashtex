@@ -18,6 +18,9 @@
 //! `A\include{c1}\pagebreak B` → 3, c1.tex `\newpage Inside c1.` → 3,
 //! `\include{nb}B` with nb.tex `In nb.\newpage` → 2.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

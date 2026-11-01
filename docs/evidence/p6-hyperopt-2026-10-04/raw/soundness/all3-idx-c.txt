@@ -1,0 +1,3 @@
+idx: 14 compiles, 14 ok, 0 mismatches, 3 converged, 5 accounting-only log differences, modes {'incremental': 14}
+{"compiles": 14, "ok": 14, "bad": 0, "conv": 3, "acct": 5, "err": 0, "interrupted": 0}
+exit 0

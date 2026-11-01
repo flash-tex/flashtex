@@ -1,0 +1,8 @@
+% 1269-special-expands-macros: \special expands macros when its token list is scanned, so redefining the macro changes the shipped whatsit (tex.web §1354).
+\input prelude
+\def\spm{XX}
+\setbox0=\hbox{\special{pre\spm post}\vrule width10pt height8pt depth2pt}
+\def\spm{YY}
+\setbox1=\hbox{\special{pre\spm post}\vrule width10pt height8pt depth2pt}
+\lsshipbox0 \lsshipbox1
+\end

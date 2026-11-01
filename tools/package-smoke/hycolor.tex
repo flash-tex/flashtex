@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{color}
+\usepackage{hycolor}
+\makeatletter
+\newcommand{\specbox}[1]{{\HyColor@UseColor{#1}Colored text.}}
+\makeatother
+\begin{document}
+Named color spec: \specbox{red}
+
+Explicit model spec: \specbox{[rgb]{0,0,1}}
+
+Empty spec is a no-op: \specbox{} done.
+\end{document}

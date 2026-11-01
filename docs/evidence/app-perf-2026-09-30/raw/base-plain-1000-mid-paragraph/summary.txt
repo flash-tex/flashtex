@@ -1,0 +1,148 @@
+# base-plain-1000-mid-paragraph
+load_before { 9.18 12.11 15.84 }
+load_after { 33.78 23.70 20.13 }
+bench: typed 200 painted 0 coalesced 0 paints 0 | k2p p50 - p95 - max - | compile p50 7211.4 p95 16207.4 | result->paint p50 - p95 -
+
+0 painted v2 revisions in /tmp/appperf/runs/base-plain-1000-mid-paragraph/app.log
+stage            n   p50     p95     max
+
+## signposts
+compileSend    events     3   19.61..51.34 s
+editorChange   n   200  p50     8.85  p95     9.80  max    23.55  total    1675.2 ms   44.10..50.92 s
+modelUpdate    n   200  p50     0.09  p95     0.14  max    15.71  total      35.3 ms   44.11..50.92 s
+resultApplied  events     4   19.61..67.64 s
+
+## hangs (>250 ms): 1
+
+samples 13515, total 13515 ms (thread=main, window None..None s, focus=None)
+
+## innermost app frame (inclusive of what it called)
+     6160 ms  45.6%  <no app frame>
+     4857 ms  35.9%  static FlashTeXMacApp.$main()
+     1062 ms   7.9%  CompletingTextView.draw(_:)
+      241 ms   1.8%  LineNumberGutter.drawHashMarksAndLabels(in:)
+      149 ms   1.1%  CompletingTextView.didChangeText()
+       70 ms   0.5%  TypingBenchDriver.tick()
+       60 ms   0.4%  specialized closure #1 in static DS.Palette.dynamic(light:dark:lightAlpha:darkAlpha:)
+       60 ms   0.4%  closure #1 in static SourceEditorView.nativeText(of:)
+       54 ms   0.4%  CompletingTextView.setSelectedRanges(_:affinity:stillSelecting:)
+       48 ms   0.4%  closure #1 in static EditorDiagnostics.isGap(_:)
+       47 ms   0.3%  CompletingTextView.setNeedsDisplay(_:avoidAdditionalLayout:)
+       34 ms   0.3%  LineNumberGutter.numberFont.getter
+       32 ms   0.2%  specialized static CaretSync.byteOffset(ofCaretUTF16:in:)
+       28 ms   0.2%  CompletingTextView.shouldChangeText(in:replacementString:)
+       23 ms   0.2%  specialized static SourceMapping.changedRegion(_:_:)
+       17 ms   0.1%  specialized static FlashTeXLog.write(_:)
+       16 ms   0.1%  ProjectDocuments.projectRoot.getter
+       15 ms   0.1%  specialized closure #1 in closure #1 in HashFunction.update<A>(data:)
+       15 ms   0.1%  RenderingV2Fast.skipRaw()
+       15 ms   0.1%  specialized String.init<A>(unsafeUninitializedCapacity:initializingUTF8With:)
+       14 ms   0.1%  specialized static EditorNavigation.uses(in:)
+       13 ms   0.1%  static RuntimeV1.encodeLine<A>(_:)
+       12 ms   0.1%  specialized _ContiguousArrayBuffer._consumeAndCreateNew(bufferIsUnique:minimumCapacity:growForAppend:)
+       11 ms   0.1%  specialized ShellModel.withMutation<A, B>(keyPath:_:)
+       11 ms   0.1%  specialized static MainActor.assumeIsolated<A>(_:file:line:)
+       10 ms   0.1%  DiagnosticsListView.row(_:in:status:)
+       10 ms   0.1%  SyntaxPainter.paint(_:layoutManager:)
+        9 ms   0.1%  specialized ShellModel.access<A>(keyPath:)
+        9 ms   0.1%  ShellModel.documents.modify
+        9 ms   0.1%  SyntaxPainter.flush()
+
+## self (leaf)
+      381 ms   2.8%  objc_msgSend
+      212 ms   1.6%  <deduplicated_symbol>
+      152 ms   1.1%  _platform_memmove
+      103 ms   0.8%  _xzm_free
+       77 ms   0.6%  swift_release
+       73 ms   0.5%  AG::Graph::propagate_dirty(AG::AttributeID)
+       69 ms   0.5%  __CF_IS_OBJC
+       60 ms   0.4%  AG::Graph::UpdateStack::update()
+       57 ms   0.4%  swift_retain
+       57 ms   0.4%  specialized find1<A>(_:key:filter:)
+       55 ms   0.4%  _platform_memset
+       55 ms   0.4%  __CFStringEqual
+       48 ms   0.4%  __CFStringHash
+       47 ms   0.3%  swift::MetadataCacheKey::operator==(swift::MetadataCacheKey const&) const
+       46 ms   0.3%  expression_merge
+       43 ms   0.3%  DYLD-STUB$$protocol witness for OptionSet.init(rawValue:) in conformance DisplayList.Properties
+       40 ms   0.3%  _StringBreadcrumbs.init(_:)
+       38 ms   0.3%  -[__NSDictionaryM objectForKey:]
+       38 ms   0.3%  __kdebug_trace64
+       38 ms   0.3%  NSISSparseVectorMapFind
+       37 ms   0.3%  AutoreleasePoolPage::add(objc_object*)
+       35 ms   0.3%  find1<A>(_:key:filter:)
+       34 ms   0.3%  _xzm_xzone_malloc_tiny
+       34 ms   0.3%  objc_release
+       34 ms   0.3%  _xzm_xzone_malloc
+       31 ms   0.2%  AG::Subgraph::update(unsigned int)
+       31 ms   0.2%  TRunGlue::FocusOnIndex(long) const
+       30 ms   0.2%  0x185a7f3f4
+       30 ms   0.2%  _CFRelease
+       28 ms   0.2%  TRunGlue::TGlyph::glyphID() const
+
+## inclusive (any binary)
+     7343 ms  54.3%  NSApplicationMain
+     7343 ms  54.3%  _DPSNextEvent
+     7343 ms  54.3%  main
+     7343 ms  54.3%  specialized runApp(_:)
+     7343 ms  54.3%  runApp<A>(_:)
+     7343 ms  54.3%  -[NSApplication run]
+     7343 ms  54.3%  start
+     7343 ms  54.3%  -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:]
+     7343 ms  54.3%  static FlashTeXMacApp.$main()
+     7343 ms  54.3%  static App.main()
+     7343 ms  54.3%  -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:]
+     7336 ms  54.3%  _BlockUntilNextEventMatchingListInMode
+     7336 ms  54.3%  _DPSBlockUntilNextEventMatchingListInMode
+     7336 ms  54.3%  ReceiveNextEventCommon
+     7335 ms  54.3%  RunCurrentEventLoopInMode
+     7331 ms  54.2%  _CFRunLoopRunSpecificWithOptions
+     5621 ms  41.6%  __CFRunLoopRun
+     3436 ms  25.4%  UC::DriverCore::continueProcessing()
+     3419 ms  25.3%  CA::Transaction::commit()
+     3392 ms  25.1%  CA::Transaction::flush_as_runloop_observer(bool)
+     3392 ms  25.1%  stepTransactionFlush
+     3132 ms  23.2%  __CFRunLoopDoObservers
+     3122 ms  23.1%  __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+     2954 ms  21.9%  <deduplicated_symbol>
+     2611 ms  19.3%  0x1866f1518
+     2609 ms  19.3%  0x1866f14f0
+     2176 ms  16.1%  __CFRunLoopDoSources0
+     2174 ms  16.1%  __CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__
+     2173 ms  16.1%  __CFRunLoopDoSource0
+     2137 ms  15.8%  GraphHost.flushTransactions()
+
+## all threads
+samples 15104, total 15104 ms (thread=all, window None..None s, focus=None)
+
+## innermost app frame (inclusive of what it called)
+     7463 ms  49.4%  <no app frame>
+     4857 ms  32.2%  static FlashTeXMacApp.$main()
+     1062 ms   7.0%  CompletingTextView.draw(_:)
+      241 ms   1.6%  LineNumberGutter.drawHashMarksAndLabels(in:)
+      149 ms   1.0%  CompletingTextView.didChangeText()
+       70 ms   0.5%  TypingBenchDriver.tick()
+       60 ms   0.4%  specialized closure #1 in static DS.Palette.dynamic(light:dark:lightAlpha:darkAlpha:)
+       60 ms   0.4%  closure #1 in static SourceEditorView.nativeText(of:)
+       55 ms   0.4%  closure #1 in static V2FontStore.hex(_:)
+       54 ms   0.4%  CompletingTextView.setSelectedRanges(_:affinity:stillSelecting:)
+       48 ms   0.3%  closure #1 in static EditorDiagnostics.isGap(_:)
+       47 ms   0.3%  CompletingTextView.setNeedsDisplay(_:avoidAdditionalLayout:)
+       37 ms   0.2%  specialized closure #1 in closure #1 in HashFunction.update<A>(data:)
+       34 ms   0.2%  LineNumberGutter.numberFont.getter
+       32 ms   0.2%  specialized static CaretSync.byteOffset(ofCaretUTF16:in:)
+       28 ms   0.2%  CompletingTextView.shouldChangeText(in:replacementString:)
+       24 ms   0.2%  RenderingV2Fast.skipRaw()
+       23 ms   0.2%  specialized static SourceMapping.changedRegion(_:_:)
+       19 ms   0.1%  specialized closure #1 in String.init<A, B>(decoding:as:)
+       18 ms   0.1%  specialized static FlashTeXLog.write(_:)
+       16 ms   0.1%  ProjectDocuments.projectRoot.getter
+       15 ms   0.1%  specialized String.init<A>(unsafeUninitializedCapacity:initializingUTF8With:)
+       14 ms   0.1%  specialized static EditorNavigation.uses(in:)
+       13 ms   0.1%  static RuntimeV1.encodeLine<A>(_:)
+       13 ms   0.1%  _stringCompare(_:_:expecting:)
+       13 ms   0.1%  RenderingV2Fast.int64()
+       12 ms   0.1%  specialized _ContiguousArrayBuffer._consumeAndCreateNew(bufferIsUnique:minimumCapacity:growForAppend:)
+       11 ms   0.1%  specialized ShellModel.withMutation<A, B>(keyPath:_:)
+       11 ms   0.1%  specialized static MainActor.assumeIsolated<A>(_:file:line:)
+       11 ms   0.1%  RenderingV2Fast.ws()
