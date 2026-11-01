@@ -7,28 +7,25 @@ import FlashTeXDisplayListV3
 // display-list-v3 socket protocol (FlashTeXDisplayListV3). Nothing here links
 // engine code: the licence boundary is this process boundary.
 //
-// The one engine since the old one retired (#1236 S6; docs:
-// apps/mac/docs/engine-v3-preview.md). `FLASHTEX_ENGINE_V3=0` keeps a
-// window's engine session off (an editor only); `1` turns it on under XCTest.
+// Chosen per document (EngineChoice.swift; docs: apps/mac/docs/engine-v3-preview.md):
+// the status bar's engine item or View > Engine for This Document; Settings >
+// Compile for documents without a choice (`FlashTeX.EngineV3.enabled`);
+// FLASHTEX_ENGINE_V3=1 (0) forces it on (off) for every document. The
+// built-in default is still the previous engine. With the new engine off
+// nothing below runs and the old preview path is unchanged.
 
 enum EngineV3 {
+    static let enabledKey = "FlashTeX.EngineV3.enabled"
     static let hostPathKey = "FlashTeX.EngineV3.hostPath"
 
-    /// Whether a window's engine session runs (`ShellModel.engineV3Enabled`):
-    /// on, unless `FLASHTEX_ENGINE_V3=0`. Under XCTest it is off unless
-    /// `FLASHTEX_ENGINE_V3=1`, so a model made for a test starts no host
-    /// process; a test that wants the engine turns it on itself. Outside
-    /// XCTest the first call also removes the defaults this build no longer
-    /// reads (EngineChoiceStore.removeRetiredDefaults; the retirement plan's §5.5).
-    @MainActor static var enabledAtLaunch: Bool {
-        switch ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"] {
-        case "1": return true
-        case "0": return false
-        default:
-            if !underTest { EngineChoiceStore.removeRetiredDefaults(in: defaults) }
-            return !underTest
-        }
-    }
+    /// A window's engine before any document opens (EngineChoice.swift:
+    /// the environment, then the app setting, then the built-in default,
+    /// with the no-TeX-Live fallback). Under XCTest the stored setting is
+    /// not read: a test that wants v3 turns it on itself, and one that does
+    /// not must not inherit whatever an earlier run left in the test
+    /// runner's defaults (with v3 on the old engine compiles nothing,
+    /// `ShellModel.suspendOldEngineForV3`).
+    @MainActor static var enabledAtLaunch: Bool { EngineChoice.atLaunch.effective == .new }
 
     /// XCTest is loaded: `swift test` sets neither of the variables
     /// `ShellModel.runningUnderXCTest` looks for, so ask for its class too.

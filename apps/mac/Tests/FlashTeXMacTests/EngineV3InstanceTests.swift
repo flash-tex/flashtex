@@ -54,6 +54,8 @@ final class EngineV3InstanceTests: XCTestCase {
     /// one stopping leaves the other compiling.
     func testTwoConcurrentSessionsKeepTheirOwnCopies() async throws {
         try EngineV3TestHost.require()
+        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         let file = try project("two")
         let a = try await session(opening: file)
         let b = try await session(opening: file)
@@ -77,6 +79,8 @@ final class EngineV3InstanceTests: XCTestCase {
     /// re-creates it, starts a fresh host and compiles again.
     func testAVanishedCopyIsRecreated() async throws {
         try EngineV3TestHost.require()
+        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         let model = try await session(opening: try project("vanish"))
         defer { model.engineV3.stop() }
         let s = model.engineV3
@@ -206,6 +210,8 @@ final class EngineV3InstanceTests: XCTestCase {
     /// in one pass after a relaunch, from the copy its last instance left.
     func testARelaunchCompilesFromTheLastCopysAux() async throws {
         try EngineV3TestHost.require()
+        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-relaunch-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

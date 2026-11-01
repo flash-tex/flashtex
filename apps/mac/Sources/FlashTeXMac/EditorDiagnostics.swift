@@ -1167,9 +1167,10 @@ extension EditorDiagnostics {
     /// The edit comes from `mechanicalEdit`, so this accepts both forms: a
     /// `help.replacement`, and the flat `suggestion` over the diagnostic's own
     /// `source`. Gating on `help.replacement` alone made the affordance
-    /// unreachable for producers whose diagnostics carry no `help` field
-    /// (the old engine's `flashtex-render`), so the wire had only
-    /// `suggestion`. The compiler sets `suggestion` at exactly one site
+    /// unreachable in the shipping configuration — `ShellModel`
+    /// `locateDefaultProducer` attaches `flashtex-render`, whose
+    /// `display::Diagnostic` carries no `help` field at all, so the wire has
+    /// only `suggestion`. The compiler sets `suggestion` at exactly one site
     /// (`Diagnostic::command_error`), where the span is the command token, so
     /// replacing `source` with it is the same edit `help.replacement` would
     /// have carried.

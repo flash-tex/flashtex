@@ -180,6 +180,7 @@ struct EditorPane: View {
                 selection: model.selection,
                 pendingEdit: model.pendingEdit,
                 marks: model.editorMarks,
+                result: model.result,
                 editorRevision: model.editorRevision,
                 projectIndexMetadata: model.completionMetadata,
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
@@ -213,6 +214,12 @@ struct EditorPane: View {
                 projectDocumentClass: { model.project.entryDocumentClass }, // `\frametitle` in a beamer deck's included slide file (Completion.swift)
                 texpandProject: { model.texpandProject }, // TeXpand's root file, packages and texpand.toml (ShellModel+TeXpand.swift)
                 language: model.editorLanguage, // BibTeX colouring for a declared bibliography (SyntaxHighlighter.swift)
+                mathPreviewContext: { // inline math hover preview (MathHoverPreview.swift)
+                    // Under engine v3 there is no old-engine frame to crop (one engine at a time).
+                    model.engineV3Enabled ? nil : model.displayListV2?.frame.map {
+                        MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)
+                    }
+                },
                 mathPreviewV3: { span in model.engineV3Enabled ? model.engineV3.mathPreviewImage(span: span) : nil }, // EngineV3MathHover.swift
                 onExCommand: { command in // Vim `:` commands (VimMode.swift) mapped to the shell's own actions
                     switch command {
@@ -333,21 +340,48 @@ struct PreviewPane: View {
     var body: some View {
         let _ = ViewBodyProbe.note("PreviewPane") // KeystrokeInvalidationTests
         VStack(spacing: 0) {
-        // No TeX to compile with (RQ20), and the one-time notice for a
-        // document last typeset by the retired previous engine
-        // (EngineChoice.swift); never a silent fallback.
-        TeXMissingBanner()
-        PreviousEngineNoticeBanner()
+        // The previous engine typesets this project because the new one
+        // cannot, and why (EngineChoice.swift); never a silent fallback.
+        EngineFallbackBanner()
+        UnicodeModeSuggestionBanner()
         // Memory pressure: a suggestion to use Low Memory, never a silent switch (PerformanceMode.swift).
         MemoryPressureBanner()
         // Chapter focus: "Previewing chapters/03.tex only", Show All (EngineV3FocusChapter.swift).
         FocusChapterBanner()
         ZStack(alignment: .topTrailing) {
-            PreviewV3Pane() // the engine's preview (EngineV3Preview.swift)
+            if model.engineV3Enabled {
+                PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)
+            } else if model.previewV2 {
+                PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
+                    .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
+            } else if let result = model.result {
+                PreviewView(result: result, dark: model.darkPreview, caretItems: model.caretItems,
+                            zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
+                            // "the pdf moves to where the changes are happening" (CaretFollow.swift)
+                            follow: model.caretFollow.request,
+                            onUserScroll: { model.caretFollow.userDidScrollPreview(); hudActivity &+= 1 },
+                            onVisiblePage: { model.previewVisiblePage = $0 },
+                            onFitPageZoom: { model.previewFitPageZoom = $0 },
+                            onPageJump: { model.previewAnnouncer.notePageJump(page: $0, of: model.toolbarPageCount) }) { source, text in
+                    guard let source else { model.navigationNote = "This item has no source mapping."; return }
+                    model.navigate(to: source, expectedText: text)
+                }
+                .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
+            } else {
+                ContentUnavailableView {
+                    Label("No preview yet", systemImage: "doc.richtext")
+                } description: {
+                    Text("Attach a producer (File > Attach Built Compiler ⌘⇧K, or ⌘⇧R for Latin Modern) and compile (⌘B), or File > Open Compile Result Fixture… (⌘⇧O).")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DS.Colors.surfaceGround)
+            }
             // The transient page/zoom HUD and the quiet state cluster
-            // (compile spinner, the engine's state line) float over the
-            // pages; nothing reserves a header row any more (#653).
-            PreviewHUD(hovering: hovering, activity: hudActivity)
+            // (compile spinner, FIXTURE/HISTORICAL, staleness) float over
+            // the pages; nothing reserves a header row any more (#653).
+            if model.previewV2 || model.chrome.hasResult {
+                PreviewHUD(hovering: hovering, activity: hudActivity)
+            }
             // The narrow layout's way back to the editor floats top-leading
             // (it lived on the removed header row).
             if model.narrowLayout && model.narrowPreviewShown {
@@ -358,7 +392,7 @@ struct PreviewPane: View {
         }
         }
         // One container for VoiceOver ("PDF preview, Page 2 of 5"); the pages
-        // and HUD inside stay reachable (EngineV3Accessibility.swift).
+        // and HUD inside stay reachable (PreviewV2Accessibility.swift, AccessibilityOverlay).
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.accessibilityLabel)
         .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage,
@@ -398,11 +432,12 @@ struct PreviewPane: View {
 /// The floating preview HUD (owner feedback on #653: no header row over
 /// the pages; further pared down after owner feedback that a "⚠ ⚠ 87 %"
 /// pill sat on top of the document — the zoom percentage readout and the
-/// warning icons were removed from here entirely, and the zoom commands
-/// (⌘9/⌘0/pinch, plus double-click on the page) are unaffected). What is
-/// left: the always-quiet state — a mini spinner while compiling, the
-/// engine's highlighted state line (a failure, an error) and load errors —
-/// pins the chip visible; the page readout shows transiently on
+/// capability-warning icons were removed from here entirely; capability
+/// notes now live in the status bar, and the zoom commands (⌘9/⌘0/pinch,
+/// plus double-click on the page) are unaffected). What is left: the
+/// always-quiet state — a mini spinner while compiling, FIXTURE/HISTORICAL
+/// when the pages are not the worker's current result, staleness and load
+/// errors — pins the chip visible; the page readout shows transiently on
 /// pointer-over and for a beat after scroll or page changes, then fades.
 /// Fading never reflows anything (§14); a healthy live preview at rest
 /// shows no chrome at all over the pages (§8, Canvas treatment).
@@ -414,23 +449,43 @@ struct PreviewHUD: View {
     @State private var activityVisible = false
 
     var body: some View {
-        // Reads the throttled chrome mirror (ShellChrome.swift), not the
-        // engine session: the old header re-evaluated on every keystroke
-        // and reply (FT-071 main-thread sample).
+        // Reads the throttled chrome mirror (ShellChrome.swift), not
+        // `result` / `inFlightRevision`: the old header re-evaluated on
+        // every keystroke and reply (FT-071 main-thread sample).
         let chrome = model.chrome
-        let pinned = chrome.compiling || chrome.staleHighlighted || chrome.loadError != nil
+        let badge = Self.stateBadge(chrome)
+        let pinned = chrome.compiling || badge != nil || chrome.staleHighlighted
+            || chrome.loadError != nil
+            || (model.previewDebugStatus && chrome.resultStatus != nil)
         let visible = hovering || pinned || activityVisible
         HStack(spacing: DS.Space.m) {
             // Fixed-size slot: the compile indicator never reflows the chip.
             Color.clear.frame(width: DS.Size.inlineStatusSlot, height: DS.Size.inlineStatusSlot)
                 .overlay { if chrome.compiling { ProgressView().controlSize(.mini).accessibilityLabel("Compiling") } }
-            if let stale = chrome.staleText { // the engine's state line: "preparing the format…", "2 stale pages", a failure (ShellChrome)
+            if let badge {
+                Text(badge.text)
+                    .font(DS.Fonts.header)
+                    .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
+                    .background(badge.color.opacity(DS.State.badgeFillOpacity), in: Capsule())
+            }
+            if model.previewDebugStatus, let status = chrome.resultStatus {
+                Text(status.rawValue).font(DS.Fonts.header).foregroundStyle(statusColor(status))
+            }
+            if let historical = chrome.historicalLabel {
+                Text(historical).font(DS.Fonts.header).foregroundStyle(DS.Colors.statusHistorical).lineLimit(1)
+                    .help("A completed older snapshot is shown while the helper compiles the newer revision; navigation, caret sync, capture destinations and export return with the current preview.")
+            } else if let stale = chrome.staleText { // the reply exceeded a bound, or "editor at rN — compiling…" (ShellChrome)
                 Text(stale)
-                    .font(DS.Fonts.secondary).foregroundStyle(chrome.staleHighlighted ? DS.Colors.severityWarning : DS.Colors.textSecondary).lineLimit(1) // routine states are quiet; only failures and errors are highlighted
+                    .font(DS.Fonts.secondary).foregroundStyle(chrome.staleHighlighted ? DS.Colors.severityWarning : DS.Colors.textSecondary).lineLimit(1) // routine "compiling…" is quiet; only bounds/no-producer are highlighted
             }
             if let err = chrome.loadError {
                 Text(err).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityError).lineLimit(1).help(err)
             }
+            // Capability notes moved to the status bar (owner feedback: no
+            // floating warnings/percent over the page) — see StatusBar below.
+            // Both panes. This was gated on `!model.previewV2` while
+            // `previewV2` defaults true, so on the shipped default nobody ever
+            // saw a page number.
             let pageCount = model.previewPageCount
             if let readout = Self.pageReadout(page: model.previewVisiblePage, of: pageCount) {
                 Text(readout)
@@ -449,7 +504,7 @@ struct PreviewHUD: View {
         .allowsHitTesting(visible)
         .animation(DS.Motion.quick, value: visible)
         .accessibilityHidden(!visible)
-        .help(Self.help(chrome: chrome))
+        .help(Self.help(chrome: chrome, producerSummary: model.producerSummary))
         // The linger timer is a real pending Task for as long as it runs;
         // under XCTest that outlives the surface being captured and makes
         // both this shot and the next one depend on when it fires, so
@@ -469,10 +524,30 @@ struct PreviewHUD: View {
     static let lingerSuppressed = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
 
-    /// The HUD's tooltip: the engine's route help (`ShellChrome.routeHelp`,
-    /// gap C21), or that the engine session is off.
-    static func help(chrome: ShellChrome) -> String {
-        chrome.route == .engineV3 ? "Engine v3 preview — " + chrome.routeHelp : "Preview — the engine is not running"
+    /// Quiet state badge: shown only when the pages are *not* the worker's
+    /// current result — FIXTURE (not a real compile) or HISTORICAL (an older
+    /// snapshot while the newer revision compiles). A healthy live preview
+    /// shows nothing here.
+    static func stateBadge(_ chrome: ShellChrome) -> (text: String, color: Color)? {
+        switch chrome.previewSource {
+        case .none: nil
+        case .fixture: ("FIXTURE", DS.Colors.severityWarning)
+        case .worker: chrome.historicalLabel != nil ? ("HISTORICAL", DS.Colors.statusHistorical) : nil
+        }
+    }
+
+    private func statusColor(_ s: RuntimeV1.Status) -> Color {
+        switch s { case .ok: DS.Colors.severitySuccess; case .recovered: DS.Colors.severityWarning; case .failed: DS.Colors.severityError }
+    }
+
+    /// The HUD's tooltip: under the new engine, that engine's route help
+    /// (`ShellChrome.routeHelp`), never the old producer's summary (gap C21);
+    /// otherwise the fixture or the old producer, with the layout capabilities.
+    static func help(chrome: ShellChrome, producerSummary: String) -> String {
+        let layout = chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", ")
+        if chrome.route == .engineV3 { return "Engine v3 preview — " + chrome.routeHelp }
+        if chrome.previewSource == .fixture { return "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(layout)" }
+        return producerSummary + " — layout: \(layout)"
     }
 
     /// The "N / M" page readout (page clamped to the count), nil with no pages.
@@ -505,10 +580,10 @@ private struct NarrowBackButton: View {
     }
 }
 
-/// Bottom status bar: the breadcrumb, the last navigation or staleness
-/// note, the keystroke-to-page latency, the mode, the editor revision (with
-/// View > Show Preview Debug Status), the problem counts, then the capture
-/// note or an export progress control while one runs.
+/// Bottom status bar: editor revision, the helper's durable revision of the
+/// active document, compile latency, the route (fixture / worker /
+/// controller), then the last navigation, staleness or capture note, and an
+/// exact-export progress control while one runs.
 struct StatusBar: View {
     @Environment(ShellModel.self) var model
 
@@ -534,13 +609,36 @@ struct StatusBar: View {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")
                     .help(chrome.latencyHelp)
             }
+            // Which engine typesets this document, a fallback's warning, and
+            // the switch (EngineChoice.swift). The old engine's producer
+            // route follows while it is the one in use.
+            EngineChoiceStatusItem()
             // Classic or Unicode, and the switch (ProjectMode.swift).
             ModeStatusItem()
+            if !model.engineV3Enabled {
+                Label(route(chrome), systemImage: routeIcon(chrome))
+                    .help(chrome.routeHelp)
+            }
+            // Capability warnings (moved off the preview HUD, owner feedback:
+            // a "⚠ ⚠ 87 %" pill was floating over the page). Still real
+            // diagnostics, just anchored in the status bar instead of
+            // overlapping the document.
+            if !chrome.capabilityNotes.isEmpty {
+                Label("\(chrome.capabilityNotes.count)", systemImage: "exclamationmark.circle")
+                    .foregroundStyle(DS.Colors.severityWarning)
+                    .help(chrome.capabilityNotes.joined(separator: "\n"))
+                    .accessibilityLabel("\(chrome.capabilityNotes.count) capability warning\(chrome.capabilityNotes.count == 1 ? "" : "s")")
+                    .accessibilityValue(chrome.capabilityNotes.joined(separator: "; "))
+            }
             // Revision counters are diagnostics, not writing state (owner,
             // #653): shown only with View > Show Preview Debug Status.
             if model.previewDebugStatus {
                 Label("r\(chrome.editorRevision)", systemImage: "pencil.line")
                     .help("Editor revision (increments on every edit)")
+                if let durable = chrome.durableRevision {
+                    Label("durable r\(durable)", systemImage: "internaldrive")
+                        .help("Durable revision of \(model.activePath) in the helper's edit ledger")
+                }
             }
             // The Vim mode indicator is NOT here: it is `VimStatusLine`, at the
             // bottom of the editor pane where vim puts a window's status line.
@@ -558,13 +656,13 @@ struct StatusBar: View {
                 .buttonStyle(.plain)
                 .help("Errors, warnings and not-implemented gaps of the last result — click to show or hide the Problems panel (⌘⇧M)")
             }
-            if model.exportSession.state.isRunning { // ShellModel+ExportSession.swift
+            if case .running(let pid, _) = model.exportSession.state { // ShellModel+ExportSession.swift
                 ProgressView().controlSize(.small)
-                Text("Exporting PDF…")
+                Text("Exporting exact PDF (flashtex-pdf-exact pid \(pid))…")
                     .foregroundStyle(.secondary).lineLimit(1)
                 Button("Cancel") { model.cancelExactExport() }
                     .ideSecondary()
-                    .help("Cancel the export; nothing is written to the destination")
+                    .help("Terminate flashtex-pdf-exact; nothing is written to the destination")
                     .accessibilityIdentifier("export.cancel")
             } else if let note = chrome.captureNote {
                 Text(note).foregroundStyle(.secondary).lineLimit(1).help(note)
@@ -577,6 +675,24 @@ struct StatusBar: View {
         .background(DS.Colors.surfaceSecondary)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
+    }
+
+    private func route(_ chrome: ShellChrome) -> String {
+        switch chrome.route {
+        case .fixture: "fixture"
+        case .controller: "controller"
+        case .worker: "worker"
+        case .none: "no producer"
+        case .engineV3: "engine v3"
+        }
+    }
+
+    private func routeIcon(_ chrome: ShellChrome) -> String {
+        switch chrome.route {
+        case .fixture: "doc.badge.gearshape"
+        case .controller, .worker, .engineV3: "bolt.horizontal.circle.fill"
+        case .none: "bolt.horizontal.circle"
+        }
     }
 }
 
@@ -642,8 +758,6 @@ private struct ReviewItem: Identifiable {
 
 /// Review sheet: the reviewer sees ambiguities and dependencies, may edit the
 /// LaTeX, and explicitly approves or rejects. Nothing is inserted otherwise.
-/// Approve inserts one undoable edit; the live compile then shows its pages
-/// and diagnostics (owner ruling E3: the shadow-compile preview retired).
 private struct ProposalReviewSheet: View {
     @Environment(ShellModel.self) var model
     @Environment(\.dismiss) private var dismiss
@@ -654,6 +768,7 @@ private struct ProposalReviewSheet: View {
     /// inspector — both behind this window-modal sheet. Without showing it
     /// here, a refused approval looks exactly like a dead button.
     @State private var failure: String?
+    @StateObject private var preview = ProposalPreview(executable: ShellModel.locateCompiler()) // shadow compile (ProposalPreview.swift)
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
@@ -691,6 +806,7 @@ private struct ProposalReviewSheet: View {
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: DS.Layout.sheetTextEditorMinHeight)
                 .border(.separator)
+            ProposalPreviewView(preview: preview)
             if !proposal.ambiguities.isEmpty {
                 Text("Ambiguities").font(.subheadline.bold())
                 ForEach(proposal.ambiguities, id: \.self) { Text("• \($0)").font(.caption) }
@@ -715,6 +831,7 @@ private struct ProposalReviewSheet: View {
                     .ideSecondary()
                     .accessibilityIdentifier("review.close")
                 Spacer()
+                ProposalApproveWarning(preview: preview)
                 Button("Approve and insert") {
                     failure = nil
                     if model.isBridgeCapture(proposal.captureId) {
@@ -732,8 +849,11 @@ private struct ProposalReviewSheet: View {
         }
         .padding(DS.Space.xl)
         .frame(width: DS.Layout.sheetWidth)
-        .onAppear { latex = proposal.latex }
-        .onChange(of: latex) { _, _ in failure = nil }
+        .onAppear { latex = proposal.latex; preview.update(from: model, latex: proposal.latex) }
+        .onChange(of: latex) { _, new in failure = nil; preview.update(from: model, latex: new) }
+        .onChange(of: model.editorRevision) { _, _ in preview.update(from: model, latex: latex) }
+        .onChange(of: model.anchor) { _, _ in preview.update(from: model, latex: latex) }
+        .onDisappear { preview.close() }
     }
 }
 

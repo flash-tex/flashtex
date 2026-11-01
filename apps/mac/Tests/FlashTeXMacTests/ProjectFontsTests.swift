@@ -42,6 +42,7 @@ final class ProjectFontsTests: XCTestCase {
     private func project() throws -> ShellModel {
         _ = try write("main.tex", "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n")
         let model = ShellModel()
+        model.detachWorker()
         model.files.policy = .disabled(reason: "test: hermetic (direct writes)")
         return model
     }
@@ -76,6 +77,7 @@ final class ProjectFontsTests: XCTestCase {
 
     func testPresentNeedsAProjectRootAndOpensOnTheManifestsTable() throws {
         let bare = ShellModel()
+        bare.detachWorker()
         bare.projectFonts.present()
         XCTAssertFalse(bare.projectFonts.shown)
         XCTAssertTrue(bare.navigationNote?.contains("Save the entry document first") == true, bare.navigationNote ?? "")
@@ -96,7 +98,7 @@ final class ProjectFontsTests: XCTestCase {
         XCTAssertEqual(model.projectFonts.families, ["Georgia", "Inter", "Latin Modern Math"])
         XCTAssertEqual(model.projectFonts.families(for: .math), ["Latin Modern Math"])
         XCTAssertEqual(model.projectFonts.families(for: .text), ["Georgia", "Inter", "Latin Modern Math"])
-        // The compile carries the table (the engine session reads `manifest.fontsByRole`).
+        // The request carries the table (ShellModel.compile sends `manifest.requestFonts`).
         XCTAssertEqual(model.manifest.requestFonts, .init(text: "Georgia", sans: "Inter"))
         XCTAssertEqual(model.manifest.fontsByRole, ["text": "Georgia", "sans": "Inter"])
     }
@@ -185,12 +187,12 @@ final class ProjectFontsTests: XCTestCase {
         XCTAssertEqual(model.openTex(at: tmp.appendingPathComponent("main.tex")), .opened)
         XCTAssertEqual(model.manifest.requestFonts, .init(text: "Georgia"))
         // A manifest re-read with a different table notifies the model
-        // (ShellModel.manifestDidRefresh); with no engine session running
-        // that changes nothing beyond the table, which the next compile reads.
+        // (ShellModel.manifestFontsDidChange); without a worker that is a no-op
+        // beyond the request field, which the next compile reads.
         fonts = ["text": "Georgia", "math": "STIX Two Math"]
         model.manifest.refresh()
         XCTAssertEqual(model.manifest.requestFonts, .init(text: "Georgia", math: "STIX Two Math"))
-        XCTAssertEqual(model.manifest.fontsByRole, ["text": "Georgia", "math": "STIX Two Math"])
+        XCTAssertNotEqual(model.fontsApplied, model.manifest.requestFonts, "compile() must not short-circuit on unchanged buffers")
     }
 
     // MARK: the completion rows
@@ -227,6 +229,7 @@ final class ProjectFontsTests: XCTestCase {
         _ = try write("main.tex", "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n")
         _ = try write("flashtex.toml", "# mine\n[project]\nentry = \"main.tex\"\n\n[fonts]\ntext = \"Old\"\n\n[packages]\nfetch = \"never\"\n")
         let model = ShellModel()
+        model.detachWorker()
         model.files.policy = .executable(helper, arguments: [])
         model.projectFonts.lister = { _ in ([], []) }
         XCTAssertEqual(model.openTex(at: tmp.appendingPathComponent("main.tex")), .opened)

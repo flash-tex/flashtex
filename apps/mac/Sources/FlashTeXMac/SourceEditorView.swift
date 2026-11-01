@@ -35,6 +35,7 @@ struct SourceEditorView: NSViewRepresentable {
     var selection: ShellModel.Selection?
     var pendingEdit: ShellModel.PendingEdit?
     var marks: [EditorDiagnostics.Mark] = []
+    var result: RuntimeV1.CompileResult? // for completion (Completion.swift)
     /// Editor revision the buffer is at; completion metadata binds to it.
     var editorRevision: Int?
     var projectIndexMetadata: Completion.Metadata?
@@ -124,8 +125,11 @@ struct SourceEditorView: NSViewRepresentable {
     /// What the buffer is coloured as (`SyntaxHighlighter.Language`): BibTeX
     /// for a declared bibliography, LaTeX otherwise.
     var language: SyntaxHighlighter.Language = .latex
-    /// The preview's crop for a formula (its UTF-16 range in the buffer;
-    /// EngineV3MathHover.swift); nil when it has none.
+    /// The current v2 preview, for the inline math hover preview
+    /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
+    var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
+    /// The engine-v3 preview's crop for a formula (its UTF-16 range in the
+    /// buffer; EngineV3MathHover.swift); nil when v3 has none.
     var mathPreviewV3: (NSRange) -> CGImage? = { _ in nil }
     /// Vim `:` commands that need the app (`:w`, `:q`, `:e`, `:set nu`;
     /// VimMode.swift); returns a status message or nil. Nothing is wired by
@@ -205,6 +209,9 @@ struct SourceEditorView: NSViewRepresentable {
         co.setLineNumbers(showLineNumbers, on: scroll)
         co.syntax.language = language // no-op unless the document's kind changed (a .bib tab)
         if let completing = tv as? CompletingTextView {
+            // Change-only: the setter rebuilds the completion metadata, and this
+            // update runs on every keystroke, not only when a result arrives.
+            if completing.compileResult?.revision != result?.revision || completing.compileResult != result { completing.compileResult = result }
             if completing.editorRevision != editorRevision { completing.editorRevision = editorRevision }
         }
         if let completing = tv as? CompletingTextView, completing.projectFiles != projectFiles { completing.projectFiles = projectFiles }
@@ -859,16 +866,25 @@ struct SourceEditorView: NSViewRepresentable {
                                                 userDefinition: parent.userDefinition, context: parent.hoverContext())
         }
 
-        /// Inline math hover preview (EngineV3MathHover.swift): the formula's
-        /// bitmap at `index`, cropped from the page bitmap the preview already
-        /// drew — nothing is rendered here. Nil when the caret is not in a
-        /// formula, the pages are stale, or that page's bitmap isn't ready yet.
+        /// Inline math hover preview (MathHoverPreview.swift): the formula's
+        /// cropped bitmap at `index`, cropped from whichever page bitmap is
+        /// already rasterized — nothing is rendered here. Nil whenever
+        /// `MathHoverPreview.crop` is (not inside one, stale, or the current
+        /// frame's items don't cover it) or that page's bitmap isn't ready yet.
         func mathPreview(at index: Int) -> (image: CGImage, range: NSRange)? {
             guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
             let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let span = EditorIntelligence.inlineMathSpan(in: text, at: index, highlighter: h) else { return nil }
-            guard let image = parent.mathPreviewV3(span) else { return nil }
+            // The engine-v3 preview crops from its own page bitmap.
+            if let image = parent.mathPreviewV3(span) { return (image, span) }
+            guard let context = parent.mathPreviewContext() else { return nil }
+            guard let crop = MathHoverPreview.crop(in: text, at: index, path: context.path, pages: context.frame.list.pages,
+                                                   previewIsStale: context.previewIsStale, highlighter: h) else { return nil }
+            guard let last = V2PageRasterizer.shared.lastRequest,
+                  let image = MathHoverPreview.image(for: crop, frame: context.frame, pixelsPerPoint: last.pixelsPerPoint, dark: context.dark,
+                                                     rasterizer: .shared)
+            else { return nil }
             return (image, span)
         }
 

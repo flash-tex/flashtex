@@ -2146,13 +2146,31 @@ final class CompletionTests: XCTestCase {
     }
 }
 
-// MARK: - Ranking, declared environments and graphics through the real text view
+// MARK: - End to end against the real preview-controller helper
 
-/// Completion ranking and the project-derived lists, partly through the real
-/// `CompletingTextView`. (Its end-to-end tests against the retired preview
-/// controller helper went with the old engine's route, #1236 S6.)
+/// The full route: real `flashtex-preview-controller` + real compiler behind
+/// `ShellModel`, the parent's fetcher wiring, `SourceEditorView` hosted in a
+/// window, and the completion list of the real `CompletingTextView`. Skipped
+/// unless `FLASHTEX_PREVIEW_CONTROLLER` and `FLASHTEX_COMPILER` point at
+/// built binaries (same convention as `PreviewControllerTests`).
 @MainActor
 final class CompletionLiveHelperTests: XCTestCase {
+    private struct Host: View {
+        let model: ShellModel
+        var body: some View {
+            SourceEditorView(
+                text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
+                selection: model.selection,
+                pendingEdit: model.pendingEdit,
+                marks: model.editorMarks,
+                result: model.result,
+                editorRevision: model.editorRevision,
+                projectIndexMetadata: model.completionMetadata,
+                onCaretChange: { model.caretUTF16 = $0 }
+            )
+        }
+    }
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 20, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
@@ -2166,6 +2184,254 @@ final class CompletionLiveHelperTests: XCTestCase {
                                  windowNumber: tv.window?.windowNumber ?? 0, context: nil, characters: chars,
                                  charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
         tv.keyDown(with: e)
+    }
+
+    /// Same as `waitUntil` with 0.2 ms slices, for timing a delivery.
+    private func waitTight(_ what: String, timeout: TimeInterval = 20, _ cond: () -> Bool) async throws {
+        let start = Date()
+        while !cond() {
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); return }
+            try await Task.sleep(nanoseconds: 200_000)
+        }
+    }
+
+    /// Inserts `insert` before `\end{document}`, opens the list for it through
+    /// the real view, returns the delivered items and removes the probe again.
+    private func popupSession(_ tv: CompletingTextView, model: ShellModel, insert: String) async throws -> CompletionSession {
+        let ns = tv.string as NSString
+        let at = ns.range(of: "\\end{document}").location
+        XCTAssertNotEqual(at, NSNotFound)
+        tv.setSelectedRange(NSRange(location: at, length: 0))
+        tv.insertText(insert, replacementRange: NSRange(location: at, length: 0))
+        try await waitUntil("model text") { model.activeText == tv.string }
+        try await waitUntil("view revision") { tv.editorRevision == model.editorRevision }
+        // The probe edit moved the editor revision: the held index metadata is
+        // refused until the helper's preview for this revision brings fresh
+        // vocabulary (the compile-result diagnostics may bind earlier).
+        try await waitUntil("index metadata for \(insert) revision") { tv.projectIndexMetadata?.revision == model.editorRevision }
+        key(tv, " ", code: 49, flags: .control)
+        try await waitUntil("popup for \(insert)") { tv.session != nil }
+        let session = try XCTUnwrap(tv.session)
+        XCTAssertEqual(session.metadataRevision, model.editorRevision, "the list was built from metadata bound to the caret's revision")
+        key(tv, "\u{1B}", code: 53)
+        tv.insertText("", replacementRange: NSRange(location: at, length: (insert as NSString).length))
+        try await waitUntil("model text restored") { model.activeText == tv.string }
+        return session
+    }
+
+    func testHelperVocabularyReachesThePopupBoundToTheEditorRevision() async throws {
+        guard let helper = PreviewControllerTests.helper, FileManager.default.isExecutableFile(atPath: helper.path),
+              ShellModel.locateCompiler() != nil else {
+            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pc-completion-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("project"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tex = root.appendingPathComponent("project/main.tex")
+        // `\bibitem[Knu84]{knuth84}` is the optional-argument form the local scan
+        // does not match, so a `\cite{` item for it can only come from the index.
+        let source = """
+        \\newcommand{\\myterm}{a defined term}
+        \\begin{document}
+        \\section{Intro}\\label{sec:intro}
+        See \\ref{sec:intro} and \\cite{knuth84}: \\myterm.
+        \\bibitem[Knu84]{knuth84} Knuth.
+        \\end{document}
+
+        """
+        try source.write(to: tex, atomically: true, encoding: .utf8)
+        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", root.appendingPathComponent("ledger").path, 1)
+        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
+
+        let model = ShellModel()
+        model.autoCompile = true
+        XCTAssertEqual(model.openTex(at: tex), .opened)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: Host(model: model))
+        window.orderFrontRegardless() // never makeKey
+        defer { window.orderOut(nil); model.detachController() }
+        try await waitUntil("hosted editor") { TypingBenchDriver.findTextView(in: [window.contentView!]) != nil }
+        let tv = try XCTUnwrap(TypingBenchDriver.findTextView(in: [window.contentView!]) as? CompletingTextView)
+        window.makeFirstResponder(tv)
+
+        model.attachController(at: helper)
+        XCTAssertTrue(model.controllerAttached)
+        try await waitUntil("first preview") { model.result?.revision == model.editorRevision && model.inFlightRevision == nil }
+        // The parent requests the vocabulary after every preview; wait for it to bind.
+        try await waitUntil("bound metadata") { model.completionMetadata?.revision == model.editorRevision }
+        let metadata = try XCTUnwrap(model.completionMetadata)
+        let latency = try XCTUnwrap(model.completionFetcher.lastLatencyMs)
+        print("live helper: request → bound completion metadata \(String(format: "%.1f", latency)) ms at editor revision \(metadata.revision); labels \(metadata.labels.map(\.name)) citations \(metadata.citations.map(\.name)) commands \(metadata.commands.count)")
+        guard case .projectIndex(let versions) = metadata.origin else { return XCTFail("origin \(metadata.origin)") }
+        XCTAssertEqual(versions["main.tex"], model.controllerState.durable["main.tex"]?.revision)
+        XCTAssertEqual(metadata.labels.map(\.name), ["sec:intro"])
+        let label = try XCTUnwrap(metadata.labels.first)
+        XCTAssertEqual(label.definitions, 1)
+        XCTAssertGreaterThanOrEqual(label.occurrences, 1)
+        XCTAssertEqual(label.definedIn, "main.tex")
+        XCTAssertEqual(metadata.citations.map(\.name), ["knuth84"])
+        let citation = try XCTUnwrap(metadata.citations.first)
+        XCTAssertEqual(citation.definitions, 1)
+        let myterm = try XCTUnwrap(metadata.commands.first { $0.name == "myterm" })
+        XCTAssertEqual(myterm.definitions, 1)
+        XCTAssertGreaterThanOrEqual(myterm.occurrences, 1)
+        XCTAssertFalse(metadata.truncated)
+
+        // The hosted SourceEditorView handed both the revision and the metadata to the view.
+        try await waitUntil("view bound") { tv.editorRevision == model.editorRevision && tv.projectIndexMetadata?.revision == model.editorRevision }
+        XCTAssertEqual(tv.boundMetadata?.labels.map(\.name), ["sec:intro"])
+        XCTAssertEqual(tv.boundMetadata?.revision, model.editorRevision)
+
+        // `\ref{` lists the label (document scan) with the index agreeing; `\cite{`
+        // lists the key only the index knows; `\my` lists the declared command.
+        let refs = try await popupSession(tv, model: model, insert: "\\ref{")
+        XCTAssertEqual(refs.items.map(\.label), ["sec:intro"])
+        XCTAssertEqual(refs.items.first?.kind, .reference)
+        let cites = try await popupSession(tv, model: model, insert: "\\cite{")
+        XCTAssertEqual(cites.items.map(\.label), ["knuth84"])
+        // main.tex is a LaTeX source (the helper's snapshot says so; nothing is declared as a bibliography here).
+        XCTAssertEqual(metadata.documentKinds, ["main.tex": "latex"])
+        XCTAssertEqual(metadata.declaredBibliographies, [])
+        XCTAssertEqual(cites.items.first?.detail, "\\bibitem in main.tex · \(citation.occurrences) use\(citation.occurrences == 1 ? "" : "s") · revision \(cites.metadataRevision ?? -1)")
+        let cmds = try await popupSession(tv, model: model, insert: "\\my")
+        XCTAssertEqual(cmds.items.map(\.label), ["\\myterm"])
+        XCTAssertEqual(cmds.items.first?.detail, "declared in main.tex · \(myterm.occurrences) use\(myterm.occurrences == 1 ? "" : "s") · revision \(cmds.metadataRevision ?? -1)")
+        // Pickup through the real route, best of N: with index metadata bound
+        // to the caret's revision, ⌃Space on `\cite{` → list showing the key
+        // only the index knows. Timed from the keystroke to the session, run
+        // loop turning in 0.2 ms slices; printed with the load it ran under.
+        var pickupMs: [Double] = []
+        var boundMs: [Double] = []
+        for _ in 0..<10 {
+            let ns = tv.string as NSString
+            let at = ns.range(of: "\\end{document}").location
+            tv.setSelectedRange(NSRange(location: at, length: 0))
+            let edited = MonotonicClock.nowNs()
+            tv.insertText("\\cite{", replacementRange: NSRange(location: at, length: 0))
+            try await waitUntil("model text") { model.activeText == tv.string }
+            try await waitTight("index metadata for the probe revision") { tv.projectIndexMetadata?.revision == model.editorRevision && tv.editorRevision == model.editorRevision }
+            boundMs.append(Double(MonotonicClock.nowNs() - edited) / 1e6)
+            let t0 = MonotonicClock.nowNs()
+            key(tv, " ", code: 49, flags: .control)
+            try await waitTight("popup") { tv.session != nil }
+            pickupMs.append(Double(MonotonicClock.nowNs() - t0) / 1e6)
+            XCTAssertEqual(tv.session?.items.map(\.label), ["knuth84"])
+            XCTAssertEqual(tv.session?.metadataRevision, model.editorRevision)
+            key(tv, "\u{1B}", code: 53)
+            tv.insertText("", replacementRange: NSRange(location: at, length: 6))
+            try await waitUntil("model text restored") { model.activeText == tv.string }
+        }
+        let load = CompletionTests.loadAverage1
+        func summary(_ v: [Double], _ f: String) -> String {
+            "best \(String(format: f, v.min()!)) / median \(String(format: f, v.sorted()[v.count / 2])) / max \(String(format: f, v.max()!)) ms"
+        }
+        print("live helper: \\cite{ pickup (⌃Space → list with the index key, best of \(pickupMs.count), 1-min load \(String(format: "%.1f", load))): "
+              + summary(pickupMs, "%.2f") + "; edit → index metadata bound (helper compile + 3 complete replies + snapshot): " + summary(boundMs, "%.1f"))
+        // Probe edits raced the helper's snapshot: any query answered after the
+        // next edit was refused as stale rather than shown (count reported).
+        let racedRefusals = model.completionFetcher.refusals
+        print("live helper: \(racedRefusals) vocabulary quer\(racedRefusals == 1 ? "y" : "ies") refused because an edit followed the request")
+        try await waitUntil("settled") { model.completionMetadata?.revision == model.editorRevision && model.inFlightRevision == nil }
+        let boundRevision = model.editorRevision
+        let boundVersions: [String: Int]
+        if case .projectIndex(let v) = model.completionMetadata!.origin { boundVersions = v } else { return XCTFail("origin") }
+
+        // Stale refusal, helper side: a query naming the previous snapshot is
+        // answered with an error and discarded; the bound metadata is unchanged.
+        let controller = try XCTUnwrap(model.controller)
+        model.completionFetcher.request(sourceVersions: boundVersions.mapValues { $0 - 1 }, editorRevision: boundRevision) { try controller.send($0, $1) }
+        try await waitUntil("stale refusal") { model.completionFetcher.refusals == racedRefusals + 1 }
+        XCTAssertNil(model.completionFetcher.query)
+        XCTAssertEqual(model.completionMetadata?.revision, boundRevision)
+        XCTAssertTrue(model.workerLog.contains { $0.contains("completion metadata refused") && $0.contains("source versions changed") }, "\(model.workerLog.suffix(5))")
+
+        // Stale refusal, editor side: an edit after the request moves the editor
+        // revision, so the held metadata no longer binds until the next preview
+        // brings metadata for the new revision.
+        model.updateActiveText(model.activeText.replacingOccurrences(of: "Knuth.", with: "Knuth again."))
+        XCTAssertNil(model.completionMetadata?.bound(to: model.editorRevision))
+        XCTAssertNil(tv.projectIndexMetadata?.bound(to: model.editorRevision), "index metadata for revision \(boundRevision) is refused at revision \(model.editorRevision)")
+        try await waitUntil("view sees new revision") { tv.editorRevision == model.editorRevision }
+        // From here the view binds nothing from the old revision: either nothing
+        // yet, or metadata the helper already produced for the new revision.
+        XCTAssertNotEqual(tv.boundMetadata?.revision, boundRevision)
+        try await waitUntil("rebound metadata") { model.completionMetadata?.revision == model.editorRevision }
+        XCTAssertGreaterThan(model.completionMetadata!.revision, boundRevision)
+        try await waitUntil("view rebound") { tv.projectIndexMetadata?.revision == model.editorRevision }
+        XCTAssertEqual(tv.boundMetadata?.citations.map(\.name), ["knuth84"])
+        print("live helper: rebound after edit in \(String(format: "%.1f", model.completionFetcher.lastLatencyMs ?? -1)) ms (request → metadata)")
+    }
+
+    /// `\cite{` through the real helper with a bibliography declared through
+    /// Document Kinds: before the declaration the key cited in main.tex is
+    /// offered as unresolved (with the hint to declare the .bib, since the
+    /// snapshot says nothing is declared); after `declareBibliography` the
+    /// same key is a "record in refs.bib (declared bibliography)" and ranks
+    /// first. `refs.bib` is never read as a bibliography because of its name:
+    /// the kind comes from the helper's `document_kinds` for that snapshot.
+    func testCiteCompletionUsesTheDeclaredBibliographyKind() async throws {
+        guard let helper = PreviewControllerTests.helper, FileManager.default.isExecutableFile(atPath: helper.path),
+              ShellModel.locateCompiler() != nil else {
+            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pc-cite-kinds-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tex = dir.appendingPathComponent("main.tex")
+        try "\\begin{document}\nMain cites \\cite{knuth84} and \\cite{lamport94}.\n\\bibitem{lamport94} Lamport.\n\\end{document}\n"
+            .write(to: tex, atomically: true, encoding: .utf8)
+        try "@book{knuth84,\n  author = {Donald E. Knuth},\n  title = {The {\\TeX}book},\n  year = 1984\n}\n"
+            .write(to: dir.appendingPathComponent("refs.bib"), atomically: true, encoding: .utf8)
+        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", root.appendingPathComponent("ledger").path, 1)
+        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
+
+        let model = ShellModel()
+        model.autoCompile = true
+        XCTAssertEqual(model.openTex(at: tex), .opened)
+        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: Host(model: model))
+        window.orderFrontRegardless() // never makeKey
+        defer { window.orderOut(nil); model.detachController() }
+        try await waitUntil("hosted editor") { TypingBenchDriver.findTextView(in: [window.contentView!]) != nil }
+        let tv = try XCTUnwrap(TypingBenchDriver.findTextView(in: [window.contentView!]) as? CompletingTextView)
+        window.makeFirstResponder(tv)
+        model.attachController(at: helper)
+        try await waitUntil("first preview") { model.result?.revision == model.editorRevision && model.inFlightRevision == nil }
+        try await waitUntil("bound metadata") { model.completionMetadata?.revision == model.editorRevision }
+
+        // Nothing declared: the snapshot reports only main.tex as latex.
+        let before = try XCTUnwrap(model.completionMetadata)
+        XCTAssertEqual(before.documentKinds, ["main.tex": "latex"])
+        XCTAssertEqual(before.declaredBibliographies, [])
+        let unresolved = try await popupSession(tv, model: model, insert: "\\cite{")
+        XCTAssertEqual(unresolved.items.map(\.label), ["lamport94", "knuth84"], "\\bibitem first, the cited-but-undefined key last")
+        guard unresolved.items.count == 2 else { return XCTFail("expected two items, got \(unresolved.items.count)") }
+        XCTAssertEqual(unresolved.items[0].detail, "\\bibitem in this document")
+        XCTAssertTrue(unresolved.items[1].detail.hasPrefix("cited but not defined in a declared bibliography source (none declared: Project > Document Kinds) · "),
+                      unresolved.items[1].detail)
+
+        // Declare refs.bib through Document Kinds (the helper's typed open).
+        let declared = await model.documentKinds.declareBibliography("refs.bib")
+        XCTAssertEqual(declared, .declared(path: "refs.bib"), model.documentKinds.status)
+        XCTAssertEqual(model.documentKinds.bibliographyPaths, ["refs.bib"])
+        // The next preview (the probe edit's) carries a vocabulary snapshot with the kinds.
+        let resolved = try await popupSession(tv, model: model, insert: "\\cite{")
+        let after = try XCTUnwrap(model.completionMetadata)
+        XCTAssertEqual(after.documentKinds, ["main.tex": "latex", "refs.bib": "bibliography"])
+        XCTAssertEqual(after.declaredBibliographies, ["refs.bib"])
+        XCTAssertEqual(after.citations.first { $0.name == "knuth84" }?.definedIn, "refs.bib")
+        XCTAssertEqual(resolved.items.map(\.label), ["lamport94", "knuth84"])
+        let knuth = try XCTUnwrap(resolved.items.first { $0.label == "knuth84" })
+        XCTAssertTrue(knuth.detail.hasPrefix("record in refs.bib (declared bibliography) · "), knuth.detail)
+        XCTAssertTrue(knuth.detail.hasSuffix("· revision \(resolved.metadataRevision ?? -1)"), knuth.detail)
+        // A prefix that only the declared record matches lists just it.
+        let kn = try await popupSession(tv, model: model, insert: "\\cite{kn")
+        XCTAssertEqual(kn.items.map(\.label), ["knuth84"])
+        XCTAssertEqual(kn.items.first?.kind, .citation)
+        print("live helper: declared-bibliography cite completion — before: \(unresolved.items.map(\.detail)); after: \(resolved.items.map(\.detail))")
     }
 
     // MARK: recently used, declared environments, graphics files
@@ -2368,7 +2634,7 @@ final class CompletionLiveHelperTests: XCTestCase {
         }
         let empty = "\\setmainfont{"
         XCTAssertEqual(Completion.suggestions(in: empty, caretUTF16: (empty as NSString).length, metadata: nil, fontFamilies: families).map(\.label), families)
-        // Without a listing (no built host) the argument offers nothing, and
+        // Without a listing (no built worker) the argument offers nothing, and
         // an ordinary command's argument is not a font argument.
         XCTAssertEqual(Completion.suggestions(in: empty, caretUTF16: (empty as NSString).length, metadata: nil), [])
         let other = "\\textbf{Hel"

@@ -2,13 +2,13 @@ import XCTest
 import FlashTeXProtocol
 @testable import FlashTeXMac
 
-/// The mode item, the switch and the routing (ProjectMode.swift, modes
-/// PROPOSAL.md §4.2-§4.5, M5; UnicodeFonts.swift): the switch writes
-/// `[project] mode` through the helper's `set_mode` and the rooted save, and
-/// only when asked; a document that needs Unicode fonts and whose mode
-/// nothing sets is typeset in Unicode mode (in memory); one set to Classic
-/// stays Classic and the mode item marks the need. The real-helper case
-/// needs the built helper and skips otherwise.
+/// The mode item, the switch and the suggestion (ProjectMode.swift, modes
+/// PROPOSAL.md §4.2-§4.5, M5): the switch writes `[project] mode` through
+/// the helper's `set_mode` and the rooted save, and only when asked; a
+/// document that needs Unicode fonts, or `[fonts]` in a Classic project,
+/// gets a one-click suggestion; in Unicode mode neither sends the document
+/// to the compatibility engine. The real-helper case needs the built helper
+/// and skips otherwise.
 @MainActor
 final class ProjectModeTests: XCTestCase {
     private var tmp: URL!
@@ -40,42 +40,36 @@ final class ProjectModeTests: XCTestCase {
         env.set("FLASHTEX_HOST_UNICODE", exe.path)
     }
 
-    /// A document that needs Unicode fonts and whose mode nothing sets is
-    /// typeset in Unicode mode, decided in memory (source "detected"); a
-    /// mode the document sets is never overruled: Classic set so keeps the
-    /// document in Classic mode and only marks the need (the status item).
-    func testANeedRoutesAnUnsetModeAndMarksAClassicOne() throws {
+    func testTheSuggestionNeedsClassicModeAndAUnicodeNeed() throws {
         try fakeUnicodeHost()
         let model = ShellModel()
-        let body = "\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nx\n\\end{document}\n"
-        model.replaceProject(entryText: body, named: "main.tex")
-        XCTAssertEqual(model.documentMode.mode, .unicode)
-        XCTAssertEqual(model.documentMode.source, EngineV3Mode.detectedSource)
-        XCTAssertEqual(model.unicodeRouting, "the document uses the fontspec package")
-        XCTAssertNil(model.unicodeModeSuggestion, "routed: nothing to mark")
-        // `% !TEX program = pdflatex` sets Classic: kept, the need marked
-        model.replaceProject(entryText: "% !TEX program = pdflatex\n" + body, named: "main.tex")
-        _ = model.unicodeFontsNeed() // the scan at an open
+        model.detachWorker()
+        model.replaceProject(entryText: "\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nx\n\\end{document}\n", named: "main.tex")
         XCTAssertEqual(model.documentMode.mode, .classic)
-        XCTAssertEqual(model.documentMode.source, "% !TEX program")
+        model.engineChoice = EngineChoice(preferred: .new, source: .builtInDefault,
+                                          blocker: .unicodeFonts(UnicodeFontsNeed(kind: .package("fontspec"), file: "main.tex")))
+        let m = try XCTUnwrap(UnicodeModeSuggestionBanner.message(model))
+        XCTAssertTrue(m.headline.contains("the fontspec package"), m.headline)
+        XCTAssertTrue(EngineFallbackBanner.coveredBySuggestion(model.engineChoice.blocker!, model) == (model.modeSwitchRefusal == nil))
         XCTAssertEqual(model.unicodeModeSuggestion?.what, "the fontspec package")
-        // `% !TEX program = xelatex`: Unicode mode, set by the document; no mark
-        model.replaceProject(entryText: "% !TEX program = xelatex\n" + body, named: "main.tex")
+        // a `% !TEX program = xelatex` line: Unicode mode, no suggestion
+        model.replaceProject(entryText: "% !TEX program = xelatex\n\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nx\n\\end{document}\n", named: "main.tex")
         XCTAssertEqual(model.documentMode.mode, .unicode)
-        XCTAssertEqual(model.documentMode.source, "% !TEX program")
+        XCTAssertNil(UnicodeModeSuggestionBanner.message(model))
         XCTAssertNil(model.unicodeModeSuggestion)
     }
 
-    /// Without Unicode mode's engine there is nothing to route to: the
-    /// document stays in Classic mode (and shows TeX's own error).
-    func testWithoutTheUnicodeHostANeedStaysInClassicMode() throws {
-        env.set("FLASHTEX_HOST_UNICODE", "none")
+    func testUnicodeModeLiftsTheUnicodeFontsRule() throws {
+        try fakeUnicodeHost()
         let model = ShellModel()
-        model.replaceProject(entryText: "\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nx\n\\end{document}\n", named: "main.tex")
+        model.detachWorker()
+        model.replaceProject(entryText: "% !TEX program = xelatex\n\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nx\n\\end{document}\n", named: "main.tex")
+        // (no TeX Live on the machine would be the first rule; the rest needs one)
+        guard EngineChoice.texLiveAvailable() else { throw XCTSkip("no TeX Live: the no-TeX-Live rule applies first") }
+        XCTAssertNil(model.engineBlocker(), "Unicode mode typesets fontspec documents itself")
+        env.set("FLASHTEX_HOST_UNICODE", "none")
         XCTAssertFalse(model.unicodeModeAvailable)
-        XCTAssertNil(model.unicodeRouting)
-        XCTAssertEqual(model.documentMode.mode, .classic)
-        XCTAssertEqual(model.documentMode.source, "default")
+        XCTAssertNotNil(model.engineBlocker(), "without the Unicode host, the compatibility engine still does")
     }
 
     func testTheItemsHelpSaysTheModeItsSourceAndTheSuggestion() {
@@ -83,8 +77,6 @@ final class ProjectModeTests: XCTestCase {
         let help = ModeStatusItem.help(r, suggestion: UnicodeFontsNeed(kind: .command("setmainfont"), file: nil))
         XCTAssertTrue(help.contains("Classic (pdfLaTeX-compatible)") && help.contains("Default") && help.contains("\\setmainfont"), help)
         XCTAssertEqual(EngineV3Mode.Resolution(mode: .unicode, format: "xelatex", source: "flashtex.toml", warning: nil).sourceLine, "Set in flashtex.toml")
-        XCTAssertTrue(EngineV3Mode.Resolution(mode: .unicode, format: "xelatex", source: EngineV3Mode.detectedSource, warning: nil)
-            .sourceLine.contains("not saved in flashtex.toml"))
     }
 
     func testRealHelperWritesTheModeOnlyWhenAsked() async throws {
@@ -94,6 +86,7 @@ final class ProjectModeTests: XCTestCase {
         try fakeUnicodeHost()
         _ = try write("main.tex", "\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nHello.\n\\end{document}\n")
         let model = ShellModel()
+        model.detachWorker()
         model.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model.openTex(at: tmp.appendingPathComponent("main.tex")), .opened)
         XCTAssertFalse(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("flashtex.toml").path), "opening writes nothing")
@@ -111,10 +104,11 @@ final class ProjectModeTests: XCTestCase {
         for _ in 0 ..< 100 where model.documentMode.source != "flashtex.toml" || model.documentMode.mode != .classic {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        // Classic set in flashtex.toml is the user's choice: a fontspec
-        // document stays in Classic mode (the status item marks the need)
-        XCTAssertEqual(model.documentMode.mode, .classic)
-        XCTAssertEqual(model.documentMode.source, "flashtex.toml")
+        // Classic set in flashtex.toml is the user's choice: no suggestion,
+        // even for a fontspec document
+        model.engineChoice = EngineChoice(preferred: .new, source: .builtInDefault,
+                                          blocker: .unicodeFonts(UnicodeFontsNeed(kind: .package("fontspec"), file: "main.tex")))
+        XCTAssertNil(UnicodeModeSuggestionBanner.message(model))
         // flashtex.toml open with unsaved edits: refused, the file untouched
         let opened = await model.project.openDocument("flashtex.toml")
         XCTAssertEqual(opened, .opened(path: "flashtex.toml"))
@@ -137,6 +131,7 @@ final class ProjectModeTests: XCTestCase {
         let root = tmp.resolvingSymlinksInPath()
         _ = try write("main.tex", "% !TEX program = xelatex\n\n\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n")
         let model = ShellModel()
+        model.detachWorker()
         model.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model.openTex(at: root.appendingPathComponent("main.tex")), .opened)
         for _ in 0 ..< 100 where model.manifest.refreshes == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
@@ -164,6 +159,7 @@ final class ProjectModeTests: XCTestCase {
         XCTAssertTrue(why.contains("out of date"), why)
         env.set("FLASHTEX_MODE", "unicode")
         let model = ShellModel()
+        model.detachWorker()
         model.replaceProject(entryText: "x\n", named: "main.tex")
         XCTAssertNotNil(model.setProjectMode(.classic))
         XCTAssertNotNil(model.modeSwitchFailure)
@@ -172,6 +168,7 @@ final class ProjectModeTests: XCTestCase {
     func testFlashtexModeInTheEnvironmentRefusesTheSwitch() throws {
         env.set("FLASHTEX_MODE", "unicode")
         let model = ShellModel()
+        model.detachWorker()
         model.replaceProject(entryText: "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n", named: "main.tex")
         XCTAssertNotNil(model.modeSwitchRefusal)
         XCTAssertNotNil(model.setProjectMode(.classic))

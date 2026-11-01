@@ -137,8 +137,7 @@ enum EngineV3Bundle {
         case none
         /// Ask first: the bundle would be downloaded.
         case ask(Config)
-        /// The user said not now: nothing compiles, and the window says so
-        /// (TeXMissingBanner, with a Download button).
+        /// The user said not now: the previous engine typesets.
         case declined
     }
 
@@ -210,7 +209,7 @@ struct EngineV3BundleSheet: View {
         let config = model.engineV3.bundleConsentConfig
         VStack(alignment: .leading, spacing: DS.Space.l) {
             Text("Download TeX Files").font(.title2.bold())
-            Text("No TeX Live is installed on this Mac. FlashTeX can typeset with a pinned set of unmodified TeX Live files instead, downloaded once into the cache and checked against their published SHA-256 digests. Nothing is downloaded until you say so; the files then serve every document.")
+            Text("No TeX Live is installed on this Mac. The new engine can typeset with a pinned set of unmodified TeX Live files instead, downloaded once into the cache and checked against their published SHA-256 digests. Nothing is downloaded until you say so; the files then serve every document.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let config {
                 HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
@@ -234,11 +233,11 @@ struct EngineV3BundleSheet: View {
                 Spacer()
                 Button("Not Now") { model.engineV3.answerBundleConsent(false) }
                     .keyboardShortcut(.cancelAction)
-                    .accessibilityHint("Downloads nothing; nothing is compiled until the TeX files are downloaded or TeX Live is installed.")
+                    .accessibilityHint("Downloads nothing; this document is typeset with the previous engine.")
                     .accessibilityIdentifier("engine-v3.bundle.not-now")
                 Button("Download") { model.engineV3.answerBundleConsent(true) }
                     .keyboardShortcut(.defaultAction)
-                    .accessibilityHint("Downloads the TeX files, then starts the engine.")
+                    .accessibilityHint("Downloads the TeX files, then starts the new engine.")
                     .accessibilityIdentifier("engine-v3.bundle.download")
             }
         }

@@ -296,7 +296,7 @@ extension ShellModel {
     }
 
     private func noteOccurrence(_ k: Int, of group: EditorDiagnostics.Group, in diags: [RuntimeV1.Diagnostic], index: Int) {
-        if let source = markSource, let id = EditorDiagnostics.identity(resultID: source.id, index: index, in: source.result) {
+        if let result, let id = EditorDiagnostics.identity(resultID: resultID, index: index, in: result) {
             currentDiagnosticID = id.key
         }
         let label = EditorDiagnostics.occurrenceLabel(k, of: group, in: diags, texts: compiledDocuments)
@@ -388,10 +388,17 @@ extension ShellModel {
     /// `DiagnosticsAnnouncer`; a throttled change is spoken once the
     /// interval ends. `nowNs` is injectable so tests drive the clock.
     func noteCompileCompletedForVoiceOver(nowNs: UInt64 = MonotonicClock.nowNs()) {
+<<<<<<< ours
         // The call comes from the host's DONE (EngineV3Session), after its
         // rows are published.
         guard engineV3Enabled else { resetDiagnosticsAnnouncer(); return }
         let summary = engineV3Problems.spokenSummary
+=======
+        // Under engine v3 there is no old-engine result: the call comes from
+        // the host's DONE (EngineV3Session), after its rows are published.
+        guard result != nil || engineV3Enabled else { resetDiagnosticsAnnouncer(); return }
+        let summary = EditorDiagnostics.spokenSummary(displayedDiagnostics)
+>>>>>>> theirs
         if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) { announceDiagnostics(message) }
         armDiagnosticsFlushIfNeeded(nowNs: nowNs)
     }
@@ -613,10 +620,23 @@ struct DiagnosticRow: View {
                 Spacer(minLength: DS.Space.m)
                 // Row actions are JetBrains inline links, not bezelled push
                 // buttons (owner on #653: no glass/bezel controls).
+<<<<<<< ours
                 if fixable {
                     DiagnosticHelpFixSlot(diagnostic: d, index: i)
                 } else {
                     MissingIncludeFixButton(diagnostic: d)
+=======
+                if helpFix {
+                    InlineActionButton(title: "Fix…") { model.previewQuickFix(diagnosticIndex: i) }
+                        .help(d.help?.message ?? "Preview a suggested fix")
+                } else if let x = model.explanations.explanation(resultID: model.resultID, index: i),
+                   x.suggestions.contains(where: { !$0.edits.isEmpty }) {
+                    InlineActionButton(title: "Fix…") { model.previewQuickFix(diagnosticIndex: i) }
+                        .help(x.suggestions.first { !$0.edits.isEmpty }?.text ?? "Preview a suggested fix")
+                } else if let fix = MissingIncludeFix.quickFix(for: d, projectRoot: model.project.projectRoot) { // ProjectScaffold.swift
+                    InlineActionButton(title: "Create \(fix.path)") { Task { _ = await model.project.createMissingInclude(fix.argument, from: fix.from); model.navigationNote = model.project.status } }
+                        .help("Create the empty file \(fix.path) under the project root and open it as included from \(fix.from)")
+>>>>>>> theirs
                 }
                 // The compiler's missing-package diagnostic (`packages X are
                 // recognised but not implemented`, `no project file found:
@@ -681,7 +701,18 @@ struct DiagnosticRow: View {
                     if let line = EditorDiagnostics.recoveryLine(recovery: d.recovery, status: status) {
                         Text("↳ \(line)").font(DS.Fonts.secondary).foregroundStyle(d.recovery == nil ? DS.Colors.textTertiary : DS.Colors.textSecondary)
                     }
+<<<<<<< ours
                     WithheldUnderlineNote(index: i) // reads the editor's marks, which follow every key
+=======
+                    if let explain = model.explanations.explanation(resultID: model.resultID, index: i)?.line {
+                        Text("↳ \(explain)").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                    }
+                    if let result = model.result,
+                       let id = EditorDiagnostics.identity(resultID: model.resultID, index: i, in: result),
+                       model.editorMarkReport.staleIdentities.contains(id) {
+                        Text("underline withheld: span edited since the compile").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning)
+                    }
+>>>>>>> theirs
                 }
                 .padding(.leading, DS.Space.xxl)
             }
@@ -695,9 +726,15 @@ struct DiagnosticRow: View {
         }
         .controlSize(.small) // 30 TeX diagnostics must fit a 260 pt panel: small trailing controls, tight rows
         .modifier(SecondaryLabelHelp(text: secondaryHelp))
+<<<<<<< ours
         .accessibleDiagnostic(EditorDiagnostics.rowAccessibility(lg, occurrence: k, in: diags, index: i, total: total, status: status,
                                                                  explanation: nil,
                                                                  lines: model.problemsLines)) {
+=======
+        .accessibleDiagnostic(EditorDiagnostics.rowAccessibility(g, occurrence: k, in: diags, status: status,
+                                                                 explanation: model.explanations.explanation(resultID: model.resultID, index: i)?.line,
+                                                                 texts: model.compiledDocuments)) {
+>>>>>>> theirs
             model.goToOccurrence(k, of: g, panel: panel)
         } // FlashTeXAccessibility: one spoken element, "Go to source" as the default action
     }

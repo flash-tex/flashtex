@@ -8,7 +8,7 @@ import HostedWindows
 
 /// Hyperref links in the engine-v3 preview (DESIGN §10, app parity): a
 /// click on a link opens an allowlisted URI or scrolls to the destination,
-/// with the retired v2 pane's policy (its `DisplayListLinks`), and hovering shows the
+/// with the v2 pane's policy (`DisplayListLinks`), and hovering shows the
 /// pointing hand and the target as a tooltip. The pure rules are checked
 /// against fixed expectations (the v2 pane's verdicts, which S6a moved into
 /// EngineV3Links); the pane test compiles a hyperref document in a hosted

@@ -1,0 +1,98 @@
+{
+  "protocol_version": 2,
+  "id": "links-1",
+  "type": "display_list",
+  "payload": {
+    "render_format": "display-list-v2",
+    "coordinate_unit": "bp_2pow20",
+    "color_space": "srgb",
+    "text_extraction": "cluster-actualtext",
+    "project_id": "demo",
+    "revision": 1,
+    "required_features": ["rgba-srgb", "cluster-actualtext"],
+    "documents": [
+      {
+        "path": "main.tex",
+        "revision": 1,
+        "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+        "byte_length": 1
+      }
+    ],
+    "fonts": [],
+    "pages": [
+      {
+        "number": 1,
+        "width": 641728512,
+        "height": 830472192,
+        "items": []
+      },
+      {
+        "number": 2,
+        "width": 641728512,
+        "height": 830472192,
+        "items": []
+      }
+    ],
+    "diagnostics": [],
+    "navigation": {
+      "links": [
+        {
+          "page": 1,
+          "rect": [75497472, 125829120, 157286400, 138412032],
+          "class": "link",
+          "border": ["0", "0", "1"],
+          "color": ["1", "0", "0"],
+          "target": {"destination": "section.1"},
+          "source": {"document": "main.tex", "start": 120, "end": 139}
+        },
+        {
+          "page": 1,
+          "rect": [75497472, 104857600, 157286400, 117440512],
+          "class": "url",
+          "border": ["0", "0", "1"],
+          "color": ["0", "1", "1"],
+          "target": {"uri": "https://example.com"},
+          "source": {"document": "main.tex", "start": 150, "end": 175}
+        },
+        {
+          "page": 1,
+          "rects": [
+            [209715200, 104857600, 262144000, 117440512],
+            [75497472, 146800640, 125829120, 159383552]
+          ],
+          "class": "url",
+          "target": {"uri": "https://example.com/wrapped"},
+          "source": {"document": "main.tex", "start": 200, "end": 240}
+        },
+        {
+          "page": 2,
+          "rect": [1048576, 1048576, 10485760, 10485760],
+          "class": "url",
+          "target": {"uri": "mailto:tex@example.com"}
+        },
+        {
+          "page": 1,
+          "rect": [314572800, 104857600, 367001600, 117440512],
+          "class": "url",
+          "target": {"uri": "file:///etc/passwd"}
+        },
+        {
+          "page": 1,
+          "rect": [377487360, 104857600, 429916160, 117440512],
+          "class": "url",
+          "target": {"uri": "javascript:alert(1)"}
+        }
+      ],
+      "destinations": {
+        "section.1": {"page": 2, "x": 0, "y": 10485760, "view": "xyz"}
+      },
+      "outline": [
+        {"title": "Introduction", "level": 1, "destination": "section.1"}
+      ],
+      "outline_open": false,
+      "page_mode": "use_outlines",
+      "open_action": "fit_first_page",
+      "info": {"title": "", "author": "", "subject": "", "keywords": "", "creator": "LaTeX with hyperref"}
+    }
+  }
+}

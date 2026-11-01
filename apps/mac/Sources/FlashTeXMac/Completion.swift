@@ -2511,7 +2511,7 @@ final class CompletionScheduler {
         pending = nil
     }
 
-    /// Head-of-run-loop delivery: a plain
+    /// Head-of-run-loop delivery (see `WorkerClient.deliver`): a plain
     /// `DispatchQueue.main.async` waits for AppKit to reach the dispatch port.
     nonisolated private static func onMain(_ block: @escaping @Sendable () -> Void) {
         CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue, block)
@@ -4228,9 +4228,11 @@ final class CompletingTextView: NSTextView {
 /// the first time the caret is in a font argument; nil or a missing binary
 /// offers nothing.
 enum InstalledFonts {
-    /// The program that lists the families: Unicode mode's host.
+    /// The program that lists the families: Unicode mode's host, else the
+    /// previous engine's `flashtex-render` (same flags), which goes with the
+    /// old route (retirement plan S6).
     @MainActor static func lister() -> URL? {
-        EngineV3.locateHost(mode: .unicode)
+        EngineV3.locateHost(mode: .unicode) ?? ShellModel.locateRenderPipeline()
     }
 
     private static let lock = NSLock()
@@ -4268,7 +4270,7 @@ enum InstalledFonts {
         p.standardOutput = stdout
         p.standardError = FileHandle.nullDevice
         // The drain publishes under a lock: the bounded waits below can
-        // expire while it is still reading.
+        // expire while it is still reading (see ExactPDFExport.run).
         let drained = Drained()
         let group = DispatchGroup()
         group.enter(); DispatchQueue.global().async { drained.put(stdout.fileHandleForReading.readDataToEndOfFile()); group.leave() }

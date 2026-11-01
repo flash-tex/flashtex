@@ -449,15 +449,8 @@ final class EngineV3Session {
         }
         let snapshot = model?.manifest.snapshot
         let warning = snapshot?.warnings.first { $0.key == "project.mode" }.map { "\($0.key): \($0.message)" }
-        let r = EngineV3Mode.resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_MODE"],
-                                     manifest: snapshot?.manifest.project.mode, manifestWarning: warning, mainText: text)
-        // Nothing set the mode, and the document needs Unicode fonts (or the
-        // project sets [fonts]): Unicode mode, decided in memory
-        // (UnicodeFonts.swift; the retirement plan's S6, no previous engine).
-        if r.source == "default", r.warning == nil, model?.unicodeRouting != nil {
-            return EngineV3Mode.Resolution(mode: .unicode, format: EngineV3Mode.unicode.format, source: EngineV3Mode.detectedSource, warning: nil)
-        }
-        return r
+        return EngineV3Mode.resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_MODE"],
+                                    manifest: snapshot?.manifest.project.mode, manifestWarning: warning, mainText: text)
     }
 
     /// The first 4 KB of a file, as text (the `% !TEX` lines are there).
@@ -511,11 +504,10 @@ final class EngineV3Session {
         }
         // No TeX Live and a bundle not downloaded yet: ask first (the host
         // would download it as it starts). The answer starts the host, or
-        // the window says that compiling needs the TeX files (TeXMissingBanner).
+        // falls back to the previous engine.
         if case .ask(let config) = EngineV3Bundle.currentGate() {
             bundleConsentConfig = config
             environmentNote = "Waiting for your answer: download the TeX files?"
-            log("waiting for the TeX files' download consent (no TeX Live)") // launch-check.sh reads it
             if !bundleConsentShown { bundleConsentShown = true }
             return
         }
@@ -542,8 +534,7 @@ final class EngineV3Session {
     }
 
     /// The consent sheet's answer: download (and start the host), or not
-    /// now (nothing compiles, and the window says so, with a Download
-    /// button: owner ruling RQ20, EngineChoice.swift).
+    /// now (the previous engine typesets, and the window says why).
     func answerBundleConsent(_ download: Bool) {
         // The answer is for the bundle the sheet showed (its digest and source).
         if let config = bundleConsentConfig ?? EngineV3Bundle.configured() { EngineV3Bundle.setConsent(download, for: config) }
@@ -746,8 +737,8 @@ final class EngineV3Session {
             if failed {
                 phase = .failed("The \(engineName) format could not be prepared: \(formats)")
             }
-            // No TeX Live and no format: the window says that compiling
-            // needs the TeX files or TeX Live (RQ20, EngineChoice.swift).
+            // No TeX Live and no format: the document falls back to the
+            // previous engine, and the window says why (EngineChoice.swift).
             if EngineChoice.hostLacksTeXLive(DL3JSONView(texlive: j["texlive"]?.string, formatFailed: failed)) {
                 model?.engineV3HostLacksTeXLive()
             }
@@ -1089,7 +1080,7 @@ final class EngineV3Session {
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
 
-    /// Opens handled (tests count them).
+    /// Opens handled (tests: an open the previous engine typesets reaches none).
     @ObservationIgnored private(set) var projectChanges = 0
 
     /// The `[project] texinputs` links the last walk made (EngineV3Mirror.linkTexInputs).
@@ -1109,8 +1100,8 @@ final class EngineV3Session {
         heldForManifest = false
         // `[fonts]` (the Fonts sheet, an outside edit): Unicode mode's host
         // reads them from the copy's flashtex.toml at each compile
-        // (crates/flashtex-xetex host/fonts.rs), so a change compiles
-        // (app-parity row A9).
+        // (crates/flashtex-xetex host/fonts.rs), so a change compiles, as the
+        // previous engine's `configure_fonts` did (app-parity row A9).
         // Classic does not apply them (modes PROPOSAL §4.5).
         let fontsChanged = hostMode == .unicode && model.manifest.fontsByRole != fontsApplied
         guard held || fontsChanged || model.manifest.texInputLinks != texInputLinksApplied
@@ -1961,8 +1952,8 @@ final class EngineV3Session {
                 let failed = status == "failed" || compileFatal || (status == "error" && (j["pages"]?.int ?? 1) == 0)
                 if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
                 // A package that needs XeTeX or LuaTeX stopped it (fontspec, unicode-math,
-                // xeCJK, \RequireXeTeX): unless its mode is set, the document moves to
-                // Unicode mode, visibly (UnicodeFonts.swift; the preamble scan missed it).
+                // xeCJK, \RequireXeTeX): the compatibility engine takes the document,
+                // visibly (UnicodeFonts.swift; the preamble scan missed it).
                 if status != "ok", let model,
                    let need = MainThreadProbe.time("v3.done.unicode", { diags.lazy.compactMap(UnicodeFonts.need(in:)).first
                        ?? diagnostics.lazy.compactMap({ UnicodeFonts.need(message: $0["message"]?.string ?? "", detail: $0["detail"]?.string) }).first }) {

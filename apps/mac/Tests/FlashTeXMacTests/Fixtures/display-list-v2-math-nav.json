@@ -1,0 +1,1889 @@
+{
+ "id": "nav3-1",
+ "payload": {
+  "color_space": "srgb",
+  "coordinate_unit": "bp_2pow20",
+  "diagnostics": [
+   {
+    "code": "math_resource_profile",
+    "message": "lmex10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmex10 design",
+    "severity": "warning",
+    "sources": []
+   },
+   {
+    "code": "math_resource_profile",
+    "message": "lmmi10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi10 design",
+    "severity": "warning",
+    "sources": []
+   },
+   {
+    "code": "math_resource_profile",
+    "message": "lmmi7: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi7 design",
+    "severity": "warning",
+    "sources": []
+   },
+   {
+    "code": "math_resource_profile",
+    "message": "lmsy10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design",
+    "severity": "warning",
+    "sources": []
+   }
+  ],
+  "documents": [
+   {
+    "byte_length": 163,
+    "path": "main.tex",
+    "revision": 1,
+    "sha256": "9d212972eaa7eb8bf45ef3527d5b8eeecfce614a6c1b16ecd68b1dd5fc9e4a0c"
+   }
+  ],
+  "fonts": [
+   {
+    "byte_length": 111536,
+    "face_index": 0,
+    "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+    "format": "opentype-cff",
+    "glyph_count": 821,
+    "postscript_name": "LMRoman10-Regular",
+    "sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+    "units_per_em": 1000
+   },
+   {
+    "byte_length": 110792,
+    "face_index": 0,
+    "font_id": "48c4b46ab255eec96588fb992fba1ed6102e53d051da480738a61cc6cdb328c3",
+    "format": "opentype-cff",
+    "glyph_count": 821,
+    "postscript_name": "LMRoman7-Regular",
+    "sha256": "48c4b46ab255eec96588fb992fba1ed6102e53d051da480738a61cc6cdb328c3",
+    "units_per_em": 1000
+   },
+   {
+    "byte_length": 733736,
+    "face_index": 0,
+    "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+    "format": "opentype-cff",
+    "glyph_count": 4802,
+    "postscript_name": "LatinModernMath-Regular",
+    "sha256": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+    "units_per_em": 1000
+   }
+  ],
+  "pages": [
+   {
+    "height": 830472192,
+    "items": [
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 155936179
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 3772254,
+          "x": 155936179
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 42,
+          "path": "main.tex",
+          "start_byte": 41
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 134114565,
+          "x": 159708433
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 159708433
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 43,
+          "path": "main.tex",
+          "start_byte": 42
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 134114565,
+          "x": 165512029
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 2901808,
+          "x": 165512029
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 44,
+          "path": "main.tex",
+          "start_byte": 43
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 2
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 134114565,
+          "x": 168413838
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 2901808,
+          "x": 168413838
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 45,
+          "path": "main.tex",
+          "start_byte": 44
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 3
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 4,
+          "top": 134114565,
+          "x": 171315646
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 171315646
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 46,
+          "path": "main.tex",
+          "start_byte": 45
+         }
+        ],
+        "text_end_byte": 5,
+        "text_start_byte": 4
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 5,
+          "top": 134114565,
+          "x": 177119242
+         },
+         {
+          "height": 7196394,
+          "text_byte": 6,
+          "top": 134114565,
+          "x": 181762231
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 177119242
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 47,
+          "path": "main.tex",
+          "start_byte": 46
+         }
+        ],
+        "text_end_byte": 6,
+        "text_start_byte": 5
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 3772254,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 65,
+        "origin_x": 155936179
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 77,
+        "origin_x": 159708433
+       },
+       {
+        "advance_x": 2901808,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 72,
+        "origin_x": 165512029
+       },
+       {
+        "advance_x": 2901808,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 66,
+        "origin_x": 168413838
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 4,
+        "gid": 77,
+        "origin_x": 171315646
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 5,
+        "gid": 50,
+        "origin_x": 177119242
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "Inline"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 4732303,
+          "text_byte": 0,
+          "top": 136693568,
+          "x": 185244423
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 4732303,
+          "top": 136693568,
+          "width": 5526244,
+          "x": 185244423
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 5526244,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 1296,
+        "origin_x": 185244423
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "a"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 4855573,
+          "text_byte": 0,
+          "top": 132664402,
+          "x": 190766372
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 4855573,
+          "top": 132664402,
+          "width": 4160875,
+          "x": 190766372
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "48c4b46ab255eec96588fb992fba1ed6102e53d051da480738a61cc6cdb328c3",
+      "font_size": 7312610,
+      "glyphs": [
+       {
+        "advance_x": 4160875,
+        "advance_y": 0,
+        "baseline_y": 137519975,
+        "cluster": 0,
+        "gid": 107,
+        "origin_x": 190766372
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "2"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 6957426,
+          "text_byte": 0,
+          "top": 135220600,
+          "x": 197774109
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 6957426,
+          "top": 135220600,
+          "width": 8127443,
+          "x": 197774109
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 8127443,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 89,
+        "origin_x": 197774109
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "+"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7364843,
+          "text_byte": 0,
+          "top": 134061029,
+          "x": 208220865
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7364843,
+          "top": 134061029,
+          "width": 4481585,
+          "x": 208220865
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 4481585,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 1297,
+        "origin_x": 208220865
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "b"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 4855573,
+          "text_byte": 0,
+          "top": 138022358,
+          "x": 212704181
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 4855573,
+          "top": 138022358,
+          "width": 4160875,
+          "x": 212704181
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "48c4b46ab255eec96588fb992fba1ed6102e53d051da480738a61cc6cdb328c3",
+      "font_size": 7312610,
+      "glyphs": [
+       {
+        "advance_x": 4160875,
+        "advance_y": 0,
+        "baseline_y": 142877931,
+        "cluster": 0,
+        "gid": 82,
+        "origin_x": 212704181
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "1"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 2444501,
+          "text_byte": 0,
+          "top": 137477062,
+          "x": 220292270
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 2444501,
+          "top": 137477062,
+          "width": 8127443,
+          "x": 220292270
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 8127443,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 52,
+        "origin_x": 220292270
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "="
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 3312612,
+          "text_byte": 0,
+          "top": 133965634,
+          "x": 232572965
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 3312612,
+          "top": 133965634,
+          "width": 4182813,
+          "x": 232572965
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 4731258,
+          "text_byte": 1,
+          "top": 141681196,
+          "x": 232692046
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 4731258,
+          "top": 141681196,
+          "width": 3583179,
+          "x": 232692046
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 7312610,
+      "glyphs": [
+       {
+        "advance_x": 4182813,
+        "advance_y": 0,
+        "baseline_y": 137197807,
+        "cluster": 0,
+        "gid": 1319,
+        "origin_x": 232572965
+       },
+       {
+        "advance_x": 3583179,
+        "advance_y": 0,
+        "baseline_y": 144913370,
+        "cluster": 1,
+        "gid": 1320,
+        "origin_x": 232692046
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "xy"
+     },
+     {
+      "height": 417841,
+      "kind": "rule",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "sources": [
+       {
+        "end_byte": 73,
+        "path": "main.tex",
+        "start_byte": 48
+       }
+      ],
+      "top": 138490392,
+      "width": 4737243,
+      "x": 232572965
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 242045987
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5223293,
+          "x": 242045987
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 75,
+          "path": "main.tex",
+          "start_byte": 74
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 134114565,
+          "x": 247269280
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 247269280
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 76,
+          "path": "main.tex",
+          "start_byte": 75
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 134114565,
+          "x": 253072876
+         },
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 134114565,
+          "x": 258876473
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 253072876
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 77,
+          "path": "main.tex",
+          "start_byte": 76
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 2
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 5223293,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 28,
+        "origin_x": 242045987
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 77,
+        "origin_x": 247269280
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 47,
+        "origin_x": 253072876
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "and"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 10446585,
+          "text_byte": 0,
+          "top": 133368670,
+          "x": 262358665
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 10446585,
+          "top": 133368670,
+          "width": 8702006,
+          "x": 262358665
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 88,
+          "path": "main.tex",
+          "start_byte": 78
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 4732303,
+          "text_byte": 3,
+          "top": 136693568,
+          "x": 271064179
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 4732303,
+          "top": 136693568,
+          "width": 4857662,
+          "x": 271064179
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 88,
+          "path": "main.tex",
+          "start_byte": 78
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 3
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 8702006,
+        "advance_y": 0,
+        "baseline_y": 133786534,
+        "cluster": 0,
+        "gid": 3077,
+        "origin_x": 262358665
+       },
+       {
+        "advance_x": 4857662,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 1321,
+        "origin_x": 271064179
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "√z"
+     },
+     {
+      "height": 417841,
+      "kind": "rule",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "sources": [
+       {
+        "end_byte": 88,
+        "path": "main.tex",
+        "start_byte": 78
+       }
+      ],
+      "top": 133368692,
+      "width": 5317627,
+      "x": 271064179
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 6578471,
+          "text_byte": 0,
+          "top": 134732488,
+          "x": 279863998
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 6578471,
+          "top": 134732488,
+          "width": 4062685,
+          "x": 279863998
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 90,
+          "path": "main.tex",
+          "start_byte": 89
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 6578471,
+          "text_byte": 1,
+          "top": 134732488,
+          "x": 283926682
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 6578471,
+          "top": 134732488,
+          "width": 4642989,
+          "x": 283926682
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 91,
+          "path": "main.tex",
+          "start_byte": 90
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 6578471,
+          "text_byte": 2,
+          "top": 134732488,
+          "x": 288569671
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 6578471,
+          "top": 134732488,
+          "width": 5513704,
+          "x": 288569671
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 92,
+          "path": "main.tex",
+          "start_byte": 91
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 2
+       },
+       {
+        "carets": [
+         {
+          "height": 6578471,
+          "text_byte": 3,
+          "top": 134732488,
+          "x": 294083375
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 6578471,
+          "top": 134732488,
+          "width": 4062685,
+          "x": 294083375
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 93,
+          "path": "main.tex",
+          "start_byte": 92
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 3
+       },
+       {
+        "carets": [
+         {
+          "height": 6578471,
+          "text_byte": 4,
+          "top": 134732488,
+          "x": 298146060
+         },
+         {
+          "height": 6578471,
+          "text_byte": 5,
+          "top": 134732488,
+          "x": 301047868
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 6578471,
+          "top": 134732488,
+          "width": 2901808,
+          "x": 298146060
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 94,
+          "path": "main.tex",
+          "start_byte": 93
+         }
+        ],
+        "text_end_byte": 5,
+        "text_start_byte": 4
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 4062685,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 105,
+        "origin_x": 279863998
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 50,
+        "origin_x": 283926682
+       },
+       {
+        "advance_x": 5513704,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 116,
+        "origin_x": 288569671
+       },
+       {
+        "advance_x": 4062685,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 105,
+        "origin_x": 294083375
+       },
+       {
+        "advance_x": 2901808,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 4,
+        "gid": 88,
+        "origin_x": 298146060
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "text."
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 3312612,
+          "text_byte": 0,
+          "top": 158787464,
+          "x": 309611488
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 3312612,
+          "top": 158787464,
+          "width": 4387566,
+          "x": 309611488
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 7312610,
+      "glyphs": [
+       {
+        "advance_x": 4387566,
+        "advance_y": 0,
+        "baseline_y": 162019638,
+        "cluster": 0,
+        "gid": 1309,
+        "origin_x": 309611488
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "n"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 10446585,
+          "text_byte": 0,
+          "top": 157318658,
+          "x": 304648763
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 10446585,
+          "top": 157318658,
+          "width": 11031594,
+          "x": 304648763
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 11031594,
+        "advance_y": 0,
+        "baseline_y": 165153597,
+        "cluster": 0,
+        "gid": 3060,
+        "origin_x": 304648763
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "∑"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 4914074,
+          "text_byte": 0,
+          "top": 182569837,
+          "x": 305427133
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 4914074,
+          "top": 182569837,
+          "width": 2522850,
+          "x": 305427133
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 7312610,
+      "glyphs": [
+       {
+        "advance_x": 2522850,
+        "advance_y": 0,
+        "baseline_y": 187403472,
+        "cluster": 0,
+        "gid": 1304,
+        "origin_x": 305427133
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "i"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 1967092,
+          "text_byte": 0,
+          "top": 184588117,
+          "x": 308382769
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 1967092,
+          "top": 184588117,
+          "width": 6413159,
+          "x": 308382769
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 5001825,
+          "text_byte": 1,
+          "top": 182547899,
+          "x": 314795934
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 5001825,
+          "top": 182547899,
+          "width": 4160875,
+          "x": 314795934
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       }
+      ],
+      "font_id": "48c4b46ab255eec96588fb992fba1ed6102e53d051da480738a61cc6cdb328c3",
+      "font_size": 7312610,
+      "glyphs": [
+       {
+        "advance_x": 6413159,
+        "advance_y": 0,
+        "baseline_y": 187403472,
+        "cluster": 0,
+        "gid": 52,
+        "origin_x": 308382769
+       },
+       {
+        "advance_x": 4160875,
+        "advance_y": 0,
+        "baseline_y": 187403472,
+        "cluster": 1,
+        "gid": 121,
+        "origin_x": 314795934
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "=0"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 10446585,
+          "text_byte": 0,
+          "top": 158872455,
+          "x": 322732947
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 10446585,
+          "top": 158872455,
+          "width": 8702006,
+          "x": 322732947
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7020105,
+          "text_byte": 3,
+          "top": 161105530,
+          "x": 331438461
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7020105,
+          "top": 161105530,
+          "width": 3604072,
+          "x": 331438461
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 3
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 8702006,
+        "advance_y": 0,
+        "baseline_y": 159290318,
+        "cluster": 0,
+        "gid": 3077,
+        "origin_x": 322732947
+       },
+       {
+        "advance_x": 3604072,
+        "advance_y": 0,
+        "baseline_y": 168010723,
+        "cluster": 1,
+        "gid": 1304,
+        "origin_x": 331438461
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "√i"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 6957426,
+          "text_byte": 0,
+          "top": 175286339,
+          "x": 326273550
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 6957426,
+          "top": 175286339,
+          "width": 5223293,
+          "x": 326273550
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 134,
+          "path": "main.tex",
+          "start_byte": 95
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 5223293,
+        "advance_y": 0,
+        "baseline_y": 182243765,
+        "cluster": 0,
+        "gid": 107,
+        "origin_x": 326273550
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "2"
+     },
+     {
+      "height": 417841,
+      "kind": "rule",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "sources": [
+       {
+        "end_byte": 134,
+        "path": "main.tex",
+        "start_byte": 95
+       }
+      ],
+      "top": 158872477,
+      "width": 3598984,
+      "x": 331438461
+     },
+     {
+      "height": 417841,
+      "kind": "rule",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "sources": [
+       {
+        "end_byte": 134,
+        "path": "main.tex",
+        "start_byte": 95
+       }
+      ],
+      "top": 172257350,
+      "width": 12304498,
+      "x": 322732947
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 199939374,
+          "x": 140266301
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 199939374,
+          "width": 4642989,
+          "x": 140266301
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 136,
+          "path": "main.tex",
+          "start_byte": 135
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 199939374,
+          "x": 144909290
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 199939374,
+          "width": 5803597,
+          "x": 144909290
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 137,
+          "path": "main.tex",
+          "start_byte": 136
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 199939374,
+          "x": 150712886
+         },
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 199939374,
+          "x": 156516483
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 199939374,
+          "width": 5803597,
+          "x": 150712886
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 138,
+          "path": "main.tex",
+          "start_byte": 137
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 2
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 207135768,
+        "cluster": 0,
+        "gid": 50,
+        "origin_x": 140266301
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 207135768,
+        "cluster": 1,
+        "gid": 77,
+        "origin_x": 144909290
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 207135768,
+        "cluster": 2,
+        "gid": 47,
+        "origin_x": 150712886
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "end"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 4732303,
+          "text_byte": 0,
+          "top": 202518377,
+          "x": 159998674
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 4732303,
+          "top": 202518377,
+          "width": 5975447,
+          "x": 159998674
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 142,
+          "path": "main.tex",
+          "start_byte": 139
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 5975447,
+        "advance_y": 0,
+        "baseline_y": 207135768,
+        "cluster": 0,
+        "gid": 1319,
+        "origin_x": 159998674
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "x"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 199939374,
+          "x": 169451373
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 199939374,
+          "width": 5803597,
+          "x": 169451373
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 145,
+          "path": "main.tex",
+          "start_byte": 143
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 199939374,
+          "x": 175254969
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 199939374,
+          "width": 5803597,
+          "x": 175254969
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 146,
+          "path": "main.tex",
+          "start_byte": 145
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 2
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 199939374,
+          "x": 181058566
+         },
+         {
+          "height": 7196394,
+          "text_byte": 4,
+          "top": 199939374,
+          "x": 183960374
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 199939374,
+          "width": 2901808,
+          "x": 181058566
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 147,
+          "path": "main.tex",
+          "start_byte": 146
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 3
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 207135768,
+        "cluster": 0,
+        "gid": 125,
+        "origin_x": 169451373
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 207135768,
+        "cluster": 1,
+        "gid": 77,
+        "origin_x": 175254969
+       },
+       {
+        "advance_x": 2901808,
+        "advance_y": 0,
+        "baseline_y": 207135768,
+        "cluster": 2,
+        "gid": 88,
+        "origin_x": 181058566
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "fin."
+     }
+    ],
+    "number": 1,
+    "width": 641728512
+   }
+  ],
+  "project_id": "p",
+  "render_format": "display-list-v2",
+  "required_features": [
+   "glyph_run",
+   "rule",
+   "rgba-srgb",
+   "cluster-actualtext"
+  ],
+  "revision": 1,
+  "text_extraction": "cluster-actualtext"
+ },
+ "protocol_version": 2,
+ "type": "display_list"
+}

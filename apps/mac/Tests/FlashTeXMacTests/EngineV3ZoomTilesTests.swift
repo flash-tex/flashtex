@@ -76,6 +76,7 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         try EngineV3TestHost.require()
         let model = ShellModel()
         model.replaceProject(entryText: Self.document, named: "main.tex")
+        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
         model.engineV3Enabled = true
         let s = model.engineV3
         // A hosted window, parked off every display: nothing is activated or focused.
@@ -86,6 +87,7 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         defer {
             model.engineV3.stop()
             window.contentView = nil
+            if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
         }
         try await EngineV3TestHost.awaitReady(s)
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 2 && s.pages[0] != nil }
@@ -205,6 +207,8 @@ final class EngineV3ZoomTilesTests: XCTestCase {
     /// page label's flake, testEachPageIsLabelled, 2026-10-12).
     func testTilesAreWhereTheirPixelsAreOnScreenInFreshPanes() async throws {
         try EngineV3TestHost.require()
+        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         for round in 0 ..< 6 {
             let model = ShellModel()
             model.replaceProject(entryText: Self.document, named: "main.tex")

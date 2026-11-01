@@ -1,25 +1,23 @@
 import AppKit
 import FlashTeXDisplayListV3
 
-// Documents that need Unicode/OpenType fonts (lane P5-FONTSPEC-FALLBACK, then
-// the retirement plan's stage S6, #1236; docs/design/modes/PROPOSAL.md §4.2
-// and Q1). Classic mode is pdfLaTeX-compatible: fontspec, unicode-math,
-// polyglossia, xeCJK and the like stop under it with their own "requires
-// XeTeX or LuaTeX" error. A document that needs them, and whose mode nothing
-// sets (no `[project] mode`, no `% !TEX program` line, no FLASHTEX_MODE), is
-// typeset in Unicode mode (`flashtex-host-unicode`): the routing is decided
-// here, in memory, and never written to the project's flashtex.toml (the
-// mode item says why: `EngineV3Mode.Resolution.source` "detected"). So is a
-// project whose flashtex.toml sets `[fonts]`, which only Unicode mode applies.
+// Documents that need Unicode/OpenType fonts (lane P5-FONTSPEC-FALLBACK; the
+// retirement plan's §4.4 "Unicode-routed documents" and R10, #1236;
+// docs/design/modes/PROPOSAL.md §4.2 and Q1). The new engine is
+// pdfLaTeX-compatible: fontspec, unicode-math, polyglossia, xeCJK and the
+// like stop under it with their own "requires XeTeX or LuaTeX" error. Until
+// the Unicode mode passes its M3 gate the previous engine stays their
+// explicit fallback, so such a document is typeset by it, visibly
+// (`EngineChoice.Blocker.unicodeFonts`), and never ends in that error.
 //
 // Two signals, as the modes proposal's §4.2 has them:
 //   1. a lexical scan of the preamble (this file's `UnicodeFonts.scan`):
 //      the entry document up to `\begin{document}`, and the project's own
 //      `.cls`, `.sty` and `\input` files it loads there;
-//   2. the engine's own truth: a Classic run that reports one of those
-//      packages' errors (`UnicodeFonts.need(in:)` over its DIAGs).
-// A mode the project or the document sets is the user's: detection never
-// overrules it.
+//   2. the engine's own truth: a run of the new engine that reports one of
+//      those packages' errors (`UnicodeFonts.need(in:)` over its DIAGs).
+// The scan suggests; the user's own choice for the document still decides
+// (`Blocker.yieldsToUserChoice`).
 //
 // The scan counts *uses* only. A name that is tested or defined is not a use
 // (`\ifdefined\setmainfont`, `\ifx\fontspec\undefined`,
@@ -539,38 +537,18 @@ extension ShellModel {
         return need
     }
 
-    /// Why the open document is typeset in Unicode mode when nothing sets
-    /// its mode (`EngineV3Session.mode`), or nil: the preamble scan, else a
-    /// Classic run's own report on this document, else `[fonts]` in
-    /// flashtex.toml. Nil too when Unicode mode's engine is not installed
-    /// (the document then stays in Classic mode and shows TeX's error).
-    /// Read on every compile, so it takes the last scan of the entry as it
-    /// is (the check after an edit scans again off the main thread and
-    /// restarts the host when the mode changes); it scans here only when the
-    /// entry has none (an open).
-    var unicodeRouting: String? {
-        guard unicodeModeAvailable else { return nil }
-        let scanned: UnicodeFontsNeed?
-        if let s = unicodeFontsScan, s.entry == project.entryPath { scanned = s.need } else { scanned = unicodeFontsNeed() }
-        if let need = scanned ?? engineHostNeedsUnicode.flatMap({ $0.document == documentURL ? $0.need : nil }) {
-            return "the document uses \(need.what)"
-        }
-        if let m = manifest.currentSnapshot?.manifest {
-            let roles = EngineChoice.fontRoles(manifest: m)
-            if !roles.isEmpty { return "flashtex.toml sets [fonts] (\(roles.joined(separator: ", ")))" }
-        }
-        return nil
-    }
-
     private func unicodeFontsOpenTexts() -> [String: String] {
         Dictionary(documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
     }
 
     /// An edit may have added or removed what makes the document need a
     /// Unicode engine: scan again once typing pauses (0.8 s), off the main
-    /// thread. Cheap per keystroke: one timer, re-armed.
+    /// thread, and only where the rule can apply (the new engine preferred,
+    /// not forced, not the user's own choice). Cheap per keystroke: one
+    /// timer, re-armed.
     func scheduleUnicodeFontsCheck() {
-        guard !engineChoicePending else { return }
+        let c = engineChoice
+        guard c.preferred == .new, !c.isForced, c.source != .user, !engineChoicePending else { return }
         unicodeFontsCheck?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.startUnicodeFontsScan() }
@@ -579,7 +557,7 @@ extension ShellModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: work)
     }
 
-    /// The scan for the current texts on a utility queue, then the mode on
+    /// The scan for the current texts on a utility queue, then the rules on
     /// the main thread (`recheckUnicodeFonts`), unless the texts changed meanwhile.
     func startUnicodeFontsScan(completion: (@MainActor () -> Void)? = nil) {
         unicodeFontsCheck = nil
@@ -600,47 +578,48 @@ extension ShellModel {
         }
     }
 
-    /// The mode again for the open document after an edit (as
+    /// The rules again for the open document after an edit (as
     /// `manifestDidRefresh` after a manifest change): a document that now
-    /// needs Unicode fonts moves to Unicode mode, one that no longer does
-    /// back to Classic, each announced (never silently). The engine's report
-    /// is dropped once the scan no longer finds what it found when the report
-    /// came (the user deleted `\usepackage{fontspec}`).
+    /// needs Unicode fonts falls back, announced; one that no longer does
+    /// returns to the new engine, announced too (never silently). The
+    /// engine's report is dropped once the scan no longer finds what it
+    /// found when the report came (the user deleted `\usepackage{fontspec}`).
     func recheckUnicodeFonts() {
         unicodeFontsCheck = nil
         guard !engineChoicePending, engineChoiceDocument == documentURL else { return }
         if let r = engineHostNeedsUnicode, r.document == documentURL, unicodeFontsNeed() != r.scanned {
             engineHostNeedsUnicode = nil
         }
-        noteDetectedModeChange()
+        var c = engineChoice
+        guard c.preferred == .new, !c.isForced else { return }
+        c.applyRule(engineBlocker())
+        guard c != engineChoice else { return }
+        var ended = false
+        if case .unicodeFonts = engineChoice.blocker, c.blocker == nil { ended = true }
+        engineFallbackDismissed = false
+        applyEngineChoice(c)
+        if ended { announceEngine("This document no longer needs Unicode fonts: the new engine typesets it.") }
     }
 
-    /// A Classic run stopped on a package that needs XeTeX or LuaTeX
-    /// (fontspec's fatal error, unicode-math's, xeCJK's, iftex's
-    /// `\RequireXeTeX`): unless the document's mode is set, it is typeset in
-    /// Unicode mode from now on. The report holds until the document is
-    /// opened again or the scan stops finding what it found now.
+    /// A run of the new engine stopped on a package that needs XeTeX or
+    /// LuaTeX (fontspec's fatal error, unicode-math's, xeCJK's, iftex's
+    /// `\RequireXeTeX`): the document falls back, with the reason, unless the
+    /// choice was forced or is the user's own for this document. The report
+    /// holds until the document is opened again, the user chooses an engine,
+    /// or the scan stops finding what it found now.
     func engineV3NeedsUnicodeFonts(_ need: UnicodeFontsNeed) {
-        guard engineHostNeedsUnicode?.document != documentURL || engineHostNeedsUnicode?.need != need else { return }
+        let c0 = engineChoice
+        guard !c0.isForced, c0.preferred == .new, c0.source != .user, c0.blocker == nil else { return }
         engineHostNeedsUnicode = (documentURL, need, unicodeFontsNeed())
-        noteDetectedModeChange()
-    }
-
-    /// The detected mode may have changed (`unicodeRouting`): a running
-    /// host restarts in the document's mode, and VoiceOver hears why.
-    private func noteDetectedModeChange() {
-        guard engineV3Enabled, engineV3.relaunchIfModeChanged(model: self) else { return }
-        let mode = documentMode
-        if mode.source == EngineV3Mode.detectedSource, let why = unicodeRouting {
-            announceEngine("Unicode mode: \(why), so this document is typeset like XeLaTeX.")
-        } else if mode.mode == .classic {
-            announceEngine("Classic mode: this document no longer needs Unicode fonts.")
-        }
+        var c = c0
+        c.applyRule(.unicodeFonts(need))
+        engineFallbackDismissed = false
+        applyEngineChoice(c)
     }
 
     /// Says `message` to VoiceOver and keeps it (tests read `engineAnnouncements`).
     func announceEngine(_ message: String) {
-        FlashTeXLog.write("engine: \(message)")
+        FlashTeXLog.write("engine choice: \(message)")
         engineAnnouncements.append(message)
         NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested,
                              userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue])

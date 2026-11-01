@@ -5,10 +5,9 @@ import FlashTeXProtocol
 
 /// App-parity row A9, project and system fonts (`[fonts]`) under the new
 /// engine (modes PROPOSAL.md §4.5, owner ruling Q5 and decision 3A): a
-/// project in Unicode mode is typeset by the new engine, with the manifest's
-/// `[fonts]` applied as `xelatex` applies the equivalent fontspec setup; a
-/// `[fonts]` project whose mode nothing sets is routed to Unicode mode (in
-/// memory, UnicodeFonts.swift); a change of `[fonts]` compiles again; and the
+/// project in Unicode mode is typeset by the new engine, not the previous
+/// one, with the manifest's `[fonts]` applied as `xelatex` applies the
+/// equivalent fontspec setup; a change of `[fonts]` compiles again; and the
 /// families the Fonts sheet and `\setmainfont{` offer come from the new
 /// engine's own catalog (`flashtex-host-unicode --list-fonts`).
 ///
@@ -31,15 +30,18 @@ final class EngineV3ProjectFontsTests: XCTestCase {
     override func setUp() {
         OwnerStateGuard.install()
         env.set("FLASHTEX_V3_CACHE", Self.cache.path)
-        env.set("FLASHTEX_ENGINE_V3", "")
+        env.set("FLASHTEX_ENGINE_V3", "") // the per-document choice and its rules decide
         env.set("FLASHTEX_MODE", "")
         env.set("FLASHTEX_BUNDLE_LOCK", "/nonexistent/flashtex-bundle.lock")
         env.set("FLASHTEX_BUNDLE_DIGEST", "")
         EngineV3Bundle.forgetConsent()
+        EngineChoiceStore.appSetting = .new
+        EngineChoice.builtInDefaultForTests = nil
     }
 
     override func tearDown() {
         for f in files { EngineChoiceStore.set(nil, for: f) }
+        EngineChoiceStore.appSetting = nil
         EngineV3Bundle.forgetConsent()
         for d in dirs { try? FileManager.default.removeItem(at: d) }
         env.restore()
@@ -85,6 +87,7 @@ final class EngineV3ProjectFontsTests: XCTestCase {
     /// A model whose manifest reads are `manifest()` (the helper's answer).
     private func model(_ manifest: @escaping () -> ProjectFilesV1.Manifest?) -> ShellModel {
         let m = ShellModel()
+        m.detachWorker()
         m.manifest.reader = { _, _ in manifest().map { .success($0) } ?? .failure(.init("no manifest (test)")) }
         return m
     }
@@ -99,12 +102,11 @@ final class EngineV3ProjectFontsTests: XCTestCase {
 
     // MARK: no host
 
-    /// A `[fonts]` project in Unicode mode is the new engine's, with no
-    /// announcement; one whose mode nothing sets is routed to Unicode mode
-    /// in memory (only Unicode mode applies `[fonts]`), never written to
-    /// flashtex.toml; Classic chosen in flashtex.toml is the user's and stays
-    /// (Classic, like pdfLaTeX, does not apply `[fonts]`, PROPOSAL §4.5). No
-    /// other engine takes over in any of them.
+    /// A `[fonts]` project in Unicode mode is the new engine's: no fallback
+    /// rule, no banner, no announcement. In Classic mode the same project
+    /// still falls back visibly until S6 (retirement plan §4.4: Classic does
+    /// not apply `[fonts]`, PROPOSAL §4.5, and the old engine stays its
+    /// explicit fallback until the Unicode mode's M3 gate).
     func testAFontsProjectInUnicodeModeIsTypesetByTheNewEngine() throws {
         let bin = try dir("texbin")
         FileManager.default.createFile(atPath: bin.appendingPathComponent("kpsewhich").path, contents: Data())
@@ -121,34 +123,25 @@ final class EngineV3ProjectFontsTests: XCTestCase {
         let m = model { current }
         defer { m.engineV3.stop() }
         XCTAssertEqual(m.openTex(at: main, dirty: .discard), .opened)
-        m.engineV3Enabled = true // the session (the Unicode host stub exits at once)
         XCTAssertEqual(m.documentMode.mode, .unicode)
-        XCTAssertEqual(m.documentMode.source, "flashtex.toml")
+        XCTAssertNil(m.engineChoice.blocker, m.engineChoice.explanation)
+        XCTAssertEqual(m.engineChoice.effective, .new)
         XCTAssertTrue(m.engineV3Enabled, "the new engine typesets it")
+        XCTAssertEqual(EngineChoiceStatusItem.spokenLabel(m.engineChoice), "Engine: New engine")
         XCTAssertTrue(m.engineAnnouncements.isEmpty, "\(m.engineAnnouncements)")
-        XCTAssertNil(m.unicodeModeSuggestion, "nothing to mark in Unicode mode")
+        XCTAssertNil(UnicodeModeSuggestionBanner.message(m), "no suggestion in Unicode mode")
 
-        // Classic, chosen in flashtex.toml: kept; the new engine still typesets it.
+        // Classic, chosen in flashtex.toml (S5's interim rule): the visible fallback.
         current = Self.manifest(root: root, mode: "classic", fonts: ["text": Self.family])
         m.manifest.refresh()
         XCTAssertEqual(m.documentMode.mode, .classic)
-        XCTAssertEqual(m.documentMode.source, "flashtex.toml")
-        XCTAssertTrue(m.engineV3Enabled, "no other engine takes over")
+        XCTAssertEqual(m.engineChoice.blocker, .projectFonts(["text"]))
+        XCTAssertFalse(m.engineV3Enabled)
 
-        // No mode set: `[fonts]` routes the project to Unicode mode, in memory.
-        current = Self.manifest(root: root, mode: nil, fonts: ["text": Self.family])
-        m.manifest.refresh()
-        XCTAssertEqual(m.documentMode.mode, .unicode)
-        XCTAssertEqual(m.documentMode.source, EngineV3Mode.detectedSource)
-        XCTAssertEqual(m.unicodeRouting, "flashtex.toml sets [fonts] (text)")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("flashtex.toml").path), "the routing is not written")
-        XCTAssertTrue(m.engineV3Enabled)
-
-        // Back to Unicode, set in flashtex.toml.
+        // Back to Unicode: the new engine again.
         current = Self.manifest(root: root, mode: "unicode", fonts: ["text": Self.family])
         m.manifest.refresh()
-        XCTAssertEqual(m.documentMode.mode, .unicode)
-        XCTAssertEqual(m.documentMode.source, "flashtex.toml")
+        XCTAssertNil(m.engineChoice.blocker)
         XCTAssertTrue(m.engineV3Enabled)
     }
 
@@ -179,6 +172,7 @@ final class EngineV3ProjectFontsTests: XCTestCase {
         let main = root.appendingPathComponent("main.tex")
         try "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n".write(to: main, atomically: true, encoding: .utf8)
         files.append(main)
+        EngineChoiceStore.appSetting = .previous // no host is started for this
         let m = model { Self.manifest(root: root, mode: nil, fonts: [:]) }
         defer { m.engineV3.stop() }
         XCTAssertEqual(m.openTex(at: main, dirty: .discard), .opened)
@@ -268,8 +262,8 @@ final class EngineV3ProjectFontsTests: XCTestCase {
         let box = Box(Self.manifest(root: root, mode: "unicode", fonts: fonts))
         let m = model { box.m }
         XCTAssertEqual(m.openTex(at: main, dirty: .discard), .opened)
-        XCTAssertEqual(m.documentMode.mode, .unicode)
-        m.engineV3Enabled = true // the session starts on the opened project
+        XCTAssertNil(m.engineChoice.blocker, m.engineChoice.explanation)
+        XCTAssertTrue(m.engineV3Enabled, "the new engine typesets a [fonts] project in Unicode mode")
         let s = m.engineV3
         try await EngineV3TestHost.awaitReady(s)
         XCTAssertEqual(s.hostMode, .unicode)
