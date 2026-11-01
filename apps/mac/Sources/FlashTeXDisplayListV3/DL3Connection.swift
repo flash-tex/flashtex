@@ -196,6 +196,11 @@ public final class DL3Connection: @unchecked Sendable {
     /// host whose HELLO lists `DL3.profileCapability`). The host answers
     /// with a `PROFILE` (decoded as `.other`) once it applies, between compiles.
     public func setProfile(_ mode: String) throws { try send(DL3.Kind.cProfile, .object(["profile": .string(mode)])) }
+    /// `VIEWPORT` (§6.3.1; only to a host whose HELLO lists
+    /// `DL3.viewportCapability`): the view shows page `page` (0-based). No reply.
+    public func setViewport(page: Int) throws { try send(DL3.Kind.cViewport, .object(["page": .int(Int64(page))])) }
+    /// Whether the host takes `VIEWPORT`.
+    public var offersViewport: Bool { hello["capabilities"]?.array?.contains(.string(DL3.viewportCapability)) ?? false }
     /// Whether the host offers performance modes.
     public var offersProfiles: Bool { hello["capabilities"]?.array?.contains(.string(DL3.profileCapability)) ?? false }
     public func bye() { try? send(DL3.Kind.bye, .object([:])); shutdownSocket() }
