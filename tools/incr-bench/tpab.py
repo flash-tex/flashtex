@@ -72,6 +72,12 @@ def perf_ok():
 
 
 PERF = perf_ok()
+if PERF and EXTRA:
+    # an event this perf or CPU does not know would stop every compile
+    _r = subprocess.run(['perf', 'stat', '-x,', '-e', EXTRA[1:], 'true'], capture_output=True, text=True)
+    if _r.returncode != 0 or 'not supported' in _r.stderr:
+        print(f'tpab.py: dropping events {EXTRA[1:]}: {_r.stderr.strip()[:200]}', flush=True)
+        EXTRA = ''
 
 
 def source(doc):
