@@ -779,6 +779,16 @@ pub(crate) struct Core {
     spare: Vec<u64>,
     /// A `reattach_lazy` whose redo is not copied in yet (`Lazy`).
     lazy: Option<Lazy>,
+    /// A second prepared restore (`prepare_also`): a READ-REVALIDATE
+    /// compile restores twice, to `P0` and, after the comparison held and
+    /// the reattach, to `P2` (`incr::Session::prepare_next`). The first
+    /// takes `prepared`, the second this. Its redo is not made ahead
+    /// (`Prepared::pre` empty): the restore to `P0`, the run and the
+    /// reattach between them clear the barrier's flags, which say whether a
+    /// redo made ahead still holds.
+    also: Option<Prepared>,
+    /// `prepare_go_on` makes no redo ahead (`prepare_also`).
+    no_pre: bool,
 }
 
 /// A reattach whose last step waits (`Core::reattach_lazy`, lane T7-MARGIN):
@@ -1297,7 +1307,7 @@ impl Core {
             p.rewound += 1;
         }
         // the redo made ahead
-        while p.pre.len() < p.cs.len() {
+        while !self.no_pre && p.pre.len() < p.cs.len() {
             if !p.pre.is_empty() && stop() {
                 return false;
             }
@@ -1331,6 +1341,27 @@ impl Core {
     /// Replace the prepared restore, giving the old one's redo chunks back.
     fn set_prepared(&mut self, p: Option<Prepared>) {
         if let Some(old) = std::mem::replace(&mut self.prepared, p) {
+            self.give_pre(old.pre);
+        }
+    }
+
+    /// `prepare_restore` to `id` into the second slot (`also`), the first
+    /// and a stopped preparation left as they are; no redo made ahead. A
+    /// preparation `stop` ends is dropped (false).
+    fn prepare_also(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
+        let keep = (self.prepared.take(), self.part.take());
+        self.no_pre = true;
+        let ok = self.prepare_restore(id, stop);
+        self.no_pre = false;
+        let got = self.prepared.take();
+        self.drop_part();
+        (self.prepared, self.part) = keep;
+        self.set_also(got.filter(|_| ok));
+        ok
+    }
+
+    fn set_also(&mut self, p: Option<Prepared>) {
+        if let Some(old) = std::mem::replace(&mut self.also, p) {
             self.give_pre(old.pre);
         }
     }
@@ -1435,6 +1466,7 @@ impl Core {
     /// Restore to `id` and discard every later checkpoint (the plain restart).
     fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
         self.drop_part();
+        self.set_also(None);
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
@@ -1523,6 +1555,20 @@ impl Core {
                 None => eprintln!("[arena] nothing prepared"),
             }
         }
+        // (a READ-REVALIDATE compile's second restore: `also`)
+        let prepared = if prepared.as_ref().is_none_or(|p| p.id != id)
+            && self.also.as_ref().is_some_and(|a| a.id == id)
+        {
+            if let Some(p) = prepared {
+                self.give_pre(p.pre);
+            }
+            if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+                eprintln!("[arena] the second prepared restore is for {id}");
+            }
+            self.also.take()
+        } else {
+            prepared
+        };
         let prepared = match prepared {
             Some(p) if p.id == id && p.history_gen == self.history_gen && p.ids == self.ids => {
                 Some(p)
@@ -1614,6 +1660,7 @@ impl Core {
     /// checkpoints from `old` on.
     fn converge(&mut self, branch: Branch, old: CheckpointId) -> Result<(), String> {
         self.drop_part();
+        self.set_also(None);
         let Some(j) = branch.ids.iter().position(|&x| x == old) else {
             let b = branch;
             self.drop_branch(b);
@@ -2201,6 +2248,8 @@ impl Arena {
             prepare_on_reattach: std::env::var_os("FLASHTEX_NO_PREPARE").is_none(),
             spare: Vec::new(),
             lazy: None,
+            also: None,
+            no_pre: false,
         });
         Arena {
             core: Box::into_raw(core),
@@ -2722,6 +2771,17 @@ impl Arena {
         self.core_mut().prepare_restore(id, stop)
     }
 
+    /// A second restore worked out ahead (`Core::also`): to `id`, for a
+    /// restore after the one `prepare_restore` prepares.
+    pub fn prepare_also(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
+        self.core_mut().prepare_also(id, stop)
+    }
+
+    /// Drop the second prepared restore, if any.
+    pub fn drop_also(&mut self) {
+        self.core_mut().set_also(None);
+    }
+
     pub fn converge(&mut self, b: Branch, old: CheckpointId) -> Result<(), String> {
         self.core_mut().converge(b, old)
     }
@@ -2759,7 +2819,9 @@ impl Arena {
     /// Give back a stopped preparation's copies (`PartPrep`): an idle trim's
     /// memory. The next preparation or restore starts afresh.
     pub fn drop_stopped_preparation(&mut self) {
-        self.core_mut().drop_part();
+        let core = self.core_mut();
+        core.drop_part();
+        core.set_also(None);
     }
 
     /// Bytes the old checkpoints' kept chunks hold.
@@ -3308,20 +3370,23 @@ impl Arena {
         let (live_b, live_d, live_w) = sum(&c.logs);
         let (br_b, br_d, br_w) = branch.map_or((0, 0, 0), |b| sum(&b.logs));
         let open = c.logs.last().map_or(0, |l| l.entries.len());
-        let prepared = c.prepared.as_ref().map_or(0, |p| {
+        let one = |p: &Prepared| {
             p.buf.capacity() * 8
                 + p.cs.capacity() * 4
                 + p.ids.capacity() * 8
                 + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
-        }) + c.part.as_ref().map_or(0, |p| {
-            // (a stopped one, `PartPrep`, kept to go on)
-            p.buf.capacity() * 8
-                + p.cs.capacity() * 4
-                + p.ids.capacity() * 8
-                + p.seen.capacity() * 8
-                + p.done.capacity() * MASK_WORDS * 8
-                + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
-        });
+        };
+        let prepared = c.prepared.as_ref().map_or(0, one)
+            + c.also.as_ref().map_or(0, one)
+            + c.part.as_ref().map_or(0, |p| {
+                // (a stopped one, `PartPrep`, kept to go on)
+                p.buf.capacity() * 8
+                    + p.cs.capacity() * 4
+                    + p.ids.capacity() * 8
+                    + p.seen.capacity() * 8
+                    + p.done.capacity() * MASK_WORDS * 8
+                    + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
+            });
         vec![
             ("space_reserved", c.bytes as i64),
             ("space_touched", (touched * CHUNK_BYTES) as i64),
@@ -4363,6 +4428,72 @@ mod tests {
             a.converge(br, ids[i]).unwrap();
             assert!(arr[..] == end[..], "jump back from {i}");
         }
+    }
+
+    /// EDITED-PAGE: a READ-REVALIDATE compile's two restores, both worked
+    /// out ahead (`prepare_restore` to `P0`, `prepare_also` to `P2`): the
+    /// restore to `P0` takes the first, the run is abandoned (reattach), and
+    /// the restore to `P2` takes the second; each equals a plain restore, the
+    /// second one's redo (made at the restore, none ahead) gives the jump
+    /// back, and a stale or stopped second preparation is not used.
+    #[test]
+    fn a_revalidations_second_restore_is_prepared_too() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 3, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..20 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 300 + k, 3000);
+        }
+        let end = arr.to_vec();
+        for (n, (p0, p2)) in [(4usize, 6usize), (4, 6), (10, 15), (0, 19)]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(a.prepare_restore(ids[p0], &mut || false));
+            assert!(a.prepare_also(ids[p2], &mut || false));
+            assert!(a.core().also.as_ref().is_some_and(|p| p.pre.is_empty()));
+            // (written after the preparations: the open log grows)
+            scribble(&mut arr, 700 + n as u64, 200);
+            let end_n = arr.to_vec();
+            let br = a.restore_branch(ids[p0]).unwrap();
+            assert!(arr[..] == copies[p0][..], "restore to {p0}");
+            assert!(a.core().also.is_some(), "the first restore kept the second");
+            // the window, then the comparison held: abandoned
+            scribble(&mut arr, 800 + n as u64, 1000);
+            a.checkpoint();
+            a.reattach(br).unwrap();
+            assert!(arr[..] == end_n[..], "reattached");
+            let k = a.core().index_of(ids[p2]).unwrap();
+            let also = a.core().also.as_ref().unwrap();
+            a.core().verify_prepared_use(also, k).unwrap();
+            let br = a.restore_branch(ids[p2]).unwrap();
+            assert!(a.core().also.is_none(), "the second restore took it");
+            assert!(arr[..] == copies[p2][..], "second restore to {p2}");
+            a.converge(br, ids[p2]).unwrap();
+            assert!(arr[..] == end_n[..], "jump back from {p2}");
+            let _ = &end;
+        }
+        // stale: a checkpoint taken since; stopped: none kept
+        assert!(a.prepare_also(ids[7], &mut || false));
+        a.checkpoint();
+        scribble(&mut arr, 990, 300);
+        let br = a.restore_branch(ids[7]).unwrap();
+        assert!(
+            arr[..] == copies[7][..],
+            "a stale second preparation not used"
+        );
+        a.drop_branch(br);
+        let live0 = a.core().slab.live;
+        let mut asked = 0;
+        assert!(!a.prepare_also(ids[1], &mut || {
+            asked += 1;
+            asked > 1
+        }));
+        assert!(a.core().also.is_none() && a.core().part.is_none());
+        assert_eq!(a.core().slab.live, live0, "a stopped one holds nothing");
     }
 
     /// `or_from`: the bits are in the word at the checkpoint named and at

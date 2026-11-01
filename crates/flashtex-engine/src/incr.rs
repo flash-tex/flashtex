@@ -3626,6 +3626,11 @@ pub struct Session {
     /// restarts far from them, and its restart point is not the next
     /// keystroke's (`prepare_next`).
     next_edits: Vec<Edit>,
+    /// The last compile's first pass revalidated (`crate::revalidate`): its
+    /// restart point `P0` and the restart `P2` it took instead. A keystroke
+    /// in the same place restores to both, and `prepare_next` prepares the
+    /// second as well (`Arena::prepare_also`).
+    revalidated_to: Option<(CheckpointId, CheckpointId)>,
     /// External tools are due: no further pass before them (`set_defer`).
     defer: Option<Defer>,
     /// The pass being run (1 for the compile's first).
@@ -3801,6 +3806,7 @@ impl Session {
             progress: None,
             last_restart: None,
             next_edits: vec![],
+            revalidated_to: None,
             defer: None,
             pass: 1,
             fixed_inputs: vec![],
@@ -4431,6 +4437,26 @@ impl Session {
                 t.elapsed().as_secs_f64() * 1e3
             );
         }
+        // A keystroke in the place the last compile revalidated restores
+        // twice: to `r` for the comparison, then, the comparison holding and
+        // the old run reattached, to `P2`. That restore rewound the old
+        // run's future from the document's end (on Infinite Descent x2's
+        // late page 400 logs, 1.2 M entries, 31 M of a key's instructions;
+        // lane EDITED-PAGE). Worked out now, it copies the state in, as the
+        // first does.
+        match self.revalidated_to {
+            Some((p0, p2)) if ok && p0 == r => {
+                let t = Instant::now();
+                let also = g.arena.prepare_also(p2, stop);
+                if self.opts.debug {
+                    eprintln!(
+                        "[incr] prepared the second restore, to {p2}: {also}, {:.2} ms",
+                        t.elapsed().as_secs_f64() * 1e3
+                    );
+                }
+            }
+            _ => g.arena.drop_also(),
+        }
         ok
     }
 
@@ -4825,6 +4851,7 @@ impl Session {
             g.layer().stats = Default::default();
         }
         self.pass = 1;
+        self.revalidated_to = None;
         let r = self.compile_pass(t0, stop_at);
         // (a lazy reattach the pass did not restore from: whole again, lane
         // T7-MARGIN; nothing after this compile sees it)
@@ -7222,6 +7249,9 @@ impl Session {
                         }
                         if self.opts.debug {
                             eprintln!("[incr] revalidated: restart at {p2} instead of {r}");
+                        }
+                        if self.pass == 1 && self.revalidated_to.is_none() {
+                            self.revalidated_to = Some((r, p2));
                         }
                         // (the next window, from `p2`: `revalidate::MAX_CHAIN`)
                         let next = chain.and_then(|(windows, bad)| {
