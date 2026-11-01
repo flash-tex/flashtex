@@ -344,6 +344,21 @@ final class EngineV3HostProcess: @unchecked Sendable {
     var pid: Int32 { process.processIdentifier }
     var isRunning: Bool { process.isRunning }
 
+    /// The host runs in Darwin's background state (`PRIO_DARWIN_BG`: the
+    /// lowest CPU priority, efficiency cores, throttled disk I/O): its
+    /// window is not the frontmost project window (ProjectWindows.swift),
+    /// so the window in front finishes its compile first. Reversible: false
+    /// puts it back to normal. A new host (a restart) starts normal: the
+    /// session sets it again (`EngineV3Session.inBackground`).
+    var background = false {
+        didSet { if background != oldValue { applyBackground() } }
+    }
+
+    private func applyBackground() {
+        guard process.isRunning else { return }
+        _ = setpriority(PRIO_DARWIN_PROCESS, id_t(process.processIdentifier), background ? PRIO_DARWIN_BG : 0)
+    }
+
     /// Ends the host: the caller has said BYE (the host leaves on its own,
     /// its compile cancelled), and SIGTERM follows after `grace` should it
     /// still run. The engine of a Unicode host ends with the host however

@@ -70,7 +70,12 @@ final class EngineV3Session {
     /// Pages on screen left from an earlier compile (the status bar's "N stale").
     private(set) var staleCount = 0
     /// A COMPILE is out and its DONE has not come back.
-    private(set) var compiling = false
+    private(set) var compiling = false {
+        didSet { if compiling != oldValue { compilingChanged?(compiling) } }
+    }
+    /// Told when `compiling` changes (ProjectWindows: the windows behind
+    /// run in the background only while the front one compiles).
+    @ObservationIgnored var compilingChanged: ((Bool) -> Void)?
     /// Edits typed while auto-compile is off, not yet sent (⌘B sends them).
     private(set) var editsWaiting = false
     /// An Export PDF… or Print… is producing its PDF (`export`).
@@ -385,9 +390,39 @@ final class EngineV3Session {
 
     // MARK: lifecycle
 
+    /// This window is not the frontmost project window: its host runs at
+    /// background priority (`EngineV3HostProcess.background`; ProjectWindows.swift).
+    var inBackground = false {
+        didSet { if inBackground != oldValue { host?.background = inBackground } }
+    }
+
+    /// Restoring several windows: this one's host waits until the front
+    /// window's first compile is done (`releaseStart`); its stored pages
+    /// are on screen meanwhile.
+    @ObservationIgnored private(set) var startHeld = false
+    @ObservationIgnored private var heldStart = false
+
+    func holdStart() { startHeld = true }
+
+    /// Ends `holdStart`: starts what `start` was asked for meanwhile.
+    func releaseStart() {
+        guard startHeld else { return }
+        startHeld = false
+        if heldStart, let model { heldStart = false; start(model: model) }
+    }
+
+    /// Called once, on the main thread, after the next DONE (ProjectWindows' restore order).
+    @ObservationIgnored var afterNextDone: (() -> Void)?
+
     /// Starts the host (once) and compiles the model's documents.
     func start(model: ShellModel) {
         self.model = model
+        if startHeld {
+            // Held (restore order): the stored pages now, the host later.
+            heldStart = true
+            if pages.isEmpty, snapshot == nil { showSnapshot(model: model) }
+            return
+        }
         stopping = false
         EngineV3MemoryPressure.shared.register(self)
         PerformanceAdvisor.shared.start() // suggests Low Memory under memory pressure (PerformanceMode.swift)
@@ -537,6 +572,7 @@ final class EngineV3Session {
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
+            h.background = inBackground // a background window's new host starts in the background
             hostStarts += 1
         } catch {
             phase = .failed("could not start \(exe.lastPathComponent): \(error.localizedDescription)")
@@ -1927,6 +1963,7 @@ final class EngineV3Session {
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
             doneCount &+= 1
+            if let after = afterNextDone { afterNextDone = nil; DispatchQueue.main.async(execute: after) }
             lastDone = j
             if status == "failed", let project, !project.exists, let model {
                 compile(model: model, reason: "recover") // the copy vanished under the host
