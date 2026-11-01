@@ -11,7 +11,8 @@
 % the free list becomes a stack of segments. |avail| heads the first; each
 % segment ends in a null link, and |seg_stack[seg_ptr-1]|, ...,
 % |seg_stack[0]| say where the free list continues after it. So
-% |flush_list(p)| pushes |avail| (when it is not null) and sets |avail:=p|;
+% |flush_list(p)|, for a list of more than one node, pushes |avail| (when
+% it is not null) and sets |avail:=p|;
 % |get_avail|, finding |avail| null, pops the next segment before it
 % considers |mem_end| and |hi_mem_min|.
 %
@@ -23,8 +24,9 @@
 %     old sequence; here |avail:=p| starts it with p's nodes, whose chain
 %     ends in null, and the old sequence's head (|avail|) is now the top of
 %     the stack: the same sequence. (A null |avail| is not pushed: the old
-%     sequence is then the stack's, which follows p's anyway.) When the
-%     stack is full, |flush_list| walks as before: same sequence.
+%     sequence is then the stack's, which follows p's anyway.) A list of
+%     one node (most are a backed-up token), or any list while the stack
+%     is full, is walked and linked as before: the same sequence.
 %   - |free_avail|, |fast_get_avail| and |get_avail| (displaylist.ch's
 %     |dl_new_node| included) take or put one node at the head through
 %     |avail|; when |avail| is null, the head is the top segment's, which
@@ -72,7 +74,7 @@ begin if p<>null then
   end;
 @y
 begin if p<>null then
-  if lazy_flush and(seg_ptr<seg_size) then
+  if lazy_flush and(seg_ptr<seg_size)and(link(p)<>null) then
     begin if avail<>null then
       begin seg_stack[seg_ptr]:=avail; incr(seg_ptr);
       end;
@@ -106,9 +108,9 @@ flashtex_merge_free; sort_avail; var_used:=0;
 @x the new sections go at the end of part 54
 @* \[55] Index.
 @y
-@ The free list's segments (see the top of changes/lazyflush.ch). When
-|seg_size| segments are pending, |flush_list| walks its list as
-pdftex.web's does.
+@ The free list's segments (see the top of changes/lazyflush.ch). A list
+of one node, and every list while |seg_size| segments are pending, is
+walked and linked as pdftex.web's |flush_list| does.
 
 @d seg_size=16383 {the most free-list segments pending}
 
