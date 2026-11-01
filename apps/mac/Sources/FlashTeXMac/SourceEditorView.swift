@@ -992,7 +992,7 @@ struct SourceEditorView: NSViewRepresentable {
         func revalidateFolds(_ tv: NSTextView) {
             guard let tv = tv as? CompletingTextView, !tv.folds.isEmpty, let storage = tv.textStorage else { return }
             if storage.length > Self.foldScanOffMainUTF16 { return }
-            tv.folds.revalidate(in: storage.mutableString)
+            tv.folds.revalidate(in: storage.string as NSString) // not the mutableString proxy: the region scan reads it per character
         }
 
         /// Debounced whole-buffer fold-triangle rescan. Also called from
