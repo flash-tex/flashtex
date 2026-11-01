@@ -4174,6 +4174,89 @@ fn compile_or_error(c: &mut Client, r: &CompileRequest) -> Result<Json, Json> {
     }
 }
 
+/// Lane TEST-GAPS: a preamble edit after a reopen from S₁ (`incr::
+/// Session::compile_pass`): S₀'s key fails, and with no checkpoint before
+/// S₀ and no history before S₁ the compile runs from the format (`mode`
+/// cold, `cold_reason` naming the file). Its pages, the PDF and the log
+/// equal a scratch compile's.
+#[test]
+fn a_preamble_edit_after_a_reopen_from_s1_runs_cold() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1p");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    s1_store(&proj, &out, &cache, "s1pa");
+    let env = [
+        ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ("FLASHTEX_S1_FILL", "off"),
+    ];
+    let host = start_host_env("s1pb", &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut r = req(1, &proj, &out, "main.tex");
+    r.viewport = Some(S1_VIEW);
+    let o = compile(&mut c, &mut view, &r);
+    assert!(
+        o.done.int_field("s1_pages").is_some(),
+        "S1 not used: {}",
+        o.done
+    );
+    let at = main.find("\\begin{document}").unwrap();
+    let mut r = req(2, &proj, &out, "main.tex");
+    r.viewport = Some(S1_VIEW);
+    r.edits = vec![Edit {
+        path: "main.tex".into(),
+        offset: at as u64,
+        delete: 0,
+        insert: "\\newcommand\\gapsx{x}\n".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("mode"), Some("cold"), "{}", o.done);
+    let why = o.done.str_field("cold_reason").unwrap_or_default();
+    assert!(
+        why.contains("main.tex"),
+        "cold for another reason: {}",
+        o.done
+    );
+    for id in 3..8 {
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.viewport = Some(S1_VIEW);
+        if compile(&mut c, &mut view, &r).done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let (p2, o2) = snapshot(&base, &proj, &out, "s1px");
+    let scratch = start_host("s1ps");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "a preamble edit after S1",
+    );
+    let (pdf, log) = (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    );
+    let _ = c.bye();
+    drop(host);
+    let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+    assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
+    assert!(log == log0, "the log differs from a scratch compile's");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Lane TEST-GAPS: `host::server::Job::parse`'s refusals: a root that is
 /// not an absolute directory, a main file outside it or missing, a format
 /// given as a path. Each is an ERROR naming it, the connection goes on,
@@ -4270,7 +4353,9 @@ fn buffers_and_edits_outside_the_project_or_the_file_are_refused() {
     assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
     let outside = base.join("escape.tex");
     let abs = outside.to_str().unwrap().to_string();
-    let cases: [(&str, Vec<(String, String)>, Vec<Edit>, String); 3] = [
+    // (what, the buffers, the edits, the refusal)
+    type Case = (&'static str, Vec<(String, String)>, Vec<Edit>, String);
+    let cases: [Case; 3] = [
         (
             "a buffer in the parent directory",
             vec![("../escape.tex".into(), "x".into())],
