@@ -468,15 +468,18 @@ fn main() {
         let last_id = id + keys as i64;
         let mut sender = c.canceller().expect("a sending handle");
         let t_start = Instant::now();
-        let sent: std::sync::Arc<std::sync::Mutex<Vec<Instant>>> = Default::default();
+        // (each keystroke's send time, and how late it went after its due
+        // time: `sent_late_ms`)
+        let sent: std::sync::Arc<std::sync::Mutex<Vec<(Instant, f64)>>> = Default::default();
         let sent2 = sent.clone();
         let typist = std::thread::spawn(move || {
+            clock_thread();
             for (k, r) in reqs.iter().enumerate() {
                 let due = t_start + Duration::from_millis(ms * k as u64);
-                if let Some(d) = due.checked_duration_since(Instant::now()) {
-                    std::thread::sleep(d);
-                }
-                sent2.lock().unwrap().push(Instant::now());
+                wait_until(due);
+                let now = Instant::now();
+                let late = now.saturating_duration_since(due).as_secs_f64() * 1e3;
+                sent2.lock().unwrap().push((now, late));
                 sender.compile(r).expect("send COMPILE");
             }
         });
@@ -512,13 +515,14 @@ fn main() {
                     let upto = (started - first_id + 1) as usize;
                     let s = sent.lock().unwrap();
                     while covered < upto.min(s.len()) {
-                        let l = (now - s[covered]).as_secs_f64() * 1e3;
+                        let l = (now - s[covered].0).as_secs_f64() * 1e3;
                         println!(
                             "{}",
                             Json::Obj(vec![
                                 ("key".into(), Json::Int(covered as i64)),
                                 ("edited_page_ms".into(), Json::Num(l)),
                                 ("by".into(), Json::Int(started)),
+                                ("sent_late_ms".into(), Json::Num(s[covered].1)),
                                 ("current".into(), Json::Bool(true)),
                             ])
                         );
@@ -530,13 +534,14 @@ fn main() {
                     let upto = (started - first_id + 1) as usize;
                     let s = sent.lock().unwrap();
                     while covered < upto.min(s.len()) {
-                        let l = (now - s[covered]).as_secs_f64() * 1e3;
+                        let l = (now - s[covered].0).as_secs_f64() * 1e3;
                         println!(
                             "{}",
                             Json::Obj(vec![
                                 ("key".into(), Json::Int(covered as i64)),
                                 ("edited_page_ms".into(), Json::Num(l)),
                                 ("by".into(), Json::Int(started)),
+                                ("sent_late_ms".into(), Json::Num(s[covered].1)),
                             ])
                         );
                         lat.push(l);
@@ -559,6 +564,7 @@ fn main() {
         }
         typist.join().expect("the typist");
         let unpainted = keys - covered;
+        let mut late: Vec<f64> = sent.lock().unwrap().iter().map(|x| x.1).collect();
         let sum = |v: &mut Vec<f64>| {
             Json::Obj(vec![
                 ("n".into(), Json::Int(v.len() as i64)),
@@ -578,6 +584,7 @@ fn main() {
                 ("edited_page_ms".into(), sum(&mut lat)),
                 ("unpainted".into(), Json::Int(unpainted as i64)),
                 ("cancelled".into(), Json::Int(cancelled)),
+                ("sent_late_ms".into(), sum(&mut late)),
             ])
         );
         let _ = std::io::stdout().flush();
@@ -730,4 +737,45 @@ fn main() {
     }
     let _ = std::io::stdout().flush();
     let _ = c.bye();
+}
+
+/// `--interval-ms`'s typist keeps its clock (lane BEAMER, 2026-11-01). A
+/// thread sleeping in a process macOS runs in the background band
+/// (`PRIO_DARWIN_BG`) has its timers coalesced: on the hosted M1 the typist
+/// woke 100 ms and more late and sent two to four keystrokes at once, and
+/// each burst counted every key but its last as not painted by its own
+/// compile (18 of the 18-20 such keys of each typing@50ms beamer row). This
+/// takes the thread out of the background band and to the user-interactive
+/// QoS, as the app's key events are; `wait_until` spins the last stretch.
+fn clock_thread() {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn setpriority(which: i32, who: u32, prio: i32) -> i32;
+            fn pthread_set_qos_class_self_np(qos: u32, relpri: i32) -> i32;
+        }
+        const PRIO_DARWIN_THREAD: i32 = 3;
+        const PRIO_DARWIN_PROCESS: i32 = 4;
+        const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+        // SAFETY: plain system calls on this thread and process, no pointers.
+        unsafe {
+            setpriority(PRIO_DARWIN_PROCESS, 0, 0);
+            setpriority(PRIO_DARWIN_THREAD, 0, 0);
+            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+        }
+    }
+}
+
+/// Sleep until `due`, spinning the last 2 ms (a timer's leeway alone made
+/// keystrokes late).
+fn wait_until(due: Instant) {
+    const SPIN: Duration = Duration::from_millis(2);
+    if let Some(d) = due.checked_duration_since(Instant::now()) {
+        if d > SPIN {
+            std::thread::sleep(d - SPIN);
+        }
+    }
+    while Instant::now() < due {
+        std::hint::spin_loop();
+    }
 }
