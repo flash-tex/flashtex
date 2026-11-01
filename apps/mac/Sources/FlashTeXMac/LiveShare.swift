@@ -90,6 +90,7 @@ final class LiveShareController {
     /// Where the session's files live: the hub's project folder, or the
     /// guest's copy.
     @ObservationIgnored private(set) var root: URL?
+    @ObservationIgnored private var rootFD: Int32 = -1
     @ObservationIgnored private var opened = false
     @ObservationIgnored private var pendingWrites: Set<FileID> = []
     @ObservationIgnored private var reconcileTimer: Timer?
@@ -110,6 +111,7 @@ final class LiveShareController {
 
     deinit {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        if rootFD >= 0 { close(rootFD) }
     }
 
     /// Observed (the File menu and the status bar read them); they change
@@ -179,6 +181,14 @@ final class LiveShareController {
             sheetShown = true
             return
         }
+        let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            hub.stop()
+            note = "Could not open the shared project folder: \(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))"
+            sheetShown = true
+            return
+        }
+        rootFD = fd
         self.hub = hub
         self.root = root
         self.allowed = allowed
@@ -332,6 +342,10 @@ final class LiveShareController {
         FlashTeXLog.write("liveshare: opening the shared copy in \(root.path)")
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            if rootFD < 0 {
+                rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                guard rootFD >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            }
             // The copy is exactly the files present now, each at a safe path
             // that collides with no other (a hostile host cannot name
             // dotfiles, links or case twins); nothing is added later.
@@ -387,6 +401,7 @@ final class LiveShareController {
         session?.stopTimers()
         session = nil
         allowed = [:]
+        if rootFD >= 0 { close(rootFD); rootFD = -1 }
         isActive = false
         isHost = false
         hub = nil
@@ -479,7 +494,8 @@ final class LiveShareController {
         // Only to skip an unchanged file; the write itself is confined.
         if let url = Self.safeTarget(root: root, path: path),
            let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
-        guard let url = try Self.writeConfined(Data(text.utf8), root: root, path: path) else { return }
+        guard rootFD >= 0,
+              let url = try Self.writeConfined(Data(text.utf8), root: root, path: path, rootFD: rootFD) else { return }
         if isHost { markGuestEdited(url) }
     }
 
@@ -493,13 +509,13 @@ final class LiveShareController {
     /// (`O_CREAT | O_EXCL | O_NOFOLLOW`) and renamed over the target with
     /// `renameat` on that same folder. A folder swapped for a link once it
     /// is open no longer matters: the write goes where the check was made.
-    /// The target's extended attributes (a quarantine mark) are kept.
+    /// The target's mode, ACL and extended attributes are kept.
     /// `afterCheck` runs between the walk and the write (tests).
     @discardableResult
-    static func writeConfined(_ data: Data, root: URL, path: String, afterCheck: (() -> Void)? = nil) throws -> URL? {
+    static func writeConfined(_ data: Data, root: URL, path: String, rootFD: Int32? = nil, afterCheck: (() -> Void)? = nil) throws -> URL? {
         guard let parts = safeParts(path), let name = parts.last else { return nil }
         func failure() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        var dir = open(root.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        var dir = rootFD.map { fcntl($0, F_DUPFD_CLOEXEC, 0) } ?? open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard dir >= 0 else { throw failure() }
         defer { close(dir) }
         for part in parts.dropLast() {
@@ -513,25 +529,34 @@ final class LiveShareController {
             close(dir)
             dir = next
         }
-        var st = stat()
-        if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0 {
-            guard st.st_mode & S_IFMT == S_IFREG else { return nil }
-        } else if errno != ENOENT {
+        var entry = stat()
+        let found = fstatat(dir, name, &entry, AT_SYMLINK_NOFOLLOW) == 0
+        if !found && errno != ENOENT {
             throw failure()
         }
         afterCheck?()
+        // Open before choosing the temporary file's mode: the target may have
+        // appeared or changed since the path check.
+        let old = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        defer { if old >= 0 { close(old) } }
+        var st = stat()
+        if old >= 0 {
+            guard fstat(old, &st) == 0 else { throw failure() }
+            guard st.st_mode & S_IFMT == S_IFREG else { return nil }
+        } else if found && entry.st_mode & S_IFMT != S_IFREG {
+            return nil
+        }
         let temp = ".\(name).liveshare-\(UUID().uuidString)"
-        let fd = openat(dir, temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        let fd = openat(dir, temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, old >= 0 ? 0o600 : 0o644)
         guard fd >= 0 else { throw failure() }
         var renamed = false
         defer { if !renamed { unlinkat(dir, temp, 0) } }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         try h.write(contentsOf: data)
         // Keep what the file carried; never block on a FIFO swapped in.
-        let old = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if old >= 0 {
-            _ = fcopyfile(old, fd, nil, copyfile_flags_t(COPYFILE_XATTR))
-            close(old)
+            _ = fcopyfile(old, fd, nil, copyfile_flags_t(COPYFILE_ACL | COPYFILE_XATTR))
+            guard fchmod(fd, st.st_mode & 0o7777) == 0 else { throw failure() }
         }
         try h.close()
         guard renameat(dir, temp, dir, name) == 0 else { throw failure() }
