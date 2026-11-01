@@ -1,0 +1,6 @@
+% 1241-pdfliteral-direct: verifies \pdfliteral direct mode and a shipout literal reach the page stream (pdftex.web §1538)
+\input prelude
+\setbox0=\hbox{\pdfliteral direct{2 Tr}\pdfliteral shipout{/PGS1 BMC}}
+\message{1241 wd=\the\wd0}
+\lsshipbox0
+\end

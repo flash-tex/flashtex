@@ -1,0 +1,11 @@
+% 614-vbadness-suppress-vs-report: verifies the same underfull vbox stays silent under \vbadness=10000 but warns under \vbadness=0.
+\input prelude
+\vbadness=10000
+\setbox0=\vbox to 100pt{\hrule width30pt height10pt depth0pt}
+\message{614 quiet-vbadness=\the\vbadness badness=\the\badness}
+\vbadness=0
+\setbox1=\vbox to 100pt{\hrule width30pt height10pt depth0pt}
+\message{614 loud-vbadness=\the\vbadness badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

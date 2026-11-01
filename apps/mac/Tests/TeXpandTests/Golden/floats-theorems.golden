@@ -1,0 +1,265 @@
+# Pack `floats` (fig img cap subfig sub) and pack `theorems`.
+
+=== fig
+requires: graphicx
+---
+\begin{figure}
+  \centering
+  \includegraphics[${1:width=0.8\linewidth}]{$2}
+  \caption{$3}
+\end{figure}
+
+=== fig
+packages: graphicx
+requires: -
+---
+\begin{figure}
+  \centering
+  \includegraphics[${1:width=0.8\linewidth}]{$2}
+  \caption{$3}
+\end{figure}
+
+=== fig[ht]
+requires: graphicx
+---
+\begin{figure}[ht]
+  \centering
+  \includegraphics[${1:width=0.8\linewidth}]{$2}
+  \caption{$3}
+\end{figure}
+
+=== fig#arch
+requires: graphicx
+---
+\begin{figure}
+  \centering
+  \includegraphics[${1:width=0.8\linewidth}]{$2}
+  \caption{$3}
+  \label{fig:arch}
+\end{figure}
+
+=== fig[ht]#arch>img{arch.pdf}+cap{System architecture}
+requires: graphicx
+---
+\begin{figure}[ht]
+  \centering
+  \includegraphics[${1:width=0.8\linewidth}]{arch.pdf}
+  \caption{System architecture}
+  \label{fig:arch}
+\end{figure}
+
+=== fig#>img+cap
+requires: graphicx
+---
+\begin{figure}
+  \centering
+  \includegraphics[${1:width=0.8\linewidth}]{$2}
+  \caption{$3}
+  \label{fig:$4}
+\end{figure}
+
+=== fig>img{a.pdf}+cap{Caption}#cap
+requires: -
+---
+error: `cap` has no place for a label
+
+=== img
+requires: graphicx
+---
+\includegraphics[${1:width=0.8\linewidth}]{$2}
+
+=== img{plot.pdf}
+requires: graphicx
+---
+\includegraphics[${1:width=0.8\linewidth}]{plot.pdf}
+
+=== img[width=.5\linewidth]{a.png}
+requires: graphicx
+---
+\includegraphics[width=.5\linewidth]{a.png}
+
+=== cap
+requires: -
+---
+error: `cap` is not available here (it works in: float)
+
+=== cap{A caption}
+scope: text figure
+requires: -
+---
+\caption{A caption}
+
+=== subfig2
+requires: subcaption, graphicx
+---
+\begin{figure}
+  \centering
+  \begin{subfigure}{${1:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{$2}
+    \caption{$3}
+  \end{subfigure}\hfill
+  \begin{subfigure}{${4:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{$5}
+    \caption{$6}
+  \end{subfigure}
+  \caption{$7}
+\end{figure}
+
+=== subfig2x2
+requires: subcaption, graphicx
+---
+\begin{figure}
+  \centering
+  \begin{subfigure}{${1:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{$2}
+    \caption{$3}
+  \end{subfigure}\hfill
+  \begin{subfigure}{${4:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{$5}
+    \caption{$6}
+  \end{subfigure}
+  \par\medskip
+  \begin{subfigure}{${7:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{$8}
+    \caption{$9}
+  \end{subfigure}\hfill
+  \begin{subfigure}{${10:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{$11}
+    \caption{$12}
+  \end{subfigure}
+  \caption{$13}
+\end{figure}
+
+=== subfig{Both}#pair>sub{a.pdf}{Left}+sub{b.pdf}{Right}
+requires: subcaption, graphicx
+---
+\begin{figure}
+  \centering
+  \begin{subfigure}{${1:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{a.pdf}
+    \caption{Left}
+  \end{subfigure}\hfill
+  \begin{subfigure}{${2:0.48\linewidth}}
+    \centering
+    \includegraphics[width=\linewidth]{b.pdf}
+    \caption{Right}
+  \end{subfigure}
+  \caption{Both}
+  \label{fig:pair}
+\end{figure}
+
+=== sub[0.3\linewidth]{a.pdf}{A}#a
+scope: text figure
+requires: subcaption, graphicx
+---
+\begin{subfigure}{0.3\linewidth}
+  \centering
+  \includegraphics[width=\linewidth]{a.pdf}
+  \caption{A}
+  \label{fig:a}
+\end{subfigure}
+
+=== thm
+requires: -
+---
+\begin{theorem}
+  $1
+\end{theorem}
+
+=== thm{Main}#main+pf
+requires: amsthm
+---
+\begin{theorem}[Main]\label{thm:main}
+  $1
+\end{theorem}
+\begin{proof}
+  $2
+\end{proof}
+
+=== lem#key
+requires: -
+---
+\begin{lemma}\label{lem:key}
+  $1
+\end{lemma}
+
+=== prop{Fubini}#
+requires: -
+---
+\begin{proposition}[Fubini]\label{prop:fubini}
+  $1
+\end{proposition}
+
+=== cor
+requires: -
+---
+\begin{corollary}
+  $1
+\end{corollary}
+
+=== defn{Group}
+requires: -
+---
+\begin{definition}[Group]
+  $1
+\end{definition}
+
+=== rmk
+requires: -
+---
+\begin{remark}
+  $1
+\end{remark}
+
+=== ex{Counterexample}
+requires: -
+---
+\begin{example}[Counterexample]
+  $1
+\end{example}
+
+=== pf
+requires: amsthm
+---
+\begin{proof}
+  $1
+\end{proof}
+
+=== pf{Proof of Theorem 1}
+requires: amsthm
+---
+\begin{proof}[Proof of Theorem 1]
+  $1
+\end{proof}
+
+=== thm{Pigeonhole}>items2
+requires: -
+---
+\begin{theorem}[Pigeonhole]
+  \begin{itemize}
+    \item $1
+    \item $2
+  \end{itemize}
+\end{theorem}
+
+=== thm{A}{B}
+requires: -
+---
+error: `thm` takes at most 1 `{…}` argument
+
+=== thm{T@}#t@*2
+requires: -
+---
+\begin{theorem}[T1]\label{thm:t1}
+  $1
+\end{theorem}
+\begin{theorem}[T2]\label{thm:t2}
+  $2
+\end{theorem}

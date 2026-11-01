@@ -1,0 +1,8 @@
+% 327-lastnodetype: verifies \lastnodetype reports -1 empty, 0 char, 1 hlist, 3 rule, 11 glue, 12 kern and 13 penalty.
+\input prelude
+\font\myrm=cmr10
+\message{327 empty=\the\lastnodetype}
+\setbox2=\hbox{\vrule width4pt height4pt depth0pt}
+\setbox0=\hbox{\myrm A\message{327 char=\the\lastnodetype}\copy2\message{327 hlist=\the\lastnodetype}\vrule width4pt height4pt depth0pt\message{327 rule=\the\lastnodetype}\hskip3pt\message{327 glue=\the\lastnodetype}\kern2pt\message{327 kern=\the\lastnodetype}\penalty9\message{327 penalty=\the\lastnodetype}}
+\lsshipbox0
+\end

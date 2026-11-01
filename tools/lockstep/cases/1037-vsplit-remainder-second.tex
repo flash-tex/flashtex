@@ -1,0 +1,12 @@
+% 1037-vsplit-remainder-second: verifies a second \vsplit of the remainder reports the next span of marks (tex.web §§967,977,382)
+\input prelude
+\splittopskip=10pt
+\setbox0=\vbox{\vskip5pt\mark{r-one}\hrule width40pt height12pt depth0pt\vskip5pt\mark{r-two}\hrule width40pt height12pt depth0pt\vskip5pt\mark{r-three}\hrule width40pt height12pt depth0pt}
+\setbox1=\vsplit0 to 20pt
+\message{1037 s1first=[\splitfirstmark] s1bot=[\splitbotmark]}
+\setbox2=\vsplit0 to 20pt
+\message{1037 s2first=[\splitfirstmark] s2bot=[\splitbotmark]}
+\lsshipbox1
+\lsshipbox2
+\lsshipbox0
+\end

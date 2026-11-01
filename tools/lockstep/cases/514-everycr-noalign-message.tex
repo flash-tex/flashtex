@@ -1,0 +1,7 @@
+% Verifies that \everycr can count rows via \noalign with a message.
+\input prelude
+\count1=0\everycr={\noalign{\global\advance\count1 by1\message{E\the\count1}}}
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr}}
+\message{514 rows=\the\count1}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 1404-romannumeral-number-string: \romannumeral, \number and \string probes of counts and control sequences.
+\input prelude
+\count4=2026
+\edef\rn{\romannumeral\count4}
+\message{1404 rn=\meaning\rn}
+\message{1404 num=\number\count4,neg=\number-42}
+\message{1404 str=\string\hbox,\string\#}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

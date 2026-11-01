@@ -1,0 +1,6 @@
+% Verifies that \omit combined with \span spans one cell across three columns.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil&#\hfil\cr\vrule width10pt height8pt depth2pt&\vrule width10pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr\omit\span\omit\span\omit\hfil\vrule width70pt height8pt depth2pt\hfil\cr}}
+\message{502 wd=\the\wd0}
+\lsshipbox0
+\end

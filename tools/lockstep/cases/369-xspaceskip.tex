@@ -1,0 +1,6 @@
+% 369-xspaceskip: verifies \xspaceskip supplies the wider glue after a high-\sfcode period.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\sfcode`.=3000 \xspaceskip=14pt plus3pt\myrm a. b\par\message{369 xspaceskip=\the\xspaceskip}}
+\lsshipbox0
+\end

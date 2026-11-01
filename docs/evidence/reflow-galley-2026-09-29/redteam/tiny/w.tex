@@ -1,0 +1,7 @@
+\catcode`\{=1 \catcode`\}=2 \vsize=20pt \maxdepth=2pt \pdfoutput=0 \parskip=0pt \parindent=5pt \font\x=cmr10 \x \hsize=100pt
+\output={\message{[OR fires: count0=\the\count0]}\global\advance\count0 by 1 \shipout\box255 }
+\everypar={\message{[EVERYPAR sees count0=\the\count0]}}
+\hrule height 15pt
+\hrule height 10pt
+\indent A\par
+\end

@@ -1,0 +1,16 @@
+% 2121-glue-round-below-half: an \hbox 1sp off its natural width with four glues of stretch (then shrink) 109226sp gets glue_set 1/436904, so after the second glue glue_temp is +-0.49999999999999994 and cur_g:=round(glue_temp) must give +-1, as web2c's zround (r+-0.5 truncated) does, not 0; \pdflastxpos after that glue shows it (tex.web §625, pdftex.web §735)
+% new versus 291-pdfsavepos: 291 reads a position after a rule; here the position lands on a glue rounding boundary
+\input prelude
+\setbox0=\hbox to 40pt{\vrule width 10pt height 5pt\hskip 0pt plus 109226sp
+  \vrule width 10pt height 5pt\hskip 0pt plus 109226sp
+  \pdfsavepos\vrule width 1pt height 5pt\hskip 0pt plus 109226sp
+  \vrule width 19pt height 5pt\hskip 0pt plus 109226sp\kern-1sp}
+\lsshipbox0
+\message{2121 stretch-x=\the\pdflastxpos}
+\setbox0=\hbox to 40pt{\vrule width 10pt height 5pt\hskip 0pt minus 109226sp
+  \vrule width 10pt height 5pt\hskip 0pt minus 109226sp
+  \pdfsavepos\vrule width 1pt height 5pt\hskip 0pt minus 109226sp
+  \vrule width 19pt height 5pt\hskip 0pt minus 109226sp\kern1sp}
+\lsshipbox0
+\message{2121 shrink-x=\the\pdflastxpos}
+\end

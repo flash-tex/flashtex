@@ -1,0 +1,13 @@
+% 731-edef-unexpanded: verifies e-TeX \unexpanded blocks a whole token list inside \edef while \the still executes: box0 typesets the frozen meaning, box1 the expanded control meaning.
+\input prelude
+\font\myrm=cmr10
+\def\foo{FOO}\def\bar{BAR}\count0=7
+\edef\e{\unexpanded{\foo\bar}!\the\count0}
+\edef\c{\foo\bar!\the\count0}
+\def\foo{changed}
+\message{731 e=\meaning\e\ c=\meaning\c}
+\setbox0=\hbox{\myrm\meaning\e}
+\setbox1=\hbox{\myrm\meaning\c}
+\lsshipbox0
+\lsshipbox1
+\end

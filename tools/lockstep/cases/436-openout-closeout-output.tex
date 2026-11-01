@@ -1,0 +1,10 @@
+\input prelude % Verifies a file opened, written and closed in the output routine reads back.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \ifnum\count1=1 \immediate\openout1=ls436data.txt \immediate\write1{hello 436} \immediate\closeout1 \else \openin2=ls436data.txt \read2 to \gotback \message{436 back=\meaning\gotback} \closein2 \fi \lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

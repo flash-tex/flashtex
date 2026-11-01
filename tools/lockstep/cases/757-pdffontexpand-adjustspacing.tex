@@ -1,0 +1,11 @@
+\input prelude % Verifies \pdfadjustspacing with \pdffontexpand expands glyphs in the box.
+\font\f=cmr10
+\pdffontexpand\f 30 20 5 autoexpand
+\pdfadjustspacing=2
+\hsize=150pt \parindent=0pt
+\setbox0=\vbox{\f aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk\par}
+\lsshipbox0
+\pdfadjustspacing=0
+\setbox0=\vbox{\f aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk\par}
+\lsshipbox0
+\end

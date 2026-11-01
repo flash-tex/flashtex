@@ -1,0 +1,9 @@
+% 1469-pdffontobjnum-order: \pdffontobjnum numbers used fonts in order; both numbers feed a box (pdftex.web §§497, 498)
+\input prelude
+\font\f=cmr10 \font\g=cmti10
+\setbox0=\hbox{\f A\g B}
+\edef\a{\pdffontobjnum\f}\edef\b{\pdffontobjnum\g}
+\setbox1=\hbox{\f \a/\b}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% 1477-bscode-sum: \knbscode \shbscode \stbscode set per-character letterspace penalties; their sum chooses a rule width (pdftex.web §§705, 1432)
+\input prelude
+\font\f=cmr10
+\knbscode\f`A=11 \shbscode\f`A=22 \stbscode\f`A=33
+\count0=\the\knbscode\f`A \advance\count0 by \the\shbscode\f`A \advance\count0 by \the\stbscode\f`A
+\ifnum\count0=66 \setbox0=\hbox{\vrule width3pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width5pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

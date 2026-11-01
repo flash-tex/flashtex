@@ -1,0 +1,9 @@
+% Verifies that \insert in a \halign cell stores a class-201 insert node in the boxed alignment: box0 dumps an \insert201 node of natural size 10pt, box1 has none.
+\input prelude
+\count201=1000 \dimen201=60pt \skip201=4pt plus 1pt
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\insert201{\vskip2pt\hrule width40pt height6pt depth0pt\vskip2pt}\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\setbox1=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{875 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

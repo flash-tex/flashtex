@@ -1,0 +1,12 @@
+% 1514-object-suite: fresh and reserved objects with both compression levels pinned off.
+\input prelude
+\pdfcompresslevel=0 \pdfobjcompresslevel=0
+\pdfobj{<< /Type /Example /V (one) >>}
+\message{1514 first=\the\pdflastobj}
+\pdfobj reserveobjnum
+\message{1514 reserved=\the\pdflastobj}
+\pdfobj useobjnum\pdflastobj{<< /V (two) >>}
+\message{1514 filled=\the\pdflastobj}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

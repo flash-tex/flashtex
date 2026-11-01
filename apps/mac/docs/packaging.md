@@ -133,9 +133,10 @@ perturbs); with `SOURCE_DATE_EPOCH` set the bundle is byte-identical.
    Developer ID Application) or via `certutil`/the developer portal, and make
    sure the private key lands in this machine's login keychain.
 
-2. **Write an entitlements file.** FlashTeXMac spawns subprocesses
-   (`flashtex-compiler`, `flashtex-pdf`, and arbitrary worker executables via
-   `File > Attach Worker Executable…`) and will need local network access for
+2. **Write an entitlements file.** FlashTeXMac spawns subprocesses (the
+   bundled helpers `flashtex-bridge`, `flashtex-edit-ledger` and
+   `flashtex-project-files`, and the engine hosts in `Contents/Helpers`) and
+   will need local network access for
    the nearby-capture listener (`NSBonjourServices` / `NSLocalNetworkUsageDescription`,
    already added to `Info.plist` by `make-app.sh` in this revision — see below).
    A Developer-ID-signed build with the *hardened runtime* enabled (required
@@ -171,7 +172,7 @@ perturbs); with `SOURCE_DATE_EPOCH` set the bundle is byte-identical.
    the App Sandbox for Mac App Store distribution, the entitlements above
    (`network.client`/`network.server`, plus
    `com.apple.security.temporary-exception.mach-lookup.global-name` or an
-   XPC service if the compiler/pdf helpers must run as sandboxed children)
+   XPC service if the helpers and engine hosts must run as sandboxed children)
    would be required in addition.
 
 3. **Sign with the hardened runtime**, replacing the ad-hoc step:
@@ -183,9 +184,9 @@ perturbs); with `SOURCE_DATE_EPOCH` set the bundle is byte-identical.
      apps/mac/build/FlashTeX.app
    ```
 
-   `--deep` re-signs the bundled `flashtex-compiler`/`flashtex-pdf` helpers
-   too; each must itself be a valid Mach-O the tool can sign (both are plain
-   Rust binaries, which sign fine). Verify with:
+   `--deep` re-signs the bundled helpers and engine hosts too; each must
+   itself be a valid Mach-O the tool can sign (all are plain Rust binaries,
+   which sign fine). Verify with:
 
    ```sh
    codesign --verify --deep --strict --verbose=2 apps/mac/build/FlashTeX.app
@@ -235,12 +236,16 @@ this worker (`mac-packaging`) to acquire or spend on.
 
 ```xml
 <key>NSLocalNetworkUsageDescription</key>
-<string>FlashTeX uses the local network to discover and receive captures from nearby devices.</string>
+<string>FlashTeX uses the local network to receive captures from nearby devices and, with Live Share, to edit projects together with other Macs.</string>
 <key>NSBonjourServices</key>
 <array>
     <string>_flashtex._tcp</string>
+    <string>_flashtex-collab._tcp</string>
 </array>
 ```
+
+(`_flashtex-collab._tcp` and the wording about Live Share were added with Live Share P1;
+docs/contracts/collab-v1.md §7.)
 
 `NSLocalNetworkUsageDescription` is required before macOS will show the local
 network permission prompt at all (its absence causes a silent denial, not a
@@ -282,7 +287,8 @@ read-only, drag-to-install image).
 
 Verified on this machine (`jay3332`'s Mac, `~/Applications` already has
 unrelated real apps installed — Android Studio, CLion, PyCharm, etc. — none
-of which this script touches):
+of which this script touches; this run predates retirement stage S6, which
+removed the `--compiler` and `--pdf` flags with the old engine's helpers):
 
 ```console
 $ apps/mac/scripts/make-app.sh --compiler … --pdf … --dmg --install
@@ -326,23 +332,20 @@ and `Contents/Resources/texmf/doc/fonts/lm/GUST-FONT-LICENSE.TXT` through
 `scripts/bundle-texmf.py`: each source file is hash-verified against the
 Commander's pinned manifest before the build (a mismatch, a missing file or a
 symlink exits 1 before `swift build`), staged, and then the whole `Resources`
-directory is verified with `crates/rendering-core/tools/verify_bundle_resources.py`
+directory is verified with `apps/mac/scripts/verify_bundle_resources.py`
 before any signing. `components.json` gains a `"resources"` entry with the nine
 verified SHA-256/byte pairs and the manifest hash; `resource-coverage.json` is
 the verifier's full report. Both are sealed by the app signature (they are
-written before `codesign`). The producer gets the bundled directory appended to
-`FLASHTEX_TFM_DIRS` (after any explicit user entries, which override it) by
-`BundledMetrics.swift` on both launch routes
-(`WorkerClient`, `PreviewControllerClient`); see `README.md` "Rooted TeX
-metrics" and the acceptance script `scripts/texmf-acceptance.sh` (bundled
-producer, host TeX denied by `sandbox-exec`, 10 pt multi-document + 12 pt
-text/math, 10 pt styles, 11 pt, deliberate removal, verifier exit 0). A
-producer before render-pipeline 421a2049 does not discover
-`../Resources/texmf` on its own, so the env route is what makes such a bundle
-independent of host TeX (evidence `docs/evidence/mac-bundle-texmf-20260912T134120Z`,
-control row 9 diagnostics, env rows 0); from 421a2049 (tip 98e829bf) the
-producer finds the bundle itself and `texmf-acceptance.sh --require-discovery`
-passes both routes (`docs/evidence/mac-bundle-texmf-20260912T135157Z`).
+written before `codesign`). These metrics fed the old engine's producer:
+`BundledMetrics.swift` appended the bundled directory to `FLASHTEX_TFM_DIRS`
+for the worker and preview-controller launch routes, and
+`scripts/texmf-acceptance.sh` checked that the bundled producer needed no host
+TeX (evidence `docs/evidence/mac-bundle-texmf-20260912T134120Z`,
+`docs/evidence/mac-bundle-texmf-20260912T135157Z`). All of them left the app in
+retirement stage S6; the app's engine reads the metrics of TeX Live or the TeX
+bundle. The staged files are still verified and recorded as above, and leave
+with `apps/mac/Fonts/` in stage S7 unless the TeX bundle reuses them
+(docs/design/engine-v2/retirement-plan.md §1.4).
 Beyond the Commander's five pinned files, 23 supplementary Latin Modern TFMs
 (other design sizes, bold, italic) ship under the in-repo pin
 `apps/mac/Fonts/texmf/SUPPLEMENTARY-METRICS.json` and are recorded in
@@ -383,8 +386,8 @@ verified against the pinned 2.004 archive) is stated in that file.
   human: launch the installed `FlashTeX.app` (not `swift run`, which has no
   bundle identity for TCC to key off), open `Edit > Nearby Companion…`,
   flip "Advertise" on, confirm the system prompt reads "FlashTeX uses the
-  local network to discover and receive captures from nearby devices."
-  (this doc's `NSLocalNetworkUsageDescription` string) with the app's name
+  local network to receive captures from nearby devices and, with Live
+  Share, to edit projects together with other Macs." (this doc's `NSLocalNetworkUsageDescription` string) with the app's name
   and icon, approve it, and confirm the listener starts (its status text)
   and that `System Settings > Privacy & Security > Local Network` then
   lists FlashTeX. Whether a subsequent `make-app.sh --install` rebuild

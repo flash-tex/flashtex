@@ -1,0 +1,42 @@
+\documentclass{beamer}
+\usetheme{Madrid}
+\usecolortheme{dolphin}
+\usefonttheme{structurebold}
+\logo{\rule{0.6cm}{0.6cm}}
+\title{Madrid with Dolphin}
+\author{C. Coder}
+\institute{FlashTeX}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\section{Theorems}
+\begin{frame}{Definitions and theorems}
+  \begin{definition}
+    A \emph{prime} is a natural number greater than one with no divisors
+    other than one and itself.
+  \end{definition}
+  \begin{theorem}[Euclid]
+    There are infinitely many primes.
+  \end{theorem}
+  \begin{proof}
+    Suppose finitely many, multiply them and add one.
+  \end{proof}
+\end{frame}
+\begin{frame}<1-2>[label=steps]{Steps, revisited later}
+  \begin{enumerate}
+    \item<1-> Collect the primes.
+    \item<2-> Multiply them.
+    \item<3-> Add one.
+  \end{enumerate}
+\end{frame}
+\section{Examples}
+\begin{frame}{Examples}
+  \begin{example}
+    $2, 3, 5, 7, 11, 13$.
+  \end{example}
+  \begin{corollary}
+    There is no largest prime.
+  \end{corollary}
+\end{frame}
+\againframe<3>{steps}
+\end{document}

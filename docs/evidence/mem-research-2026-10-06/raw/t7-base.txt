@@ -1,0 +1,14 @@
+== t7-base full-1000: host RSS peak 677 MB (sampled 677 MB)
+  letter@end       n  19 edited instr p50   102.0 M p95   106.2 M | keystroke p50    801.9 M | logs  284.7 MB ckpts 1030 page_cache  97.6
+  letter@middle    n  19 edited instr p50    91.5 M p95    97.4 M | keystroke p50   4590.4 M | logs  282.0 MB ckpts 1061 page_cache  97.6
+  letter@start     n  20 edited instr p50    99.4 M p95   104.2 M | keystroke p50   1353.3 M | logs  285.4 MB ckpts 1092 page_cache  97.6
+  preamble         n  13 edited instr p50  4133.8 M p95  4179.1 M | keystroke p50 106362.7 M | logs  285.8 MB ckpts 1145 page_cache  97.6
+  sentence@middle  n  19 edited instr p50    91.6 M p95    97.7 M | keystroke p50   4600.4 M | logs  282.2 MB ckpts 1066 page_cache  97.6
+  split@middle     n  19 edited instr p50   102.3 M p95   106.6 M | keystroke p50   4577.7 M | logs  274.0 MB ckpts 1032 page_cache  97.6
+== t7-base plain-1000: host RSS peak 595 MB (sampled 596 MB)
+  letter@end       n  19 edited instr p50    36.7 M p95    36.8 M | keystroke p50    375.0 M | logs  222.3 MB ckpts 1026 page_cache  99.7
+  letter@middle    n  19 edited instr p50    61.5 M p95    61.6 M | keystroke p50    646.6 M | logs  222.2 MB ckpts 1027 page_cache  99.7
+  letter@start     n  20 edited instr p50    36.7 M p95    72.8 M | keystroke p50    847.2 M | logs  222.9 MB ckpts 1049 page_cache  99.7
+  preamble         n  13 edited instr p50   721.9 M p95   724.9 M | keystroke p50  44637.1 M | logs  220.6 MB ckpts 1057 page_cache  99.7
+  sentence@middle  n  19 edited instr p50    70.2 M p95    71.0 M | keystroke p50  81898.3 M | logs  219.3 MB ckpts 1032 page_cache  99.7
+  split@middle     n  19 edited instr p50    70.2 M p95    71.0 M | keystroke p50  82224.5 M | logs  219.3 MB ckpts 1034 page_cache  99.7

@@ -1,0 +1,7 @@
+% 345-fontcharwd: verifies \fontcharwd reports cmr10 glyph widths matching the shipped glyphs.
+\input prelude
+\font\myrm=cmr10
+\message{345 wdA=\the\fontcharwd\myrm`A,wdg=\the\fontcharwd\myrm`g,wdper=\the\fontcharwd\myrm`.}
+\setbox0=\hbox{\myrm Ag.}
+\lsshipbox0
+\end

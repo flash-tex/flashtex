@@ -1,0 +1,10 @@
+% 908-raise-lower-negative-nested: verifies negative \raise and \lower shift nested boxes in the opposite direction.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\setbox1=\hbox{\raise-6pt\hbox{\lower-4pt\copy0}}
+\message{908 neg-ht=\the\ht1 neg-dp=\the\dp1}
+\setbox2=\hbox{\raise4pt\copy0}
+\message{908 pos-ht=\the\ht2 pos-dp=\the\dp2}
+\lsshipbox1
+\lsshipbox2
+\end

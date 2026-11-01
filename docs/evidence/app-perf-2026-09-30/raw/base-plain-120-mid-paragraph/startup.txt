@@ -1,0 +1,1 @@
+/app.log: first live frame published 1547 ms, first page blit -, first paint - [first-paint stall logged]

@@ -1,0 +1,6 @@
+% Verifies that \halign displays between paragraphs inside one \vbox.
+\input prelude
+\setbox0=\vbox{\noindent\vrule width40pt height4pt depth0pt\par\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}\noindent\vrule width40pt height4pt depth0pt\par}
+\message{512 ht=\the\ht0}
+\lsshipbox0
+\end

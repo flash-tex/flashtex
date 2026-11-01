@@ -1,0 +1,69 @@
+\input prelude
+% #1219 review plant p2, rebuilt so that pdfTeX's result is determined.
+% The head node last held \headthree's token. With TeX Live's hash
+% (changes/web2c.ch: hash_prime 8501) \headthree is at eqtb location 1915,
+% so the token is 4095+1915=6010: font(head), its high half, is 0
+% (nullfont) and character(head), its low half, 6010. Nullfont's kn code
+% block is followed by 22 \lpcode blocks (0), one \efcode block (1000),
+% which holds offsets 5888..6143 from nullfont's base, and 22 more \lpcode
+% blocks, so every read stays inside the used part of pdf_mem. pdfTeX
+% widens the first box's glue by the nullfont quad (8.33333) only if the
+% head holds exactly that token; any other location reads a 0.
+\font\f=cmr10 \f
+\fontdimen6\nullfont=5pt
+\knbscode\nullfont`x=0
+\font\FL=cmr10 at 5pt \lpcode\FL`x=0
+\font\FL=cmr10 at 6pt \lpcode\FL`x=0
+\font\FL=cmr10 at 7pt \lpcode\FL`x=0
+\font\FL=cmr10 at 8pt \lpcode\FL`x=0
+\font\FL=cmr10 at 9pt \lpcode\FL`x=0
+\font\FL=cmr10 at 10pt \lpcode\FL`x=0
+\font\FL=cmr10 at 11pt \lpcode\FL`x=0
+\font\FL=cmr10 at 12pt \lpcode\FL`x=0
+\font\FL=cmr10 at 13pt \lpcode\FL`x=0
+\font\FL=cmr10 at 14pt \lpcode\FL`x=0
+\font\FL=cmr10 at 15pt \lpcode\FL`x=0
+\font\FL=cmr10 at 16pt \lpcode\FL`x=0
+\font\FL=cmr10 at 17pt \lpcode\FL`x=0
+\font\FL=cmr10 at 18pt \lpcode\FL`x=0
+\font\FL=cmr10 at 19pt \lpcode\FL`x=0
+\font\FL=cmr10 at 20pt \lpcode\FL`x=0
+\font\FL=cmr10 at 21pt \lpcode\FL`x=0
+\font\FL=cmr10 at 22pt \lpcode\FL`x=0
+\font\FL=cmr10 at 23pt \lpcode\FL`x=0
+\font\FL=cmr10 at 24pt \lpcode\FL`x=0
+\font\FL=cmr10 at 25pt \lpcode\FL`x=0
+\font\FL=cmr10 at 26pt \lpcode\FL`x=0
+\font\FE=cmr10 at 40pt \efcode\FE`x=1000
+\font\FL=cmr10 at 50pt \lpcode\FL`x=0
+\font\FL=cmr10 at 51pt \lpcode\FL`x=0
+\font\FL=cmr10 at 52pt \lpcode\FL`x=0
+\font\FL=cmr10 at 53pt \lpcode\FL`x=0
+\font\FL=cmr10 at 54pt \lpcode\FL`x=0
+\font\FL=cmr10 at 55pt \lpcode\FL`x=0
+\font\FL=cmr10 at 56pt \lpcode\FL`x=0
+\font\FL=cmr10 at 57pt \lpcode\FL`x=0
+\font\FL=cmr10 at 58pt \lpcode\FL`x=0
+\font\FL=cmr10 at 59pt \lpcode\FL`x=0
+\font\FL=cmr10 at 60pt \lpcode\FL`x=0
+\font\FL=cmr10 at 61pt \lpcode\FL`x=0
+\font\FL=cmr10 at 62pt \lpcode\FL`x=0
+\font\FL=cmr10 at 63pt \lpcode\FL`x=0
+\font\FL=cmr10 at 64pt \lpcode\FL`x=0
+\font\FL=cmr10 at 65pt \lpcode\FL`x=0
+\font\FL=cmr10 at 66pt \lpcode\FL`x=0
+\font\FL=cmr10 at 67pt \lpcode\FL`x=0
+\font\FL=cmr10 at 68pt \lpcode\FL`x=0
+\font\FL=cmr10 at 69pt \lpcode\FL`x=0
+\font\FL=cmr10 at 70pt \lpcode\FL`x=0
+\font\FL=cmr10 at 71pt \lpcode\FL`x=0
+\pdfadjustinterwordglue=1
+\chardef\zero=0
+\def\m#1{}
+\m{\headthree\headthree\headthree}\setbox\zero=\hbox{ }
+\lsshipbox0
+\m{\headthree\headthree\headthree}\setbox\zero=\vbox{\hsize100pt \noindent{} x\par}
+\lsshipbox0
+\m{\headone\headtwo\headthree}\setbox\zero=\hbox{ }
+\lsshipbox0
+\end

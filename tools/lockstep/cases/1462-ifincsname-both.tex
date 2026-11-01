@@ -1,0 +1,8 @@
+% 1462-ifincsname-both: \ifincsname is true inside \csname and false outside; both branches feed one box (pdftex.web §§1762, 1769)
+\input prelude
+\font\f=cmr10
+\expandafter\def\csname cs\ifincsname IN\else OUT\fi\endcsname{ok}
+\ifincsname\count0=1\else\count0=0\fi
+\ifnum\count0=0 \setbox0=\hbox{\f \csIN} \else \setbox0=\hbox{\vrule width9pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

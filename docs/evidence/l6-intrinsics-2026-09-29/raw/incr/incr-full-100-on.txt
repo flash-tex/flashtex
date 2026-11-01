@@ -1,0 +1,22 @@
+settled: ['cold', 'cold', 'unchanged'] in 1.2s, 101 pages
+0:delete@189384: incremental restart@46/gap739 conv@49 rerun=3 first=47 edited=6.4ms cpu=5.6 total=39.3ms restore=1.4 find=0.6(key 0.2) tests=3/17.6 logs=29MB OK
+0:revert: incremental restart@46/gap739 conv@49 rerun=3 first=47 edited=6.1ms cpu=5.3 total=35.9ms restore=1.0 find=0.6(key 0.2) tests=3/15.2 logs=29MB OK
+1:replace@220127: incremental restart@53/gap3202 conv@55 rerun=2 first=54 edited=4.5ms cpu=3.7 total=19.8ms restore=1.0 find=0.6(key 0.2) tests=2/3.2 logs=29MB OK
+1:revert: incremental restart@53/gap3202 conv@55 rerun=2 first=54 edited=5.1ms cpu=4.2 total=21.2ms restore=1.2 find=0.6(key 0.2) tests=2/3.4 logs=29MB OK
+2:insert@188698: incremental restart@46/gap53 conv@None rerun=55 first=47 edited=6.0ms cpu=5.2 total=204.5ms restore=1.0 find=0.6(key 0.2) tests=7/10.1 logs=29MB OK diff=['page 47: 6355 differs outside what the structural comparison reads: pdf_char_used[41]: 0x1000000ff -> 0x3000000ff']
+2:revert: incremental restart@46/gap53 conv@None rerun=55 first=47 edited=6.4ms cpu=5.6 total=230.9ms restore=1.2 find=0.6(key 0.2) tests=7/10.2 logs=29MB OK diff=['page 47: 6355 differs outside what the structural comparison reads: pdf_char_used[41]: 0x3000000ff -> 0x1000000ff']
+3:insert@203007: incremental restart@49/gap2435 conv@51 rerun=2 first=50 edited=5.8ms cpu=5.1 total=30.5ms restore=1.0 find=0.6(key 0.2) tests=2/12.1 logs=29MB OK
+3:revert: incremental restart@49/gap2435 conv@51 rerun=2 first=50 edited=5.8ms cpu=5.0 total=32.2ms restore=1.0 find=0.6(key 0.2) tests=2/12.0 logs=29MB OK
+4:replace@199960: incremental restart@48/gap3040 conv@50 rerun=2 first=49 edited=4.5ms cpu=3.8 total=27.4ms restore=1.0 find=0.6(key 0.2) tests=2/11.2 logs=29MB OK
+4:revert: incremental restart@48/gap3040 conv@50 rerun=2 first=49 edited=4.6ms cpu=3.8 total=28.9ms restore=1.0 find=0.6(key 0.2) tests=2/12.5 logs=29MB OK
+5:replace@204610: incremental restart@49/gap4038 conv@52 rerun=3 first=51 edited=13.7ms cpu=12.9 total=38.5ms restore=1.0 find=0.6(key 0.2) tests=3/15.6 logs=29MB OK
+5:revert: incremental restart@49/gap4038 conv@52 rerun=3 first=51 edited=13.2ms cpu=12.4 total=35.8ms restore=0.9 find=0.6(key 0.2) tests=3/14.1 logs=29MB OK
+6:delete@202313: incremental restart@49/gap1741 conv@51 rerun=2 first=50 edited=15.0ms cpu=5.5 total=50.5ms restore=7.1 find=0.6(key 0.2) tests=2/12.3 logs=29MB OK
+6:revert: incremental restart@49/gap1741 conv@51 rerun=2 first=50 edited=5.9ms cpu=5.1 total=31.3ms restore=1.0 find=0.6(key 0.2) tests=2/12.9 logs=29MB OK
+7:replace@216477: incremental restart@52m/gap3218 conv@None rerun=49 first=53 edited=6.1ms cpu=5.3 total=186.0ms restore=1.1 find=0.6(key 0.2) tests=7/9.1 logs=29MB OK diff=['page 53: 3146 differs outside what the structural comparison reads: fewest_demerits: 0x130e -> 0x15a2']
+7:revert: incremental restart@52m/gap3218 conv@None rerun=49 first=53 edited=6.1ms cpu=5.3 total=183.6ms restore=1.0 find=0.6(key 0.2) tests=7/9.0 logs=29MB OK diff=['page 53: 3146 differs outside what the structural comparison reads: fewest_demerits: 0x15a2 -> 0x130e']
+8:insert@202852: incremental restart@49/gap2280 conv@None rerun=52 first=50 edited=5.8ms cpu=5.1 total=193.8ms restore=1.1 find=0.6(key 0.2) tests=7/12.6 logs=29MB OK diff=['page 50: structures differ: glue set differs (walking Some((List, 65, 65)))']
+8:revert: incremental restart@49/gap2280 conv@None rerun=52 first=50 edited=5.8ms cpu=5.0 total=195.1ms restore=1.1 find=0.6(key 0.2) tests=7/12.3 logs=29MB OK diff=['page 50: structures differ: glue set differs (walking Some((List, 65, 65)))']
+9:replace@218256: incremental restart@53/gap1331 conv@55 rerun=2 first=54 edited=4.9ms cpu=4.0 total=20.7ms restore=1.1 find=0.6(key 0.2) tests=2/3.4 logs=29MB OK
+9:revert: incremental restart@53/gap1331 conv@55 rerun=2 first=54 edited=4.7ms cpu=3.9 total=20.7ms restore=1.2 find=0.6(key 0.3) tests=2/3.4 logs=29MB OK
+{"doc": "full-100", "compiles": 20, "verified_ok": 20, "mismatches": 0, "converged": 14, "accounting_only": 0, "modes": {"incremental": 20}}

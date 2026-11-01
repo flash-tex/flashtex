@@ -1,0 +1,7 @@
+% 371-char-fonts: verifies \char pulls the same code point from two different fonts in one hlist.
+\input prelude
+\font\myrm=cmr10 \font\mytt=cmtt10
+\setbox0=\hbox{{\myrm \char65}{\mytt \char65}}
+\message{371 wd=\the\wd0}
+\lsshipbox0
+\end

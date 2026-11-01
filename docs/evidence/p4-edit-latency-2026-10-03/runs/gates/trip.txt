@@ -1,0 +1,88 @@
+warning: binary `corpus_augment` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../corpus_augment
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `corpus-augment`, convert the file stem
+  |
+1 - src/bin/corpus_augment.rs
+1 + src/bin/corpus-augment.rs
+  |
+warning: `flashtex-bridge` (manifest) generated 1 warning
+warning: binary `edit_latency_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../edit_latency_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `edit-latency-bench`, convert the file stem
+  |
+1 - src/bin/edit_latency_bench.rs
+1 + src/bin/edit-latency-bench.rs
+  |
+warning: binary `fixture_digest` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../fixture_digest
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `fixture-digest`, convert the file stem
+  |
+1 - src/bin/fixture_digest.rs
+1 + src/bin/fixture-digest.rs
+  |
+warning: binary `incremental_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../incremental_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `incremental-bench`, convert the file stem
+  |
+1 - src/bin/incremental_bench.rs
+1 + src/bin/incremental-bench.rs
+  |
+warning: binary `large_doc_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../large_doc_bench
+  |                                                                                       ^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `large-doc-bench`, convert the file stem
+  |
+1 - src/bin/large_doc_bench.rs
+1 + src/bin/large-doc-bench.rs
+  |
+warning: binary `scaling_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../scaling_bench
+  |                                                                                       ^^^^^^^^^^^^^
+  |
+help: to change the binary name to `scaling-bench`, convert the file stem
+  |
+1 - src/bin/scaling_bench.rs
+1 + src/bin/scaling-bench.rs
+  |
+warning: binary `ttfb_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../ttfb_bench
+  |                                                                                       ^^^^^^^^^^
+  |
+help: to change the binary name to `ttfb-bench`, convert the file stem
+  |
+1 - src/bin/ttfb_bench.rs
+1 + src/bin/ttfb-bench.rs
+  |
+warning: `flashtex-compiler` (manifest) generated 6 warnings
+   Compiling web2rust v0.1.0 (/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/tools/web2rust)
+    Finished `release` profile [optimized] target(s) in 4.57s
+web2rust: 1380 sections, 122867 tokens, 1045 pool strings, checksum 504454778
+web2rust: parsed 21 constants, 28 types, 314 globals, 331 routines, 50 main statements
+web2rust: named 634 macro constants at 4324 sites
+web2rust: emitted 317 routines into 12 files
+PASS tripin.log: byte-identical (465 lines)
+PASS trip.log: byte-identical (7306 lines)
+PASS tripos.tex: byte-identical (3 lines)
+PASS tripin.fot: identical after the accepted differences (2 echoed input line(s) removed; final newline dropped)
+PASS trip.fot: identical after the accepted differences (1 echoed input line(s) removed; final newline dropped)
+PASS trip.typ: identical after DVItype's banner line
+work dir: /var/folders/_0/d71mvr2d4_177qkm0506xl200000gn/T/tmp.gxnBsjW4i4
+trip exit 0

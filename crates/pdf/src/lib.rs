@@ -17,6 +17,17 @@
 //! - Pages are always white. The writer takes no theme input, so a dark preview
 //!   in the Mac app cannot leak into the export.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::chunks_exact_to_as_chunks,
+    clippy::cloned_ref_to_slice_refs,
+    clippy::manual_range_patterns,
+    clippy::needless_late_init,
+    clippy::neg_cmp_op_on_partial_ord,
+    clippy::useless_vec,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 pub mod cff;
 pub mod compare;
 pub mod deflate;

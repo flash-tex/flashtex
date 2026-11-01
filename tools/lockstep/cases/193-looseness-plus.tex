@@ -1,0 +1,10 @@
+\input prelude
+\font\myrm=cmr10
+\tolerance=10000
+\message{193 tolerance=\the\tolerance}
+\setbox0=\vbox{\hsize=220pt\parindent=0pt\looseness=0\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\setbox2=\vbox{\hsize=220pt\parindent=0pt\looseness=1\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\message{193 controlht=\the\ht0;looseht=\the\ht2}
+\lsshipbox0
+\lsshipbox2
+\end

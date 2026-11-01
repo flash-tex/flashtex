@@ -1,0 +1,6 @@
+% Verifies that \noalign in \valign can hold a \penalty and a \kern.
+\input prelude
+\setbox0=\hbox{\valign{#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\noalign{\penalty0\kern6pt}\hbox{\vrule width8pt height20pt depth2pt}\cr}}
+\message{509 wd=\the\wd0}
+\lsshipbox0
+\end

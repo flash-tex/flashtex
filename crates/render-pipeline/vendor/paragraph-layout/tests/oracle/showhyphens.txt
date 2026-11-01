@@ -1,4 +1,0 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.22)  13 SEP 2026 00:47
-[] \T1/cmr/m/n/10 coun-terex-am-ple sat-isfy hy-pothe-ses ex-plic-itly ir-ra-ti
-onal ex-pres-sion spec-i-fied state-ment as-so-ciate ta-ble present hy-phen-ati
-on

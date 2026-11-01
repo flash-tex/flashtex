@@ -1,0 +1,1 @@
+Exercises hyperref bookmarks: nested section titles containing math via \texorpdfstring land as plain text in main.out, while toc insertion shifts subsection page numbers in main.aux between pass 1 and pass 2.

@@ -1,0 +1,9 @@
+% 608-infinite-shrink-hbox: verifies minus 1fil shrink absorbs any excess quietly while matching finite shrink leaves the box overfull.
+\input prelude
+\setbox0=\hbox to 30pt{\vrule width10pt height8pt depth2pt\hskip 20pt minus 1fil\vrule width10pt height8pt depth2pt}
+\message{608 inf-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox to 30pt{\vrule width10pt height8pt depth2pt\hskip 20pt minus 8pt\vrule width10pt height8pt depth2pt}
+\message{608 fin-wd=\the\wd1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,11 @@
+% 1121-looseness-unsatisfiable-fallback: verifies an unsatisfiable \looseness falls back to the closest feasible line count: -5 keeps 2 lines of a natural 3, and +5 keeps 2 lines of a natural 1 (tex.web § 875)
+\input prelude
+\font\myrm=cmr10
+\def\lump{supercalifragilistic aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu}
+\def\short{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu}
+\setbox0=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\looseness=0\myrm \lump\par\message{1121 lump0=\the\prevgraf}}
+\setbox1=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\looseness=-5\myrm \lump\par\message{1121 lump-5=\the\prevgraf}}
+\setbox2=\vbox{\hsize=300pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\looseness=0\myrm \short\par\message{1121 short0=\the\prevgraf}}
+\setbox3=\vbox{\hsize=300pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\looseness=5\myrm \short\par\message{1121 short5=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1 \lsshipbox2 \lsshipbox3
+\end

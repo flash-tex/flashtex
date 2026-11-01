@@ -1,0 +1,8 @@
+% Verifies \fontcharwd, \fontcharht, \fontchardp and \fontcharic report cmr10 glyph metrics.
+\input prelude
+\font\f=cmr10
+\message{467 wd-A=\the\fontcharwd\f`A; ht-A=\the\fontcharht\f`A; dp-g=\the\fontchardp\f`g}
+\message{467 ht-paren=\the\fontcharht\f`(; dp-paren=\the\fontchardp\f`(; ic-f=\the\fontcharic\f`f}
+\setbox0=\hbox{\f Ag(}
+\lsshipbox0
+\end

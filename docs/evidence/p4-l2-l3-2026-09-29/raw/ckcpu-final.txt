@@ -1,0 +1,4 @@
+{"cpu_ms": 0.5351521511017827, "cyc_k": 2057.235420776495, "ins_k": 2775.3689181532004, "seal_cpu_ms": 0.2866610703043022, "rss_plain_mb": 100.734375, "rss_every_mb": 336.953125, "n": 954, "cpu_plain": 7.79, "cpu_every": 8.299999999999999}
+{"cpu_ms": 0.6190975865687302, "cyc_k": 2158.433738719832, "ins_k": 2811.767750262329, "seal_cpu_ms": 0.30051101783840506, "rss_plain_mb": 100.890625, "rss_every_mb": 336.71875, "n": 954, "cpu_plain": 8.21, "cpu_every": 8.8}
+{"cpu_ms": 0.8919202518363061, "cyc_k": 3232.9027534102834, "ins_k": 2920.2900818467997, "seal_cpu_ms": 0.3057492130115425, "rss_plain_mb": 100.8125, "rss_every_mb": 337.0, "n": 954, "cpu_plain": 8.33, "cpu_every": 9.18}
+median per checkpoint: {"cpu_ms": 0.619, "cyc_k": 2158.434, "ins_k": 2811.768, "seal_cpu_ms": 0.301, "rss_plain_mb": 100.812, "rss_every_mb": 336.953, "n": 954, "cpu_plain": 8.21, "cpu_every": 8.8}

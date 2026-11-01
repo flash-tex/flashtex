@@ -43,6 +43,10 @@ struct ChangeEnvironmentMenuItems: View {
     var body: some View {
         Button("Change Environment…") { model.presentChangeEnvironment() }
             .keyboardShortcut("e", modifiers: [.control, .command])
+        // TeXpand (TeXpandPrompt.swift): the structure editor inside a grid,
+        // the abbreviation prompt elsewhere. Off until Settings › Abbreviations.
+        Button("Expand Abbreviation or Edit Structure…") { TeXpandCommandAction.run() }
+            .keyboardShortcut("t", modifiers: [.control, .command])
     }
 }
 

@@ -1,0 +1,9 @@
+% 905-vtop-first-tall-vs-deep-box: verifies \vtop takes its height from its first box, tall first item versus deep first item.
+\input prelude
+\setbox0=\vtop{\hbox{\vrule width40pt height12pt depth2pt}\hbox{\vrule width40pt height8pt depth2pt}}
+\message{905 tall-first-ht=\the\ht0 dp=\the\dp0}
+\setbox1=\vtop{\hbox{\vrule width40pt height2pt depth12pt}\hbox{\vrule width40pt height8pt depth2pt}}
+\message{905 deep-first-ht=\the\ht1 dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

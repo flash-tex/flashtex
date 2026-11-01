@@ -1,0 +1,10 @@
+% 2108-copy-mixed-nodes-twins: two \copy reads of one rule, glue, kern and penalty list ship identical dumps (tex.web §§203, 204, 1079)
+% new versus 394-copy-vs-box: 394 nests one copied box; here a list of rule, glue, kern and penalty is copied and both twins are shipped
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth1pt\hskip4pt\kern3pt\penalty60}
+\setbox1=\hbox{\copy0}
+\setbox2=\hbox{\copy0}
+\message{2108 w1=\the\wd1 w2=\the\wd2}
+\lsshipbox1
+\lsshipbox2
+\end

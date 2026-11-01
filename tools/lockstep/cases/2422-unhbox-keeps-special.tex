@@ -1,0 +1,9 @@
+% 2422-unhbox-keeps-special: unpacking a box splices its \special whatsit into the outer list with zero width, so the shipped dump reads rule, special, rule at the rules' width (tex.web §§1356, 1361)
+% new versus 031-unhbox: 031 ships unpacked rules and fil glue with no whatsit; here the unboxed special node lands between the rules and the width message proves it adds nothing
+\input prelude
+\setbox0=\hbox{\special{inner 2422}\vrule width20pt height8pt depth2pt}
+\setbox1=\hbox{\vrule width20pt height8pt depth2pt\unhbox0}
+\ifvoid0\message{2422 box0-void}\else\message{2422 box0-kept}\fi
+\message{2422 wd=\the\wd1}
+\lsshipbox1
+\end

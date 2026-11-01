@@ -1,0 +1,15 @@
+% 684-clubpenalty-pagebreak: verifies \clubpenalty=10000 moves the page break before the paragraph instead of leaving its first line alone at the page bottom.
+\input prelude
+\font\myrm=cmr10
+\hsize=200pt \vsize=45pt \parindent=0pt \parskip=0pt plus2pt \topskip=10pt \maxdepth=4pt \baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt \parfillskip=0pt plus1fil \tolerance=200 \widowpenalty=0 \brokenpenalty=0 \interlinepenalty=0
+\output={\lsshipbox255}
+\def\lump{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi}
+\clubpenalty=0
+\hrule width100pt height30pt depth0pt
+\myrm \lump\ \lump\par
+\message{684 club0 shipped}
+\clubpenalty=10000
+\hrule width100pt height30pt depth0pt
+\myrm \lump\ \lump\par
+\message{684 club10000 shipped}
+\end

@@ -245,13 +245,15 @@ final class ConversionCredentialTests: XCTestCase {
         model.detachBridge()
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    /// Waits on a helper process (the Python bridge double); generous because a loaded runner
+    /// delays process start-up and replies by seconds, not because anything is timed.
+    private func waitUntil(_ what: String, timeout: TimeInterval = 30, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTFail("timed out waiting for \(what)")
+        XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the bridge double")
     }
 }
 

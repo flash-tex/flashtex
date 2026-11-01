@@ -1,0 +1,7 @@
+\input prelude
+\setbox0=\hbox to 60pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fil}
+\setbox1=\hbox to 100pt{\unhbox0\hskip 0pt plus 1fil}
+\ifvoid0 \message{031 box0-void} \else \message{031 box0-kept} \fi
+\message{031 wd=\the\wd1}
+\lsshipbox1
+\end

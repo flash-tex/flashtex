@@ -1,0 +1,8 @@
+% 1254-pdfcompresslevel-objcompresslevel: verifies \pdfcompresslevel and \pdfobjcompresslevel defaults and assignment (pdftex.web §672)
+\input prelude
+\message{1254 default=\the\pdfcompresslevel,\the\pdfobjcompresslevel}
+\pdfcompresslevel=0 \pdfobjcompresslevel=1
+\message{1254 set=\the\pdfcompresslevel,\the\pdfobjcompresslevel}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

@@ -1,0 +1,1822 @@
+{
+ "classes": {
+  "a": 0,
+  "b": 0,
+  "c": 0,
+  "d": 0,
+  "e": 0
+ },
+ "documents": {
+  "packages": [
+   {
+    "id": "adjustbox-readmefig",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "algorithm2e-geradwp",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "algorithmicx-algorithmicx",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "amsmath-subeqn",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "amssymb-latex-first",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 4
+    }
+   },
+   {
+    "id": "amsthm-latex-second-a",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "appendix-tikzpeople",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: the oracle's traced log is 12533 MiB, above --pt1-max-log-mb 1024",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "array-p37",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 3
+    }
+   },
+   {
+    "id": "babel-sample-animals-de",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "beamer-beamerfontthemeexample",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "bm-beautynote",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: the oracle's traced log is 1083 MiB, above --pt1-max-log-mb 1024",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "booktabs-6-6-6",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 2
+    }
+   },
+   {
+    "id": "braket-braket",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "calc-tools-overview",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "cancel-sample-tma",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "caption-test-tblr-extras",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "chemfig-chemfig-en",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: oracle: the traced pass did not finish in the capture's 600 s limit",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "circuitikz-compatibility",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "cleveref-2-4-14",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "colortbl-colortbl-DE",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "comment-comm_test",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "csquotes-csquotes",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "datetime2-sample-calc",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "dcolumn-13-3-25",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "dsfont-dsdoc",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "empheq-11-4-28",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "enumitem-enumitem",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "esint-11-4-14",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "eso-pic-eso-ex1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "etoolbox-demo-opencolor",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "fancyhdr-nolink-pdftex",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 0
+    }
+   },
+   {
+    "id": "fancyvrb-verbatim-content",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "float-7-5-1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "fontawesome5-fontawesome5",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "fontenc-encguide",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "footmisc-3-5-17",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 0
+    }
+   },
+   {
+    "id": "forest-milsymb",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: the oracle's traced log is 7239 MiB, above --pt1-max-log-mb 1024",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "fp-pgfmanual4bbox",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "geometry-geometry-samples",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "glossaries-glossaries-user-example027",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "graphicx-grfguide",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "hyperref-wiki_mwe",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "ifthen-A-5-6",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 2
+    }
+   },
+   {
+    "id": "imakeidx-test",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "inputenc-inputenc-iso-8859-7",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "keyval-kvsetkeys-example",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "koma-script-letter-example-00-en",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "lipsum-sampleRL",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "listings-sample8",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "lmodern-tstlmt1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "longtable-sample3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "lscape-cahierprof-exemple",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: the oracle's traced log is 9780 MiB, above --pt1-max-log-mb 1024",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "makeidx-pdfmarginpar",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "mathpazo-mathtest",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "mathtools-11-2-22",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "memoir-trims-example",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "mhchem-mhchem",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: the oracle's traced log is 7168 MiB, above --pt1-max-log-mb 1024",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "microtype-sphack-doc",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "minted-main",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "multirow-6-7-7",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "natbib-p312",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 1
+    }
+   },
+   {
+    "id": "newtxmath-mathnotes",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "nicematrix-simples-matrices-fra",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "parskip-3-1-11",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "pdflscape-hologo-example",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "pdfpages-pdf-ex",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "pgfmath-qr-example",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: the oracle's traced log is 4605 MiB, above --pt1-max-log-mb 1024",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "pgfplots-pgfplotsexample",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 1
+    }
+   },
+   {
+    "id": "physics-physics",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "qtree-qarrows",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "rotating-rotex",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "setspace-setspace-doc",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "siunitx-xsim.texsx-308883",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "soul-glossaries-extra-manual-example117",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "stmaryrd-11-8-11",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "subcaption-7-4-11",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 1
+    }
+   },
+   {
+    "id": "tabu-europasscv",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: tabu times its X-column trial typesetting with \\pdfelapsedtime, which \\tracingall logs, so pdfTeX's own traced log differs between runs",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "tabularx-tbx",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 2
+    }
+   },
+   {
+    "id": "tcolorbox-tcolorbox-example",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "threeparttable-uspace-test",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "tikz-zeichnung",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 3
+    }
+   },
+   {
+    "id": "titlesec-titlesec",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "tocloft-p46",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "todonotes-alterAppearenceOfListOfTodos",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "ulem-ulem",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "upgreek-sample-constants",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "url-url",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "verbatim-scalerel",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "wrapfig-6-4-1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "xcolor-xcolor4",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "xparse-simpleicons",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "xspace-externalize",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   }
+  ]
+ },
+ "engines": {
+  "new": {
+   "date": "2026-09-30",
+   "engine_kind": "tex",
+   "engine_sha256": "484ad943e6a65a8eb4efc4191ff599e83264bdec58e6e79b491c7d51e2c3355f",
+   "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+   "git_sha": "9713f29b3",
+   "host": "mac-m5pro-dq222",
+   "oracle_pdftex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "platform": "Darwin 25.6.0 arm64",
+   "pt": "on",
+   "raster": "pdftoppm",
+   "shell_escape": "default",
+   "tex_live": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+  },
+  "pdflatex": {
+   "date": "2026-09-30",
+   "engine_kind": "tex",
+   "engine_sha256": "3ead7baeffb81c638fe75599602278566370e6319c0469f6ab00ff62bff4b0eb",
+   "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "git_sha": null,
+   "host": "mac-m5pro-dq222",
+   "oracle_pdftex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "platform": "Darwin 25.6.0 arm64",
+   "pt": "on",
+   "raster": "pdftoppm",
+   "shell_escape": "default",
+   "tex_live": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+  },
+  "v1": {
+   "date": "2026-09-30",
+   "engine_kind": "flashtex-cli",
+   "engine_sha256": "41106a01a64793023da19be66c80d6bda9bf4f8846c8b8bf451797172fd62839",
+   "engine_version": "flashtex 0.1.0 (9713f29b3)",
+   "git_sha": "9713f29b3",
+   "host": "mac-m5pro-dq222",
+   "oracle_pdftex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "platform": "Darwin 25.6.0 arm64",
+   "pt": "on",
+   "raster": "pdftoppm",
+   "shell_escape": "default",
+   "tex_live": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+  }
+ },
+ "harness_sha": "1cf4f4e39",
+ "host_label": "mac-m5pro-dq222",
+ "schema": "flashtex-parity-engines/1",
+ "subject": "new",
+ "tiers": {
+  "packages": {
+   "new": {
+    "L0": [
+     92,
+     92
+    ],
+    "L1": [
+     92,
+     92
+    ],
+    "L2": [
+     92,
+     92
+    ],
+    "L3": [
+     92,
+     92
+    ],
+    "L4": [
+     92,
+     92
+    ],
+    "P-T1": [
+     84,
+     84
+    ],
+    "P-T2": [
+     92,
+     92
+    ],
+    "documents": 92,
+    "excluded": {}
+   },
+   "pdflatex": {
+    "L0": [
+     92,
+     92
+    ],
+    "L1": [
+     92,
+     92
+    ],
+    "L2": [
+     92,
+     92
+    ],
+    "L3": [
+     92,
+     92
+    ],
+    "L4": [
+     92,
+     92
+    ],
+    "P-T1": [
+     84,
+     84
+    ],
+    "P-T2": [
+     92,
+     92
+    ],
+    "documents": 92,
+    "excluded": {}
+   },
+   "v1": {
+    "L0": [
+     11,
+     92
+    ],
+    "L1": [
+     9,
+     92
+    ],
+    "L2": [
+     6,
+     92
+    ],
+    "L3": [
+     3,
+     92
+    ],
+    "L4": [
+     1,
+     92
+    ],
+    "P-T1": null,
+    "P-T2": [
+     0,
+     92
+    ],
+    "documents": 92,
+    "excluded": {}
+   }
+  }
+ }
+}

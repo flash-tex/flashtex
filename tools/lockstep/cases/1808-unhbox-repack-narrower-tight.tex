@@ -1,0 +1,8 @@
+% 1808-unhbox-repack-narrower-tight: unpacking a set box into a narrower to-box drops its old fil setting and shrinks the finite glue to a Tight ratio while the source goes void (tex.web §§ 664, 667, 1110)
+% new versus 031-unhbox: 031 unpacks a fil box into a wider box that stretches again; here the target is narrower, so the repack shrinks to -0.66667 and reports Tight
+\input prelude
+\setbox0=\hbox to 60pt{\vrule width10pt height8pt depth2pt\hskip 10pt plus 1fil minus 6pt\vrule width20pt height8pt depth2pt}
+\setbox1=\hbox to 36pt{\unhbox0}
+\message{1808 repack-wd=\the\wd1 src-wd=\the\wd0}
+\lsshipbox1
+\end

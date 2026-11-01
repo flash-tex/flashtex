@@ -1,0 +1,8 @@
+% Verifies \char and \chardef produce the same glyphs as literal characters.
+\input prelude
+\font\f=cmr10
+\chardef\capA=`A \chardef\cqq=`?
+\message{460 meaningA=\meaning\capA; meaningq=\meaning\cqq}
+\setbox0=\hbox{\f A\char65 \capA ?\char63 \cqq}
+\lsshipbox0
+\end

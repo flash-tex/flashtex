@@ -1,0 +1,10 @@
+% 1023-ifdim-units-nested: verifies \ifdim with in/bp/pc/cm units, negative zero, and stacked relations (tex.web §§498-501)
+\input prelude
+\message{1023 in-bp=[\ifdim1in=72bp T\else F\fi] pc-pt=[\ifdim1pc=12pt T\else F\fi]}
+\message{1023 in-pc=[\ifdim1in=6pc T\else F\fi] cm-in=[\ifdim2.54cm=1in T\else F\fi]}
+\message{1023 negzero=[\ifdim-0pt=0pt T\else F\fi] neg=[\ifdim-3pt<-2pt T\else F\fi]}
+\dimen0=1in \dimen1=72bp
+\ifdim\dimen0=\dimen1 \ifdim\dimen0>1pc \message{1023 nest-all}\else\message{1023 nest-no2}\fi\else\message{1023 nest-no1}\fi
+\setbox0=\hbox{\vrule width1023pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

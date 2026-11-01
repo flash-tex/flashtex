@@ -1,0 +1,76 @@
+\documentclass{beamer}
+\usetheme{Warsaw}
+\usecolortheme{beaver}
+\title[Warsaw deck]{A Warsaw Deck with Beaver Colours}
+\subtitle{Themes, navigation and blocks}
+\author[A. Author]{Ada Author\inst{1} \and Ben Builder\inst{2}}
+\institute[Inst.]{\inst{1}First Institute \and \inst{2}Second Institute}
+\date{3 October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Outline}\tableofcontents\end{frame}
+\section{Introduction}
+\subsection{Motivation}
+\begin{frame}{Motivation}
+  \begin{itemize}
+    \item Slides should compile exactly as pdflatex compiles them.
+    \item Navigation bars show sections and mini frames.
+    \item Every theme draws shadows, rounded boxes and gradients.
+  \end{itemize}
+\end{frame}
+\begin{frame}{Blocks}
+  \begin{block}{Ordinary block}
+    A plain block with a title.
+  \end{block}
+  \begin{alertblock}{Alert block}
+    Something that needs attention: $e^{i\pi}+1=0$.
+  \end{alertblock}
+  \begin{exampleblock}{Example block}
+    An example: $\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$.
+  \end{exampleblock}
+\end{frame}
+\subsection{Layout}
+\begin{frame}{Columns}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Left.} A column of text that wraps over several lines so that
+      the paragraph builder has something to do.
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{enumerate}
+        \item First
+        \item Second
+        \item Third
+      \end{enumerate}
+    \end{column}
+  \end{columns}
+\end{frame}
+\section{Results}
+\subsection{Tables}
+\begin{frame}{A table}
+  \begin{center}
+  \begin{tabular}{lrr}
+    \hline
+    Engine & Pages & Time (ms) \\
+    \hline
+    pdflatex & 12 & 410 \\
+    flashtex & 12 & 4 \\
+    \hline
+  \end{tabular}
+  \end{center}
+\end{frame}
+\subsection{Math}
+\begin{frame}{Equations}
+  \begin{align}
+    a^2 + b^2 &= c^2 \\
+    \int_0^1 x^2\,dx &= \tfrac13
+  \end{align}
+\end{frame}
+\section*{Summary}
+\begin{frame}{Summary}
+  \begin{itemize}
+    \item Warsaw and beaver.
+    \item<2-> Overlays in a themed deck.
+  \end{itemize}
+\end{frame}
+\end{document}

@@ -1,0 +1,17 @@
+\input prelude
+\count0=100
+\dimen0=10pt
+\def\foo{outer}
+\begingroup
+\count0=200
+\dimen0=20pt
+\def\foo{inner}
+\message{021 in-count=\the\count0}
+\message{021 in-def=\meaning\foo}
+\endgroup
+\message{021 out-count=\the\count0}
+\message{021 out-dimen=\the\dimen0}
+\message{021 out-def=\meaning\foo}
+\setbox0=\hbox{\vrule width21pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

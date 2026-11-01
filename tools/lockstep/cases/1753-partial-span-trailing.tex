@@ -1,0 +1,6 @@
+% 1753-partial-span-trailing: verifies a span over only the last columns leaves the first column at natural width (tex.web §§ 798, 801)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil&#\hfil\cr\vrule width10pt height8pt depth2pt&\omit\span\omit\hfil\vrule width50pt height8pt depth2pt\hfil\cr}}
+\message{1753 wd=\the\wd0}
+\lsshipbox0
+\end

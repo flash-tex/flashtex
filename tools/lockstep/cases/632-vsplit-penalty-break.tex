@@ -1,0 +1,12 @@
+% 632-vsplit-penalty-break: verifies \vsplit breaks at a penalty while penalty 10000 forbids the break and swallows the whole box.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height25pt depth0pt\penalty0\vskip10pt\hrule width40pt height25pt depth0pt}
+\setbox1=\vsplit0 to 27pt
+\message{632 top=\the\ht1 rest=\the\ht0}
+\setbox2=\vbox{\hrule width40pt height25pt depth0pt\penalty10000\vskip10pt\hrule width40pt height25pt depth0pt}
+\setbox3=\vsplit2 to 27pt
+\ifvoid2 \message{632 ctl-rest-void ctl-top=\the\ht3} \else \message{632 ctl-rest-kept} \fi
+\lsshipbox1
+\lsshipbox0
+\lsshipbox3
+\end

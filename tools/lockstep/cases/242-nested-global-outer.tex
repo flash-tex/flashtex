@@ -1,0 +1,21 @@
+\input prelude
+\count0=0 \count1=100 \count2=0
+\begingroup
+\count0=1 \count2=1
+\begingroup
+\count0=2 \count1=200 \count2=2
+\begingroup
+\count0=3 \count2=3
+% global at the innermost level escapes every enclosing group
+\global\count0=30
+\global\count1=300
+\message{242 L3=\the\count0,\the\count1,\the\count2}
+\endgroup
+\message{242 L2=\the\count0,\the\count1,\the\count2}
+\endgroup
+\message{242 L1=\the\count0,\the\count1,\the\count2}
+\endgroup
+\message{242 L0=\the\count0,\the\count1,\the\count2}
+\setbox0=\hbox{\vrule width242pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,6 @@
+% 1192-prevgraf-shifts-hang-start-line: assigning \prevgraf moves the paragraph's first line number, so hanging starts immediately (tex.web §§814, 877, 1244)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\hangindent=40pt\hangafter=1\myrm alpha beta gamma delta epsilon\prevgraf=5 zeta eta theta iota kappa lambda mu nu\par}
+\lsshipbox0
+\end

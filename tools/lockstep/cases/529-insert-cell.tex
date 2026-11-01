@@ -1,0 +1,7 @@
+% Verifies that \insert in a cell stores an insert node in the alignment.
+\input prelude
+\count200=1000 \dimen200=100pt
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\insert200{\hrule width40pt height6pt depth0pt}\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{529 ht200=\the\ht200}
+\lsshipbox0
+\end

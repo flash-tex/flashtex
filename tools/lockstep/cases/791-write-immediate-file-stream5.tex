@@ -1,0 +1,14 @@
+% 791-write-immediate-file-stream5: verifies an \immediate\write to file stream 5 lands in the generated file and reads back.
+\input prelude
+\immediate\openout5=ls791data.txt
+\immediate\write5{alpha 791}
+\immediate\closeout5
+\openin1=ls791data.txt
+\read1 to \gotA
+\message{791 back=\meaning\gotA}
+\read1 to \gotB
+\ifeof1\message{791 eof-yes}\else\message{791 eof-no}\fi
+\closein1
+\setbox0=\hbox{\vrule width91pt height8pt depth2pt}
+\lsshipbox0
+\end

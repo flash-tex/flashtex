@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage[user]{zref}
+\begin{document}
+See the labeled equation on page~\zpageref{eq:demo}.
+\begin{equation}
+E = mc^2 \zlabel{eq:demo}
+\end{equation}
+Reference value: \zref{eq:demo} on page \zpageref{eq:demo}.
+\end{document}

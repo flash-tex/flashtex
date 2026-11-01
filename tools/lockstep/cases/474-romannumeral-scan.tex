@@ -1,0 +1,15 @@
+% Verifies \romannumeral number scanning: digits from \the join the number, letters stop it, and negative zero yields empty.
+\input prelude
+\count0=65
+\edef\ra{\romannumeral0\the\count0}
+\message{474 ra=\meaning\ra}
+\edef\rb{\romannumeral-0 hello}
+\message{474 rb=\meaning\rb}
+\def\foo{AB}
+\edef\rc{\romannumeral0\foo}
+\message{474 rc=\meaning\rc}
+\edef\rd{\romannumeral`A}
+\message{474 rd=\meaning\rd}
+\setbox0=\hbox{\vrule width474pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

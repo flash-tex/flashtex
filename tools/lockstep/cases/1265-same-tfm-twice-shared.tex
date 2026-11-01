@@ -1,0 +1,9 @@
+% 1265-same-tfm-twice-shared: two \font identifiers over one TFM share a single internal font, so a \fontdimen assigned through one shows in boxes set with the other (tex.web §§1260, 578).
+\input prelude
+\font\fa=cmr10 \font\fb=cmr10
+\setbox0=\hbox{\fa a b c d}
+\fontdimen2\fa=8pt
+\message{1265 via-fb=\the\fontdimen2\fb}
+\setbox1=\hbox{\fb a b c d}
+\lsshipbox0 \lsshipbox1
+\end

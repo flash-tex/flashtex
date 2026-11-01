@@ -1,0 +1,6 @@
+% 1041-preamble-loop-repeat: verifies a && preamble loop lengthens for extra columns (tex.web §§ 783, 793)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&&#\hfil\cr\vrule width10pt height8pt depth2pt&\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt&\vrule width40pt height8pt depth2pt\cr}}
+\message{1041 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,0 +1,7 @@
+% 1191-prevdepth-ignore-depth-skips-baselineskip: \prevdepth=-1000pt equals ignore_depth so no interline glue is added before the next box, while \prevdepth=0pt does add baselineskip glue (tex.web §679)
+\input prelude
+\baselineskip=12pt
+\setbox0=\vbox{\hbox{\vrule width40pt height8pt depth2pt}\prevdepth=-1000pt\hbox{\vrule width40pt height8pt depth2pt}\prevdepth=0pt\hbox{\vrule width40pt height8pt depth2pt}}
+\message{1191 ht=\the\ht0}
+\lsshipbox0
+\end

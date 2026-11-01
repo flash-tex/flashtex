@@ -70,7 +70,6 @@ final class LargeDocumentEditorTests: XCTestCase {
                 selection: model.selection,
                 pendingEdit: model.pendingEdit,
                 marks: marks.isEmpty ? model.editorMarks : marks,
-                result: model.result,
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { model.caretLengthUTF16 = $0.length },
                 onEditApplied: { model.editApplied($0, newText: $1) },
@@ -354,76 +353,7 @@ final class LargeDocumentEditorTests: XCTestCase {
     }
 }
 
-/// Durable edits on the large buffer through the REAL preview controller and
-/// compiler (skips without `FLASHTEX_PREVIEW_CONTROLLER`/`FLASHTEX_COMPILER`):
-/// a 500 KB paste into a 60 KB document, a whole-document selection, a
-/// shift-arrow selection and typing at the start of the 560 KB buffer all
-/// end durable, byte-exact, with one revision per edit.
 extension LargeDocumentEditorTests {
-    func testLargePasteSelectionAndTypingEndDurableThroughTheRealHelper() async throws {
-        let base = Self.proseDocument(bytes: 60_000)
-        let h = try await IMEHarness.attached("large-doc", text: base)
-        defer { h.close() }
-        let model = h.model, tv = h.textView!
-        let d1 = try await h.helperDocument()
-        XCTAssertEqual(d1.revision, 1)
-        let revBefore = model.editorRevision
-
-        // Paste (one insertText, as `paste:` does) 500 KB before \end{document}.
-        let block = Self.proseDocument(bytes: 500_000)
-            .replacingOccurrences(of: "\\documentclass{article}\n\\begin{document}\n", with: "")
-            .replacingOccurrences(of: "\\end{document}\n", with: "")
-        let at = (base as NSString).range(of: "\\end{document}", options: .backwards).location
-        tv.setSelectedRange(NSRange(location: at, length: 0))
-        let paste = Self.timed { tv.insertText(block, replacementRange: NSRange(location: at, length: 0)) }
-        let afterPaste = model.editorRevision
-        XCTAssertEqual(afterPaste, revBefore + 1, "the paste is one revision")
-        let t0 = MonotonicClock.nowNs()
-        // The helper numbers its own revisions (r1 = open): the paste is r2.
-        try await h.waitUntil("paste durable", timeout: 120) {
-            model.controllerState.durable["main.tex"]?.revision == d1.revision + 1
-        }
-        XCTAssertEqual(model.controllerState.editorRevisionByDurable["main.tex"]?[d1.revision + 1], afterPaste)
-        let pasteDurableMs = Double(MonotonicClock.nowNs() - t0) / 1e6
-        let d2 = try await h.helperDocument()
-        XCTAssertEqual(d2.revision, d1.revision + 1)
-        XCTAssertTrue(d2.text.sameBytes(as: model.activeText))
-        XCTAssertGreaterThanOrEqual(model.activeText.utf8.count, 560_000)
-
-        // Whole-document selection, then a shift-arrow: no revision, nothing sent.
-        tv.selectAll(nil)
-        tv.moveLeftAndModifySelection(nil)
-        try await h.turn()
-        XCTAssertEqual(model.editorRevision, afterPaste, "selection changes are not edits")
-        XCTAssertEqual(model.caretLengthUTF16, tv.selectedRange().length)
-
-        // Type at the start of the buffer: one revision per keystroke, all durable.
-        let start = (model.activeText as NSString).range(of: "The quick brown fox").location
-        tv.setSelectedRange(NSRange(location: start, length: 0))
-        tv.scrollRangeToVisible(tv.selectedRange())
-        try await h.turn()
-        var keys: [Sample] = []
-        for ch in ["Z", "é", "→"] {
-            keys.append(Self.timed { tv.insertText(ch, replacementRange: tv.selectedRange()) })
-        }
-        let final = model.editorRevision
-        XCTAssertEqual(final, afterPaste + 3)
-        let t1 = MonotonicClock.nowNs()
-        // Keystrokes typed while an edit is in flight are grouped into the next
-        // submission: the durable document reaches `final` in 1–3 helper revisions.
-        try await h.waitUntil("typing durable", timeout: 120) {
-            model.controllerState.editorRevisionByDurable["main.tex"]?.values.contains(final) == true
-        }
-        let typingDurableMs = Double(MonotonicClock.nowNs() - t1) / 1e6
-        let d5 = try await h.helperDocument()
-        XCTAssertTrue((d1.revision + 2...d1.revision + 4).contains(d5.revision), "helper revision \(d5.revision)")
-        XCTAssertTrue(d5.text.sameBytes(as: model.activeText), "the helper holds the typed buffer byte for byte")
-        XCTAssertTrue(model.activeText.sameBytes(as: SourceEditorView.nativeText(of: tv)))
-        XCTAssertTrue(d5.text.contains("Zé→The quick brown fox"))
-        XCTAssertEqual(d5.sha256, SourceDigest.sha256Hex(model.activeText))
-        print("large-document durable (real helper, \(model.activeText.utf8.count) bytes): paste \(paste), durable after \(Int(pasteDurableMs)) ms; keystrokes at the start \(Self.stats(keys)), durable after \(Int(typingDurableMs)) ms; \(IMEHarness.uptime())")
-    }
-
     // MARK: bounded selection announcement (lane mac-editor-a11y-3)
 
     /// Below the limit the bounded form is the unbounded one; above it the

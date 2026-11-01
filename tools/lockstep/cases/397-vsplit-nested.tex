@@ -1,0 +1,8 @@
+% 397-vsplit-nested: verifies \vsplit keeps a nested \vbox whole, breaking only at outer glue (overfull warning, exit 0).
+\input prelude
+\setbox0=\vbox{\vbox{\hrule width60pt height10pt depth0pt\vskip5pt\hrule width60pt height10pt depth0pt}\vskip5pt\vbox{\hrule width60pt height10pt depth0pt}}
+\setbox1=\vsplit0 to 12pt
+\message{397 top-ht=\the\ht1 rest-ht=\the\ht0}
+\lsshipbox1
+\lsshipbox0
+\end

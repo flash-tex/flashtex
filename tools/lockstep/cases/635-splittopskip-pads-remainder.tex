@@ -1,0 +1,15 @@
+% 635-splittopskip-pads-remainder: verifies \splittopskip pads the remainder box below a split, unlike the zero default.
+\input prelude
+\splittopskip=12pt
+\setbox0=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt\hbox{\vrule width40pt height8pt depth2pt}}
+\setbox1=\vsplit0 to 30pt
+\message{635 top=\the\ht1 rest=\the\ht0}
+\splittopskip=0pt
+\setbox2=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt\hbox{\vrule width40pt height8pt depth2pt}}
+\setbox3=\vsplit2 to 30pt
+\message{635 ctl-top=\the\ht3 ctl-rest=\the\ht2}
+\lsshipbox1
+\lsshipbox0
+\lsshipbox3
+\lsshipbox2
+\end

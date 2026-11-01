@@ -1,0 +1,5 @@
+\input prelude % Verifies \the\badness reports 10000 for a glue-less underfull hbox.
+\setbox0=\hbox to 100pt{\vrule width10pt height5pt depth0pt}
+\message{423 badness=\the\badness}
+\lsshipbox0
+\end

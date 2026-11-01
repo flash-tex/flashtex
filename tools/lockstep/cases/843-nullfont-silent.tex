@@ -1,0 +1,12 @@
+% 843-nullfont-silent: verifies \nullfont with \tracinglostchars=0 ships an empty box silently while the same characters in cmr10 ship ink.
+\input prelude
+\font\rm=cmr10
+\tracinglostchars=0
+\message{843 lost=\the\tracinglostchars; nullname=\fontname\nullfont}
+\setbox0=\hbox{\nullfont ABC}
+\message{843 null-wd=\the\wd0}
+\setbox1=\hbox{\rm ABC}
+\message{843 rm-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

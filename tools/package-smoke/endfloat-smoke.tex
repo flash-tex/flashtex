@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{endfloat}
+\begin{document}
+Text comes first; the float moves to the end.
+\begin{figure}[ht]
+\centering\rule{3cm}{2cm}
+\caption{A delayed figure.\label{fig:ef}}
+\end{figure}
+See Figure~\ref{fig:ef} at the end.
+\end{document}

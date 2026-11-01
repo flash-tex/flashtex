@@ -1,0 +1,12 @@
+% 2131-strings-input-braced: \tracingstats=2 string counts after a braced \input{...} file name, whose scanned string tex.ch keeps (tex.web §537; tex.ch [54/web2c] scan_file_name_braced)
+\input prelude
+\immediate\openout1=ls2131braced.tex
+\immediate\write1{\noexpand\message{2131 inside}}
+\immediate\closeout1
+\tracingstats=2
+\def\lsname{ls2131braced}
+\input{\lsname}
+\input{\lsname.tex}
+\setbox0=\hbox{\vrule width2131pt height8pt depth2pt}
+\lsshipbox0
+\end

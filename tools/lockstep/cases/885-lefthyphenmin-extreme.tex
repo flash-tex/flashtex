@@ -1,0 +1,10 @@
+% 885-lefthyphenmin-extreme: verifies a large \lefthyphenmin forbids early hyphen points so only breaks six letters in survive against the (2,2) control.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{885 pat set}
+\setbox0=\vbox{\hsize=90pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm bananabanana bananabanana bananabanana\par\message{885ctl lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=90pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=6\righthyphenmin=2\myrm bananabanana bananabanana bananabanana\par\message{885lhm6 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

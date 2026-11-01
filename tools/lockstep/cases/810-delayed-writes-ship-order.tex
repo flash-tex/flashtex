@@ -1,0 +1,8 @@
+% 810-delayed-writes-ship-order: verifies delayed writes from two boxes fire at their own shipout in ship order.
+\input prelude
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\write-1{box A 810}}
+\setbox2=\hbox{\vrule width20pt height8pt depth2pt\write-1{box B 810}}
+\lsshipbox2
+\lsshipbox0
+\message{810 done}
+\end

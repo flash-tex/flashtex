@@ -1,0 +1,10 @@
+% 1832-unskip-scaled-glue-control-space: unskip removes the factor-scaled glue and a control space then lays narrow glue that ignores the surviving high factor (tex.web §§1041, 1043, 1104)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000
+\setbox0=\hbox{\myrm a. \unskip\ b}
+\message{1832 replaced-wd=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1832 extra-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

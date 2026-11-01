@@ -1,0 +1,734 @@
+"""P-T1 capture adapter: one traced run of a TeX engine, in PDF mode.
+
+    capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None) -> Capture(log, boxes, pdf_path)
+
+(tools/parity adds `stream=` and `timeout=`, and a Capture of a log over
+MAX_LOG_BYTES has `log` None and its `fingerprint`: see pt1stream.py.)
+
+`extra_env` is added to the run's environment (the candidate engine's
+`FLASHTEX_FORMATS`, never the oracle's). Every run uses the one shell-escape
+setting (SHELL_ESCAPE; by default no flag) and a `pdftex` symlink as argv[0]
+(engine_link).
+
+This is the shape `tools/lockstep/run.py` exposes (agreed on #2, comments
+5885107001 and 5885140240), so there is one capture implementation in the
+repository, not two. `tools/parity` only calls `capture` through this module.
+
+TODO(lockstep): when `tools/lockstep/run.py` with `capture` lands on main,
+delete the stand-in below and import lockstep's `capture` at the bottom of
+this file. The stand-in is deliberately minimal and must not grow features that
+lockstep lacks.
+
+Settings, as DESIGN §1.1 / the P0-LOCKSTEP-HARNESS assignment define them:
+LaTeX's `\\tracingall` (which includes `\\tracingoutput=1`, so every
+`\\shipout` dumps its box into the log), then `\\tracingonline=1`,
+`\\showboxdepth=\\showboxbreadth=2147483647`, and `\\nonstopmode` again,
+because LaTeX's `\\loggingoutput` sets `\\errorstopmode` and TeX would block
+on stdin at the first error. `max_print_line`, `error_line` and
+`half_error_line` are raised through the environment, and
+`SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1` pin every date.
+
+`normalise_log` covers what differs between two runs of the same engine in
+two places:
+  * banner: every line before the `**` first-line echo (engine name and
+    version, format date, `\\write18` and `%&-line` notes);
+  * paths: the absolute work directory becomes `<WORKDIR>`, and the
+    run's TEXMFVAR `<TEXMFVAR>` (`workdir_subs`);
+  * the clock: values `\\pdfelapsedtime` puts into the trace become
+    `<ELAPSED>`, only where the trace shows they came from it
+    (`ElapsedMask`; Commander ruling, lane P5-PT1-SKIPS).
+
+`split_accounting` then applies the DESIGN §1.1 P-T1 ruling (2026-09-29,
+"N2"). It removes only end-of-run capacity and output-size accounting, and
+hands those lines back so the harness can report them as a separate,
+non-gating accounting check:
+  * `\\tracingstats` lines `Memory usage before: a&b; after: c&d; still
+    untouched: e`, matched as the whole line;
+  * the `Here is how much of TeX's memory you used:` block;
+  * the `PDF statistics:` block;
+  * the byte count in `Output written on X (N pages, B bytes).`. The page
+    count stays compared.
+Every removed line must have one of the exact shapes pdfTeX 1.40.29 prints
+(`ACCOUNTING_BLOCKS`, taken from the 82 fixture logs and checked against
+tex.web and pdftex.web; plurals follow `print_char("s")`). Anything else
+stays compared (#1191 review 5888078003; #1196 review 5888464701):
+  * a block's lines must come in pdfTeX's order, each shape at most once. The
+    first line that doesn't fit ends the block and is compared, even if it
+    starts with a space (` junk`, ` Overfull \\hbox`);
+  * each block header, and `Output written on`, counts only once, and only
+    in the end-of-run trailer after the last `\\shipout`. A header earlier in
+    the log is compared;
+  * a `Memory usage` line counts only when an earlier shipout still owes
+    its one line. Nested shipouts, as in beamer, owe theirs too.
+
+The rules are `workdir_subs`, `banner_end`, `Accounting.step` and
+`BoxSplitter`. `normalise_log`, `split_accounting` and `split_boxes` drive
+them over a whole log; pt1stream.py drives the same code over a stream, for a
+log too big to hold (one implementation, two drivers).
+"""
+
+import collections
+import functools
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import threading
+
+# The one \write18 setting, for BOTH engines. Owner decision #1209 (DESIGN
+# §4.5): restricted by default, as in TeX Live's pdflatex. So the default is
+# no flag at all, and each engine runs in its own default mode (texmf.cnf
+# `shell_escape = p`: ` restricted \write18 enabled.`, \pdfshellescape=2,
+# which l3kernel's \sys_if_shell reads). `parity.py --shell-escape-flag`
+# overrides it with -shell-restricted, -no-shell-escape or -shell-escape.
+SHELL_ESCAPE = None
+PROGRAM = "pdftex"  # the name every engine runs under (see engine_link)
+BIN_ROOT = os.path.join(tempfile.gettempdir(), "flashtex-parity-bin")
+
+TRACE =(r"\tracingall\tracingonline=1\showboxdepth=2147483647\showboxbreadth=2147483647"
+         r"\nonstopmode")
+# DESIGN §4.5 pins the random seed. pdfTeX seeds \pdfuniformdeviate (l3kernel's
+# \int_rand, pgf's random numbers) from the clock, so a document that draws one
+# differs from itself between runs. Every pass of every TeX engine the harness
+# runs (the oracles and a TeX --engine) starts its first line with this.
+SEED = r"\pdfsetrandomseed 1\relax"
+TRACE_ENV = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1",
+             "max_print_line": "10000", "error_line": "254", "half_error_line": "238"}
+# The traced pass's time limit in seconds (parity.py --pt1-timeout). A pass it
+# stops is a harness error (tiers.TRACE_TIMEOUT), never a pass.
+TIMEOUT = 1800
+
+# The traced-log budget in bytes (parity.py --pt1-max-log-mb; 0: none). A log
+# over it is never read whole: a \tracingall log runs to 25 GB (arXiv
+# 2501.08663v2), and reading one whole costs several times that in memory.
+# Such a log is read once as a stream into its P-T1 fingerprint
+# (pt1stream.py, constant memory), and a Capture of it has `log` and `boxes`
+# None, its `size`, `complete` (from its tail) and `fingerprint`. 256 MiB: the
+# in-memory compare of two differing logs holds about 13 times one log
+# (`split_accounting` and `first_line_diff` split both into lines; 5.4 GiB
+# measured for the 436 MB beamer-visuals fixture log), and the harness's
+# processes must stay under 6 GB.
+# Streaming gives the same verdict, so the budget only decides whether a
+# failure quotes the first differing line or names the lines that hold it.
+MAX_LOG_BYTES = 256 << 20
+
+Capture = collections.namedtuple("Capture", "log boxes pdf_path size complete fingerprint timed_out",
+                                 defaults=(None, None, None, False))
+
+
+SHIPOUT = "Completed box being shipped out"
+_OUTPUT_WRITTEN = re.compile(r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
+_MEMORY_USAGE = re.compile(r"^Memory usage before: \d+&\d+; after: \d+&\d+; still untouched: \d+$")
+# header -> the continuation lines it may have, in pdfTeX's order (tex.web
+# section 1334, pdftex.web's PDF statistics); each matches the whole line
+ACCOUNTING_BLOCKS = {
+    "Here is how much of TeX's memory you used:": [re.compile(x) for x in (
+        r"^ \d+ strings? out of \d+$",
+        r"^ \d+ string characters? out of \d+$",
+        r"^ \d+ words of memory out of \d+$",
+        r"^ \d+ multiletter control sequences? out of \d+\+\d+$",
+        r"^ \d+ words of font info for \d+ fonts?, out of \d+ for \d+$",
+        r"^ \d+ hyphenation exceptions? out of \d+$",
+        r"^ \d+i,\d+n,\d+p,\d+b,\d+s stack positions out of \d+i,\d+n,\d+p,\d+b,\d+s$")],
+    "PDF statistics:": [re.compile(x) for x in (
+        r"^ \d+ PDF objects? out of \d+ \(max\. \d+\)$",
+        r"^ \d+ compressed objects? within \d+ object streams?$",
+        r"^ \d+ named destinations? out of \d+ \(max\. \d+\)$",
+        r"^ \d+ words of extra memory for PDF output out of \d+ \(max\. \d+\)$")],
+}
+
+
+# The kpsewhich beside the oracle's pdftex (parity.py sets it from
+# `kpsewhich_beside`), so TEXMFVAR comes from the oracle's texmf.cnf; None:
+# the one on PATH.
+KPSEWHICH = None
+
+
+def kpsewhich_beside(pdftex):
+    """The kpsewhich in `pdftex`'s directory (the link's, then the real
+    binary's), or None."""
+    for d in (os.path.dirname(pdftex), os.path.dirname(os.path.realpath(pdftex))):
+        k = os.path.join(d, "kpsewhich")
+        if os.path.isfile(k) and os.access(k, os.X_OK):
+            return k
+    return None
+
+
+def default_texmfvar():
+    """kpathsea's TEXMFVAR when the variable is unset (`kpsewhich -var-value
+    TEXMFVAR` without it in the environment; `KPSEWHICH`, else PATH's); ""
+    when kpsewhich is missing or fails."""
+    return _kpse_texmfvar(KPSEWHICH or shutil.which("kpsewhich") or "")
+
+
+@functools.lru_cache(maxsize=None)
+def _kpse_texmfvar(kpse):
+    if not kpse:
+        return ""
+    env = {k: v for k, v in os.environ.items() if k != "TEXMFVAR"}
+    try:
+        p = subprocess.run([kpse, "-var-value", "TEXMFVAR"], env=env, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def cached_log_subs():
+    """The pairs for a log another run normalised (a cached oracle log):
+    this run's TEXMFVAR and kpathsea's default. A log cached with TEXMFVAR
+    unset before that was normalised names the default directory, and must
+    match under a run that sets TEXMFVAR elsewhere (scoreboard-run.sh).
+    Applying them to a log normalised under today's rule changes nothing."""
+    pairs = set(workdir_subs(None)) | set(workdir_subs(None, default_texmfvar()))
+    return sorted(pairs, key=lambda p: (-len(p[0]), p[0]))  # the longest path first, as workdir_subs
+
+
+def workdir_subs(workdir, texmfvar=None):
+    """The (text, replacement) pairs `normalise_log` applies, in order: each
+    spelling of `workdir` (real and absolute path) becomes `<WORKDIR>`, and
+    each spelling of the run's TEXMFVAR `<TEXMFVAR>`; the longest path first,
+    so a path that contains another (`/private/tmp/w` and `/tmp/w`) is
+    replaced whole, and for each its `dir/` form before the bare one. No pair
+    holds a newline, so applying them to each line, or to any run of whole
+    lines, is the same as applying them to the whole text (pt1stream relies
+    on this).
+
+    TEXMFVAR is where kpathsea's mktexpk writes the PK fonts it makes, and
+    pdfTeX names each PK font it embeds by that path (`</.../texmfvar/fonts/
+    pk/ljfour/jknappen/fc/fcr10.600pk>`). scoreboard-run.sh gives every run
+    its own TEXMFVAR, so a cached oracle log named an earlier run's directory
+    and the P-T1 compare failed on it (fontenc-encguide). Every engine runs
+    with this process's TEXMFVAR (`engine_env`), so within one run the two
+    sides name the same directory, and the token removes only the run's
+    identity, as `<WORKDIR>` does; the PK fonts themselves are compared in
+    P-T2. `texmfvar` defaults to this process's TEXMFVAR, and when that is
+    unset to kpathsea's own (`default_texmfvar`): unset, the engines still
+    write and name their PK fonts there, so a log made with TEXMFVAR unset and
+    one made with it set to the same directory normalise alike (arXiv
+    2501.08775v2: an oracle cached with it set, scored with it unset, failed
+    P-T1 on its `<.../bbm10.600pk>` font-list line). An empty, relative or
+    multi-path value (kpathsea braces or a path list) is left alone.
+    `workdir` None: the TEXMFVAR pairs only, for a log that is already
+    normalised (a cached oracle log); applying them again changes nothing."""
+    if texmfvar is None:
+        texmfvar = os.environ.get("TEXMFVAR") or default_texmfvar()
+    roots = [(workdir, "<WORKDIR>")] if workdir else []
+    if os.path.isabs(texmfvar) and "{" not in texmfvar and os.pathsep not in texmfvar:
+        roots.insert(0, (texmfvar, "<TEXMFVAR>"))  # the work directory wins a tie
+    paths = {}
+    for root, token in roots:
+        for p in {os.path.realpath(root), os.path.abspath(root)}:
+            paths[p] = token
+    subs = []
+    for p in sorted(paths, key=lambda p: (-len(p), p)):
+        subs += [(p.rstrip("/") + "/", paths[p] + "/"), (p, paths[p])]
+    assert not any("\n" in a for a, _ in subs), (workdir, texmfvar)
+    return subs
+
+
+def banner_end(line):
+    """Whether `line` is the `**` first-line echo, where the banner ends."""
+    return line.startswith("**")
+
+
+def normalise_log(text, workdir):
+    """The legitimate-difference normalisation described in the module doc."""
+    lines = text.split("\n")
+    start = next((i for i, ln in enumerate(lines) if banner_end(ln)), 0)
+    out = "\n".join(lines[start:])
+    for a, b in workdir_subs(workdir):
+        out = out.replace(a, b)
+    return ElapsedMask().text_in_pieces(out)
+
+
+# ----------------------------------------------------------------------------
+# \pdfelapsedtime (Commander ruling, lane P5-PT1-SKIPS)
+
+ELAPSED = "<ELAPSED>"
+# Recorded in a streamed fingerprint (pt1stream): one made before the mask
+# existed has no `elapsed_mask`, and is not compared with one that masked
+# something (tiers.compare_pt1_streamed).
+ELAPSED_MASK_V = 1
+# The names that mean the \pdfelapsedtime primitive before a traced run
+# starts: the primitive, and expl3's alias made in the format (expl3-code.tex
+# `\__kernel_primitive:NN \pdfelapsedtime \tex_elapsedtime:D`), which no
+# traced line reveals. Aliases made during the run (`\let\pdf@elapsedtime
+# \pdfelapsedtime`, pdftexcmds) are learnt from their `{into \X=\pdfelapsedtime}`.
+ELAPSED_PRIMITIVES = ("\\pdfelapsedtime", "\\tex_elapsedtime:D")
+_ASSIGN = re.compile(r"^\{(globally )?(changing|into|reassigning|restoring|retaining) (\\[^=]+)=(.*)\}$")
+_GROUP = re.compile(r"^\{(entering|leaving) ", re.M)
+_EXPANSION = re.compile(r"^(~\.*)?(\\\S+) ((?:#\d)*)->(.*)$")
+# `\the` only: `\number` (or `\romannumeral`...) is expanded through expand(),
+# which \tracingcommands=3 shows as `{\number}`, and that disarms (strict).
+_ARM_MACRO = re.compile(r"(\\global )?\\[ex]def (\\\S+) \{\\the (\\\S+) \}")
+# The bare form only: the timer alone (`\R =\pdfelapsedtime ` and then the
+# end of the body or `\relax`) for a \count, or exactly `sp` for a \dimen.
+# Anything else after it (`\pdfelapsedtime \dimen 2`, `2\pdfelapsedtime`, a
+# unit other than sp) scales the value: not armed.
+_ARM_REGISTER = re.compile(r"(\\global )?\\\S+ ?=? ?(\\\S+) (?:(\\relax (?:.*))?|(sp)(?:[ \\].*)?)$")
+_REGISTER_CMD = re.compile(r"^\{\\(?:count|dimen)\d+\}$")
+_INT = re.compile(r"^-?\d+$")
+_DIMEN = re.compile(r"^-?\d+\.\d+pt$")
+# While armed, a line of the macro's own body that a ^^J in it broke off
+# (tabu's message ends `^^J^^J}`) may come before the assignment. A line
+# that starts like anything TeX traces is not one, and disarms.
+_TRACE_START = ("{", "~", "\\", "#", "!")
+
+
+class ElapsedMask:
+    """Masks the values `\\pdfelapsedtime` puts into a `\\tracingall` log,
+    and only those. pdfTeX's elapsed time is the wall clock, so a document
+    that stores it (tabu times its X-column trial typesetting) logs a
+    different number on every run, pdfTeX against itself included.
+
+    A value is masked (replaced by `<ELAPSED>`) only where the trace itself
+    shows it came from the timer:
+      * ARMING: a macro's expansion line (`\\m ->...`) whose body STARTS with
+        `\\edef \\X {\\the \\pdfelapsedtime }` (or `\\xdef`, `\\global`, or
+        an alias of the primitive; not `\\number`, whose `{\\number}` line
+        disarms), or with the bare `\\R =\\pdfelapsedtime ` (then nothing or
+        `\\relax`) for a `\\count` register `\\R`, or `\\R =\\pdfelapsedtime sp`
+        for a `\\dimen` one; a factor or another unit is not armed;
+      * the ASSIGNMENT that must come next, exactly: `{\\global}` if the body
+        has it, `{\\edef}` or `{\\xdef}` (or the register's `{\\countN}` /
+        `{\\dimenN}`), `{changing \\X=...}`, then `{into \\X=N}`, whose
+        number (a dimen's whole value) is masked. Anything else in between,
+        an expansion line or any other command, disarms it (only lines of
+        the macro's own body that a `^^J` broke off may come first);
+      * that name's CURRENT timer value where it shows again: its later
+        `{changing ...}`, `{reassigning ...}` and `{retaining ...}` lines and
+        its expansion line `\\X ->N`; and a `{restoring \\X=N}` only when N is
+        the timer value saved for `\\X` at that group level. The save stack
+        follows TeX's (`{entering ...}` and `{leaving ...}` group lines; a
+        local assignment saves the previous value once per group, a global
+        one saves nothing), so a wrong value restored is still compared.
+    Everything else stays compared: a number derived from the timer
+    (`\\numexpr` of two of them), a value typeset, shown or copied to
+    another name, and a timer read from the input file itself rather than
+    from a macro. Those still fail P-T1, which is the strict side.
+
+    Line-local apart from that state, so `text` on any run of whole lines
+    at a time gives the same result (pt1stream feeds it chunks). A chunk that
+    names no alias and no tracked name, while nothing is armed, can change
+    only the group depth, which is read from its group lines."""
+
+    __slots__ = ("aliases", "armed", "cur", "frames", "base", "pending_global", "masked")
+
+    def __init__(self):
+        self.aliases = set(ELAPSED_PRIMITIVES)
+        self.armed = None      # [kind, name ("bare"/"sp" until a register's), stage, global]
+        self.cur = {}          # name -> its current value, while that is a timer value
+        self.frames = []       # per group entered since tracking began: name -> saved timer value or None
+        self.base = {}         # the same for the groups entered before tracking began
+        self.pending_global = {}  # name -> whether its last `changing` line was global
+        self.masked = 0        # lines masked so far
+
+    # -- state -------------------------------------------------------------
+
+    def _tracked(self):
+        names = set(self.cur)
+        for f in self.frames:
+            names.update(k for k, v in f.items() if v is not None)
+        return names
+
+    def _settle(self):
+        """Forget the save stack once no timer value is current or saved."""
+        if not self.cur and not any(v is not None for f in self.frames for v in f.values()):
+            self.frames, self.base, self.pending_global = [], {}, {}
+
+    def _active(self):
+        return bool(self.cur or self.frames or self.base)
+
+    def _group(self, kind):
+        if not self._active():
+            return
+        if kind == "entering":
+            self.frames.append({})
+        elif self.frames:
+            self.frames.pop()
+            self._settle()
+
+    def _save(self, name, is_global):
+        """A local assignment to `name`: TeX saves its value once per group."""
+        if is_global:
+            return
+        top = self.frames[-1] if self.frames else self.base
+        top.setdefault(name, self.cur.get(name))
+
+    # -- driving -----------------------------------------------------------
+
+    def text(self, text):
+        """`text`: whole lines joined by "\\n"."""
+        if self.armed is None and not any(a in text for a in self.aliases):
+            if not self._active():
+                return text
+            names = self._tracked()
+            if not any(n in text for n in names):
+                for m in _GROUP.finditer(text):  # nothing else in it can matter
+                    self._group(m.group(1))
+                return text
+        lines = text.split("\n")
+        for i, ln in enumerate(lines):
+            out = self.line(ln)
+            if out is not ln:
+                lines[i] = out
+        return "\n".join(lines)
+
+    def text_in_pieces(self, text, piece=1 << 20):
+        """`text` (a whole log) a piece of whole lines at a time, so the
+        pass-through test above skips most of it."""
+        out, i, n = [], 0, len(text)
+        while i < n:
+            j = text.find("\n", min(i + piece, n))
+            j = n if j < 0 else j
+            out.append(self.text(text[i:j]))
+            i = j + 1
+            if j < n and i == n:
+                out.append("")  # the log ended with a newline
+        return "\n".join(out)
+
+    @staticmethod
+    def _split(value):
+        """(VALUE with its number masked, the bare number) of an assignment
+        line's VALUE: a macro's `macro:->N` or a register's `N`."""
+        bare = value[len("macro:->"):] if value.startswith("macro:->") else value
+        return value[:len(value) - len(bare)] + ELAPSED, bare
+
+    def _mask(self, ln, m):
+        masked, _ = self._split(m.group(4))
+        self.masked += 1
+        return ln[:m.start(4)] + masked + "}"
+
+    def line(self, ln):
+        if self.armed is not None:
+            return self._armed_line(ln)
+        if ln.startswith("{"):
+            if ln.startswith("{entering ") or ln.startswith("{leaving "):
+                self._group(ln[1:ln.index(" ")])
+                return ln
+            m = _ASSIGN.match(ln)
+            return ln if m is None else self._assignment(ln, m)
+        m = _EXPANSION.match(ln) if "->" in ln else None
+        if m is None:
+            return ln
+        name, body = m.group(2), m.group(4)
+        if not m.group(3) and self.cur.get(name) == body:  # \X ->N: the timer value expanded
+            self.masked += 1
+            return ln[:m.start(4)] + ELAPSED
+        a = _ARM_MACRO.match(body)
+        if a and a.group(3) in self.aliases:
+            self.armed = ["macro", a.group(2), "start", bool(a.group(1))]
+            return ln
+        a = _ARM_REGISTER.match(body)
+        if a and a.group(2) in self.aliases:
+            self.armed = ["register", "sp" if a.group(4) else "bare", "start", bool(a.group(1))]
+        return ln
+
+    def _assignment(self, ln, m):
+        """An assignment line while nothing is armed: never the timer's own."""
+        verb, name, value = m.group(2), m.group(3), m.group(4)
+        if verb in ("into", "reassigning", "restoring", "retaining"):
+            if value == ELAPSED_PRIMITIVES[0]:  # \let\X\pdfelapsedtime: its meaning prints so
+                self.aliases.add(name)
+            else:  # rebound to anything else, the primitive's own names included
+                self.aliases.discard(name)
+        if not self._active():
+            return ln
+        _, bare = self._split(value)
+        cur = self.cur.get(name)
+        if verb == "changing":
+            self.pending_global[name] = bool(m.group(1))
+            return self._mask(ln, m) if cur is not None and bare == cur else ln
+        if verb == "into":  # a new value from elsewhere
+            self._save(name, self.pending_global.pop(name, False))
+            if self.cur.pop(name, None) is not None:
+                self._settle()
+            return ln
+        if verb in ("reassigning", "retaining"):
+            if verb == "retaining" and self.frames:
+                self.frames[-1].pop(name, None)
+            return self._mask(ln, m) if cur is not None and bare == cur else ln
+        # restoring: the value saved for it at this level
+        top = self.frames[-1] if self.frames else self.base
+        saved = top.pop(name, None)
+        if saved is None:
+            self.cur.pop(name, None)
+            return ln
+        self.cur[name] = saved
+        return self._mask(ln, m) if bare == saved else ln
+
+    def _armed_line(self, ln):
+        kind, name, stage, has_global = self.armed
+        if not ln.startswith(_TRACE_START):
+            if stage == "start":
+                return ln  # a line of the macro's body that a ^^J broke off
+        elif stage == "start" and ln == "{\\global}" and has_global:
+            self.armed[3] = False  # once
+            return ln
+        elif stage == "start" and kind == "macro" and ln in ("{\\edef}", "{\\xdef}"):
+            self.armed[2] = "assign"
+            return ln
+        elif stage == "start" and kind == "register" and _REGISTER_CMD.match(ln) \
+                and (name == "sp") == ln.startswith("{\\dimen"):  # \count bare, \dimen in sp
+            self.armed[1], self.armed[2] = ln[1:-1], "assign"
+            return ln
+        elif stage in ("assign", "into"):
+            m = _ASSIGN.match(ln)
+            if m and m.group(3) == name:
+                verb, value = m.group(2), m.group(4)
+                cur = self.cur.get(name)
+                _, bare = self._split(value)
+                if stage == "assign" and verb == "changing":
+                    self.armed[2], self.armed[3] = "into", bool(m.group(1))
+                    return self._mask(ln, m) if cur is not None and bare == cur else ln
+                if verb == "into" and stage == "into" or verb == "reassigning" and stage == "assign":
+                    self.armed = None
+                    fits = _INT.match(bare) if kind == "macro" or name.startswith("\\count") else _DIMEN.match(bare)
+                    if fits and (kind == "register" or value.startswith("macro:->")):
+                        if verb == "into":
+                            self._save(name, has_global)
+                        self.cur[name] = bare
+                        return self._mask(ln, m)
+                    return self._assignment(ln, m)
+        self.armed = None  # anything else: the timer's assignment is not what comes next
+        return self.line(ln)
+
+
+class Accounting:
+    """The N2 ruling's per-line state: which lines of a log are accounting.
+    `step` is the one implementation of the rules in the module doc.
+    `split_accounting` drives it over a whole log, knowing where the last
+    shipout is; `pt1stream` drives it over a stream, which does not (it runs
+    a copy per hypothesis). `copy` is what makes that possible."""
+
+    __slots__ = ("block", "pos", "mem_owed", "seen")
+
+    def __init__(self):
+        self.seen = set()          # trailer items already consumed (headers, Output written)
+        self.block, self.pos = None, 0  # current block's shapes and the next one allowed
+        self.mem_owed = 0          # shipouts not yet followed by their Memory usage line
+
+    def copy(self):
+        c = Accounting()
+        c.seen, c.block, c.pos, c.mem_owed = set(self.seen), self.block, self.pos, self.mem_owed
+        return c
+
+    def step(self, ln, trailer, strict, accounting):
+        """Route one line: to `strict`, to `accounting`, or (`Output written`)
+        to both, its byte count replaced in the strict copy. `trailer`: the
+        line comes after the log's last shipout."""
+        block = self.block
+        if block is not None:
+            j = next((k for k in range(self.pos, len(block)) if block[k].match(ln)), None)
+            if j is not None:
+                accounting.append(ln)
+                self.pos = j + 1
+                return
+            self.block = None
+        if SHIPOUT in ln:
+            self.mem_owed += 1  # a \shipout nested in another's (beamer) owes its line too
+        if trailer and ln in ACCOUNTING_BLOCKS and ln not in self.seen:
+            self.seen.add(ln)
+            accounting.append(ln)
+            self.block, self.pos = ACCOUNTING_BLOCKS[ln], 0
+            return
+        if self.mem_owed and _MEMORY_USAGE.match(ln):
+            self.mem_owed -= 1
+            accounting.append(ln)
+            return
+        m = _OUTPUT_WRITTEN.match(ln) if trailer and "output" not in self.seen else None
+        if m:
+            self.seen.add("output")
+            accounting.append(ln)
+            strict.append(m.group(1) + ", <BYTES> bytes).")
+            return
+        strict.append(ln)
+
+
+def trailer_sensitive(ln):
+    """Whether `Accounting.step` can route `ln` differently in the trailer
+    than before it, given no block is open and nothing has been consumed:
+    a block header or an `Output written` line. Every other line goes the
+    same way either side of the last shipout."""
+    return ln in ACCOUNTING_BLOCKS or (ln.startswith("Output written on ") and _OUTPUT_WRITTEN.match(ln) is not None)
+
+
+def split_accounting(log):
+    """(strict log, accounting lines): the ruling's accounting removed from
+    `log` under the rules in the module doc, and exactly the removed lines, in
+    order. The `Output written` line stays in the strict log with its byte
+    count replaced by `<BYTES>`."""
+    lines = log.split("\n")
+    last_ship = max((i for i, ln in enumerate(lines) if SHIPOUT in ln), default=-1)
+    strict, accounting = [], []
+    st = Accounting()
+    for i, ln in enumerate(lines):
+        st.step(ln, i > last_ship, strict, accounting)
+    return "\n".join(strict), accounting
+
+
+class BoxSplitter:
+    """Where `\\shipout` box dumps start and end in a `\\tracingoutput` log:
+    from the `Completed box being shipped out [..]` line up to the blank line
+    that `end_diagnostic(true)` prints after the box. `feed` each line, then
+    `close`; a subclass says what to do with the pieces (`split_boxes`
+    collects them, pt1stream hashes them)."""
+
+    def __init__(self):
+        self.open = False
+
+    def feed(self, ln):
+        if not self.open:
+            k = ln.find(SHIPOUT)
+            if k >= 0:
+                self.open = True
+                self.start(ln[k:])
+        elif ln == "":
+            self.open = False
+            self.end()
+        else:
+            self.add(ln)
+
+    def close(self):
+        if self.open:
+            self.open = False
+            self.end()
+
+
+class _BoxList(BoxSplitter):
+    def __init__(self):
+        super().__init__()
+        self.boxes, self.cur = [], None
+
+    def start(self, first):
+        self.cur = [first]
+
+    def add(self, ln):
+        self.cur.append(ln)
+
+    def end(self):
+        self.boxes.append("\n".join(self.cur))
+
+
+def split_boxes(log):
+    """Every `\\shipout` box dump in a `\\tracingoutput` log, in order (`BoxSplitter`)."""
+    b = _BoxList()
+    for ln in log.split("\n"):
+        b.feed(ln)
+    b.close()
+    return b.boxes
+
+
+def engine_link(engine_bin):
+    """The per-engine bin directory's `pdftex` symlink to `engine_bin`.
+
+    Every engine, the oracle included, runs as argv[0] `pdftex` through such
+    a link (`run_engine`), because pdfTeX's warnings print argv[0], as in
+    `pdfTeX warning: pdftex (file ./x.pdf): ...`. Setting the name before
+    the run means nothing in the log needs normalising, so nothing can hide
+    behind a token normaliser. kpathsea follows the link to the real binary's
+    directory, so SELFAUTOLOC and texmf.cnf are unchanged."""
+    real = os.path.realpath(engine_bin)
+    d = os.path.join(BIN_ROOT, hashlib.sha256(real.encode("utf-8")).hexdigest()[:16])
+    link = os.path.join(d, PROGRAM)
+    if os.path.realpath(link) != real:
+        os.makedirs(d, exist_ok=True)
+        # pid AND thread: check_positions.py runs its workers as threads of
+        # one process, and two of them once shared one temporary name here.
+        tmp = f"{link}.{os.getpid()}.{threading.get_ident()}"
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+        os.symlink(real, tmp)
+        os.replace(tmp, link)  # atomic: parallel workers may race here
+    return link
+
+
+def engine_env(link, extra_env=None):
+    """The run environment. The link's directory comes first on PATH, so
+    kpathsea, finding argv[0] `pdftex` there, follows the link to the real
+    binary. `FLASHTEX_*` variables are never inherited. Only `extra_env`,
+    which callers give the candidate engine alone (e.g. its
+    `FLASHTEX_FORMATS`), puts them there, so the oracle never sees them."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("FLASHTEX_")}
+    env.update(TRACE_ENV)
+    env.update(extra_env or {})
+    env["PATH"] = os.path.dirname(link) + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def run_engine(engine_bin, fmt, args, workdir, extra_env=None, timeout=TIMEOUT):
+    """One run: argv[0] is exactly `pdftex` (pdfTeX prints argv[0] as given,
+    e.g. `pdfTeX warning: ./x (file ...)`, so a path would differ per engine),
+    executed through the engine's link, with the one shell-escape setting and
+    the format. Returns (exit code or None, timed out)."""
+    link = engine_link(engine_bin)
+    argv = [PROGRAM] + ([SHELL_ESCAPE] if SHELL_ESCAPE else []) + ([f"-fmt={fmt}"] if fmt else []) + list(args)
+    try:
+        p = subprocess.run(argv, executable=link, cwd=workdir, env=engine_env(link, extra_env),
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=timeout, check=False)
+        return p.returncode, False
+    except subprocess.TimeoutExpired:
+        return None, True
+
+
+def first_line(tex, trace=False):
+    """The command line's TeX input for `tex`: the pinned seed, the tracing
+    settings for a traced pass, then `\\input{tex}`."""
+    return SEED + (TRACE if trace else "") + r"\input{" + tex + "}"
+
+
+def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None, stream=False, timeout=None):
+    """One traced pass. With `stream`, its log is a named pipe that
+    pt1stream reads while the engine runs, so no byte of it reaches the disk:
+    "pipe" keeps it in memory up to the budget and streams it past that (the
+    oracle, whose size is not known yet); "fingerprint" streams it from the
+    first byte, in constant memory (a candidate whose oracle's log is over
+    the budget). Otherwise the log is a file as usual; one over the budget is
+    read as a stream and then deleted. `timeout` (default TIMEOUT) bounds the
+    pass; `timed_out` says it stopped it."""
+    import pt1stream  # the streamed half of this module's normalisation
+
+    tex = os.path.relpath(os.path.abspath(tex_path), os.path.abspath(workdir))
+    stem = os.path.splitext(os.path.basename(tex))[0]
+    logp, pdf = os.path.join(workdir, stem + ".log"), os.path.join(workdir, stem + ".pdf")
+    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", first_line(tex, trace=True)]
+    timeout = timeout or TIMEOUT
+    raw = None
+    if stream:
+        with pt1stream.LogPipe(logp, workdir, None if stream == "fingerprint" else MAX_LOG_BYTES) as pipe:
+            _, timed_out = run_engine(engine_bin, fmt, args, workdir, extra_env, timeout=timeout)
+        pdf = pdf if os.path.isfile(pdf) else None
+        if pipe.replaced:  # the engine put a file where the pipe was: read that instead
+            stream = False
+        elif pipe.fingerprint is not None:
+            fp = pipe.fingerprint
+            return Capture(None, None, pdf, fp["bytes"], fp["complete"], fp, timed_out)
+        else:
+            raw, size = pipe.raw, len(pipe.raw)
+    else:
+        _, timed_out = run_engine(engine_bin, fmt, args, workdir, extra_env, timeout=timeout)
+        pdf = pdf if os.path.isfile(pdf) else None
+    if raw is None:
+        size = os.path.getsize(logp) if os.path.isfile(logp) else 0
+        if MAX_LOG_BYTES and size > MAX_LOG_BYTES:  # checked before a byte of it is read whole
+            fp = pt1stream.fingerprint_file(logp, workdir)
+            os.remove(logp)  # up to tens of GB: never left behind
+            return Capture(None, None, pdf, size, fp["complete"], fp, timed_out)
+        try:
+            with open(logp, "rb") as f:
+                raw = f.read()
+        except OSError:
+            raw = b""
+    log = normalise_log(raw.decode("latin-1"), workdir)  # TeX writes bytes; latin-1 round-trips them
+    return Capture(log, split_boxes(log), pdf, size, None, None, timed_out)
+
+
+# TODO(lockstep): replace with `from run import capture` (tools/lockstep on
+# sys.path) once tools/lockstep/run.py lands with the `fmt=` and `extra_env=`
+# keywords, the one shell-escape setting and the `pdftex` argv[0]; until
+# then this stand-in is the implementation.
+capture = _capture_standin
+SOURCE = "tools/parity/capture.py (stand-in until tools/lockstep lands)"

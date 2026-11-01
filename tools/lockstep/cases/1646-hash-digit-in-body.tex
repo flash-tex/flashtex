@@ -1,0 +1,8 @@
+% 1646-hash-digit-in-body: verifies ##1 in a parameterless body keeps the digit, showing doubled in \meaning and on use (tex.web §479)
+\input prelude
+\def\a{##1}
+\message{1646 mean=\meaning\a}
+\message{1646 use=[\a]}
+\setbox0=\hbox{\vrule width1646pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,21 @@
+% 1761-display-atop-clearance: the same atop stack spreads wider apart in display style than inline, since display uses the num1 shift with a larger rule-less clearance while text uses the atop-only num3 shift; closest 091, which ships only the inline form (tex.web §§743, 744, 745).
+\input prelude
+% plain-style math fonts (== tools/lockstep/mathsetup.tex; inlined: harness stages only prelude+case)
+\font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
+\font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
+\font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+\font\tenex=cmex10
+\skewchar\teni='177 \skewchar\seveni='177 \skewchar\fivei='177
+\skewchar\tensy='60 \skewchar\sevensy='60 \skewchar\fivesy='60
+\textfont0=\tenrm \scriptfont0=\sevenrm \scriptscriptfont0=\fiverm
+\textfont1=\teni \scriptfont1=\seveni \scriptscriptfont1=\fivei
+\textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\mathcode`a="7161 \mathcode`b="7162
+\hsize=300pt \parindent=0pt
+\setbox0=\hbox{${a\atop b}$}
+\message{1761 text ht=\the\ht0 dp=\the\dp0}
+\setbox1=\vbox{$$a\atop b$$}
+\message{1761 disp ht=\the\ht1 dp=\the\dp1}
+\lsshipbox0 \lsshipbox1
+\end

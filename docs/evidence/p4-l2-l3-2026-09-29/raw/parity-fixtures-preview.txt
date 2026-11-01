@@ -1,0 +1,3 @@
+fixtures: accounting (non-gating): 82/82 documents differ
+fixtures: 82 measured, P-T1 82/82 (100.0%), P-T2 82/82 (100.0%), L3 98.8%; at least: L0 100.0%, L1 100.0%, L2 100.0%, L3 98.8%, L4 —
+report: /tmp/p4l2/parity-g2-preview/report.md

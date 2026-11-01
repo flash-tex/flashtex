@@ -1,0 +1,3 @@
+idx: 32 compiles, 32 ok, 0 mismatches, 29 converged, 0 accounting-only log differences, modes {'incremental': 32}
+{"compiles": 32, "ok": 32, "bad": 0, "conv": 29, "acct": 0, "err": 0, "interrupted": 0}
+exit 0

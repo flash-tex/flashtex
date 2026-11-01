@@ -1,0 +1,28 @@
+\documentclass[handout]{beamer}
+\usetheme{CambridgeUS}
+\usepackage{pgfpages}
+\pgfpagesuselayout{2 on 1}[a4paper,border shrink=5mm]
+\title{Handout mode}
+\author{H. Handout}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Overlays collapse}
+  \begin{itemize}
+    \item<1-> Shown.
+    \item<2-> Shown in the handout too.
+    \item<3-| handout:0> Hidden in the handout.
+  \end{itemize}
+  \only<2| handout:0>{Only in the presentation.}
+  \only<3| handout:1>{In the handout.}
+\end{frame}
+\begin{frame}<handout:2>{Several handout slides}
+  \only<1>{First version.}\only<2>{Second version.}
+\end{frame}
+\begin{frame}<handout:0>{Not in the handout}
+  This frame is left out.
+\end{frame}
+\begin{frame}{Last}
+  Four pages, two per sheet.
+\end{frame}
+\end{document}

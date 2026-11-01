@@ -1,0 +1,10 @@
+% 849-noboundary-ligature: verifies f\noboundary i sets two separate glyphs while plain fi in the control sets the ligature.
+\input prelude
+\font\rm=cmr10
+\setbox0=\hbox{\rm fi}
+\message{849 joined-wd=\the\wd0}
+\setbox1=\hbox{\rm f\noboundary i}
+\message{849 broken-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

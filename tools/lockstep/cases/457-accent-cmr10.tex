@@ -1,0 +1,7 @@
+% Verifies \accent builds accented glyphs with accent kerns in cmr10.
+\input prelude
+\font\f=cmr10
+\message{457 grave-slot=\the\fontcharwd\f`e; acute-slot=\the\fontcharwd\f`A}
+\setbox0=\hbox{\f \accent18 e \accent19 A}
+\lsshipbox0
+\end

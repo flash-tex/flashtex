@@ -1,0 +1,9 @@
+% 355-exhyphenpenalty: verifies a large \exhyphenpenalty makes the breaker avoid breaking after an explicit hyphen it takes at penalty 50.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\exhyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\myrm well-known aa bb cc well-known dd ee ff well-known gg hh ii\par\message{355 exh50 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\exhyphenpenalty=10000\lefthyphenmin=2\righthyphenmin=3\myrm well-known aa bb cc well-known dd ee ff well-known gg hh ii\par\message{355 exh10000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

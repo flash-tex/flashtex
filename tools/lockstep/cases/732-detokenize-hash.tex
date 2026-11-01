@@ -1,0 +1,12 @@
+% 732-detokenize-hash: verifies \detokenize turns a parameter character into doubled catcode-12 ## characters: box0 typesets a##b, box1 the hash-free control ab.
+\input prelude
+\font\myrm=cmr10
+\edef\e{\detokenize{a##b}}
+\edef\c{\detokenize{ab}}
+\edef\f{\detokenize{####}}
+\message{732 e=\meaning\e\ c=\meaning\c\ f=\meaning\f}
+\setbox0=\hbox{\myrm\e\f}
+\setbox1=\hbox{\myrm\c}
+\lsshipbox0
+\lsshipbox1
+\end

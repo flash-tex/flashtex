@@ -3,7 +3,7 @@
 //! `glyf`. It reads only those bytes (seeks, no whole-file reads), so a
 //! directory of a few hundred fonts -- several hundred megabytes of CJK and
 //! emoji collections on a Mac -- indexes in tens of milliseconds. Outlines,
-//! metrics, layout tables and everything else are font-engine's job once a
+//! metrics, layout tables and everything else are the caller's job once a
 //! face is actually selected.
 //!
 //! Layout references: OpenType 1.9 §5 (table directory, `ttcf` header),
@@ -234,7 +234,7 @@ impl<'a> NameTable<'a> {
             // Latin letters that do occur.
             bytes.iter().map(|&b| b as char).collect::<String>()
         } else {
-            let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+            let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|&c| u16::from_be_bytes(c)).collect();
             String::from_utf16_lossy(&units)
         };
         let s = s.trim().to_string();

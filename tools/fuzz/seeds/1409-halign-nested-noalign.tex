@@ -1,0 +1,11 @@
+% 1409-halign-nested-noalign: two-column \halign with a nested \halign carrying \noalign in one cell.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr
+\vbox{\halign{#\hfil\cr
+\vrule width10pt height6pt depth2pt\cr
+\noalign{\vskip4pt}
+\vrule width15pt height6pt depth2pt\cr}}&\vrule width30pt height8pt depth2pt\cr
+\vrule width20pt height8pt depth2pt&\vrule width25pt height8pt depth2pt\cr}}
+\message{1409 wd=\the\wd0 ht=\the\ht0}
+\lsshipbox0
+\end

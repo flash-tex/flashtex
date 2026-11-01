@@ -1,0 +1,9 @@
+% Verifies that \hidewidth lets a wide entry overlap its column while a negative \tabskip pulls columns together: box0 combines both, box1 uses plain entries with positive tabskip and is wider.
+\input prelude
+\def\hidewidth{\hskip-1000pt plus 1fill}
+\setbox0=\vbox{\tabskip=-6pt\halign{#\hfil&#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\hbox to 0pt{\vrule width70pt height8pt depth2pt\hidewidth}&\vrule width20pt height8pt depth2pt\cr}}
+\setbox1=\vbox{\tabskip=6pt\halign{#\hfil&#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width70pt height8pt depth2pt&\vrule width20pt height8pt depth2pt\cr}}
+\message{872 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

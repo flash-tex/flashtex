@@ -1,5 +1,10 @@
 # Packages, fonts and the project manifest — direction and slices
 
+> **Partly historical.** The slices for the old engine (its compiler, render pipeline and font
+> crates) were deleted with it in S7 (retirement plan, row 11). The manifest (`crates/project-manifest`),
+> packages (`crates/package-resolver`, `crates/docstrip`) and `[fonts]` in Unicode mode are live:
+> see [the project manifest](../user/project-manifest.md).
+
 **Status:** direction set by the owner on 2026-09-19; slices below are being
 dispatched. Rules on #905 (read `.cls`/`.sty` files, not an allow-list).
 **Owner of this document:** mac-claude-a (until the Commander reassigns it).

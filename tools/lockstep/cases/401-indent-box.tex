@@ -1,0 +1,6 @@
+% 401-indent-box: verifies \indent opens a paragraph with an empty indent box of width \parindent.
+\input prelude
+\setbox0=\vbox{\hsize=200pt\parindent=20pt\indent\vrule width40pt height8pt depth2pt\par}
+\message{401 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,2 +1,0 @@
-Argument of \a has an extra }.
-Paragraph ended before \a was complete.

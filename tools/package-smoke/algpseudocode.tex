@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{algpseudocode}
+\begin{document}
+\begin{algorithmic}[1]
+\Procedure{Euclid}{$a,b$}
+\While{$b \ne 0$}
+\State $r \gets a \bmod b$ \Comment{remainder}
+\State $a \gets b$ \State $b \gets r$
+\EndWhile
+\State \Return $a$
+\EndProcedure
+\end{algorithmic}
+\end{document}

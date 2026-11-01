@@ -1,0 +1,2 @@
+Cross-pass state: forward \cite keys plus \nocite{*} resolved via refs.bbl from BibTeX (plain style); TOC and forward \ref/\pageref settle in main.aux.
+article class with fontenc, geometry, amsmath, hyperref. Pass 1: [?] citations and empty TOC (1 page); pass 2: bibliography appears (2 pages); pass 3: TOC page numbers settle. Reproduce with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1.

@@ -1,0 +1,12 @@
+plain-1000  fix2           p 1001 cpu  1.453s (1.000)  wall  1.465s  instr       - (-)  cyc       - (-)  load 0.5-0.8  runs 1.447 1.473 1.513 1.496 1.439 1.431 1.453
+plain-1000  fat            p 1001 cpu  1.439s (0.991)  wall  1.444s  instr       - (-)  cyc       - (-)  load 0.5-0.8  runs 1.437 1.456 1.443 1.505 1.424 1.426 1.439
+plain-1000  unchkr         p 1001 cpu  1.426s (0.982)  wall  1.431s  instr       - (-)  cyc       - (-)  load 0.5-0.8  runs 1.403 1.450 1.435 1.433 1.400 1.412 1.426
+plain-1000  cgu1           p 1001 cpu  1.459s (1.004)  wall  1.465s  instr       - (-)  cyc       - (-)  load 0.5-0.8  runs 1.458 1.493 1.488 1.520 1.458 1.447 1.459
+plain-1000  thin           p 1001 cpu  1.455s (1.002)  wall  1.465s  instr       - (-)  cyc       - (-)  load 0.5-0.8  runs 1.455 1.445 1.454 1.490 1.472 1.437 1.483
+plain-1000  pdflatex       p 1001 cpu  1.205s (0.829)  wall  1.217s  instr       - (-)  cyc       - (-)  load 0.5-1.1  runs 1.217 1.204 1.205 1.221 1.202 1.200 1.222
+full-300    fix2           p  299 cpu  1.648s (1.000)  wall  1.653s  instr       - (-)  cyc       - (-)  load 1.7-3.0  runs 1.649 1.641 1.672 1.645 1.642 1.650 1.648
+full-300    fat            p  299 cpu  1.650s (1.001)  wall  1.656s  instr       - (-)  cyc       - (-)  load 1.7-2.8  runs 1.642 1.651 1.658 1.650 1.651 1.641 1.641
+full-300    unchkr         p  299 cpu  1.607s (0.975)  wall  1.613s  instr       - (-)  cyc       - (-)  load 1.7-2.8  runs 1.601 1.622 1.606 1.607 1.614 1.603 1.612
+full-300    cgu1           p  299 cpu  1.648s (1.000)  wall  1.654s  instr       - (-)  cyc       - (-)  load 1.7-2.8  runs 1.647 1.651 1.646 1.667 1.647 1.648 1.749
+full-300    thin           p  299 cpu  1.638s (0.994)  wall  1.644s  instr       - (-)  cyc       - (-)  load 1.6-2.7  runs 1.641 1.635 1.638 1.652 1.638 1.637 1.707
+full-300    pdflatex       p  299 cpu  1.896s (1.150)  wall  1.905s  instr       - (-)  cyc       - (-)  load 1.6-2.7  runs 1.883 1.895 1.909 1.902 1.896 1.895 1.927

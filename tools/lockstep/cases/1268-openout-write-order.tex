@@ -1,0 +1,11 @@
+% 1268-openout-write-order: delayed whatsits run in list order at shipout, so open-then-write fills the file and reads back while write-then-open echoes to the log and leaves an empty file (tex.web §§1351, 1370, 1374).
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm\openout1=ls1268a.txt\write1{AAA-line}\vrule width10pt height8pt depth2pt}
+\setbox1=\hbox{\myrm\write2{BBB-line}\openout2=ls1268b.txt\vrule width11pt height8pt depth2pt}
+\lsshipbox0 \lsshipbox1
+\immediate\closeout1 \immediate\closeout2
+\openin0=ls1268a.txt \read0 to \gotA \closein0
+\setbox2=\hbox{\myrm\gotA}
+\lsshipbox2
+\end

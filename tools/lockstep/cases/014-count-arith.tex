@@ -1,0 +1,16 @@
+\input prelude
+\count0=10
+\advance\count0 by 5
+\message{014 add=\the\count0}
+\multiply\count0 by 3
+\message{014 mul=\the\count0}
+\divide\count0 by 4
+\message{014 div=\the\count0}
+\count1=-7
+\divide\count1 by 2
+\message{014 negdiv=\the\count1}
+\countdef\alias=0
+\message{014 alias=\the\alias}
+\setbox0=\hbox{\vrule width14pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

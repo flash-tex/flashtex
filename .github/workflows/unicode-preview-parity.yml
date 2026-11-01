@@ -1,0 +1,131 @@
+# Unicode mode's preview against xelatex (lane UNICODE-PREVIEW-QA; owner
+# priority: Unicode mode must fully work in the app).
+#
+# WHAT. tools/displaylist/unicode_preview_parity.py compiles every case of
+# tools/displaylist/unicode-cases/ (Latin Modern, TeX Gyre and system fonts
+# with weights, styles and OpenType features, unicode-math with four math
+# fonts, polyglossia RTL, Devanagari, xeCJK, colour, links, PNG/JPEG/PDF
+# images, TikZ, rotations, transparency) through flashtex-host-unicode, as
+# the Mac app does, and with TeX Live's xelatex (the oracle only). Then
+# `swift test --filter UnicodePreviewParityTests` draws each page of the
+# display list through the app's DL3Renderer and requires:
+#   - 0 px against Core Graphics' rendering of FlashTeX's own PDF at 1x, 2x
+#     and 4x (zero tolerance, as preview-parity.yml for Classic);
+#   - within 2% of inked cells (1 px/pt, grey delta > 0.25) of xelatex's PDF
+#     (xdvipdfmx rounds and subsets differently; a wrong glyph, face, image
+#     or line is far above it);
+#   - every font and image resolves and no page falls back to the PDF,
+#     except cases marked `% preview: pdf-fallback`.
+#
+# WHERE. GitHub-hosted macOS (system fonts such as Georgia, Hiragino and
+# Songti are the cases' subject; never a self-hosted Mac: the team's Macs are
+# laptops). The TeX is BasicTeX plus the packages the cases load, as ci.yml's
+# mac-v3-host installs it.
+#
+# WHEN. After the merge (push to main) when the change can move a pixel of
+# Unicode mode, and on manual runs. Not in the merge queue.
+name: unicode preview parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/flashtex-xetex/**'
+      - 'crates/display-list-v3/**'
+      - 'crates/pdf/**'
+      - 'tools/displaylist/unicode_preview_parity.py'
+      - 'tools/displaylist/unicode-cases/**'
+      - 'apps/mac/Sources/FlashTeXPreviewV3/**'
+      - 'apps/mac/Sources/FlashTeXDisplayListV3/**'
+      - 'apps/mac/Tests/FlashTeXPreviewV3Tests/UnicodePreviewParityTests.swift'
+      - '.github/workflows/unicode-preview-parity.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: unicode-preview-parity-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  sweep:
+    name: Unicode-mode preview vs xelatex (macOS)
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      CI: "1"
+      FLASHTEX_NO_ACTIVATE: "1"
+      FLASHTEX_KEYCHAIN_OFF: "1"
+      FLASHTEX_REVIEW_HISTORY_DIR: "off"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      SOURCE_DATE_EPOCH: "0"
+      FORCE_SOURCE_DATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: swift --version && sw_vers
+      - name: BasicTeX and the packages the cases load
+        run: |
+          set -euo pipefail
+          brew install --cask basictex
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH="/Library/TeX/texbin:$PATH"
+          sudo tlmgr update --self
+          sudo tlmgr install fontspec unicode-math lm-math tex-ini-files tex-gyre tex-gyre-math \
+            stix2-otf libertinus-fonts polyglossia bidi xecjk pgf xcolor mwe gnu-freefont \
+            zref etoolbox makecmds xkeyval iftex l3packages
+          kpsewhich xelatex.ini fontspec.sty unicode-math.sty polyglossia.sty xeCJK.sty tikz.sty \
+            example-image-a.png latinmodern-math.otf STIXTwoMath-Regular.otf FreeSerif.otf
+          xelatex --version | head -n 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: unicode-parity-client
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: unicode-parity-host
+          workspaces: crates/flashtex-xetex -> target
+          cache-on-failure: true
+      - name: build flashtex-host-unicode and dl3-client
+        run: |
+          set -euo pipefail
+          (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode)
+          cargo build --release --locked -p flashtex-display-list --bin dl3-client
+      - name: compile the cases (FlashTeX through the host, and xelatex)
+        run: |
+          set -o pipefail
+          python3 tools/displaylist/unicode_preview_parity.py --jobs 3 --work "$RUNNER_TEMP/dl3-unicode" \
+            2>&1 | tee "$RUNNER_TEMP/dl3-unicode-runs.txt"
+      - name: swift test --filter UnicodePreviewParityTests
+        working-directory: apps/mac
+        env:
+          FLASHTEX_DL3_UNICODE: ${{ runner.temp }}/dl3-unicode
+          FLASHTEX_UNICODE_PARITY_REQUIRE: "1"
+          FLASHTEX_V3_PARITY_OUT: ${{ runner.temp }}/dl3-unicode/parity
+        run: |
+          set -o pipefail
+          swift test --filter UnicodePreviewParityTests 2>&1 | tee "$RUNNER_TEMP/dl3-unicode/swift-test.log" \
+            | grep -vE '^\s*$' | tail -n 120
+          grep -E '^unicode parity' "$RUNNER_TEMP/dl3-unicode/swift-test.log" | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unicode-preview-parity
+          path: |
+            ${{ runner.temp }}/dl3-unicode-runs.txt
+            ${{ runner.temp }}/dl3-unicode/runs.json
+            ${{ runner.temp }}/dl3-unicode/parity.unicode.json
+            ${{ runner.temp }}/dl3-unicode/swift-test.log
+            ${{ runner.temp }}/dl3-unicode/*/display.dl3
+            ${{ runner.temp }}/dl3-unicode/*/flashtex.pdf
+            ${{ runner.temp }}/dl3-unicode/*/oracle.pdf
+          if-no-files-found: ignore
+          retention-days: 14

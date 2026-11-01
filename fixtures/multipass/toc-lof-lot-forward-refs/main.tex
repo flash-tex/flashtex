@@ -1,0 +1,45 @@
+\documentclass[11pt,notitlepage]{report}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+\title{Survey of Caching Strategies for Incremental Builds}
+\author{FlashTeX Fixtures Team}
+\date{}
+\begin{document}
+\maketitle
+\begingroup
+\let\clearpage\relax
+\tableofcontents
+\listoffigures
+\listoftables
+\endgroup
+\chapter{Strategies and measurements}
+\label{ch:strat}
+Incremental build systems reuse work from previous compilations. The full measurements are in Section~\ref{sec:results} on page~\pageref{sec:results}; the cache layout is sketched in Figure~\ref{fig:cache} on page~\pageref{fig:cache}, and the raw timings are in Table~\ref{tab:times} on page~\pageref{tab:times}. Caching pays off only when dependency tracking is precise: over-approximate sets rebuild too much, while under-approximate sets produce stale output. This survey compares content hashing against timestamp comparison on workloads of increasing size.
+\section{Background}
+Content hashing skips unchanged files; timestamp comparison conservatively rebuilds them. The eviction policy of Section~\ref{sec:results} interacts with fingerprint granularity: fine-grained fingerprints admit more sharing but cost more to verify.
+\begin{figure}[ht]
+\centering
+\rule{0.6\textwidth}{3cm}
+\caption{Layout of the incremental build cache}
+\label{fig:cache}
+\end{figure}
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|}
+\hline
+Workload & Files & Time (s) \\
+\hline
+Small & 120 & 1.2 \\
+Medium & 1400 & 4.8 \\
+Large & 12000 & 17.3 \\
+\hline
+\end{tabular}
+\caption{From-scratch build times per workload}
+\label{tab:times}
+\end{table}
+\section{Results}
+\label{sec:results}
+Content hashing wins on the large workload, cutting rebuild time roughly in half. As previewed at the start of this chapter, the gap grows with workload size. Figure~\ref{fig:cache} summarizes the winning layout and Table~\ref{tab:times} gives the baseline it improves upon.
+\end{document}

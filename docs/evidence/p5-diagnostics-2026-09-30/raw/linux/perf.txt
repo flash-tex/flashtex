@@ -1,0 +1,3 @@
+{"side_channel": "on", "pages": 27, "diagnostics": 46, "cold_s_median": 0.4284, "cold_s": [0.4284, 0.4339, 0.4248], "edited_ms_p50": 3.671, "edited_ms_p95": 4.263, "diagnostics_cmd_ms_p50": 0.307}
+{"side_channel": "off", "pages": 27, "diagnostics": 31, "cold_s_median": 0.4152, "cold_s": [0.4136, 0.4197, 0.4152], "edited_ms_p50": 3.466, "edited_ms_p95": 4.29, "diagnostics_cmd_ms_p50": 0.077}
+perf exit 0

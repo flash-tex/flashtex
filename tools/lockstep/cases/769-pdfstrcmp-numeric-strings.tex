@@ -1,0 +1,8 @@
+\input prelude % Verifies \pdfstrcmp compares digit strings lexicographically, not numerically.
+\font\f=cmr10
+\edef\m{\pdfstrcmp{10}{9}}\edef\z{\pdfstrcmp{9}{10}}
+\setbox0=\hbox{\f \m/\z}
+\lsshipbox0
+\setbox0=\hbox{\f \z/\m}
+\lsshipbox0
+\end

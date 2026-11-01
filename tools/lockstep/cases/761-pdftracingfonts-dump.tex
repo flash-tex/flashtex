@@ -1,0 +1,9 @@
+\input prelude % Verifies \pdftracingfonts annotates used fonts in the shipped box dump.
+\font\f=cmr10
+\pdftracingfonts=1
+\setbox0=\hbox{\f AB}
+\lsshipbox0
+\pdftracingfonts=0
+\setbox0=\hbox{\f AB}
+\lsshipbox0
+\end

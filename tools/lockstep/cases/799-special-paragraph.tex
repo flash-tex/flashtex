@@ -1,0 +1,9 @@
+% 799-special-paragraph: verifies a mid-paragraph \special lands among the glyph nodes in the shipped dump.
+\input prelude
+\font\f=cmr10
+\hsize=200pt \parindent=0pt
+\setbox0=\vbox{\f\noindent abc\special{mid 799}def\par}
+\lsshipbox0
+\setbox2=\vbox{\f\noindent abcdef\par}
+\lsshipbox2
+\end

@@ -1,0 +1,6 @@
+% 398-vbox-to-stretch: verifies \vfil glue stretches evenly to fill a \vbox to to its target height.
+\input prelude
+\setbox0=\vbox to 100pt{\hrule width50pt height10pt depth0pt\vfil\hrule width50pt height10pt depth0pt\vfil\hrule width50pt height10pt depth0pt}
+\message{398 ht=\the\ht0}
+\lsshipbox0
+\end

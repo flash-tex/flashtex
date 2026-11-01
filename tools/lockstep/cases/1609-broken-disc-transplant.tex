@@ -1,0 +1,6 @@
+% 1609-broken-disc-transplant: verifies a taken \discretionary break moves its pre-break text to the end of the line and its post-break text to the start of the next, while untaken ones stay whole in the dump (tex.web §§ 882, 884, 885)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=30pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\exhyphenpenalty=50\hyphenpenalty=50\myrm aa\discretionary{pre}{post}{}bb\discretionary{pre}{post}{}cc\discretionary{pre}{post}{}dd\discretionary{pre}{post}{}ee\par\message{1609 lines=\the\prevgraf}}
+\lsshipbox0
+\end

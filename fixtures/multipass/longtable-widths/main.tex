@@ -1,0 +1,93 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{array,longtable,booktabs}
+
+\title{Catalog of Reference Springs for the Teaching Laboratory}
+\author{Teaching Laboratory}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+
+The teaching laboratory keeps a stock of reference springs whose stiffness
+was measured during the inventory of Section~\ref{sec:inventory} on
+page~\pageref{sec:inventory}. The full catalog is Table~\ref{tab:springs},
+a multipage \textsf{longtable} whose column widths are written to the
+\texttt{.aux} file on the first pass and read back on the second, so the
+header row is misaligned with the body columns on pass~1 and snaps into
+alignment on pass~2. The notes on
+temperature dependence in Section~\ref{sec:notes} apply to every entry.
+
+\section{Inventory}
+\label{sec:inventory}
+
+Each spring was weighed and its stiffness fitted from ten load--extension
+pairs. Uncertainties are one standard deviation.
+
+\begin{longtable}{@{}clrrl@{}}
+  \caption{Catalog of reference springs\label{tab:springs}} \\
+  \toprule
+  ID & Material & Length (mm) & $k$ (N/m) & Comment \\
+  \midrule
+  \endfirsthead
+  \caption[]{Catalog of reference springs (continued)} \\
+  \toprule
+  ID & Material & Length (mm) & $k$ (N/m) & Comment \\
+  \midrule
+  \endhead
+  \midrule
+  \multicolumn{5}{r@{}}{\emph{continued on next page}} \\
+  \endfoot
+  \bottomrule
+  \endlastfoot
+  S01 & Steel & 100 & 12.4 & light duty \\
+  S02 & Steel & 150 & 8.1 & light duty \\
+  S03 & Steel & 200 & 5.9 & demonstration set \\
+  S04 & Brass & 100 & 9.7 & non-magnetic \\
+  S05 & Brass & 150 & 6.3 & non-magnetic \\
+  S06 & Brass & 200 & 4.4 & demonstration set \\
+  S07 & Phosphor bronze & 100 & 11.2 & corrosion resistant \\
+  S08 & Phosphor bronze & 150 & 7.5 & corrosion resistant \\
+  S09 & Phosphor bronze & 200 & 5.1 & demonstration set \\
+  S10 & Music wire & 80 & 24.8 & high stiffness \\
+  S11 & Music wire & 120 & 16.2 & high stiffness \\
+  S12 & Music wire & 160 & 11.9 & high stiffness \\
+  S13 & Stainless 302 & 100 & 13.1 & humid environments \\
+  S14 & Stainless 302 & 150 & 8.8 & humid environments \\
+  S15 & Stainless 302 & 200 & 6.2 & demonstration set \\
+  S16 & Beryllium copper & 100 & 10.4 & spark-free \\
+  S17 & Beryllium copper & 150 & 6.9 & spark-free \\
+  S18 & Beryllium copper & 200 & 4.8 & demonstration set \\
+  S19 & Titanium & 100 & 7.8 & lightweight rigs \\
+  S20 & Titanium & 150 & 5.2 & lightweight rigs \\
+  S21 & Titanium & 200 & 3.6 & demonstration set \\
+  S22 & Inconel & 100 & 14.5 & high temperature \\
+  S23 & Inconel & 150 & 9.6 & high temperature \\
+  S24 & Inconel & 200 & 6.8 & demonstration set \\
+  S25 & Elgiloy & 100 & 12.9 & fatigue resistant \\
+  S26 & Elgiloy & 150 & 8.5 & fatigue resistant \\
+  S27 & Elgiloy & 200 & 6.0 & demonstration set \\
+  S28 & Carbon steel & 100 & 15.2 & general purpose \\
+  S29 & Carbon steel & 150 & 10.1 & general purpose \\
+  S30 & Carbon steel & 200 & 7.3 & demonstration set \\
+  S31 & Zinc-plated steel & 100 & 12.1 & general purpose \\
+  S32 & Zinc-plated steel & 150 & 8.0 & general purpose \\
+  S33 & Zinc-plated steel & 200 & 5.7 & demonstration set \\
+  S34 & Hastelloy & 100 & 11.8 & corrosive atmospheres \\
+  S35 & Hastelloy & 150 & 7.9 & corrosive atmospheres \\
+  S36 & Hastelloy & 200 & 5.5 & demonstration set \\
+\end{longtable}
+
+\section{Notes}
+\label{sec:notes}
+
+The stiffness values in Table~\ref{tab:springs} drift by roughly
+$2 \times 10^{-4}$ per $^{\circ}$C; experiments outside $18$--$24^{\circ}$C
+should apply the correction posted next to the inventory of
+Section~\ref{sec:inventory}.
+
+\end{document}

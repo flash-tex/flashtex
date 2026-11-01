@@ -1,0 +1,7 @@
+% 798-special-vlist-glue: verifies a \special sits between glues in the shipped vbox dump.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip10pt\special{probe 798}\vskip10pt\hrule width40pt height6pt depth0pt}
+\lsshipbox0
+\setbox2=\vbox{\hrule width40pt height6pt depth0pt\vskip10pt\vskip10pt\hrule width40pt height6pt depth0pt}
+\lsshipbox2
+\end

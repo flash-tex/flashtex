@@ -395,9 +395,8 @@ enum DocumentStatistics {
 // MARK: - ShellModel integration (debounced, off-main-thread)
 
 /// Owns the last computed `DocumentStatistics` for the open document set and
-/// recomputes it in the background, coalescing bursts of edits the same way
-/// `ShellModel`'s own compile debounce does (`ShellModel.swift`,
-/// `ProposalPreview.swift`): a keystroke calls `scheduleUpdate`, which cancels
+/// recomputes it in the background, coalescing bursts of edits with a
+/// debounce: a keystroke calls `scheduleUpdate`, which cancels
 /// any pending timer and starts a new one; only the timer that survives
 /// `debounceInterval` (default 300 ms) actually scans, and it scans on
 /// `DispatchQueue.global`, never the main thread the editor is typing on.

@@ -1,0 +1,11 @@
+% 1418-pdfinsertht-reports-height: \pdfinsertht reports the current page insert height (leading skip plus box height and depth; trailing skip dropped), 0pt for an empty class (pdftex.web §498)
+\input prelude
+\font\myrm=cmr10
+\count254=1000 \dimen254=100pt \skip254=0pt
+\insert254{\vskip10pt\hbox{\myrm Q}\vskip20pt}
+\setbox0=\hbox{\myrm\pdfinsertht254}
+\message{1418 ht254=\pdfinsertht254}
+\setbox1=\hbox{\myrm\pdfinsertht253}
+\message{1418 ht253=\pdfinsertht253}
+\lsshipbox0 \lsshipbox1
+\end

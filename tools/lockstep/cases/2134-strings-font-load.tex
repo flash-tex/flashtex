@@ -1,0 +1,11 @@
+% 2134-strings-font-load: \tracingstats=2 string counts after TFM loads, a reload under a new name, a new size and a new font (tex.web §§517, 1257, 1260; tex.ch [49.1257], [49.1260] no flushable font name)
+\input prelude
+\tracingstats=2
+\font\lsa=cmr10
+\font\lsb=cmr10
+\font\lsc=cmr10 at 12pt
+\font\lsd=cmr10 scaled 1200
+\font\lse=cmtt10
+\setbox0=\hbox{\lsa A\lsc A\lse A\vrule width2134pt height8pt depth2pt}
+\lsshipbox0
+\end

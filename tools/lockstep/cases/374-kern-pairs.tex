@@ -1,0 +1,7 @@
+% 374-kern-pairs: verifies the font kern program inserts kern nodes between letters, shown in the dump.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm AV To}
+\message{374 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 604-negative-stretch: verifies negative stretch glue cannot take up slack (underfull, badness 10000) while ample positive stretch fits quietly.
+\input prelude
+\setbox0=\hbox to 100pt{\vrule width10pt height8pt depth2pt\hskip 20pt plus -8pt\vrule width10pt height8pt depth2pt}
+\message{604 neg-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox to 100pt{\vrule width10pt height8pt depth2pt\hskip 20pt plus 60pt\vrule width10pt height8pt depth2pt}
+\message{604 pos-wd=\the\wd1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

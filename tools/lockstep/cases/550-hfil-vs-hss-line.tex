@@ -1,0 +1,9 @@
+% 550-hfil-vs-hss-line: verifies nested \hfil and \hss boxes leave different glue specs in paragraph lines.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\noindent\myrm aa \hbox to 60pt{\hfil bb} cc\par}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\noindent\myrm aa \hbox to 60pt{\hss bb} cc\par}
+\message{550 done}
+\lsshipbox0
+\lsshipbox1
+\end

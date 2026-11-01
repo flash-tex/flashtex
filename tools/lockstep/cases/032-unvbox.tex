@@ -1,0 +1,7 @@
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip 4pt\hrule width40pt height6pt depth0pt}
+\setbox1=\vbox{\unvbox0\vskip 0pt plus 1fil\hrule width40pt height2pt depth0pt}
+\message{032 ht=\the\ht1}
+\ifvoid0 \message{032 box0-void} \else \message{032 box0-kept} \fi
+\lsshipbox1
+\end

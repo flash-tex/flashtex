@@ -1,0 +1,9 @@
+% 668-vtop-to-vs-vbox-to: verifies \vtop to sizes from the first baseline while \vbox to stacks the same rows from the top.
+\input prelude
+\setbox0=\vtop to 40pt{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{668 vtop-ht=\the\ht0 vtop-dp=\the\dp0}
+\setbox1=\vbox to 40pt{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{668 vbox-ht=\the\ht1 vbox-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

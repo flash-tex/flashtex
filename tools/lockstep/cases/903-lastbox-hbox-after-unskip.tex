@@ -1,0 +1,11 @@
+% 903-lastbox-hbox-after-unskip: verifies \lastbox on a horizontal list takes the box only after \unskip removes the trailing glue.
+\input prelude
+\setbox4=\hbox{\vrule width12pt height8pt depth2pt}
+\setbox0=\hbox{\copy4\hskip10pt\setbox2=\lastbox\ifvoid2\message{903 glued-void}\else\message{903 glued-kept}\fi}
+\message{903 glued-wd=\the\wd0}
+\setbox1=\hbox{\copy4\hskip10pt\unskip\setbox3=\lastbox\ifvoid3\message{903 stripped-void}\else\message{903 stripped-kept wd=\the\wd3}\fi}
+\message{903 stripped-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox3
+\end

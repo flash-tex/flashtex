@@ -1,0 +1,18 @@
+# actionlint configuration. `brew install actionlint && actionlint` is part of
+# reviewing a workflow change (docs/ci-cd.md, "Running the pieces locally").
+#
+# The labels of the team's self-hosted Apple Silicon Macs, as
+# scripts/ci/install-selfhosted-runner.sh registers them. Without this, every
+# `runs-on: [self-hosted, macOS, ARM64, flashtex]` is reported as an unknown
+# label and the real findings get lost in the noise.
+self-hosted-runner:
+  labels:
+    - flashtex
+    # The owner's NixOS PC (TeX Live 2026 first on PATH), as
+    # scripts/ci/install-selfhosted-runner-nixos.sh registers its three instances
+    # (ci.yml plan's linux_runner; nightly.yml corpus-t4 and the engine jobs).
+    - flashtex-linux
+    # The one Mac instance for heavy scheduled jobs (mac-m1max-a-2, added by
+    # hand): p5-scoreboard's Mac route and nightly's templates leg and
+    # engine-nightly-mac, so the other Mac stays free for the merge queue.
+    - flashtex-heavy

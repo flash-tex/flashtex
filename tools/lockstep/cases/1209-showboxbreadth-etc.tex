@@ -1,0 +1,9 @@
+% 1209-showboxbreadth-etc: verifies \showboxbreadth=2 shows only the first two items of a shipped hbox and elides the rest with etc. (tex.web §182)
+\input prelude
+\showboxbreadth=2
+\setbox0=\hbox{\vrule width11pt height8pt depth2pt\hskip3pt\vrule width12pt height8pt depth2pt\vrule width13pt height8pt depth2pt\vrule width14pt height8pt depth2pt}
+\lsshipbox0
+\showboxbreadth=10000
+\setbox2=\hbox{\vrule width11pt height8pt depth2pt\hskip3pt\vrule width12pt height8pt depth2pt\vrule width13pt height8pt depth2pt\vrule width14pt height8pt depth2pt}
+\lsshipbox2
+\end

@@ -1,0 +1,9 @@
+total 276.7 G cycles
+ 11.75  dl_note_node
+ 13.02  displaylist_all
+  6.70  diag
+  6.35  checkpoints
+  4.36  malloc
+  2.16  ship_out
+  1.40  host_send
+  0.22  kpathsea

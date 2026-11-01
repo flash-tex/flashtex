@@ -1,0 +1,14 @@
+% 1170-spaceskip-xspaceskip: \spaceskip fixes normal spaces, \xspaceskip fixes high-spacefactor ones (tex.web §§1041, 1043, 1044)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000
+\spaceskip=20pt \xspaceskip=30pt
+\setbox0=\hbox{\myrm a b}
+\message{1170 normal=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1170 xspace=\the\wd1}
+\xspaceskip=0pt
+\setbox2=\hbox{\myrm a. b}
+\message{1170 scaled=\the\wd2}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

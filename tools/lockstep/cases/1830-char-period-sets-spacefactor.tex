@@ -1,0 +1,11 @@
+% 1830-char-period-sets-spacefactor: a period built with \char drives the factor exactly like a literal period, giving identical extra space (tex.web §§1038, 1044)
+\input prelude
+\font\myrm=cmr10
+\def\sp{ }
+\sfcode`\.=3000
+\setbox0=\hbox{\myrm a\char46 \sp b}
+\message{1830 char-wd=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1830 literal-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

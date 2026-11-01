@@ -1,0 +1,8 @@
+\input prelude % Verifies \pdfmdfivesum of a string typeset as hex in the box.
+\font\f=cmr10
+\edef\h{\pdfmdfivesum{hello}}\edef\w{\pdfmdfivesum{world}}
+\setbox0=\hbox{\f \h}
+\lsshipbox0
+\setbox0=\hbox{\f \w}
+\lsshipbox0
+\end

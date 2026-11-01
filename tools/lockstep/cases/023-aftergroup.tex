@@ -1,0 +1,13 @@
+\input prelude
+\def\saved{outer}
+\def\chkA{\message{023 A-saved=\saved}}
+\def\chkB{\message{023 B}}
+\begingroup
+\def\saved{inner}
+\aftergroup\chkA
+\aftergroup\chkB
+\endgroup
+\message{023 direct=\saved}
+\setbox0=\hbox{\vrule width23pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

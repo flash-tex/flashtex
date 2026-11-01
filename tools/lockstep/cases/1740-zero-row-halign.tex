@@ -1,0 +1,6 @@
+% 1740-zero-row-halign: verifies an alignment closed before any row ships an empty box (tex.web §§ 785, 800)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil\crcr}}
+\message{1740 wd=\the\wd0 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 1647-string-chardef-primitive: verifies \string spells a chardef name and a primitive name with the escape character (tex.web §§468, 470)
+\input prelude
+\font\myrm=cmr10
+\chardef\capA=`A
+\edef\s{\string\capA}
+\edef\p{\string\par}
+\message{1647 s=\meaning\s,p=\meaning\p}
+\setbox0=\hbox{\myrm\s}
+\lsshipbox0
+\end

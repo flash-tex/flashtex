@@ -1,0 +1,11 @@
+% 1176-raise-lower-move-edges: over-lowering zeroes height, over-raising zeroes depth, negative move narrows (tex.web §§653, 1073)
+\input prelude
+\setbox0=\hbox{\vrule width10pt height4pt depth2pt}
+\setbox1=\hbox{\lower8pt\copy0}
+\message{1176 low=\the\ht1,\the\dp1}
+\setbox2=\hbox{\raise8pt\copy0}
+\message{1176 high=\the\ht2,\the\dp2}
+\setbox3=\vbox{\moveright-8pt\copy0}
+\message{1176 mov=\the\wd3}
+\lsshipbox1 \lsshipbox2 \lsshipbox3
+\end

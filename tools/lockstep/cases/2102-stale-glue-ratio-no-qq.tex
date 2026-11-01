@@ -1,0 +1,24 @@
+% 2102-stale-glue-ratio-no-qq: a zero-expansion line box (hpack with cal_expand_ratio, font_expand_ratio=0, pdftex.web §§823, 834, 1066) lands on words that 24000 glue nodes, half of them freed, left behind, and keeps their stale glue_sign, glue_order and glue_set; pdfTeX shows it as "glue set 0.0foul" because TeX Live's tex.ch [12.186] drops tex.web's "?.?" test (pdftex.web §186)
+\input prelude
+% Tracing off while memory is filled: 24000 glue items would trace 24000 times.
+\tracingcommands=0 \tracingassigns=0 \tracingmacros=0 \tracingifs=0
+\tracingrestores=0 \tracinggroups=0 \tracingnesting=0
+\font\myrm=cmr10
+\pdffontexpand\myrm 30 20 10 autoexpand
+\parindent=0pt \parfillskip=0pt \pdfadjustspacing=2
+\countdef\k=10 \countdef\j=11
+\def\txt{This is a small test line of text.}
+\setbox1=\hbox{\myrm\txt}
+% Fill low memory past 65535 with glue nodes, each with its own spec.
+\def\fill{\ifnum\j>0 \hskip\j sp plus 1pt minus 2pt \advance\j by -1 \expandafter\fill\fi}
+\j=12000 \setbox100=\hbox{\fill}
+\j=12000 \setbox101=\hbox{\fill}
+% Free the first list: its glue nodes go back to the free list.
+\setbox100=\box99
+\tracingcommands=3 \tracingassigns=1 \tracingmacros=2 \tracingifs=1
+\tracingrestores=1 \tracinggroups=1 \tracingnesting=2
+\def\one{\hsize=\wd1 \advance\hsize by \k sp \myrm\txt\par}
+\def\step{\ifnum\k<40 \advance\k by 1 \ifnum\k=0 \else\one\fi\expandafter\step\fi}
+\setbox0=\vbox{\k=-41 \step}
+\lsshipbox0
+\end

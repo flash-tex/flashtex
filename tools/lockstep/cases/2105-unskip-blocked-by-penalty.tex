@@ -1,0 +1,7 @@
+% 2105-unskip-blocked-by-penalty: \unskip leaves a trailing penalty node alone, so the penalty is still reported (tex.web §§1104, 1105)
+% new versus 547-unskip-blocked-by-kern: same primitive as 547 with a different blocker, a penalty at the tail
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth1pt\penalty60\unskip\message{2105 pen=\the\lastpenalty}}
+\message{2105 wd=\the\wd0}
+\lsshipbox0
+\end

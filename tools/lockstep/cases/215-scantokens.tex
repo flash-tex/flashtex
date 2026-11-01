@@ -1,0 +1,6 @@
+\input prelude
+\scantokens{\def\foo{bar}}
+\message{215 foomeans=\meaning\foo}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

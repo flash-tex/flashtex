@@ -1,0 +1,35 @@
+{"load_before":"161.02 114.05 78.88","doc":"d10","mode":"seeded-time"}
+{"label":"d10","cold_iters":3,"pages":10}
+{"label":"d10","loc":"EDITSTART","validate":false,"p50":10.88,"p95":18.10,"max":22.73,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":50.9}
+{"label":"d10","loc":"EDITMID","validate":false,"p50":12.68,"p95":24.09,"max":27.03,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":51.2}
+{"label":"d10","loc":"EDITEND","validate":false,"p50":12.45,"p95":21.67,"max":25.57,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":51.3}
+{"label":"d10","loc":"EDITMID-backspace","validate":false,"p50":12.48,"p95":33.54,"max":60.78,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":51.5}
+{"load_after":"159.01 114.41 79.22","doc":"d10"}
+{"load_before":"159.01 114.41 79.22","doc":"d100","mode":"seeded-time"}
+{"label":"d100","cold_iters":4,"pages":100}
+{"label":"d100","loc":"EDITSTART","validate":false,"p50":104.33,"p95":174.19,"max":214.24,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":384.4}
+{"label":"d100","loc":"EDITMID","validate":false,"p50":133.22,"p95":201.19,"max":211.52,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":385.2}
+{"label":"d100","loc":"EDITEND","validate":false,"p50":110.37,"p95":179.27,"max":196.50,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":386.2}
+{"label":"d100","loc":"EDITMID-backspace","validate":false,"p50":105.97,"p95":153.75,"max":180.70,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":386.4}
+{"load_after":"155.79 116.59 80.82","doc":"d100"}
+{"load_before":"155.79 116.59 80.82","doc":"d300","mode":"seeded-time"}
+{"label":"d300","cold_iters":4,"pages":300}
+{"label":"d300","loc":"EDITSTART","validate":false,"p50":360.73,"p95":499.54,"max":528.06,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1023.5}
+{"label":"d300","loc":"EDITMID","validate":false,"p50":296.16,"p95":413.81,"max":498.45,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1031.5}
+{"label":"d300","loc":"EDITEND","validate":false,"p50":273.15,"p95":379.68,"max":428.00,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1033.5}
+{"label":"d300","loc":"EDITMID-backspace","validate":false,"p50":252.42,"p95":375.83,"max":425.68,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1040.2}
+{"load_after":"151.61 123.02 85.86","doc":"d300"}
+{"load_before":"151.61 123.02 85.86","doc":"c300","mode":"seeded-time"}
+{"label":"c300","cold_iters":4,"pages":300}
+{"label":"c300","loc":"EDITSTART","validate":false,"p50":245.46,"p95":331.27,"max":399.81,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":545.8}
+{"label":"c300","loc":"EDITMID","validate":false,"p50":272.91,"p95":386.56,"max":463.30,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":552.5}
+{"label":"c300","loc":"EDITEND","validate":false,"p50":242.25,"p95":351.27,"max":470.35,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":553.4}
+{"label":"c300","loc":"EDITMID-backspace","validate":false,"p50":238.37,"p95":349.38,"max":374.00,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":465.1}
+{"load_after":"143.44 124.83 88.44","doc":"c300"}
+{"load_before":"143.44 124.83 88.44","doc":"d1000","mode":"seeded-time"}
+{"label":"d1000","cold_iters":4,"pages":999}
+{"label":"d1000","loc":"EDITSTART","validate":false,"p50":742.47,"p95":1822.73,"max":2334.81,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":3703.5}
+{"label":"d1000","loc":"EDITMID","validate":false,"p50":702.95,"p95":795.27,"max":915.67,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":3901.6}
+{"label":"d1000","loc":"EDITEND","validate":false,"p50":1091.87,"p95":1913.07,"max":2688.96,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":3927.9}
+{"label":"d1000","loc":"EDITMID-backspace","validate":false,"p50":1410.02,"p95":2341.17,"max":2735.29,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":3376.7}
+{"load_after":"103.14 112.52 91.24","doc":"d1000"}

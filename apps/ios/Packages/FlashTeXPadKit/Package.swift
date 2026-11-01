@@ -14,7 +14,12 @@ import PackageDescription
 //                            syntax token model, environment editing rules,
 //                            the Return key, delimiter matching, auto-close,
 //                            the supported-latex vocabulary decoder)
-// Nothing under the three symlinks is owned by apps/ios alone: a change there
+//   - `FlashTeXCollabCore` <- symlink to apps/mac/Sources/FlashTeXCollabCore
+//                            (live collaboration's collab-v1 data model: the
+//                            text and file-map CRDTs, local undo, the wire
+//                            codec; docs/contracts/collab-v1.md). Not linked
+//                            by the app yet (live-share P2).
+// Nothing under the four symlinks is owned by apps/ios alone: a change there
 // is a change to the Mac editor too and runs both test suites.
 let package = Package(
     name: "FlashTeXPadKit",
@@ -24,11 +29,17 @@ let package = Package(
         .library(name: "NearbyClient", targets: ["NearbyClient"]),
         .library(name: "FlashTeXProtocol", targets: ["FlashTeXProtocol"]),
         .library(name: "FlashTeXEditorCore", targets: ["FlashTeXEditorCore"]),
+        .library(name: "FlashTeXCollabCore", targets: ["FlashTeXCollabCore"]),
+    ],
+    dependencies: [
+        // The shared editor core's TOML reader (TeXpand; see apps/mac/Package.swift).
+        .package(url: "https://github.com/dduan/TOMLDecoder", exact: "0.4.5"),
     ],
     targets: [
         .target(name: "FlashTeXProtocol"),
         .target(name: "NearbyClient"),
-        .target(name: "FlashTeXEditorCore", dependencies: ["FlashTeXProtocol"]),
+        .target(name: "FlashTeXEditorCore", dependencies: ["FlashTeXProtocol", .product(name: "TOMLDecoder", package: "TOMLDecoder")]),
+        .target(name: "FlashTeXCollabCore"),
         .target(
             name: "FlashTeXPadKit",
             dependencies: ["FlashTeXProtocol", "NearbyClient", "FlashTeXEditorCore"],
@@ -42,8 +53,11 @@ let package = Package(
                 .enableExperimentalFeature("StrictConcurrency")
             ]
         ),
-        // XCTest is hosted by the generated iOS project (FlashTeXPadTests).
-        // Keeping a second SwiftPM test target here makes Xcode discover the
-        // symlinked protocol/client sources as overlapping test sources.
+        // UI-free FlashTeXPadKit logic is tested here on macOS (`swift test`);
+        // everything touching UIKit is hosted by the iOS project
+        // (FlashTeXPadTests). This target depends on FlashTeXPadKit alone
+        // and lives in Tests/, away from the symlinked protocol/client
+        // sources (8d1ab8e25 dropped an earlier target over that overlap).
+        .testTarget(name: "FlashTeXPadKitTests", dependencies: ["FlashTeXPadKit"], path: "Tests/FlashTeXPadKitTests"),
     ]
 )

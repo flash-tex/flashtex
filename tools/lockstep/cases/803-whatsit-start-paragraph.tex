@@ -1,0 +1,9 @@
+% 803-whatsit-start-paragraph: verifies a \special at the very start of a paragraph leads the horizontal list.
+\input prelude
+\font\f=cmr10
+\hsize=200pt \parindent=0pt
+\setbox0=\vbox{\f\noindent\special{first 803}abc\par}
+\lsshipbox0
+\setbox2=\vbox{\f\noindent abc\par}
+\lsshipbox2
+\end

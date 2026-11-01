@@ -1,0 +1,8 @@
+% 671-parshape-one-entry: verifies a one-line \parshape spec indents and narrows every line, unlike the unshaped control box.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=200pt\parshape=1 40pt 100pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par\message{671 shaped lines=\the\prevgraf}}
+\setbox1=\vbox{\parindent=0pt\hsize=200pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par\message{671 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\end

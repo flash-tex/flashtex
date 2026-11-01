@@ -1,0 +1,9 @@
+% 2201-futurelet-peeks-letter: \futurelet binds the peeked character token itself (tex.web §1221)
+% new versus 160-futurelet-basic: 160 peeks a macro so the log shows a macro meaning and a foo-ran line; here the peeked token is the letter A so the log shows the letter meaning and the branch line
+\input prelude
+\font\myrm=cmr10
+\def\nextB{\ifx\peeked A\message{2201 is-A}\else\message{2201 not-A}\fi}
+\setbox0=\hbox{\myrm\futurelet\peeked\nextB A}
+\message{2201 peek=[\meaning\peeked]}
+\lsshipbox0
+\end

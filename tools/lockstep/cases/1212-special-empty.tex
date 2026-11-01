@@ -1,0 +1,5 @@
+% 1212-special-empty: verifies an empty \special{} ships as an empty whatsit node (tex.web §1354)
+\input prelude
+\setbox0=\hbox{\special{}\vrule width30pt height8pt depth2pt}
+\lsshipbox0
+\end

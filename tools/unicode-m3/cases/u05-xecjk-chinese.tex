@@ -1,0 +1,13 @@
+% Unicode corpus (M3): xeCJK with the Fandol fonts by file name.
+\documentclass{article}
+\usepackage{xeCJK}
+\setCJKmainfont[BoldFont=FandolSong-Bold.otf, ItalicFont=FandolKai-Regular.otf]{FandolSong-Regular.otf}
+\setCJKsansfont[BoldFont=FandolHei-Bold.otf]{FandolHei-Regular.otf}
+\setCJKmonofont{FandolFang-Regular.otf}
+\begin{document}
+\section{中文排版}
+这是一个中文段落，包含标点符号：逗号，句号。问号？感叹号！“引号”和《书名号》。
+中文与English混排，数字123和公式$a+b=c$。\textbf{粗体}、\textit{楷体}、
+\textsf{黑体}、\texttt{仿宋}。这一段文字要足够长，才能检验中文的断行规则与
+标点挤压：（括号）、【方括号】、——破折号——、……省略号……。
+\end{document}

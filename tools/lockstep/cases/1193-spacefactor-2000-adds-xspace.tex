@@ -1,0 +1,10 @@
+% 1193-spacefactor-2000-adds-xspace: an assigned \spacefactor of 2000 makes the next space token add the font extra space and double the stretch, unlike a control space, which ignores it (tex.web §§1043, 1044)
+\input prelude
+\font\myrm=cmr10
+\def\sp{ }
+\setbox0=\hbox{\myrm a\spacefactor=2000 \sp b}
+\setbox1=\hbox{\myrm a b}
+\message{1193 sf-wd=\the\wd0 plain-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

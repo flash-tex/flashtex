@@ -1,0 +1,18 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\begin{document}
+\begin{figure}[h]
+\centering
+\begin{subfigure}{0.45\textwidth}
+\centering\rule{3cm}{2cm}
+\caption{First part}\label{fig:sub-a}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.45\textwidth}
+\centering\rule{3cm}{2cm}
+\caption{Second part}\label{fig:sub-b}
+\end{subfigure}
+\caption{A figure made of \ref{fig:sub-a} and \ref{fig:sub-b}.}
+\end{figure}
+\end{document}

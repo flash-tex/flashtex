@@ -1,0 +1,10 @@
+% 2334-lastbox-resets-shift: \lastbox takes a raised box with its shift cleared, beside a copied control that keeps it (tex.web §§1080, 1081)
+% new versus 037-lastbox: 037 ships a taken box with no shift involved; here the control prints a shifted vbox while the taken twin prints the same vbox unshifted
+\input prelude
+\setbox2=\vbox{\hrule width20pt height6pt depth0pt}
+\setbox0=\hbox{\raise4pt\copy2}
+\setbox1=\hbox{\raise4pt\box2\global\setbox3=\lastbox}
+\message{2334 void=\ifvoid3 yes\else no\fi}
+\lsshipbox0
+\lsshipbox3
+\end

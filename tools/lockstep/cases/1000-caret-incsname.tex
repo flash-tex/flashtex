@@ -1,0 +1,8 @@
+% 1000-caret-incsname: verifies ^^ hex codes become characters, also inside control-sequence names (tex.web §§352-356)
+\input prelude
+\message{1000 ab=^^41^^42}
+\expandafter\def\csname ab^^41c\endcsname{CARETDEF}
+\message{1000 cs=\abAc}
+\setbox0=\hbox{\vrule width1000pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

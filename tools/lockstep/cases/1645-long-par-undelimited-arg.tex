@@ -1,0 +1,9 @@
+% 1645-long-par-undelimited-arg: verifies a \long macro takes a lone \par token as one undelimited argument, leaving the rest (tex.web §§392, 393)
+\input prelude
+\font\myrm=cmr10
+\long\def\lg#1{[#1]}
+\edef\r{\lg\par X}
+\message{1645 r=\meaning\r}
+\setbox0=\hbox{\myrm X}
+\lsshipbox0
+\end

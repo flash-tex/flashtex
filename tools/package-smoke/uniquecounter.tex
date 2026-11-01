@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{uniquecounter}
+\UniqueCounterNew{smoke}
+\begin{document}
+First: \UniqueCounterCall{smoke}; second: \UniqueCounterCall{smoke}.
+Current value: \UniqueCounterGet{smoke}.
+Each call returns a fresh unique number.
+\end{document}
