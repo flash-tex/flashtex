@@ -536,13 +536,10 @@ impl CStr<'_> {
 }
 
 impl Globals {
-    fn fm_buf_overflow(&mut self) -> ! {
-        self.pdftex_fail("buffer overflow at file mapfile.c, line 53")
-    }
-
     /// `read_field`: bytes up to a blank, `<`, `"` or the end, then skip one
-    /// blank.
-    fn read_field(&mut self, line: &CStr, r: &mut usize) -> Vec<u8> {
+    /// blank. Its `check_buf` names the line of the macro's use in
+    /// mapfile.c, `c_line`.
+    fn read_field(&mut self, line: &CStr, r: &mut usize, c_line: u32) -> Vec<u8> {
         let mut buf = Vec::with_capacity(32);
         loop {
             let c = line.at(*r);
@@ -550,7 +547,7 @@ impl Globals {
                 break;
             }
             if buf.len() + 1 > FM_BUF_SIZE {
-                self.fm_buf_overflow();
+                self.check_buf_fail("mapfile.c", c_line);
             }
             buf.push(c);
             *r += 1;
@@ -571,7 +568,7 @@ impl Globals {
         let mut fm = FmEntry::new();
         let (mut u, mut v) = (0u8, 0u8);
         'scan: {
-            let buf = self.read_field(&line, &mut r);
+            let buf = self.read_field(&line, &mut r, 455);
             if !buf.is_empty() {
                 fm.tfm_name = buf;
             }
@@ -580,7 +577,7 @@ impl Globals {
             }
             if !line.at(r).is_ascii_digit() {
                 // 2nd field ps_name may not start with a digit
-                let buf = self.read_field(&line, &mut r);
+                let buf = self.read_field(&line, &mut r, 460);
                 if !buf.is_empty() {
                     fm.ps_name = Some(buf);
                 }
@@ -596,13 +593,12 @@ impl Globals {
                 }
                 let c = line.at(s);
                 if c == b' ' || c == b'"' || c == b'<' || c == 0 {
-                    // not e. g. 8r.enc: atoi
-                    let digits = &raw[r..s];
-                    fm.fd_flags = std::str::from_utf8(digits)
-                        .ok()
-                        .and_then(|d| d.parse::<i64>().ok())
-                        .map(|d| d as i32)
-                        .unwrap_or(0);
+                    // not e. g. 8r.enc: the C library's atoi, `(int)strtol`,
+                    // so a number too big for a `long` saturates and is then
+                    // cut to an `int` (2^63-1 gives -1, "not set", on LP64)
+                    let digits = std::ffi::CString::new(&raw[r..s]).unwrap_or_default();
+                    // SAFETY: `digits` is a NUL-terminated string of digits.
+                    fm.fd_flags = unsafe { libc::atoi(digits.as_ptr()) };
                     r = s;
                 }
             }
@@ -692,7 +688,7 @@ impl Globals {
                                 r += 1;
                             }
                         }
-                        let buf = self.read_field(&line, &mut r);
+                        let buf = self.read_field(&line, &mut r, 531);
                         // encoding, formats: '8r.enc' or '<8r.enc' or '<[8r.enc'
                         if buf.len() > 4 && ends_with_ci(&buf, b".enc") {
                             fm.encname = Some(buf);
@@ -800,7 +796,9 @@ impl Globals {
             a += 4;
         }
         // the value of SlantFont and ExtendFont must be reasonable
-        if fm.slant.abs() > 1000 {
+        // `abs(INT_MIN)` is too big too (clang compiles `abs(x) > 1000` as a
+        // range test; `i32::abs` would wrap it to a negative number)
+        if fm.slant.unsigned_abs() > 1000 {
             if warn {
                 let g = cfmt::fmt_g(fm.slant as f64 / 1000.0);
                 self.pdftex_warn(&format!(
@@ -810,7 +808,7 @@ impl Globals {
             }
             a += 8;
         }
-        if fm.extend.abs() > 2000 {
+        if fm.extend.unsigned_abs() > 2000 {
             if warn {
                 let g = cfmt::fmt_g(fm.extend as f64 / 1000.0);
                 self.pdftex_warn(&format!(
@@ -1017,7 +1015,7 @@ impl Globals {
                             }
                             if c != b' ' as i32 || buf.last().is_some_and(|&l| l != 32) {
                                 if buf.len() + 1 > FM_BUF_SIZE {
-                                    self.pdftex_fail("buffer overflow at file mapfile.c, line 440");
+                                    self.check_buf_fail("mapfile.c", 440);
                                 }
                                 buf.push(c as u8);
                             }
