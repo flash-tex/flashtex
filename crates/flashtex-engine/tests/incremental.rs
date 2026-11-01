@@ -6484,3 +6484,53 @@ fn a_link_broken_across_lines_does_not_stop_convergence() {
         runs[1]
     );
 }
+
+/// Lane REVIEW-INCR: `\pdfobj file` (pdftex.web's "Write out a PDF object":
+/// `tex_b_openin`, then every byte to the end) reads the whole file, as
+/// `\pdfmdfivesum file` does. A document that embeds its own source while
+/// its stream is open at the page checkpoints before a late edit: a restart
+/// at one of them kept the object written with the old source. Every
+/// compile equals scratch runs.
+#[test]
+fn a_file_embedded_by_pdfobj_is_read_whole() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("pdfobj-file");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\begin{document}\n\
+             \\immediate\\pdfobj stream file {\\jobname.tex}\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, if i == 34 { word } else { "lorem" }));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("alphb"))],
+        "a letter late in the embedded file",
+    );
+    assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("alpha"))],
+        "the revert",
+    );
+}

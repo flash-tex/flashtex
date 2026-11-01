@@ -2883,8 +2883,23 @@ impl Globals {
 
     /// `open_input(&f, kpse_tex_format, FOPEN_RBIN_MODE)` (pdftex.h's
     /// `texbopenin`): a TeX input file read as bytes (`\pdfobj file`).
+    ///
+    /// Its one caller, pdftex.web's "Write out a PDF object", copies every
+    /// byte to the end, so for the incremental journal this is a read of
+    /// the whole file (`note_whole_read`, as `\pdfmdfivesum file`), not only
+    /// the lookup that found it. Without the close after all of it, a
+    /// document embedding its own source (`\immediate\pdfobj stream file
+    /// {\jobname.tex}`) had restart points after the embed, its stream still
+    /// before a later edit, and kept the object with the old source (lane
+    /// REVIEW-INCR, `tests/incremental.rs`).
     pub fn tex_b_openin(&mut self, f: &mut ByteFile) -> bool {
-        self.byte_open_in(f, Format::Tex)
+        let ok = self.byte_open_in(f, Format::Tex);
+        if ok {
+            if let Some(p) = f.path.as_deref() {
+                note_whole_read(p);
+            }
+        }
+        ok
     }
 
     /// `open_input(&f, kpse_vf_format, FOPEN_RBIN_MODE)` (pdftex.h's
