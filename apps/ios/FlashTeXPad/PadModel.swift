@@ -95,6 +95,8 @@ final class PadModel: ObservableObject {
     // Captures (the product: draw/pick → capture_submit → receipt)
     let queue: CaptureQueue
     @Published var captures: [CaptureRecord] = []
+    /// The Captures list's thumbnails, each decoded once off the main actor.
+    let thumbnails = CaptureThumbnails()
 
     /// Production: pairings in the Keychain (`KeychainPairStore`), drafts /
     /// receipts / outcomes in Application Support (`CaptureStore`). Tests pass
@@ -253,6 +255,38 @@ final class PadModel: ObservableObject {
         }
     }
 
+    /// The app's scene phase (`FlashTeXPadApp`). Back in the foreground, a
+    /// stored pairing whose link died while the app was away reconnects by
+    /// itself: iOS drops the connection of a suspended app, and before this
+    /// only launch reconnected. Going to the background finishes the capture
+    /// writes still queued, so a suspended app is never killed with a capture
+    /// that is not on disk.
+    func scenePhaseChanged(to phase: ScenePhase) async {
+        switch phase {
+        case .active:
+            guard pairedMac != nil, !link.isConnected else { return }
+            await autoReconnect()
+        case .background:
+            let app = UIApplication.shared
+            let task = BackgroundTask()
+            task.id = app.beginBackgroundTask(withName: "flashtex.pad.captures") { task.end(app) }
+            await queue.flush()
+            task.end(app)
+        default:
+            break
+        }
+    }
+
+    /// One `beginBackgroundTask` grant, ended once (by the work or by expiry).
+    private final class BackgroundTask: @unchecked Sendable {
+        var id = UIBackgroundTaskIdentifier.invalid
+        @MainActor func end(_ app: UIApplication) {
+            guard id != .invalid else { return }
+            app.endBackgroundTask(id)
+            id = .invalid
+        }
+    }
+
     private func connected(_ pair: PairedMac, host: String, port: UInt16) {
         rememberEndpoint(host: host, port: port, fingerprint: pair.fingerprint)
         destination = link.destination
@@ -312,7 +346,10 @@ final class PadModel: ObservableObject {
                 let interval: TimeInterval
                 do {
                     guard let self else { return }
-                    if n >= self.maxPolls || !self.queue.shouldPoll(id) {
+                    // A dead link stops the poller (reconnecting resumes it:
+                    // `resumeOutcomePolling`) rather than spending the remaining
+                    // polls recording "not connected".
+                    if n >= self.maxPolls || !self.queue.shouldPoll(id) || !self.link.isConnected {
                         self.pollers[id] = nil
                         return
                     }

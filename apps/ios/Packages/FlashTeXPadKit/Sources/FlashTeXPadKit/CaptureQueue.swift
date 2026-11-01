@@ -140,8 +140,12 @@ public final class CaptureQueue: @unchecked Sendable {
         }
     }
 
-    /// Caller must hold `lock`. `store.save` runs under that lock so a concurrent
-    /// `records` read cannot observe a torn list; CaptureStore has its own lock too.
+    /// Caller must hold `lock`. Prunes, then hands a snapshot to `persistQueue`:
+    /// the disk write (PNG, `captures.json`) never runs on the caller's thread
+    /// or under `lock`, so `draft` on the main actor and every `records` read
+    /// return without waiting for the disk. Snapshots are enqueued while
+    /// `lock` is held, so the serial queue writes them in mutation order and
+    /// the last state wins.
     private func persistLocked() {
         guard let store else { return }
         if _records.count > Self.maxRecords {
@@ -149,9 +153,29 @@ public final class CaptureQueue: @unchecked Sendable {
             for i in stride(from: kept.count - 1, through: 0, by: -1) where kept.count > Self.maxRecords && kept[i].status.isTerminal { kept.remove(at: i) }
             _records = kept
         }
-        do { try store.save(_records) } catch { _lastStoreError = "\(error)" }
+        let snapshot = Snapshot(records: _records)
+        persistQueue.async { [self] in
+            do {
+                try store.save(snapshot.records)
+                lock.withLock { _lastStoreError = nil }
+            } catch {
+                lock.withLock { _lastStoreError = "\(error)" }
+            }
+        }
     }
+    private let persistQueue = DispatchQueue(label: "flashtex.pad.capture-store", qos: .utility)
+    /// A copied list handed to `persistQueue`. `@unchecked`: value types
+    /// only, never mutated after the copy (NearbyWire's payload structs are
+    /// not marked Sendable).
+    private struct Snapshot: @unchecked Sendable { let records: [CaptureRecord] }
     public var lastStoreError: String? { lock.withLock { _lastStoreError } }
+
+    /// Resolves once every change made so far is on disk (or failed:
+    /// `lastStoreError`). `send` waits for it before the bytes leave, so a
+    /// capture the Mac may have received is always one a relaunch lists.
+    public func flush() async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in persistQueue.async { done.resume() } }
+    }
     private var _lastStoreError: String?
 
     /// Client-side checks the Mac would fail anyway (`NearbyWire.checkImage`,
@@ -183,6 +207,7 @@ public final class CaptureQueue: @unchecked Sendable {
         let attempt: Int
         if case .disconnected(_, let n) = r.status { attempt = n + 1 } else { attempt = 1 }
         update(id) { $0.status = .sending(attempt: attempt) }
+        await flush()
         do {
             guard let session = link.session, let pair = link.pair else { throw NearbyError.closed("not connected to a Mac") }
             if let bound = r.pairId, bound != pair.pairId {

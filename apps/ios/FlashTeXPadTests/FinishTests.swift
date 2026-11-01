@@ -189,6 +189,43 @@ final class FinishTests: XCTestCase {
         XCTAssertTrue(mac.captures.isEmpty, "no re-delivery and no retry of another Mac's payload")
     }
 
+    /// A link that died (the app was suspended, the Mac went away) stops the
+    /// outcome pollers instead of running all `maxPolls` probes against it;
+    /// reconnecting resumes them. Before: every poller kept going, recording
+    /// "not connected" every `pollInterval` until `maxPolls`.
+    func testPollingStopsWhenTheLinkDropsAndResumesOnReconnect() async throws {
+        let model = await pairedModel()
+        let r = model.draft(CaptureRecord(source: .pencil, png: CaptureQueueTests.trianglePNG(), instructions: "x"))
+        await model.send(r.id)
+        XCTAssertTrue(model.isPollingOutcomes)
+        model.link.disconnect()
+        await waitUntil(2) { !model.isPollingOutcomes }
+        XCTAssertFalse(model.isPollingOutcomes, "no polling against a dead link")
+        let pairId = try XCTUnwrap(model.pairedMac?.pairId)
+        mac = try FakeMac.restart(mac, keys: [.init(identity: pairId, psk: mac.longTermPSK, bootstrap: false)])
+        await model.reconnect(host: "127.0.0.1", port: String(mac.port))
+        XCTAssertTrue(model.isPollingOutcomes, "reconnecting resumes the outcome poller")
+    }
+
+    /// Back in the foreground with the link gone (iOS drops the connection
+    /// while the app is suspended): the stored pairing reconnects by itself.
+    /// Before, the app reconnected only at launch, so after any trip to
+    /// another app the person had to find the Reconnect button.
+    func testReturningToTheForegroundReconnectsTheStoredPairing() async throws {
+        let model = await pairedModel()
+        let pair = try XCTUnwrap(model.pairedMac)
+        model.link.disconnect()
+        XCTAssertFalse(model.link.isConnected)
+        mac = try FakeMac.restart(mac, keys: [.init(identity: pair.pairId, psk: mac.longTermPSK, bootstrap: false)])
+        model.rememberEndpoint(host: "127.0.0.1", port: mac.port, fingerprint: pair.fingerprint)
+        defer { UserDefaults.standard.removeObject(forKey: PadModel.lastEndpointKey(pair.fingerprint)) }
+        await model.scenePhaseChanged(to: .active)
+        XCTAssertTrue(model.link.isConnected, model.linkStatus)
+        XCTAssertEqual(mac.hellos.map(\.pairId), [pair.pairId], "one reconnect with the stored key")
+        await model.scenePhaseChanged(to: .active)
+        XCTAssertEqual(mac.hellos.count, 1, "an open link is left alone")
+    }
+
     // MARK: 2. QR pairing (payload path; the simulator has no camera)
 
     func testPairFromTheMacsQRPayloadWithTypedHostPort() async throws {
@@ -235,6 +272,7 @@ final class FinishTests: XCTestCase {
         await model.send(sent.id)
         await waitUntil { model.captures.first { $0.id == sent.id }?.outcome?.latex == "\\beta" }
 
+        await model.queue.flush() // writes land off the main actor
         // Disk: index + one PNG per capture. Independent of Keychain
         // availability, so this is asserted before the Keychain-dependent
         // part below might skip the rest of the test.
