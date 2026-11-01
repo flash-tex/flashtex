@@ -33,11 +33,11 @@ const MAX_SAFE_INTEGER: u64 = (1u64 << 53) - 1;
 // explicit denylist of named control sequences that are independently known
 // to grant filesystem access, shell execution, or the power to change how
 // the rest of the document is parsed (catcodes, primitive/macro
-// redefinition), plus a few purely structural invariants — balanced
-// grouping, no premature `\end{document}`, no bidi/invisible characters that
-// make the reviewed text display differently than it compiles — that have no
-// legitimate use in a small inserted body snippet. Anything not on this list
-// passes through unchanged; a human still reviews the literal `latex` text
+// redefinition). File-reading commands that remain allowed require literal,
+// project-relative arguments. The scan also checks structural invariants —
+// balanced grouping, no premature `\end{document}`, no bidi/invisible
+// characters that make the reviewed text display differently than it compiles.
+// A human still reviews the literal `latex` text
 // (and any `advisories` this scan adds) before `prepare_insert` is approved.
 //
 // Scanning walks `latex` once as a flat `Vec<char>` with plain counters, not
@@ -83,18 +83,21 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
     "makeatother",
     "documentclass",
     "usepackage",
+    "pdfximage",
+    "pdfobj",
+    "pdfmdfivesum",
+    "pdffiledump",
+    "pdffilesize",
+    "pdffilemoddate",
 ];
 /// Control words that are only ever a hang risk (not file/shell access) and
 /// are occasionally legitimate in hand-written macros, so they are surfaced
 /// to the human reviewer via `ambiguities` instead of being hard-rejected.
 const SOFT_CONTROL_WORDS: &[&str] = &["loop", "repeat"];
-/// Commands that read a file named by their braced arguments, with how
-/// many braced arguments name a path (`\inputminted{lang}{file}` counts
-/// both: a language name is never a path, so checking it costs nothing).
-/// A snippet may use them only with a project-relative path
-/// (`reader_path_ok`); the bridge has no project root to resolve links
-/// against, so that last step stays with the engine's confined reads.
-/// `\input`/`\include` are denied outright above.
+/// Commands that read a file named by their braced arguments, with the
+/// number of literal arguments required. The bridge has no project root to
+/// resolve links against, so the engine must also confine reads.
+/// `\input`/`\include` and pdfTeX file primitives are denied outright above.
 const FILE_READERS: &[(&str, usize)] = &[
     ("includegraphics", 1),
     ("includepdf", 1),
@@ -113,85 +116,153 @@ const FILE_READERS: &[(&str, usize)] = &[
     ("graphicspath", 1),
     ("bibliography", 1),
     ("addbibresource", 1),
-    ("pdfximage", 1),
-    ("pdfobj", 1),
-    ("pdfmdfivesum", 1),
-    ("pdffiledump", 1),
-    ("pdffilesize", 1),
-    ("pdffilemoddate", 1),
 ];
 
-/// A reader's path argument (braces removed, surrounding space trimmed)
-/// names a file inside the project: not absolute, not `~`- or
-/// `$`-expanded (kpathsea expands both), no `..` component, and no
-/// control sequence, whose expansion this scan cannot know
-/// (`\string/etc/passwd` is `/etc/passwd`).
-fn reader_path_ok(arg: &str) -> bool {
-    let path: String = arg.chars().filter(|c| !matches!(c, '{' | '}')).collect();
-    let path = path.trim();
-    !(path.starts_with('/')
-        || path.starts_with('~')
-        || path.contains('$')
-        || path.contains('\\')
-        || path.split('/').any(|seg| seg.trim() == ".."))
+fn reader_path_ok(path: &[char]) -> bool {
+    !path.is_empty()
+        && path[0] != '/'
+        && path
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '+' | '-'))
+        && !path
+            .split(|c| *c == '/')
+            .any(|segment| segment == ['.', '.'])
 }
 
-/// Checks the `count` braced arguments after a reader's name at `i`,
-/// skipping `*`, `[...]` options and, for the pdfTeX primitives, the
-/// keywords before the braced name (`width 2pt`, `file`). Every brace
-/// group up to that many is checked, so a hostile path cannot hide in a
-/// later one.
-fn readers_args_ok(chars: &[char], mut i: usize, count: usize, primitive: bool) -> bool {
-    let mut seen = 0;
-    while seen < count && i < chars.len() {
-        match chars[i] {
-            c if c.is_whitespace() || c == '*' => i += 1,
-            '[' if !primitive => {
-                let mut depth = 0usize;
-                while i < chars.len() {
-                    match chars[i] {
-                        '{' => depth += 1,
-                        '}' => depth = depth.saturating_sub(1),
-                        ']' if depth == 0 => break,
-                        _ => {}
-                    }
-                    i += 1;
-                }
+fn skip_reader_space(chars: &[char], i: &mut usize) {
+    while chars.get(*i).is_some_and(|c| c.is_whitespace()) {
+        *i += 1;
+    }
+}
+
+fn strip_tex_comments(latex: &str) -> Vec<char> {
+    let input: Vec<char> = latex.chars().collect();
+    let mut stripped: Vec<char> = Vec::with_capacity(input.len());
+    let mut backslashes = 0usize;
+    let mut in_control_word = false;
+    let mut i = 0;
+    while i < input.len() {
+        let c = input[i];
+        if c == '%' && backslashes % 2 == 0 {
+            while i < input.len() && !matches!(input[i], '\r' | '\n') {
                 i += 1;
             }
-            '{' => {
-                let start = i + 1;
-                let mut depth = 0usize;
-                while i < chars.len() {
-                    match chars[i] {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
+            if input.get(i) == Some(&'\r') {
+                i += 1;
+            }
+            if input.get(i) == Some(&'\n') {
+                i += 1;
+            }
+            while matches!(input.get(i), Some(' ' | '\t')) {
+                i += 1;
+            }
+            // A comment ends a control word; letters on the next line cannot
+            // extend its name even though the line ending disappears.
+            if in_control_word && input.get(i).is_some_and(char::is_ascii_alphabetic) {
+                stripped.push(' ');
+            }
+            backslashes = 0;
+            in_control_word = false;
+            continue;
+        }
+        stripped.push(c);
+        in_control_word = c.is_ascii_alphabetic() && (in_control_word || backslashes % 2 == 1);
+        backslashes = if c == '\\' { backslashes + 1 } else { 0 };
+        i += 1;
+    }
+    stripped
+}
+
+fn braced_reader_path_ok(chars: &[char], i: &mut usize, directory: bool) -> bool {
+    if chars.get(*i) != Some(&'{') {
+        return false;
+    }
+    *i += 1;
+    let start = *i;
+    while chars.get(*i).is_some_and(|c| *c != '}') {
+        *i += 1;
+    }
+    let path = &chars[start..*i];
+    if chars.get(*i) != Some(&'}')
+        || !reader_path_ok(path)
+        || (directory && path.last() != Some(&'/'))
+    {
+        return false;
+    }
+    *i += 1;
+    true
+}
+
+/// Accept only literal options and project-relative paths immediately after
+/// a reader command. Two-argument readers require two literal braced values.
+fn readers_args_ok(chars: &[char], mut i: usize, count: usize, graphicspath: bool) -> bool {
+    if chars.get(i) == Some(&'*') {
+        i += 1;
+    }
+    skip_reader_space(chars, &mut i);
+    if chars.get(i) == Some(&'[') {
+        i += 1;
+        while let Some(&c) = chars.get(i) {
+            if c == ']' {
+                break;
+            }
+            if c == '\\' {
+                i += 1;
+                let start = i;
+                while chars.get(i).is_some_and(char::is_ascii_alphabetic) {
                     i += 1;
                 }
-                let end = i.min(chars.len());
-                let arg: String = chars[start.min(end)..end].iter().collect();
-                if !reader_path_ok(&arg) {
+                let word: String = chars[start..i].iter().collect();
+                if chars.get(i).is_some_and(|c| c.is_alphabetic())
+                    || !matches!(
+                        word.as_str(),
+                        "linewidth"
+                            | "textwidth"
+                            | "columnwidth"
+                            | "textheight"
+                            | "paperwidth"
+                            | "paperheight"
+                            | "hsize"
+                            | "vsize"
+                    )
+                {
                     return false;
                 }
-                seen += 1;
-                i += 1;
+                continue;
             }
-            // A macro as the whole argument (`\includegraphics\p`, with
-            // `\p` from an allowed `\newcommand`) cannot be checked.
-            '\\' if !primitive => return false,
-            // A primitive's keywords and dimensions come before its name.
-            _ if primitive => i += 1,
-            // Anything else ends the arguments (an unbraced one-token name
-            // such as `\includegraphics x` cannot hold `/` or `..`).
-            _ => break,
+            if matches!(c, '{' | '}' | '%') {
+                return false;
+            }
+            i += 1;
         }
+        if chars.get(i) != Some(&']') {
+            return false;
+        }
+        i += 1;
+    }
+    skip_reader_space(chars, &mut i);
+    if graphicspath {
+        if chars.get(i) != Some(&'{') {
+            return false;
+        }
+        i += 1;
+        let mut seen = false;
+        loop {
+            skip_reader_space(chars, &mut i);
+            if chars.get(i) == Some(&'}') {
+                return seen;
+            }
+            if !braced_reader_path_ok(chars, &mut i, true) {
+                return false;
+            }
+            seen = true;
+        }
+    }
+    for _ in 0..count {
+        if !braced_reader_path_ok(chars, &mut i, false) {
+            return false;
+        }
+        skip_reader_space(chars, &mut i);
     }
     true
 }
@@ -238,7 +309,9 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
         BridgeError::new("invalid_proposal", message)
     }
 
-    let chars: Vec<char> = latex.chars().collect();
+    // Catcode changes are denied, so comments can be removed before scanning
+    // command names, grouping, and literal reader arguments.
+    let chars = strip_tex_comments(latex);
     let mut advisories = Vec::new();
     let mut seen_soft_words = std::collections::BTreeSet::new();
     let mut saw_invisible = false;
@@ -277,9 +350,11 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                         )));
                     }
                     if let Some(&(_, count)) = FILE_READERS.iter().find(|(w, _)| *w == word) {
-                        if !readers_args_ok(&chars, i, count, word.starts_with("pdf")) {
+                        if latex.contains("^^")
+                            || !readers_args_ok(&chars, i, count, word == "graphicspath")
+                        {
                             return Err(invalid(format!(
-                                "LaTeX uses \\{word} with a path that is absolute, uses `..`, `~` or `$`, or is built by a macro; only project-relative paths are permitted in an inserted snippet"
+                                "LaTeX uses \\{word} with an unchecked or non-project-relative path; only checkable project-relative reader paths are permitted in an inserted snippet"
                             )));
                         }
                     }
@@ -348,14 +423,6 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                 }
                 depth -= 1;
                 i += 1;
-            }
-            '%' => {
-                // Default-catcode line comment. Sound only because `\catcode`
-                // itself is denied above, so `%` cannot have been redefined
-                // by this same snippet before this point.
-                while chars.get(i).is_some_and(|&c| c != '\n') {
-                    i += 1;
-                }
             }
             _ => i += 1,
         }

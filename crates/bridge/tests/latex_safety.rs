@@ -14,7 +14,9 @@ fn proposal(latex: &str) -> Proposal {
     }
 }
 fn rejected(latex: &str) {
-    let err = proposal(latex).validate().unwrap_err();
+    let Err(err) = proposal(latex).validate() else {
+        panic!("expected rejection of {latex:?}");
+    };
     assert_eq!(err.code, "invalid_proposal", "payload: {latex:?}");
 }
 fn accepted(latex: &str) {
@@ -35,6 +37,8 @@ fn shell_escape_is_rejected() {
 #[test]
 fn file_io_primitives_are_rejected() {
     rejected(r"\input{/etc/passwd}");
+    rejected(r"\input{chap1}");
+    rejected(r"\input chap1");
     rejected(r"\include{secret}");
     rejected(r"\openin0=/etc/passwd ");
     rejected(r"\read0 to\x");
@@ -201,11 +205,118 @@ fn file_readers_may_not_name_a_path_outside_the_project() {
     rejected(r"\import{/etc/}{passwd}");
     rejected(r"\InputIfFileExists{/etc/passwd}{}{}");
     rejected(r"\includepdf[pages=-]{../other.pdf}");
-    // Project-relative paths stay accepted; \newcommand is allowed by
+    // Project-relative literal paths stay accepted; \newcommand is allowed by
     // policy (Commander ruling).
     accepted(r"\includegraphics[width=0.5\linewidth]{figs/plot.pdf}");
+    accepted(r"\includegraphics[width=3cm]{figs/plot.pdf}");
     accepted(r"\includegraphics{plot}");
     accepted(r"\inputminted{c}{src/main.c}");
     accepted(r"\import{chapters/}{intro}");
     accepted(r"\newcommand{\R}{\mathbb{R}} \renewcommand{\vec}[1]{\mathbf{#1}}");
+}
+
+#[test]
+fn reader_arguments_are_checked_after_tex_comments_are_removed() {
+    rejected("\\verbatiminput%comment\n{/etc/hosts}");
+    rejected("\\input%comment\n{/etc/hosts}");
+    rejected("\\input%comment\rpasswd");
+    rejected("\\includegraphics{%\n/etc/passwd}");
+    rejected("\\includegraphics[%]\n]{/etc/passwd}");
+    rejected("\\graphicspath{{figs/}%}\n{/tmp/}}");
+    accepted("\\verbatiminput%comment\n{figs/a.pdf}");
+    accepted("% a figure\n\\includegraphics[width=.5\\linewidth]{figs/a.pdf}");
+    accepted("\\includegraphics{figs/a.pdf} % trailing note");
+    accepted(r"100\% correct \includegraphics{figs/a.pdf}");
+    accepted("\\includegraphics{% comment\r\n  \tfigs/a.pdf}");
+    rejected("\\includegraphics{\\\\% comment\n/etc/passwd}");
+}
+
+#[test]
+fn comments_end_at_cr_lf_or_crlf() {
+    for ending in ["\r", "\n", "\r\n"] {
+        for command in [
+            r"\includegraphics{/etc/passwd}",
+            r"\input{/etc/passwd}",
+            r"\pdffilesize{/etc/passwd}",
+        ] {
+            rejected(&format!("% ignore{ending}{command}"));
+        }
+    }
+}
+
+#[test]
+fn caret_encoded_reader_paths_are_rejected() {
+    rejected(r"\pdffilesize{^^2fetc/hosts}");
+    rejected(r"^^ \includegraphics{figs/a.pdf}");
+}
+
+#[test]
+fn pdftex_file_primitives_are_denied_without_scanning_keywords() {
+    rejected(r"\pdfximage attr {} {/tmp/private.pdf}");
+    rejected(r"\pdfobj attr {} file {/tmp/x}");
+    rejected(r"\pdfximage ATTR {} {/tmp/x}");
+    rejected(r"\pdfximage height 1ptattr {} {/tmp/x}");
+    rejected(r"\pdfximage named {} {/tmp/x}");
+    rejected(r"\pdfximage attr \% {} {/tmp/x}");
+    for primitive in [
+        r"\pdfximage{figs/a.pdf}",
+        r"\pdfobj file {figs/a.pdf}",
+        r"\pdfmdfivesum file {figs/a.pdf}",
+        r"\pdffiledump{figs/a.pdf}",
+        r"\pdffilesize{figs/a.pdf}",
+        r"\pdffilemoddate{figs/a.pdf}",
+    ] {
+        rejected(primitive);
+    }
+    rejected(r"\newcommand{\p}{{/tmp/private.pdf}}\pdffilesize\p");
+}
+
+#[test]
+fn each_graphics_search_directory_is_checked() {
+    rejected(r"\graphicspath{{figs/}{/tmp/private/}}\includegraphics{secret.pdf}");
+    rejected(r"\graphicspath{{figs/}{../private/}}");
+    rejected(r"\graphicspath{}");
+    rejected(r"\graphicspath{{figs}{img/}}");
+    accepted(r"\graphicspath{{figs/}{img/}}\includegraphics{secret.pdf}");
+    accepted(r"\graphicspath{{figs/} {img/}}");
+}
+
+#[test]
+fn reader_arguments_follow_the_literal_allowlist() {
+    rejected(r"\includegraphics{.{}./x}");
+    rejected(r"\includegraphics{{.}./x}");
+    rejected(r"\includegraphics<2>{/etc/passwd}");
+    rejected(r"\includegraphics\p");
+    rejected(r"\includegraphics*{/etc/passwd}");
+    rejected(r"\includegraphics[width=\input]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\csname]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\linewidthx]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\linewidthé]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\linewidth\relax]{/etc/passwd}");
+    rejected(r"\includegraphics[width=\linewidth\relax{/etc/passwd}]{figs/a.pdf}");
+    rejected(r"\includegraphics{figs/a.pdf\p}");
+    rejected(r"\includegraphics{figs//../x}");
+    rejected(r"\includegraphics{figs/a^b.pdf}");
+    rejected(r"\includegraphics{figs/a<b>.pdf}");
+    rejected(r"\includegraphics[width={3cm}]{figs/a.pdf}");
+    accepted(r"\includegraphics{figs/a.pdf}");
+    accepted(r"\includegraphics*{figs/a.pdf}");
+    accepted(r"\includegraphics*[width=.5\linewidth]{figs/a.pdf}");
+    accepted(r"\includegraphics[width=3cm]{img/b}");
+    accepted(r"\includegraphics[width=.5\linewidth]{figs/a.pdf}");
+    for dimension in [
+        "textwidth",
+        "columnwidth",
+        "textheight",
+        "paperwidth",
+        "paperheight",
+        "hsize",
+        "vsize",
+    ] {
+        accepted(&format!(
+            r"\includegraphics[width=.5\{dimension}]{{figs/a.pdf}}"
+        ));
+    }
+    accepted(r"\verbatiminput{code/x.txt}");
+    accepted(r"\inputminted{c}{src/main.c}");
 }
