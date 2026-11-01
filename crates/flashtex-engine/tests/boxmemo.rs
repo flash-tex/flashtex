@@ -398,6 +398,34 @@ fn spans_begin_paragraphs() {
 }
 
 #[test]
+fn spans_where_the_page_breaks() {
+    // pictures that begin paragraphs on the main vertical list, pages of
+    // five lines: where the page builder's run at a paragraph's start
+    // fires the output routine, a replay would typeset the picture with
+    // the output still to run; it is read normally there
+    let s = check_files(
+        "span-page",
+        &[
+            ("p.tex", SPAN_PIC),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    "\\vsize=60pt \\parskip=1pt \\baselineskip=12pt \\output={\\shipout\\box255}\n\
+                     \\def\\pic{\\indent\\setbox0\\hbox\\bgroup}\n\
+                     \\def\\two{\\n=0 \\input p z\\par\\message{[\\the\\n|\\the\\dimen1|\\the\\pagetotal]}}\n\
+                     \\two\\two\\two\\two\\two\\two\\two\\two\\two\\two\\two\\two\\two\\two\\two\\two\n\
+                     \\showlists\\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    );
+    assert!(stat(&s, "hits") >= 6, "{s}");
+}
+
+#[test]
 fn spans_fall_back_when_the_file_changed() {
     // the same file name and first line, its next line rewritten by
     // `\write` between the inputs: the recorded lines are not the file's,

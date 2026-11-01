@@ -745,3 +745,117 @@ Measured (NixOS PC, T7 beamer-30, two rounds of 19 keys, instructions to the edi
 key 1 143 M → 93 M (the steady keys 92 M); the open's preamble row (a run from the format) 24.5 G →
 24.1 G instructions for the whole compile, 5.29 G → 5.24 G to its first page, wall unchanged.
 Evidence: `docs/evidence/t7-margin-2026-10-21/`.
+
+## 15. Revision 6: spans, a picture read from its file (lane PICTURE-MEMO, 2026-11-01)
+
+DESIGN.md §12 P6's picture memoisation for TikZ and pgfplots. **Off by default**: an environment is
+offered only when `FLASHTEX_BOXMEMO_SPANS` names it (`tikzpicture,tikzcd`); sweeps.yml takes it as
+`boxmemo_spans`. A measure call (§2) is one macro whose arguments are its whole input; a picture is
+not: `\begin{tikzpicture}` reads its body line by line from the file until `\end{tikzpicture}`.
+
+### 15.1 The unit, its key, and what it reads and writes
+
+A **span** is offered where LaTeX's `\begin` (`bm_span_cs`, marked at format load or when entered)
+is called with an argument naming an offered environment, the level below it being a file's line
+(not a token list, the terminal, `\read` or a pseudo file) after the preamble. Its recording may
+read that file level F. It ends when `\begin`'s body is used up and `cur_level` is back at the
+call's: after `\end{tikzpicture}`'s `\endgroup`. The store's key is the environment's control
+sequence; K1 adds the call's line number, `loc`/`limit` from the line's start, the state, the file's
+index, `in_open` and the rest of the buffer's line. Each line `input_ln` reads into F is recorded
+raw with its offset (a hook after `input_ln` in `next_line`). A variant whose key holds is taken only
+if F's file is the same path and its next lines (`peek_lines`, a read then a seek back) are exactly
+the recorded ones; else the span is read normally (the `spans_fall_back_when_the_file_changed` test
+rewrites the file between inputs).
+
+What a picture reads, and how each is held:
+- macros, registers, parameters, fonts and their parameters, `\pgf*` state (all ordinary macros and
+  registers: the picture serial `\pgf@picture@serial@count`, `\tikz@fig@count`, pgfmath's
+  `\pgfmath@rnd@z`): K2, K3, KR as for every call (§3, §10.1, §12);
+- its own lines: the key above; any other file (`\input`, `\openin`, pgfplots' `table`, an image) is
+  refused (a file level above F at its first token; `\openin`/`\read` are `Command`, `\pdfximage`
+  and `\pdffilesize` are not admitted);
+- randomness: `\pdfuniformdeviate`, `\pdfnormaldeviate` and `\pdfsetrandomseed` are refused
+  (`Expandable`, `Command`); pgfmath's own generator is a register and part of the key;
+- page position: `\pdfsavepos` is a node replayed like any other (its position is the shipout's);
+  `\pdflastxpos`/`\pdflastypos` are refused (`LastItem`); remember-picture's positions come from
+  macros the `.aux` defined, so they are meanings in K3;
+- the page and output: `Page`, `OuterList` and output are refused as before (§4).
+
+What it writes: the op log (§5, §12.5), the nodes it appends (draw-call fragments, §10.3, now with
+math noads), F's position (below), the line-shift journal and source positions (§15.4).
+
+### 15.2 Fast-forwarding the file
+
+A replay leaves F where the recording left it: the buffer's line from F's `start`, `loc`, `limit`,
+`state`, `first`, `last`, `line` (`SpanEnd`), F's file advanced past the recorded lines
+(`skip_lines`, each counting towards the next timed checkpoint as `input_ln` would). `max_buf_stack`
+is the recording's high mark if it raised it; if not, the variant is taken only where
+`max_buf_stack` is at least what it was at the recording's call (a restored checkpoint can leave it
+lower), so a replay leaves the high mark the normal path would.
+
+### 15.3 Paragraphs begun by a picture
+
+`\begin{tikzpicture}` in vertical mode begins a paragraph (`\leavevmode`), which is open at the
+span's end. LaTeX's `\everypar` (ltpara) calls `new_graf` twice. Inside a box, the recording keeps
+the outer list's nodes the paragraph added (its `\parskip` glue: static, from eqtb, a sparse
+register, or its own spec with its reference count) and the paragraph's `space_factor`/`prev_graf`;
+a replay appends them, pushes the nest as `new_graf` did and replays the inner nodes. On the main
+vertical list a hook at `new_graf` notes the page builder's run there; the replay runs `build_page`
+at the same point. The recording is kept only if that run fired nothing and put no insertion on the
+page, and the parameters it reads (`\vsize`, `\maxdepth`, `\tracingpages`, `\topskip`) are the same
+at each run and at the end. A variant is taken there only when the run is sure to fire nothing
+(`bm_page_quiet`: no forcing penalty or insertion among the contributions, no output active, and the
+page's total plus every contribution's height, depth and natural width, each at least 0, at most the
+page's goal); otherwise the output routine would run before the picture, and the picture is read
+normally. `spans_begin_paragraphs` tests a box and the page with a `\parskip` that changes;
+`spans_where_the_page_breaks` fails without the check (logs differ with BOX-MEMO on; verification
+mode reports "normal path not pure").
+
+### 15.4 Source positions and the line-shift journal
+
+Nodes carry display-list source positions (SyncTeX tags and lines): the recording keeps each one
+relative to F's first line (`SidePos::At`), the replay puts them back for the lines where the span
+now is. tikz-cd reads `\inputlineno` (`\tikzcd@lineno`), which the line-shift journal records: the
+entries a span made are kept as lines relative to its first and pushed again by the replay
+(`journal_push`); a span whose entries are not all F's lines is not recorded.
+
+### 15.5 Memory
+
+pgfplots pictures log tens of thousands of operations. A span's entry keeps only the replay's
+compressed operations (§12.5, with global assignments to sparse registers compressed too); the full
+log is kept only in verification mode. A span's entry is at most `MAX_BYTES/4` (8 MB, else `Large`),
+so one plot cannot evict the store. Control sequences a span enters are hoisted to the front of its
+replay (`new_cs_first`).
+
+### 15.6 `\copy` of a box it did not make
+
+TikZ copies boxes made outside the picture (node contents kept in `\pgfnodeparttextbox` and the
+like). A `\copy` of a foreign register keys the register's contents (`kc`, its nodes walked as for
+fragments) instead of refusing (`BoxContent`). The full-state verifier now also compares the math
+scratch scalars `cur_style`, `cur_size`, `cur_mu`, `mlist_penalties` and `head_info` (a push_nest
+leaves garbage in `head_info` that a later `\vadjust` reads).
+
+### 15.7 How a replay is proven equal
+
+Verification mode (`FLASHTEX_BOXMEMO=verify`) runs every admitted span both ways: the command line
+compares the whole engine state (`incr::same_state`, the scalars above, F's level and file offset)
+from a checkpoint; the host compares the op logs, the fragment, `SpanEnd` (`same`: equal but for the
+high mark, where each must leave the same one), the paragraph, the journal and the positions. Gates:
+`tests/boxmemo.rs` (`spans_*`, off/on/verify logs and PDFs equal, `full_differences` 0); the
+`FLASHTEX_BOXMEMO_SPANS` sweeps (sweeps.yml `boxmemo=on|verify|off`, `boxmemo_spans`).
+
+### 15.8 Measured (this Mac, mac-m5pro-kabir; CPU seconds to the edited page, picbench keys)
+
+- arXiv 2501.08950v2 (pgfplots, 27 pages), typing at "as we al", three type/revert pairs: off
+  1.28 s, then 0.65–0.68 s a key; spans 1.89 s for the first (recording), then 0.44–0.47 s a key.
+  Every compile compared with a scratch compile: 0 differences.
+- fixtures/real-world/tikzcd-shaded-notes, four edit points: 15–17 → 4–5 ms; 54–77 → 29–47 ms;
+  50–62 → 37–43 ms; 35–45 → 19–22 ms; 0 verification differences.
+- What is still refused on 2501.08950v2: pictures inside a macro's argument (`\scalebox{..}{\begin..}`,
+  a token-list F: `SpanLevel`), two plots over 8 MB (`Large`), one `LongList`.
+
+### 15.9 Open
+
+Token-list F (a picture in a macro argument or a macro body); a plot's outermost group is kept whole
+when a `\global\let` reads a macro assigned in the same group (§12.5's `net` gives up), which is most
+of its 7 MB; on by default only after the span sweeps show no difference.

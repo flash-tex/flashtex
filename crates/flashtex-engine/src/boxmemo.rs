@@ -640,7 +640,9 @@ impl SpanEnd {
 /// A span begun in vertical mode inside a box (§15.3): it started a
 /// paragraph (`new_graf`), which is still open at its end. The nodes it
 /// appended to the box's list before (the paragraph skip), the paragraph's
-/// level (`mode_line`, `prev_graf`, `aux`) and its list.
+/// level (`mode_line`, `prev_graf`, `aux`) and its list. (On the main
+/// vertical list, `outer_h`: the skips' natural widths, each at least 0,
+/// for [`Globals::bm_page_quiet`].)
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Graf {
     outer: crate::boxfrag::Frag,
@@ -648,6 +650,7 @@ struct Graf {
     ml: i32,
     pg: i32,
     aux: u64,
+    outer_h: i64,
 }
 
 /// The source positions of a span's output nodes (§15.4), in the order
@@ -687,7 +690,7 @@ struct GlueRec {
 struct GrafNote {
     glues: Vec<GlueRec>,
     tail: i32,
-    page: Option<(Vec<i64>, [i32; 3])>,
+    page: Option<(Vec<i64>, [i64; 7])>,
 }
 
 /// A span's recording: the file level's input-stack index and file.
@@ -4030,6 +4033,12 @@ impl Globals {
         if graf {
             let holes: Vec<i32> = rec.holes.iter().map(|h| h.1).collect();
             let note = rec.span.as_mut().and_then(|s| s.graf.take());
+            let outer_h: i64 = note.as_ref().map_or(0, |n| {
+                n.glues
+                    .iter()
+                    .map(|g| (crate::generated::types::memory_word(g.spec_words[1]).int() as i64).max(0))
+                    .sum()
+            });
             // the paragraph skips: on the outer list still (a box's), or
             // as the main vertical list's noted them
             let outer = if start.nest_ptr > 0 {
@@ -4078,6 +4087,7 @@ impl Globals {
                 ml: self.cur_list.ml_field,
                 pg: self.cur_list.pg_field,
                 aux: self.cur_list.aux_field.0,
+                outer_h,
             });
         }
         // a draw call's output, with its holes
@@ -4658,7 +4668,13 @@ impl Globals {
                 (*p == path
                     && next.len() >= *len
                     && next[..*len] == sp.file.lines[..]
-                    && (sp.end.max_buf.is_some() || sp.end.max_buf0 <= high))
+                    && (sp.end.max_buf.is_some() || sp.end.max_buf0 <= high)
+                    // (a paragraph begun on the main vertical list: the
+                    // page builder's run there must fire nothing, §15.3)
+                    && sp
+                        .graf
+                        .as_ref()
+                        .is_none_or(|g| self.nest_ptr != 0 || self.bm_page_quiet(g.outer_h)))
                     .then_some(*i)
             })
         });
@@ -4843,13 +4859,76 @@ impl Globals {
 
     /// What the page builder reads of `eqtb` when no insertion and no
     /// output routine is involved (pdftex.web's `build_page` and
-    /// `freeze_page_specs`): `\vsize`, `\maxdepth`, `\tracingpages`.
-    fn bm_page_params(&self) -> [i32; 3] {
+    /// `freeze_page_specs`): `\vsize`, `\maxdepth`, `\tracingpages`, and
+    /// `\topskip` (its glue on an empty page: width, stretch, shrink and
+    /// the orders' word).
+    fn bm_page_params(&self) -> [i64; 7] {
+        let t = self.bm_eq(GLUE_BASE + k::top_skip_code).hh().rh();
+        let w = |i: i32| self.mem[(t + i) as usize].int() as i64;
         [
-            self.bm_eq(k::dimen_base + k::vsize_code).int(),
-            self.bm_eq(k::dimen_base + k::max_depth_code).int(),
-            self.bm_eq(INT_BASE + k::tracing_pages_code).int(),
+            self.bm_eq(k::dimen_base + k::vsize_code).int() as i64,
+            self.bm_eq(k::dimen_base + k::max_depth_code).int() as i64,
+            self.bm_eq(INT_BASE + k::tracing_pages_code).int() as i64,
+            w(1),
+            w(2),
+            w(3),
+            (self.mem[t as usize].0 >> 32) as i64,
         ]
+    }
+
+    /// Will the page builder, run on the main vertical list's
+    /// contributions and then skips of natural width `extra` (each at
+    /// least 0), fire nothing and take no insertion (§15.3)? A span begun
+    /// there replays its run only then: its recording's paragraph was
+    /// typeset with no output routine between. Sufficient, not necessary:
+    /// no penalty that forces a break, no insertion, and the page's total
+    /// with every contribution's height, depth and natural width added
+    /// (each at least 0; shrink only takes away) at most the page's goal,
+    /// so no breakpoint is past the goal (pdftex.web's `build_page`, `c =
+    /// awful_bad` only then).
+    fn bm_page_quiet(&self, extra: i64) -> bool {
+        if self.output_active
+            || self.bm_link(k::page_ins_head) != k::page_ins_head
+            || self.insert_penalties >= k::inf_penalty
+            || self.nest_ptr != 0
+        {
+            return false;
+        }
+        let sc = |p: i32| (self.mem[p as usize].int() as i64).max(0);
+        let (goal, mut h) = if self.page_contents == k::empty {
+            let t = self.bm_eq(GLUE_BASE + k::top_skip_code).hh().rh();
+            (self.bm_eq(k::dimen_base + k::vsize_code).int() as i64, sc(t + 1))
+        } else {
+            (self.page_so_far[0] as i64, 0)
+        };
+        h += self.page_so_far[1] as i64 + (self.page_so_far[7] as i64).max(0) + extra;
+        let mut p = self.bm_link(CONTRIB_HEAD);
+        let mut n = 0;
+        while p != 0 {
+            n += 1;
+            if p >= self.hi_mem_min || n > 10_000 {
+                return false;
+            }
+            let t = self.mem[p as usize].hh().b0();
+            if t == k::hlist_node || t == k::vlist_node || t == k::rule_node {
+                h += sc(p + 3) + sc(p + 2);
+            } else if t == k::glue_node {
+                h += sc(self.mem[(p + 1) as usize].hh().lh() + 1);
+            } else if t == k::kern_node {
+                h += sc(p + 1);
+            } else if t == k::penalty_node {
+                if self.mem[(p + 1) as usize].int() <= -k::inf_penalty {
+                    return false;
+                }
+            } else if t == k::ins_node {
+                return false;
+            }
+            if p == self.cur_list.tail_field {
+                break;
+            }
+            p = self.bm_link(p);
+        }
+        h <= goal
     }
 
     /// Where a span's recording leaves its file level (§15).
