@@ -27,11 +27,20 @@ mk() { # NAME BINARY-DIRECTORY: an engine directory and its pdflatex format, as 
   [ -s "$f/pdflatex.fmt" ] || { tail -5 "$f/pdflatex.log" || true; echo "l6pgo.sh: no format for $1" >&2; exit 1; }
 }
 
+# The instrumented build's frames are larger: on GitHub's M1 VMs its format build overflowed the
+# main thread's 8 MB stack (a segmentation fault at once, run 41334149491). Both builds run under
+# the same, larger limit (the command line runs TeX on the main thread).
+ulimit -s 65520 2>/dev/null || ulimit -s hard 2>/dev/null || true
+echo "stack limit: $(ulimit -s)"
 echo "== the default release build ($(git rev-parse --short HEAD))"
 cargo build --release --locked -q -p flashtex-engine
 mk def target/release
 echo "== the profile-guided build (scripts/build-engine-dist.sh)"
-scripts/build-engine-dist.sh --out "$WORK/dist"
+scripts/build-engine-dist.sh --out "$WORK/dist" || {
+  tail -n 30 target/pgo-train/fmt/pdflatex.log 2>/dev/null || true
+  cp target/pgo-train/fmt/pdflatex.log "$WORK/r/pgo-format.log" 2>/dev/null || true
+  exit 1
+}
 mk pgo "$WORK/dist"
 cp "$WORK/dist/flashtex-engine.profdata" "$WORK/r/" 2>/dev/null || true
 
