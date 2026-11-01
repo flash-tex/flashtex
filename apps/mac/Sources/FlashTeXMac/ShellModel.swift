@@ -455,7 +455,7 @@ final class ShellModel {
     }()
     /// True under XCTest, whichever of the two variables the runner sets
     /// (shared with `PreviewHUD.lingerSuppressed` / `ThinSplitViewController`).
-    static let runningUnderXCTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    nonisolated static let runningUnderXCTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
     /// Revision the editor buffer corresponds to. Bumps on every edit so the
     /// UI can say when the preview's source ranges no longer match the buffer.
