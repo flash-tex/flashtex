@@ -937,7 +937,9 @@ extension ShellModel {
         // (ProjectDocuments); the entry with its saved text.
         if activePath != project.entryPath { return project.isDirty(activePath) }
         if let savedText { return !savedText.sameBytes(as: activeText) }
-        return documentURL == nil && editorRevision > 1 && !activeText.isEmpty
+        // A file URL with no saved text: a restored buffer whose file is
+        // gone (or unreadable) — no file holds it, so it is unsaved.
+        return (documentURL != nil || editorRevision > 1) && !activeText.isEmpty
     }
 
     /// Hash of the text the editor last saw on disk for the open document.
