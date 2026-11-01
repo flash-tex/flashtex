@@ -456,12 +456,30 @@ gate_clippy() {
   return $rc
 }
 
+# Test threads for a workspace whose tests each start an engine host, or ""
+# for cargo's default (one a core). flashtex-xetex's tests/host.rs has 21
+# tests, each a debug flashtex-host-unicode that makes its format ready before
+# it listens; started all at once under load (gate.sh at nice 19 with a
+# runner's jobs on a Mac) 7 of 21 failed after 600 s with "the host did not
+# listen", and with --test-threads=3 all 21 passed in 76 s (lane
+# FSWATCH-FLAKE, #1912). A third of the cores, 2 to 8; RUST_TEST_THREADS,
+# when set, wins.
+host_test_threads() { # host_test_threads <workspace dir>
+  [[ "$1" == crates/flashtex-xetex ]] || return 0
+  local n
+  n="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 6)"
+  n=$(( n / 3 ))
+  (( n < 2 )) && n=2
+  (( n > 8 )) && n=8
+  echo "${RUST_TEST_THREADS:-$n}"
+}
+
 gate_tests_touched() {
   if [[ -z "${CHANGED_CRATES// /}" ]]; then
     echo "no crates changed against $BASE"
     return 0
   fi
-  local rc=0 pkg ws ok el t0 what
+  local rc=0 pkg ws ok el t0 what th
   while IFS=$'\t' read -r pkg ws _ed; do
     [[ -n "$pkg" ]] || continue
     t0=$SECONDS; ok=0
@@ -479,7 +497,9 @@ gate_tests_touched() {
       if [[ "$ws" == "." ]]; then
         cargo_test -p "$pkg" --locked --no-fail-fast && ok=1 || ok=0
       else
-        ( cd "$ws" && cargo_test --locked --no-fail-fast ) && ok=1 || ok=0
+        th="$(host_test_threads "$ws")"
+        [[ -n "$th" ]] && what="$what (test threads: $th)"
+        ( cd "$ws" && { [[ -z "$th" ]] || export RUST_TEST_THREADS="$th"; } && cargo_test --locked --no-fail-fast ) && ok=1 || ok=0
       fi
     fi
     el=$(( SECONDS - t0 ))
@@ -548,11 +568,13 @@ workspace_profile() { # workspace_profile <debug|release>
 # target/, excluded from the root workspace), so this is the only place `full`
 # builds it. (Until S7 this also ran the old pipeline and its CLI.)
 standalone_profile() { # standalone_profile <debug|release>
-  local profile="$1" flag=() c rc=0
+  local profile="$1" flag=() c rc=0 th
   [[ "$profile" == release ]] && flag=(--release)
   for c in flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
-    ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
+    th="$(host_test_threads "crates/$c")"
+    ( cd "crates/$c" && cargo build --locked "${flag[@]}" \
+        && { [[ -z "$th" ]] || export RUST_TEST_THREADS="$th"; } && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
   done
   return $rc
 }
