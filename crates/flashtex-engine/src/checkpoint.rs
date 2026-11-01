@@ -2529,6 +2529,11 @@ impl Globals {
                     keep.extend(self.pending_ids());
                     self.layer().taken.retain(|(i, _)| keep.contains(i));
                 }
+                if matches!(why, Point::BeginDocument | Point::Aux) {
+                    // (and the forms written by now: a persisted S₀ sends
+                    // them, `displaylist::KeptForm`)
+                    self.dl_keep_forms_at(id);
+                }
                 let l = self.layer();
                 if let Ok(w) = written {
                     l.written_at.push((id, w));

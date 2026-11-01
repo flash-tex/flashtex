@@ -1003,11 +1003,16 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
         .ok_or("the output opens are fewer than at S0")?
         .to_vec();
     let sizes = (g.arena.len_bytes() as u64, g.arena.scalar_bytes() as u64);
+    // The forms the preamble wrote (`\immediate\pdfxform`: pgf's
+    // shadings), which a process that opens S₀ never writes and its pages
+    // draw (`displaylist::KeptForm`).
+    let forms = crate::displaylist::kept_forms_at(id);
     let tail: Encode = Box::new(move |head: &mut Vec<u8>| {
         sites.sites().enc(head);
         opens.enc(head);
         sizes.0.enc(head);
         sizes.1.enc(head);
+        forms.enc(head);
     });
     Ok(S0Image {
         head,
@@ -1170,6 +1175,7 @@ pub fn read_s0(
         }
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
+        let forms = Vec::<crate::displaylist::KeptForm>::dec(&mut r)?;
         let present = Vec::<u32>::dec(&mut r)?;
         let pages = Vec::<u32>::dec(&mut r)?;
         let data_off = (8 + hlen).next_multiple_of(S0_PAGE);
@@ -1248,6 +1254,9 @@ pub fn read_s0(
         let id = g.checkpoint()?;
         // (the sites just put back are S₀'s, for a later save of it)
         crate::diag::keep_sites_at(id);
+        // (the forms its preamble wrote: sent before the first page this
+        // process ships, and S₀'s for a later save of it)
+        crate::displaylist::keep_forms(id, forms);
         let ext_s = t3.elapsed().as_secs_f64();
         let rep = OpenReport {
             config_s,
@@ -1266,8 +1275,9 @@ pub fn read_s0(
 // (v4: the key's reads at the document's start, `Key::arm`; v5: the pages,
 // page-aligned, `S0_PAGE`; v6: the key's stat signatures hold the change
 // time, `StatSig::ctime_ns`; v7: the records hold READ-TRACK's counts,
-// `crate::dormant::Dorm`)
-const MAGIC: &[u8] = b"flashtex S0 v7";
+// `crate::dormant::Dorm`; v8: the forms the preamble wrote,
+// `displaylist::KeptForm`)
+const MAGIC: &[u8] = b"flashtex S0 v8";
 
 /// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
 /// every supported system's page size divides (4 KB elsewhere).

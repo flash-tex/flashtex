@@ -193,6 +193,10 @@ struct State {
     /// is the same display list, which is then not built again. Names, like
     /// the spans: it outlives restores (each entry checks itself).
     memo: HashMap<(bool, u32), Memo>,
+    /// The forms a persisted S₀ brought (`keep_forms`), to be emitted before
+    /// this process's first page or form (`Globals::dl_send_kept_forms`):
+    /// its run starts after the preamble that wrote them.
+    kept_pending: Vec<KeptForm>,
 }
 
 impl State {
@@ -217,6 +221,7 @@ impl State {
             capture: None,
             cwd: std::env::current_dir().ok(),
             memo: HashMap::new(),
+            kept_pending: Vec::new(),
         }
     }
 
@@ -369,6 +374,7 @@ pub trait Sink {
 /// one relative file names are taken from.
 pub fn init_with_sink(sink: Box<dyn Sink>) {
     DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+    FORMS_AT.with(|a| a.borrow_mut().clear());
     SINK.with(|s| *s.borrow_mut() = Some(sink));
     forget_engine_state();
     ENABLED.store(true, Ordering::Relaxed);
@@ -687,6 +693,202 @@ pub fn span_for(name: &[u8], line: u32) -> Option<u32> {
 /// Where span `s` is now: (file id, line).
 pub fn span_location(s: u32) -> Option<(u32, u32)> {
     with(|st| st.spans.get((s as usize).checked_sub(1)?).copied()).flatten()
+}
+
+// ---------------------------------------------------------------------------
+// forms written before S₀
+
+/// A form the engine wrote before S₀ or the `.aux` point, as a persisted S₀
+/// carries it (`host::prepare_s0`): the display list it was emitted as, and
+/// the spans its items name by place (a process numbers its spans afresh).
+///
+/// pdfTeX writes a form once, after the first page that uses it, or at once
+/// (`\immediate\pdfxform`: pgf's shadings and fadings, which a beamer theme
+/// or `\usetikzlibrary{fadings}` makes in the preamble). A process that opens
+/// a persisted S₀ starts after the preamble and never writes those, while
+/// its pages draw them: it sends them from the file instead
+/// ([`keep_forms`]), or its client draws those pages without them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeptForm {
+    /// The form's id (pdfTeX's `/Fm` n).
+    pub index: u32,
+    pub body: Vec<u8>,
+    pub hash: [u8; 32],
+    pub fonts: Vec<(u32, [u8; 32])>,
+    pub images: Vec<(u32, [u8; 32])>,
+    pub forms: Vec<u32>,
+    /// The spans the body names: the id it has there, the file's name as
+    /// TeX names it, the line.
+    pub places: Vec<(u32, Vec<u8>, u32)>,
+}
+
+crate::codec_struct!(KeptForm {
+    index,
+    body,
+    hash,
+    fonts,
+    images,
+    forms,
+    places
+});
+
+thread_local! {
+    /// The forms written by S₀ and by the `.aux` point (`dl_keep_forms_at`),
+    /// by checkpoint, as `crate::diag` keeps the definition sites.
+    static FORMS_AT: RefCell<Vec<(u64, Arc<Vec<KeptForm>>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The checkpoints [`FORMS_AT`] keeps (S₀, the `.aux` point, and a few
+/// earlier ones a restart in the preamble replaced).
+const FORMS_KEPT: usize = 8;
+
+fn keep_at(id: u64, forms: Arc<Vec<KeptForm>>) {
+    FORMS_AT.with(|a| {
+        let mut a = a.borrow_mut();
+        a.retain(|(i, _)| *i != id);
+        if a.len() >= FORMS_KEPT {
+            a.remove(0);
+        }
+        a.push((id, forms));
+    });
+}
+
+/// The forms written by checkpoint `id` (S₀ or the `.aux` point), as
+/// [`Globals::dl_keep_forms_at`] kept them; none when it did not.
+pub fn kept_forms_at(id: u64) -> Vec<KeptForm> {
+    FORMS_AT
+        .with(|a| {
+            a.borrow()
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, f)| f.as_ref().clone())
+        })
+        .unwrap_or_default()
+}
+
+/// A persisted S₀ was opened as checkpoint `id`, with the forms its
+/// preamble wrote: they are S₀'s (for a later save of it), and they are
+/// emitted before the first page or form this process ships
+/// (`Globals::dl_send_kept_forms`), unless the engine writes them itself.
+pub fn keep_forms(id: u64, forms: Vec<KeptForm>) {
+    with(|st| st.kept_pending = forms.clone());
+    keep_at(id, Arc::new(forms));
+}
+
+impl Globals {
+    /// At S₀ and the `.aux` point (checkpoint `id`): keep the forms the
+    /// engine has written by now (pdfTeX's `is_obj_written`), each as the
+    /// display list last emitted it, for a persisted S₀ ([`KeptForm`]).
+    pub fn dl_keep_forms_at(&mut self, id: u64) {
+        if !enabled() {
+            return;
+        }
+        // pdfTeX's list of form objects, newest first (`head_tab`,
+        // `obj_link`); `obj_info` is the form's `/Fm` number
+        let mut written = vec![];
+        let head = (crate::generated::consts::obj_type_xform - 1) as usize;
+        let mut k = self.head_tab[head];
+        let mut left = self.obj_ptr.max(0) as usize + 1;
+        while k > 0 && left > 0 && (k as usize) < self.obj_tab.len() {
+            let o = &self.obj_tab[k as usize];
+            if o.int2 > -1 {
+                written.push(o.int0 as u32);
+            }
+            k = o.int1;
+            left -= 1;
+        }
+        written.reverse();
+        let forms = with(|st| {
+            written
+                .iter()
+                .filter_map(|&n| {
+                    let e = &st.memo.get(&(true, n))?.emitted;
+                    let places = e
+                        .spans
+                        .iter()
+                        .filter_map(|&s| {
+                            let &(f, line) = st.spans.get((s as usize).checked_sub(1)?)?;
+                            let name = st.files.get((f as usize).checked_sub(1)?)?;
+                            Some((s, name.clone(), line))
+                        })
+                        .collect();
+                    Some(KeptForm {
+                        index: n,
+                        body: e.body.as_ref().clone(),
+                        hash: e.hash,
+                        fonts: e.fonts.clone(),
+                        images: e.images.clone(),
+                        forms: e.forms.clone(),
+                        places,
+                    })
+                })
+                .collect::<Vec<KeptForm>>()
+        })
+        .unwrap_or_default();
+        keep_at(id, Arc::new(forms));
+    }
+
+    /// Emit the forms a persisted S₀ brought ([`keep_forms`]), once, before
+    /// the first page or form this process ships: each one the engine has
+    /// not emitted itself (a run from the format that followed a refused
+    /// open writes them again), whose fonts and images are the ones it
+    /// named. Its spans are this process's for the same places.
+    fn dl_send_kept_forms(&mut self) {
+        let Some(kept) = with(|st| std::mem::take(&mut st.kept_pending)) else {
+            return;
+        };
+        for kf in kept {
+            if with(|st| st.memo.contains_key(&(true, kf.index))).unwrap_or(true) {
+                continue;
+            }
+            let same = kf.fonts.iter().all(|&(f, k)| self.dl_font_key(f) == k)
+                && kf
+                    .images
+                    .iter()
+                    .all(|&(n, k)| self.dl_image_key(n) == Some(k));
+            if !same {
+                continue;
+            }
+            let map: HashMap<u32, u32> = kf
+                .places
+                .iter()
+                .map(|(s, name, line)| (*s, span_for(name, *line).unwrap_or(0)))
+                .collect();
+            let body = if map.iter().all(|(a, b)| a == b) {
+                kf.body
+            } else {
+                let Ok(mut p) = Page::decode(StreamKind::Form, &kf.body) else {
+                    continue;
+                };
+                for it in p.items.iter_mut() {
+                    if let flashtex_display_list::page::Item::Span(s) = it {
+                        let old = *s;
+                        *s = map.get(&old).copied().unwrap_or(0);
+                    }
+                }
+                p.encode()
+            };
+            let mut spans: Vec<u32> = vec![];
+            for (s, _, _) in &kf.places {
+                if let Some(&n) = map.get(s).filter(|&&n| n != 0) {
+                    if !spans.contains(&n) {
+                        spans.push(n);
+                    }
+                }
+            }
+            let e = Emitted {
+                form: true,
+                index: kf.index,
+                body: Arc::new(body),
+                hash: kf.hash,
+                fonts: kf.fonts,
+                images: kf.images,
+                forms: kf.forms,
+                spans,
+            };
+            with_sink(|s| s.emit(e));
+        }
+    }
 }
 
 /// Whether side-table entries `a` and `b` (of an old run's node and the
@@ -1176,6 +1378,8 @@ impl Globals {
         let _m = crate::memstat::scope(crate::memstat::tag::DL);
         let t_emit = std::time::Instant::now();
         let saved_scaled_out = self.scaled_out;
+        // (a persisted S₀'s forms, before this process's first stream)
+        self.dl_send_kept_forms();
         let kind = if cap.form {
             StreamKind::Form
         } else {
