@@ -338,6 +338,149 @@ impl SpanIndex {
 // ---------------------------------------------------------------------------
 // set-up, sinks and peers
 
+/// A page's or form's encoded body (`PAGE`/`FORM`), shared by the writer's
+/// memo (`State::memo`) and the host's page cache, which hold the same one.
+/// It may be gzip-packed in place (`set_packed`, the host's packer: lane
+/// MEMORY), which both holders then see; it always reads back as the bytes
+/// it was made with (`bytes`).
+pub struct Body {
+    len: usize,
+    state: std::sync::Mutex<BodyState>,
+}
+
+enum BodyState {
+    Plain(Arc<Vec<u8>>),
+    /// The gzip of the bytes, and their SHA-256 (to compare without
+    /// unpacking).
+    Packed {
+        z: Vec<u8>,
+        sha: [u8; 32],
+    },
+}
+
+impl std::fmt::Debug for Body {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Body({} bytes{})",
+            self.len,
+            if self.is_packed() { ", packed" } else { "" }
+        )
+    }
+}
+
+impl Body {
+    pub fn new(bytes: Vec<u8>) -> Body {
+        Body {
+            len: bytes.len(),
+            state: std::sync::Mutex::new(BodyState::Plain(Arc::new(bytes))),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, BodyState> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Bytes unpacked.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn is_packed(&self) -> bool {
+        matches!(*self.state(), BodyState::Packed { .. })
+    }
+
+    /// The bytes as made (unpacked, into a copy of their own, if packed).
+    pub fn bytes(&self) -> Arc<Vec<u8>> {
+        match &*self.state() {
+            BodyState::Plain(b) => b.clone(),
+            BodyState::Packed { z, .. } => Arc::new(unpack(z, self.len)),
+        }
+    }
+
+    /// The bytes while they are not packed (what a packer packs).
+    pub fn plain(&self) -> Option<Arc<Vec<u8>>> {
+        match &*self.state() {
+            BodyState::Plain(b) => Some(b.clone()),
+            BodyState::Packed { .. } => None,
+        }
+    }
+
+    /// Hold `z`, the gzip of the bytes, and `sha`, their SHA-256, instead
+    /// of the bytes (unless packed already).
+    pub fn set_packed(&self, mut z: Vec<u8>, sha: [u8; 32]) {
+        // (kept until the page changes: no slack)
+        z.shrink_to_fit();
+        let mut s = self.state();
+        if matches!(*s, BodyState::Plain(_)) {
+            *s = BodyState::Packed { z, sha };
+        }
+    }
+
+    /// Whether `other` holds the same bytes (packed: by SHA-256).
+    pub fn same(&self, other: &Body) -> bool {
+        if std::ptr::eq(self, other) {
+            return true;
+        }
+        if self.len != other.len {
+            return false;
+        }
+        let (a, b) = (self.digest_or_plain(), other.digest_or_plain());
+        match (a, b) {
+            (Err(x), Err(y)) => x == y,
+            (Ok(x), Ok(y)) => x == y,
+            (Ok(x), Err(y)) | (Err(y), Ok(x)) => x == body_digest(y.as_slice()),
+        }
+    }
+
+    /// The SHA-256 if packed, else the bytes.
+    fn digest_or_plain(&self) -> Result<[u8; 32], Arc<Vec<u8>>> {
+        match &*self.state() {
+            BodyState::Plain(b) => Err(b.clone()),
+            BodyState::Packed { sha, .. } => Ok(*sha),
+        }
+    }
+
+    /// Heap bytes it holds.
+    pub fn heap_bytes(&self) -> usize {
+        match &*self.state() {
+            BodyState::Plain(b) => b.capacity(),
+            BodyState::Packed { z, .. } => z.capacity(),
+        }
+    }
+}
+
+/// The SHA-256 of a body's bytes (`Body::set_packed`'s `sha`): the
+/// distribution's accelerated one where it is built in, else the display
+/// list's own (the same digest).
+pub fn body_digest(b: &[u8]) -> [u8; 32] {
+    #[cfg(feature = "distribution")]
+    {
+        use sha2::Digest;
+        sha2::Sha256::digest(b).into()
+    }
+    #[cfg(not(feature = "distribution"))]
+    {
+        sha256(b)
+    }
+}
+
+fn unpack(z: &[u8], len: usize) -> Vec<u8> {
+    #[cfg(feature = "distribution")]
+    {
+        crate::bundle::gz::gunzip(z, len).expect("a body the host packed itself unpacks")
+    }
+    #[cfg(not(feature = "distribution"))]
+    {
+        let _ = (z, len);
+        unreachable!("bodies are packed only with the distribution feature")
+    }
+}
+
 /// One page or form the writer produced: the encoded `PAGE`/`FORM` body and
 /// what a reader needs before it.
 #[derive(Clone, Debug)]
@@ -346,7 +489,7 @@ pub struct Emitted {
     /// Page: its 0-based index in the document (pdfTeX's `total_pages` at
     /// ship-out, which a checkpoint restores). Form: its `/Fm` number.
     pub index: u32,
-    pub body: Arc<Vec<u8>>,
+    pub body: Arc<Body>,
     /// The content hash the body carries (spec §4.6).
     pub hash: [u8; 32],
     /// Font and image ids the items use, with their keys, in order of
@@ -568,7 +711,10 @@ impl Peer {
                 return false;
             }
         }
-        send(if e.form { kind::FORM } else { kind::PAGE }, &e.body)
+        send(
+            if e.form { kind::FORM } else { kind::PAGE },
+            &e.body.bytes(),
+        )
     }
 
     /// A `SOURCES` body for the spans (and their files) the reader does not
@@ -1328,7 +1474,7 @@ impl Globals {
         let e = Emitted {
             form: cap.form,
             index: cap.id,
-            body: Arc::new(body),
+            body: Arc::new(Body::new(body)),
             hash: out.page.hash,
             fonts,
             images,
@@ -2828,5 +2974,43 @@ mod tests {
         assert_eq!(e[2], b"uni6302");
         assert_eq!(e[7], b"uni6307");
         assert_eq!(e[0], b".notdef");
+    }
+}
+
+/// A body packed in place reads back as the bytes it was made with, and
+/// compares equal to them packed or not (lane MEMORY).
+#[cfg(all(test, feature = "distribution"))]
+mod body_tests {
+    use super::*;
+
+    fn pack(b: &Body) {
+        let plain = b.plain().expect("plain");
+        let z = crate::bundle::gz::gzip(&plain, 1);
+        b.set_packed(z, body_digest(&plain));
+    }
+
+    #[test]
+    fn a_packed_body_reads_back_and_compares_by_its_bytes() {
+        let bytes: Vec<u8> = (0..100_000u32).map(|i| (i * 7 % 251) as u8).collect();
+        let (a, b) = (Body::new(bytes.clone()), Body::new(bytes.clone()));
+        let mut other = bytes.clone();
+        other[50_000] ^= 1;
+        let c = Body::new(other.clone());
+        assert!(a.same(&b) && !a.same(&c));
+        let plain_heap = a.heap_bytes();
+        pack(&a);
+        assert!(a.is_packed() && a.plain().is_none());
+        assert!(a.heap_bytes() < plain_heap / 2);
+        assert_eq!(*a.bytes(), bytes);
+        assert_eq!(a.len(), bytes.len());
+        assert!(a.same(&b) && b.same(&a) && !a.same(&c) && !c.same(&a));
+        pack(&b);
+        pack(&c);
+        assert!(a.same(&b) && !a.same(&c));
+        assert_eq!(*c.bytes(), other);
+        // packing again changes nothing
+        a.set_packed(vec![], [0; 32]);
+        assert_eq!(*a.bytes(), bytes);
+        assert!(!a.same(&Body::new(bytes[..10].to_vec())));
     }
 }
