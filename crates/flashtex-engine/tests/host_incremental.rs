@@ -1667,7 +1667,8 @@ fn a_superseded_compile_still_sends_its_edited_page() {
         // a compile superseded while it ran (the next keystroke was sent
         // as soon as it started) still sent its changed page
         let cancelled = |d: &Json| d.str_field("status") == Some("cancelled");
-        let ran = |d: &Json| d.get("stages").is_some() && d.str_field("mode") == Some("incremental");
+        let ran =
+            |d: &Json| d.get("stages").is_some() && d.str_field("mode") == Some("incremental");
         for (n, d) in dones[..2].iter().enumerate() {
             if cancelled(d) && ran(d) {
                 assert!(
@@ -1697,7 +1698,9 @@ fn a_superseded_compile_still_sends_its_edited_page() {
     // the protection it would stop at its first checkpoint, long before its
     // page, in practice every time; once at least, or the test proved
     // nothing.
-    eprintln!("{sent_superseded} of 10 compiles were superseded while they ran and sent their page");
+    eprintln!(
+        "{sent_superseded} of 10 compiles were superseded while they ran and sent their page"
+    );
     assert!(
         sent_superseded >= 1,
         "no compile was superseded while it ran: the protection was not exercised"

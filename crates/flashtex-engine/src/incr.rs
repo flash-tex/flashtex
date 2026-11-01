@@ -3619,6 +3619,8 @@ pub struct Session {
     preempt: Option<Preempt>,
     /// `set_cancel`.
     cancel: Option<Preempt>,
+    /// `set_protect_edit` (default on).
+    protect_edit: bool,
     /// `set_on_continue`.
     on_continue: Option<std::rc::Rc<dyn Fn(usize)>>,
     /// The heartbeat every run reports to (`set_progress`).
@@ -3804,6 +3806,7 @@ impl Session {
             defpatch: HashMap::new(),
             preempt: None,
             cancel: None,
+            protect_edit: true,
             on_continue: None,
             progress: None,
             last_restart: None,
@@ -4468,6 +4471,15 @@ impl Session {
     /// and the next `compile` keeps what it typeset (`settle_paused`).
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
+    }
+
+    /// Whether newer work waits for an incremental compile's first changed
+    /// page (`Obs::protect_edit`; on unless turned off). Off, a preemption
+    /// stops the run at the checkpoint it is asked at, as a cancel does:
+    /// the soundness driver's interleaved edits (`compile-interrupt`) stop
+    /// runs anywhere, before the edited page too, which a cancel still does.
+    pub fn set_protect_edit(&mut self, on: bool) {
+        self.protect_edit = on;
     }
 
     /// The client cancelled the compile (`c(pass, pages)` says so): a run
@@ -7068,7 +7080,7 @@ impl Session {
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
         obs.first_incremental = self.pass == 1;
-        obs.protect_edit = self.pass == 1;
+        obs.protect_edit = self.pass == 1 && self.protect_edit;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
