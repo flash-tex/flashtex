@@ -178,3 +178,34 @@ fn ordinary_math_and_lookalike_control_words_are_unaffected() {
     accepted(r"\inputencoding{utf8}"); // starts with "input", is not \input
     accepted(r"\foreach \x in {1,...,5} { \draw (\x,0) circle (1pt); }");
 }
+
+#[test]
+fn file_readers_may_not_name_a_path_outside_the_project() {
+    // Absolute, home-relative, variable-expanded or `..` paths reach
+    // files outside the project; a name built by a macro cannot be
+    // checked here, so it is refused too.
+    rejected(r"\includegraphics{/etc/passwd}");
+    rejected(r"\includegraphics[width=\linewidth]{../../secret.png}");
+    rejected(r"\includegraphics{ {/Users}/me/.ssh/id_rsa}");
+    rejected(r"\includegraphics{~/Pictures/x}");
+    rejected(r"\includegraphics{$HOME/x}");
+    rejected(r"\includegraphics{figs/../../x}");
+    rejected(r"\includegraphics{\string/etc/passwd}");
+    rejected(r"\newcommand\p{/etc/passwd}\includegraphics\p");
+    rejected(r"\pdfximage width 2pt {/etc/passwd}");
+    rejected(r"\pdfobj file {/etc/passwd}");
+    rejected(r"\pdfmdfivesum file {../x}");
+    rejected(r"\verbatiminput{/etc/hosts}");
+    rejected(r"\lstinputlisting[language=C]{/etc/hosts}");
+    rejected(r"\inputminted{c}{/etc/hosts}");
+    rejected(r"\import{/etc/}{passwd}");
+    rejected(r"\InputIfFileExists{/etc/passwd}{}{}");
+    rejected(r"\includepdf[pages=-]{../other.pdf}");
+    // Project-relative paths stay accepted; \newcommand is allowed by
+    // policy (Commander ruling).
+    accepted(r"\includegraphics[width=0.5\linewidth]{figs/plot.pdf}");
+    accepted(r"\includegraphics{plot}");
+    accepted(r"\inputminted{c}{src/main.c}");
+    accepted(r"\import{chapters/}{intro}");
+    accepted(r"\newcommand{\R}{\mathbb{R}} \renewcommand{\vec}[1]{\mathbf{#1}}");
+}

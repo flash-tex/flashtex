@@ -88,6 +88,113 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
 /// are occasionally legitimate in hand-written macros, so they are surfaced
 /// to the human reviewer via `ambiguities` instead of being hard-rejected.
 const SOFT_CONTROL_WORDS: &[&str] = &["loop", "repeat"];
+/// Commands that read a file named by their braced arguments, with how
+/// many braced arguments name a path (`\inputminted{lang}{file}` counts
+/// both: a language name is never a path, so checking it costs nothing).
+/// A snippet may use them only with a project-relative path
+/// (`reader_path_ok`); the bridge has no project root to resolve links
+/// against, so that last step stays with the engine's confined reads.
+/// `\input`/`\include` are denied outright above.
+const FILE_READERS: &[(&str, usize)] = &[
+    ("includegraphics", 1),
+    ("includepdf", 1),
+    ("includesvg", 1),
+    ("includestandalone", 1),
+    ("verbatiminput", 1),
+    ("VerbatimInput", 1),
+    ("lstinputlisting", 1),
+    ("inputminted", 2),
+    ("import", 2),
+    ("subimport", 2),
+    ("includefrom", 2),
+    ("subincludefrom", 2),
+    ("InputIfFileExists", 1),
+    ("IfFileExists", 1),
+    ("graphicspath", 1),
+    ("bibliography", 1),
+    ("addbibresource", 1),
+    ("pdfximage", 1),
+    ("pdfobj", 1),
+    ("pdfmdfivesum", 1),
+    ("pdffiledump", 1),
+    ("pdffilesize", 1),
+    ("pdffilemoddate", 1),
+];
+
+/// A reader's path argument (braces removed, surrounding space trimmed)
+/// names a file inside the project: not absolute, not `~`- or
+/// `$`-expanded (kpathsea expands both), no `..` component, and no
+/// control sequence, whose expansion this scan cannot know
+/// (`\string/etc/passwd` is `/etc/passwd`).
+fn reader_path_ok(arg: &str) -> bool {
+    let path: String = arg.chars().filter(|c| !matches!(c, '{' | '}')).collect();
+    let path = path.trim();
+    !(path.starts_with('/')
+        || path.starts_with('~')
+        || path.contains('$')
+        || path.contains('\\')
+        || path.split('/').any(|seg| seg.trim() == ".."))
+}
+
+/// Checks the `count` braced arguments after a reader's name at `i`,
+/// skipping `*`, `[...]` options and, for the pdfTeX primitives, the
+/// keywords before the braced name (`width 2pt`, `file`). Every brace
+/// group up to that many is checked, so a hostile path cannot hide in a
+/// later one.
+fn readers_args_ok(chars: &[char], mut i: usize, count: usize, primitive: bool) -> bool {
+    let mut seen = 0;
+    while seen < count && i < chars.len() {
+        match chars[i] {
+            c if c.is_whitespace() || c == '*' => i += 1,
+            '[' if !primitive => {
+                let mut depth = 0usize;
+                while i < chars.len() {
+                    match chars[i] {
+                        '{' => depth += 1,
+                        '}' => depth = depth.saturating_sub(1),
+                        ']' if depth == 0 => break,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            '{' => {
+                let start = i + 1;
+                let mut depth = 0usize;
+                while i < chars.len() {
+                    match chars[i] {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                let end = i.min(chars.len());
+                let arg: String = chars[start.min(end)..end].iter().collect();
+                if !reader_path_ok(&arg) {
+                    return false;
+                }
+                seen += 1;
+                i += 1;
+            }
+            // A macro as the whole argument (`\includegraphics\p`, with
+            // `\p` from an allowed `\newcommand`) cannot be checked.
+            '\\' if !primitive => return false,
+            // A primitive's keywords and dimensions come before its name.
+            _ if primitive => i += 1,
+            // Anything else ends the arguments (an unbraced one-token name
+            // such as `\includegraphics x` cannot hold `/` or `..`).
+            _ => break,
+        }
+    }
+    true
+}
 /// Above this depth, flag for human review: implausible for ordinary math
 /// but not yet clearly abusive.
 const SOFT_GROUP_DEPTH: usize = 20;
@@ -168,6 +275,13 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                         return Err(invalid(format!(
                             "LaTeX uses \\{word}, which is not permitted in an inserted snippet"
                         )));
+                    }
+                    if let Some(&(_, count)) = FILE_READERS.iter().find(|(w, _)| *w == word) {
+                        if !readers_args_ok(&chars, i, count, word.starts_with("pdf")) {
+                            return Err(invalid(format!(
+                                "LaTeX uses \\{word} with a path that is absolute, uses `..`, `~` or `$`, or is built by a macro; only project-relative paths are permitted in an inserted snippet"
+                            )));
+                        }
                     }
                     if SOFT_CONTROL_WORDS.contains(&word.as_str()) {
                         seen_soft_words.insert(word.clone());
