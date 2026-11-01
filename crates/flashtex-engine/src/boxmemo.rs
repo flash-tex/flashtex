@@ -4180,6 +4180,37 @@ impl Globals {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_budget_stops_a_name_whose_recordings_buy_too_few_hits() {
+        // (the default budget unless the environment says otherwise)
+        let Some((min, ratio)) = budget_config() else {
+            return;
+        };
+        // a name that never hits: `min` recordings, then none
+        let lone = -7;
+        for _ in 0..min {
+            assert!(Globals::bm_budget_allows(lone));
+        }
+        assert!(!Globals::bm_budget_allows(lone));
+        // stopped for good, whatever it hits later
+        ST.with(|s| s.borrow_mut().budget.get_mut(&lone).unwrap().hits = u32::MAX);
+        assert!(!Globals::bm_budget_allows(lone));
+        // a name whose recordings buy `ratio` hits each records on
+        let good = -8;
+        for i in 0..4 * min {
+            assert!(Globals::bm_budget_allows(good), "recording {i}");
+            ST.with(|s| {
+                s.borrow_mut().budget.get_mut(&good).unwrap().hits =
+                    (ratio * (i + 1) as f64).ceil() as u32;
+            });
+        }
+        ST.with(|s| {
+            let mut s = s.borrow_mut();
+            s.budget.remove(&lone);
+            s.budget.remove(&good);
+        });
+    }
+
     fn def(p: i32, w: i32, kind: i32) -> Op {
         Op::Def {
             p,
