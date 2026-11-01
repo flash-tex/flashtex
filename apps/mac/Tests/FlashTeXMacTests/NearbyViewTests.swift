@@ -102,7 +102,7 @@ final class NearbyViewControllerTests: XCTestCase {
         XCTAssertEqual(a.generation, 1)
         XCTAssertEqual(c.journal.pending, a, "the attempt is durable as soon as it is shown")
         XCTAssertEqual(c.journal.generation, 1)
-        XCTAssertEqual(announced.last, "Pairing code \(Pairing.spokenCode(a.code)), valid for 120 seconds.")
+        XCTAssertEqual(announced.last, "Pairing code shown, valid for 120 seconds.")
         try await waitUntil("advertising with the bootstrap key") { state.isAdvertising && state.port != nil }
         XCTAssertTrue(c.machine.isAdvertising)
         XCTAssertFalse(c.phase.canShowCode(), "one code at a time")
@@ -270,7 +270,7 @@ final class NearbyViewControllerTests: XCTestCase {
         XCTAssertGreaterThan(rolled.expiresAt, short.expiresAt)
         XCTAssertEqual(c.journal.pending, rolled, "the rolled code is journaled")
         XCTAssertEqual(c.journal.generation, 2)
-        XCTAssertTrue(announced.last?.hasPrefix("The pairing code expired unused. New pairing code \(Pairing.spokenCode(rolled.code)), valid for") == true,
+        XCTAssertTrue(announced.last?.hasPrefix("The pairing code expired unused. New pairing code shown, valid for") == true,
                       "\(announced)")
         try await waitUntil("transport serves the new code") { state.pairingCode == rolled.code && state.coordinator.current?.code == rolled.code }
         XCTAssertEqual(state.coordinator.current?.generation, 2)

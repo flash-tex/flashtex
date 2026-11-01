@@ -38,7 +38,7 @@ struct NearbyTransportMetrics: Equatable {
         case .connectionClosed(_, let reason):
             closed += 1
             if reason.contains("timed out") { timedOut += 1 }
-        case .failed, .stopped, .connectionOpened, .receiving:
+        case .failed, .stopped, .connectionOpened, .receiving, .handshakeRefused, .pairingLockedOut:
             break
         }
     }

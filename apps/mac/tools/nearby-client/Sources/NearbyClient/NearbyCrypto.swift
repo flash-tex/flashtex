@@ -21,10 +21,37 @@ public enum NearbyCrypto {
         public let psk: Data
     }
 
+    /// Base32 characters of a pairing code: 32 random bytes (256 bits), as
+    /// the Mac's `Pairing.generateCode` writes them (proposal §5).
+    public static let codeLength = 52
+    /// Crockford's alphabet: no I, L, O or U.
+    public static let codeAlphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+
+    /// The canonical form of a typed, pasted or scanned code, or nil when it
+    /// is not a full-strength code: spaces and hyphens dropped, letters
+    /// upper-cased, `O` read as 0 and `I`/`L` as 1, exactly `codeLength`
+    /// characters of the alphabet. Same rules as the Mac's `Pairing.canonicalCode`.
+    public static func canonicalCode(_ typed: String) -> String? {
+        var out = ""
+        for c in typed.uppercased() {
+            switch c {
+            case " ", "-", "\t", "\n": continue
+            case "O": out.append("0")
+            case "I", "L": out.append("1")
+            default:
+                guard codeAlphabet.contains(c) else { return nil }
+                out.append(c)
+            }
+        }
+        return out.count == codeLength ? out : nil
+    }
+
     /// `psk_boot = HKDF-SHA256(code, salt, "flashtex-nearby-v1 psk", 32)`,
     /// `pair_id = hex(HKDF-SHA256(code, salt, "flashtex-nearby-v1 pair-id", 8))`.
+    /// A full-strength code is derived from its canonical form; any other
+    /// string (the "123456" vector) as given.
     public static func derive(code: String, salt: Data) -> Derived {
-        let ikm = SymmetricKey(data: Data(code.utf8))
+        let ikm = SymmetricKey(data: Data((canonicalCode(code) ?? code).utf8))
         let psk = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt, info: pskInfo, outputByteCount: pskLength)
         let id = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt, info: pairIDInfo, outputByteCount: 8)
         return Derived(pairId: hex(id.withUnsafeBytes { Data($0) }), psk: psk.withUnsafeBytes { Data($0) })

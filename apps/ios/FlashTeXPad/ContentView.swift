@@ -389,7 +389,7 @@ struct MacLinkPanel: View {
                 HStack {
                     Button { Task { await model.browseNearby() } } label: { Label(model.browsing ? "Browsing…" : "Find nearby Macs", systemImage: "dot.radiowaves.left.and.right") }
                         .buttonStyle(.bordered).disabled(model.browsing).accessibilityIdentifier("pair.browse")
-                    TextField("6-digit code from the Mac", text: $code).keyboardType(.numberPad).frame(maxWidth: 220).accessibilityIdentifier("pair.code")
+                    TextField("Code from the Mac (52 characters; or scan its QR)", text: $code).font(.body.monospaced()).keyboardType(.asciiCapable).textInputAutocapitalization(.characters).autocorrectionDisabled().frame(maxWidth: 420).accessibilityIdentifier("pair.code")
                 }
                 if model.nearbyMacs.isEmpty {
                     Text(model.browsing ? "listening…" : "none found yet — on the Mac open Captures (⌘⇧I) or Nearby Companion (⌘⇧N); advertising starts there")
@@ -415,7 +415,7 @@ struct MacLinkPanel: View {
                 }
             }
             Section("Pair by QR (the Mac's Nearby window shows it beside the code)") {
-                Text("Scan the Mac's QR (flashtex-nearby://pair?v=1&code&salt&fp&name) with the camera, or paste its text. The Mac is found by Bonjour (fp); if that fails — the simulator has no camera and no Bonjour listener in tests — type its host and port below.")
+                Text("Scan the Mac's QR (flashtex-nearby://pair?v=2&code&salt&fp&name) with the camera, or paste its text. The Mac is found by Bonjour (fp); if that fails — the simulator has no camera and no Bonjour listener in tests — type its host and port below.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     if PairingScannerView.isAvailable {
@@ -425,7 +425,7 @@ struct MacLinkPanel: View {
                             .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("pair.qr.unavailable")
                     }
                 }
-                TextField("flashtex-nearby://pair?v=1&code=…&salt=…&fp=…&name=…", text: $qrText, axis: .vertical)
+                TextField("flashtex-nearby://pair?v=2&code=…&salt=…&fp=…&name=…", text: $qrText, axis: .vertical)
                     .font(.caption.monospaced()).accessibilityIdentifier("pair.qr.text")
                 HStack {
                     Button("Paste") { if let t = UIPasteboard.general.string { qrText = t } }.buttonStyle(.bordered).accessibilityIdentifier("pair.qr.paste")

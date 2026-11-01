@@ -63,6 +63,12 @@ final class NearbyListener {
         /// JSON Lines carry no length hint.
         case receiving(identity: String?, bytes: Int, expected: Int?)
         case connectionClosed(identity: String?, reason: String)
+        /// A connection from an address in handshake backoff, closed before
+        /// TLS (`NearbyHandshakeLimiter`); `retryAfter` is in whole seconds.
+        case handshakeRefused(address: String, failures: Int, retryAfter: Int)
+        /// The pairing code being served met `bootstrapLockout` failed
+        /// handshakes; the owner of the listener ends that attempt.
+        case pairingLockedOut(failures: Int)
     }
     static let receivingReportInterval = 64 * 1024
 
@@ -90,6 +96,9 @@ final class NearbyListener {
     /// sessions and by the replacement listener on restart, so a reconnecting
     /// companion's retry is acknowledged from memory and never re-delivered.
     private(set) var memory: NearbyAckMemory
+    /// Failed handshakes per address and per pairing code; on `queue`, and
+    /// carried to the replacement listener by `adoptConnections`.
+    private(set) var limiter: NearbyHandshakeLimiter
     /// Off-queue JSON/base64/image work; concurrency is bounded by the budget.
     private let decodeQueue: DispatchQueue
 
@@ -104,6 +113,7 @@ final class NearbyListener {
         // moves only through `adoptConnections`.
         self.memory = memory ?? NearbyAckMemory(maxPerPair: configuration.limits.maxRememberedCaptures)
         self.memory.limit = configuration.limits.maxRememberedCaptures
+        self.limiter = NearbyHandshakeLimiter(policy: configuration.limits.handshake)
         self.decodeQueue = DispatchQueue(label: "flashtex.nearby.decode", qos: .utility, attributes: .concurrent)
         queue.setSpecific(key: Self.queueKey, value: true)
         self.sink = sink
@@ -200,6 +210,15 @@ final class NearbyListener {
         }
         listener.newConnectionHandler = { [weak self] nw in
             guard let self else { nw.cancel(); return }
+            // An address that keeps failing the handshake waits out its
+            // backoff before the stack spends another handshake on it.
+            let address = Self.address(of: nw)
+            if let wait = self.limiter.retryAfter(address, now: Date()) {
+                nw.cancel()
+                self.events(.handshakeRefused(address: address, failures: self.limiter.failures(address),
+                                              retryAfter: Int(wait.rounded(.up))))
+                return
+            }
             // Unauthenticated peers get no application bytes, so the cap is
             // a close plus an event rather than an error envelope.
             guard self.connections.count < self.configuration.limits.maxConnections else {
@@ -207,7 +226,7 @@ final class NearbyListener {
                 self.events(.connectionClosed(identity: nil, reason: "too many connections (\(self.configuration.limits.maxConnections))"))
                 return
             }
-            let c = Connection(nw, owner: self)
+            let c = Connection(nw, address: address, owner: self)
             self.connections[ObjectIdentifier(c)] = c
             c.start()
         }
@@ -277,6 +296,10 @@ final class NearbyListener {
             recentNonces = other.recentNonces
             budget = other.budget
             budget.limits = configuration.limits
+            // A key-table change (a new code, a stored pairing) must not
+            // wipe an address's backoff or a code's failure count.
+            limiter = other.limiter
+            limiter.policy = configuration.limits.handshake
             // Acknowledgement memory follows the pairings that survive; a
             // forgotten pairing's retries must not be answered from it.
             memory = other.memory
@@ -298,6 +321,26 @@ final class NearbyListener {
     }
 
     fileprivate func forget(_ c: Connection) { connections.removeValue(forKey: ObjectIdentifier(c)) }
+
+    /// The peer's host (no port): what handshake backoff is keyed by.
+    static func address(of nw: NWConnection) -> String {
+        if case .hostPort(let host, _) = nw.endpoint { return "\(host)" }
+        return "\(nw.endpoint)"
+    }
+
+    /// On `queue`: a connection ended before TLS completed.
+    fileprivate func handshakeFailed(address: String) {
+        let code = configuration.psks.first(where: \.isBootstrap)?.identity
+        if limiter.recordFailure(address, bootstrap: code, now: Date()) {
+            events(.pairingLockedOut(failures: limiter.bootstrapFailures))
+        }
+    }
+
+    /// On `queue`: TLS completed with one of the table's keys.
+    fileprivate func handshakeSucceeded(address: String) { limiter.recordSuccess(address) }
+
+    /// Call from outside `queue` only.
+    var handshakeLimiter: NearbyHandshakeLimiter { queue.sync { limiter } }
 
     /// On `queue`. Nonces survive a restart only through `adoptConnections`.
     fileprivate func acceptNonce(_ key: String) -> Bool {
@@ -325,9 +368,14 @@ final class NearbyListener {
         /// One armed deadline at a time: handshake, then hello, then the
         /// frame in progress (none while idle between complete lines).
         private var deadline: DispatchWorkItem?
+        /// The peer's host, for handshake backoff.
+        let address: String
+        /// Set once the handshake's outcome went to the limiter.
+        private var handshakeCounted = false
 
-        init(_ nw: NWConnection, owner: NearbyListener) {
+        init(_ nw: NWConnection, address: String, owner: NearbyListener) {
             self.nw = nw
+            self.address = address
             self.owner = owner
             self.maxLineBytes = owner.configuration.maxLineBytes
             self.limits = owner.configuration.limits
@@ -343,6 +391,7 @@ final class NearbyListener {
                     // Typical for a plaintext or wrong-key peer: the handshake
                     // failed. A failed connection still needs cancel to release
                     // its socket; the second, `.cancelled`, pass is a no-op.
+                    if self.session == nil { self.countHandshake(failed: true) }
                     self.finish(reason: self.session == nil ? "handshake failed: \(error)" : "failed: \(error)")
                     self.nw.cancel()
                 case .cancelled: self.finish(reason: "cancelled")
@@ -353,9 +402,17 @@ final class NearbyListener {
             // hold one of the connection slots: no bytes are owed to it.
             arm(after: limits.handshakeTimeout) { [weak self] in
                 guard let self, self.session == nil else { return }
+                self.countHandshake(failed: true)
                 self.close(reason: NearbyFrameError.handshakeTimeout(seconds: self.limits.handshakeTimeout).reason)
             }
             nw.start(queue: queue)
+        }
+
+        /// Reports this connection's handshake to the limiter, once.
+        private func countHandshake(failed: Bool) {
+            guard !handshakeCounted, let owner else { return }
+            handshakeCounted = true
+            if failed { owner.handshakeFailed(address: address) } else { owner.handshakeSucceeded(address: address) }
         }
 
         // MARK: deadlines (all on `queue`)
@@ -391,6 +448,7 @@ final class NearbyListener {
                 close(reason: "unexpected TLS parameters")
                 return
             }
+            countHandshake(failed: false)
             var sessionIdentity: String?
             session = NearbySession(keys: owner.configuration.psks, macName: owner.configuration.macName,
                                     sink: owner.sink, destinations: owner.destinations, pairing: owner.pairing,

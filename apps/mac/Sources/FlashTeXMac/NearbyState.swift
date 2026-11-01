@@ -293,6 +293,13 @@ final class NearbyState: ObservableObject {
             if let id { receivingBytes.removeValue(forKey: id) }
             if let id, let i = connectedPairIds.firstIndex(of: id) { connectedPairIds.remove(at: i) }
             note("closed \(id ?? "unauthenticated"): \(reason)")
+        case .handshakeRefused(let address, let failures, let wait):
+            note("refused \(address) before TLS: \(failures) failed handshakes, retry in \(wait) s")
+        case .pairingLockedOut(let failures):
+            // Whatever the window does with the event (it ran first, through
+            // `onEvent`), the code is no longer served.
+            note("pairing code withdrawn after \(failures) failed handshakes")
+            cancelPairing()
         }
     }
 

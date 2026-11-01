@@ -17,7 +17,7 @@ final class AcceptanceSliceTests: XCTestCase {
     var mac: FakeMac!
     var model: PadModel!
     let salt = Data((0..<16).map { UInt8($0 * 7 + 1) })
-    let code = "482913"
+    let code = "4829130123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD"
 
     override func setUp() async throws {
         model = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))

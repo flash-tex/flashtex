@@ -344,6 +344,9 @@ struct NearbyReceiveLimits: Equatable {
     var keepaliveIdleSeconds = 15
     var keepaliveIntervalSeconds = 5
     var keepaliveCount = 4
+    /// Backoff after failed handshakes and the pairing-code lockout
+    /// (`NearbyHandshakeLimiter`).
+    var handshake = NearbyHandshakeLimiter.Policy()
 
     static let base64Overhead = 4.0 / 3.0
     /// Longest base64 string that can encode `maxImageBytes`.

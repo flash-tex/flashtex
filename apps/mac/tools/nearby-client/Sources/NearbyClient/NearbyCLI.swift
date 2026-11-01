@@ -8,9 +8,9 @@ public enum NearbyCLI {
     public static let usage = """
     usage: nearby-client <command> [options]
 
-      pair   --code 123456 --name "iPad Sim" [--mac <name|fp>] [--seconds 5]
+      pair   --code <52-character code> --name "iPad Sim" [--mac <name|fp>] [--seconds 5]
              [--host 127.0.0.1 --port N --salt <32 hex>]      (skip Bonjour)
-             [--qr "flashtex-nearby://pair?v=1&code=…&salt=…&fp=…&name=…"]
+             [--qr "flashtex-nearby://pair?v=2&code=…&salt=…&fp=…&name=…"]
              (the Mac's QR image, decoded: supplies --code, --mac fp and --salt)
       send   --image file.png|jpg [--instructions "..."] [--capture-id ID]
              [--mac <name|fp>] [--host H --port N]
@@ -217,7 +217,7 @@ public enum NearbyCLI {
             }
         }
         if let scanned {
-            if let c = o.string("code"), c != scanned.code { throw Failure(code: 64, message: "--code \(c) differs from the QR payload's code") }
+            if let c = o.string("code"), (NearbyCrypto.canonicalCode(c) ?? c) != scanned.code { throw Failure(code: 64, message: "--code \(c) differs from the QR payload's code") }
             if let m = o.string("mac"), m != scanned.fingerprint, m != scanned.macName {
                 throw Failure(code: 64, message: "--mac \(m) is neither the QR payload's fp \(scanned.fingerprint) nor its name")
             }

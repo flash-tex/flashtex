@@ -113,29 +113,65 @@ final class DiscoveredMacTests: XCTestCase {
 }
 
 final class NearbyBootstrapPayloadTests: XCTestCase {
-    /// Pinned vector (salt 00…0f, code 123456): the Mac's PairingQRTests
-    /// encode exactly this string into its QR image.
+    static let code = "0123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCDEFGHJK"
+
+    /// Pinned string (salt 00…0f, a fixed 52-character code): the Mac's
+    /// PairingQRTests encode exactly this string into its QR image.
     func testPayloadRoundTripAndPinnedString() throws {
         let salt = try XCTUnwrap(NearbyCrypto.data(hex: "000102030405060708090a0b0c0d0e0f"))
-        let p = NearbyBootstrapPayload(code: "123456", salt: salt, macName: "Jay's Mac Studio")
+        let p = NearbyBootstrapPayload(code: Self.code, salt: salt, macName: "Jay's Mac Studio")
         XCTAssertEqual(p.fingerprint, "0e712816d64b7c47")
         XCTAssertEqual(p.urlString,
-                       "flashtex-nearby://pair?v=1&code=123456&salt=000102030405060708090a0b0c0d0e0f&fp=0e712816d64b7c47&name=Jay's%20Mac%20Studio")
+                       "flashtex-nearby://pair?v=2&code=\(Self.code)&salt=000102030405060708090a0b0c0d0e0f&fp=0e712816d64b7c47&name=Jay's%20Mac%20Studio")
         XCTAssertEqual(try NearbyBootstrapPayload.parse(p.urlString), p)
         XCTAssertEqual(try NearbyBootstrapPayload.parse(" \(p.urlString)\n"), p, "scanner whitespace is tolerated")
     }
 
     func testPayloadRefusals() throws {
         let salt = "000102030405060708090a0b0c0d0e0f"
+        let code = Self.code
         func reason(_ s: String) -> String {
             do { _ = try NearbyBootstrapPayload.parse(s); return "accepted" } catch let e as NearbyError { return e.description } catch { return "\(error)" }
         }
-        XCTAssertEqual(reason("https://example.com/pair?v=1"), "invalid input: not a flashtex-nearby://pair payload")
-        XCTAssertEqual(reason("flashtex-nearby://pair?v=2&code=123456&salt=\(salt)&fp=0e712816d64b7c47"), "invalid input: payload version 2 is not 1")
-        XCTAssertEqual(reason("flashtex-nearby://pair?v=1&code=12345&salt=\(salt)&fp=0e712816d64b7c47"), "invalid input: payload code must be 6 digits")
-        XCTAssertEqual(reason("flashtex-nearby://pair?v=1&code=123456&salt=0001&fp=0e712816d64b7c47"), "invalid input: payload salt must be 16 hex bytes")
-        XCTAssertEqual(reason("flashtex-nearby://pair?v=1&code=123456&salt=\(salt)&fp=deadbeefdeadbeef"), "invalid input: payload fp does not match its salt")
-        XCTAssertEqual(reason("flashtex-nearby://pair?v=1&code=123456&salt=\(salt)&fp=0e712816d64b7c47"), "accepted", "name is optional")
+        XCTAssertEqual(reason("https://example.com/pair?v=2"), "invalid input: not a flashtex-nearby://pair payload")
+        XCTAssertEqual(reason("flashtex-nearby://pair?v=1&code=123456&salt=\(salt)&fp=0e712816d64b7c47"), "invalid input: payload version 1 is not 2",
+                       "a six-digit payload from an older Mac is refused")
+        XCTAssertEqual(reason("flashtex-nearby://pair?v=2&code=123456&salt=\(salt)&fp=0e712816d64b7c47"), "invalid input: payload code must be the 52-character code")
+        XCTAssertEqual(reason("flashtex-nearby://pair?v=2&code=\(code.dropLast())&salt=\(salt)&fp=0e712816d64b7c47"), "invalid input: payload code must be the 52-character code")
+        XCTAssertEqual(reason("flashtex-nearby://pair?v=2&code=\(code)&salt=0001&fp=0e712816d64b7c47"), "invalid input: payload salt must be 16 hex bytes")
+        XCTAssertEqual(reason("flashtex-nearby://pair?v=2&code=\(code)&salt=\(salt)&fp=deadbeefdeadbeef"), "invalid input: payload fp does not match its salt")
+        XCTAssertEqual(reason("flashtex-nearby://pair?v=2&code=\(code)&salt=\(salt)&fp=0e712816d64b7c47"), "accepted", "name is optional")
+    }
+
+    /// The typed fallback is the same 256-bit secret: canonicalised exactly
+    /// as the Mac does, and a weak code is refused before any connection.
+    func testTypedCodeIsCanonicalisedAndWeakCodesNeverConnect() async throws {
+        let code = Self.code
+        XCTAssertEqual(NearbyCrypto.canonicalCode(code.lowercased()), code)
+        XCTAssertEqual(NearbyCrypto.canonicalCode(stride(from: 0, to: 52, by: 4).map { i in
+            String(code.dropFirst(i).prefix(4)) }.joined(separator: " ")), code)
+        XCTAssertEqual(NearbyCrypto.canonicalCode("o" + String(repeating: "i", count: 50) + "L"), "0" + String(repeating: "1", count: 51))
+        XCTAssertNil(NearbyCrypto.canonicalCode("123456"))
+        XCTAssertNil(NearbyCrypto.canonicalCode(String(code.dropLast()) + "U"))
+        let salt = Data(repeating: 7, count: 16)
+        XCTAssertEqual(NearbyCrypto.derive(code: code.lowercased(), salt: salt), NearbyCrypto.derive(code: code, salt: salt))
+    }
+
+    /// Uses only API that predates the 256-bit code, so it also ran (and
+    /// failed) against the six-digit client.
+    func testWeakCodesAreRefusedBeforeAnyConnection() async throws {
+        let salt = Data(repeating: 7, count: 16)
+        XCTAssertThrowsError(try NearbyBootstrapPayload.parse(
+            "flashtex-nearby://pair?v=1&code=123456&salt=\(NearbyCrypto.hex(salt))&fp=\(NearbyCrypto.fingerprint(salt: salt))"),
+            "a six-digit QR payload is refused")
+        // Nothing listens on port 9: a weak code must fail before connecting.
+        do {
+            _ = try await NearbyClient.pair(endpoint: .hostPort(host: "127.0.0.1", port: 9), salt: salt, fingerprint: "f",
+                                            macName: "m", code: "123456", companionName: "c", connectTimeout: 1)
+            XCTFail("a six-digit code must be refused")
+        } catch let e as NearbyError {
+            XCTAssertEqual(e, .invalidInput("pairing code must be the 52-character code the Mac shows"))
+        }
     }
 
     /// `capture_not_permitted` is its own class: pairing intact (no re-pair),
@@ -223,7 +259,7 @@ final class NearbyClientFlowTests: XCTestCase {
     let salt = NearbyCrypto.data(hex: "0f0e0d0c0b0a09080706050403020100")!
 
     func testPairSendReconnectViaLibrary() async throws {
-        let boot = NearbyCrypto.derive(code: "424242", salt: salt)
+        let boot = NearbyCrypto.derive(code: "4242420123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD", salt: salt)
         let mac = try FakeMac(keys: [.init(identity: boot.pairId, psk: boot.psk, bootstrap: true)],
                               destination: .init(destinationId: "anchor-1", projectId: "demo", path: "main.tex", baseRevision: 5))
         mac.start()
@@ -233,7 +269,7 @@ final class NearbyClientFlowTests: XCTestCase {
 
         var transcript: [String] = []
         let (pair, session) = try await NearbyClient.pair(endpoint: ep, salt: salt, fingerprint: NearbyCrypto.fingerprint(salt: salt),
-                                                          macName: "x", code: "424242", companionName: "Test iPad") { dir, line in
+                                                          macName: "x", code: "4242420123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD", companionName: "Test iPad") { dir, line in
             transcript.append((dir == .sent ? ">> " : "<< ") + String(decoding: line, as: UTF8.self))
         }
         XCTAssertEqual(pair.pairId, boot.pairId)
@@ -300,7 +336,8 @@ final class NearbyClientFlowTests: XCTestCase {
     }
 
     func testCLICommandsAgainstFakeMac() async throws {
-        let boot = NearbyCrypto.derive(code: "777777", salt: salt)
+        let pairingCode = String(NearbyBootstrapPayloadTests.code.reversed())
+        let boot = NearbyCrypto.derive(code: pairingCode, salt: salt)
         let mac = try FakeMac(keys: [.init(identity: boot.pairId, psk: boot.psk, bootstrap: true)],
                               destination: .init(destinationId: "anchor-2", projectId: "demo", path: "notes.tex", baseRevision: 9))
         mac.start()
@@ -312,7 +349,7 @@ final class NearbyClientFlowTests: XCTestCase {
         try Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC")!.write(to: png)
 
         var out: [String] = []
-        let code = await NearbyCLI.run(["pair", "--code", "777777", "--name", "CLI iPad", "--host", "127.0.0.1", "--port", "\(mac.port)",
+        let code = await NearbyCLI.run(["pair", "--code", pairingCode, "--name", "CLI iPad", "--host", "127.0.0.1", "--port", "\(mac.port)",
                                         "--salt", NearbyCrypto.hex(salt), "--store", store, "-v"]) { out.append($0) }
         XCTAssertEqual(code, 0, out.joined(separator: "\n"))
         XCTAssertEqual(out.last, "paired")
@@ -357,7 +394,7 @@ final class NearbyClientFlowTests: XCTestCase {
 
     func testBonjourDiscoveryFindsAdvertisedFakeMac() async throws {
         let name = "nearby-client test \(UUID().uuidString.prefix(6))"
-        let boot = NearbyCrypto.derive(code: "111111", salt: salt)
+        let boot = NearbyCrypto.derive(code: "1111110123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD", salt: salt)
         let mac = try FakeMac(keys: [.init(identity: boot.pairId, psk: boot.psk, bootstrap: true)], advertise: name, salt: salt)
         mac.start()
         defer { mac.stop() }
@@ -369,7 +406,7 @@ final class NearbyClientFlowTests: XCTestCase {
         XCTAssertTrue(found.isSupported)
         XCTAssertEqual(found.salt, salt)
         // And connect through the Bonjour endpoint itself (resolved to host:port first).
-        let (pair, session) = try await NearbyClient.pair(mac: found, code: "111111", companionName: "Browsing iPad")
+        let (pair, session) = try await NearbyClient.pair(mac: found, code: "1111110123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD", companionName: "Browsing iPad")
         XCTAssertEqual(pair.fingerprint, fp)
         XCTAssertEqual(session.macName, "Fake Mac")
         if case .hostPort(_, let port) = try XCTUnwrap(session.connection.dialed) { XCTAssertEqual(port.rawValue, mac.port) } else { XCTFail() }

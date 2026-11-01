@@ -578,8 +578,8 @@ final class PairingTests: XCTestCase {
         XCTAssertTrue(Pairing.verifyHelloProof(Pairing.vectorHelloProof, psk: a.psk, nonce: "n-1"))
         XCTAssertFalse(Pairing.verifyHelloProof(Pairing.vectorHelloProof, psk: a.psk, nonce: "n-2"))
         XCTAssertFalse(Pairing.verifyHelloProof("not base64!", psk: a.psk, nonce: "n-1"))
-        XCTAssertEqual(Pairing.generateCode().count, 6)
-        XCTAssertTrue(Pairing.generateCode().allSatisfy(\.isNumber))
+        XCTAssertEqual(Pairing.generateCode().count, 52)
+        XCTAssertNotNil(Pairing.canonicalCode(Pairing.generateCode()))
         XCTAssertNotEqual(Pairing.mintLongTermPSK(), Pairing.mintLongTermPSK())
     }
 
@@ -723,7 +723,7 @@ final class NearbyStateTests: XCTestCase {
 
         state.beginPairing()
         let code = try XCTUnwrap(state.pairingCode)
-        XCTAssertEqual(code.count, 6)
+        XCTAssertEqual(code.count, Pairing.codeLength)
         XCTAssertNotNil(state.codeExpiresAt)
         // Restarting for the bootstrap key keeps the port.
         try await waitUntil("restarted with bootstrap key") {

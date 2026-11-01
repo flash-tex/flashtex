@@ -685,7 +685,7 @@ final class PadModel: ObservableObject {
         linkStatus = "not paired"
     }
 
-    /// QR pairing: the Mac's `flashtex-nearby://pair?v=1&code&salt&fp&name`
+    /// QR pairing: the Mac's `flashtex-nearby://pair?v=2&code&salt&fp&name`
     /// (scanned with VisionKit, or pasted). Host/port typed when Bonjour
     /// cannot find the Mac (the simulator has no camera and, in tests, no
     /// advertising listener).

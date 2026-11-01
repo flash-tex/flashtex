@@ -16,7 +16,7 @@ final class CompanionInsertTests: XCTestCase {
     var mac: FakeMac!
     var model: PadModel!
     let salt = Data((0..<16).map { UInt8($0 + 17) })
-    let code = "314159"
+    let code = "3141590123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD"
     var store: PairFile!
 
     override func setUp() async throws {
