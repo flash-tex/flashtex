@@ -230,7 +230,7 @@ impl Type1<'_, '_> {
     }
 
     fn line_error(&self, what: &str) -> Fail {
-        Fail(format!("{what}: `{}'", self.r.line.quoted()))
+        Fail::of(&[what.as_bytes(), b": `", self.r.line.quoted(), b"'"])
     }
 
     // --- the encrypted part --------------------------------------------
@@ -288,7 +288,7 @@ impl Type1<'_, '_> {
         if line.starts_with(b"/FontType") {
             let i = self.scan_num(b"FontType".len() + 1)?.0 as i32;
             if i != 1 {
-                return Err(Fail(format!("Type{i} fonts unsupported by pdfTeX")));
+                return Err(Fail::from(format!("Type{i} fonts unsupported by pdfTeX")));
             }
             return Ok(());
         }
@@ -439,10 +439,11 @@ impl Type1<'_, '_> {
                 self.standard_encoding = true;
                 return Ok(standard_names());
             }
-            return Err(Fail(format!(
-                "cannot subset font (unknown predefined encoding `{}')",
-                String::from_utf8_lossy(&word)
-            )));
+            return Err(Fail::of(&[
+                b"cannot subset font (unknown predefined encoding `",
+                &word,
+                b"')",
+            ]));
         }
         // Two forms: `/Encoding [/a /b ...] readonly def`, or
         //     /Encoding 256 array 0 1 255 {1 index exch /.notdef put} for
@@ -699,7 +700,9 @@ impl Type1<'_, '_> {
                 .ok()
                 .and_then(|i| self.cs.subrs.get_mut(i))
             else {
-                return Err(Fail(format!("Subrs array: entry index out of range ({n})")));
+                return Err(Fail::from(format!(
+                    "Subrs array: entry index out of range ({n})"
+                )));
             };
             if self.token_pair.is_none() {
                 self.token_pair = token_pair(&cs.data);
@@ -707,7 +710,7 @@ impl Type1<'_, '_> {
             *slot = cs;
         } else {
             if self.cs.glyphs.len() as i32 + 1 > self.dict.size {
-                return Err(Fail(format!(
+                return Err(Fail::from(format!(
                     "CharStrings dict: more entries than dict size ({})",
                     self.dict.size
                 )));
@@ -1177,6 +1180,6 @@ pub(super) mod tests {
         let mut font = pfa();
         font.truncate(CLEAR.len() + 40);
         let e = embed_with(&font, 0, 0, &[]).err().unwrap();
-        assert_eq!(e.0, "unexpected end of file");
+        assert_eq!(e.0, b"unexpected end of file");
     }
 }

@@ -127,10 +127,11 @@ pub(super) fn parse_enc_file(data: &[u8]) -> Result<GlyphNames> {
     let mut line = lines.next()?;
     let bracket = line.iter().position(|&c| c == b'[');
     let (Some(bracket), Some(b'/')) = (bracket, line.first()) else {
-        return Err(Fail(format!(
-            "invalid encoding vector (a name or `[' missing): `{}'",
-            without_eol(&line)
-        )));
+        return Err(Fail::of(&[
+            b"invalid encoding vector (a name or `[' missing): `",
+            without_eol(&line),
+            b"'",
+        ]));
     };
     let mut count = 0;
     let mut at = bracket + 1;
@@ -144,10 +145,11 @@ pub(super) fn parse_enc_file(data: &[u8]) -> Result<GlyphNames> {
             if line[at.min(line.len())..].starts_with(b"] def") {
                 return Ok(names);
             }
-            return Err(Fail(format!(
-                "invalid encoding vector: a name or `] def' expected: `{}'",
-                without_eol(&line)
-            )));
+            return Err(Fail::of(&[
+                b"invalid encoding vector: a name or `] def' expected: `",
+                without_eol(&line),
+                b"'",
+            ]));
         }
         line = lines.next()?;
         at = 0;
@@ -220,16 +222,22 @@ mod tests {
         let e = parse_enc_file(b"Test [ /A ] def\n").unwrap_err();
         assert_eq!(
             e.0,
-            "invalid encoding vector (a name or `[' missing): `Test [ /A ] def'"
+            b"invalid encoding vector (a name or `[' missing): `Test [ /A ] def'"
         );
         let e = parse_enc_file(b"/Test [ /A ] readonly def\n").unwrap_err();
         assert!(e
             .0
-            .starts_with("invalid encoding vector: a name or `] def' expected"));
+            .starts_with(b"invalid encoding vector: a name or `] def' expected"));
         let e = parse_enc_file(b"/Test [ /A\n").unwrap_err();
-        assert_eq!(e.0, "unexpected end of file");
+        assert_eq!(e.0, b"unexpected end of file");
         let many: String = (0..257).map(|i| format!("/g{i} ")).collect();
         let e = parse_enc_file(format!("/T [ {many}] def\n").as_bytes()).unwrap_err();
-        assert_eq!(e.0, "encoding vector contains more than 256 names");
+        assert_eq!(e.0, b"encoding vector contains more than 256 names");
+        // a byte that is not UTF-8 stays itself in the message
+        let e = parse_enc_file(b"/T [ /a \xe9x ] def\n").unwrap_err();
+        assert_eq!(
+            e.0,
+            b"invalid encoding vector: a name or `] def' expected: `/T [ /a \xe9x ] def'"
+        );
     }
 }
