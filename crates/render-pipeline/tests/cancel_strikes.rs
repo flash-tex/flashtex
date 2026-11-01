@@ -15,6 +15,9 @@
 //! | `$\bcancel{x+y}$` | `5.83333+1.94444 x 23.199` | `0.0+6.29749 x 25.199` (4,-1) | `5.09319+1.94444 x 23.199` |
 //! | `$\xcancel{\frac{a}{b}}$` | `6.9512+3.44841 x 6.73764` | `12.39+0.0 x 6.1998` (1,2) | `7.9464+3.44841 x 6.73764` |
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

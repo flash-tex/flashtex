@@ -632,6 +632,8 @@ impl Ttf<'_> {
                     }
                     buf.push(0);
                 }
+                // Indexed as in writettf.c's `for (i = 0; i < nnames; i++)`.
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..nnames.min(count) {
                     let ni = self.glyph_tab[i].name_index as usize;
                     self.glyph_tab[i].name = if ni < NMACGLYPHS {
@@ -663,6 +665,8 @@ impl Ttf<'_> {
 
     fn post_format_3(&mut self) {
         let count = self.glyph_tab.len();
+        // Indexed as in writettf.c's `ttf_post_format_3` loop.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..NMACGLYPHS.min(count) {
             self.glyph_tab[i].name_index = i as u16;
         }
@@ -1049,6 +1053,8 @@ impl Ttf<'_> {
                     continue;
                 };
                 let t = self.dir_tab[tab];
+                // Indexed as in writettf.c's `for (k = 0; k < 4; k++) put_char(tab->tag[k])`.
+                #[allow(clippy::needless_range_loop)]
                 for k in 0..4 {
                     self.put_char(t.tag[k] as i8 as i64);
                 }
@@ -1059,6 +1065,8 @@ impl Ttf<'_> {
         } else {
             for tab in 0..self.dir_tab.len() {
                 let t = self.dir_tab[tab];
+                // Indexed as in writettf.c's `for (k = 0; k < 4; k++) put_char(tab->tag[k])`.
+                #[allow(clippy::needless_range_loop)]
                 for k in 0..4 {
                     self.put_char(t.tag[k] as i8 as i64);
                 }

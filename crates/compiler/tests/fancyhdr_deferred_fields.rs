@@ -18,6 +18,12 @@
 //!
 //! and no diagnostic: `\topicshort` is defined by the time any page ships.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::vec_box,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
 use flashtex_compiler::layout::LayoutConstraints;
 use flashtex_compiler::parser::{parse, Block, Inline};

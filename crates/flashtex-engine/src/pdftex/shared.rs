@@ -57,6 +57,7 @@ impl<T: Clone> Deref for Shared<T> {
 impl<T: Clone> DerefMut for Shared<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
+        let _m = crate::memstat::scope(crate::memstat::tag::COW);
         Arc::make_mut(&mut self.0)
     }
 }
@@ -126,12 +127,14 @@ impl<K: Clone + Eq + Hash, V: Clone> ShardMap<K, V> {
             return self.shards[i].get(&k).unwrap();
         }
         self.len += 1;
+        let _m = crate::memstat::scope(crate::memstat::tag::COW);
         let shards = Arc::make_mut(&mut self.shards);
         shards[i].entry(k).or_insert(v)
     }
 
     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
         let i = shard_of(&k);
+        let _m = crate::memstat::scope(crate::memstat::tag::COW);
         let shards = Arc::make_mut(&mut self.shards);
         let old = shards[i].insert(k, v);
         if old.is_none() {

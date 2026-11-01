@@ -1,0 +1,574 @@
+{
+ "counter": "time",
+ "platform": "darwin",
+ "runs": 5,
+ "machine": "arm64",
+ "cpus": 15,
+ "engine": {
+  "b1-article": {
+   "candidate-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 67.1,
+    "ms_median": 70.8,
+    "instructions_best": 1279804043,
+    "instructions_median": 1280546760
+   },
+   "candidate-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 59.6,
+    "ms_median": 62.2,
+    "instructions_best": 1157865095,
+    "instructions_median": 1158195327
+   },
+   "xelatex-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 124.0,
+    "ms_median": 127.0,
+    "instructions_best": 1724916156,
+    "instructions_median": 1726551769
+   },
+   "xelatex-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 284.0,
+    "ms_median": 295.2,
+    "instructions_best": 1724836954,
+    "instructions_median": 1726265886
+   }
+  },
+  "b2-fontspec-named": {
+   "candidate-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 135.2,
+    "ms_median": 136.2,
+    "instructions_best": 3076305756,
+    "instructions_median": 3076436201
+   },
+   "candidate-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 131.4,
+    "ms_median": 135.0,
+    "instructions_best": 3045848860,
+    "instructions_median": 3045946625
+   },
+   "xelatex-no-pdf": {
+    "exit": [
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "ms_best": 194.0,
+    "ms_median": 202.2,
+    "instructions_best": 3423513671,
+    "instructions_median": 3423691385
+   },
+   "xelatex-pdf": {
+    "exit": [
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "ms_best": 341.0,
+    "ms_median": 356.8,
+    "instructions_best": 3425134844,
+    "instructions_median": 3426894119
+   }
+  },
+  "b3-unicode-math": {
+   "candidate-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 305.4,
+    "ms_median": 313.9,
+    "instructions_best": 7850196344,
+    "instructions_median": 7851132282
+   },
+   "candidate-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 299.5,
+    "ms_median": 309.0,
+    "instructions_best": 7814623332,
+    "instructions_median": 7816934421
+   },
+   "xelatex-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 363.2,
+    "ms_median": 368.8,
+    "instructions_best": 7803416799,
+    "instructions_median": 7803732120
+   },
+   "xelatex-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 519.6,
+    "ms_median": 544.0,
+    "instructions_best": 7803467014,
+    "instructions_median": 7803891402
+   }
+  },
+  "b4-fontspec-pages": {
+   "candidate-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 223.3,
+    "ms_median": 226.2,
+    "instructions_best": 4513200345,
+    "instructions_median": 4516368320
+   },
+   "candidate-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 161.8,
+    "ms_median": 165.6,
+    "instructions_best": 3878194165,
+    "instructions_median": 3879588424
+   },
+   "xelatex-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 221.5,
+    "ms_median": 231.3,
+    "instructions_best": 4122184346,
+    "instructions_median": 4125571753
+   },
+   "xelatex-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 375.7,
+    "ms_median": 392.3,
+    "instructions_best": 4118855219,
+    "instructions_median": 4120911013
+   }
+  },
+  "b5-long": {
+   "candidate-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 1894.2,
+    "ms_median": 1906.3,
+    "instructions_best": 27977905668,
+    "instructions_median": 27980808000
+   },
+   "candidate-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 662.3,
+    "ms_median": 688.2,
+    "instructions_best": 17293936822,
+    "instructions_median": 17307104055
+   },
+   "xelatex-no-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 646.6,
+    "ms_median": 718.5,
+    "instructions_best": 13904852236,
+    "instructions_median": 13945551052
+   },
+   "xelatex-pdf": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 796.2,
+    "ms_median": 818.1,
+    "instructions_best": 13891561406,
+    "instructions_median": 13903449192
+   }
+  },
+  "startup": {
+   "candidate": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 34.7,
+    "ms_median": 35.4,
+    "instructions_best": 567481173,
+    "instructions_median": 567898528
+   },
+   "xelatex": {
+    "exit": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ms_best": 103.6,
+    "ms_median": 126.4,
+    "instructions_best": 1219087902,
+    "instructions_median": 1220733472
+   }
+  }
+ },
+ "host": {
+  "b1-article": {
+   "open": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 74.454,
+    "done_ms": 120.782
+   },
+   "reopen": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 67.667,
+    "done_ms": 114.272
+   },
+   "edits": [
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 89.874,
+     "done_ms": 132.499
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 86.82,
+     "done_ms": 129.774
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 90.016,
+     "done_ms": 136.354
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 87.226,
+     "done_ms": 129.822
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 85.927,
+     "done_ms": 127.021
+    }
+   ],
+   "preamble_edit": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 52.1,
+    "done_ms": 92.307
+   },
+   "edit_first_page_ms_max": 90.016
+  },
+  "b2-fontspec-named": {
+   "open": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 147.996,
+    "done_ms": 266.036
+   },
+   "reopen": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 137.945,
+    "done_ms": 252.844
+   },
+   "edits": [
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 150.624,
+     "done_ms": 258.789
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 157.529,
+     "done_ms": 268.267
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 136.6,
+     "done_ms": 249.921
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 155.614,
+     "done_ms": 264.491
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 154.588,
+     "done_ms": 260.643
+    }
+   ],
+   "preamble_edit": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 118.56,
+    "done_ms": 226.137
+   },
+   "edit_first_page_ms_max": 157.529
+  },
+  "b3-unicode-math": {
+   "open": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 320.743,
+    "done_ms": 619.85
+   },
+   "reopen": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 315.46,
+    "done_ms": 613.654
+   },
+   "edits": [
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 353.797,
+     "done_ms": 650.711
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 338.435,
+     "done_ms": 636.366
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 339.55,
+     "done_ms": 631.714
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 315.649,
+     "done_ms": 609.083
+    },
+    {
+     "status": "ok",
+     "pages": 2,
+     "first_page_ms": 338.56,
+     "done_ms": 629.198
+    }
+   ],
+   "preamble_edit": {
+    "status": "ok",
+    "pages": 2,
+    "first_page_ms": 305.935,
+    "done_ms": 603.182
+   },
+   "edit_first_page_ms_max": 353.797
+  },
+  "b4-fontspec-pages": {
+   "open": {
+    "status": "ok",
+    "pages": 38,
+    "first_page_ms": 136.563,
+    "done_ms": 341.813
+   },
+   "reopen": {
+    "status": "ok",
+    "pages": 38,
+    "first_page_ms": 132.049,
+    "done_ms": 338.505
+   },
+   "edits": [
+    {
+     "status": "ok",
+     "pages": 38,
+     "first_page_ms": 158.901,
+     "done_ms": 362.153
+    },
+    {
+     "status": "ok",
+     "pages": 38,
+     "first_page_ms": 162.676,
+     "done_ms": 367.07
+    },
+    {
+     "status": "ok",
+     "pages": 38,
+     "first_page_ms": 164.499,
+     "done_ms": 364.244
+    },
+    {
+     "status": "ok",
+     "pages": 38,
+     "first_page_ms": 152.433,
+     "done_ms": 350.822
+    },
+    {
+     "status": "ok",
+     "pages": 38,
+     "first_page_ms": 165.625,
+     "done_ms": 372.037
+    }
+   ],
+   "preamble_edit": {
+    "status": "ok",
+    "pages": 38,
+    "first_page_ms": 127.535,
+    "done_ms": 329.14
+   },
+   "edit_first_page_ms_max": 165.625
+  },
+  "b5-long": {
+   "open": {
+    "status": "ok",
+    "pages": 654,
+    "first_page_ms": 135.02,
+    "done_ms": 1887.069
+   },
+   "reopen": {
+    "status": "ok",
+    "pages": 654,
+    "first_page_ms": 137.714,
+    "done_ms": 1886.426
+   },
+   "edits": [
+    {
+     "status": "ok",
+     "pages": 654,
+     "first_page_ms": 199.449,
+     "done_ms": 1950.117
+    },
+    {
+     "status": "ok",
+     "pages": 654,
+     "first_page_ms": 170.37,
+     "done_ms": 1865.009
+    },
+    {
+     "status": "ok",
+     "pages": 654,
+     "first_page_ms": 193.35,
+     "done_ms": 1896.019
+    },
+    {
+     "status": "ok",
+     "pages": 654,
+     "first_page_ms": 185.333,
+     "done_ms": 1902.808
+    },
+    {
+     "status": "ok",
+     "pages": 654,
+     "first_page_ms": 177.002,
+     "done_ms": 1863.392
+    }
+   ],
+   "preamble_edit": {
+    "status": "ok",
+    "pages": 654,
+    "first_page_ms": 150.483,
+    "done_ms": 1873.989
+   },
+   "edit_first_page_ms_max": 199.449
+  }
+ }
+}

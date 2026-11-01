@@ -106,6 +106,35 @@ final class DecoderParityTests: XCTestCase {
         XCTAssertEqual(try DL3Page.decode(kind: .page, body: skip).items.count, 0)
     }
 
+    /// ORIGINS (spec §4.2, section 7): one f64 pair per GLYPH, else refused;
+    /// a writer before ORIGINS (the checked-in fixture) decodes with none.
+    func testOriginsDecodeAndFailClosed() throws {
+        let page = try XCTUnwrap(try DL3Frames.split(try fixture("beamer-overlays.dl3")).first { $0.kind == DL3.Kind.page })
+        XCTAssertEqual(try DL3Page.decode(kind: .page, body: page.body).origins, [])
+        func le<T: FixedWidthInteger>(_ v: T) -> [UInt8] { withUnsafeBytes(of: v.littleEndian, Array.init) }
+        func f64(_ v: Double) -> [UInt8] { le(v.bitPattern) }
+        let glyph: [UInt8] = [0x01] + le(UInt16(1)) + le(UInt16(65)) + le(Int32(5)) + le(Int32(6)) + le(UInt16(0))
+        let items = glyph + [0x07] + glyph
+        func body(_ origins: [(Double, Double)]) -> [UInt8] {
+            let o = le(UInt32(origins.count)) + origins.flatMap { f64($0.0) + f64($0.1) }
+            return Array(page.body.prefix(120)) + le(UInt32(2))
+                + le(UInt32(3)) + le(UInt32(items.count)) + items
+                + le(UInt32(7)) + le(UInt32(o.count)) + o
+        }
+        let p = try DL3Page.decode(kind: .page, body: body([(72.0001, 700.5), (80.25, 700.5)]))
+        XCTAssertEqual(p.origins, [DL3Origin(x: 72.0001, y: 700.5), DL3Origin(x: 80.25, y: 700.5)])
+        XCTAssertThrowsError(try DL3Page.decode(kind: .page, body: body([(72, 700)])))
+        // Tag 8 is the Typst host's PAGE_META (JSON, 3.3 draft): skipped, never read as rules.
+        var typst = body([(1, 2), (3, 4)])
+        let meta = Array(#"{"engine":"typst","number":1}"#.utf8)
+        typst.replaceSubrange(120 ..< 124, with: le(UInt32(3)))
+        typst += le(UInt32(8)) + le(UInt32(meta.count)) + meta
+        let tp = try DL3Page.decode(kind: .page, body: typst)
+        XCTAssertEqual(tp.origins.count, 2)
+        XCTAssertEqual(tp.ruleGeometry, [])
+        XCTAssertThrowsError(try DL3Page.decode(kind: .page, body: Array(body([(72, 700), (80, 700)]).dropLast(1))))
+    }
+
     func testCompileRequestJSON() throws {
         var r = DL3CompileRequest(id: 7, root: "/p", main: "main.tex")
         r.viewport = 3

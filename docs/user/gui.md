@@ -11,35 +11,36 @@ text says so.
 
 ```
 ┌ Sidebar ────┬ Editor ─────────────────────┬ Preview ───────────────┐
-│ Project     │ tabs: main.tex  chapter1.tex│ header: producer, zoom │
-│ Outline     │ gutter │ source              │ pages                  │
+│ Project     │ tabs: main.tex  chapter1.tex│ pages                  │
+│ Outline     │ gutter │ source              │                        │
 │ Problems    │        │                     │                        │
 ├─────────────┴─────────────────────────────┴────────────────────────┤
 │ Problems panel (⌘⇧M): errors / warnings / not implemented           │
 ├──────────────────────────────────────────────────────────────────────┤
-│ status bar: r12 · durable r12 · 31 ms · worker · 2 ⚠                 │
+│ status bar: § Introduction · 31 ms · Classic · 2 ⚠                   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Sidebar** (left, drag to resize). *Project* lists the open files — the
-  entry document first, an orange dot for unsaved changes, `rN` for the
-  durable revision — followed by greyed rows for every `\input`/`\include`
-  target that exists on disk but is not open yet (click to open). *Outline*
-  lists sections (indented by level), environments and labels of the active
-  file with line numbers; click to jump. *Problems* shows error / warning /
+  entry document first, an orange dot for unsaved changes — followed by
+  greyed rows for every `\input`/`\include` target that exists on disk but
+  is not open yet (click to open). *Outline* lists sections (indented by
+  level), environments and labels of the active file with line numbers; click to jump. *Problems* shows error / warning /
   not-implemented counts; clicking one opens the panel filtered to it.
 - **Editor** (middle) with a tab per open file. Closing a tab (×) only
   detaches the file for this session; includes are rediscovered from the entry
   document. The tab bar's *Project* menu lists the include tree, *Open All
   Includes*, and the file's kind.
-- **Preview** (right): the rendered pages. The preview header names the
-  attached producer and holds the zoom controls; the window **toolbar** holds
-  the *Auto-compile after edits*, *v2 pane* and *Dark preview* switches, the
-  Problems toggle and *Commands*.
-- **Problems panel** (bottom, ⌘⇧M) and the **status bar** (editor revision,
-  last compile latency, route, a live word count — click it for a
-  per-section breakdown popover, "M of N words" while there is a selection —
-  and problem counts — click the counts to toggle the panel).
+- **Preview** (right): the rendered pages. The window's **title bar** holds
+  Compile, the command palette, *Focus Preview on This Chapter*, the *Dark
+  preview* switch, Fit Width, Fit Page, the zoom buttons, Export PDF and the
+  Captures toggle.
+- **Problems panel** (bottom, ⌘⇧M) and the **status bar** (where the caret
+  is, the last note, a live word count — click it for a per-section
+  breakdown popover, "M of N words" while there is a selection — the
+  keystroke-to-page latency, the mode item (Classic or Unicode; see
+  *Compiling*), and problem counts — click the counts to toggle the panel;
+  *View › Show Preview Debug Status* adds the editor revision).
 - **⌘⇧P** opens the command palette: every command with its shortcut; type to
   filter, Return runs.
 
@@ -77,8 +78,9 @@ without leaving the app, or open an existing `.tex` file.
 3. **Type the reference first if you prefer.** Write `\input{chapters/two}`
    in any document: the sidebar shows `chapters/two.tex` as **missing —
    create**; click it and the empty file is created and opened. After a
-   compile, the *Problems* row of the engine's "included file not found"
-   diagnostic offers **Create chapters/two.tex** — the same action.
+   compile, the *Problems* row of TeX's ``LaTeX Error: File
+   `chapters/two.tex' not found.`` (or `No file chapters/two.tex.` for an
+   `\include`) offers **Create chapters/two.tex** — the same action.
 4. **Rename… / Delete…** are in a member's context menu (not the entry).
    Rename moves the file and rewrites every `\input`/`\include` that
    points at it in the open documents — one undoable edit per document
@@ -113,20 +115,17 @@ without leaving the app, or open an existing `.tex` file.
   expansion; `\input{\jobname}` is reported as non-literal). Targets resolve
   against the project root, `name.tex` before `name`, never above the root
   and never through symlinks. Resolved files show in the sidebar; open them
-  (click, ⌘-click the command, or *Open All Includes*) to edit them. On the
-  direct route (no preview controller attached) the compile request carries
-  the whole resolved include closure automatically — chapters you never
-  opened are still compiled, read fresh from disk each time, and recompile
-  when they change on disk. An unopened include still shows as a greyed
-  sidebar row; opening it makes its buffer (not disk) authoritative, and
-  closing it reverts to reading disk. On the helper route (below), an include
-  still needs an explicit open: the durable helper compiles only its own
-  ledger membership.
+  (click, ⌘-click the command, or *Open All Includes*) to edit them. The
+  engine compiles the whole project: chapters you never opened are read
+  from disk, and an outside change to one (a git checkout, another editor)
+  recompiles. An unopened include still shows as a greyed sidebar row;
+  opening it makes its buffer (not disk) authoritative, and closing it
+  reverts to reading disk.
 - **Packages and classes.** The `.sty`/`.cls`/`.def`/`.clo` files next to
   the entry, and every file under the manifest's `texinputs` directories,
-  show in the Project tree as greyed rows with the class/style icon and go
-  out with every compile on the direct route, so the engine can read a
-  project-local `\usepackage{mystyle}`. Click one to open it. *File ›
+  show in the Project tree as greyed rows with the class/style icon and are
+  part of every compile, so the engine can read a project-local
+  `\usepackage{mystyle}`. Click one to open it. *File ›
   Create flashtex.toml…* writes the commented manifest template next to
   the entry and opens it (coloured as plain text with comments). See
   [the project manifest](project-manifest.md).
@@ -139,21 +138,24 @@ without leaving the app, or open an existing `.tex` file.
   chosen family and *Class default* first. Apply writes the table into
   `flashtex.toml` — created from the template when there is none; *Class
   default* everywhere without a manifest writes nothing — and the preview
-  recompiles with the new fonts. A `\setmainfont`, `\setsansfont` or
+  recompiles with the new fonts. `[fonts]` applies in Unicode mode only: a
+  project whose mode nothing sets is typeset in Unicode mode once it has a
+  `[fonts]` table (see *Compiling*). A `\setmainfont`, `\setsansfont` or
   `\setmonofont` in the document still wins over the table, and a
   `\fontspec{…}` group wins locally. The `\setmainfont{` completion rows
   show the same sample in each family.
-- **Packages.** When a compile reports a `\usepackage` the engine does not
-  model and the project does not supply, FlashTeX resolves it through the
-  manifest's local libraries and the per-user package cache first (no
-  network) and then, under the manifest's `[packages] fetch` policy, offers
-  to fetch its LaTeX source files from CTAN: **one sheet per project**
-  listing each package, its version, its files and the URL, with *Fetch*,
-  *Not Now* and *Never for This Project* (which writes `fetch = "never"`);
-  tick *Remember* and Fetch writes `fetch = "always"` so the sheet does not
-  come back. Nothing is fetched without the sheet or that remembered answer.
-  Fetched and library files are compiled from the cache — never from the
-  project — and appear under a dimmed *Packages* group in the Project tree
+- **Packages.** When a compile stops on a package that neither TeX nor the
+  project has (``LaTeX Error: File `x.sty' not found.``), FlashTeX looks it
+  up in the manifest's local libraries and the per-user package cache first
+  (no network) and then, under the manifest's `[packages] fetch` policy,
+  offers to fetch it from CTAN: **one sheet per project** listing each
+  package by name, with *Look Up* (asks CTAN for its version and files,
+  fetching nothing), *Fetch*, *Not Now* and *Never for This Project* (which
+  writes `fetch = "never"`); tick *Remember* and Fetch writes `fetch =
+  "always"` so the sheet does not come back. Nothing is sent to CTAN without
+  the sheet or that remembered answer. Fetched and library files are
+  compiled from the cache — never from the project — and appear under a
+  dimmed *Packages* group in the Project tree
   with their source in the tooltip; they cannot be opened as project files.
   *File › Fetch Missing Packages…* asks again about anything declined. A
   package that ships only `.dtx`/`.ins` sources is unpacked with FlashTeX's
@@ -169,10 +171,6 @@ without leaving the app, or open an existing `.tex` file.
   change or quitting without saving writes a snapshot under
   `~/Library/Application Support/FlashTeX/`; the next time you open that file,
   *File › Restore Unsaved Snapshot…* offers Restore / Discard Snapshot / Later.
-- **Durable history.** On the helper route (below) every edit is also
-  journaled; *Edit › Durable History…* shows undo/redo stacks that survive a
-  crash or relaunch. Without the helper the window says "no preview
-  controller attached".
 
 ## Editing
 
@@ -248,16 +246,14 @@ without leaving the app, or open an existing `.tex` file.
   formula split across more than two lines.
 - **⌘-click** (or ⌘⇧D, *Navigate › Go to Matching*): `\ref{key}` → its
   `\label`; `\label` → cycles through its references; `\begin` ↔ `\end`;
-  `\input{file}` → opens the file. `\cite{key}` and user macros resolve
-  through the project index, which needs the preview-controller helper route
-  (see *Compiling*); without it the footer says the caret is not on a
-  matchable command.
+  `\input{file}` → opens the file. On anything else the footer says the
+  caret is not on a matchable command (user macros: *Go to definition*
+  below).
 - **Gutter**: line numbers, a red or orange dot on lines with an error or
   warning, a grey dot for "not implemented" gaps. Inline underlines mark the
   exact span (red dotted = error, orange = warning); hovering shows the
   message. After you edit, underlines that overlap the edit are dropped, never
-  drawn under the wrong text; when a compile fails with no output the previous
-  underlines are kept and flagged "kept from revision N".
+  drawn under the wrong text.
 - **Auto-close**: typing `{` inserts `}` when the brace is code and followed by
   whitespace or a closer (Preferences › Auto-close brackets & math). Return
   auto-indents and closes `\begin{env}` with the matching `\end{env}`.
@@ -265,16 +261,8 @@ without leaving the app, or open an existing `.tex` file.
   incremental search as you type, with a Replace row (⌘⌥F) whose replacements
   are one undoable edit. Find Next/Previous have no key equivalent (Return /
   Shift-Return in the find bar's own field do the same); **⌘E** sets the
-  current selection as the search string, **⌘J** re-centers it in view. This
-  is separate from *Find in Project* below (one file vs. the whole project).
-- **Find in Project** (⌘⇧F): case-sensitive literal search across the
-  project's durable source; Return or ⌘G goes to the next match; *Plan
-  Replacement* → *Apply* performs a reviewed replace-all. **Helper route
-  only** — otherwise the window says "Search requires the durable helper
-  (flashtex-preview-controller) to be attached and ready."
-- **Rename Citation** (*Edit › Rename Citation…*, also in the toolbar): plans
-  a rename of a citation key across the project, shows every affected place,
-  and applies it as one group after you confirm. Helper route only.
+  current selection as the search string, **⌘J** re-centers it in view. The
+  find bar searches the active file only.
 - **Environments**: a caret on `\begin{X}` or `\end{X}` highlights both ends
   like a bracket pair (nesting of the same name and stray `\end`s are
   tolerated). **⌘⇧A** (*Navigate › Select Environment*) selects the innermost
@@ -306,9 +294,8 @@ without leaving the app, or open an existing `.tex` file.
   or on a command defined by `\newcommand`/`\def`, *Plan Rename* lists the
   occurrences per open document (word-boundary aware — `\foo` never touches
   `\foobar` — comments and verbatim skipped; a name that already exists is
-  refused) and *Apply* rewrites them: one undoable edit per document, or one
-  guarded `apply_group` per file (ledger undo) when the durable helper is
-  attached. Buffer-only: files that are not open are not touched.
+  refused) and *Apply* rewrites them: one undoable edit per document.
+  Buffer-only: files that are not open are not touched.
 - **Outline** (sidebar): parts, chapters, sections and subsections nest by
   depth; theorem-like environments and figures/tables show their caption or
   first line; the row of the caret's section is highlighted and clicking any
@@ -364,15 +351,13 @@ editor's picture of the project, not just of the compile:
   mark — "mystyle.sty: 2 problems — loaded here" — in the gutter, the
   underline, the hover and the error lens, so the line to look under is
   visible from the document.
-- **Missing-package quick fixes**: the row for `packages X are recognised
-  but not implemented` (or `no project file found: looked for X.sty`)
-  offers **Create X.sty** — writes the package template (`\NeedsTeXFormat`,
-  `\ProvidesPackage{X}[date v1.0 …]`, `\DeclareOption*`,
+- **Missing-package quick fixes**: the row for ``LaTeX Error: File `X.sty'
+  not found.`` offers **Create X.sty** — writes the package template
+  (`\NeedsTeXFormat`, `\ProvidesPackage{X}[date v1.0 …]`, `\DeclareOption*`,
   `\ProcessOptions\relax`) next to the entry document and opens it; the next
   compile loads it — and **Fetch X…**, which opens the package consent
   sheet for that name (nothing is fetched until you agree there; see
-  *Fetch Missing Packages…*). Several names fold into one menu. The
-  compiler's own fix (remove the `\usepackage`) stays alongside.
+  *Fetch Missing Packages…*). Several names fold into one menu.
 - **New File…** (⌘N) accepts a `.sty` or `.cls` name and writes the same
   template (`\ProvidesClass` + `\LoadClass{article}` for a class); a new
   package is referenced from the caret with `\usepackage{name}` when the
@@ -381,65 +366,75 @@ editor's picture of the project, not just of the compile:
 
 ## Compiling
 
-FlashTeX compiles through a **producer** process that ships inside the app.
+FlashTeX has one engine: `flashtex-host`, a pdfLaTeX-compatible TeX engine
+that ships inside the app (`Contents/Helpers`) and runs as a separate
+process. It compiles a private copy of the project in
+`~/Library/Caches/FlashTeX/engine-v3/projects/`; your files are only written
+when you save. Developer details:
+[`apps/mac/docs/engine-v3-preview.md`](../../apps/mac/docs/engine-v3-preview.md).
 
-- **At launch** the bundled `flashtex-render` — the current engine: Latin
-  Modern fonts, TeX metrics, the larger LaTeX subset and the v2 preview —
-  attaches automatically and the document compiles (status bar route
-  `worker`; the header names `flashtex-render`). The older Times-metrics
-  `flashtex-compiler` is still bundled and can be attached from the File
-  menu (⌘⇧K) for comparison; **File › Attach Render Pipeline (Latin Modern)**
-  (⌘⇧R) switches back. `FLASHTEX_COMPILER=<path>` names an explicit engine;
-  `FLASHTEX_AUTOATTACH=0` disables auto-attach altogether.
-- **Auto-compile** (toolbar switch, on by default) sends every edit to the
-  producer immediately; one request is in flight at a time and the newest
-  buffer is coalesced behind it, so the preview never shows an older
-  revision over a newer one. **⌘B** compiles on demand (*File › Compile*).
-  Latency (send → result) is shown in the status bar, typically tens of
-  milliseconds; the engine retypesets only the paragraphs you touched.
-- A result is `ok`, `recovered` (pages rendered around problems) or `failed`
-  (no pages; the previous preview stays on screen). *View › Show Preview
-  Debug Status* reveals the status word, a "provisional rendering" note and
-  the display-list identity line in the preview header.
-- **Other producers** (developer options): *Attach Built Compiler* (⌘⇧K) finds
-  `$FLASHTEX_COMPILER` or a `crates/compiler` build; *Attach Worker
-  Executable…* (⌘K) runs any program speaking the JSON Lines protocol
-  (see [compiler.md](compiler.md)); *Detach Worker* stops it. The
-  preview-controller **helper route** (durable ledger + project index owned
-  by the helper, route `controller`; powers Find in Project, Rename Citation,
-  Durable History and `\cite`/macro navigation) has no menu item yet. It
-  starts only when the app is launched with
-  `FLASHTEX_AUTOATTACH=1 FLASHTEX_PREVIEW_CONTROLLER=<path to flashtex-preview-controller>`
-  in the environment, e.g. from a terminal:
-
-  ```sh
-  A=/Applications/FlashTeX.app/Contents/MacOS
-  FLASHTEX_AUTOATTACH=1 FLASHTEX_PREVIEW_CONTROLLER=$A/flashtex-preview-controller $A/FlashTeX
-  ```
-
-  (This is the developer hook documented in `apps/mac/README.md`; it was not
-  exercised while writing this guide.)
+- **TeX files.** The engine reads the LaTeX classes and packages of your
+  TeX Live (MacTeX) installation. Without one it uses the pinned TeX bundle
+  instead, which the app asks before downloading (*Download TeX Files*).
+  With neither — no TeX Live, and no bundle or a declined download — the
+  window shows a plain message, **"Compiling needs the TeX bundle or a TeX
+  Live installation."**, with a **Download** button when a bundle is
+  configured; the editor keeps working, and nothing else typesets the
+  document. On first use the engine prepares the pdfLaTeX format (a few
+  seconds; the pane says "Preparing the pdfLaTeX format…").
+- **Auto-compile** (Settings › Compile › *Auto-compile after edits*, on by
+  default) sends every edit to the engine at once; a newer edit supersedes
+  the compile that is running, and the edited page arrives first. **⌘B** compiles on demand (*File › Compile*, the title bar's ▶);
+  **⌘.** stops a compile that runs too long; *File › Show TeX Log* opens the
+  last compile's `.log`. *Stop at the first error* (same settings section)
+  makes TeX stop like `pdflatex -halt-on-error`; off, an error pdfLaTeX
+  recovers from is shown as a warning and every page is shown. The
+  keystroke-to-page latency is in the status bar.
+- **Bibliographies and indexes.** In a trusted project the engine runs
+  bibtex, biber and makeindex from your TeX Live as latexmk would, and
+  compiles again with what they made; their progress shows in the pane and
+  the status bar.
+- **Project trust.** A project downloaded or received from another computer
+  compiles with shell escape off until you click *Trust This Project* above
+  the pages; a project made on this Mac compiles with pdflatex's restricted
+  shell escape.
+- **Classic and Unicode mode.** Classic mode is pdfLaTeX-compatible; Unicode
+  mode is XeLaTeX-compatible (`flashtex-host-unicode`, fontspec, system
+  fonts, `[fonts]`). The status bar's mode item and *View › Mode for This
+  Document* show the mode and where it comes from; choosing a mode there
+  writes `[project] mode` to `flashtex.toml`. A document that uses fontspec,
+  unicode-math, `\setmainfont` and the like, or a project whose
+  `flashtex.toml` sets `[fonts]`, is typeset in Unicode mode when nothing
+  sets its mode (no `[project] mode`, no `% !TEX program` line, no
+  `FLASHTEX_MODE`): the mode item then says "Detected: …", and
+  `flashtex.toml` is not written. A mode you set is kept, Classic included
+  (Classic does not apply `[fonts]`); the mode item then shows a warning.
+- **Documents typeset before.** A document FlashTeX's previous engine last
+  typeset opens on this engine with a one-time notice over the preview
+  ("This document is now typeset with the new engine."); *Dismiss* removes
+  it for good.
+- **Focus Preview on This Chapter** (*View*, and the title bar) compiles
+  only the active chapter (`\includeonly`).
+- `FLASHTEX_ENGINE_V3=0` in the environment launches the app with the
+  engine off (an editor only).
 
 ## The preview
 
-- **Two panes.** The default is the **v2 pane**: it paints the rendering-v2
-  display list (exact glyphs and positions, the same data the exact PDF
-  export uses) that `flashtex-render` sends with every result. If the older
-  `flashtex-compiler` is attached there is no display list and the pane says
-  "No v2 display list yet" — press ⌘⇧R, or flip the toolbar's *v2 pane*
-  switch off to see the v1 pane (text items drawn with CoreText).
-  `FLASHTEX_PREVIEW_V2=0` starts on the v1 pane.
+- **Pages** are drawn from the engine's display list exactly as Core
+  Graphics draws the PDF pdflatex would write (`\includegraphics`, TikZ and
+  everything else the engine typesets). A page the display list cannot
+  express fully is drawn from the compile's PDF.
 - **Zoom**: ⌘= / ⌘- step by ×1.25 between 25 % and 400 % of fit-width; ⌘9
-  fits the widest page to the pane; ⌘0 shows 1 PDF point per screen point.
-  The header's −/+ buttons and percentage (double-click = fit width) and
-  pinch-to-zoom do the same. Wide pages scroll horizontally.
-- **Click-to-source**: click any word or rule in the preview to select its
-  source in the editor. If you edited that region since the last compile the
-  click is refused with "recompile to navigate" rather than selecting the
-  wrong text.
-- **Caret sync**: preview text whose source contains the editor caret is
-  highlighted (accent fill + underline);
-  *Navigate › Reveal Caret in Preview* (⌘⇧J) selects the whole span.
+  fits the widest page to the pane, ⌘⇧9 fits a whole page; ⌘0 shows 1 PDF
+  point per screen point. The title bar's buttons and pinch-to-zoom do the
+  same. Wide pages scroll horizontally.
+- **Click-to-source**: click any glyph in the preview to select the source
+  character it came from, opening an `\input`/`\include` file if it is not
+  open yet. If you edited that region since the last compile the click is
+  refused with "recompile to navigate" rather than selecting the wrong text.
+- **Caret sync**: the caret's line is marked on the page (a faint band, the
+  caret's glyph tinted, a caret bar); *Navigate › Reveal Caret in Preview*
+  (⌘⇧J) scrolls to the caret's glyph and flashes it.
 - **The preview follows what you are editing** (Preferences › *Preview follows
   the caret*, on by default): shortly after you stop typing — and after the
   recompiled preview lands — the pane scrolls to the text the caret is in, but
@@ -453,45 +448,25 @@ FlashTeX compiles through a **producer** process that ships inside the app.
   out yet — moves nothing. Short hops are animated; long jumps, and "Reduce
   motion", are instant. ⌘⇧J always scrolls to the caret at once, whether or
   not the preference above is even on.
-- **Dark preview** (toolbar switch): inverts page and text colours on screen
-  only; exports are unaffected. Its initial state follows the editor
-  appearance preference.
-- **Stale frames**: while a new frame is being prepared the previous one stays
-  visible with a STALE mark; a frame that fails validation is never painted
-  partially — the pane shows the refusal and offers the v1 preview.
-- **Images: `\includegraphics` png/jpeg/pdf** (v2 pane, `flashtex-render`
-  attached, a project opened from disk). `\includegraphics[width=…,
-  height=…, scale=…, angle=…, page=…]{figures/plot}` inside a `figure` or
-  `table` float paints the file — PNG, JPEG, or one page of a PDF — at the
-  size pdfTeX would give it. The file is read from the project directory
-  (no symlinks, never outside the project) and its bytes must match what the
-  producer sized: if you replace the file, the preview shows "stale image:
-  figures/plot.png" in the header and leaves that box empty until the next
-  compile. Clicking the image selects its `\includegraphics` in the editor.
-  *File › Export PDF…* embeds the same images.
-- **TikZ: drawn in the preview and v2 export** (v2 pane, `flashtex-render`
-  attached). A `tikzpicture` (`\usepackage{tikz}`; the tikz-min subset —
-  `\draw`, `\fill`, `\clip`, `\node`, lines, circles, rectangles, arrows,
-  `dashed`, colours) is painted as vector paths: fills by their rule,
-  strokes with their width, caps, joins and dash pattern, clips applied.
-  Clicking anywhere on the drawn ink selects the whole `tikzpicture` in the
-  editor (the engine attributes each path to the picture, not to one
-  command). *File › Export PDF…* writes the same paths.
+- **Dark preview** (title bar switch): draws the pages dark on screen only
+  (ink lightness inverted, images kept); exports are unaffected. Its initial
+  state follows the editor appearance preference.
+- **Stale pages**: while a compile is under way, pages it will change are
+  dimmed with an orange border until they are current again.
 
 ## Problems and quick fixes
 
 The Problems panel (⌘⇧M; also opened by the sidebar rows and the status-bar
-counts) lists the diagnostics of the current result, grouped by identical
-message ("12× `\in` is not supported…") with a *Show: All / Errors / Warnings*
-filter. Each row shows the message, a `↳` recovery line (what was rendered
-instead), an `↳ explain:` line from the offline explanation catalogue, and
-an "N places" menu.
+counts) lists the diagnostics of the last compile — TeX's own messages, as
+pdflatex prints them — grouped by identical message with a *Show: All /
+Errors / Warnings* filter. Each row shows the message, a plain-language
+explanation where one is known, TeX's help text, and an "N places" menu.
 
 - **Go to source**: click a row or press Return; ⌘⇧] / ⌘⇧[ step through
   diagnostics from the editor, ⌘⌥] / ⌘⌥[ step through the places of the
   selected group.
-- **Fix…** appears when the catalogue has a concrete edit for that
-  diagnostic (for example *Remove `\foo` and keep its argument text*). It
+- **Fix…** appears when there is a mechanical edit for that diagnostic (for
+  example loading the package that defines an undefined command). It
   opens a *Suggested fix* sheet with Before / After; **Apply** performs one
   undoable edit, **Cancel** changes nothing. The fix is rebased byte-exactly
   onto the current text and refused if that region changed since the compile.
@@ -499,33 +474,15 @@ an "N places" menu.
   `path:line: error: message` lines for the selected row or all rows —
   handy for bug reports.
 
-What each diagnostic code means is listed in
-[compiler.md › Troubleshooting](compiler.md#troubleshooting).
-
 ## PDF export
 
 | Menu item | Shortcut | What it writes |
 |---|---|---|
-| **File › Export PDF…** | ⌘⇧E | The current display list through `flashtex-pdf-exact`: embedded Latin Modern subsets, original glyph IDs, exact positions, typed rules, `\includegraphics` images and TikZ paths. Needs a display list (i.e. `flashtex-render` attached). Progress and Cancel in the status bar; the file is written atomically |
+| **File › Export PDF…** | ⌘⇧E | The PDF pdflatex would write for the editor's text, from a full run of the engine (with the resident run's `.aux`, so references are resolved). It waits for bibtex/biber/makeindex to settle first. Progress and Cancel in the status bar; the file is written atomically |
 | File › Print… | ⌘P | Not an export, but the same bytes: the PDF above, through the system print panel |
 
-There is one export route. Three earlier ones — a CoreGraphics rendering of the
-v1 layout (⌘⇧E), *Export PDF via Rust Writer…* (⌘⌥E) and the v2 pane's own
-*Export PDF (v2)…* — were removed in favour of it: each wrote a lower-fidelity
-version of the same document. `flashtex build` on the command line writes the
-same bytes.
-
-The export is black on white regardless of the dark-preview switch. It is not a
-pdfTeX PDF: only what the engine laid out is written (no hyperlinks, no
-metadata). Anything the writer cannot express exactly is refused by name rather
-than approximated.
-
-A long document is previewed through a **page window** — the engine cannot send
-its whole display list in one reply — but it still exports in full: Export and
-Print re-render the complete document through the render pipeline first, which
-takes a few seconds and is reported in the status bar. That needs the render
-pipeline attached (⌘⇧R); without it, Export says so and points you at
-`flashtex build`.
+There is one export route: the engine's. The export is the light-mode PDF
+regardless of the dark-preview switch.
 
 ## Capture conversion (the only model-backed feature)
 
@@ -584,8 +541,9 @@ companion is paired, so the iPad reconnects without any click.
    edit at the caret, verifies it, and inserts exactly one undoable edit (⌘Z).
    **Edit** changes the text first (the bridge refuses edited text —
    transfer-v1 inserts only the journaled proposal — so edit after inserting
-   or reject and resend), **Review…** opens the full sheet with the shadow
-   compile and ambiguities, **Reject** discards it. The iPad's row shows
+   or reject and resend), **Review…** opens the full sheet (the LaTeX, the
+   wrap and insertion preview, the destination, Approve / Reject),
+   **Reject** discards it. The iPad's row shows
    "Inserted on Mac ✓".
 5. **Clear N** removes finished rows. Without a bridge, captures wait in the
    inspector as *received* until **Attach bridge**.
@@ -630,11 +588,8 @@ you trust.
 | ⌘⌥R | Show in Finder (the active document; sidebar rows have *Reveal in Finder*, the tree's empty space *Reveal Project in Finder*) |
 | ⌘⇧P | Command palette |
 | ⌘B | Compile now |
-| ⌘⇧R | Attach render pipeline (Latin Modern) — the current engine |
-| ⌘⇧K | Attach built compiler |
-| ⌘K | Attach worker executable… |
-| ⌘⇧O / ⌘R | Open compile-result fixture… / Reload fixture (developer) |
-| ⌘⇧E | Export PDF… (the display list through `flashtex-pdf-exact`) |
+| ⌘. | Stop compile |
+| ⌘⇧E | Export PDF… (the engine's PDF) |
 | ⌘P | Print… (the same bytes) |
 | ⌘Z | Undo (including an applied fix or capture insertion) |
 | Esc / ⌃Space | Open the completion list explicitly (it also opens on its own — see below) |
@@ -662,9 +617,6 @@ you trust.
 | ⌘= / ⌘- | Zoom preview in / out (×1.25, 25–400 %) |
 | ⌘0 / ⌘9 | Preview actual size / fit width |
 | ⌘⌥= / ⌘⌥- / ⌘⌥0 | Editor font size larger / smaller / reset (13 pt) |
-| ⌘⇧F / ⌘G | Find in Project… / next match |
-| Edit › Rename Citation… | Reviewed citation-key rename across the project |
-| Edit › Durable History… | Undo/redo on the durable edit ledger |
 | ⌘⇧N | Nearby Companion… (pairing, captures) |
 | ⌘⌥P | Pin insertion point (capture destination) |
 | Edit › Open Capture Proposal… | Open a capture proposal file (review sheet; Return approves) |
@@ -722,14 +674,10 @@ as you type it; the caret is a block outside insert mode.
 
 ## Not yet supported
 
-- Automatic attachment of the Latin Modern render pipeline at launch (press
-  ⌘⇧R); a menu item for the preview-controller helper route, so Find in
-  Project, Rename Citation, Durable History and `\cite` navigation need the
-  environment-variable launch described under *Compiling*.
-- `\includegraphics` outside a `figure`/`table` float (and its `trim`/`clip`/
-  `viewport` keys), tables, bibliographies and other constructs listed under
-  [Supported LaTeX](compiler.md#supported-latex) render as diagnostics, not
-  content. Images in floats: see *The preview*.
+- Project-wide search and replace, citation-key rename, durable (ledger)
+  undo history and `\cite` navigation: they needed the preview-controller
+  helper, which the app no longer runs. The find bar searches one file;
+  *Rename Symbol* covers labels and user commands in the open documents.
 - Notarization: the app is ad-hoc signed, hence the right-click › Open step on
   first launch of a browser download.
 - Capture-conversion providers other than xAI (the provider seam is documented

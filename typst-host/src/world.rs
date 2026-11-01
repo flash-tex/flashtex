@@ -1,19 +1,24 @@
 //! The host's Typst `World`: one project root, files read from disk and
-//! confined to it, fonts from files, no packages yet.
+//! confined to it, packages from the project, the host's paths and cache or
+//! (with consent) the network, fonts from files.
 //!
 //! * **Confinement** (DESIGN.md §15.2, "File access"): every path is
-//!   canonicalised and must stay inside the canonical project root, so a
-//!   symlink cannot leave it (typst#5454 is open upstream; this closes it for
-//!   us, as §4.5 does for LaTeX).
-//! * **Packages** (`@preview/...`) are refused with a located error: the
-//!   FlashTeX package lock, offline mode and first-use consent (§15.2) come
-//!   with T1, and until then the host never touches the network.
+//!   canonicalised and must stay inside the canonical project root, or for
+//!   a package file inside the package's canonical root, so a symlink cannot
+//!   leave it (typst#5454 is open upstream; this closes it for us, as §4.5
+//!   does for LaTeX).
+//! * **Packages** ([`crate::packages`]): vendored, the host's paths, the
+//!   cache checked against the project's lock, and the network only when the
+//!   client says `"packages": "online"` (offline by default). A host without
+//!   a [`Packages`] refuses every package.
 //! * **Fonts** are files (`--font-path`, and the system's when enabled);
-//!   nothing is embedded (§15.2).
+//!   nothing is embedded (§15.2). The fonts the document uses are recorded in
+//!   the project's lock and checked on every compile ([`crate::fontlist`]).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Duration};
@@ -22,6 +27,10 @@ use typst::text::{Font, FontBook, FontInfo};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::{FontPath, FontStore};
+use typst_layout::PagedDocument;
+
+use crate::fontlist;
+use crate::packages::{LockMode, Packages, ProjectLock};
 
 /// Where the host finds fonts.
 #[derive(Clone, Debug, Default)]
@@ -37,6 +46,8 @@ pub struct Fonts {
     store: FontStore,
     /// For each font index: the file and face it came from.
     files: Vec<(PathBuf, u32)>,
+    /// Font index → its file's SHA-256 (hex), hashed once per process.
+    shas: Mutex<HashMap<usize, String>>,
 }
 
 impl Fonts {
@@ -54,7 +65,21 @@ impl Fonts {
             .collect();
         let mut store = FontStore::new();
         store.extend(entries);
-        Fonts { store, files }
+        Fonts {
+            store,
+            files,
+            shas: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The SHA-256 (hex) of font `index`'s file.
+    fn sha(&self, index: usize, font: &Font) -> String {
+        if let Some(s) = self.shas.lock().unwrap().get(&index) {
+            return s.clone();
+        }
+        let s = fontlist::file_sha(font);
+        self.shas.lock().unwrap().insert(index, s.clone());
+        s
     }
 
     pub fn len(&self) -> usize {
@@ -83,6 +108,41 @@ pub struct HostWorld<'f> {
     sources: Mutex<HashMap<FileId, Source>>,
     /// Raw files, read once per compile.
     files: Mutex<HashMap<FileId, FileResult<Bytes>>>,
+    /// Where packages come from; `None`: every package is refused.
+    packages: Option<Arc<Packages>>,
+    /// The project's `flashtex-typst.lock`.
+    lock: Arc<ProjectLock>,
+    /// This compile may fetch packages (`COMPILE.packages` `online`).
+    online: AtomicBool,
+    /// Packages this compile asked for (one `needed` each).
+    asked: Mutex<std::collections::HashSet<typst::syntax::package::PackageSpec>>,
+    /// Package roots resolved by this compile.
+    resolved: Mutex<HashMap<typst::syntax::package::PackageSpec, PathBuf>>,
+    fonts_state: Mutex<FontsState>,
+}
+
+/// What the font list last saw.
+#[derive(Default)]
+struct FontsState {
+    /// Fonts loaded when the document's fonts were last recorded.
+    loaded_seen: Option<usize>,
+    /// The `[fonts]` table last checked, and what the check found.
+    checked: Option<BTreeMap<String, (String, String)>>,
+    problems: Vec<fontlist::Problem>,
+    /// What the last [`HostWorld::after_compile`] found, for the next
+    /// compile's diagnostics.
+    notes: Vec<LockNote>,
+}
+
+/// A note the host adds to a compile's diagnostics about the project's
+/// lock (spec §11.8: `DIAGNOSTIC.kind`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LockNote {
+    /// `font` or `lock`.
+    pub kind: &'static str,
+    pub message: String,
+    /// The lock file.
+    pub file: PathBuf,
 }
 
 impl<'f> HostWorld<'f> {
@@ -95,6 +155,7 @@ impl<'f> HostWorld<'f> {
             return Err(format!("root {} is not a directory", root.display()));
         }
         let main = project_file(main)?;
+        let lock = ProjectLock::new(&root);
         Ok(HostWorld {
             root,
             main,
@@ -103,11 +164,38 @@ impl<'f> HostWorld<'f> {
             loaded: Mutex::new(HashMap::new()),
             sources: Mutex::new(HashMap::new()),
             files: Mutex::new(HashMap::new()),
+            packages: None,
+            lock,
+            online: AtomicBool::new(false),
+            asked: Mutex::new(Default::default()),
+            resolved: Mutex::new(HashMap::new()),
+            fonts_state: Mutex::new(FontsState::default()),
         })
+    }
+
+    /// Resolve packages through `packages` (without, every package is
+    /// refused).
+    pub fn with_packages(mut self, packages: Arc<Packages>) -> Self {
+        self.packages = Some(packages);
+        self
+    }
+
+    /// Replace the standard library (tools that need Typst's test-suite
+    /// globals; the host itself always uses the default library).
+    #[doc(hidden)]
+    pub fn set_library(&mut self, library: Library) {
+        self.library = LazyHash::new(library);
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The next compile's options (`COMPILE.packages`, `COMPILE.lock`).
+    pub fn set_compile_options(&mut self, online: bool, lock: LockMode) {
+        self.online.store(online, Ordering::Relaxed);
+        self.lock.set_mode(lock);
+        self.lock.refresh();
     }
 
     /// Forget the raw files read by the last compile, so the next one sees
@@ -115,6 +203,116 @@ impl<'f> HostWorld<'f> {
     /// (`Source::replace` reparses only what changed).
     pub fn reset(&mut self) {
         self.files.get_mut().unwrap().clear();
+        self.asked.get_mut().unwrap().clear();
+        self.resolved.get_mut().unwrap().clear();
+    }
+
+    /// The lock's notes for this compile's diagnostics (cheap: no font is
+    /// hashed here): the lock as read before the compile, if it cannot be
+    /// read, and what the previous [`HostWorld::after_compile`] found.
+    /// Sent on every compile until fixed.
+    pub fn lock_notes(&self) -> Vec<LockNote> {
+        if self.lock.mode() == LockMode::Off {
+            return vec![];
+        }
+        let mut notes = vec![];
+        if let (_, Some(e)) = self.lock.snapshot() {
+            notes.push(LockNote {
+                kind: "lock",
+                message: e,
+                file: self.lock.path(),
+            });
+        }
+        if let Some(m) = self.lock.take_memory_note() {
+            notes.push(LockNote {
+                kind: "lock",
+                message: m,
+                file: self.lock.path(),
+            });
+        }
+        notes.extend(self.fonts_state.lock().unwrap().notes.iter().cloned());
+        notes
+    }
+
+    /// After a compile's `DONE` (off the edited page's path; DESIGN.md
+    /// §15.2 "recorded in the project", never before the page): record the
+    /// fonts the document uses in the lock when they are new to it (or all
+    /// of them, with `lock` `update`) and check the recorded ones against
+    /// the installed fonts, hashing font files as needed (once per process
+    /// each). The findings reach the client with the next compile
+    /// ([`HostWorld::lock_notes`]).
+    pub fn after_compile(&self, doc: Option<&PagedDocument>) {
+        let mode = self.lock.mode();
+        if mode == LockMode::Off {
+            return;
+        }
+        let file = self.lock.path();
+        let mut notes = vec![];
+        let mut st = self.fonts_state.lock().unwrap();
+        if let Some(doc) = doc {
+            let loaded = self.loaded.lock().unwrap().len();
+            if st.loaded_seen != Some(loaded) || mode == LockMode::Update {
+                st.loaded_seen = Some(loaded);
+                let used = fontlist::used_fonts(doc);
+                let indices: Vec<Option<usize>> = {
+                    let loaded = self.loaded.lock().unwrap();
+                    used.iter().map(|f| loaded.get(f).copied()).collect()
+                };
+                let entries: Vec<(String, String, String)> = used
+                    .iter()
+                    .zip(indices)
+                    .filter_map(|(f, i)| {
+                        let i = i?;
+                        let name = self
+                            .fonts
+                            .files
+                            .get(i)
+                            .and_then(|(p, _)| p.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        Some((fontlist::key(f.info()), self.fonts.sha(i, f), name))
+                    })
+                    .collect();
+                let r = self.lock.update(|l| {
+                    if mode == LockMode::Update {
+                        let now: BTreeMap<_, _> =
+                            entries.into_iter().map(|(k, s, n)| (k, (s, n))).collect();
+                        let changed = l.fonts != now;
+                        l.fonts = now;
+                        return changed;
+                    }
+                    let mut changed = false;
+                    for (k, s, n) in entries {
+                        if let std::collections::btree_map::Entry::Vacant(e) = l.fonts.entry(k) {
+                            e.insert((s, n));
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+                if let Err(e) = r {
+                    notes.push(LockNote {
+                        kind: "lock",
+                        message: format!("the font list was not recorded: {e}"),
+                        file: file.clone(),
+                    });
+                }
+            }
+        }
+        let (lock, _) = self.lock.snapshot();
+        if st.checked.as_ref() != Some(&lock.fonts) {
+            let book = self.fonts.store.book();
+            st.problems = fontlist::check(&lock.fonts, book, &|i| self.font(i), &|i, f| {
+                self.fonts.sha(i, f)
+            });
+            st.checked = Some(lock.fonts);
+        }
+        notes.extend(st.problems.iter().map(|p| LockNote {
+            kind: "font",
+            message: p.message.clone(),
+            file: file.clone(),
+        }));
+        st.notes = notes;
     }
 
     /// The absolute path of a project file (for `SOURCES` and diagnostics).
@@ -139,18 +337,45 @@ impl<'f> HostWorld<'f> {
     }
 
     fn read(&self, id: FileId) -> FileResult<Bytes> {
-        if let VirtualRoot::Package(spec) = id.root() {
-            return Err(FileError::Other(Some(
-                format!(
-                    "package {spec} is not available: this Typst host has no package support yet \
-                     (the FlashTeX package lock, offline mode and consent come first; DESIGN.md §15.2)"
-                )
-                .into(),
-            )));
-        }
         let rel = Path::new(id.vpath().get_without_slash());
-        let path = self.confine(rel).map_err(|_| FileError::AccessDenied)?;
-        let data = std::fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
+        let path = if let VirtualRoot::Package(spec) = id.root() {
+            let Some(packages) = &self.packages else {
+                return Err(FileError::Other(Some(
+                    format!("package {spec} is not available: this host serves no packages").into(),
+                )));
+            };
+            // Resolved once per compile (a package has many files).
+            let cached = self.resolved.lock().unwrap().get(spec).cloned();
+            let pkg_root = match cached {
+                Some(r) => r,
+                None => {
+                    let online = self.online.load(Ordering::Relaxed);
+                    let first = self.asked.lock().unwrap().insert(spec.clone());
+                    let r = packages.resolve(spec, &self.root, &self.lock, online, first)?;
+                    self.resolved
+                        .lock()
+                        .unwrap()
+                        .insert(spec.clone(), r.clone());
+                    r
+                }
+            };
+            let path = confine(&pkg_root, rel).map_err(|_| FileError::AccessDenied)?;
+            (pkg_root, path)
+        } else {
+            let path = self.confine(rel).map_err(|_| FileError::AccessDenied)?;
+            (self.root.clone(), path)
+        };
+        let (base, path) = path;
+        // `confine` resolved every symlink; open that resolved path from the
+        // base without following any, so a component swapped for a symlink
+        // since cannot be followed out (no check-then-open race).
+        let inner = path
+            .strip_prefix(&base)
+            .map_err(|_| FileError::AccessDenied)?;
+        let data = read_nofollow(&base, inner).map_err(|e| match e.raw_os_error() {
+            Some(libc::ELOOP) | Some(libc::ENOTDIR) => FileError::AccessDenied,
+            _ => FileError::from_io(e, &path),
+        })?;
         Ok(Bytes::new(data))
     }
 }
@@ -288,6 +513,59 @@ pub fn open_for_write(root: &Path, rel: &Path, create: bool) -> Result<std::fs::
     Ok(f)
 }
 
+/// Read `base`/`rel` (`base` canonical, `rel` already resolved inside it)
+/// walking from `base` with `openat`, every component `O_NOFOLLOW`: a
+/// symlink anywhere is refused (`ELOOP`/`ENOTDIR`) instead of followed.
+pub fn read_nofollow(base: &Path, rel: &Path) -> std::io::Result<Vec<u8>> {
+    use std::ffi::CString;
+    use std::io::Read;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let bad = || std::io::Error::from_raw_os_error(libc::EINVAL);
+    let cstr = |s: &std::ffi::OsStr| CString::new(s.as_bytes()).map_err(|_| bad());
+    let open_at = |dir: libc::c_int, name: &CString, flags: libc::c_int| {
+        // SAFETY: a valid directory descriptor (or AT_FDCWD for the absolute
+        // base) and a NUL-terminated name; the result is owned exactly once.
+        let fd = unsafe { libc::openat(dir, name.as_ptr(), flags | libc::O_CLOEXEC) };
+        if fd < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        }
+    };
+    let names: Vec<&std::ffi::OsStr> = rel
+        .components()
+        .map(|c| match c {
+            std::path::Component::Normal(n) => Ok(n),
+            _ => Err(bad()),
+        })
+        .collect::<Result<_, _>>()?;
+    let Some((file, dirs)) = names.split_last() else {
+        return Err(bad());
+    };
+    let mut dir = open_at(
+        libc::AT_FDCWD,
+        &cstr(base.as_os_str())?,
+        libc::O_RDONLY | libc::O_DIRECTORY,
+    )?;
+    for d in dirs {
+        dir = open_at(
+            dir.as_raw_fd(),
+            &cstr(d)?,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )?;
+    }
+    let fd = open_at(
+        dir.as_raw_fd(),
+        &cstr(file)?,
+        libc::O_RDONLY | libc::O_NOFOLLOW,
+    )?;
+    let mut f = std::fs::File::from(fd);
+    let mut data = Vec::new();
+    f.read_to_end(&mut data)?;
+    Ok(data)
+}
+
 /// The path the kernel has for an open descriptor.
 fn fd_path(f: &std::fs::File) -> Result<PathBuf, String> {
     use std::os::fd::AsRawFd;
@@ -399,6 +677,29 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reads walk from the base with O_NOFOLLOW: a symlink swapped in for a
+    /// directory or the file is refused, a plain path is read.
+    #[test]
+    fn reads_never_follow_symlinks() {
+        let dir = std::env::temp_dir().join(format!("ftth-rnofollow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("proj/sub")).unwrap();
+        std::fs::create_dir_all(dir.join("out")).unwrap();
+        let base = dir.join("proj").canonicalize().unwrap();
+        std::fs::write(base.join("sub/a.typ"), "inside").unwrap();
+        std::fs::write(dir.join("out/a.typ"), "OUTSIDE").unwrap();
+        assert_eq!(
+            read_nofollow(&base, Path::new("sub/a.typ")).unwrap(),
+            b"inside"
+        );
+        std::os::unix::fs::symlink(dir.join("out"), base.join("swapped")).unwrap();
+        std::os::unix::fs::symlink(dir.join("out/a.typ"), base.join("f.typ")).unwrap();
+        assert!(read_nofollow(&base, Path::new("swapped/a.typ")).is_err());
+        assert!(read_nofollow(&base, Path::new("f.typ")).is_err());
+        assert!(read_nofollow(&base, Path::new("../out/a.typ")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn civil_dates() {

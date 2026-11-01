@@ -42,6 +42,9 @@
 //! 299 559` and `lmsy8.afm` `B 31 41 274 559` (thousandths of the font size),
 //! placed at the box position above.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

@@ -1,0 +1,6 @@
+start 2026-10-02T17:20:44Z 13:20  up 21 days, 12:13, 2 users, load averages: 97.61 80.34 72.78
+Darwin 25.3.0 arm64
+Apple M1 Max 10 34359738368
+engine /tmp/ib-t7/t7 HEAD ab9893935; checkout ab9893935
+waited for load1 < 20.0: now 48.14
+end 2026-10-02T18:11:04Z 14:11  up 21 days, 13:03, 2 users, load averages: 5.27 11.50 28.20

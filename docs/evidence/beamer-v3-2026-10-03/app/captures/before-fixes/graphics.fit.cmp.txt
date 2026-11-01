@@ -1,0 +1,24 @@
+status done; pages 7 (pdf 7); incomplete (
+)
+p1 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 1049 maxDelta 127 bbox x0-1037 y0-746
+p2 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 1405 maxDelta 2 bbox x256-1029 y190-746
+p3 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 2852 maxDelta 252 bbox x81-1029 y229-746
+p4 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 1606 maxDelta 217 bbox x302-1029 y218-746
+p5 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 1606 maxDelta 217 bbox x302-1029 y218-746
+p6 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 855 maxDelta 2 bbox x302-1029 y218-746
+p7 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 769 maxDelta 2 bbox x280-1029 y183-746
+p8 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p9 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p10 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p11 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p12 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p13 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p14 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p15 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE

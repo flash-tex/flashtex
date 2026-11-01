@@ -1,5 +1,11 @@
 //! JSON Lines worker. Requests on stdin, replies on stdout, logs on stderr.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::question_mark,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 use flashtex_compiler::json;
 use flashtex_compiler::protocol::{self, RequestLine};
 use flashtex_compiler::supported;

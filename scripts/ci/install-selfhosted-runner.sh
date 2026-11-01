@@ -342,5 +342,8 @@ Then tell the workflows to use it:
 
 Until that variable is 1, every Mac job stays on GitHub-hosted runners, so the
 fallback is the default and this runner can be registered and watched before
-anything depends on it.
+anything depends on it. It switches the Macs only: the NixOS runners have
+their own switch, FLASHTEX_SELFHOSTED_LINUX (which follows this one while it
+is unset), so set it to 0 first if they are offline:
+  gh variable set FLASHTEX_SELFHOSTED_LINUX --repo $REPO --body 0
 EOF

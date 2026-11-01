@@ -3,6 +3,9 @@
 //! LaTeX layer, and compares against pdfTeX data in `expected.txt`
 //! (dimensions, `\badness`, `\showbox` text, diagnostics, positions).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod dsl;
 
 use std::collections::HashMap;

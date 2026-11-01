@@ -1,0 +1,9 @@
+% unicode-math with Fira Sans and Fira Math (TeX Live's fira, firamath)
+\documentclass{article}
+\usepackage{unicode-math}
+\setmainfont{FiraSans-Regular.otf}[BoldFont=FiraSans-Bold.otf, ItalicFont=FiraSans-Italic.otf]
+\setmathfont{FiraMath-Regular.otf}
+\begin{document}
+Fira: $f(x) = \frac{1}{\sigma\sqrt{2\pi}} e^{-\frac{(x-\mu)^2}{2\sigma^2}}$, $\forall\epsilon>0$.
+\[ \mathbf{A}\mathbf{x} = \mathbf{b}, \qquad \lVert x\rVert_2 = \sqrt{\textstyle\sum_i x_i^2} \]
+\end{document}

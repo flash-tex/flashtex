@@ -1,7 +1,7 @@
 # FlashTeX Cargo workspace (docs/proposals/generated-data-and-maintainability.md
 # §3.2, slice 2 complete).
 #
-# All 38 crates are members: one Cargo.lock (this directory's), one target
+# Every crate under crates/ is a member, except crates/flashtex-xetex (exclude below): one Cargo.lock (this directory's), one target
 # directory (./target), and `cargo test --workspace` tests them all.
 # Binaries of member crates are therefore built into ./target/<profile>/, NOT
 # crates/<name>/target/<profile>/ -- scripts that need a helper binary resolve
@@ -19,6 +19,10 @@
 # resolves a crates.io version it did not already lock.
 resolver = "2"
 members = ["crates/*", "tools/web2rust"]
+# The XeTeX port (docs/design/xetex/PLAN.md) is built on its own, with its own
+# lockfile and target directory (scripts/xetex-lockstep.sh), so that its 70k
+# generated lines do not slow every workspace build and gate.
+exclude = ["crates/flashtex-xetex"]
 
 # perf-bench's committed baselines (crates/perf-bench/baselines/) state the
 # build profile, and two runs are only comparable when it matches, so the

@@ -22,6 +22,9 @@
 //! math-layout models both (`BigSizing`, PR #239); selecting between them is
 //! this crate's job, because the package list is the pipeline's to read.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

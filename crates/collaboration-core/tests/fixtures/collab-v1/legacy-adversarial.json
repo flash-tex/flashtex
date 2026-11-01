@@ -1,0 +1,36 @@
+{
+  "format": "collab-v1-fixture/1",
+  "name": "legacy-adversarial",
+  "description": "adversarial.rs in collab-v1: inserts anchored to a tombstone, a scalar deleted twice concurrently, delete and insert at one element",
+  "generator": "rust oracle (crates/collaboration-core)",
+  "frames": [
+    "2c0000000501010001b7ecd4fc8eb694ab9e010001b4bddd0ddbb73e89ca448763fd5d56100100086d61696e2e746578",
+    "2700000005020101b4bddd0ddbb73e89ca448763fd5d56100101b7ecd4fc8eb694ab9e0100000003616263",
+    "2d00000005030101b4bddd0ddbb73e89ca448763fd5d5610010281f0f5bbc4aca8d49c0100b7ecd4fc8eb694ab9e010101",
+    "2d00000005040101b4bddd0ddbb73e89ca448763fd5d5610010281fc99afe1c98eb2b00100b7ecd4fc8eb694ab9e010101",
+    "3b00000005050101b4bddd0ddbb73e89ca448763fd5d56100101b7ecd4fc8eb694ab9e010301b7ecd4fc8eb694ab9e010101b7ecd4fc8eb694ab9e01020158",
+    "3b00000005060101b4bddd0ddbb73e89ca448763fd5d5610010181f0f5bbc4aca8d49c010101b7ecd4fc8eb694ab9e010101b7ecd4fc8eb694ab9e01030159",
+    "2d00000005070101b4bddd0ddbb73e89ca448763fd5d5610010281fc99afe1c98eb2b00101b7ecd4fc8eb694ab9e010001",
+    "3b00000005080101b4bddd0ddbb73e89ca448763fd5d56100101b7ecd4fc8eb694ab9e010401b7ecd4fc8eb694ab9e010101b7ecd4fc8eb694ab9e0103015a"
+  ],
+  "orders": [
+    [0, 1, 2, 3, 4, 5, 6, 7],
+    [7, 6, 5, 4, 3, 2, 1, 0],
+    [3, 5, 1, 7, 6, 4, 0, 2, 6, 4]
+  ],
+  "expected": {
+    "project_digest": "12e731bde338a0f3",
+    "filemap_digest": "9a865a90b5c9a009",
+    "files": [
+      {
+        "file": "b4bddd0ddbb73e89ca448763fd5d5610",
+        "path": "main.tex",
+        "kind": "text",
+        "text": "YZXc",
+        "digest": "5b6bdbd0fba26293"
+      }
+    ],
+    "rejected": [],
+    "pending": 0
+  }
+}

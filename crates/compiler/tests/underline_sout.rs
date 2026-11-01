@@ -7,6 +7,9 @@
 //!   Rule 10 / tex.web §735).
 //! - ulem `\sout` is `\bgroup \ULdepth=-.55ex \ULset`.
 //! `\uline` geometry is unchanged (see `uline.rs`).
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::doc_lazy_continuation, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::LayoutConstraints;
 use flashtex_compiler::parser::{

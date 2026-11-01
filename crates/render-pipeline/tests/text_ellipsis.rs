@@ -15,6 +15,9 @@
 //! content stream by `tools/visual-oracle/pdftext.py`. pdflatex is an oracle:
 //! it is never in the product path.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

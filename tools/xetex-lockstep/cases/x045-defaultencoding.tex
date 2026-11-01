@@ -1,0 +1,12 @@
+% x045-defaultencoding: \XeTeXdefaultencoding and \XeTeXinputencoding with built-in names
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\XeTeXdefaultencoding "utf16le"
+\XeTeXdefaultencoding "auto"
+\XeTeXinputencoding "UTF8"
+\XeTeXinputencoding "auto"
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

@@ -1,0 +1,35 @@
+{
+  "format": "collab-v1-fixture/1",
+  "name": "legacy-five-replicas-one-anchor",
+  "description": "adversarial.rs in collab-v1: five replicas insert at the identical anchor; one total order",
+  "generator": "rust oracle (crates/collaboration-core)",
+  "frames": [
+    "2c0000000501010001e5c0c1f3ebdfd4d7ae010001fe6b8e80a5f4561dccb8ac5aa6b853a50100086d61696e2e746578",
+    "2600000005020101fe6b8e80a5f4561dccb8ac5aa6b853a50101e5c0c1f3ebdfd4d7ae01000000025b5d",
+    "3b00000005030101fe6b8e80a5f4561dccb8ac5aa6b853a50101e5c0c1f3ebdfd4d7ae010201e5c0c1f3ebdfd4d7ae010001e5c0c1f3ebdfd4d7ae01010130",
+    "3b00000005040101fe6b8e80a5f4561dccb8ac5aa6b853a50101e3d4bfbde8cbe296c0010001e5c0c1f3ebdfd4d7ae010001e5c0c1f3ebdfd4d7ae01010131",
+    "3a00000005050101fe6b8e80a5f4561dccb8ac5aa6b853a50101b793d6a5d4fc8af6430001e5c0c1f3ebdfd4d7ae010001e5c0c1f3ebdfd4d7ae01010132",
+    "3b00000005060101fe6b8e80a5f4561dccb8ac5aa6b853a50101e1c0c5b9e99ae3f4c8010001e5c0c1f3ebdfd4d7ae010001e5c0c1f3ebdfd4d7ae01010133",
+    "3a00000005070101fe6b8e80a5f4561dccb8ac5aa6b853a50101a18fe2fa82efac9b430001e5c0c1f3ebdfd4d7ae010001e5c0c1f3ebdfd4d7ae01010134"
+  ],
+  "orders": [
+    [0, 1, 2, 3, 4, 5, 6],
+    [6, 5, 4, 3, 2, 1, 0],
+    [5, 4, 0, 6, 3, 2, 1, 6]
+  ],
+  "expected": {
+    "project_digest": "c3dd023d538d2307",
+    "filemap_digest": "a3253c70c76db95c",
+    "files": [
+      {
+        "file": "fe6b8e80a5f4561dccb8ac5aa6b853a5",
+        "path": "main.tex",
+        "kind": "text",
+        "text": "[42013]",
+        "digest": "d4317e31d58c7a3f"
+      }
+    ],
+    "rejected": [],
+    "pending": 0
+  }
+}

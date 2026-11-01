@@ -9,19 +9,21 @@ import XCTest
 /// `\write18`, as pdflatex's default. Nothing here touches the app's
 /// defaults: each test has its own store file.
 final class EngineV3TrustTests: XCTestCase {
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-trust-\(getpid())")
     var store: EngineV3Trust.Store!
     var storeFile: URL!
     var made: [URL] = []
 
     override func setUp() {
-        setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1)
+        OwnerStateGuard.install(); env.set("FLASHTEX_V3_CACHE", Self.cache.path)
         storeFile = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-trust-store-\(UUID().uuidString).json")
         store = .file(storeFile)
     }
 
     override func tearDown() {
-        unsetenv("FLASHTEX_V3_CACHE")
+        env.restore()
         EngineV3Trust.testSharedFolders = []
         try? FileManager.default.removeItem(at: Self.cache)
         try? FileManager.default.removeItem(at: Self.cache.deletingLastPathComponent().appendingPathComponent(Self.cache.lastPathComponent + "-trust.json"))
@@ -295,7 +297,7 @@ final class EngineV3TrustTests: XCTestCase {
     /// off and 2 when restricted; the document has a second page only when 2.
     @MainActor
     func testQuarantinedProjectCompilesWithShellEscapeOffUntilTrusted() async throws {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built") }
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built") }
         let (dir, file) = try project("\\documentclass{article}\n\\begin{document}\nOne.\n\\ifnum\\pdfshellescape=2 \\newpage Two.\\fi\n\\end{document}\n")
         quarantine(file)
         // The folder stands in for ~/Downloads, with another download in it
@@ -305,8 +307,6 @@ final class EngineV3TrustTests: XCTestCase {
         try "\\immediate\\write18{x}".write(to: unrelated, atomically: true, encoding: .utf8)
         quarantine(unrelated)
         // The records go to the store beside FLASHTEX_V3_CACHE (setUp), removed in tearDown.
-        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
-        defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         func wait(_ cond: @escaping () -> Bool) async throws {
             let start = Date()
             while !cond() { if Date().timeIntervalSince(start) > 60 { XCTFail("timeout"); return }; try await Task.sleep(nanoseconds: 50_000_000) }

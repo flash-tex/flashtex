@@ -80,7 +80,7 @@ class CaptureTest(unittest.TestCase):
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
-    def test_capture_037_lastbox_single_shipout(self):
+    def test_capture_037_lastbox_ships_two_boxes(self):
         if shutil.which("pdftex") is None:
             self.skipTest("reference engine pdftex not on PATH")
         workdir = tempfile.mkdtemp(prefix="lockstep-test-037-")
@@ -92,9 +92,10 @@ class CaptureTest(unittest.TestCase):
                                      "037-lastbox.tex"), tex)
             cap = lockstep_run.capture(tex, "pdftex", workdir)
             self.assertEqual(cap.returncode, 0)
+            # the case ships box 1 and then box 2 (\lsshipbox1, \lsshipbox2)
             self.assertEqual(cap.log.count(
-                "Completed box being shipped out"), 1)
-            self.assertEqual(len(cap.boxes), 1)
+                "Completed box being shipped out"), 2)
+            self.assertEqual(len(cap.boxes), 2)
             self.assertIn("Completed box being shipped out", cap.boxes[0])
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -1752,6 +1753,16 @@ class LineEndingTest(unittest.TestCase):
         self.assertEqual(
             lockstep_run.normalise("a\r\nb\r\n", "/nonexistent-tmp"),
             "a\r\nb\r\n")
+
+    def test_normalise_masks_pdfelapsedtime_values(self):
+        """DESIGN §1.1 (#1462): the same mask as tools/parity's."""
+        def log(n):
+            return ("~.\\stamp ->\\edef \\st {\\the \\pdfelapsedtime }\n{\\edef}\n"
+                    f"{{changing \\st=undefined}}\n{{into \\st=macro:->{n}}}\n{{into \\count255={n}}}\n")
+        a, b = (lockstep_run.normalise(log(n), "/nonexistent-tmp") for n in (4147, 4163))
+        self.assertIn("{into \\st=macro:-><ELAPSED>}", a)
+        self.assertNotEqual(a, b)  # the ordinary \count255 assignment stays compared
+        self.assertEqual(a.replace("count255=4147", "count255=4163"), b)
 
     def test_normalise_hides_the_per_engine_bin_dir_hash(self):
         """A warning prints argv[0], which embeds the per-engine link

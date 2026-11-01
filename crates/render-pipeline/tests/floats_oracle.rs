@@ -4,6 +4,9 @@
 //! test-only; cargo never runs TeX). Every image box, caption start and body
 //! paragraph start must agree on the page and within 1 pt (bp) in x and y.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(unused_mut, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use flashtex_compiler::json::{self, Value};

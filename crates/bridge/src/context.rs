@@ -23,7 +23,7 @@ pub fn build<'a>(
     supported_features: Vec<String>,
 ) -> Result<Context> {
     crate::range(&doc.text, start, end)?;
-    // The feature list is compiler-derived (`features::supported_features`, well
+    // The feature list is the bridge's own table (`features::supported_features`, well
     // over 100 entries today), so bound it by count and total bytes rather than
     // the former 64 entries, which rejected every real `capture_convert`.
     if end - start > MAX_CONTEXT_BYTES / 2

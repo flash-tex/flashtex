@@ -27,6 +27,9 @@
 //! space: `4.83948 plus 5.44014 minus 0.40297` at 11pt, five times the
 //! stretch `\thm@headsep` asks for.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::doc_lazy_continuation, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

@@ -1,0 +1,48 @@
+\documentclass[10pt]{beamer}
+\usetheme{metropolis}
+\usepackage{appendixnumberbeamer}
+\usepackage{booktabs}
+\title{Metropolis under pdflatex}
+\subtitle{Progress bar, standout and appendix}
+\author{M. Modern}
+\institute{FlashTeX}
+\date{3 October 2026}
+\metroset{progressbar=frametitle}
+\begin{document}
+\maketitle
+\begin{frame}{Table of contents}
+  \setbeamertemplate{section in toc}[sections numbered]
+  \tableofcontents[hideallsubsections]
+\end{frame}
+\section{Elements}
+\begin{frame}{Typography}
+  The theme's fonts fall back to Computer Modern Sans under pdflatex.
+  \begin{itemize}
+    \item \textbf{Bold}, \emph{emphasised}, \alert{alerted}.
+    \item<2-> Revealed on the second slide.
+  \end{itemize}
+\end{frame}
+\begin{frame}{Blocks}
+  \begin{block}{Default}Block content.\end{block}
+  \begin{alertblock}{Alert}Block content.\end{alertblock}
+  \begin{exampleblock}{Example}Block content.\end{exampleblock}
+\end{frame}
+\begin{frame}{Table}
+  \begin{tabular}{@{} lr @{}}
+    \toprule
+    Fruit & Price \\
+    \midrule
+    Apples & 2.50 \\
+    Pears & 3.10 \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+\section{Conclusion}
+\begin{frame}[standout]
+  Questions?
+\end{frame}
+\appendix
+\begin{frame}{Backup}
+  Appendix frames are not counted.
+\end{frame}
+\end{document}

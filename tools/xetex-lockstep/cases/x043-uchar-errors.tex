@@ -1,0 +1,11 @@
+% x043-uchar-errors: \Uchar and \Ucharcat out of range
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\message{x043 [\Uchar"110000]}
+\message{x043 [\Ucharcat"41 5]}
+\message{x043 [\Ucharcat"41 16]}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

@@ -1,0 +1,11 @@
+% Unicode bench (M3, INCREMENTAL.md §1's second row): fontspec with a font
+% found by name through the font index (there \setmainfont{Georgia}, a macOS
+% font; here TeX Gyre Termes, which TeX Live has on every platform).
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Termes}
+\begin{document}
+\section{Named font}
+The quick brown fox jumps over the lazy dog. EDITPOINT This paragraph is the
+one the latency harness edits; fi fl ffi ligatures and “quotes”.
+\end{document}

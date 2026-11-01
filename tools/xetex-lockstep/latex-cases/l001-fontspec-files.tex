@@ -1,0 +1,24 @@
+% l001-fontspec-files: fontspec with TeX Gyre fonts named by file
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyretermes-regular.otf}[
+  BoldFont=texgyretermes-bold.otf,
+  ItalicFont=texgyretermes-italic.otf,
+  BoldItalicFont=texgyretermes-bolditalic.otf]
+\setsansfont{texgyreheros-regular.otf}[BoldFont=texgyreheros-bold.otf]
+\setmonofont{texgyrecursor-regular.otf}
+\begin{document}
+\section{Office efficiency}
+We shall find that office workers, efficient and affluent, flatly refuse
+difficult fjords; \textbf{AVATAR}, \emph{Wo, Ta,} T. Yo! Naïve café owners in
+Zürich serve crème brûlée -- or not --- with 1234567890 ``quotes''.
+\textsf{Sans serif text, with \textbf{office} ligatures.}
+\texttt{monospaced office text}
+
+\subsection{Lists}
+\begin{itemize}
+\item \textbf{\textit{Bold italic}} and \textit{italic} words.
+\item Accented: Ångström, Łódź, Øresund, façade, naïveté, Æsir, œuvre.
+\item Punctuation: ¡Hola! ¿Qué? «guillemets» ‹single› „low“ ‚low‘.
+\end{itemize}
+\end{document}

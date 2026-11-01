@@ -34,6 +34,23 @@
 #      and no reference to the engine crate, and (from cargo metadata) links
 #      no GPL/LGPL/AGPL or unlicensed package from any source.
 #
+#   E. The MIT Mac app (apps/mac) links no GPL code; it only runs
+#      flashtex-host as a separate executable that make-app.sh copies into the
+#      bundle. No SwiftPM/Xcode build input names a GPL crate (E1) or declares
+#      a binary/system-library target, linked library, unsafeFlags, native
+#      library or link-path setting (E2; Apple frameworks are fine); no
+#      apps/mac packaging script passes link flags to the build, and no GPL
+#      crate builds a staticlib/cdylib/dylib (E3); no symlink under apps/mac
+#      resolves into a GPL crate (E4). Swift sources may name the engine's
+#      paths to find the host executable, so they are not scanned. This is
+#      the "check C" of the old-engine retirement plan (#1236, R4); C was
+#      taken by then.
+#
+#   F. The makeindex port (crates/makeindex, package flashtex-makeindex) is
+#      under the MakeIndex Distribution Notice, neither MIT nor GPL: no crate
+#      but the GPL engine has it in its `cargo metadata` resolve graph,
+#      other than through the engine (which check A already confines).
+#
 # The engine crate is created by another lane. Until crates/flashtex-engine
 # exists, check A says so and passes; check B runs regardless, because what it
 # enforces holds today and is what keeps the boundary cheap to defend later.
@@ -133,7 +150,9 @@ if not nodes:
     print("ERROR\t%s\tcargo metadata returned no resolve graph" % ws)
     raise SystemExit(0)
 
-engine_ids = {i for i, n in name_of.items() if n == engine}
+# The engine and the GPL runtime it shares with the XeTeX-derived engine
+# (crates/flashtex-runtime, moved out of it): reaching either is reaching GPL.
+engine_ids = {i for i, n in name_of.items() if n in (engine, "flashtex-runtime")}
 if not engine_ids:
     print("CLEAN\t%s\t%s is not in this workspace's graph at all" % (ws, engine))
     raise SystemExit(0)
@@ -616,6 +635,284 @@ PY
     rm -f "$d3_out"
   fi
   rm -f "$d_meta"
+fi
+
+# ---------------------------------------------------------------------------
+# E. apps/mac: the MIT Mac app links no GPL code
+# ---------------------------------------------------------------------------
+# The app reaches the engine only by running flashtex-host as a separate
+# process, which make-app.sh copies into the bundle (aggregation, DESIGN §3).
+# Swift sources may name the engine's paths to find that executable, so only
+# build inputs (SwiftPM, Xcode, Clang module maps) and scripts anywhere under
+# apps/mac are scanned. Not inside $(...), as in D.
+if [[ ! -d apps/mac ]]; then
+  ok "E  apps/mac does not exist in this checkout"
+else
+  e_out="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  GPL_PKGS="$GPL_PKGS" ROOT="$ROOT" python3 - > "$e_out" <<'PY'
+import os, re
+
+root = os.environ["ROOT"]
+gpl = [p for p in os.environ["GPL_PKGS"].split() if p]
+mac = os.path.join(root, "apps", "mac")
+SKIP_DIRS = {".build", "DerivedData", "build", ".git", "target", ".swiftpm"}
+NAMES = ("Package.swift", "Package.resolved", "project.yml")
+# .modulemap: a Clang module map's `link "name"` links that library.
+EXTS = (".pbxproj", ".xcconfig", ".entitlements", ".xcscheme", ".modulemap")
+SCRIPT_EXTS = (".sh", ".bash", ".zsh", ".py", ".rb", ".pl")
+
+def is_script(path, name):
+    """A shell/Python/... script, a Makefile or an extensionless #! file, wherever it lives."""
+    if name.endswith(SCRIPT_EXTS) or name in ("Makefile", "makefile", "GNUmakefile"):
+        return True
+    if "." in name:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(2) == b"#!"
+    except OSError:
+        return False
+
+inputs, scripts, links = [], [], []
+for dirpath, dirnames, filenames in os.walk(mac):
+    dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+    for d in list(dirnames):
+        if os.path.islink(os.path.join(dirpath, d)):
+            links.append(os.path.join(dirpath, d))
+            dirnames.remove(d)
+    for f in filenames:
+        p = os.path.join(dirpath, f)
+        if os.path.islink(p):
+            links.append(p)
+            if not os.path.isfile(p):
+                continue
+        if f in NAMES or f.endswith(EXTS):
+            inputs.append(p)
+        elif is_script(p, f):
+            scripts.append(p)
+inputs.sort(); scripts.sort(); links.sort()
+rel = lambda p: os.path.relpath(p, root)
+script_set = set(scripts)
+
+def strip_c_comments(text):
+    """Blank out // and /* */ comments outside "strings", keeping line breaks."""
+    out, i, n, state = [], 0, len(text), "code"
+    while i < n:
+        c, two = text[i], text[i:i + 2]
+        if state == "block":
+            if two == "*/":
+                state, i = "code", i + 2
+                continue
+            out.append("\n" if c == "\n" else " ")
+        elif state == "str":
+            out.append(c)
+            if c == "\\" and i + 1 < n and text[i + 1] != "\n":
+                out.append(text[i + 1]); i += 1
+            elif c in "\"\n":  # strings never span lines in these files
+                state = "code"
+        elif two == "/*":
+            state, i = "block", i + 2
+            out.append("  ")
+            continue
+        elif two == "//":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        else:
+            if c == '"':
+                state = "str"
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+def code_lines(path):
+    """Numbered lines with comments dropped. Scripts and YAML have # comments
+    only (so a shell case arm `*)` is code); the other inputs // and /* */."""
+    text = open(path, encoding="utf-8", errors="replace").read()
+    res = []
+    if path in script_set or path.endswith((".yml", ".yaml")):
+        for i, line in enumerate(text.splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            res.append((i, re.split(r"\s#\s", line)[0]))
+    else:
+        for i, line in enumerate(strip_c_comments(text).splitlines(), 1):
+            if line.strip():
+                res.append((i, line))
+    return res
+
+def logical_lines(path):
+    """code_lines, with a multi-line Xcode list `KEY = ( ... );` joined onto
+    the line that opens it, so a setting is checked with all its values."""
+    res, cur = [], None
+    for n, line in code_lines(path):
+        if cur is not None:
+            cur[1] += " " + line.strip()
+            if line.strip().startswith(")"):
+                res.append(tuple(cur)); cur = None
+        elif re.search(r"=\s*\(\s*$", line):
+            cur = [n, line.rstrip()]
+        else:
+            res.append((n, line))
+    if cur is not None:
+        res.append(tuple(cur))
+    return res
+
+out = ["INFO\t%d SwiftPM/Xcode build inputs, %d scripts, %d symlinks under apps/mac"
+       % (len(inputs), len(scripts), len(links))]
+
+# E1: a GPL crate named in a build input, also as a linker -l<name> or lib<name>.
+pats = sorted({q for p in gpl for q in (p, p.replace("-", "_"))})
+hits = 0
+for path in inputs:
+    for n, line in code_lines(path):
+        for pat in pats:
+            if re.search(r"(?<![\w-])(-l|lib)?%s(?![\w-])" % re.escape(pat), line):
+                out.append("FAIL\tE1\t%s:%d names the GPL crate %s: %s" % (rel(path), n, pat, line.strip()[:120]))
+                hits += 1
+if not hits:
+    out.append("OK\tE1\tno apps/mac build input names a GPL crate (%s)" % (" ".join(gpl) or "none exist"))
+
+def search_paths(line):
+    """LIBRARY_SEARCH_PATHS set to anything besides $(inherited)."""
+    m = re.search(r"LIBRARY_SEARCH_PATHS[^=;]*=(.*)", line)
+    if not m:
+        return False
+    return bool(re.sub(r"\$[({]inherited[)}]|[\s\"'(),;]", "", m.group(1)))
+
+# E2: the ways a Swift target links a native artifact. Apple frameworks
+# (.linkedFramework, `link framework` in a module map) are allowed;
+# libraries, flags and binaries are not.
+E2 = [
+    (re.compile(r"\.binaryTarget"), "SwiftPM binary target"),
+    (re.compile(r"\.systemLibrary"), "SwiftPM system-library target"),
+    (re.compile(r"linkedLibrary"), "SwiftPM linked library"),
+    (re.compile(r"unsafeFlags"), "SwiftPM unsafeFlags"),
+    (re.compile(r"\.xcframework"), "xcframework reference"),
+    (re.compile(r"\.dylib|\.a\b(?!\w)", re.I), "native library file"),
+    (re.compile(r"OTHER_LDFLAGS[^=;]*=[^;]*-[lL]"), "OTHER_LDFLAGS naming a library"),
+    (search_paths, "LIBRARY_SEARCH_PATHS"),
+    (re.compile(r"(^|[\s{])link\s+\""), "module-map linked library"),
+    (re.compile(r"libflashtex", re.I), "libflashtex"),
+]
+hits = 0
+for path in inputs:
+    for n, line in logical_lines(path):
+        for rx, what in E2:
+            if rx(line) if callable(rx) else rx.search(line):
+                out.append("FAIL\tE2\t%s:%d declares %s: %s" % (rel(path), n, what, line.strip()[:120]))
+                hits += 1
+if not hits:
+    out.append("OK\tE2\tno binary or system-library target, linked library, unsafe flag or native library in apps/mac")
+
+# E3: packaging passes no link flags to swift build, and no GPL crate builds
+# a linkable library, so its only artifact is an executable to copy.
+FLAGS = re.compile(r"-Xlinker|-X(swiftc|cc)\s+-[lL]")
+hits = 0
+for path in scripts:
+    for n, line in code_lines(path):
+        if FLAGS.search(line):
+            out.append("FAIL\tE3\t%s:%d passes link flags to the build: %s" % (rel(path), n, line.strip()[:120]))
+            hits += 1
+crates = os.path.join(root, "crates")
+gpl_dirs = []
+for d in sorted(os.listdir(crates)) if os.path.isdir(crates) else []:
+    toml = os.path.join(crates, d, "Cargo.toml")
+    if not os.path.isfile(toml):
+        continue
+    text = open(toml, encoding="utf-8", errors="replace").read()
+    m = re.search(r'^\[package\][^\[]*?^\s*name\s*=\s*"([^"]+)"', text, re.M | re.S)
+    if not m or m.group(1) not in gpl:
+        continue
+    gpl_dirs.append(os.path.realpath(os.path.join(crates, d)))
+    for n, line in enumerate(text.splitlines(), 1):
+        s = line.split("#")[0]
+        if re.search(r"crate-type\s*=.*(staticlib|cdylib|\"dylib\")", s):
+            out.append("FAIL\tE3\t%s:%d makes GPL crate %s linkable: %s" % (rel(toml), n, m.group(1), s.strip()[:120]))
+            hits += 1
+if not hits:
+    out.append("OK\tE3\tno apps/mac script passes link flags, and no GPL crate builds a static or dynamic library")
+
+# E4: a symlink resolving into a GPL crate would compile its files into the app.
+hits = 0
+for link in links:
+    target = os.path.realpath(link)
+    for g in gpl_dirs:
+        if target == g or target.startswith(g + os.sep):
+            out.append("FAIL\tE4\t%s resolves into the GPL crate %s"
+                       % (rel(link), os.path.relpath(g, os.path.realpath(root))))
+            hits += 1
+if not hits:
+    out.append("OK\tE4\tnone of the %d symlinks under apps/mac resolves into a GPL crate" % len(links))
+print("\n".join(out))
+PY
+  while IFS="$(printf '\t')" read -r kind a b; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      INFO) info "E  $a" ;;
+      OK)   ok   "$a  $b" ;;
+      FAIL) fail "$a  $b" ;;
+      *)    fail "E  unexpected output: $kind $a $b" ;;
+    esac
+  done < "$e_out"
+  rm -f "$e_out"
+fi
+
+# ---------------------------------------------------------------------------
+# F. The makeindex port: only the engine links it
+# ---------------------------------------------------------------------------
+MKI_DIR="crates/makeindex"
+MKI_PKG="$(pkg_name "$MKI_DIR/Cargo.toml")"
+if [[ -z "$MKI_PKG" ]]; then
+  ok "F  $MKI_DIR does not exist, so nothing can depend on it"
+else
+  f_meta=""
+  if ! f_meta="$(cargo metadata --format-version 1 --locked 2>/dev/null)"; then
+    f_meta="$(cargo metadata --format-version 1 2>/dev/null || true)"
+  fi
+  f_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  printf '%s' "$f_meta" > "$f_file"
+  f_report="$(MKI="$MKI_PKG" ENGINE="${ENGINE_PKG:-flashtex-engine}" python3 - "$f_file" <<'PY'
+import collections, json, os, sys
+
+mki, engine = os.environ["MKI"], os.environ["ENGINE"]
+try:
+    meta = json.load(open(sys.argv[1], encoding="utf-8"))
+except ValueError:
+    print("FAIL\tcargo metadata failed; the dependency graph could not be checked")
+    raise SystemExit(0)
+name_of = {p["id"]: p["name"] for p in meta["packages"]}
+nodes = (meta.get("resolve") or {}).get("nodes") or []
+rev = collections.defaultdict(list)
+for n in nodes:
+    for dep in n.get("dependencies") or [d["pkg"] for d in n.get("deps", [])]:
+        rev[dep].append(n["id"])
+start = {i for i, n in name_of.items() if n == mki}
+seen, queue = set(start), collections.deque(start)
+while queue:
+    cur = queue.popleft()
+    if name_of.get(cur) == engine:
+        continue  # beyond the engine: check A's business
+    for up in rev.get(cur, ()):
+        if up not in seen:
+            seen.add(up)
+            queue.append(up)
+bad = sorted(name_of[i] for i in seen - start if name_of[i] != engine)
+if bad:
+    for b in bad:
+        print("FAIL\t%s depends on %s other than through %s" % (b, mki, engine))
+else:
+    print("OK\tonly %s links %s" % (engine, mki))
+PY
+)"
+  rm -f "$f_file"
+  while IFS="$(printf '\t')" read -r kind a; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      OK)   ok   "F  $a" ;;
+      *)    fail "F  $a" ;;
+    esac
+  done <<< "$f_report"
 fi
 
 echo

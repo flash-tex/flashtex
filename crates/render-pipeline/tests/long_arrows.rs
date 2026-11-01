@@ -5,6 +5,9 @@
 //! pdfTeX's join is 1.611em, which moved HW1 Problem 4(b)'s display by
 //! 0.84bp on each side of its `\Longrightarrow`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::collapsible_str_replace, clippy::no_effect_replace, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

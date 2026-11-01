@@ -11,6 +11,9 @@
 //! show/cover/omit decision is the render pipeline's
 //! (`crates/render-pipeline/tests/beamer_overlays.rs`).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::doc_lazy_continuation, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_compiler::overlay::{OverlayKind, OverlayRange, OverlaySpec};
 use flashtex_compiler::parser::{parse, Block, Inline};
 

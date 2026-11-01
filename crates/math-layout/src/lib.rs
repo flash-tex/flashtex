@@ -9,6 +9,9 @@
 //! No TeX engine is involved at runtime. The Computer Modern adapter embeds
 //! metrics extracted from TFM files at development time; see `README.md`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::clone_on_copy, clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 pub mod ams;
 pub mod ams_tfm;
 pub mod boxes;

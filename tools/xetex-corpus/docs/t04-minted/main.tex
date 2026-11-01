@@ -1,0 +1,11 @@
+% minted: needs -shell-escape and Python's Pygments (latexminted in TeX Live 2026)
+\documentclass{article}
+\usepackage{fontspec}
+\setmonofont{Menlo}
+\usepackage{minted}
+\begin{document}
+\begin{minted}{python}
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+\end{minted}
+\end{document}

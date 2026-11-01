@@ -1,0 +1,9 @@
+{
+ "expect_fonts": [
+  "latinmodern-math.otf",
+  "texgyretermes-regular.otf"
+ ],
+ "forbid_fonts": [
+  "texgyretermes-math.otf"
+ ]
+}

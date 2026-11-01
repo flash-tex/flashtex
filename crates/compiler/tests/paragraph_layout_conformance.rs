@@ -20,6 +20,9 @@
 //! deliberate metrics deviation (`quotesingle` 180 vs `quoteright` 333).
 //! Measure is the compiler's text column (`PAGE_WIDTH_PT - 2*MARGIN_PT`).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::manual_contains, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_compiler::layout::{
     self as clayout, BODY_SIZE_PT, MARGIN_PT, PAGE_WIDTH_PT, text_width,
 };

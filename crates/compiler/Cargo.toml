@@ -22,6 +22,7 @@ flashtex-tex-expansion = { path = "../tex-expansion" }
 
 # Test-only: paragraph-layout conformance harness (#27, slice 1). Never a
 # main dependency: adopting `layout_paragraph` in production changes every
-# line break and needs Commander sequencing.
+# line break and needs Commander sequencing. Also used by the paragraph-layout
+# FT-030 tests moved here in retirement S1 (tests/paragraph_layout_*.rs).
 [dev-dependencies]
 flashtex-paragraph-layout = { path = "../paragraph-layout" }

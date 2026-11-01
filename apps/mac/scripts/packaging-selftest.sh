@@ -10,6 +10,13 @@
 # have the identity/profile it probes for, reporting that).
 # --full additionally runs repro-check.sh (ad-hoc and `--sign -` hardened
 # runtime), then launch-check.sh on the resulting app and on a --dmg image.
+# Its builds pass --require-engine-host, as a release does: flashtex-host must
+# be built first (cargo build --release -p flashtex-engine --bin flashtex-host),
+# and the hardened app's Contents/Helpers/flashtex-host is verified with codesign.
+# Every helper the app runs must be in the bundle, and none of the retired
+# old engine's (retirement stage S6, #1236): a missing helper FAILS, it is
+# never skipped. The fast part checks the same list in make-app.sh and
+# scripts/ci/build-helpers.sh.
 # make-app.sh arguments after -- (e.g. --helper-root <main checkout>) are
 # passed through to every build in --full mode.
 set -euo pipefail
@@ -129,6 +136,30 @@ ln -s "$MAC_DIR/Fonts/lmroman10-regular.otf" "$WORK/fonts-symlink/lmroman10-regu
 FLASHTEX_BUNDLE_FONTS_DIR="$WORK/fonts-symlink" expect_preflight_failure "pinned bundle metric refused" --debug
 FLASHTEX_BUNDLE_FONTS_DIR="$WORK/fonts-absent" expect_preflight_failure "pinned bundle fonts directory not found" --debug
 
+section "Engine host and the new CLI ship (app-parity row D5; no build)"
+# A release (release.yml: --require-engine-host) refuses an app without
+# flashtex-host before the build; the CLI tarball's checks are portable.
+expect_preflight_failure "--require-engine-host: no flashtex-host" --debug --require-engine-host --engine-host "$WORK/missing/flashtex-host"
+if "$MAC_DIR/../../scripts/tests/package-cli.test.sh" >"$WORK/package-cli-test.log" 2>&1; then
+  ok "scripts/tests/package-cli.test.sh: $(grep -c '^  ok' "$WORK/package-cli-test.log") checks (flashtex-v3, flashtex-host, its pool and licence in the CLI tarball; release.yml builds and requires them)"
+else
+  bad "scripts/tests/package-cli.test.sh: $(grep 'FAIL' "$WORK/package-cli-test.log" | head -3 | tr '\n' ' ')"
+fi
+
+section "Bundled helpers (no build): the app's list, and nothing of the old engine"
+# The helpers the app runs (Contents/MacOS), in make-app.sh's HELPER_TABLE and
+# build-helpers.sh's HELPERS; the engine hosts go to Contents/Helpers.
+APP_HELPERS="flashtex-bridge flashtex-edit-ledger flashtex-project-files"
+RETIRED_HELPERS="flashtex-cli flashtex-compiler flashtex-pdf flashtex-render flashtex-pdf-exact flashtex-preview-controller flashtex-explain"
+BUILD_HELPERS="$MAC_DIR/../../scripts/ci/build-helpers.sh"
+for h in $APP_HELPERS; do
+  if grep -q "|$h|" "$MAKE"; then ok "make-app.sh bundles $h"; else bad "make-app.sh's HELPER_TABLE lacks $h"; fi
+  if grep -q "=$h\"" "$BUILD_HELPERS"; then ok "build-helpers.sh builds $h"; else bad "build-helpers.sh's HELPERS lacks $h"; fi
+done
+for h in $RETIRED_HELPERS; do
+  if grep -q "|$h|" "$MAKE" || grep -q "=$h\"" "$BUILD_HELPERS"; then bad "the retired helper $h is still bundled or built"; else ok "$h is neither bundled nor built"; fi
+done
+
 section "Resources"
 for f in Info.plist.template FlashTeX.entitlements; do
   if plutil -lint "$MAC_DIR/Resources/$f" >/dev/null 2>&1; then ok "plutil -lint Resources/$f"; else bad "plutil -lint Resources/$f"; fi
@@ -155,29 +186,49 @@ else
 fi
 
 section "--help"
-for s in make-app.sh launch-check.sh repro-check.sh texmf-acceptance.sh; do
+for s in make-app.sh launch-check.sh repro-check.sh; do
   HELP="$("$SCRIPT_DIR/$s" --help 2>/dev/null || true)"
   if grep -q "Usage:" <<< "$HELP"; then ok "$s --help"; else bad "$s --help"; fi
 done
-for s in make-app.sh launch-check.sh repro-check.sh packaging-selftest.sh texmf-acceptance.sh; do
+for s in make-app.sh launch-check.sh repro-check.sh packaging-selftest.sh; do
   if /bin/bash -n "$SCRIPT_DIR/$s" 2>/dev/null; then ok "$s parses under /bin/bash 3.2"; else bad "$s does not parse under /bin/bash 3.2"; fi
 done
 
 if [[ "$FULL" -eq 1 ]]; then
   section "Full: repro-check (ad-hoc)"
-  if "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-adhoc.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} >"$WORK/repro-adhoc.log" 2>&1; then
+  if "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-adhoc.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} --require-engine-host >"$WORK/repro-adhoc.log" 2>&1; then
     ok "repro-check.sh (ad-hoc): $(grep '^RESULT' "$WORK/repro-adhoc.md")"
   else
     bad "repro-check.sh (ad-hoc) failed: $(grep '^RESULT' "$WORK/repro-adhoc.md" 2>/dev/null || tail -3 "$WORK/repro-adhoc.log")"
   fi
   section "Full: repro-check (--sign -, hardened runtime, SOURCE_DATE_EPOCH pinned)"
-  if SOURCE_DATE_EPOCH="$(date +%s)" "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-hardened.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} --sign - --dmg >"$WORK/repro-hardened.log" 2>&1; then
+  if SOURCE_DATE_EPOCH="$(date +%s)" "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-hardened.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} --require-engine-host --sign - --dmg >"$WORK/repro-hardened.log" 2>&1; then
     ok "repro-check.sh (--sign - --dmg, pinned): $(grep '^RESULT' "$WORK/repro-hardened.md")"
   else
     bad "repro-check.sh (--sign -) failed: $(grep '^RESULT' "$WORK/repro-hardened.md" 2>/dev/null || tail -3 "$WORK/repro-hardened.log")"
   fi
   FLAGS="$(codesign -dvv "$MAC_DIR/build/FlashTeX.app" 2>&1 | grep '^CodeDirectory' || true)"
   if grep -q 'runtime' <<< "$FLAGS"; then ok "app hardened-runtime signed: $FLAGS"; else bad "app is not hardened-runtime signed: $FLAGS"; fi
+  section "Full: the engine host is bundled and signed (app-parity row D5)"
+  HOST_BIN="$MAC_DIR/build/FlashTeX.app/Contents/Helpers/flashtex-host"
+  if [[ -x "$HOST_BIN" ]]; then ok "Contents/Helpers/flashtex-host: $(ls -l "$HOST_BIN" | awk '{print $5}') bytes"; else bad "Contents/Helpers/flashtex-host is missing"; fi
+  if codesign --verify --strict --verbose=2 "$HOST_BIN" >"$WORK/host-verify.txt" 2>&1; then
+    ok "codesign --verify --strict flashtex-host: $(tr '\n' ' ' < "$WORK/host-verify.txt")"
+  else
+    bad "codesign --verify --strict flashtex-host: $(tr '\n' ' ' < "$WORK/host-verify.txt")"
+  fi
+  HOST_FLAGS="$(codesign -dvv "$HOST_BIN" 2>&1 | grep -E '^(Identifier|CodeDirectory)' | tr '\n' ' ' || true)"
+  if grep -q 'runtime' <<< "$HOST_FLAGS"; then ok "flashtex-host hardened-runtime signed: $HOST_FLAGS"; else bad "flashtex-host is not hardened-runtime signed: $HOST_FLAGS"; fi
+  if codesign --verify --deep --strict --verbose=2 "$MAC_DIR/build/FlashTeX.app" >"$WORK/app-verify.txt" 2>&1; then
+    ok "codesign --verify --deep --strict FlashTeX.app: $(tr '\n' ' ' < "$WORK/app-verify.txt")"
+  else
+    bad "codesign --verify --deep --strict FlashTeX.app: $(tr '\n' ' ' < "$WORK/app-verify.txt")"
+  fi
+  if python3 -c 'import json,sys; e=json.load(open(sys.argv[1]))["engine_host"]; sys.exit(0 if e["bundled"] else 1)' "$MAC_DIR/build/FlashTeX.app/Contents/Resources/components.json" 2>/dev/null; then
+    ok "components.json: engine_host bundled"
+  else
+    bad "components.json: engine_host not bundled"
+  fi
   section "Full: launch-check (app, hardened)"
   if "$SCRIPT_DIR/launch-check.sh" --evidence "$WORK/launch-app.md" >"$WORK/launch-app.log" 2>&1 && ! grep -q '^- FAIL' "$WORK/launch-app.md"; then
     ok "launch-check.sh --app: $(grep -c '^- ' "$WORK/launch-app.md") notes, 0 FAIL"
@@ -190,20 +241,16 @@ if [[ "$FULL" -eq 1 ]]; then
   else
     bad "launch-check.sh --dmg: $(grep '^- FAIL' "$WORK/launch-dmg.md" 2>/dev/null | head -3 | tr '\n' ' ')$(tail -2 "$WORK/launch-dmg.log" | tr '\n' ' ')"
   fi
-  section "Full: texmf-acceptance (bundled producer, host TeX excluded)"
-  if [[ -x "$MAC_DIR/build/FlashTeX.app/Contents/MacOS/flashtex-render" ]]; then
-    if "$SCRIPT_DIR/texmf-acceptance.sh" --evidence "$WORK/texmf-acceptance" >"$WORK/texmf-acceptance.log" 2>&1; then
-      ok "texmf-acceptance.sh: $(grep '^Result' "$WORK/texmf-acceptance/README.md")"
-    else
-      bad "texmf-acceptance.sh: $(grep '^- FAIL' "$WORK/texmf-acceptance/README.md" 2>/dev/null | head -3 | tr '\n' ' ')$(tail -2 "$WORK/texmf-acceptance.log" | tr '\n' ' ')"
-    fi
-    cp "$WORK/texmf-acceptance/README.md" "$WORK/texmf-acceptance.md"
-  else
-    skip "texmf-acceptance: no bundled flashtex-render (pass -- --render <path>)"
-  fi
+  section "Full: every helper the app runs is bundled, none of the old engine's"
+  for h in $APP_HELPERS; do
+    if [[ -x "$MAC_DIR/build/FlashTeX.app/Contents/MacOS/$h" ]]; then ok "Contents/MacOS/$h"; else bad "Contents/MacOS/$h is missing"; fi
+  done
+  for h in $RETIRED_HELPERS; do
+    if [[ -e "$MAC_DIR/build/FlashTeX.app/Contents/MacOS/$h" ]]; then bad "Contents/MacOS/$h is bundled (retired in S6)"; else ok "no $h in the bundle"; fi
+  done
   if [[ -n "$EVIDENCE_FILE" ]]; then
     EVDIR="$(dirname "$EVIDENCE_FILE")"
-    for f in repro-adhoc.md repro-hardened.md launch-app.md launch-dmg.md texmf-acceptance.md; do
+    for f in repro-adhoc.md repro-hardened.md launch-app.md launch-dmg.md; do
       [[ -f "$WORK/$f" ]] && cp "$WORK/$f" "$EVDIR/packaging-selftest-$f"
     done
   fi

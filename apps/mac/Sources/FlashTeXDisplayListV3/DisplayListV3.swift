@@ -16,16 +16,34 @@ import Foundation
 public enum DL3 {
     public static let protocolName = "display-list-v3"
     public static let versionMajor = 3
-    public static let versionMinor = 1
+    /// 3.2: `external_tools`, `TOOL`, `cause` (bibtex, biber, makeindex in the host).
+    public static let versionMinor = 2
     /// Scaled points per PDF point: 65536 × 72.27 / 72 = 6578176/100.
     public static let spPerBp = 65781.76
     public static let maxFrame = 1 << 28
 
+    /// The `HELLO` `accept` entry for `PROGRESS` (§6.8).
+    public static let progressCapability = "progress-v1"
+    /// The host capability (`HELLO.capabilities`) for `TRIM`: the client
+    /// sends TRIM only to a host that lists it.
+    public static let trimCapability = "trim-v1"
+    /// Host capability for performance modes (§6.9): `HELLO.profile` and `PROFILE`.
+    public static let profileCapability = "profile-v1"
+
     public enum Kind {
         public static let cHello: UInt8 = 0x01, compile: UInt8 = 0x02, cancel: UInt8 = 0x03, bye: UInt8 = 0x04
+        /// `trim-v1`: the system is short of memory, `{"level": "warning"|"critical"}`; no reply.
+        public static let trim: UInt8 = 0x08
         public static let hello: UInt8 = 0x41, started: UInt8 = 0x42, font: UInt8 = 0x43, image: UInt8 = 0x44
         public static let page: UInt8 = 0x45, form: UInt8 = 0x46, sources: UInt8 = 0x47, diagnostic: UInt8 = 0x48
         public static let done: UInt8 = 0x49, error: UInt8 = 0x4A, pages: UInt8 = 0x4B
+        /// 3.2: bibtex/biber/makeindex runs of a compile (spec §6.4).
+        public static let tool: UInt8 = 0x4C
+        /// `progress-v1` (capability-gated, §6.8): a heartbeat while a compile typesets.
+        public static let progress: UInt8 = 0x70
+        /// `profile-v1` (capability-gated, §6.9): choose a performance mode (client → host),
+        /// and the host's reply with the knobs now in effect (host → client).
+        public static let cProfile: UInt8 = 0x07, profile: UInt8 = 0x51
 
         /// The names `dl3-dump` and the Rust crate's `kind::name` use.
         public static func name(_ k: UInt8) -> String {
@@ -34,6 +52,7 @@ public enum DL3 {
             case compile: "compile"
             case cancel: "cancel"
             case bye: "bye"
+            case trim: "trim"
             case hello: "hello"
             case started: "started"
             case font: "font"
@@ -45,6 +64,10 @@ public enum DL3 {
             case done: "done"
             case error: "error"
             case pages: "pages"
+            case tool: "tool"
+            case progress: "progress"
+            case cProfile: "client-profile"
+            case profile: "profile"
             case DL3Diag.kind: "diag"
             default: "unknown"
             }
@@ -154,6 +177,12 @@ public struct DL3Path: Equatable, Sendable {
     public var segs: [DL3Seg]
 }
 
+/// A glyph's exact origin in stream space (bp, y up): spec §4.2 ORIGINS.
+public struct DL3Origin: Equatable, Sendable {
+    public var x: Double, y: Double
+    public init(x: Double, y: Double) { self.x = x; self.y = y }
+}
+
 public struct DL3Link: Equatable, Sendable {
     /// left, top, right, bottom (page space, sp).
     public var rect: [Int32]
@@ -195,6 +224,17 @@ public struct DL3Page: Equatable, Sendable {
     public var links: [DL3Link] = []
     public var dests: [DL3Dest] = []
     public var unsupported: [String] = []
+    /// ORIGINS (spec §4.2): the exact origin of each GLYPH item, in item
+    /// order, in stream space (bp, y up); the item's (x, y) is its sp
+    /// rounding. Empty when the writer sent none (a writer before ORIGINS):
+    /// then the sp position is all there is. Otherwise one per glyph, or
+    /// decoding fails.
+    public var origins: [DL3Origin] = []
+    /// RULE_GEOMETRY (spec §4.4): what the PDF draws each RULE item with, in
+    /// item order: `[e, f, x, y, w, h, 0]` for FILL (`re` under the CTM's
+    /// translation e, f), `[e, f, x0, y0, x1, y1, lw]` for a stroked rule.
+    /// Empty from a writer before it; otherwise one per rule, or decoding fails.
+    public var ruleGeometry: [[Double]] = []
 
     public init(kind: StreamKind, index: UInt32) { self.kind = kind; self.index = index }
 
@@ -261,8 +301,24 @@ public struct DL3Page: Equatable, Sendable {
                     let l = Int(try d.u16())
                     p.unsupported.append(String(decoding: try d.take(l), as: UTF8.self))
                 }
+            case 7: // ORIGINS
+                let m = try d.count(16)
+                p.origins.reserveCapacity(m)
+                for _ in 0 ..< m { p.origins.append(DL3Origin(x: try d.f64(), y: try d.f64())) }
+            case 9: // RULE_GEOMETRY (8 is Typst's PAGE_META, 3.3)
+                let m = try d.count(56)
+                p.ruleGeometry.reserveCapacity(m)
+                for _ in 0 ..< m { p.ruleGeometry.append(try (0 ..< 7).map { _ in try d.f64() }) }
             default: break // a later minor version's section: skipped
             }
+        }
+        if !p.origins.isEmpty {
+            let glyphs = p.items.reduce(0) { n, it in if case .glyph = it { return n + 1 }; return n }
+            if p.origins.count != glyphs { throw DL3Error("ORIGINS has \(p.origins.count) origins for \(glyphs) glyphs") }
+        }
+        if !p.ruleGeometry.isEmpty {
+            let rules = p.items.reduce(0) { n, it in if case .rule = it { return n + 1 }; return n }
+            if p.ruleGeometry.count != rules { throw DL3Error("RULE_GEOMETRY has \(p.ruleGeometry.count) entries for \(rules) rules") }
         }
         // Every reference must resolve (fail closed).
         for it in p.items {
@@ -433,10 +489,20 @@ public struct DL3Font: Sendable {
     public var info: DL3JSON
     public var program: [UInt8]
 
+    public init(id: UInt16, key: [UInt8], info: DL3JSON, program: [UInt8]) {
+        self.id = id; self.key = key; self.info = info; self.program = program
+    }
+
     public var keyHex: String { DL3Hex.string(key) }
     public var format: String? { info["format"]?.string }
     public var pdfName: String? { info["pdf_name"]?.string }
     public var psName: String? { info["ps_name"]?.string }
+    /// 3.3 `glyph_ids` (spec §11.1): a GLYPH's `code` is the glyph id in
+    /// the face, not a character code (the XeTeX and Typst hosts' native
+    /// OpenType/TrueType fonts).
+    public var glyphIds: Bool { info["glyph_ids"]?.bool ?? false }
+    /// The face of a collection (`.ttc`/`.otc`) the program means; 0 otherwise.
+    public var faceIndex: Int { Int(info["face_index"]?.int ?? 0) }
     /// 256 glyph names (code → name), or nil when the font sent none.
     public var encoding: [String?]? {
         guard let a = info["encoding"]?.array else { return nil }
@@ -513,8 +579,12 @@ public enum DL3Event: Sendable {
     case done(DL3JSON)
     case error(DL3JSON)
     case pages(DL3JSON)
+    /// 3.2: `{"id", "event": run|done|skip|settled, ...}` (§6.4).
+    case tool(DL3JSON)
     /// `diag-v1` (§6.7), for a client that accepted it.
     case diag(DL3Diag)
+    /// `progress-v1` (§6.8), for a client that accepted it: `{"id", "pass", "page"}`.
+    case progress(DL3JSON)
     /// A kind this version does not know (a later minor version's): skipped.
     case other(UInt8, Int)
 
@@ -531,7 +601,9 @@ public enum DL3Event: Sendable {
         case DL3.Kind.done: .done(try DL3JSON.parse(body))
         case DL3.Kind.error: .error(try DL3JSON.parse(body))
         case DL3.Kind.pages: .pages(try DL3JSON.parse(body))
+        case DL3.Kind.tool: .tool(try DL3JSON.parse(body))
         case DL3Diag.kind: .diag(try DL3Diag.decode(body))
+        case DL3.Kind.progress: .progress(try DL3JSON.parse(body))
         default: .other(k, body.count)
         }
     }

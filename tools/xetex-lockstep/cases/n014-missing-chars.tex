@@ -1,0 +1,8 @@
+% n014-missing-chars: characters a native font lacks are lost (\tracinglostchars)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x \tracinglostchars=2
+\setbox0=\hbox{a雪b🍌c\char"E000 d}
+\lsshipbox0
+\end

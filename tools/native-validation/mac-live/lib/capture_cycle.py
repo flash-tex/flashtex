@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Packaged-app capture cycle through the helpers bundled in FlashTeX.app.
 
-Drives the four binaries inside `FlashTeX.app/Contents/MacOS` (flashtex-bridge,
-flashtex-edit-ledger, flashtex-compiler, flashtex-pdf) over their real JSON Lines
-protocols, in the order the Mac shell uses them (transfer-v1 / runtime-v1 /
-edit-ledger service), without any UI scripting (Accessibility is not granted and
-the app window must never be activated) and without any network call:
+Drives the two binaries inside `FlashTeX.app/Contents/MacOS` (flashtex-bridge,
+flashtex-edit-ledger) over their real JSON Lines protocols, in the order the Mac
+shell uses them (transfer-v1 / edit-ledger service), without any UI scripting
+(Accessibility is not granted and the app window must never be activated) and
+without any network call:
 
   1. bridge: document_open -> destination_pin -> capture_submit (the shared
      protocol/fixtures/capture-submission.json image) -> duplicate retry ->
@@ -21,9 +21,9 @@ the app window must never be activated) and without any network call:
      (receipt pending: no bridge ever prepared this edit, so no capture_applied
      is sent) -> SIGKILL the ledger -> restart -> document and pending receipt
      survive.
-  3. export: the post-insertion document is compiled by flashtex-compiler
-     (runtime-v1 `compile`) and the compile_result is piped to
-     `flashtex-pdf --out <pdf> --verify`; page count and sha256 are recorded.
+
+The export stage (the old engine's compile and PDF writer) left with that
+engine in retirement stage S6 (#1236): neither is bundled any more.
 
 Every request/reply is journaled to <work>/transcript.jsonl. Stdlib only.
 """
@@ -119,7 +119,7 @@ class Cycle:
     def __init__(self, a):
         self.a = a
         self.macos = os.path.join(a.app, "Contents", "MacOS")
-        self.bins = {n: os.path.join(self.macos, n) for n in ("flashtex-bridge", "flashtex-edit-ledger", "flashtex-compiler", "flashtex-pdf")}
+        self.bins = {n: os.path.join(self.macos, n) for n in ("flashtex-bridge", "flashtex-edit-ledger")}
         os.makedirs(a.work, exist_ok=True)
         self.transcript = open(os.path.join(a.work, "transcript.jsonl"), "w", encoding="utf-8")
         self.checks = []
@@ -258,7 +258,6 @@ class Cycle:
         before = self.text
         start = end = self.pin_byte
         after = before.encode("utf-8")[:start].decode("utf-8") + latex + before.encode("utf-8")[end:].decode("utf-8")
-        self.after_text = after
         edit = {"capture_id": prop["capture_id"], "edit_id": "mac-live-edit-1", "project_id": self.project, "path": self.path,
                 "expected_revision": 1, "start_byte": start, "end_byte": end, "removed_text": "", "replacement": latex,
                 "document_before_sha256": sha256_text(before)}
@@ -311,52 +310,8 @@ class Cycle:
         self.record["ledger_document_after"] = {"revision": d.get("revision"), "source_sha256": d.get("source_sha256"), "bytes": len(after.encode("utf-8"))}
         self.record["bridge_capture_applied"] = "not sent: the bridge never prepared this edit (no provider proposal); the receipt stays pending in the ledger by design"
 
-    # ---------------------------------------------------------- 3. export
-    def export_stage(self):
-        a = self.a
-        argv = [self.bins["flashtex-compiler"]]
-        comp = LineProcess("compiler", argv, self.transcript)
-        req = {"protocol_version": 1, "id": "mac-live-compile-1", "type": "compile",
-               "payload": {"project_id": self.project, "revision": self.new_revision or 2, "entry_path": self.path,
-                           "documents": [{"path": self.path, "text": self.after_text}]}}
-        r, ms = comp.send(req, timeout=60)
-        self.timings["compiler_compile"] = [round(ms, 3)]
-        comp.close()
-        p = r.get("payload") or {}
-        pages = p.get("pages") or []
-        diags = p.get("diagnostics") or []
-        self.record["compile"] = {"status": p.get("status"), "pages": len(pages), "items": sum(len(pg.get("items", [])) for pg in pages),
-                                  "diagnostics": diags[:10], "diagnostic_count": len(diags), "revision": p.get("revision"),
-                                  "round_trip_ms": round(ms, 3)}
-        self.check("compiler compile_result correlated (id, project, revision)",
-                   r.get("type") == "compile_result" and r.get("id") == "mac-live-compile-1" and p.get("project_id") == self.project
-                   and p.get("revision") == req["payload"]["revision"], {k: r.get(k) for k in ("id", "type")})
-        self.check("compiler status ok/recovered with >= 1 page", p.get("status") in ("ok", "recovered") and len(pages) >= 1,
-                   {"status": p.get("status"), "pages": len(pages), "diagnostics": len(diags)})
-        texts = " ".join(str(it.get("text", "")) for pg in pages for it in pg.get("items", []))
-        self.check("compiled items include the original fixture text", "Hello" in texts, texts[:120])
-        self.record["compile"]["item_text_excerpt"] = texts[:200]
-        json.dump(r, open(os.path.join(a.work, "compile_result.json"), "w"))
-        pdf = os.path.join(a.work, "export.pdf")
-        argv = [self.bins["flashtex-pdf"], "--out", pdf, "--verify"]
-        self.record["pdf_argv"] = argv
-        t0 = time.monotonic()
-        proc = subprocess.run(argv, input=(json.dumps(r, separators=(",", ":")) + "\n").encode("utf-8"), capture_output=True, timeout=60)
-        ms = (time.monotonic() - t0) * 1000
-        self.timings["pdf_export"] = [round(ms, 3)]
-        out = (proc.stdout + proc.stderr).decode("utf-8", "replace")
-        self.transcript.write(json.dumps({"process": "pdf", "argv": argv, "exit": proc.returncode, "output": out[-2000:]}) + "\n")
-        self.check("flashtex-pdf --verify exit 0", proc.returncode == 0, out[-300:])
-        data = open(pdf, "rb").read() if os.path.isfile(pdf) else b""
-        page_objs = len(re.findall(rb"/Type\s*/Page\b(?!s)", data))
-        self.record["pdf"] = {"path": pdf, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest() if data else None,
-                              "header": data[:8].decode("latin-1") if data else None, "page_objects": page_objs,
-                              "writer_output": out[-800:], "export_ms": round(ms, 3)}
-        self.check("PDF header %PDF- and trailer %%EOF", data.startswith(b"%PDF-") and b"%%EOF" in data[-64:], self.record["pdf"]["header"])
-        self.check("PDF page objects == compiled pages", page_objs == len(pages), {"pdf": page_objs, "compiled": len(pages)})
-
     def run(self):
-        stages = [("bridge", self.bridge_stage), ("review", self.review_stage), ("export", self.export_stage)]
+        stages = [("bridge", self.bridge_stage), ("review", self.review_stage)]
         for name, fn in stages:
             print("==> capture cycle: %s" % name)
             try:
@@ -369,7 +324,7 @@ class Cycle:
         self.record["transcript"] = os.path.join(self.a.work, "transcript.jsonl")
         json.dump(self.record, open(self.a.out, "w"), indent=1, sort_keys=True, default=str)
         print("capture cycle: %d passed, %d failed" % (self.record["passed"], self.record["failed"]))
-        # Private journals are scratch: keep the transcript, PDF and compile result only.
+        # Private journals are scratch: keep the transcript only.
         for d in ("captures", "ledger"):
             shutil.rmtree(os.path.join(self.a.work, d), ignore_errors=True)
         return 0 if self.record["failed"] == 0 else 1
@@ -380,7 +335,7 @@ def main():
     ap.add_argument("--app", required=True, help="packaged FlashTeX.app")
     ap.add_argument("--fixtures", required=True, help="protocol/fixtures directory")
     ap.add_argument("--proposal", required=True, help="fixture capture_proposal envelope JSON")
-    ap.add_argument("--work", required=True, help="scratch directory (journals, transcript, pdf)")
+    ap.add_argument("--work", required=True, help="scratch directory (journals, transcript)")
     ap.add_argument("--out", required=True, help="JSON summary path")
     a = ap.parse_args()
     return Cycle(a).run()

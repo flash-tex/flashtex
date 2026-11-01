@@ -4,6 +4,7 @@ import Foundation
 import CoreImage
 import ImageIO
 import IOSurface
+import ObjectiveC
 import FlashTeXDisplayListV3
 
 // The display-list-v3 preview renderer (DESIGN.md §6.2): a decoded page
@@ -36,23 +37,56 @@ public final class DL3RenderFont: @unchecked Sendable {
     public let key: String
     /// Outline fonts; nil for Type 3.
     public let cgFont: CGFont?
-    /// code → glyph (0: none / .notdef).
+    /// code → glyph (0: none / .notdef). Empty for a `glyph_ids` font.
     public let glyphs: [CGGlyph]
+    /// `glyph_ids` (spec §11.1, the XeTeX and Typst hosts' native fonts): a
+    /// code is the glyph id itself, below this count; 0 for a font whose
+    /// codes go through `glyphs`.
+    public let glyphIdCount: Int
     /// Type 3: code → mask.
     public let type3: [Int: Type3Glyph]?
     /// Glyph space → text space beyond the program's own FontMatrix
     /// (pdfTeX's `font_matrix` for SlantFont/ExtendFont), else identity.
     /// Type 3: the font's whole `/FontMatrix` (bitmap pixels → text space).
     public let fontTransform: CGAffineTransform
+    /// The program's bounding box at size 1 in glyph space (text units),
+    /// or nil when it is empty or not finite: then a tile never culls the
+    /// font's glyphs (`DL3Renderer.rasterizeTile`).
+    public let inkBox: CGRect?
 
-    init(key: String, cgFont: CGFont?, glyphs: [CGGlyph], type3: [Int: Type3Glyph]? = nil, fontTransform: CGAffineTransform) {
-        self.key = key; self.cgFont = cgFont; self.glyphs = glyphs; self.type3 = type3; self.fontTransform = fontTransform
+    init(key: String, cgFont: CGFont?, glyphs: [CGGlyph], glyphIdCount: Int = 0, type3: [Int: Type3Glyph]? = nil, fontTransform: CGAffineTransform) {
+        self.key = key; self.cgFont = cgFont; self.glyphs = glyphs; self.glyphIdCount = glyphIdCount; self.type3 = type3; self.fontTransform = fontTransform
+        // Tile culling (DL3Tiles): an outline font's bounding box. A Type 3
+        // font has none here, so its glyphs are never culled (and its pages
+        // are cut from one whole-page raster, `tilesByTranslation`).
+        if let cgFont {
+            let box = CTFontGetBoundingBox(CTFontCreateWithGraphicsFont(cgFont, 1, nil, nil)).standardized
+            inkBox = box.width.isFinite && box.height.isFinite && box.width > 0 && box.height > 0 ? box : nil
+        } else {
+            inkBox = nil
+        }
     }
 
     /// Whether `code` draws anything.
     public func draws(_ code: Int) -> Bool {
         if let type3 { return type3[code]?.mask != nil }
-        return code < glyphs.count && glyphs[code] != 0
+        // A glyph id is drawn whatever it is, 0 too: the PDF shows glyph 0
+        // (CID 0, the font's .notdef box) where the shaper found no glyph
+        // (XeTeX keeps those in a native word with inter-word space shaping:
+        // Latin words in an Arabic font were boxes in xelatex's PDF and ours,
+        // and blank in the preview).
+        if glyphIdCount > 0 { return code >= 0 && code < glyphIdCount }
+        return glyph(code) != 0
+    }
+
+    /// The outline glyph `code` draws (0: none / .notdef): the glyph id
+    /// itself for a `glyph_ids` font, else the code's entry in `glyphs`.
+    /// Every outline lookup goes through here: a `glyph_ids` code is not a
+    /// character code, and reading it through the cmap drew every letter of
+    /// a Unicode-mode page as another (`hello` as `?2HHQ`).
+    @inline(__always) public func glyph(_ code: Int) -> CGGlyph {
+        if glyphIdCount > 0 { return code >= 0 && code < glyphIdCount ? CGGlyph(code) : 0 }
+        return code >= 0 && code < glyphs.count ? glyphs[code] : 0
     }
 
     /// Loads `font`'s program, or says why it cannot be drawn from the display list.
@@ -64,10 +98,14 @@ public final class DL3RenderFont: @unchecked Sendable {
         case "type1", "truetype", "opentype": break
         default: return .failure(DL3Error("\(label): format \(font.format ?? "?") has no program to draw"))
         }
-        guard !font.program.isEmpty,
-              let provider = CGDataProvider(data: Data(font.program) as CFData),
-              let cg = CGFont(provider) else {
+        guard !font.program.isEmpty, let cg = outlineFont(font.program, face: font.format == "type1" ? 0 : font.faceIndex) else {
             return .failure(DL3Error("\(label): the program does not load"))
+        }
+        if font.glyphIds {
+            // Codes are glyph ids in the face (XeTeX's native fonts, Typst):
+            // drawn as they are, no encoding, no cmap.
+            return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: [], glyphIdCount: max(1, cg.numberOfGlyphs),
+                                          fontTransform: fontTransform(font, cg)))
         }
         var glyphs = [CGGlyph](repeating: 0, count: 256)
         if font.format == "type1" {
@@ -122,14 +160,31 @@ public final class DL3RenderFont: @unchecked Sendable {
                 for code in 0 ..< 256 { glyphs[code] = unicodeGlyph(code) }
             }
         }
-        var t = CGAffineTransform.identity
-        if let fm = font.fontMatrix {
-            // The program's FontMatrix is 1/unitsPerEm (what a size-1 font
-            // applies); `font_matrix` replaces it.
-            let upem = Double(cg.unitsPerEm)
-            t = CGAffineTransform(a: fm[0] * upem, b: fm[1] * upem, c: fm[2] * upem, d: fm[3] * upem, tx: fm[4] * upem, ty: fm[5] * upem)
+        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: fontTransform(font, cg)))
+    }
+
+    /// Glyph space → text space beyond the program's own 1/unitsPerEm.
+    static func fontTransform(_ font: DL3Font, _ cg: CGFont) -> CGAffineTransform {
+        guard let fm = font.fontMatrix else { return .identity }
+        // The program's FontMatrix is 1/unitsPerEm (what a size-1 font
+        // applies); `font_matrix` replaces it.
+        let upem = Double(cg.unitsPerEm)
+        return CGAffineTransform(a: fm[0] * upem, b: fm[1] * upem, c: fm[2] * upem, d: fm[3] * upem, tx: fm[4] * upem, ty: fm[5] * upem)
+    }
+
+    /// The outline program as Core Graphics loads it: face `face` of a
+    /// collection (`.ttc`/`.otc`, which `CGFont(CGDataProvider)` does not
+    /// open by face), else the program itself.
+    static func outlineFont(_ program: [UInt8], face: Int) -> CGFont? {
+        let data = Data(program) as CFData
+        let isCollection = program.count >= 4 && program[0] == 0x74 && program[1] == 0x74 && program[2] == 0x63 && program[3] == 0x66 // "ttcf"
+        if isCollection || face > 0 {
+            guard let descs = CTFontManagerCreateFontDescriptorsFromData(data) as? [CTFontDescriptor],
+                  face >= 0, face < descs.count else { return nil }
+            return CTFontCopyGraphicsFont(CTFontCreateWithFontDescriptor(descs[face], 1, nil), nil)
         }
-        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: t))
+        guard let provider = CGDataProvider(data: data) else { return nil }
+        return CGFont(provider)
     }
 
     static func loadType3(_ font: DL3Font, label: String) -> Result<DL3RenderFont, DL3Error> {
@@ -176,10 +231,23 @@ enum Type1Encoding {
 
 /// An image resource (spec §5.2), decoded once per key.
 public final class DL3RenderImage: @unchecked Sendable {
-    public enum Payload { case raster(CGImage), pdf(CGPDFPage, box: CGRect) }
+    /// `.pdf`: an included page drawn as pdfTeX's Form XObject draws it:
+    /// `box` is its /BBox, the selected page box in the page's own
+    /// coordinates (bp), and `matrix` its /Matrix (identity unless the page
+    /// has /Rotate 90, 180 or 270).
+    public enum Payload { case raster(CGImage), pdf(CGPDFPage, box: CGRect, matrix: CGAffineTransform) }
     public let key: String
     public let payload: Payload
-    init(key: String, payload: Payload) { self.key = key; self.payload = payload }
+    /// What holding it costs (decoded samples, or the PDF file's size), for
+    /// `DL3ResourceCache`'s bound.
+    let cost: Int
+    /// The document a `.pdf` payload's page belongs to. A `CGPDFPage` does
+    /// not retain its document: once the document is released the page draws
+    /// nothing (every included PDF page was blank in the preview).
+    let document: CGPDFDocument?
+    init(key: String, payload: Payload, document: CGPDFDocument? = nil, cost: Int = 0) {
+        self.key = key; self.payload = payload; self.document = document; self.cost = cost
+    }
 
     static func load(_ info: DL3JSON) -> Result<DL3RenderImage, DL3Error> {
         guard let file = info["file"]?.string, let type = info["type"]?.string else { return .failure(DL3Error("image without file/type")) }
@@ -191,18 +259,122 @@ public final class DL3RenderImage: @unchecked Sendable {
                   let img = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCache: true] as CFDictionary) else {
                 return .failure(DL3Error("\(file): cannot decode"))
             }
-            return .success(DL3RenderImage(key: key, payload: .raster(deviceSamples(img))))
+            var samples = info["color_space"].flatMap { pdfColored(img, $0) } ?? deviceSamples(img)
+            // A JPEG in the PDF is a DCTDecode stream, which Core Graphics
+            // reads through its JPEG data provider; drawn small, that one
+            // decodes at a reduced size (the DCT's own scaling) where
+            // ImageIO's samples are point-sampled (a frame drawn at 1 px/pt
+            // came out black in the preview, grey in the PDF). So the same
+            // provider here, in the space chosen above.
+            if type != "png", let provider = CGDataProvider(url: url as CFURL), let space = samples.colorSpace,
+               let jpeg = CGImage(jpegDataProviderSource: provider, decode: nil, shouldInterpolate: false, intent: samples.renderingIntent),
+               jpeg.width == samples.width, jpeg.height == samples.height,
+               jpeg.colorSpace?.numberOfComponents == space.numberOfComponents, let recolored = jpeg.copy(colorSpace: space) {
+                samples = recolored
+            }
+            return .success(DL3RenderImage(key: key, payload: .raster(samples), cost: img.bytesPerRow * img.height))
         case "pdf":
-            guard let doc = CGPDFDocument(url as CFURL), let page = doc.page(at: Int(info["page"]?.int ?? 1)) else {
+            guard let doc = DL3Renderer.openPDF(url), let page = DL3Renderer.page(of: doc, at: Int(info["page"]?.int ?? 1)) else {
                 return .failure(DL3Error("\(file): cannot open page \(info["page"]?.int ?? 1)"))
             }
-            let w = info["width"]?.double ?? 0, h = info["height"]?.double ?? 0
-            let box = CGRect(x: info["orig_x"]?.double ?? 0, y: info["orig_y"]?.double ?? 0, width: w, height: h)
-            return .success(DL3RenderImage(key: key, payload: .pdf(page, box: box)))
+            let box = pdfBox(info, page: page)
+            let rotate = Int(info["rotate"]?.int ?? Int64(page.rotationAngle))
+            let size = (try? FileManager.default.attributesOfItem(atPath: file)[.size] as? Int) ?? 0
+            return .success(DL3RenderImage(key: key, payload: .pdf(page, box: box, matrix: formMatrix(box: box, rotate: rotate)),
+                                           document: doc, cost: size))
         default:
             return .failure(DL3Error("\(file): image type \(type) is not drawn"))
         }
     }
+
+    /// pdfTeX's form /Matrix for a page with /Rotate (pdftoepdf.c
+    /// `write_epdf`; flashtex-engine `pdftoepdf.rs`): the page turns about
+    /// its box, clockwise as /Rotate says, and the turned box keeps its
+    /// lower-left corner. Identity for 0 or a rotation that is not a
+    /// multiple of 90 (pdfTeX writes no matrix then).
+    static func formMatrix(box: CGRect, rotate: Int) -> CGAffineTransform {
+        let (x1, y1, x2, y2) = (box.minX, box.minY, box.maxX, box.maxY)
+        switch ((rotate % 360) + 360) % 360 {
+        case 90: return CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: x1 - y1, ty: y1 + x2)
+        case 180: return CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: x1 + x2, ty: y1 + y2)
+        case 270: return CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: x1 + y2, ty: y1 - x1)
+        default: return .identity
+        }
+    }
+
+    /// The included page's box in bp, in the page's own coordinates
+    /// (protocol §5.2: `orig_x`, `orig_y`, `width`, `height`; pdfTeX's /BBox). A box no PDF page can have (non-positive, or
+    /// beyond the 14,400-unit page limit, PDF 32000-1 Annex C) is not used:
+    /// a host that sends pdfTeX's internal scaled points (bp × 65,781.76)
+    /// would shrink the page to nothing (the title-page logo of a 592-page
+    /// book vanished). The box `page_box` names is then read from the file
+    /// itself, with the PDF defaults pdfTeX also applies (crop falls back to
+    /// media; bleed, trim and art to crop).
+    static func pdfBox(_ info: DL3JSON, page: CGPDFPage) -> CGRect {
+        let w = info["width"]?.double ?? 0, h = info["height"]?.double ?? 0
+        let given = CGRect(x: info["orig_x"]?.double ?? 0, y: info["orig_y"]?.double ?? 0, width: w, height: h)
+        let limit = 14_400.0
+        if w > 0, h > 0, w <= limit, h <= limit, abs(given.minX) <= limit, abs(given.minY) <= limit { return given }
+        let kind: CGPDFBox
+        switch info["page_box"]?.string {
+        case "media": kind = .mediaBox
+        case "bleed": kind = .bleedBox
+        case "trim": kind = .trimBox
+        case "art": kind = .artBox
+        default: kind = .cropBox
+        }
+        return page.getBoxRect(kind)
+    }
+}
+
+/// The decoded samples in the colour space the host's PDF gives them
+/// (IMAGE `color_space`, spec §5.2; Unicode mode writes dvipdfmx's): `icc`,
+/// the profile the file embeds (ImageIO tags the samples with it);
+/// `calgray`/`calrgb`, the PDF's CalGray/CalRGB with its numbers; an
+/// indexed image keeps its palette over that base. With the PDF's
+/// `/Intent`, not interpolated. Nil when the description is not one of
+/// these (the caller then takes the device space).
+func pdfColored(_ img: CGImage, _ cs: DL3JSON) -> CGImage? {
+    let nums = { (k: String) -> [CGFloat] in (cs[k]?.array ?? []).compactMap { $0.double }.map { CGFloat($0) } }
+    let indexed = img.colorSpace?.model == .indexed
+    var base: CGColorSpace?
+    switch cs["type"]?.string {
+    case "icc":
+        base = indexed ? img.colorSpace?.baseColorSpace : img.colorSpace
+        guard base?.model == .rgb || base?.model == .monochrome || base?.model == .cmyk else { return nil }
+    case "calgray":
+        let white = nums("white_point")
+        guard white.count == 3, let g = cs["gamma"]?.double else { return nil }
+        base = CGColorSpace(calibratedGrayWhitePoint: white, blackPoint: [0, 0, 0], gamma: CGFloat(g))
+    case "calrgb":
+        let white = nums("white_point"), m = nums("matrix")
+        guard white.count == 3, m.count == 9, let g = cs["gamma"]?.double else { return nil }
+        let gg = [CGFloat](repeating: CGFloat(g), count: 3)
+        base = CGColorSpace(calibratedRGBWhitePoint: white, blackPoint: [0, 0, 0], gamma: gg, matrix: m)
+    default: return nil
+    }
+    guard var space = base else { return nil }
+    if indexed {
+        let n = space.numberOfComponents
+        guard let src = img.colorSpace, src.baseColorSpace?.numberOfComponents == n,
+              let table = src.colorTable, table.count >= n, table.count % n == 0,
+              let ix = CGColorSpace(indexedBaseSpace: space, last: table.count / n - 1, colorTable: table) else { return nil }
+        space = ix
+    } else if img.colorSpace?.numberOfComponents != space.numberOfComponents {
+        return nil
+    }
+    let intent: CGColorRenderingIntent
+    switch cs["intent"]?.string {
+    case "Perceptual": intent = .perceptual
+    case "RelativeColorimetric": intent = .relativeColorimetric
+    case "Saturation": intent = .saturation
+    case "AbsoluteColorimetric": intent = .absoluteColorimetric
+    default: intent = .defaultIntent
+    }
+    guard let provider = img.dataProvider else { return nil }
+    return CGImage(width: img.width, height: img.height, bitsPerComponent: img.bitsPerComponent, bitsPerPixel: img.bitsPerPixel,
+                   bytesPerRow: img.bytesPerRow, space: space, bitmapInfo: img.bitmapInfo, provider: provider,
+                   decode: nil, shouldInterpolate: false, intent: intent)
 }
 
 /// The decoded samples in the PDF's device colour space, as pdfTeX embeds
@@ -226,7 +398,16 @@ func deviceSamples(_ img: CGImage) -> CGImage {
 /// A page (or form) with its resource ids resolved as they stood when it
 /// arrived (spec §5: a later rebinding never changes a page already held).
 public struct DL3PreparedPage: @unchecked Sendable {
-    public var page: DL3Page
+    public var page: DL3Page { didSet { formIDs = Self.formIDs(page) } }
+    /// The forms the page draws (`needsPDFFallback(forms:)` runs over every
+    /// page at each DONE: it walked every item, ~107 ms on main for 592
+    /// pages of text in a debug build).
+    public private(set) var formIDs: [UInt32] = []
+    static func formIDs(_ page: DL3Page) -> [UInt32] {
+        var ids: [UInt32] = []
+        for it in page.items { if case .form(let id, _) = it, !ids.contains(id) { ids.append(id) } }
+        return ids
+    }
     public var fonts: [UInt16: DL3RenderFont]
     public var images: [UInt32: DL3RenderImage]
     /// Why some item cannot be drawn exactly (a font that did not load,
@@ -235,6 +416,7 @@ public struct DL3PreparedPage: @unchecked Sendable {
 
     public init(page: DL3Page, fonts: [UInt16: DL3RenderFont], images: [UInt32: DL3RenderImage], problems: [String] = []) {
         self.page = page; self.fonts = fonts; self.images = images; self.problems = problems
+        formIDs = Self.formIDs(page)
     }
 
     public var widthPt: Double { page.boxWidth }
@@ -248,8 +430,8 @@ public struct DL3PreparedPage: @unchecked Sendable {
     public func needsPDFFallback(forms: [UInt32: DL3PreparedPage], depth: Int = 0) -> Bool {
         if needsPDFFallback { return true }
         guard depth < 16 else { return false }
-        for it in page.items {
-            if case .form(let id, _) = it, let f = forms[id], f.needsPDFFallback(forms: forms, depth: depth + 1) { return true }
+        for id in formIDs {
+            if let f = forms[id], f.needsPDFFallback(forms: forms, depth: depth + 1) { return true }
         }
         return false
     }
@@ -257,17 +439,46 @@ public struct DL3PreparedPage: @unchecked Sendable {
 
 /// Resolves ids to loaded resources, caching fonts and images by key across
 /// compiles and connections. Thread-safe.
+///
+/// Images are kept least-recently-used first out, within `imageLimit`
+/// entries and `imageByteLimit` bytes (decoded samples, or the PDF file's
+/// size: a `CGPDFDocument` keeps its file mapped). A page that holds an image
+/// keeps it alive whatever the cache drops; an id bound again re-reads it.
 public final class DL3ResourceCache: @unchecked Sendable {
     public static let shared = DL3ResourceCache()
     private let lock = NSLock()
     private var fonts: [String: Result<DL3RenderFont, DL3Error>] = [:]
     private var images: [String: Result<DL3RenderImage, DL3Error>] = [:]
+    /// Image keys, least recently used first.
+    private var imageOrder: [String] = []
+    private var imageBytes = 0
+    public private(set) var imageLimit: Int
+    public private(set) var imageByteLimit: Int
     /// Programs by key, so `have_fonts` can name them (the host then sends an empty program).
     private var programs: Set<String> = []
 
-    public init() {}
+    public init(imageLimit: Int = 256, imageByteLimit: Int = 512 << 20) {
+        self.imageLimit = max(1, imageLimit); self.imageByteLimit = max(0, imageByteLimit)
+    }
+
+    /// Images held now, and their cost (tests).
+    public var heldImages: (count: Int, bytes: Int) { lock.lock(); defer { lock.unlock() }; return (images.count, imageBytes) }
 
     public var heldFontKeys: [String] { lock.lock(); defer { lock.unlock() }; return programs.sorted() }
+
+    /// New limits for the decoded images (the app's performance mode):
+    /// images over them go now, least recently used first.
+    public func setImageLimits(count: Int, bytes: Int) {
+        lock.lock()
+        imageLimit = max(1, count); imageByteLimit = max(0, bytes)
+        var gone: [Result<DL3RenderImage, DL3Error>] = []
+        while !imageOrder.isEmpty, imageOrder.count > imageLimit || imageBytes > imageByteLimit {
+            let old = imageOrder.removeFirst()
+            if let g = images.removeValue(forKey: old) { imageBytes -= Self.cost(g); gone.append(g) }
+        }
+        lock.unlock()
+        _ = gone // (released after the lock)
+    }
 
     public func font(_ f: DL3Font) -> Result<DL3RenderFont, DL3Error> {
         let key = f.keyHex
@@ -288,11 +499,39 @@ public final class DL3ResourceCache: @unchecked Sendable {
     public func image(_ info: DL3JSON) -> Result<DL3RenderImage, DL3Error> {
         let key = (info["key"]?.string ?? "") + "|" + (info["file"]?.string ?? "")
         lock.lock()
-        if let hit = images[key] { lock.unlock(); return hit }
+        if let hit = images[key] {
+            if let i = imageOrder.lastIndex(of: key) { imageOrder.remove(at: i) }
+            imageOrder.append(key)
+            lock.unlock()
+            return hit
+        }
         lock.unlock()
         let r = DL3RenderImage.load(info)
-        lock.lock(); images[key] = r; lock.unlock()
+        lock.lock()
+        if images.updateValue(r, forKey: key) == nil {
+            imageOrder.append(key)
+            imageBytes += Self.cost(r)
+        }
+        // Drop the least recently used, never the one just loaded.
+        while imageOrder.count > 1, imageOrder.count > imageLimit || imageBytes > imageByteLimit {
+            let old = imageOrder.removeFirst()
+            if let gone = images.removeValue(forKey: old) { imageBytes -= Self.cost(gone) }
+        }
+        lock.unlock()
         return r
+    }
+
+    /// Memory pressure: forgets every cached image. A page that holds one
+    /// keeps it (what is on screen stays); the rest are freed, and an id
+    /// bound again decodes its image again.
+    public func trimImages() {
+        lock.lock(); defer { lock.unlock() }
+        images = [:]; imageOrder = []; imageBytes = 0
+    }
+
+    private static func cost(_ r: Result<DL3RenderImage, DL3Error>) -> Int {
+        if case .success(let i) = r { return i.cost }
+        return 0
     }
 }
 
@@ -422,14 +661,25 @@ public enum DL3Renderer {
     /// `forms` are the forms the page may draw (by id).
     public static func draw(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], in ctx: CGContext,
                             appearance: DL3Appearance = .light) {
+        draw(prepared, forms: forms, in: ctx, appearance: appearance, cull: [])
+    }
+
+    /// `cull`: the context is clipped to these rects (user space, bp):
+    /// glyphs whose ink meets none of them are skipped, nothing else changes
+    /// (`clippedTiles`). Empty: draw everything.
+    static func draw(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], in ctx: CGContext,
+                     appearance: DL3Appearance = .light, cull: [CGRect]) {
         ctx.saveGState()
         ctx.translateBy(x: -prepared.page.box[0], y: -prepared.page.box[1])
-        drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance)
+        drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance, cull: cull)
         ctx.restoreGState()
     }
 
+    /// `tile`: the context is a tile of the page raster (`rasterizeTile`):
+    /// items outside it are skipped and glyph origins and rule edges are
+    /// handed over as the whole page rounds them. `cull`: see `draw`.
     static func drawStream(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], in ctx: CGContext, depth: Int,
-                           appearance: DL3Appearance = .light) {
+                           appearance: DL3Appearance = .light, tile: Tile? = nil, cull: [CGRect] = []) {
         let page = prepared.page
         let H = page.box[3]
         let black = color([0], appearance)
@@ -438,20 +688,32 @@ public enum DL3Renderer {
         var stack: [GState] = []
         var glyphMatrix = CGAffineTransform.identity
         var lastFont: DL3RenderFont?
+        var ink = TileInk()
+        // The k-th GLYPH's exact origin (ORIGINS, spec §4.2), when the writer sent them.
+        let origins = page.origins
+        var glyphIndex = 0
+        // The k-th RULE's geometry (RULE_GEOMETRY, spec §4.4), when sent.
+        let ruleGeometry = page.ruleGeometry
+        var ruleIndex = 0
         ctx.setFillColor(black)
         ctx.setStrokeColor(black)
         ctx.setTextDrawingMode(.fill)
         for item in page.items {
             switch item {
             case .glyph(let f, let code, let x, let y, _):
-                guard gs.textRender != 3, let font = prepared.fonts[f], Int(code) < 256, font.draws(Int(code)) else { continue }
+                let gi = glyphIndex
+                glyphIndex += 1
+                // Stream space (bp, y up): the PDF's own origin, else its sp rounding.
+                let ox: Double, oy: Double
+                if gi < origins.count { ox = origins[gi].x; oy = origins[gi].y } else { ox = Double(x) / K; oy = snap(H - Double(y) / K) }
+                guard gs.textRender != 3, let font = prepared.fonts[f], font.draws(Int(code)) else { continue }
                 if let t = gs.textFill, !inText { ctx.setFillColor(t); inText = true }
                 if let t3 = font.type3?[Int(code)], let mask = t3.mask {
                     // Type 3 (writet3): the glyph procedure's `w 0 0 h llx lly cm`
                     // image mask, through the FontMatrix and the text matrix.
                     ctx.saveGState()
                     ctx.concatenate(CGAffineTransform(a: glyphMatrix.a, b: glyphMatrix.b, c: glyphMatrix.c, d: glyphMatrix.d,
-                                                      tx: Double(x) / K, ty: snap(H - Double(y) / K)))
+                                                      tx: ox, ty: oy))
                     ctx.concatenate(font.fontTransform)
                     // Core Graphics smooths a Type 3 glyph's mask as .medium does
                     // (measured on the PK documents: .none/.low/.default differ).
@@ -462,17 +724,54 @@ public enum DL3Renderer {
                     continue
                 }
                 guard let cgFont = font.cgFont else { continue }
-                let g = font.glyphs[Int(code)]
-                if lastFont !== font { ctx.setFont(cgFont); ctx.setFontSize(1); lastFont = font }
+                let g = font.glyph(Int(code))
                 var tm = font.fontTransform.concatenating(glyphMatrix)
-                tm.tx = Double(x) / K
-                tm.ty = snap(H - Double(y) / K)
+                tm.tx = ox
+                tm.ty = oy
+                if !cull.isEmpty, !cull.contains(where: { ink.meets($0, font: font, matrix: tm) }) { continue }
+                if let tile {
+                    guard ink.meets(tile.visible, font: font, matrix: tm) else { continue }
+                    tm.tx = tileCoordinate(tm.tx, scale: tile.scale)
+                    tm.ty = tileCoordinate(tm.ty, scale: tile.scale)
+                }
+                if lastFont !== font { ctx.setFont(cgFont); ctx.setFontSize(1); lastFont = font }
                 ctx.textMatrix = tm
                 ctx.showGlyphs([g], at: [.zero])
             case .rule(let kind, let x, let y, let w, let h):
                 if inText { ctx.setFillColor(gs.fill); inText = false }
+                let ri = ruleIndex
+                ruleIndex += 1
+                if ri < ruleGeometry.count {
+                    // As the PDF draws it: the CTM's translation, then `re f`, or `m l S`.
+                    let g = ruleGeometry[ri]
+                    if let tile, kind == .fill { // (a tile by translation has only filled rules)
+                        // The page's edges: `re`'s corners through the CTM's translation.
+                        let s = tile.scale
+                        func edge(_ t: Double, _ v: Double) -> Double { Double(Float(s * v + s * t)) / s }
+                        tileRule(left: edge(g[0], g[2]), right: edge(g[0], g[2] + g[4]),
+                                 top: edge(g[1], g[3] + g[5]), bottom: edge(g[1], g[3]), tile: tile, in: ctx)
+                        continue
+                    }
+                    ctx.saveGState()
+                    ctx.concatenate(CGAffineTransform(a: 1, b: 0, c: 0, d: 1, tx: g[0], ty: g[1]))
+                    ctx.beginPath()
+                    if kind == .fill {
+                        ctx.addRect(CGRect(x: g[2], y: g[3], width: g[4], height: g[5]))
+                        ctx.fillPath()
+                    } else {
+                        ctx.setLineWidth(g[6]); ctx.setLineCap(.butt)
+                        ctx.move(to: CGPoint(x: g[2], y: g[3])); ctx.addLine(to: CGPoint(x: g[4], y: g[5]))
+                        ctx.strokePath()
+                    }
+                    ctx.restoreGState()
+                    continue
+                }
                 let left = snap(Double(x) / K), top = snap(H - Double(y) / K)
                 let right = snap(Double(x + w) / K), bottom = snap(H - Double(y + h) / K)
+                if let tile, kind == .fill { // (a tile by translation has only filled rules)
+                    tileRule(left: left, right: right, top: top, bottom: bottom, tile: tile, in: ctx)
+                    continue
+                }
                 switch kind {
                 case .fill:
                     ctx.beginPath()
@@ -507,17 +806,35 @@ public enum DL3Renderer {
                 guard let img = prepared.images[id] else { continue }
                 ctx.saveGState()
                 ctx.concatenate(affine(page.matrix(m)))
+                // Every tile walks the whole page: an image outside this
+                // tile is skipped (a PDF one would cost its document's draw).
+                switch img.payload {
+                case .raster: if Self.outsideClip(CGRect(x: 0, y: 0, width: 1, height: 1), in: ctx) { ctx.restoreGState(); continue }
+                case .pdf(_, let box, let matrix): if Self.outsideClip(box.applying(matrix), in: ctx) { ctx.restoreGState(); continue }
+                }
                 switch img.payload {
                 case .raster(let cgImage):
                     ctx.interpolationQuality = .default // what Core Graphics uses for a PDF image without /Interpolate (measured: .none and .medium/.high differ)
+                    // Core Graphics draws a PDF's image XObject whose device
+                    // transform is axis-aligned (0/90/180/270°) without edge
+                    // antialiasing: an edge pixel the image only partly covers
+                    // is all image, not a blend with the page (measured: 0 px
+                    // apart that way at 1–4.25 px/pt, ~1,500 edge pixels apart
+                    // antialiased at the pane's 2.86 px/pt; lane BEAMER-V3).
+                    // A rotated image keeps its antialiased edges, as there.
+                    if Self.axisAligned(ctx.ctm) { ctx.setShouldAntialias(false) }
                     ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-                case .pdf(let pdfPage, let box):
-                    ctx.clip(to: CGRect(x: 0, y: 0, width: 1, height: 1))
-                    if box.width > 0, box.height > 0 {
-                        ctx.scaleBy(x: 1 / box.width, y: 1 / box.height)
-                        ctx.translateBy(x: -box.minX, y: -box.minY)
-                    }
-                    ctx.drawPDFPage(pdfPage)
+                case .pdf(let pdfPage, let box, let matrix):
+                    // pdfTeX includes a PDF page as a Form XObject: its space
+                    // is the page's own coordinates (bp), its /BBox the
+                    // selected page box there, its /Matrix the rotation (if
+                    // any), and its `cm` (this item's matrix) already carries
+                    // the scaled −origin. So: the form matrix, the clip to
+                    // the box, then the page's content stream as it is
+                    // (`drawPDFPage` neither rotates nor clips).
+                    ctx.concatenate(matrix)
+                    ctx.clip(to: box)
+                    DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                 }
                 ctx.restoreGState()
                 lastFont = nil
@@ -559,6 +876,99 @@ public enum DL3Renderer {
             }
         }
     }
+
+    /// Draws a PDF page (a fallback page, an included PDF image) from this
+    /// thread's own copy of its document when the document was opened with
+    /// `openPDF` (every document the app draws from), else from the page as
+    /// given. Core Graphics draws one `CGPDFDocument`'s pages wrongly when
+    /// two threads use it at once: shadings (beamer's balls, headlines and
+    /// frame titles) came out up to 75 levels off, at random, and the pane
+    /// draws fallback pages on a concurrent raster queue, the tile queue and
+    /// `concurrentPerform` tile batches at the same time (lane BEAMER-V3). A
+    /// lock around the draw was not enough (3 of ~52 test runs still failed:
+    /// the page lookup and box reads of the shared document stayed
+    /// concurrent). Each page drawn from its own document is exact, so each
+    /// thread opens its own document from the same bytes, once, and keeps the
+    /// last ones it drew (`PDFThreadDocuments`).
+    ///
+    /// A CGPDFPage does not keep its document: the session lets go of the
+    /// fallback document when a DONE replaces it, while a raster job may
+    /// still hold its pages (`page.document` is then nil). A page taken with
+    /// `page(of:at:)` carries the bytes too, so such a page is still drawn
+    /// from this thread's own document, never from the shared page;
+    /// a page whose own document cannot be opened is not drawn. A page not
+    /// opened with `openPDF` is drawn as given (its caller draws it from one
+    /// thread). Returns whether the page was drawn.
+    ///
+    /// Take an `openPDF` document's pages with `page(of:at:)`, never
+    /// `CGPDFDocument.page(at:)`: a page without the bytes is drawn only
+    /// while its document lives (a debug build asserts on one).
+    @discardableResult
+    public static func drawPDFPage(_ page: CGPDFPage, in ctx: CGContext) -> Bool {
+        assert(!takenWithoutBytes(page), "a page of an openPDF document taken with CGPDFDocument.page(at:): take it with DL3Renderer.page(of:at:)")
+        guard let bytes = DL3PDFBytes.of(page) ?? page.document.flatMap(DL3PDFBytes.of) else {
+            ctx.drawPDFPage(page)
+            return true
+        }
+        // The bytes (and so this thread's document of them: `retire` drops it
+        // when they go, from any thread) live until the draw is over, also
+        // when they came from `page.document`, which nothing else may hold.
+        // A CGPDFPage does not keep its document, so the document is held too.
+        return withExtendedLifetime(bytes) {
+            guard let doc = PDFThreadDocuments.current.document(for: bytes) else { return false }
+            return withExtendedLifetime(doc) {
+                guard let own = doc.page(at: page.pageNumber) else { return false }
+                ctx.drawPDFPage(own)
+                return true
+            }
+        }
+    }
+
+    /// Whether `page` is of an `openPDF` document but was taken without its
+    /// bytes (`CGPDFDocument.page(at:)` rather than `page(of:at:)`).
+    static func takenWithoutBytes(_ page: CGPDFPage) -> Bool {
+        DL3PDFBytes.of(page) == nil && page.document.flatMap(DL3PDFBytes.of) != nil
+    }
+
+    /// Whether `rect` (user space) lies wholly outside what `ctx` can draw
+    /// into: its clip, which in a bitmap context is at most the bitmap (a
+    /// tile). Compared in device space, the clip grown by a pixel, so an
+    /// image that could touch any pixel of the context is drawn.
+    static func outsideClip(_ rect: CGRect, in ctx: CGContext) -> Bool {
+        let clip = ctx.boundingBoxOfClipPath
+        guard !clip.isNull, !clip.isInfinite, !rect.isNull, !rect.isInfinite else { return clip.isNull }
+        let device = ctx.convertToDeviceSpace(clip).insetBy(dx: -1, dy: -1)
+        return !ctx.convertToDeviceSpace(rect).intersects(device)
+    }
+
+    /// Opens a PDF for drawing: the file's bytes are read once (a later
+    /// rewrite of the file does not change what is drawn) and kept with the
+    /// document, so `drawPDFPage` can open a private copy per thread.
+    public static func openPDF(_ url: URL) -> CGPDFDocument? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return openPDF(data: data)
+    }
+
+    public static func openPDF(data: Data) -> CGPDFDocument? {
+        guard let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider) else { return nil }
+        DL3PDFBytes.attach(DL3PDFBytes(data), to: doc)
+        return doc
+    }
+
+    /// Page `k` (1-based) of `doc`, carrying the document's bytes when it
+    /// was opened with `openPDF` (a page outlives its document's last
+    /// reference: `drawPDFPage`). Only the pages taken get them: opening
+    /// the compile's PDF at a DONE stays O(1) in its pages (it attached
+    /// them to every page up front, on the main thread).
+    public static func page(of doc: CGPDFDocument, at k: Int) -> CGPDFPage? {
+        guard let p = doc.page(at: k) else { return nil }
+        if let bytes = DL3PDFBytes.of(doc), DL3PDFBytes.of(p) == nil { DL3PDFBytes.attach(bytes, to: p) }
+        return p
+    }
+
+    /// Whether `m` maps the unit square's edges onto device rows and columns
+    /// (no rotation, or a quarter turn; flips included).
+    static func axisAligned(_ m: CGAffineTransform) -> Bool { (m.b == 0 && m.c == 0) || (m.a == 0 && m.d == 0) }
 
     /// A position rounded to sp is within 7.6e-6 bp of the PDF's. pdfTeX
     /// writes positions with three decimals, so a value that close to the
@@ -627,14 +1037,16 @@ public enum DL3Renderer {
         }
     }
 
+    /// `background`: the ground, over every pixel (the page's partial last
+    /// column and row included), as `rasterizeToSurface` lays it.
     public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba,
-                                     smoothFonts: Bool = false) -> CGContext? {
+                                     smoothFonts: Bool = false, background: CGColor = CGColor(gray: 1, alpha: 1)) -> CGContext? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: layout.bitmapInfo) else { return nil }
-        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.setFillColor(background)
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
@@ -657,12 +1069,10 @@ public enum DL3Renderer {
     /// One page's bitmap (off-main safe).
     public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba,
                                  appearance: DL3Appearance = .light, smoothFonts: Bool = false) -> CGImage? {
+        // The ground over every pixel: a dark page's partial last column and
+        // row are dark too, as `rasterizeToSurface`'s (and its tiles').
         guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, layout: layout,
-                                      smoothFonts: smoothFonts) else { return nil }
-        if appearance == .dark {
-            ctx.saveGState(); ctx.setFillColor(appearance.background)
-            ctx.fill(CGRect(x: 0, y: 0, width: prepared.widthPt, height: prepared.heightPt)); ctx.restoreGState()
-        }
+                                      smoothFonts: smoothFonts, background: appearance.background) else { return nil }
         draw(prepared, forms: forms, in: ctx, appearance: appearance)
         return ctx.makeImage()
     }
@@ -688,7 +1098,7 @@ public enum DL3Renderer {
         let box = pdfPage.getBoxRect(.mediaBox)
         let s = surface(widthPt: box.width, heightPt: box.height, scale: scale, smoothFonts: smoothFonts) { ctx in
             ctx.translateBy(x: -box.minX, y: -box.minY)
-            ctx.drawPDFPage(pdfPage)
+            DL3Renderer.drawPDFPage(pdfPage, in: ctx)
         }
         guard appearance == .dark, let s else { return s }
         let ci = CIImage(ioSurface: s)
@@ -744,7 +1154,111 @@ public enum DL3Renderer {
         guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout,
                                       smoothFonts: smoothFonts) else { return nil }
         ctx.translateBy(x: -box.minX, y: -box.minY)
-        ctx.drawPDFPage(pdfPage)
+        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
         return ctx.makeImage()
+    }
+}
+
+/// A PDF's bytes, kept with the `CGPDFDocument` opened from them
+/// (`DL3Renderer.openPDF`), so a thread can open its own document of the
+/// same PDF. `id` is unique per opened PDF (never reused, unlike an address).
+public final class DL3PDFBytes: @unchecked Sendable {
+    public let data: Data
+    public let id: UInt64
+    private static let counter = NSLock()
+    nonisolated(unsafe) private static var next: UInt64 = 0
+
+    init(_ data: Data) {
+        self.data = data
+        Self.counter.lock(); Self.next &+= 1; id = Self.next; Self.counter.unlock()
+    }
+
+    /// The PDF is no longer held (its document and pages are gone: a DONE
+    /// replaced the fallback PDF, an image left the cache): every thread's
+    /// own document of it goes too, rather than staying until 16 others
+    /// push it out of an idle worker thread's cache.
+    deinit { PDFThreadDocuments.retire(id) }
+
+    nonisolated(unsafe) private static var key: UInt8 = 0
+    static func attach(_ bytes: DL3PDFBytes, to doc: AnyObject) {
+        withUnsafePointer(to: &key) { objc_setAssociatedObject(doc, $0, bytes, .OBJC_ASSOCIATION_RETAIN) }
+    }
+    static func of(_ doc: AnyObject) -> DL3PDFBytes? {
+        withUnsafePointer(to: &key) { objc_getAssociatedObject(doc, $0) as? DL3PDFBytes }
+    }
+}
+
+/// One thread's own documents of the PDFs it drew last, opened from the
+/// shared bytes: at most `limit` documents and `byteLimit` bytes of PDF
+/// (least recently used out; the newest always stays). Each thread has its
+/// own (`Thread.threadDictionary`): a document is only ever drawn on its
+/// thread. The lock is for `retire`, which drops a PDF no longer held from
+/// every thread's cache (GCD keeps its worker threads, and their caches).
+///
+/// A tile draws every included PDF its rectangle meets, so the limit is
+/// above the PDFs one page shows: with 4, a page of 5 or more PDFs (a
+/// figure grid) opened each document again on every tile, 54-360 ms each.
+final class PDFThreadDocuments {
+    static let limit = 16
+    static let byteLimit = 128 << 20
+    let maxCount: Int, maxBytes: Int
+    init(maxCount: Int = limit, maxBytes: Int = byteLimit) { self.maxCount = maxCount; self.maxBytes = maxBytes }
+    private let lock = NSLock()
+    private var entries: [(id: UInt64, doc: CGPDFDocument, bytes: Int)] = []
+    /// Documents opened on this thread (tests).
+    private(set) var opened = 0
+    /// The documents kept and their PDFs' bytes (tests).
+    var kept: (count: Int, bytes: Int) { lock.lock(); defer { lock.unlock() }; return (entries.count, entries.reduce(0) { $0 + $1.bytes }) }
+    /// Whether a document of PDF `id` is kept (tests).
+    func holds(_ id: UInt64) -> Bool { lock.lock(); defer { lock.unlock() }; return entries.contains { $0.id == id } }
+
+    static var current: PDFThreadDocuments {
+        let d = Thread.current.threadDictionary
+        if let c = d["flashtex.dl3.pdf-documents"] as? PDFThreadDocuments { return c }
+        let c = PDFThreadDocuments()
+        d["flashtex.dl3.pdf-documents"] = c
+        registryLock.lock()
+        registry.removeAll { $0.cache == nil }
+        registry.append(Weak(cache: c))
+        registryLock.unlock()
+        return c
+    }
+
+    private struct Weak { weak var cache: PDFThreadDocuments? }
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var registry: [Weak] = []
+
+    /// Drops PDF `id` from every thread's cache (`DL3PDFBytes.deinit`).
+    static func retire(_ id: UInt64) {
+        registryLock.lock()
+        let caches = registry.compactMap(\.cache)
+        registryLock.unlock()
+        for c in caches {
+            c.lock.lock()
+            let gone = c.entries.filter { $0.id == id } // (released after the lock)
+            c.entries.removeAll { $0.id == id }
+            c.lock.unlock()
+            _ = gone
+        }
+    }
+
+    func document(for bytes: DL3PDFBytes) -> CGPDFDocument? {
+        lock.lock()
+        if let i = entries.firstIndex(where: { $0.id == bytes.id }) {
+            let e = entries.remove(at: i)
+            entries.append(e)
+            lock.unlock()
+            return e.doc
+        }
+        lock.unlock()
+        guard let provider = CGDataProvider(data: bytes.data as CFData), let doc = CGPDFDocument(provider) else { return nil }
+        lock.lock()
+        opened += 1
+        entries.append((bytes.id, doc, bytes.data.count))
+        var out: [CGPDFDocument] = []
+        while entries.count > 1, entries.count > maxCount || entries.reduce(0, { $0 + $1.bytes }) > maxBytes { out.append(entries.removeFirst().doc) }
+        lock.unlock()
+        _ = out
+        return doc
     }
 }

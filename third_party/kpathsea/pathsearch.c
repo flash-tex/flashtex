@@ -475,12 +475,19 @@ path_search (kpathsea kpse, const_string path, string name,
         *found = dir_list_search (kpse, dirs, name, all,
                                   kpathsea_readable_file);
 #ifdef KPSE_CASEFOLDING_SEARCH
-        if (!STR_LIST (*found)
-            && kpse_cnf_p (kpathsea_var_value (kpse,
-                                               "texmf_casefold_search"))) {
-          /* Nothing found; search again, case-insensitively: */
-          *found = dir_list_search (kpse, dirs, name, all,
-                                    casefold_readable_file);
+        /* FlashTeX change (2026-10-09): the variable's value, which
+           kpathsea_var_value allocates, is freed (it was lost at every
+           search that found nothing on disk).  */
+        if (!STR_LIST (*found)) {
+          string casefold = kpathsea_var_value (kpse, "texmf_casefold_search");
+          boolean again = kpse_cnf_p (casefold);
+          free (casefold);
+          if (again) {
+            /* Nothing found; search again, case-insensitively: */
+            free (STR_LIST (*found));
+            *found = dir_list_search (kpse, dirs, name, all,
+                                      casefold_readable_file);
+          }
         }
 #endif /* KPSE_CASEFOLDING_SEARCH */
       }
@@ -649,6 +656,10 @@ kpathsea_path_search_list_generic (kpathsea kpse,
       /* That search can only return a zero- or one-element list, so: */
       if (!STR_LIST_EMPTY (abs_ret_list)) {
         str_list_add (&ret_list, STR_LIST_FIRST_ELT (abs_ret_list));
+        /* FlashTeX change (2026-10-09): the list's array, not its one
+           element (now ret_list's), is given back; it was lost at every
+           lookup of an absolute name in a resident process.  */
+        free (STR_LIST (abs_ret_list));
         if (!all) { /* if they only wanted one, we're done */
           goto out;
         }
@@ -707,11 +718,19 @@ kpathsea_path_search_list_generic (kpathsea kpse,
         *found = dir_list_search_list (kpse, dirs, names, all,
                                       kpathsea_readable_file);
 #ifdef KPSE_CASEFOLDING_SEARCH
-        if (!STR_LIST (*found) && kpse_cnf_p (kpathsea_var_value (kpse,
-                                                   "texmf_casefold_search"))) {
-          /* Still nothing; search again, case-insensitively: */
-          *found = dir_list_search_list (kpse, dirs, names, all,
-                                         casefold_readable_file);
+        /* FlashTeX change (2026-10-09): the variable's value, which
+           kpathsea_var_value allocates, is freed (it was lost at every
+           search that found nothing on disk).  */
+        if (!STR_LIST (*found)) {
+          string casefold = kpathsea_var_value (kpse, "texmf_casefold_search");
+          boolean again = kpse_cnf_p (casefold);
+          free (casefold);
+          if (again) {
+            /* Still nothing; search again, case-insensitively: */
+            free (STR_LIST (*found));
+            *found = dir_list_search_list (kpse, dirs, names, all,
+                                           casefold_readable_file);
+          }
         }
 #endif
       }
@@ -725,6 +744,20 @@ kpathsea_path_search_list_generic (kpathsea kpse,
         str_list_add (&ret_list, STR_LIST_FIRST_ELT (*found));
         done = true;
       }
+    }
+    /* FlashTeX change (2026-10-09): this element's list is given back:
+       its array and struct, and the names ret_list did not take (all
+       but the first when only one was wanted). Upstream lost them at every
+       path element of every search, which a resident process repeats
+       (macOS `leaks`, lane MEMORY-SAFETY).  */
+    if (found) {
+      if (!all && STR_LIST (*found)) {
+        unsigned i;
+        for (i = 1; i < STR_LIST_LENGTH (*found); i++)
+          free (STR_LIST_ELT (*found, i));
+      }
+      free (STR_LIST (*found));
+      free (found);
     }
   }
 

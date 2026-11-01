@@ -6,6 +6,12 @@
 //! naming the ignored keys, and is a real error after `\documentclass`,
 //! exactly like real LaTeX.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::useless_format,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
 use flashtex_compiler::layout::LayoutConstraints;

@@ -54,7 +54,7 @@ crate::codec_struct!(State {
 /// The C library's `regcomp` + `regexec` (csrc/flashtex_regex.c): whether
 /// `pattern` matches `text`, and the first `n` subexpression spans; or
 /// `regerror`'s message.
-#[cfg(feature = "regex")]
+#[cfg(flashtex_regex)]
 fn regex_match(
     pattern: &[u8],
     text: &[u8],
@@ -100,8 +100,9 @@ fn regex_match(
     Ok((r == 1, so.into_iter().zip(eo).collect()))
 }
 
-/// Without the `regex` feature there is no regular-expression engine.
-#[cfg(not(feature = "regex"))]
+/// Without the `regex` feature (the trip tests' scratch packages) there is
+/// no regular-expression engine.
+#[cfg(not(flashtex_regex))]
 fn regex_match(_: &[u8], _: &[u8], _: bool, _: i32) -> Result<(bool, Vec<(i64, i64)>), String> {
     Err("regular expressions are not available in this build".into())
 }
@@ -146,52 +147,7 @@ fn empty_to_none(b: Vec<u8>) -> Option<Vec<u8>> {
 // Dates (texmfmp.c: init_start_time, makepdftime, initstarttime)
 // ---------------------------------------------------------------------------
 
-/// `struct tm` as far as POSIX fixes it, followed by the BSD/glibc
-/// extensions macOS and Linux both have.
-#[repr(C)]
-struct Tm {
-    tm_sec: i32,
-    tm_min: i32,
-    tm_hour: i32,
-    tm_mday: i32,
-    tm_mon: i32,
-    tm_year: i32,
-    tm_wday: i32,
-    tm_yday: i32,
-    tm_isdst: i32,
-    tm_gmtoff: std::ffi::c_long,
-    tm_zone: *const std::ffi::c_char,
-}
-
-extern "C" {
-    fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
-    fn gmtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
-}
-
-fn broken_down(t: i64, utc: bool) -> Tm {
-    let mut tm = Tm {
-        tm_sec: 0,
-        tm_min: 0,
-        tm_hour: 0,
-        tm_mday: 0,
-        tm_mon: 0,
-        tm_year: 0,
-        tm_wday: 0,
-        tm_yday: 0,
-        tm_isdst: 0,
-        tm_gmtoff: 0,
-        tm_zone: std::ptr::null(),
-    };
-    // SAFETY: both functions only write the `struct tm` they are given.
-    unsafe {
-        if utc {
-            gmtime_r(&t, &mut tm);
-        } else {
-            localtime_r(&t, &mut tm);
-        }
-    }
-    tm
-}
+use crate::os::broken_down;
 
 /// `makepdftime`: `D:YYYYmmddHHMMSS` plus `Z` or `+HH'MM'`.
 pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {
@@ -398,6 +354,8 @@ impl Globals {
             .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
+        // (the incremental journal: the time read, and the file)
+        crate::system::note_stamp(&path, t);
         let s = make_pdf_time(t, force_source_date());
         if self.pool_ptr as usize + s.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
@@ -414,6 +372,8 @@ impl Globals {
         let Ok(meta) = std::fs::metadata(&path) else {
             return;
         };
+        // (the incremental journal: the size is the content's)
+        crate::system::note_size_read(&path);
         let b = meta.len().to_string().into_bytes();
         if self.pool_ptr as usize + b.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
@@ -1004,6 +964,9 @@ impl Globals {
     /// `pdftex_fail` (utils.c): the same layout as pdftex.web's `pdf_error`,
     /// then the run ends.
     pub fn pdftex_fail(&mut self, msg: &str) -> ! {
+        if super::images::probing() {
+            super::images::probe_fail(msg.to_string());
+        }
         // safe_print: `print` of each character code
         fn safe_print(g: &mut Globals, s: &[u8]) {
             for &c in s {
@@ -1060,5 +1023,29 @@ mod tests {
     #[test]
     fn pdf_time_in_utc() {
         assert_eq!(super::make_pdf_time(0, true), b"D:19700101000000Z");
+    }
+
+    /// `\pdfmatch`'s regcomp/regexec: REG_EXTENDED, spans of the
+    /// subexpressions, -1 for one that took no part.
+    #[cfg(flashtex_regex)]
+    #[test]
+    fn pdfmatch_regex() {
+        let m = super::regex_match(b"(a+)(c)?b", b"xaab", false, 4).unwrap();
+        assert_eq!(m, (true, vec![(1, 4), (1, 3), (-1, -1), (-1, -1)]));
+        let m = super::regex_match(b"A+B", b"xaab", true, 1).unwrap();
+        assert_eq!(m, (true, vec![(1, 4)]));
+        assert!(!super::regex_match(b"^b", b"ab", false, 1).unwrap().0);
+        assert!(super::regex_match(b"(", b"", false, 1).is_err());
+    }
+
+    /// On Windows the regex is pdfTeX's copy of glibc's
+    /// (third_party/pdftex-regex), whose messages are glibc's.
+    #[cfg(all(flashtex_regex, windows))]
+    #[test]
+    fn pdfmatch_regex_is_glibc_on_windows() {
+        assert_eq!(
+            super::regex_match(b"(", b"", false, 1),
+            Err("Unmatched ( or \\(".to_string())
+        );
     }
 }

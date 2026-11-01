@@ -21,6 +21,9 @@
 //! introspection for future `\show`/`\meaning` work, etc).
 #![allow(dead_code)]
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::blocks_in_conditions, clippy::chunks_exact_to_as_chunks, clippy::doc_lazy_continuation, clippy::empty_line_after_doc_comments, clippy::let_and_return, clippy::manual_is_multiple_of, clippy::single_match, clippy::type_complexity, clippy::unnecessary_map_or, clippy::while_let_loop, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod catcode;
 mod conditionals;
 mod error;

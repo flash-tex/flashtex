@@ -1,6 +1,9 @@
 //! `\boxed` uses the same four-rule frame geometry as `\fcolorbox`, with
 //! amsmath's fixed 3pt separation and 0.4pt rule width.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::chunks_exact_to_as_chunks, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

@@ -13,6 +13,12 @@
 //! about the oracle page height). Bounding boxes are the oracle `papersize`
 //! specials converted with K = 72/72.27.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::type_complexity,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 use flashtex_vector_graphics::item::Item;
 use flashtex_vector_graphics::path::PathCommand;
 use flashtex_vector_graphics::tikz::{ApproxMeasurer, Picture, Tikz};

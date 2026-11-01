@@ -14,7 +14,7 @@
 //! | [`mapfile`] | `mapfile.c` | ported |
 //! | [`subfont`] | `subfont.c` | ported: subfont map entries (`name@sfd@`) |
 //! | [`writefont`] | `writefont.c` | ported |
-//! | [`writet1`] | `writet1.c` | ported: Type 1 embedding and subsetting |
+//! | [`writet1`] | `writet1.c` | rewritten into idiomatic Rust (docs/design/engine-v2/REWRITE.md §6): Type 1 embedding and subsetting |
 //! | [`writeenc`] | `writeenc.c` | ported |
 //! | [`tounicode`] | `tounicode.c` | ported |
 //! | [`writet3`] | `writet3.c`, `pkin.c` | ported: PK bitmap fonts (found or made by kpathsea's linked `kpse_find_pk`, which runs mktexpk) and `.pgc` files as Type 3 |
@@ -38,6 +38,7 @@ pub mod avlstuff;
 pub mod cfile;
 pub mod cfmt;
 pub mod epdf;
+pub mod fmtable;
 pub mod fonts;
 pub mod images;
 pub mod macnames;
@@ -59,7 +60,9 @@ pub mod writet1;
 pub mod writet3;
 pub mod writettf;
 pub mod xpdf;
-pub mod zlib;
+/// TeX Live's zlib, built and bound by the runtime (crates/flashtex-runtime,
+/// docs/design/xetex/PLAN.md §3.3), under its old path.
+pub use flashtex_runtime::zlib;
 
 use crate::generated::Globals;
 use std::cell::RefCell;
@@ -82,10 +85,6 @@ pub struct CState {
     pub out: output::State,
     /// The image table and the image writers' state.
     pub img: shared::Shared<images::State>,
-    /// The display-list writer's side table (`crate::displaylist`), set
-    /// only in a snapshot: engine state outside the word space like the
-    /// rest, but not what the engine computes, so `same_as` ignores it.
-    pub dl: crate::displaylist::Snap,
 }
 
 thread_local! {
@@ -155,6 +154,7 @@ pub fn note_printed() {
 pub fn reset_state() {
     STATE.with(|s| *s.borrow_mut() = CState::default());
     crate::displaylist::engine_reset();
+    crate::lineshift::reset();
 }
 
 crate::codec_struct!(CState {
@@ -164,8 +164,7 @@ crate::codec_struct!(CState {
     fonts,
     fonts_busy,
     out,
-    img,
-    dl
+    img
 });
 
 fn enc_of<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
@@ -195,7 +194,7 @@ impl CState {
     pub fn same_as(&self, o: &CState) -> bool {
         let (f, g) = (&self.fonts, &o.fonts);
         same_enc(&self.utils, &o.utils)
-            && same_shared(&self.vf, &o.vf)
+            && (shared::Shared::ptr_eq(&self.vf, &o.vf) || self.vf.same_as(&o.vf))
             && self.avl.same_as(&o.avl)
             && self.fonts_busy == o.fonts_busy
             && same_enc(&self.out, &o.out)
@@ -214,15 +213,13 @@ impl CState {
 pub fn snapshot_state() -> Result<CState, String> {
     with_state(|s| {
         assert!(!s.fonts_busy, "checkpoint while the font backend is out");
-        let mut c = s.clone();
-        c.dl = crate::displaylist::snapshot();
-        Ok(c)
+        Ok(s.clone())
     })
 }
 
 /// Replace this thread's C state (restoring a checkpoint).
 pub fn restore_state(st: CState) {
-    crate::displaylist::restore(&st.dl);
+    crate::displaylist::restored();
     STATE.with(|s| *s.borrow_mut() = st);
 }
 

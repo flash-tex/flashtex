@@ -1,0 +1,13 @@
+% x019-bytes-encoding: \XeTeXinputencoding "bytes" reads the rest of the file byte by byte
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\XeTeXinputencoding "bytes"
+\setbox0=\hbox{café ü ab}
+\message{x019 [café]}
+\XeTeXinputencoding "utf8"
+\setbox1=\hbox{cafÃ©}
+\lsshipbox0
+\lsshipbox1
+\end

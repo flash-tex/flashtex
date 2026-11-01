@@ -1,0 +1,72 @@
+samples 304680, cycles 276728.6 M
+ self%  incl%  function
+ 23.65  27.99  body_2::get_next
+ 11.20  11.75  displaylist::dl_note_node
+  8.58  19.65  body_2::macro_call
+  5.92   6.21  body_2::end_token_list
+  4.90  41.97  body_2::expand
+  4.72   4.73  body_1::id_lookup
+  3.12  15.74  body_3::conditional
+  2.76   3.32  Arena::checkpoint
+  2.75  98.50  body_7::main_control
+  2.72  11.88  body_0::get_avail
+  2.29   2.30  body_1::delete_token_ref
+  1.92  11.12  body_3::scan_toks
+  1.47   1.47  _platform_memmove
+  1.42  27.87  body_7::prefixed_command
+  1.39   1.61  body_2::begin_token_list
+  1.30   2.95  body_0::get_node
+  1.26   1.37  dg_name::z
+  1.25   1.55  _xzm_free
+  1.15   1.23  Arena::retain
+  0.95   5.15  body_2::back_input
+  0.92   0.92  _tlv_get_addr
+  0.85   3.26  diag::dg_def
+  0.76   1.94  body_2::eq_define
+  0.70   3.32  diag::dg_def_begin
+  0.70   1.48  body_1::copy_node_list
+  0.45   0.62  RandomState::insert
+  0.43   0.44  body_0::free_node
+  0.38   0.57  WidthEnv::show
+  0.34   3.86  body_2::scan_int
+  0.34   0.61  body_1::flush_node_list
+  0.33   0.81  body_3::str_toks
+  0.32   1.63  body_2::unsave
+  0.31   0.31  _xzm_xzone_malloc
+  0.30   1.53  body_3::the_toks
+  0.29   0.44  <deduplicated_symbol>
+  0.26   1.47  Core::save
+  0.26   0.28  Core::seal
+  0.24   2.40  body_2::scan_dimen
+  0.24   1.23  body_2::scan_keyword
+  0.24   0.85  body_7::get_r_token
+  0.22   0.22  body_2::eq_save
+  0.22   0.22  body_0::print_char
+  0.21   0.21  _platform_memset
+  0.21   0.21  _xzm_xzone_malloc_from_freelist_chunk
+  0.21   0.21  arena::rewound_until
+  0.18   0.18  body_2::eq_destroy
+  0.18   0.62  body_2::scan_something_internal
+  0.17   0.17  _malloc_zone_malloc
+  0.15   0.15  __bzero
+  0.15   0.33  seal::X
+  0.15   0.15  write::Xneu_15fl
+  0.12   0.12  _free
+  0.12   0.12  hash_insert_normalized
+  0.11   0.19  body_0::show_token_list
+  0.11   2.33  dg_def::z
+  0.10   0.27  _xzm_xzone_find_and_malloc_from_freelist_chunk
+  0.10   0.11  body_0::search_string
+  0.10   0.58  body_2::get_token
+  0.10   2.45  body_7::do_register_command
+  0.09   0.99  WidthEnv::run
+
+-- inclusive --
+ 99.90  _pthread_start
+ 99.90  thread_start
+ 99.90  new::thread_start
+ 99.85  main::f
+ 99.85  vtable::b
+ 99.85  Engine::run
+
+[exited with code 0]
