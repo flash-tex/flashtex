@@ -16,7 +16,7 @@ static ON: AtomicBool = AtomicBool::new(false);
 /// The command line's switch, `FLASHTEX_LAZY_FLUSH=1`, read before the run
 /// starts (`flashtex_lazy_flush_enabled` reads it at `Set initial values`).
 pub fn enable_from_env() {
-    if std::env::var_os("FLASHTEX_LAZY_FLUSH").is_some_and(|v| v == "1") {
+    if !std::env::var_os("FLASHTEX_LAZY_FLUSH").is_some_and(|v| v == "0") {
         ON.store(true, Ordering::Relaxed);
     }
 }
