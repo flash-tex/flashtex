@@ -603,11 +603,38 @@ struct SpanEnd {
     first: i32,
     last: Option<i32>,
     max_buf: Option<i32>,
+    /// `max_buf_stack` at the call: with `max_buf` `None` the span's own
+    /// high mark is at most this, so a replay needs `max_buf_stack` at
+    /// least this (a restored checkpoint can leave it lower); comparisons
+    /// compare the high mark each leaves instead ([`SpanEnd::same`]).
+    max_buf0: i32,
     line: i32,
     /// The line-shift journal's entries the span made (`\inputlineno`
     /// reads of its file level's lines, tikz-cd's `\tikzcd@lineno`), each
     /// as its line's distance from the span's first.
     journal: Vec<i32>,
+}
+
+impl SpanEnd {
+    /// The buffer's high mark a replay of `self` leaves after a call at
+    /// which it was `at` (both counted from the line's start).
+    fn high_mark(&self, at: i32) -> i32 {
+        self.max_buf.map_or(at, |m| m.max(at))
+    }
+
+    /// Does a replay of the recorded `self` leave the state the normal
+    /// path's `b` (of a call at the same place) left? Equal but for the
+    /// high mark, where each leaves the same one from `b`'s call.
+    fn same(&self, b: &SpanEnd) -> bool {
+        let strip = |e: &SpanEnd| SpanEnd {
+            max_buf: None,
+            max_buf0: 0,
+            ..e.clone()
+        };
+        strip(self) == strip(b)
+            && (self.max_buf.is_some() || self.max_buf0 <= b.max_buf0)
+            && self.high_mark(b.max_buf0) == b.high_mark(b.max_buf0)
+    }
 }
 
 /// A span begun in vertical mode inside a box (§15.3): it started a
@@ -2351,6 +2378,13 @@ impl Globals {
         if with_config(|c| self.bm_name_is(p, &c.names)) {
             self.bm_cand[p as usize] = true;
         }
+        if self.bm_span_cs == 0
+            && with_config(|c| !c.spans.is_empty())
+            && self.bm_name_is(p, &[b"begin".to_vec()])
+        {
+            self.bm_cand[p as usize] = true;
+            self.bm_span_cs = p;
+        }
         if self.bm_rec_on {
             self.bm_note_new_cs(p);
         }
@@ -3051,6 +3085,7 @@ impl Globals {
                                 first: 0,
                                 last: None,
                                 max_buf: None,
+                                max_buf0: 0,
                                 line: 0,
                                 journal: vec![],
                             },
@@ -4353,7 +4388,7 @@ impl Globals {
                     if a.file != b.file {
                         diffs.push("the span's lines differ".to_string());
                     }
-                    if a.end != b.end {
+                    if !a.end.same(&b.end) {
                         diffs.push(format!("the span's end: recorded {:?} normal path {:?}", a.end, b.end).chars().take(400).collect());
                     }
                     match (&a.graf, &b.graf) {
@@ -4605,7 +4640,8 @@ impl Globals {
                 .collect()
         });
         let n = want.iter().map(|w| w.2).max().unwrap_or(0);
-        let index = self.input_stack[(self.input_ptr - 1) as usize].index_field;
+        let fl = self.input_stack[(self.input_ptr - 1) as usize];
+        let (index, high) = (fl.index_field, self.max_buf_stack - fl.start_field);
         let file = &mut self.input_file[(index - 1) as usize];
         let Some(path) = file.opened_path().map(str::to_string) else {
             return Err(Some(most));
@@ -4618,7 +4654,11 @@ impl Globals {
             let v = &s.store[&cs];
             want.iter().find_map(|(i, p, len)| {
                 let sp = v[*i].span.as_ref()?;
-                (*p == path && next.len() >= *len && next[..*len] == sp.file.lines[..])
+                // (the buffer's high mark: see `SpanEnd::max_buf0`)
+                (*p == path
+                    && next.len() >= *len
+                    && next[..*len] == sp.file.lines[..]
+                    && (sp.end.max_buf.is_some() || sp.end.max_buf0 <= high))
                     .then_some(*i)
             })
         });
@@ -4831,6 +4871,7 @@ impl Globals {
             first: self.first - st,
             last: read.then_some(self.last - st),
             max_buf: (self.max_buf_stack > s.max_buf).then_some(self.max_buf_stack - st),
+            max_buf0: s.max_buf - st,
             line: self.line,
             journal: self.bm_span_journal(s.f, s.line0, s.journal).unwrap_or_default(),
         }

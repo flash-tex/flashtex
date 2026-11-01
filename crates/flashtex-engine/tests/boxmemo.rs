@@ -31,8 +31,9 @@ struct Run {
     pdf: Option<Vec<u8>>,
 }
 
-/// Run `\input t` in INITEX with BOX-MEMO in `mode`, offering `names`.
-fn run(dir: &Path, mode: &str, names: &str) -> Run {
+/// Run `\input t` in INITEX with BOX-MEMO in `mode`, offering the macros
+/// `names` and the environments `spans` (§15).
+fn run_spans(dir: &Path, mode: &str, names: &str, spans: &str) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
@@ -45,6 +46,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         .env("FORCE_SOURCE_DATE", "1")
         .env("FLASHTEX_BOXMEMO", mode)
         .env("FLASHTEX_BOXMEMO_NAMES", names)
+        .env("FLASHTEX_BOXMEMO_SPANS", spans)
         .env("FLASHTEX_BOXMEMO_STATS", &stats)
         .env("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1")
         .stdin(Stdio::null())
@@ -75,11 +77,24 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_files(tag, &[("t.tex", src)], "")
+}
+
+/// [`check`] with more files beside `t.tex`, offering `spans`; the files
+/// are written afresh before each run (a run may rewrite one).
+fn check_files(tag: &str, files: &[(&str, &str)], spans: &str) -> String {
     let d = scratch(tag);
-    std::fs::write(d.join("t.tex"), src).unwrap();
-    let off = run(&d, "off", "measure");
-    let on = run(&d, "on", "measure");
-    let verify = run(&d, "verify", "measure");
+    let write = || {
+        for (n, src) in files {
+            std::fs::write(d.join(n), src).unwrap();
+        }
+    };
+    write();
+    let off = run_spans(&d, "off", "measure", spans);
+    write();
+    let on = run_spans(&d, "on", "measure", spans);
+    write();
+    let verify = run_spans(&d, "verify", "measure", spans);
     assert_eq!(off.log, on.log, "{tag}: log with BOX-MEMO on differs");
     assert!(off.pdf == on.pdf, "{tag}: PDF with BOX-MEMO on differs");
     assert!(
@@ -317,4 +332,97 @@ fn font_parameters_are_part_of_the_key() {
     );
     assert!(stat(&s, "hits") >= 3, "{s}");
     assert!(stat(&s, "recordings") >= 3, "{s}");
+}
+
+/// A LaTeX-like `\begin`/`\end` in INITEX: `\begin{pic}` opens a group and
+/// a box in the paragraph, `\end{pic}` closes them; the picture is read
+/// from its own file (`p.tex`), as `\input` of a TikZ picture is.
+const SPAN_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+    \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\hsize=200pt \\parindent=0pt\n\
+    \\countdef\\n=1 \\let\\stop\\end \\let\\bgroup={ \\let\\egroup=}\n\
+    \\def\\begin#1{\\begingroup\\csname#1\\endcsname}\\def\\end#1{\\csname end#1\\endcsname\\endgroup}\n\
+    \\def\\pic{\\setbox0\\hbox\\bgroup}\\def\\endpic{\\egroup\\global\\dimen1=\\wd0 \\box0 }\n\
+    \\def\\one{\\n=0 x \\input p y \\message{[\\the\\n|\\the\\dimen1]}}\n";
+
+/// The picture: two lines of drawing between `\begin{pic}` and `\end{pic}`.
+const SPAN_PIC: &str = "\\begin{pic}\\vrule width 3pt height 2pt\\kern2pt\n\
+    \\vrule height 5pt width 1pt\\global\\advance\\n by 1 \\def\\x{y}\n\
+    \\end{pic}\n";
+
+#[test]
+fn spans_replay_in_a_paragraph() {
+    // a picture read from its file in horizontal mode, four times with the
+    // same state: replayed, the file is read past its lines and the
+    // paragraph is the normal path's
+    let s = check_files(
+        "span",
+        &[
+            ("p.tex", SPAN_PIC),
+            (
+                "t.tex",
+                &[SPAN_PRELUDE, "\\one\\one\\one\\one\\par\\showlists\\stop\n"].concat(),
+            ),
+        ],
+        "pic",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn spans_begin_paragraphs() {
+    // a picture that starts a paragraph (`\indent`, LaTeX's
+    // `\leavevmode`) in vertical mode: on the main vertical list (the page
+    // builder runs), inside a `\vbox`, and after a paragraph skip that
+    // changed; the paragraph is still open at the span's end (§15.3)
+    let s = check_files(
+        "span-graf",
+        &[
+            ("p.tex", SPAN_PIC),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    "\\vsize=60pt \\parskip=1pt plus 1pt \\baselineskip=12pt \\output={\\showbox255 \\shipout\\box255}\n\
+                     \\def\\pic{\\indent\\setbox0\\hbox\\bgroup}\n\
+                     \\def\\two{\\n=0 \\input p z\\par\\message{[\\the\\n|\\the\\dimen1]}}\n\
+                     \\two\\two\\two\\two\\two\\two\\parskip=2pt \\two\\two\n\
+                     \\setbox3\\vbox{\\two\\two\\two}\\showbox3 \\setbox3\\vbox{\\two\\two}\\showbox3\n\
+                     \\showlists\\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    );
+    assert!(stat(&s, "hits") >= 6, "{s}");
+}
+
+#[test]
+fn spans_fall_back_when_the_file_changed() {
+    // the same file name and first line, its next line rewritten by
+    // `\write` between the inputs: the recorded lines are not the file's,
+    // so it is read normally; then the state it reads changed (\n)
+    let s = check_files(
+        "span-file",
+        &[
+            ("p.tex", SPAN_PIC),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    "\\one\\one\n\
+                     \\toks0={\\begin{pic}\\vrule width 3pt height 2pt\\kern2pt}\
+                     \\toks2={\\vrule height 6pt width 4pt\\global\\advance\\n by 1 \\def\\x{y}}\
+                     \\toks4={\\end{pic}}\n\
+                     \\immediate\\openout3=p.tex \\immediate\\write3{\\the\\toks0}\
+                     \\immediate\\write3{\\the\\toks2}\\immediate\\write3{\\the\\toks4}\\immediate\\closeout3\n\
+                     \\one\\one\\n=5 x \\input p y \\message{[\\the\\n|\\the\\dimen1]}\\par\\showlists\\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    );
+    // the second input before the rewrite, the second after it
+    assert_eq!(stat(&s, "hits"), 2, "{s}");
 }
