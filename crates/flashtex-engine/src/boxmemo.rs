@@ -901,6 +901,29 @@ struct Scratch {
     // `x_over_n`'s and `xn_over_d`'s remainder (tex.web §106, §107): read
     // only right after the call that sets it (§458, §461, §716, §717)
     remainder: i32,
+    // pdfTeX's protrusion: `char_pw` sets the character it looked at
+    // (`left_pw`, `right_pw`), and both are read only right after, in the
+    // same line break (`total_pw` then try_break's "Calculate variations of
+    // marginal kerns", post_line_break's `new_margin_kern`). fancyhdr's head
+    // breaks its `\parbox`es with microtype's protrusion on (a replay of
+    // `\@oddhead`, proof-practice-21242 in sweep A's verify mode)
+    last_leftmost_char: i32,
+    last_rightmost_char: i32,
+    // pdfTeX's `divide_scaled` remainder, read only right after a call of it
+    // (`adv_char_width`, `pdf_set_origin`, `pdf_set_textmatrix`,
+    // `pdf_use_font`, `pdf_begin_string` after their `divide_scaled` or
+    // `pdf_print_bp`); font expansion's packing sets it
+    scaled_out: i32,
+    // font expansion's ratio: `hpack(cal_expand_ratio)` zeroes and computes
+    // it, and only the `hpack(subst_ex_font)` it then calls reads it
+    font_expand_ratio: i32,
+    // a paragraph's expansion limits and step: `line_break` sets all three
+    // as it starts (pdftex.web "Get ready to start line breaking", when
+    // `pdf_adjust_spacing > 1`), and only that line break reads them
+    // (`check_expand_pars`, try_break's shortfall), under the same test
+    max_stretch_ratio: i32,
+    max_shrink_ratio: i32,
+    cur_font_step: i32,
     // pseudo-printing scratch (D9's list)
     tally: i32,
     first_count: i32,
@@ -934,6 +957,13 @@ impl Scratch {
             def_ref: g.def_ref,
             long_state: g.long_state,
             remainder: g.remainder,
+            last_leftmost_char: g.last_leftmost_char,
+            last_rightmost_char: g.last_rightmost_char,
+            scaled_out: g.scaled_out,
+            font_expand_ratio: g.font_expand_ratio,
+            max_stretch_ratio: g.max_stretch_ratio,
+            max_shrink_ratio: g.max_shrink_ratio,
+            cur_font_step: g.cur_font_step,
             tally: g.tally,
             first_count: g.first_count,
             trick_count: g.trick_count,
@@ -979,6 +1009,13 @@ impl Scratch {
         g.def_ref = self.def_ref;
         g.long_state = self.long_state;
         g.remainder = self.remainder;
+        g.last_leftmost_char = self.last_leftmost_char;
+        g.last_rightmost_char = self.last_rightmost_char;
+        g.scaled_out = self.scaled_out;
+        g.font_expand_ratio = self.font_expand_ratio;
+        g.max_stretch_ratio = self.max_stretch_ratio;
+        g.max_shrink_ratio = self.max_shrink_ratio;
+        g.cur_font_step = self.cur_font_step;
         g.tally = self.tally;
         g.first_count = self.first_count;
         g.trick_count = self.trick_count;

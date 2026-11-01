@@ -877,3 +877,55 @@ x2/book/real-numbers/inequalities.tex --page 887 --kind letter --keys 8 --gap-ms
 
 The host's verify mode on the same keys compared 9,222 calls' operation logs with their normal
 paths', no difference.
+
+**Two verifier gaps the verify sweep found** (sweep A and budget-d with `boxmemo=verify`, the
+command line's full-state verifier on the scratch runs; the PDFs with BOX-MEMO off and on were
+byte-identical both times).
+
+1. **pdfTeX's protrusion and expansion scratch** (proof-practice-21242: fancyhdr's head under
+   microtype; `\@oddhead`, now recorded, breaks its `\parbox`es). A replay leaves the scalars below
+   as they were before the call; the normal path leaves the call's last values. They join §7's
+   scratch list (`Scratch`: the replay takes the normal path's values before the comparison),
+   because every read follows a write on the same call path, inside one command. No read can see a
+   value from before the call. The readers in the generated code (`src/generated/`, matching
+   pdftex.web) are:
+   - `last_leftmost_char`, `last_rightmost_char`: written only by `char_pw`, which sets the side's
+     pointer (to null first) on every call. There are three readers:
+     - try_break's "Calculate variations of marginal kerns" (body_6.rs). It runs under
+       `pdf_protrude_chars > 1`, right after `total_pw` in the same block and under the same test.
+       `total_pw` ends `left_pw(l) + right_pw(r)` on every path, so both are set.
+     - post_line_break's right margin kern (`new_margin_kern(-w, last_rightmost_char, ...)`), right
+       after `w := char_pw(p, right_side)`.
+     - post_line_break's left margin kern, right after `char_pw(p, left_side)`.
+   - `font_expand_ratio`: `hpack(.., cal_expand_ratio)` zeroes it as it starts and may compute it
+     (`divide_scaled`). Every read is in `hpack(.., subst_ex_font)` (`do_subst_font`, the kern
+     substitution). Its one caller is that same `hpack(cal_expand_ratio)`, just after it set the
+     value.
+   - `max_stretch_ratio`, `max_shrink_ratio`, `cur_font_step`: set as `line_break` starts ("Get
+     ready to start line breaking", under `pdf_adjust_spacing > 1`). They are read only inside that
+     `line_break`: by `check_expand_pars`, whose nine callers are all in `line_break` and its
+     `try_break`, and by try_break's shortfall, both under the same test. Nothing in a line break
+     assigns `\pdfadjustspacing`.
+   - `scaled_out`: `divide_scaled`'s remainder. Each reader follows a `divide_scaled` with no other
+     call in between:
+     - `adv_char_width`;
+     - `pdf_use_font`;
+     - the text-matrix and string starts;
+     - `pdf_set_origin` and `pdf_set_textmatrix`, after `pdf_print_bp`, which is
+       `pdf_print_real(divide_scaled(...))`.
+
+     The display list saves and restores it around its own use (`displaylist/mod.rs`).
+
+   Test: `protrusion_around_a_replayed_call_is_the_normal_paths` (cmr10 with `\rpcode`,
+   `\lpcode`, `\efcode`, `\pdffontexpand`, protrusion and expansion on, paragraphs broken before
+   and after a call that breaks its own). It fails without the two protrusion pointers in the list
+   (`last_leftmost_char: 0x4c4a29 -> 0x4c4a48`).
+2. **The save stack walked as `show_save_groups` walks it** (full-100: cleveref's prefix under
+   `\label` in `equation`). `iso.rs` stepped one nest level back up (`p += 1`) after a math group,
+   a discretionary, a math choice and an insertion. pdftex.web's `show_save_groups` does that only
+   for simple, semi-simple and `\noalign` groups. The other four own a nest level, and the walk has
+   passed it. With the extra step, a math group in a display read the display's level as inline
+   math under it, took the `$$` for an `\eqno` with a saved word, and misread every entry below.
+   The convergence test shares the walk; there such a state compared as different (conservative).
+   Test: `calls_in_math_groups_compare_their_save_stack`. It fails with the old walk (`save entry 2
+   of type 104`).

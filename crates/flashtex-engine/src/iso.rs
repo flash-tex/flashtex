@@ -2556,14 +2556,17 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
                     0
                 }
                 OUTPUT_GROUP | MATH_LEFT_GROUP => 0,
-                MATH_GROUP => {
-                    p += 1;
-                    1
-                }
-                DISC_GROUP | MATH_CHOICE_GROUP | INSERT_GROUP => {
-                    p += 1;
-                    1
-                }
+                // Each of these owns a nest level (`push_math`, `push_nest`),
+                // which the walk above has passed: `show_save_groups` goes
+                // on from the next one down without `incr(p)` (pdftex.web,
+                // "math_group: goto found2", and the same for
+                // `disc_group`, `math_choice_group` and `insert_group`).
+                // With the `incr`, a math group in a display read the
+                // display's level as inline math's below it, took the `$$`
+                // for an `\eqno`, and misread the save stack below
+                // (`\label` in `equation`: full-100, sweep budget-d's
+                // verify mode).
+                MATH_GROUP | DISC_GROUP | MATH_CHOICE_GROUP | INSERT_GROUP => 1,
                 VCENTER_GROUP => 2,
                 MATH_SHIFT_GROUP => {
                     let inner_mm =

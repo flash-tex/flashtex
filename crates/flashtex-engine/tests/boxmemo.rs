@@ -75,7 +75,15 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_with(tag, src, &[])
+}
+
+/// [`check`] with `files` (name, bytes) next to `t.tex`.
+fn check_with(tag: &str, src: &str, files: &[(&str, Vec<u8>)]) -> String {
     let d = scratch(tag);
+    for (n, b) in files {
+        std::fs::write(d.join(n), b).unwrap();
+    }
     std::fs::write(d.join("t.tex"), src).unwrap();
     let off = run(&d, "off", "measure");
     let on = run(&d, "on", "measure");
@@ -425,4 +433,66 @@ fn a_box_made_in_a_group_is_not_the_calls_after_it() {
          \\setbox301\\hbox{\\vrule width 8pt}\\measure{a}\\show\\measure{a}\\show\\end\n",
     );
     assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+/// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
+fn cmr10() -> Option<Vec<u8>> {
+    let bin = flashtex_engine::resolver::find_texlive_bin()?;
+    let out = Command::new(bin.join("kpsewhich"))
+        .arg("cmr10.tfm")
+        .output()
+        .ok()?;
+    std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+}
+
+#[test]
+fn protrusion_around_a_replayed_call_is_the_normal_paths() {
+    // (lane FANCYHDR) pdfTeX's protrusion keeps the character `char_pw`
+    // last looked at (`last_leftmost_char`, `last_rightmost_char`). A call
+    // that breaks a paragraph with protrusion on (fancyhdr's head: its
+    // `\\parbox`es under microtype) leaves them set; a replay does not.
+    // Every read is right after a `char_pw` on the same path (`total_pw`
+    // then try_break's margin-kern variations; post_line_break's margin
+    // kerns), so they are the verifier's scratch. The paragraphs broken
+    // before and after the call, with protrusion and expansion, must be
+    // the normal path's, and the whole state otherwise agree
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "protrusion",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0 \\pdfoutput=1\n\
+         \\font\\f=cmr10 \\f \\rpcode\\f`.=700 \\lpcode\\f`A=600 \\rpcode\\f`d=200\n\
+         \\efcode\\f`A=1000 \\efcode\\f`d=1000 \\pdffontexpand\\f 30 30 10 autoexpand\n\
+         \\pdfprotrudechars=2 \\pdfadjustspacing=2 \\parindent=0pt \\tolerance=10000 \\hsize=80pt\n\
+         \\hbadness=10000 \\vbadness=10000 \\hfuzz=16383pt \\vfuzz=16383pt\n\
+         \\def\\body#1{\\hsize=45pt A word and A word. #1 And A word.\\par}\n\
+         \\setbox9\\vbox{\\body{x}\\body{yy}}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\body{#1}}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\one#1{\\setbox1\\vbox{A b dd. A c dd.\\par\\measure{#1}A d and A word dd. A b.\\par}\\showbox1 \\message{[\\the\\dimen1]}}\n\
+         \\one{x}\\one{x}\\one{x}\\one{yy}\\one{x}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn calls_in_math_groups_compare_their_save_stack() {
+    // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
+    // display, and of a display's `\\eqno` (cleveref's prefix under
+    // `\\label` in `equation`). The full verifier walks the save stack
+    // group by group as `show_save_groups` does; it took the display's
+    // nest level for inline math under a math group, read the `$$` as an
+    // `\\eqno` with a saved word, and misread every entry below
+    let s = check(
+        "math-group",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
+         \\hsize=100pt \\tracingonline=0\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
 }
