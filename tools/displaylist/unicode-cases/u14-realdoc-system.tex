@@ -1,11 +1,11 @@
-% u14-realdoc-system: a real document (lane UNICODE) on macOS system fonts by name, everything at once: Georgia/Helvetica Neue/Menlo, STIX Two Math (unicode-math), polyglossia Greek, Hebrew and Arabic (bidi), xeCJK (Songti SC, Hiragino Sans GB), hyperref, contents, footnotes, a table, cross references
+% u14-realdoc-system: a real document (lane UNICODE) on macOS system fonts by name, everything at once: Georgia, Arial and Courier New (Scale=MatchLowercase), STIX Two Math (unicode-math), polyglossia Greek, Hebrew and Arabic (Times New Roman, bidi), xeCJK (Songti SC, Hiragino Sans GB), hyperref, contents, footnotes, a table, cross references. Only fonts xelatex shapes with OpenType: Helvetica Neue, Menlo and Geeza Pro have morx and no GSUB, so xelatex shapes them with AAT (Core Text), out of scope (DESIGN.md 2026-10-04); with them page 1 was 2.14% of inked cells off (up to 0.28 pt drift in the scaled runs)
 \documentclass[11pt]{article}
 \usepackage{amsmath}
 \usepackage{fontspec}
 \usepackage{unicode-math}
 \setmainfont{Georgia}
-\setsansfont{Helvetica Neue}[Scale=MatchLowercase]
-\setmonofont{Menlo}[Scale=MatchLowercase]
+\setsansfont{Arial}[Scale=MatchLowercase]
+\setmonofont{Courier New}[Scale=MatchLowercase]
 \setmathfont{STIX Two Math}
 \usepackage{xeCJK}
 \setCJKmainfont{Songti SC}
@@ -19,7 +19,7 @@
 \setotherlanguage{arabic}
 \newfontfamily\greekfont{Georgia}
 \newfontfamily\hebrewfont{Times New Roman}[Script=Hebrew]
-\newfontfamily\arabicfont{Geeza Pro}[Script=Arabic]
+\newfontfamily\arabicfont{Times New Roman}[Script=Arabic]
 \title{Many Scripts on System Fonts}
 \author{A. Author\thanks{\texttt{author@example.org}}}
 \date{1 November 2026}
@@ -29,8 +29,8 @@
 
 \section{Introduction}\label{s:intro}
 A paper an author writes on a Mac: the body in Georgia, headings and
-\textsf{sans text in Helvetica Neue, \textbf{bold}}, code in
-\texttt{Menlo: fn main() \{\}}, ligatures fi fl, \textit{italic},
+\textsf{sans text in Arial, \textbf{bold}}, code in
+\texttt{Courier New: fn main() \{\}}, ligatures fi fl, \textit{italic},
 \textbf{\textit{bold italic}}.\footnote{A footnote, as papers have.}
 Section~\ref{s:math} has the mathematics.
 
@@ -69,7 +69,7 @@ Arabic inline, \textarabic{سلام}, then a paragraph.
 Script & Font \\ \hline
 Latin & Georgia \\
 Hebrew & Times New Roman: \texthebrew{עברית} \\
-Arabic & Geeza Pro: \textarabic{عربي} \\
+Arabic & Times New Roman: \textarabic{عربي} \\
 Chinese & Songti SC: 中文 \\
 \end{tabular}
 
