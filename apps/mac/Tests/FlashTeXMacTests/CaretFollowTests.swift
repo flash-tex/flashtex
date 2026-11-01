@@ -14,9 +14,9 @@ import FlashTeXProtocol
 /// 2. `CaretFollowControllerTests`: when a follow is considered — the debounce
 ///    (driven by an injected clock, measured rather than guessed), the
 ///    manual-scroll disarm and the preference.
-/// 3. `CaretFollowTargetTests`: where the caret is, on the real v1 sample and
-///    the real v2 display list, and the quiet nil for a caret that maps to
-///    nothing.
+/// 3. `CaretFollowTargetTests`: the model's caret moves and edits aim the
+///    follow, on the real sample text (the engine's own target is
+///    EngineV3CaretMarkTests').
 /// 4. `CaretFollowHostedTests`: the whole thing inside a real `NSScrollView`.
 
 // MARK: - 1. the pure decision
@@ -433,46 +433,14 @@ final class CaretFollowControllerTests: XCTestCase {
 
 // MARK: - 3. where the caret is
 
+/// The target itself comes from the engine's pages (`caretPreviewTarget`,
+/// EngineV3SourceMap.swift; EngineV3CaretMarkTests). Here the multipage
+/// sample's items stand in for them, so the model's own wiring — caret
+/// moves, edits and the re-arm rules — is exercised on the real fixture text.
 @MainActor
 final class CaretFollowTargetTests: XCTestCase {
-    static let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures")
-    static let fontsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().appendingPathComponent("Fonts")
-
     override func setUp() { super.setUp(); CaretFollow.enabledOverride = true; CaretFollow.debounceOverride = 0 }
     override func tearDown() { CaretFollow.enabledOverride = nil; CaretFollow.debounceOverride = nil; super.tearDown() }
-
-    /// v1 (`compile_result`): the sample's "naïve" is item 2 of page 1, and
-    /// the target is that item's own rectangle in page points.
-    func testV1TargetIsTheItemUnderTheCaretInPagePoints() throws {
-        let model = ShellModel()
-        model.previewV2 = false
-        model.loadFixtures(request: nil, result: CaretSyncTests.resultURL)
-        XCTAssertNil(model.loadError, model.loadError ?? "")
-        let ns = (model.activeText as NSString).range(of: "naïve")
-        model.caretUTF16 = ns.location + 3
-        XCTAssertEqual(model.caretItems, [1: [2]])
-        let target = try XCTUnwrap(model.caretPreviewTarget())
-        XCTAssertEqual(target.page, 1)
-        let result = try XCTUnwrap(model.result)
-        let expected = try XCTUnwrap(PreviewHitRects.compute(page: result.pages[0], scale: 1, rulesNegotiated: false)
-            .first { $0.index == 2 }?.rect)
-        XCTAssertEqual(target.rect, expected)
-        XCTAssertGreaterThan(target.rect.width, 0)
-        XCTAssertGreaterThan(target.rect.height, 0)
-
-        // Page 2: "Résumé" — the page number comes from the item, not the caret.
-        model.caretUTF16 = (model.activeText as NSString).range(of: "Résumé").location
-        XCTAssertEqual(model.caretPreviewTarget()?.page, 2)
-
-        // A caret in the whitespace between items, and one past the buffer,
-        // map to nothing at all — the follower then does nothing, quietly.
-        model.caretUTF16 = 62
-        XCTAssertEqual(model.caretItems, [:])
-        XCTAssertNil(model.caretPreviewTarget())
-        model.caretUTF16 = (model.activeText as NSString).length + 10
-        XCTAssertNil(model.caretPreviewTarget())
-    }
 
     /// An edit on this model schedules and fires one follow end to end (zero
     /// debounce), and the request carries the same target. Also end to end:
@@ -481,12 +449,20 @@ final class CaretFollowTargetTests: XCTestCase {
     /// `\newpage`, a different page).
     func testAnEditOnTheModelProducesTheFollowRequestThePaneWillSee() throws {
         let model = ShellModel()
-        model.previewV2 = false
         model.loadFixtures(request: nil, result: CaretSyncTests.resultURL)
+        XCTAssertNil(model.loadError, model.loadError ?? "")
+        let sample = try RuntimeV1.decodeCompileResult(Data(contentsOf: CaretSyncTests.resultURL)).payload
+        let target: () -> CaretFollow.Target? = { [weak model] in
+            guard let model, let byte = model.caretByte,
+                  let page = CaretSync.indicesByPage(byte: byte, path: model.activePath, in: sample).keys.min() else { return nil }
+            return CaretFollow.Target(page: page, rect: CGRect(x: 72, y: 72, width: 40, height: 10))
+        }
+        model.caretFollow.target = target
         let naive = (model.activeText as NSString).range(of: "naïve").location
         model.caretUTF16 = naive + 3
         let request = try XCTUnwrap(model.caretFollow.request, "moving the caret is enough to aim the preview")
-        XCTAssertEqual(request.target, model.caretPreviewTarget())
+        XCTAssertEqual(request.target, target())
+        XCTAssertEqual(request.target.page, 1)
         XCTAssertEqual(request.reason, .caretMove)
 
         // A manual preview scroll stops it; a caret move that stays on the
@@ -501,7 +477,8 @@ final class CaretFollowTargetTests: XCTestCase {
         let moved = try XCTUnwrap(model.caretFollow.request)
         XCTAssertGreaterThan(moved.token, request.token, "a different line/page re-arms on its own")
         XCTAssertEqual(moved.reason, .caretMove)
-        XCTAssertEqual(moved.target, model.caretPreviewTarget())
+        XCTAssertEqual(moved.target, target())
+        XCTAssertEqual(moved.target.page, 2)
 
         // Scrolled away again; this time an edit is what brings it back.
         model.caretFollow.userDidScrollPreview()
@@ -509,59 +486,6 @@ final class CaretFollowTargetTests: XCTestCase {
         let after = try XCTUnwrap(model.caretFollow.request)
         XCTAssertGreaterThan(after.token, moved.token)
         XCTAssertEqual(after.reason, .edit)
-    }
-
-    /// v2 (display-list-v2), on the real producer's list: the caret inside
-    /// `\frac{x}{y}` targets the enclosing formula box, converted from ticks
-    /// to page points; a caret in the preamble targets nothing.
-    func testV2TargetIsTheFormulaBoxUnderTheCaret() throws {
-        let store = V2FontStore(directories: [Self.fontsDir.path])
-        guard store.fonts.contains(where: { $0.url.lastPathComponent == "latinmodern-math.otf" }) else { throw XCTSkip("bundled math font missing") }
-        let tex = try String(contentsOf: Self.fixtures.appendingPathComponent("display-list-v2-math-nav.tex"), encoding: .utf8)
-        let model = ShellModel()
-        model.replaceProject(entryText: tex)
-        model.previewV2 = true
-        let done = expectation(description: "load")
-        model.loadDisplayListV2(url: Self.fixtures.appendingPathComponent("display-list-v2-math-nav.json")) { done.fulfill() }
-        wait(for: [done], timeout: 20)
-        guard case .loaded? = model.displayListV2 else { return XCTFail("expected a prepared frame") }
-
-        model.caretUTF16 = (tex as NSString).range(of: "\\frac{x}{y}").location + 6 // inside `x`
-        let target = try XCTUnwrap(model.caretPreviewTarget())
-        let box = try XCTUnwrap(model.caretFormulaBoxes().first)
-        XCTAssertEqual(target.page, box.page)
-        XCTAssertEqual(target.rect.minX, RenderingV2.points(box.box.bounds.x), accuracy: 1e-9)
-        XCTAssertEqual(target.rect.minY, RenderingV2.points(box.box.bounds.top), accuracy: 1e-9)
-        XCTAssertEqual(target.rect.width, RenderingV2.points(box.box.bounds.width), accuracy: 1e-9)
-        XCTAssertEqual(target.rect.height, RenderingV2.points(box.box.bounds.height), accuracy: 1e-9)
-        XCTAssertGreaterThan(target.rect.height, 0)
-
-        // Plain text keeps a target too (the exact caret or the cluster).
-        model.caretUTF16 = (tex as NSString).range(of: "Inline").location + 2
-        XCTAssertTrue(model.caretFormulaBoxes().isEmpty)
-        let text = try XCTUnwrap(model.caretPreviewTarget())
-        XCTAssertEqual(text.page, 1)
-        XCTAssertGreaterThan(text.rect.height, 0)
-
-        // The preamble (byte 0 is `\documentclass`) is in no item: no target,
-        // no note, no scroll.
-        model.caretUTF16 = 0
-        XCTAssertNil(model.caretPreviewTarget())
-    }
-
-    /// A historical snapshot is never followed onto (the caret belongs to the
-    /// live buffer, the preview to an older revision).
-    func testNoTargetWhileAHistoricalPreviewIsShown() throws {
-        let model = ShellModel()
-        model.previewV2 = false
-        model.loadFixtures(request: nil, result: CaretSyncTests.resultURL)
-        model.caretUTF16 = (model.activeText as NSString).range(of: "naïve").location + 3
-        XCTAssertNotNil(model.caretPreviewTarget())
-        model.historicalPreview = HistoricalDisplay(shownEditorRevision: 1, compilingEditorRevision: 2,
-                                                    shownCompileRevision: 1, currentCompileRevision: 2,
-                                                    requestID: "req-1", resultID: "res-1")
-        XCTAssertNil(model.caretPreviewTarget())
-        XCTAssertEqual(model.caretItems, [:], "caret sync already refuses an older snapshot; following agrees")
     }
 }
 

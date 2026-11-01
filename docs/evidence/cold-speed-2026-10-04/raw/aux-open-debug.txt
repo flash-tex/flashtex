@@ -1,0 +1,4 @@
+[aux] open ./infdesc.aux: arm_level 0 request 0 want true aux_point None s0 Some(66) input_ptr 4
+[aux] open ./infdesc.aux: arm_level 0 request 0 want true aux_point None s0 Some(66) input_ptr 4
+[aux] open ./infdesc.aux: arm_level 0 request 0 want true aux_point None s0 Some(66) input_ptr 4
+[aux] open ./infdesc.aux: arm_level 0 request 0 want true aux_point None s0 Some(66) input_ptr 4

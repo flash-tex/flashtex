@@ -20,7 +20,14 @@ height (a form's BBox height). Rules are recognised as the spec defines
 form XObject.
 
     python3 tools/displaylist/check_positions.py --engine target/release/flashtex-initex \
-        --formats /path/to/fmtdir [--only hw1] [-j 6] [--json out.json]
+        --formats /path/to/fmtdir [--only hw1] [-j 6] [--json out.json] [--pt2]
+
+Each fixture's work directory keeps what the preview-parity sweep
+(apps/mac PreviewParityTests) reads: `display.dl3`, the engine's PDF under
+`src/`, and `oracle.pdf`, pdflatex's own PDF, which the sweep renders as the
+reference. `--pt2` also runs P-T2 (tools/parity/tiers.py) on the engine PDF
+that this same run wrote beside the display list, against `oracle.pdf`; a
+fixture then passes only when both its positions and P-T2 do.
 
 Oracle tooling only: pdflatex (MacTeX) is never in the product path.
 """
@@ -30,6 +37,7 @@ import concurrent.futures
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -478,6 +486,11 @@ def check(doc, cfg):
     if not cand_pdf or not os.path.isfile(dl3):
         rec["why"] = "engine: " + str(cmeta.get("why"))
         return rec
+    shutil.copyfile(ref_pdf, os.path.join(work, "oracle.pdf"))
+    if cfg["pt2"]:
+        pt2 = tiers.compare_pt2(ref_pdf, cand_pdf, os.path.join(work, "pt2"))
+        rec["pt2"] = {k: pt2.get(k) for k in ("ok", "why", "pages", "pages_equal", "fonts_equal", "first_page")
+                      if pt2.get(k) is not None}
     try:
         rpages, rforms = reference(ref_pdf, work)
         dpages, dforms, _ = display_list(dl3, cfg["dump"])
@@ -508,6 +521,10 @@ def check(doc, cfg):
             rec["why"] = "position"
             rec["first"] = d
             return rec
+    if cfg["pt2"] and not rec["pt2"]["ok"]:
+        rec["why"] = "P-T2"
+        rec["first"] = rec["pt2"]
+        return rec
     rec["ok"] = True
     rec["seconds"] = round(time.time() - t0, 2)
     return rec
@@ -527,9 +544,11 @@ def main():
                     help="a directory of fixture documents (default: the parity fixtures)")
     ap.add_argument("-j", type=int, default=4)
     ap.add_argument("--json", default=None, help="write the per-document results here")
+    ap.add_argument("--pt2", action="store_true",
+                    help="also run P-T2 on the engine PDF of the same run; a fixture passes only if both pass")
     a = ap.parse_args()
     cfg = {"engine": os.path.abspath(a.engine), "oracle": a.oracle, "cache": a.cache, "work": a.work,
-           "dump": os.path.abspath(a.dump),
+           "dump": os.path.abspath(a.dump), "pt2": a.pt2,
            "engine_env": {"FLASHTEX_FORMATS": os.path.abspath(a.formats), "FLASHTEX_POOL": os.path.abspath(a.pool)}}
     docs = parity.fixture_documents(roots=tuple(a.root) or parity.FIXTURE_ROOTS, only=tuple(a.only))
     results = []
@@ -554,6 +573,9 @@ def main():
                "pages": sum((r.get("pages") or [0])[0] for r in results if r["ok"])}
     print(f"positions: {n_ok}/{len(results)} documents exact (0 sp); "
           f"{summary['pages']} pages, {summary['glyphs']} glyphs, {summary['rules']} rules")
+    if a.pt2:
+        summary["pt2"] = sum(bool((r.get("pt2") or {}).get("ok")) for r in results)
+        print(f"P-T2 (engine PDF written with the display list): {summary['pt2']}/{len(results)}")
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump({"summary": summary, "results": results}, f, indent=1)

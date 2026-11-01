@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mkeng.sh NAME [--keep-fmt]: copy this checkout's release binaries (flashtex-host, flashtex-initex,
-# dl3-keys, dl3-client; `cargo build --release -p flashtex-engine -p flashtex-display-list`; from
+# dl3-keys, dl3-client, dl3-dump, dl3-coldopen; `cargo build --release -p flashtex-engine -p flashtex-display-list`; from
 # $CARGO_TARGET_DIR when set) to
 # $INCR_BENCH_DIR/NAME and build its pdflatex format in $INCR_BENCH_DIR/fmt-NAME.
 set -e
@@ -11,7 +11,7 @@ N=$1
 D=$IB/$N
 mkdir -p $D
 T=${CARGO_TARGET_DIR:-$W/target}/release
-cp $T/flashtex-initex $T/flashtex-host $T/dl3-keys $T/dl3-client $T/dl3-dump $D/
+cp $T/flashtex-initex $T/flashtex-host $T/dl3-keys $T/dl3-client $T/dl3-dump $T/dl3-coldopen $D/
 cp $W/crates/flashtex-engine/pdftex.pool $D/
 ln -sf $D/flashtex-initex $D/pdftex
 (cd $W && git rev-parse --short HEAD) > $D/HEAD

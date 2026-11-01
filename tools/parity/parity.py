@@ -4,11 +4,11 @@ pdfLaTeX, and what stops the rest?
 
 Oracle tooling only (Python 3 standard library, plus qpdf run as an external
 program for P-T2). pdflatex (MacTeX) is the oracle and never runs in the
-product path. The engine under test is `--engine <bin>`: by default the
-shipped command line, `flashtex build` (the same exact-route PDF the Mac app
-exports), run on the untouched source tree; or any pdfTeX-compatible command
-line (pdfTeX itself for the self-test, later the new engine), run as
-`<bin> -fmt=pdflatex` on a copy of the tree. `--engine-kind` overrides the
+product path. The engine under test is `--engine <bin>`: by default (since
+S5) the new engine, flashtex-initex, or any pdfTeX-compatible command line
+(pdfTeX itself for the self-test), run as `<bin> -fmt=pdflatex` on a copy of
+the tree; or, with `--old-engine`, the frozen command line `flashtex build`
+(the old exact-route PDF), run on the untouched source tree. `--engine-kind` overrides the
 detection, which reads the first line of `<bin> --version`.
 
 Headline: the DESIGN §1.1 gating tiers (tools/parity/tiers.py), per document
@@ -111,6 +111,14 @@ FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
 # crates/flashtex-cli/target/, which is where it lived while the crate was
 # standalone against crates/render-pipeline/vendor/.
 DEFAULT_FLASHTEX = os.path.join(REPO, "target", "release", "flashtex")
+# Since S5 (retirement plan §1.8) the engine under test defaults to the new
+# engine, flashtex-initex (FLASHTEX_ENGINE overrides). It needs its formats:
+# --engine-env FLASHTEX_FORMATS=<dir with pdflatex.fmt>, or FLASHTEX_FORMATS in
+# the environment (scripts/engine-parity.sh build makes them). The pool
+# defaults to crates/flashtex-engine/pdftex.pool. `--old-engine` picks the
+# frozen flashtex CLI (FLASHTEX_CLI, else DEFAULT_FLASHTEX) until S7.
+DEFAULT_ENGINE = os.path.join(REPO, "target", "release", "flashtex-initex")
+DEFAULT_POOL = os.path.join(REPO, "crates", "flashtex-engine", "pdftex.pool")
 # Diagnostic codes that describe fonts/outline provenance, not typesetting:
 # they cannot block L0-L3 and are L4 causes only.
 FONT_NOTE_CODES = {"math_resource_profile", "math_metrics_opentype", "font_substitution", "font_face_substituted"}
@@ -693,15 +701,23 @@ def pt1_skip_reason(doc, cfg):
 
 
 def pt1_plan(doc, cfg, skip):
-    """How the TeX candidate's traced pass runs: (stream, time limit). When
-    the oracle's log is over the in-memory budget, the candidate's is
-    expected to be too: its log is a named pipe streamed from the first
-    byte (`capture(stream="fingerprint")`, constant memory). The limit
-    scales with the oracle's log (`tiers.pt1_timeout`)."""
-    if cfg["pt"] != "on" or skip or not cfg.get("oracle_pdftex"):
+    """How the TeX candidate's traced pass runs: (stream, time limit). Its
+    log is always a named pipe, like the oracle's, so no byte of it reaches
+    the disk: a candidate that traces far more than the oracle (a runaway
+    loop until the time limit, at 27-40 MiB/s) once wrote tens of GB into
+    the work directory. When the oracle's log is over the in-memory budget,
+    the candidate's is expected to be too, and is streamed from the first
+    byte (`capture(stream="fingerprint")`, constant memory); otherwise it is
+    held in memory up to the budget and streamed past it
+    (`capture(stream="pipe")`, the oracle's own mode). The limit scales with
+    the oracle's log and its traced pass's time (`tiers.pt1_timeout`)."""
+    if cfg["pt"] != "on" or skip:
         return False, None
+    if not cfg.get("oracle_pdftex"):
+        return "pipe", None
     meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
-    return ("fingerprint" if ptiers.log_over_budget(meta) else False), ptiers.pt1_timeout(meta.get("log_chars"))
+    return (("fingerprint" if ptiers.log_over_budget(meta) else "pipe"),
+            ptiers.pt1_timeout(meta.get("log_chars"), meta.get("trace_seconds")))
 
 
 def pt_oracle_trace(cfg, skip):
@@ -1282,15 +1298,29 @@ def run_jobs(jobs, cfg, workers, report, fn=None, initargs=("-no-shell-escape",)
     unfinished future fails with it, running or not. Those documents are then
     run again on a fresh pool; if that breaks too, the rest run one per pool,
     so only a document whose own worker dies is recorded (`worker_died_record`,
-    a failure). Returns the ids of those documents."""
+    a failure). Returns the ids of those documents.
+
+    Workers are spawned, on every OS (macOS's default already): a broken pool
+    SIGTERMs its other workers and joins them with no timeout, so each must
+    die of it. A forked worker carries the parent's Python SIGTERM handler,
+    and CPython drops a signal that reaches the child before it has finished
+    starting (its pending signals are cleared after fork), so that worker
+    lived on idle and hung the run (CI's self-tests on hosted Linux, 2026-10).
+    A spawned worker has SIGTERM's default action until `set_shell_escape`."""
     fn = fn or score_safe
     died = []
+    ctx = multiprocessing.get_context("spawn")
 
     def one_pool(batch, n):
         left = []
-        with concurrent.futures.ProcessPoolExecutor(max_workers=n, initializer=set_shell_escape,
+        with concurrent.futures.ProcessPoolExecutor(max_workers=n, mp_context=ctx, initializer=set_shell_escape,
                                                     initargs=initargs) as ex:
-            futs = {ex.submit(fn, d, cfg): (t, d) for t, d in batch}
+            futs = {}
+            for t, d in batch:
+                try:
+                    futs[ex.submit(fn, d, cfg)] = (t, d)
+                except concurrent.futures.BrokenExecutor:  # a worker died before all were submitted
+                    left.append((t, d))
             for fut in concurrent.futures.as_completed(futs):
                 t, d = futs[fut]
                 try:
@@ -1318,12 +1348,50 @@ class Terminated(BaseException):
     engine, then the worker exits (`score_safe`)."""
 
 
+# How long a worker has, after SIGTERM, to unwind through `Terminated` before
+# it exits regardless (`_worker_sigterm`).
+TERM_GRACE = 10.0
+_term_deadline = []
+
+
+def _term_exit():
+    ptiers.remove_active_work()
+    os._exit(128 + signal.SIGTERM)
+
+
 def _worker_sigterm(_signum, _frame):
+    """Raise `Terminated` so the document unwinds, but never rely on it alone.
+    An exception raised from a signal handler can land anywhere: inside a
+    `__del__` (Popen's, as subprocess.run returns), where Python prints
+    "Exception ignored" and carries on; or between subprocess's own lock
+    acquire and release, after which `Popen.__exit__` waits forever on its
+    `_waitpid_lock`. The worker then lives on, and ProcessPoolExecutor, which
+    terminates the other workers when one dies and joins them with no timeout,
+    hangs the whole run (CI's self-tests hung until the job timeout on
+    hosted Linux, in WorkerDeath, 2026-10). So the first SIGTERM also arms a
+    deadline after which the worker exits anyway, and a second exits at once."""
+    if _term_deadline:
+        _term_exit()
+    import threading
+    t = threading.Timer(TERM_GRACE, _term_exit)
+    t.daemon = True
+    t.start()
+    _term_deadline.append(t)
     raise Terminated()
 
 
+_main_pid = []
+
+
 def _main_sigterm(_signum, _frame):
-    """SIGTERM in parity.py: the workers get it too, clean up and exit."""
+    """SIGTERM in parity.py: the workers get it too, clean up and exit. A
+    worker forked from this process (run_jobs spawns, but a caller may not)
+    inherits this handler until its initializer installs `_worker_sigterm`;
+    a SIGTERM in that window must exit that worker, not run the main
+    process's cleanup there (whose join raises, inside fork's own handlers,
+    where the error is ignored and the worker lives on)."""
+    if os.getpid() not in _main_pid:
+        _term_exit()
     kids = multiprocessing.active_children()
     for c in kids:
         c.terminate()
@@ -1724,10 +1792,30 @@ def baseline_of(results):
     return {r["id"]: (r["level"] if not r.get("excluded") else None) for r in results}
 
 
+def baseline_host():
+    """The host a fixtures baseline is recorded on (retirement plan RQ8, S1b).
+    `system` is what decides comparability: the fixtures paint some glyphs from
+    system fonts, so levels from another OS are not comparable (DESIGN §8)."""
+    return {"system": platform.system(), "machine": platform.machine(), "node": platform.node(),
+            "platform": f"{platform.system()} {platform.release()} {platform.machine()}"}
+
+
+class BaselineHostMismatch(Exception):
+    pass
+
+
 def check_baseline(results, path):
-    """Every document must reach at least the level recorded in `path`."""
+    """Every document must reach at least the level recorded in `path`.
+    Raises BaselineHostMismatch when the baseline names a host system other
+    than this one. A baseline without `host` (schema /1, before RQ8) is
+    checked as before."""
     with open(path, encoding="utf-8") as f:
-        base = json.load(f)["levels"]
+        doc = json.load(f)
+    host = doc.get("host") or {}
+    if host.get("system") and host["system"] != platform.system():
+        raise BaselineHostMismatch(f"{path} was recorded on {host['system']}, not on this host's "
+                                   f"{platform.system()}; its levels are not comparable here (DESIGN §8)")
+    base = doc["levels"]
     now = baseline_of(results)
     regressions = []
     for did, lvl in sorted(base.items()):
@@ -1838,8 +1926,12 @@ def main(argv=None):
     ap.add_argument("--pt1-sample", action="append", default=[], metavar="TIER=FRACTION",
                     help="evaluate P-T1 on this fraction of TIER only (a fixed pseudo-random sample, "
                          "in_pt1_sample); P-T2 and L0-L4 still run on every document; repeatable")
-    ap.add_argument("--engine", "--flashtex", dest="engine", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX),
-                    help="engine under test: the flashtex CLI (default) or a pdfTeX-compatible binary")
+    ap.add_argument("--engine", "--flashtex", dest="engine", default=None,
+                    help="engine under test: a pdfTeX-compatible binary (default: the new engine, "
+                         "$FLASHTEX_ENGINE or target/release/flashtex-initex) or the flashtex CLI")
+    ap.add_argument("--old-engine", action="store_true",
+                    help="measure the frozen flashtex CLI ($FLASHTEX_CLI or target/release/flashtex) "
+                         "instead of the new engine (until S7)")
     ap.add_argument("--engine-kind", choices=["auto", "flashtex-cli", "tex"], default="auto",
                     help="how to run --engine (auto: from the first line of `<engine> --version`)")
     ap.add_argument("--oracle-pdftex", default=ptiers.DEFAULT_ORACLE,
@@ -1857,13 +1949,19 @@ def main(argv=None):
                     help="in-memory budget for a traced log (MiB); a larger one is compared as a stream, in constant "
                          "memory (pt1stream.py); 0: no budget")
     ap.add_argument("--pt1-timeout", type=int, default=ptiers.pcapture.TIMEOUT, metavar="S",
-                    help="time limit of a traced pass, at least; a candidate's grows with the oracle's log "
-                         f"({ptiers.PT1_MIN_RATE >> 20} MiB/s). A pass it stops is a harness error, never a pass")
+                    help="time limit of a traced pass, at least; the oracle's is "
+                         f"{ptiers.PT1_ORACLE_FACTOR} times this (cached), a candidate's grows with the oracle's "
+                         f"log ({ptiers.PT1_MIN_RATE >> 20} MiB/s) and with {ptiers.PT1_ORACLE_SLACK} times its traced "
+                         "pass, up to the oracle's limit. A pass it stops is a harness error, never a pass")
     ap.add_argument("--pt1-skip", action="append", default=[], metavar="ID",
                     help="document ([tier/]id) whose P-T1 is not evaluated (its oracle is never traced); repeatable")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
     ap.add_argument("--cache", default=pcorpus.default_cache())
     ap.add_argument("--texmf", default=pcorpus.DEFAULT_TEXMF)
+    ap.add_argument("--corpus-texmf", default=None, metavar="DIR",
+                    help="where the TeX Live tiers' documents (templates, packages) are copied from, when not "
+                         "--texmf: a tree holding the manifests' pinned files, e.g. on a host whose TeX Live has "
+                         "no doc files; the oracle and the definitions index stay on --texmf")
     ap.add_argument("--font-dirs", default=None)
     ap.add_argument("--tfm-dirs", default=None)
     ap.add_argument("--regenerate", action="store_true",
@@ -1885,9 +1983,17 @@ def main(argv=None):
     except argparse.ArgumentTypeError as e:
         ap.error(str(e))
     tiers = args.tier or ["fixtures"]
+    if args.old_engine and args.engine:
+        ap.error("--old-engine and --engine name two engines; pass one")
+    if args.old_engine:
+        args.engine = os.environ.get("FLASHTEX_CLI") or DEFAULT_FLASHTEX
+    elif not args.engine:
+        args.engine = os.environ.get("FLASHTEX_ENGINE") or DEFAULT_ENGINE
     if not os.path.isfile(args.engine):
-        print(f"engine not found at {args.engine}; build the flashtex CLI with\n  cargo build --release "
-              "-p flashtex-cli --bin flashtex", file=sys.stderr)
+        how = ("cargo build --release -p flashtex-cli --bin flashtex" if args.old_engine else
+               "scripts/engine-parity.sh --work W build   (then --engine W/eng/flashtex-initex "
+               "--engine-env FLASHTEX_FORMATS=W/fmt)")
+        print(f"engine not found at {args.engine}; build it with\n  {how}", file=sys.stderr)
         return 2
     kind = args.engine_kind if args.engine_kind != "auto" else ptiers.engine_kind(args.engine)
     oracle_pdftex = args.oracle_pdftex if args.pt != "off" and os.path.isfile(args.oracle_pdftex) else None
@@ -1906,9 +2012,19 @@ def main(argv=None):
         print(f"--engine-env wants KEY=VALUE, got {bad}", file=sys.stderr)
         return 2
     engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
+    if os.path.basename(args.engine) == "flashtex-initex":
+        # the new engine's own inputs, when not given (see DEFAULT_ENGINE)
+        engine_env.setdefault("FLASHTEX_POOL", os.environ.get("FLASHTEX_POOL") or DEFAULT_POOL)
+        if "FLASHTEX_FORMATS" not in engine_env and os.environ.get("FLASHTEX_FORMATS"):
+            engine_env["FLASHTEX_FORMATS"] = os.environ["FLASHTEX_FORMATS"]
+        if "FLASHTEX_FORMATS" not in engine_env:
+            print("the new engine needs its formats: --engine-env FLASHTEX_FORMATS=<dir with pdflatex.fmt> "
+                  "(scripts/engine-parity.sh build makes them), or --old-engine", file=sys.stderr)
+            return 2
     max_log = int(args.pt1_max_log_mb * (1 << 20))
     kpse = ptiers.pcapture.kpsewhich_beside(oracle_pdftex) if oracle_pdftex else None
     set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, kpse, worker=False)
+    _main_pid[:] = [os.getpid()]
     signal.signal(signal.SIGTERM, _main_sigterm)
     swept = ptiers.sweep_stale_work(args.cache)
     if swept:
@@ -1938,7 +2054,7 @@ def main(argv=None):
             wanted = set(select_documents(ids, args))
             docs = []
             for m in paths:
-                docs += pcorpus.fetch_manifest(m, args.cache, args.texmf, log=log, only=wanted)
+                docs += pcorpus.fetch_manifest(m, args.cache, args.corpus_texmf or args.texmf, log=log, only=wanted)
         tier_docs[t] = docs
     results = {t: [] for t in tiers}
     jobs = [(t, d) for t in tiers for d in tier_docs[t]]
@@ -1963,7 +2079,7 @@ def main(argv=None):
             "engine_kind": kind, "engine_version": exe_ver.splitlines()[0] if exe_ver else "",
             "oracle_pdftex": oracle_pdftex, "oracle_pdftex_version": oracle_ver, "pt": args.pt,
             "pt1_max_log_mb": args.pt1_max_log_mb, "pt1_skip": sorted(args.pt1_skip),
-            "pt1_timeout": args.pt1_timeout,
+            "pt1_timeout": args.pt1_timeout, "pt1_oracle_timeout": ptiers.oracle_pt1_timeout(),
             "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
             "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
             "engine_env": sorted(engine_env),
@@ -2032,8 +2148,9 @@ def main(argv=None):
         return DIED_EXIT
     if args.write_baseline:
         with open(args.write_baseline, "w", encoding="utf-8") as f:
-            json.dump({"schema": "flashtex-parity-baseline/1", "generated": meta["started_utc"], "raster": args.raster,
-                       "flashtex_version": exe_ver, "levels": baseline_of(all_results)}, f, indent=1, sort_keys=True)
+            json.dump({"schema": "flashtex-parity-baseline/2", "generated": meta["started_utc"], "raster": args.raster,
+                       "flashtex_version": exe_ver, "host": baseline_host(),
+                       "levels": baseline_of(all_results)}, f, indent=1, sort_keys=True)
             f.write("\n")
     if args.require_pt:
         misses = require_pt(all_results)
@@ -2044,7 +2161,11 @@ def main(argv=None):
             return 1
         log(f"P-T gate: all {sum(1 for r in all_results if not r.get('excluded'))} measured documents pass P-T1 and P-T2")
     if args.check_baseline:
-        regs = check_baseline(all_results, args.check_baseline)
+        try:
+            regs = check_baseline(all_results, args.check_baseline)
+        except BaselineHostMismatch as e:
+            log(f"refusing: {e}")
+            return 2
         if regs:
             for did, was, now in regs:
                 log(f"REGRESSION {did}: baseline {was}, now {now}")

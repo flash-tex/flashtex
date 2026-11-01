@@ -1,0 +1,14 @@
+% Unicode bench (M3, INCREMENTAL.md §1's third row): unicode-math and amsmath.
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\begin{document}
+\section{Math}
+The quick brown fox jumps over the lazy dog. EDITPOINT This paragraph is the
+one the latency harness edits.
+\[ \sum_{n=1}^{\infty}\frac{1}{n^2}=\frac{\pi^2}{6},\qquad \mathbb{R}^n,\ \mathcal{F},\ \symbf{v} \]
+\begin{align}
+  \nabla\cdot\vec{E} &= \frac{\rho}{\varepsilon_0} \\
+  f(x) &= \int_{-\infty}^{\infty}\hat f(\xi)\,e^{2\pi i\xi x}\,d\xi
+\end{align}
+\end{document}

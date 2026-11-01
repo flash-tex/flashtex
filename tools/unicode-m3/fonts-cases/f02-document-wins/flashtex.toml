@@ -1,0 +1,5 @@
+[fonts]
+text = "TeX Gyre Termes"
+sans = "TeX Gyre Heros"
+mono = "TeX Gyre Cursor"
+math = "TeX Gyre Termes Math"

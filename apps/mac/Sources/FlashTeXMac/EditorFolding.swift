@@ -192,6 +192,9 @@ final class EditorFoldStore {
 
     var isEmpty: Bool { folds.isEmpty }
     var cacheIsWarm: Bool { cachedGeneration == generation }
+    /// Bumped by every edit and reset: a region scan made off the main thread
+    /// for one generation is installed only while it is still current.
+    var currentGeneration: Int { generation }
 
     func isHidden(_ index: Int) -> Bool { EditorFolding.contains(index, inSortedRanges: mergedHidden) }
 

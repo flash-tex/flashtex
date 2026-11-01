@@ -14,7 +14,10 @@ import NearbyClient
 /// Packets to a local address are delivered in the stack, so this measures
 /// binding, address scoping, Bonjour registration per interface and the
 /// framing deadlines on that path — not wire latency between two machines.
-/// Every test skips (with the reason) on a Mac with no active `en*` link.
+/// Every test skips (with the reason) on a Mac with no active `en*` link,
+/// and, locally only (never on CI), the TLS tests on one whose own `en*`
+/// addresses stall a bare TLS-PSK handshake that plain TCP and loopback
+/// complete (`requireTLSLAN`).
 @MainActor
 final class NearbyLANInterfaceTests: XCTestCase {
     static let psk = Data(repeating: 0x3C, count: 32)
@@ -79,6 +82,110 @@ final class NearbyLANInterfaceTests: XCTestCase {
         return addrs
     }
 
+    /// The LAN addresses, when TLS-PSK to this Mac's own `en*` addresses can
+    /// be tested here. On some Macs a TLS-PSK handshake to the Mac's own
+    /// `en*` address stalls in `preparing` for a share of attempts, IPv4 and
+    /// link-local alike, while plain TCP to the same address and TLS-PSK
+    /// over loopback complete in milliseconds (seen with an endpoint-security
+    /// socket filter that holds TLS flows on non-loopback interfaces); the
+    /// tests' own connections then time out at random. So, locally only,
+    /// a bare `NWListener` and client handshake to each address first, and
+    /// the test skips only on all of this, with the measurements:
+    /// - a handshake still `preparing` at its 2 s deadline (a `failed` or
+    ///   `waiting` one is a failure: the test runs and reports it);
+    /// - plain TCP to the same address, same interface, connecting every time;
+    /// - TLS-PSK over loopback completing every time.
+    /// On CI (`CI` or `GITHUB_ACTIONS` set) nothing is probed and nothing
+    /// skips: there a stall is a failure, whatever causes it, so a
+    /// regression that breaks non-loopback TLS can never pass as a skip.
+    func requireTLSLAN() async throws -> [LANAddress] {
+        let addrs = try requireLAN()
+        let env = ProcessInfo.processInfo.environment
+        if env["CI"] != nil || env["GITHUB_ACTIONS"] != nil { return addrs }
+        let known = await Self.knownInterfaces()
+        for a in addrs {
+            for k in 0..<4 {
+                let tls = await Self.handshake(host: a.host, interface: known[a.interface], tls: true)
+                guard case .stalled = tls else {
+                    if case .ready = tls { continue }
+                    print("measured: TLS-PSK probe to \(a): \(tls); the test runs")
+                    return addrs
+                }
+                var plain: [String] = [], loop: [String] = []
+                for _ in 0..<3 {
+                    let p = await Self.handshake(host: a.host, interface: known[a.interface], tls: false)
+                    guard case .ready(let ms) = p else { print("measured: plain TCP to \(a): \(p); the test runs"); return addrs }
+                    plain.append(String(format: "%.0f ms", ms))
+                    let l = await Self.handshake(host: "127.0.0.1", interface: nil, tls: true)
+                    guard case .ready(let lms) = l else { print("measured: TLS-PSK over loopback: \(l); the test runs"); return addrs }
+                    loop.append(String(format: "%.0f ms", lms))
+                }
+                let why = "TLS-PSK handshake \(k + 1) to this Mac's own \(a) was still preparing at 2 s (\(k) completed before it), "
+                    + "while plain TCP to it connected 3/3 (\(plain.joined(separator: ", "))) and TLS-PSK over loopback 3/3 "
+                    + "(\(loop.joined(separator: ", "))): this Mac's network path holds TLS to its own LAN addresses "
+                    + "(an endpoint-security socket filter does), so the LAN TLS tests would time out at random. Never skipped on CI."
+                print("measured: \(why)")
+                throw XCTSkip(why)
+            }
+        }
+        return addrs
+    }
+
+    enum Handshake: CustomStringConvertible {
+        case ready(ms: Double)
+        /// Still `preparing` (or before it) at the deadline.
+        case stalled
+        /// `failed`, `waiting` or `cancelled`, with the error.
+        case failed(String)
+        /// The probe's own listener did not start.
+        case noListener
+        var description: String {
+            switch self {
+            case .ready(let ms): String(format: "ready in %.0f ms", ms)
+            case .stalled: "still preparing at 2 s"
+            case .failed(let why): "failed: \(why)"
+            case .noListener: "no probe listener"
+            }
+        }
+    }
+
+    /// One connection to `host` on a bare listener on every interface:
+    /// TLS-PSK with the product's parameters (`tls`), else plain TCP.
+    static func handshake(host: String, interface: NWInterface?, tls: Bool) async -> Handshake {
+        final class State: @unchecked Sendable { let lock = NSLock(); var outcome: Handshake? }
+        let queue = DispatchQueue(label: "nearby.test.probe")
+        let server = tls ? NearbyListener.parameters(psks: [(pairId, psk)], loopbackOnly: false) : NWParameters.tcp
+        guard let listener = try? NWListener(using: server, on: .any) else { return .noListener }
+        listener.newConnectionHandler = { $0.start(queue: queue) }
+        listener.start(queue: queue)
+        defer { listener.cancel() }
+        let start = Date()
+        while (listener.port?.rawValue ?? 0) == 0, Date().timeIntervalSince(start) < 2 { try? await Task.sleep(nanoseconds: 5_000_000) }
+        guard let port = listener.port, port.rawValue != 0 else { return .noListener }
+        let params = tls ? NearbyListener.clientParameters(identity: pairId, psk: psk) : NWParameters.tcp
+        params.requiredInterface = interface
+        let c = NWConnection(host: NWEndpoint.Host(host), port: port, using: params)
+        defer { c.cancel() }
+        let state = State()
+        let t0 = Date()
+        c.stateUpdateHandler = { s in
+            let o: Handshake?
+            switch s {
+            case .ready: o = .ready(ms: Date().timeIntervalSince(t0) * 1000)
+            case .failed(let e), .waiting(let e): o = .failed("\(e)")
+            case .cancelled: o = .failed("cancelled")
+            default: o = nil
+            }
+            if let o { state.lock.withLock { if state.outcome == nil { state.outcome = o } } }
+        }
+        c.start(queue: queue)
+        while Date().timeIntervalSince(t0) < 2 {
+            if let o = state.lock.withLock({ state.outcome }) { return o }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return state.lock.withLock { state.outcome } ?? .stalled
+    }
+
     static func loadAverage() -> Double {
         var l = [Double](repeating: 0, count: 3)
         return getloadavg(&l, 3) >= 1 ? l[0] : 0
@@ -135,7 +242,7 @@ final class NearbyLANInterfaceTests: XCTestCase {
 
     struct TimedOut: Error {}
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 8, file: StaticString = #filePath, line: UInt = #line,
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, file: StaticString = #filePath, line: UInt = #line,
                            _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -182,7 +289,7 @@ final class NearbyLANInterfaceTests: XCTestCase {
     /// link-local IPv6 address with the client pinned to that interface, and
     /// every session carries the same identity (nonce echo, name, destination).
     func testAllInterfaceListenerIsReachableOnEachLANAddressWithScopedClient() async throws {
-        let addrs = try requireLAN()
+        let addrs = try await requireTLSLAN()
         let known = await Self.knownInterfaces()
         let (state, _, _) = makeState(name: "FlashTeX LAN \(UUID().uuidString.prefix(6))")
         state.startAdvertising()
@@ -310,7 +417,7 @@ final class NearbyLANInterfaceTests: XCTestCase {
     /// remembers a different Mac fingerprint does not match this service
     /// however many interfaces advertise it.
     func testWrongKeyIsRefusedAndForeignFingerprintIsNotMatchedOnLAN() async throws {
-        let addrs = try requireLAN()
+        let addrs = try await requireTLSLAN()
         let known = await Self.knownInterfaces()
         let name = "FlashTeX LAN fp \(UUID().uuidString.prefix(6))"
         let (state, _, _) = makeState(name: name)
@@ -368,7 +475,7 @@ final class NearbyLANInterfaceTests: XCTestCase {
     /// through a second address: its retry is acknowledged from the
     /// pairing's memory and the sink never sees the capture twice.
     func testReconnectViaASecondAddressIsAcknowledgedFromMemoryNotRedelivered() async throws {
-        let addrs = try requireLAN()
+        let addrs = try await requireTLSLAN()
         try XCTSkipIf(addrs.count < 2, "one LAN address only (\(addrs)); a second address is needed")
         let known = await Self.knownInterfaces()
         let (state, _, sink) = makeState(name: "FlashTeX LAN reconnect \(UUID().uuidString.prefix(6))")
@@ -417,7 +524,7 @@ final class NearbyLANInterfaceTests: XCTestCase {
     /// A partial frame over a LAN address is refused at the frame deadline
     /// (typed error, then close), measured from the first byte on that path.
     func testFrameTimeoutIsEnforcedOnANonLoopbackPath() async throws {
-        let addrs = try requireLAN()
+        let addrs = try await requireTLSLAN()
         let load = Self.loadAverage()
         print("measured: 1-min load \(load)")
         try XCTSkipIf(load > 20, "timing test skipped under load \(load)")

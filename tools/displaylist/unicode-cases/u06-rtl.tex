@@ -1,0 +1,20 @@
+% u06-rtl: polyglossia right-to-left text: Arabic (Geeza Pro, a .ttc; the environment is `Arabic`, `arabic` is LaTeX's counter command) and Hebrew (Times New Roman)
+% preview: tolerance 2 px (Geeza Pro: the preview draws the ends of a joined Arabic word one coverage level darker than both PDFs draw their subset, at 2x; not positions or matrix)
+\documentclass{article}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{arabic}
+\setotherlanguage{hebrew}
+\newfontfamily\arabicfont{Geeza Pro}[Script=Arabic]
+\newfontfamily\hebrewfont{Times New Roman}[Script=Hebrew]
+\begin{document}
+English first, then Arabic:
+\begin{Arabic}
+مرحبا بالعالم. هذا نص عربي للاختبار، مع أرقام ١٢٣٤٥ وكلمات متصلة.
+\end{Arabic}
+and Hebrew:
+\begin{hebrew}
+שלום עולם. זהו טקסט בעברית לבדיקה, עם ניקוד: בְּרֵאשִׁית.
+\end{hebrew}
+Mixed inline \textarabic{سلام} and \texthebrew{שלום} words.
+\end{document}

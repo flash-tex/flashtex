@@ -1,0 +1,20 @@
+% p002-picfile-keywords: \XeTeXpicfile's scaled, xscaled, yscaled, width, height and rotated keywords, in each order
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+\input prelude
+\def\space{ }
+\setbox0=\vbox{
+\hbox{\XeTeXpicfile p-plain.png scaled 1500 }
+\hbox{\XeTeXpicfile p-plain.png xscaled 500 yscaled 2000 }
+\hbox{\XeTeXpicfile p-300dpi.png width 2in }
+\hbox{\XeTeXpicfile p-300dpi.png height 1cm }
+\hbox{\XeTeXpicfile p-300dpi.png width 3cm height 1cm }
+\hbox{\XeTeXpicfile p-exif.jpg rotated 30 }
+\hbox{\XeTeXpicfile p-exif.jpg rotated 90 width 2cm }
+\hbox{\XeTeXpicfile p-exif.jpg width 2cm rotated 90 }
+\hbox{\XeTeXpicfile p-info.bmp rotated -45.5 scaled 2000 }
+\hbox{\XeTeXpicfile p-info.bmp scaled 2000 rotated 180 }
+\hbox{\XeTeXpicfile "p-jfif-dpi.jpg" width 100pt height 50pt rotated 12.25 }
+\hbox{\XeTeXpicfile p-core.bmp xscaled -1000 }
+}
+\lsshipbox0
+\end

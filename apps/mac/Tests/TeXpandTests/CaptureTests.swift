@@ -391,7 +391,16 @@ final class CaptureTests: XCTestCase {
         let t0 = Date()
         for k in 0..<100 { _ = p.scope(at: end - k * 37, in: text) }
         let perQuery = Date().timeIntervalSince(t0) / 100
-        XCTAssertLessThan(perQuery, 0.005, "warm queries scan at most a checkpoint's worth (§8 budget: 1 ms in release)")
+        // A speed budget: gating only where the machine's speed is known (no
+        // CI=1, 1-minute load not above the core count), as in
+        // FlashTeXMacTests/TimingBudget.swift; reported everywhere.
+        var load = [0.0, 0.0, 0.0]
+        let loaded = getloadavg(&load, 3) >= 1 && load[0] > Double(ProcessInfo.processInfo.activeProcessorCount)
+        if ProcessInfo.processInfo.environment["CI"] == "1" || loaded {
+            print(String(format: "perf(non-gating): TeXpand warm scope query %.3f ms against a 5 ms budget (load %.1f)", perQuery * 1000, load[0]))
+        } else {
+            XCTAssertLessThan(perQuery, 0.005, "warm queries scan at most a checkpoint's worth (§8 budget: 1 ms in release)")
+        }
         // An edit invalidates the checkpoints after it, and only those.
         let mid = text.length / 2
         text.replaceCharacters(in: NSRange(location: mid, length: 0), with: "\\begin{itemize}\n")

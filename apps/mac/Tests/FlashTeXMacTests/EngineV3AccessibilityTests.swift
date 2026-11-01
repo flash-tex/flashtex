@@ -50,7 +50,7 @@ final class EngineV3AccessibilityTests: XCTestCase {
     /// The real table is TeX Live's `glyphtounicode.tex`, as pdfTeX's
     /// `\pdfgentounicode` uses it.
     func testTeXLivesTableIsReadWhenPresent() throws {
-        try XCTSkipIf(EngineV3GlyphText.locate("glyphtounicode.tex") == nil, "no TeX Live")
+        if EngineV3GlyphText.locate("glyphtounicode.tex") == nil { throw EngineV3TestHost.unavailable("no TeX Live (glyphtounicode.tex)") }
         let t = EngineV3GlyphText.table
         XCTAssertGreaterThan(t.count, 4000)
         XCTAssertEqual(t["ffi"], "ffi")
@@ -112,11 +112,11 @@ final class EngineV3AccessibilityTests: XCTestCase {
         XCTAssertEqual(page.accessibilityRoleDescription(), PreviewAccessibility.pageRoleDescription)
         let lines = page.axLines.map(\.text)
         XCTAssertEqual(lines, ["Hello world, this is a test.", "Second paragraph: fine office.", "1"])
-        XCTAssertEqual(page.accessibilityLabel(), V2PageText.pageLabel(number: 1, totalPages: 2, lineCount: 3))
+        XCTAssertEqual(page.accessibilityLabel(), PreviewPageText.pageLabel(number: 1, totalPages: 2, lineCount: 3))
         XCTAssertEqual(page.accessibilityValue() as? String, lines.joined(separator: "\n"))
         let children = try XCTUnwrap(page.accessibilityChildren() as? [PreviewAXElement])
         XCTAssertEqual(children.count, 3)
-        XCTAssertEqual(children[1].accessibilityLabel(), V2PageText.lineLabel(page: 1, line: page.axLines[1]))
+        XCTAssertEqual(children[1].accessibilityLabel(), PreviewPageText.lineLabel(page: 1, line: page.axLines[1]))
         XCTAssertEqual(children[1].accessibilityRoleDescription(), PreviewAccessibility.lineRoleDescription)
         // The line's frame lies on the page, where the text is drawn.
         XCTAssertTrue(page.bounds.contains(children[1].viewFrame), "\(children[1].viewFrame) in \(page.bounds)")
@@ -196,6 +196,9 @@ final class EngineV3AccessibilityTests: XCTestCase {
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["\u{1ECD}"], "ọ (o, dot below)")
         glyphs = [g(0, "o", "o", x: 0), g(1, "macron", "\u{00AF}", x: 0, inkY: 102)]
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o\u{0331}"], "o, macron below (no precomposed form)")
+        // A period on the next line, under the letter: not a dot below (beyond 0.8 em).
+        glyphs = [g(0, "o", "o", x: 0), g(1, "period", ".", x: 0, baseline: 112, inkY: 111)]
+        XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o", "."])
         // A sentence's period on the baseline after a letter is punctuation.
         glyphs = [g(0, "o", "o", x: 0), g(1, "period", ".", x: 5, inkY: 98.5)]
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o", "."])

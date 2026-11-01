@@ -10,6 +10,9 @@ A case whose naive form fails and whose normalised form compiles is a rule that
 earns its keep; the report names them. Cases where both compile are
 no-regression checks: the rule must not break LaTeX that was already fine.
 
+With --flashtex (default: `flashtex-v3` on PATH, the new engine's CLI,
+crates/flashtex-build) each form is also checked with `flashtex-v3 check`.
+
 Usage: scripts/caret_context_oracle.py [--fixture PATH] [--flashtex BIN]
 Exit status is non-zero if any normalised insertion fails to compile.
 """
@@ -31,20 +34,20 @@ def compile_with(engine, body, preamble, workdir):
             if line.startswith("!"):
                 return False, line.strip()[:90]
         return False, "pdflatex failed"
-    r = subprocess.run([engine, "--tex", str(d / "main.tex"), "--v2", str(d / "out.json")],
+    # `flashtex-v3 check`: exit 0 with no error diagnostic, 1 when TeX reports one.
+    r = subprocess.run([engine, "check", str(d / "main.tex"), "--no-tools", "-q"],
                        capture_output=True, text=True)
-    out = d / "out.json"
-    if r.returncode != 0 or not out.exists():
-        return False, (r.stderr.strip().splitlines() or ["no output"])[-1][:90]
-    diags = json.loads(out.read_text()).get("diagnostics", [])
-    errs = [x for x in diags if x.get("severity") == "error"]
-    return (not errs), ("; ".join(x.get("message", "")[:80] for x in errs[:2]))
+    if r.returncode == 0:
+        return True, ""
+    errs = [l for l in r.stdout.splitlines() if ": error: " in l]
+    return False, ("; ".join(e.split(": error: ", 1)[1][:80] for e in errs[:2])
+                   or (r.stderr.strip().splitlines() or ["flashtex-v3 check failed"])[-1][:90])
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixture", type=pathlib.Path, default=DEFAULT_FIXTURE)
-    ap.add_argument("--flashtex", default=shutil.which("flashtex-render"))
+    ap.add_argument("--flashtex", default=shutil.which("flashtex-v3"))
     args = ap.parse_args()
     data = json.loads(args.fixture.read_text())
     default_preamble = data["preamble"]

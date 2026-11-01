@@ -1,0 +1,8 @@
+% x001-utf8-text: UTF-8 letters in a TFM font: present ones typeset, absent ones are lost characters (char-warning-xetex.ch)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\setbox0=\hbox{cafe naive é ü ✓ 雪 🍌 Ω}
+\lsshipbox0
+\end

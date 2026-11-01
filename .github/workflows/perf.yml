@@ -24,8 +24,34 @@ name: perf
 
 on:
   pull_request:
+    # Only the crates perf-bench links (the old engine's pipeline and its
+    # dependencies, from `cargo metadata`). A new-engine PR used to start a
+    # 13-50 minute run here that measured nothing it changed, and those runs
+    # held hosted runners that the sweeps and the merge queue were waiting
+    # for. Every push to main still measures, so nothing goes unmeasured.
     paths:
-      - "crates/**"
+      - "crates/bibliography/**"
+      - "crates/class-geometry/**"
+      - "crates/compiler/**"
+      - "crates/docstrip/**"
+      - "crates/document-style/**"
+      - "crates/font-discovery/**"
+      - "crates/font-engine/**"
+      - "crates/font-resources/**"
+      - "crates/math-layout/**"
+      - "crates/microtype/**"
+      - "crates/package-resolver/**"
+      - "crates/paragraph-layout/**"
+      - "crates/pdf/**"
+      - "crates/perf-bench/**"
+      - "crates/project-files/**"
+      - "crates/project-manifest/**"
+      - "crates/render-pipeline/**"
+      - "crates/tex-boxes/**"
+      - "crates/tex-expansion/**"
+      - "crates/tex-text-encoding/**"
+      - "crates/vector-graphics/**"
+      - "Cargo.lock"
       - "fixtures/real-world/**"
       - ".github/workflows/perf.yml"
   push:

@@ -183,7 +183,7 @@ final class PreviewTextCacheTests: XCTestCase {
 
         let cache = PreviewTextCache()
         func lineForLegacyItem() -> (key: PreviewTextCache.Key, line: PreviewTextCache.Line) {
-            // What PreviewView does per item: resolve the face, then key at the exact size.
+            // What the retired v1 pane did per item: resolve the face, then key at the exact size.
             let name = PreviewFonts.resolve(hint: nil, size: 10).postScriptName
             let key = PreviewTextCache.key(text: "Résumé", postScriptName: name, size: 10 * 2.0)
             return (key, cache.line(for: key))

@@ -1,0 +1,34 @@
+% 2576-write-buffer-readback: a file still open for \write holds on disk only what the C library's stdio buffer has flushed (st_blksize, 4096 bytes on APFS and ext4; flushed when the byte after a full buffer is written), so \pdffilesize and \openin/\read of it see 0, then 4096, then 8192 bytes (issue #1557; tex.web §§1370, 1374, 483).
+\input prelude
+\font\myrm=cmr10
+\def\T{abcdefghij}
+\def\L{\T\T\T\T\T\T\T\T\T123456789}% 99 characters: 100 bytes a line
+\countdef\n=1 \countdef\lines=2
+\def\loop{\ifnum\n<\count3 \immediate\write1{\L}\advance\n by1 \expandafter\loop\fi}
+% The lines \openin reads from the file now, and the last one.
+\def\readback#1{\lines=0 \let\last=\relax \openin0=#1 \rd}
+\def\rd{\ifeof0 \else\read0 to \x \ifeof0 \else\advance\lines by1 \let\last=\x\fi\expandafter\rd\fi}
+\tracingcommands=0 \tracingmacros=0 \tracingifs=0 \tracingassigns=0 \tracingrestores=0 \tracingnesting=0
+\immediate\openout1=ls2576a.txt
+% 4000 bytes, then 96: the buffer is full (4096) and nothing is on disk
+\count3=40 \n=0 \loop
+\immediate\write1{\T\T\T\T\T\T\T\T\T12345}
+\edef\sizeA{\pdffilesize{ls2576a.txt}}\readback{ls2576a.txt}\edef\linesA{\the\lines}
+% two bytes more: the first 4096 go out
+\immediate\write1{x}
+\edef\sizeB{\pdffilesize{ls2576a.txt}}\readback{ls2576a.txt}\edef\linesB{\the\lines}\let\lastB=\last
+% to 5998 bytes: still 4096 on disk
+\count3=19 \n=0 \loop
+\edef\sizeC{\pdffilesize{ls2576a.txt}}\readback{ls2576a.txt}\edef\linesC{\the\lines}
+% to 8198: 8192 on disk
+\count3=22 \n=0 \loop
+\edef\sizeD{\pdffilesize{ls2576a.txt}}\readback{ls2576a.txt}\edef\linesD{\the\lines}\let\lastD=\last
+\immediate\closeout1
+\edef\sizeE{\pdffilesize{ls2576a.txt}}\readback{ls2576a.txt}\edef\linesE{\the\lines}
+\tracingcommands=3 \tracingmacros=2 \tracingifs=1 \tracingassigns=1 \tracingrestores=1 \tracingnesting=2
+\message{[A \sizeA/\linesA] [B \sizeB/\linesB] [C \sizeC/\linesC] [D \sizeD/\linesD] [E \sizeE/\linesE]}
+\setbox0=\hbox{\myrm A\sizeA/\linesA\ B\sizeB/\linesB\ C\sizeC/\linesC\ D\sizeD/\linesD\ E\sizeE/\linesE}
+\setbox1=\hbox{\myrm\lastB}
+\setbox2=\hbox{\myrm\lastD}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

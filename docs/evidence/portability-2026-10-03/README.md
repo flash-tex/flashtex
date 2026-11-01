@@ -105,6 +105,9 @@ row 22; each fix is its own commit.
 
 ### Still different or untested on Windows
 
+*Superseded in part by #1418 (2026-10-04): the current state is
+[`docs/dev/engine-windows.md`](../../dev/engine-windows.md).*
+
 - `\pdfmatch`: no regex engine (row 21). Fix: vendor `pdftexdir/regex` with
   version, licence and sha256 (DESIGN.md §3), about 1 d.
 - No inode in stat stamps (std's file index is unstable): size, mtime and

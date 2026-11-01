@@ -1,0 +1,459 @@
+{
+  "appFootprintMaxBytes" : 82086336,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0001.png",
+      "incomplete" : false,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "source" : "pane",
+      "sourceLines" : {
+        "\/tmp\/bva\/cache\/projects\/21dcb3c1a11526c3-62651-1\/out\/main.toc:1" : 5,
+        "\/tmp\/bva\/cache\/projects\/21dcb3c1a11526c3-62651-1\/out\/main.toc:2" : 11,
+        "\/tmp\/bva\/cache\/projects\/21dcb3c1a11526c3-62651-1\/out\/main.toc:3" : 8,
+        "\/tmp\/bva\/cache\/projects\/21dcb3c1a11526c3-62651-1\/out\/main.toc:4" : 6,
+        "\/tmp\/bva\/cache\/projects\/21dcb3c1a11526c3-62651-1\/out\/main.toc:5" : 7,
+        "main.tex:16" : 7
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0001-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 80.12104034423828,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 52.18803882598877
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0002.png",
+      "incomplete" : false,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:42",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:42" : 206
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0002-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 77.72505283355713,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 52.50394344329834
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0003.png",
+      "incomplete" : false,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:53",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:53" : 108
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0003-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 81.01499080657959,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 52.17099189758301
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0004.png",
+      "incomplete" : false,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:65",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:65" : 88
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0004-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 80.3290605545044,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.29802227020264
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0005.png",
+      "incomplete" : false,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:65",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:65" : 88
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0005-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 80.44695854187012,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.45895481109619
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0006.png",
+      "incomplete" : false,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:76" : 114
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0006-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 75.48010349273682,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 50.37391185760498
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0007.png",
+      "incomplete" : false,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:76",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:76" : 110
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0007-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 78.67205142974854,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.03898048400879
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0008.png",
+      "incomplete" : false,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:76",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:76" : 113
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0008-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 78.75096797943115,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 50.227999687194824
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0009.png",
+      "incomplete" : false,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:104" : 203
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0009-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 80.09696006774902,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.91802978515625
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0010.png",
+      "incomplete" : false,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:104",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:104" : 136
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0010-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 82.0159912109375,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.437973976135254
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0011.png",
+      "incomplete" : false,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:130" : 206
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0011-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 80.59096336364746,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 52.09493637084961
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0012.png",
+      "incomplete" : false,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:130" : 139
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0012-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 82.0930004119873,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.411986351013184
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0013.png",
+      "incomplete" : false,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:143" : 121
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : false,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0013-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 78.85599136352539,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 50.9190559387207
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/rw-beamer-polish\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 1831.954,
+      "mode" : "cold",
+      "ms" : 2664.006792,
+      "pages" : 13,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 26
+    }
+  ],
+  "firstPageMs" : 1472.388834,
+  "firstPixelsMs" : 248.241834,
+  "forward" : {
+    "104" : 9,
+    "130" : 11,
+    "143" : 13,
+    "16" : 1,
+    "42" : 2,
+    "53" : 3,
+    "65" : 4,
+    "76" : 6
+  },
+  "hostFootprintEndBytes" : 192645248,
+  "hostFootprintMaxBytes" : 192645248,
+  "incompletePages" : [
+
+  ],
+  "load" : [
+    9.92236328125,
+    17.60302734375,
+    22.1279296875
+  ],
+  "pages" : 13,
+  "settledMs" : 2664.006792,
+  "status" : "done"
+}

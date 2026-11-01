@@ -1,0 +1,18 @@
+% u06-fonts-body: fonts looked up by name in the preamble and first loaded
+% in the body, on different pages (the font manager's maps, the layout
+% engines and the output's font resources, before and after a restart)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Georgia}
+\newfontfamily\arial{Arial}
+\newfontfamily\courier{Courier New}
+\begin{document}
+Georgia on the first page: “quotes”, ligatures fi fl, and figures 0123456789.
+\newpage
+{\arial Arial on the second page, in bold \textbf{here} and italic \textit{there}.}
+\newpage
+{\courier Courier New on the third page: monospaced text.}
+{\fontspec{Times New Roman} Times New Roman, loaded on this page only.}
+\newpage
+Georgia again on the fourth page, {\arial with Arial} and {\courier Courier}.
+\end{document}

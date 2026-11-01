@@ -1,0 +1,9 @@
+% x021-crlf: CR LF and lone CR line ends
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\setbox0=\hbox{a
+b}\message{x021 one}\message{x021 two}  
+\lsshipbox0
+\end

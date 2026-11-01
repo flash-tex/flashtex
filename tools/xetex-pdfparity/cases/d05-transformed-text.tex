@@ -1,0 +1,16 @@
+% d05-transformed-text: text under graphicx's transformations (pdf:btrans rotate, x:scale in pdf:btrans) and a TikZ node rotated with cm, for the XDV check
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{graphicx}
+\usepackage{tikz}
+\begin{document}
+Plain \rotatebox{30}{rotated by thirty} and \rotatebox[origin=c]{-90}{down}
+then \scalebox{2}[0.5]{scaled} and \reflectbox{reflected} and
+\resizebox{3cm}{!}{resized to three cm} and
+\rotatebox{45}{\scalebox{1.5}{nested \rotatebox{-45}{twice}}} done.
+
+\begin{tikzpicture}
+\node[rotate=60,draw] at (0,0) {node at sixty};
+\node[xslant=0.5,scale=1.3] at (4,0) {slanted};
+\end{tikzpicture}
+\end{document}

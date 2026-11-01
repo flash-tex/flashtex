@@ -2345,11 +2345,10 @@ final class CompletionScheduler {
         /// environment skeletons are built with them.
         var indentUnit: String = ""
         var environmentRules: EnvironmentEditingRules = .conventional
-        /// The built `flashtex-render` (`ShellModel.locateRenderPipeline`),
-        /// asked on the main thread: its `--list-fonts` is what
-        /// `\setmainfont{` offers, run by the job off-main once per launch
-        /// (`InstalledFonts`). Nil offers no families.
-        var renderPipeline: URL? = nil
+        /// The engine whose `--list-fonts` is what `\setmainfont{` offers
+        /// (`InstalledFonts.lister`), asked on the main thread and run by
+        /// the job off-main once per launch. Nil offers no families.
+        var fontLister: URL? = nil
         /// The author is writing a package or class (a `.sty`/`.cls` buffer,
         /// or the caret inside `\makeatletter`): the kernel vocabulary leads
         /// (`Completion.suggestions(packageMode:)`). Decided on the main
@@ -2453,7 +2452,7 @@ final class CompletionScheduler {
                 case .word(_, _, _, .graphics)?:
                     if let root = request.graphicsRoot { graphics = Completion.graphicsFiles(under: root) }
                 case .word(_, _, _, .font)?:
-                    fontFamilies = InstalledFonts.families(renderPipeline: request.renderPipeline)
+                    fontFamilies = InstalledFonts.families(tool: request.fontLister)
                 case .word(_, _, _, .citation)?:
                     if let sources = request.bibliography { bibliographyEntries = BibScanner.entries(for: sources, cancelled: { job.isCancelled }) }
                 case .command?:
@@ -2512,7 +2511,7 @@ final class CompletionScheduler {
         pending = nil
     }
 
-    /// Head-of-run-loop delivery (see `WorkerClient.deliver`): a plain
+    /// Head-of-run-loop delivery: a plain
     /// `DispatchQueue.main.async` waits for AppKit to reach the dispatch port.
     nonisolated private static func onMain(_ block: @escaping @Sendable () -> Void) {
         CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue, block)
@@ -3085,6 +3084,27 @@ extension Completion.Kind {
 /// list. Rust metadata (`compileResult`, `accept(projectIndex:)`) is used only
 /// when bound to `editorRevision`, which the owner sets on every update.
 final class CompletingTextView: NSTextView {
+    /// Live Share: the session's typing undo step ends where AppKit's does
+    /// (a capture insertion, an auto-closed pair's own step).
+    override func breakUndoCoalescing() {
+        super.breakUndoCoalescing()
+        (delegate as? SourceEditorView.Coordinator)?.liveShareBreakUndoCoalescing()
+    }
+
+    /// Live Share: the session file's local-only undo stack. The text view's
+    /// own undo is off in a session (`allowsUndo`, which makes `undoManager`
+    /// nil, so AppKit registers no typing undo anywhere); ⌘Z and Edit ▸ Undo
+    /// reach the session's stack through `undo:`/`redo:` below. Outside a
+    /// session neither is answered here and everything is AppKit's.
+    var liveShareUndoManager: UndoManager? { (delegate as? SourceEditorView.Coordinator)?.liveShare.link?.undoManager }
+    @objc func undo(_ sender: Any?) { liveShareUndoManager?.undo() }
+    @objc func redo(_ sender: Any?) { liveShareUndoManager?.redo() }
+    /// Only a session answers `undo:`/`redo:` here; otherwise they travel
+    /// the responder chain as before.
+    override func responds(to aSelector: Selector!) -> Bool {
+        if aSelector == #selector(undo(_:)) || aSelector == #selector(redo(_:)) { return liveShareUndoManager != nil }
+        return super.responds(to: aSelector)
+    }
     var compileResult: RuntimeV1.CompileResult? {
         didSet { resultMetadata = compileResult.map(Completion.Metadata.from) }
     }
@@ -3095,10 +3115,10 @@ final class CompletingTextView: NSTextView {
     /// on the main thread when the list is requested; nil (a bare text view,
     /// an unsaved buffer) offers none.
     var graphicsRoot: () -> URL? = { nil }
-    /// The built `flashtex-render` whose `--list-fonts` fills `\setmainfont{`
-    /// (`InstalledFonts`), asked on the main thread when the list is
+    /// The engine whose `--list-fonts` fills `\setmainfont{`
+    /// (`InstalledFonts.lister`), asked on the main thread when the list is
     /// requested; nil (a bare text view) offers no families.
-    var renderPipeline: () -> URL? = { nil }
+    var fontLister: () -> URL? = { nil }
     /// The project's other open documents, asked on the main thread when the
     /// list is requested (`ShellModel.editorHoverContext`'s texts); their
     /// macros are offered as declared. A bare text view has none.
@@ -3117,7 +3137,15 @@ final class CompletingTextView: NSTextView {
     var texpandProject: () -> TeXpandProject? = { nil }
     /// Accepted commands and environments, ranked first on the next open. A
     /// bare text view keeps its own; the hosted editor installs the shared one.
-    var recentlyUsed = Completion.RecentlyUsed()
+    ///
+    /// `lazy`, as `folds` and `scheduler` are: `NSTextView.init(frame:)`
+    /// calls `init(frame:textContainer:)`, and each of the two Swift
+    /// initializers runs this class's property initializers, so an object
+    /// made by an initializer expression was made twice and the first one
+    /// was never released (leaks(1): one RecentlyUsed, EditorFoldStore and
+    /// CompletionScheduler with its dispatch queue per editor). A lazy
+    /// property's storage starts empty, so nothing is made until first use.
+    lazy var recentlyUsed = Completion.RecentlyUsed()
     /// Whether the caret is in math mode, answered by the owner from its
     /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
     /// line's lexing. Unwired — a bare text view in a test — it answers nil:
@@ -3139,7 +3167,7 @@ final class CompletingTextView: NSTextView {
     /// macros are offered as declared in that file. A bare text view has none.
     var packageDocuments: () -> [Completion.SourceDocument] = { [] }
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
-    let folds = EditorFoldStore()
+    private(set) lazy var folds = EditorFoldStore() // lazy: see `recentlyUsed`
 
     // MARK: paste an image (PasteImage.swift)
 
@@ -3176,6 +3204,12 @@ final class CompletingTextView: NSTextView {
     /// A plain-text view disables Paste for a pasteboard with no text on it;
     /// an image the image paste would take enables it.
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        // Live Share: Edit ▸ Undo/Redo name and enable the session's stack.
+        if let m = liveShareUndoManager, item.action == #selector(undo(_:)) || item.action == #selector(redo(_:)) {
+            let undo = item.action == #selector(undo(_:))
+            (item as? NSMenuItem)?.title = undo ? m.undoMenuItemTitle : m.redoMenuItemTitle
+            return undo ? m.canUndo : m.canRedo
+        }
         if item.action == #selector(paste(_:)), isEditable, imagePasteHandler != nil,
            PasteImage.wouldHandle(imagePasteboard()) { return true }
         return super.validateUserInterfaceItem(item)
@@ -3402,7 +3436,7 @@ final class CompletingTextView: NSTextView {
     }
 
     /// Replaceable so tests can inject a manual executor.
-    var scheduler = CompletionScheduler()
+    lazy var scheduler = CompletionScheduler() // lazy: see `recentlyUsed`
     private(set) var session: CompletionSession?
     var isCompletionActive: Bool { session != nil }
 
@@ -3564,6 +3598,7 @@ final class CompletingTextView: NSTextView {
         foregroundDecorator?(dirtyRect)
         folds.drawPlaceholders(in: dirtyRect, textView: self)
         texpandEditor?.draw(dirtyRect) // capture region and expansion preview (TeXpandEditor.swift)
+        MainThreadProbe.editorDrew() // key → glyph drawn (EditorInstantTests); one Bool test when off
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`
@@ -3648,7 +3683,7 @@ final class CompletingTextView: NSTextView {
                                                   projectClass: projectDocumentClass(),
                                                   indentUnit: EditorPreferences.shared.indentString,
                                                   environmentRules: EditorPreferences.shared.environmentRules,
-                                                  renderPipeline: renderPipeline(),
+                                                  fontLister: fontLister(),
                                                   packageMode: packageContext.packageMode, atLetter: packageContext.atLetter,
                                                   projectPackageFiles: projectPackageFiles(), packageDocuments: packageDocuments())
         // The engine's definitions when the last result carried them, whatever
@@ -4183,21 +4218,27 @@ final class CompletingTextView: NSTextView {
 }
 
 /// The installed font families `\setmainfont{` completes with, as the
-/// engine's own index sees them (`flashtex-render --list-fonts`, over
-/// `crates/font-discovery`): the same names the document resolves against,
-/// so what the list offers is what the render finds. AppKit's font panel
-/// would list Core Text's view of the machine instead, which differs for
-/// project-local and `FLASHTEX_FONT_DIRS` fonts. Listed once per launch
-/// (~30 ms warm, ~250 ms cold) by the completion job, off-main, the first
-/// time the caret is in a font argument; nil or a missing binary offers
-/// nothing.
+/// new engine's own catalog sees them (`flashtex-host-unicode
+/// --list-fonts`, the catalog Unicode mode's `\setmainfont{…}` and
+/// `[fonts]` resolve against, crates/flashtex-xetex
+/// `FontCatalog::family_names`; app-parity row A9), so what the list offers
+/// is what the compile finds. AppKit's font panel would list Core Text's
+/// view of the machine instead, which differs for `FLASHTEX_FONT_DIRS` and
+/// a bundle's fonts. Listed once per launch by the completion job, off-main,
+/// the first time the caret is in a font argument; nil or a missing binary
+/// offers nothing.
 enum InstalledFonts {
+    /// The program that lists the families: Unicode mode's host.
+    @MainActor static func lister() -> URL? {
+        EngineV3.locateHost(mode: .unicode)
+    }
+
     private static let lock = NSLock()
     nonisolated(unsafe) private static var cached: (URL, [String])?
     nonisolated(unsafe) private static var cachedMath: (URL, [String])?
 
-    nonisolated static func families(renderPipeline: URL?) -> [String] {
-        guard let tool = renderPipeline else { return [] }
+    nonisolated static func families(tool: URL?) -> [String] {
+        guard let tool else { return [] }
         lock.lock(); defer { lock.unlock() }
         if let (url, names) = cached, url == tool { return names }
         let names = list(tool: tool, flag: "--list-fonts")
@@ -4208,8 +4249,8 @@ enum InstalledFonts {
     /// The families with a face carrying an OpenType `MATH` table
     /// (`--list-math-fonts`): what the Fonts sheet's Math row offers
     /// (ProjectFonts.swift). Same caching as `families`.
-    nonisolated static func mathFamilies(renderPipeline: URL?) -> [String] {
-        guard let tool = renderPipeline else { return [] }
+    nonisolated static func mathFamilies(tool: URL?) -> [String] {
+        guard let tool else { return [] }
         lock.lock(); defer { lock.unlock() }
         if let (url, names) = cachedMath, url == tool { return names }
         let names = list(tool: tool, flag: "--list-math-fonts")
@@ -4227,7 +4268,7 @@ enum InstalledFonts {
         p.standardOutput = stdout
         p.standardError = FileHandle.nullDevice
         // The drain publishes under a lock: the bounded waits below can
-        // expire while it is still reading (see ExactPDFExport.run).
+        // expire while it is still reading.
         let drained = Drained()
         let group = DispatchGroup()
         group.enter(); DispatchQueue.global().async { drained.put(stdout.fileHandleForReading.readDataToEndOfFile()); group.leave() }

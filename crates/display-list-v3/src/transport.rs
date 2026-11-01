@@ -127,6 +127,17 @@ mod windows {
         fn connect(s: Socket, name: *const SockaddrUn, len: i32) -> i32;
         fn closesocket(s: Socket) -> i32;
         fn setsockopt(s: Socket, level: i32, name: i32, value: *const u8, len: i32) -> i32;
+        fn WSAIoctl(
+            s: Socket,
+            code: u32,
+            in_buf: *const u8,
+            in_len: u32,
+            out_buf: *mut u8,
+            out_len: u32,
+            returned: *mut u32,
+            overlapped: *mut u8,
+            completion: *mut u8,
+        ) -> i32;
     }
     #[link(name = "kernel32")]
     extern "system" {
@@ -136,6 +147,10 @@ mod windows {
     const WSA_FLAG_NO_HANDLE_INHERIT: u32 = 0x80;
     const HANDLE_FLAG_INHERIT: u32 = 0x01;
     const FIONBIO: i32 = 0x8004_667E_u32 as i32;
+    /// afunix.h: `_WSAIOR(IOC_VENDOR, 256)`.
+    const SIO_AF_UNIX_GETPEERPID: u32 = 0x5800_0100;
+    const WSAEINVAL: i32 = 10022;
+    const WSAEOPNOTSUPP: i32 = 10045;
 
     fn last_error() -> io::Error {
         // SAFETY: no preconditions.
@@ -231,6 +246,41 @@ mod windows {
         }
         pub fn set_nonblocking(&self, on: bool) -> io::Result<()> {
             self.0.set_nonblocking(on)
+        }
+        /// The process id of the other end (`SIO_AF_UNIX_GETPEERPID`,
+        /// Windows 10 1803 and later). Where Windows does not know the
+        /// control code, the error is `ErrorKind::Unsupported`: Winsock
+        /// answers an unknown `WSAIoctl` code with `WSAEOPNOTSUPP` or, for
+        /// a code outside its table, `WSAEINVAL` (the arguments here are
+        /// otherwise valid). Any other failure keeps its own error.
+        pub fn peer_pid(&self) -> io::Result<u32> {
+            let mut pid = 0u32;
+            let mut n = 0u32;
+            // SAFETY: a 4-byte output buffer, no input, synchronous.
+            let r = unsafe {
+                WSAIoctl(
+                    self.0.as_raw_socket() as Socket,
+                    SIO_AF_UNIX_GETPEERPID,
+                    std::ptr::null(),
+                    0,
+                    &mut pid as *mut u32 as *mut u8,
+                    4,
+                    &mut n,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            if r != 0 {
+                let e = last_error();
+                return Err(match e.raw_os_error() {
+                    Some(WSAEOPNOTSUPP | WSAEINVAL) => io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!("SIO_AF_UNIX_GETPEERPID: {e} (Windows before 10 1803)"),
+                    ),
+                    _ => e,
+                });
+            }
+            Ok(pid)
         }
     }
 

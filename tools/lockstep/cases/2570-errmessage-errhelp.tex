@@ -1,0 +1,9 @@
+% 2570-errmessage-errhelp: \errmessage with \errhelp set prints `! message.` plus the context and the custom help line instead of the default help (tex.web §§1277, 1279, 1283, 1284)
+% new versus none: no existing case ends in an error; this lane's no-halt option makes \errmessage with \errhelp coverable
+% lockstep: no-halt
+\input prelude
+\errhelp{try-again-later}
+\errmessage{boom-help}
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

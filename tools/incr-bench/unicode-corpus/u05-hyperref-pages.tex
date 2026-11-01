@@ -1,0 +1,27 @@
+% u05-hyperref-pages: hyperref over several pages with fontspec: section
+% links, page references, URLs, footnotes and the outline, so that edits
+% move destinations and links between pages
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage[colorlinks]{hyperref}
+\begin{document}
+\tableofcontents
+\section{Start}\label{s:start}
+See section~\ref{s:end} on page~\pageref{s:end}, and \href{https://example.org}{a
+link}. Words to fill the paragraph so that the line breaker has work to do,
+with words, and more words, and yet more words until the line wraps a few
+times.\footnote{A footnote with \url{https://example.org/a/b}.}
+
+\newpage
+\section{Middle}\label{s:middle}
+Back to section~\ref{s:start}. Words to fill the paragraph so that the line
+breaker has work to do, with words, and more words, and yet more words until
+the line wraps a few times. Words to fill the paragraph so that the line
+breaker has work to do.
+
+\newpage
+\section{End}\label{s:end}
+From page~\pageref{s:middle}: section~\ref{s:middle}. Words to fill the
+paragraph so that the line breaker has work to do, with words, and more
+words, and yet more words until the line wraps a few times.
+\end{document}

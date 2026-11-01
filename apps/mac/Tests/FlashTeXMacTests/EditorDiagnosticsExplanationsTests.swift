@@ -366,6 +366,8 @@ final class EditorDiagnosticsExplanationsTests: XCTestCase {
         #endif
         print(String(format: "EditorDiagnostics marks+explanations bench (%@): %d bytes, %d diagnostics, reply %d bytes: first fetch decode %.3f ms; per keystroke best %.3f ms, median %.3f ms, worst %.3f ms",
                      build, compiled.utf8.count, diags.count, replyLine.utf8.count, firstFetchMs, sorted[0], sorted[sorted.count / 2], sorted[sorted.count - 1]))
-        XCTAssertLessThan(sorted[0], 2.0, "marks + cached explanations must stay far below one frame after the first fetch")
+        // marks + cached explanations must stay far below one frame after the
+        // first fetch; a speed budget (TimingBudget.swift).
+        TimingBudget.assertWithin(sorted[0], 2.0, "EditorDiagnostics marks + cached explanations (\(build), best of \(sorted.count))")
     }
 }

@@ -655,8 +655,9 @@ fn compiler_restart_never_revalidates_older_index_snapshot() {
 }
 
 fn historical_fixture(dir: &std::path::Path) -> Controller {
-    let body = format!("import pathlib\n{}", ECHO.replace("time.sleep(.02)",
-        "\n while p['revision'] > 1 and not pathlib.Path(__file__).with_name('release').exists(): time.sleep(.001)"));
+    // The gate exits once its parent or temp dir is gone (#1221, #1329).
+    let body = format!("import pathlib,os\nP=os.getppid()\n{}", ECHO.replace("time.sleep(.02)",
+        "\n while p['revision'] > 1 and not pathlib.Path(__file__).with_name('release').exists(): time.sleep(.001); (os.getppid()!=P or not pathlib.Path(__file__).parent.exists()) and sys.exit(1)"));
     let mut controller = Controller::new(
         "p".into(),
         "main.tex".into(),
@@ -852,7 +853,8 @@ fn edit_admission_tracks_queued_supersession_and_failed_admission() {
         .unwrap();
     assert!(saved.compile_admission.is_none());
     assert!(saved.preview_error.is_some());
-    let gated = "import json,sys,pathlib,time\nroot=pathlib.Path(__file__).parent\nfor line in sys.stdin:\n r=json.loads(line);p=r['payload'];(root/'started').touch()\n while not (root/'release').exists(): time.sleep(.001)\n print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)\n";
+    // The gate exits once its parent or temp dir is gone (#1221, #1329).
+    let gated = "import json,sys,pathlib,time,os\nroot=pathlib.Path(__file__).parent\nP=os.getppid()\nfor line in sys.stdin:\n r=json.loads(line);p=r['payload'];(root/'started').touch()\n while not (root/'release').exists(): time.sleep(.001); (os.getppid()!=P or not root.exists()) and sys.exit(1)\n print(json.dumps({'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}),flush=True)\n";
     controller
         .restart(command(dir.path(), gated), Limits::default())
         .unwrap();

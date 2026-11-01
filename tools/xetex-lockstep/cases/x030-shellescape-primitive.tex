@@ -1,0 +1,11 @@
+% x030-shellescape-primitive: \shellescape, \primitive and \ifprimitive
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x030 \the\shellescape}
+\let\relax=\undefined
+\primitive\relax
+\message{x030 \ifprimitive\par yes\else no\fi\space\ifprimitive\relax yes\else no\fi}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

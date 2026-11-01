@@ -174,6 +174,10 @@ struct P<'a> {
     clashes: Vec<String>,
     consts: HashMap<String, i64>,
     types: HashMap<String, Ty>,
+    /// The integer constants of the routine being parsed (a local `const`
+    /// section, as in xetex.web's `load_native_font`): each use becomes its
+    /// value, as Pascal's constant substitution makes it.
+    local_consts: HashMap<String, i64>,
 }
 
 impl<'a> P<'a> {
@@ -462,6 +466,17 @@ impl<'a> P<'a> {
     fn simple(&mut self) -> R<Expr> {
         let mut e = if self.eat_op("-") {
             let t = self.term()?;
+            // Pascal's `-a and b` is `-(a and b)`; web2c prints `- (integer)`
+            // before the factor, so C reads `(-a) && b`. A negative macro
+            // constant makes such a term (xetex.web's `null` is
+            // `-"FFFFFFF`: `(#)<>null and ...`).
+            if self.bare == Some("and") {
+                let e = self.err::<()>(
+                    "unary `-` before an unparenthesised `and`: Pascal and web2c's C read \
+                     this differently; parenthesise it in a change file",
+                );
+                self.clashes.push(e.unwrap_err());
+            }
             self.bare = Some("neg");
             Expr::Un("-", Box::new(t))
         } else {
@@ -530,6 +545,8 @@ impl<'a> P<'a> {
                         self.i += 1;
                         let args = self.args()?;
                         Expr::Call(n.to_string(), args)
+                    } else if let Some(v) = self.local_consts.get(&*n) {
+                        Expr::Int(*v)
                     } else {
                         Expr::Var(n.to_string())
                     }
@@ -582,6 +599,13 @@ impl<'a> P<'a> {
         }
         loop {
             let e = self.expr()?;
+            // web2c's `addressof(x)` as an argument (xetex.web: a C routine
+            // that writes its result through a pointer) is `x` passed to a
+            // `var` parameter, which is how the routine is declared here.
+            let e = match e {
+                Expr::Call(f, mut a) if f == "addressof" && a.len() == 1 => a.pop().unwrap(),
+                e => e,
+            };
             // `write(f, x:1)` — a Pascal field-width specifier.
             if self.eat_op(":") {
                 let w = self.expr()?;
@@ -791,6 +815,7 @@ pub fn parse(t: &Tangled) -> R<Program> {
         clashes: vec![],
         consts: HashMap::new(),
         types: HashMap::new(),
+        local_consts: HashMap::new(),
     };
     p.expect_kw("program")?;
     let _name = p.ident()?;
@@ -948,8 +973,19 @@ pub fn parse(t: &Tangled) -> R<Program> {
             }
         }
         let mut locals = vec![];
+        p.local_consts.clear();
         if p.eat_kw("const") {
-            return p.err("local `const` sections are not supported");
+            // Only integer constants: `name = <integer constant>;`.
+            while let Tok::Id(n) = p.peek() {
+                if matches!(&**n, "var" | "begin" | "procedure" | "function") {
+                    break;
+                }
+                let n = p.ident()?;
+                p.expect_op("=")?;
+                let v = p.const_int()?;
+                p.expect_op(";")?;
+                p.local_consts.insert(n, v);
+            }
         }
         if p.eat_kw("var") {
             while let Tok::Id(_) = p.peek() {
@@ -978,6 +1014,7 @@ pub fn parse(t: &Tangled) -> R<Program> {
         let body = p.stmt_seq(&["end"])?;
         p.expect_kw("end")?;
         p.expect_op(";")?;
+        p.local_consts.clear();
         routines.push(Routine {
             name,
             params,
