@@ -44,6 +44,15 @@
 //! edited page show as waiting keystrokes; `unpainted` counts those never
 //! shown.
 //!
+//! `--external-tools auto` (a trusted project, as the app sends it: spec
+//! §6.4) lets the host run makeindex, bibtex and biber; every compile then
+//! lasts until the host's `TOOL` `settled` for it, so the follow-up compiles
+//! the tools cause (same id) belong to it and its last `DONE` is its result.
+//! Without it the host's default holds (tools off): a document whose index or
+//! bibliography a tool makes has fewer pages than pdflatex's (infdesc-x2:
+//! 1,140 without its four indexes, 1,152 with them, the oracle's count).
+//! Not with `--overlap`.
+//!
 //! `--edit FILE` (relative to `--root`) types in another file of the project
 //! than `--main`, e.g. a book chapter the main file `\input`s; the line search
 //! and `--line` then look at that file.
@@ -103,6 +112,10 @@ struct Result {
 fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option<u32>) -> Result {
     let t0 = Instant::now();
     c.compile(req).expect("send COMPILE");
+    // With the external tools on, the compile lasts until `TOOL` `settled`
+    // for it; its follow-up compiles (same id) are part of it.
+    let tools = req.external_tools.as_deref() == Some("auto");
+    let (mut last_done, mut settled): (Option<Json>, bool) = (None, false);
     let (mut first_page, mut target_page, mut first_index) = (None, None, None);
     let (mut later_pages, mut stale_seen, mut stale_marked) = (0u32, false, true);
     let mut last_pages: Option<Json> = None;
@@ -160,7 +173,28 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
                 }
                 last_pages = Some(j);
             }
-            Event::Done(d) => break d,
+            Event::Done(d) => {
+                let mine = d.int_field("id") == Some(req.id);
+                if !tools {
+                    break d;
+                }
+                if mine {
+                    last_done = Some(d);
+                }
+                if settled && last_done.is_some() {
+                    break last_done.take().unwrap();
+                }
+            }
+            Event::Tool(j)
+                if tools
+                    && j.int_field("id") == Some(req.id)
+                    && j.str_field("event") == Some("settled") =>
+            {
+                settled = true;
+                if let Some(d) = last_done.take() {
+                    break d;
+                }
+            }
             _ => {}
         }
     };
@@ -201,7 +235,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport] [--includeonly NAME,...]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport] [--includeonly NAME,...] [--external-tools auto|off]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -222,6 +256,7 @@ fn main() {
         let mut r = CompileRequest::new(id, &root, &main);
         r.output_dir = arg("--output-dir");
         r.incremental = true;
+        r.external_tools = arg("--external-tools");
         // `--includeonly a,b`: a chapter focus (`\includeonly{a,b}`).
         r.includeonly = arg("--includeonly").map(|v| v.split(',').map(str::to_string).collect());
         r
@@ -263,11 +298,26 @@ fn main() {
         None => (held.count as f64 * at) as u32,
     }
     .min(held.count.saturating_sub(1) as u32);
-    let main_file = |f: u32| {
-        held.files
-            .get(&f)
-            .is_some_and(|p| p.ends_with(&format!("/{efile}")))
-    };
+    // The edited file is the one whose path, resolved against the root, is
+    // `root/efile` (canonical paths). A name suffix is not enough: in a
+    // project with the same tree twice (infdesc-x2's `x2/book/...` copy),
+    // `book/a.tex` is a suffix of `x2/book/a.tex`, every line then seems to
+    // be on two pages, and no line qualifies.
+    let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let edited: HashMap<u32, bool> = held
+        .files
+        .iter()
+        .map(|(&i, p)| {
+            let p = std::path::Path::new(p.strip_prefix("./").unwrap_or(p));
+            let full = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                std::path::Path::new(&root).join(p)
+            };
+            (i, std::fs::canonicalize(&full).unwrap_or(full) == target)
+        })
+        .collect();
+    let main_file = |f: u32| edited.get(&f).copied().unwrap_or(false);
     let on_pages = |line: u32| -> Vec<u32> {
         let mut v: Vec<u32> = held
             .lines
@@ -473,6 +523,10 @@ fn main() {
     );
     let (mut firsts, mut targets, mut dones) = (vec![], vec![], vec![]);
     let overlap = a.iter().any(|x| x == "--overlap");
+    if overlap && arg("--external-tools").as_deref() == Some("auto") {
+        eprintln!("dl3-keys: --overlap with --external-tools auto is not supported");
+        std::process::exit(2)
+    }
     // `--no-viewport`: no `viewport` in the COMPILE (as the app sends it
     // while page 1 is on screen).
     let viewport = !a.iter().any(|x| x == "--no-viewport");
@@ -498,24 +552,23 @@ fn main() {
         let last_id = id + keys as i64;
         let mut sender = c.canceller().expect("a sending handle");
         let t_start = Instant::now();
-        // (each keystroke's send time, and how late it went after its due
-        // time: `sent_late_ms`)
-        let sent: std::sync::Arc<std::sync::Mutex<Vec<(Instant, f64)>>> = Default::default();
+        let sent: std::sync::Arc<std::sync::Mutex<Vec<Instant>>> = Default::default();
         let sent2 = sent.clone();
         let typist = std::thread::spawn(move || {
-            clock_thread();
             for (k, r) in reqs.iter().enumerate() {
                 let due = t_start + Duration::from_millis(ms * k as u64);
-                wait_until(due);
-                let now = Instant::now();
-                let late = now.saturating_duration_since(due).as_secs_f64() * 1e3;
-                sent2.lock().unwrap().push((now, late));
+                if let Some(d) = due.checked_duration_since(Instant::now()) {
+                    std::thread::sleep(d);
+                }
+                sent2.lock().unwrap().push(Instant::now());
                 sender.compile(r).expect("send COMPILE");
             }
         });
         let (mut started, mut covered, mut lat) = (0i64, 0usize, vec![]);
         let (mut cancelled, mut done_last) = (0, false);
-        while !done_last {
+        let tools = arg("--external-tools").as_deref() == Some("auto");
+        let mut settled_last = !tools;
+        while !(done_last && settled_last) {
             let ev = c
                 .next_event()
                 .expect("read")
@@ -545,14 +598,13 @@ fn main() {
                     let upto = (started - first_id + 1) as usize;
                     let s = sent.lock().unwrap();
                     while covered < upto.min(s.len()) {
-                        let l = (now - s[covered].0).as_secs_f64() * 1e3;
+                        let l = (now - s[covered]).as_secs_f64() * 1e3;
                         println!(
                             "{}",
                             Json::Obj(vec![
                                 ("key".into(), Json::Int(covered as i64)),
                                 ("edited_page_ms".into(), Json::Num(l)),
                                 ("by".into(), Json::Int(started)),
-                                ("sent_late_ms".into(), Json::Num(s[covered].1)),
                                 ("current".into(), Json::Bool(true)),
                             ])
                         );
@@ -564,14 +616,13 @@ fn main() {
                     let upto = (started - first_id + 1) as usize;
                     let s = sent.lock().unwrap();
                     while covered < upto.min(s.len()) {
-                        let l = (now - s[covered].0).as_secs_f64() * 1e3;
+                        let l = (now - s[covered]).as_secs_f64() * 1e3;
                         println!(
                             "{}",
                             Json::Obj(vec![
                                 ("key".into(), Json::Int(covered as i64)),
                                 ("edited_page_ms".into(), Json::Num(l)),
                                 ("by".into(), Json::Int(started)),
-                                ("sent_late_ms".into(), Json::Num(s[covered].1)),
                             ])
                         );
                         lat.push(l);
@@ -583,7 +634,13 @@ fn main() {
                     if d.str_field("status") == Some("cancelled") {
                         cancelled += 1;
                     }
-                    done_last = d.int_field("id") == Some(last_id);
+                    done_last |= d.int_field("id") == Some(last_id);
+                }
+                Event::Tool(j)
+                    if j.int_field("id") == Some(last_id)
+                        && j.str_field("event") == Some("settled") =>
+                {
+                    settled_last = true;
                 }
                 Event::Error(e) => {
                     eprintln!("dl3-keys: host error: {e}");
@@ -594,7 +651,6 @@ fn main() {
         }
         typist.join().expect("the typist");
         let unpainted = keys - covered;
-        let mut late: Vec<f64> = sent.lock().unwrap().iter().map(|x| x.1).collect();
         let sum = |v: &mut Vec<f64>| {
             Json::Obj(vec![
                 ("n".into(), Json::Int(v.len() as i64)),
@@ -614,7 +670,6 @@ fn main() {
                 ("edited_page_ms".into(), sum(&mut lat)),
                 ("unpainted".into(), Json::Int(unpainted as i64)),
                 ("cancelled".into(), Json::Int(cancelled)),
-                ("sent_late_ms".into(), sum(&mut late)),
             ])
         );
         let _ = std::io::stdout().flush();
@@ -767,45 +822,4 @@ fn main() {
     }
     let _ = std::io::stdout().flush();
     let _ = c.bye();
-}
-
-/// `--interval-ms`'s typist keeps its clock (lane BEAMER, 2026-11-01). A
-/// thread sleeping in a process macOS runs in the background band
-/// (`PRIO_DARWIN_BG`) has its timers coalesced: on the hosted M1 the typist
-/// woke 100 ms and more late and sent two to four keystrokes at once, and
-/// each burst counted every key but its last as not painted by its own
-/// compile (18 of the 18-20 such keys of each typing@50ms beamer row). This
-/// takes the thread out of the background band and to the user-interactive
-/// QoS, as the app's key events are; `wait_until` spins the last stretch.
-fn clock_thread() {
-    #[cfg(target_os = "macos")]
-    {
-        extern "C" {
-            fn setpriority(which: i32, who: u32, prio: i32) -> i32;
-            fn pthread_set_qos_class_self_np(qos: u32, relpri: i32) -> i32;
-        }
-        const PRIO_DARWIN_THREAD: i32 = 3;
-        const PRIO_DARWIN_PROCESS: i32 = 4;
-        const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
-        // SAFETY: plain system calls on this thread and process, no pointers.
-        unsafe {
-            setpriority(PRIO_DARWIN_PROCESS, 0, 0);
-            setpriority(PRIO_DARWIN_THREAD, 0, 0);
-            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
-        }
-    }
-}
-
-/// Sleep until `due`, spinning the last 2 ms (a timer's leeway alone made
-/// keystrokes late).
-fn wait_until(due: Instant) {
-    const SPIN: Duration = Duration::from_millis(2);
-    if let Some(d) = due.checked_duration_since(Instant::now()) {
-        if d > SPIN {
-            std::thread::sleep(d - SPIN);
-        }
-    }
-    while Instant::now() < due {
-        std::hint::spin_loop();
-    }
 }
