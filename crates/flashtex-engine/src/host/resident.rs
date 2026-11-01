@@ -985,6 +985,11 @@ impl Engine {
             conn.minor >= 1 && req.get("incremental").and_then(Json::as_bool) == Some(true);
         let s0_path = self.s0_path(&job);
         if self.doc.as_ref().map(|d| &d.job) != Some(&job) {
+            // (the project's stored files: never pruned while it is open,
+            // and used now, `super::s0cache`)
+            if let Some(p) = &s0_path {
+                super::s0cache::hold(&[p, &p.with_extension("s1")]);
+            }
             if let Err(e) = self.open(job.clone()) {
                 return server::error(&out, Some(id), "request", &e);
             }

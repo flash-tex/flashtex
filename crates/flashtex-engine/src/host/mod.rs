@@ -34,6 +34,7 @@ pub mod crash;
 pub mod diag;
 pub mod external;
 mod resident;
+pub mod s0cache;
 pub mod s0write;
 pub mod s1;
 pub mod server;

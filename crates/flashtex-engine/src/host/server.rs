@@ -409,6 +409,11 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     let profile = crate::profile::Profile::new(mode, &pinned);
     opts.apply_profile(&profile);
+    // The S₀/S₁ cache, pruned to the mode's cap in the background once the
+    // first document is open (`super::s0cache`).
+    if let Some(d) = &s0_cache {
+        super::s0cache::prune_in_background(d.clone(), super::s0cache::cap(mode));
+    }
     let cfg = Arc::new(Config {
         engine,
         engine_version,
