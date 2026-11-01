@@ -43,7 +43,6 @@
 use crate::generated::Globals;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -251,6 +250,76 @@ struct Def {
     gen: u32,
 }
 
+impl Def {
+    /// An empty slot of [`Defs`] (no file has this number).
+    const NONE: Def = Def {
+        file: u32::MAX,
+        line: 0,
+        col: 0,
+        print: 0,
+        gen: 0,
+    };
+}
+
+/// Bits of a token list's address that pick its slot in a [`Defs`] block.
+const DEFS_BLOCK_BITS: u32 = 8;
+const DEFS_BLOCK: usize = 1 << DEFS_BLOCK_BITS;
+
+/// The definition sites by token list (`St::defs`): a table indexed by the
+/// list's address, in blocks of 256 slots made as a definition first lands
+/// in one. A `\def` stores its site with two loads and no hash: in a cold
+/// open of the 1,152-page *Infinite Descent* x2, the hash map's insert was
+/// 0.9 % of the engine thread (lane COLD-FIRST-2). The lists TeX gives
+/// definitions lie in its single-word memory, a range of about 1.5 M words
+/// there; 224 k sites filled 4.7 k blocks (29 MB, against the map's 9 MB).
+#[derive(Default)]
+struct Defs {
+    blocks: Vec<Option<Box<[Def; DEFS_BLOCK]>>>,
+}
+
+impl Defs {
+    fn get(&self, p: i32) -> Option<&Def> {
+        let p = usize::try_from(p).ok()?;
+        let b = self.blocks.get(p >> DEFS_BLOCK_BITS)?.as_ref()?;
+        Some(&b[p & (DEFS_BLOCK - 1)]).filter(|d| d.file != u32::MAX)
+    }
+
+    fn insert(&mut self, p: i32, d: Def) {
+        let Ok(p) = usize::try_from(p) else {
+            return;
+        };
+        let i = p >> DEFS_BLOCK_BITS;
+        if i >= self.blocks.len() {
+            self.blocks.resize_with(i + 1, || None);
+        }
+        self.blocks[i].get_or_insert_with(|| Box::new([Def::NONE; DEFS_BLOCK]))
+            [p & (DEFS_BLOCK - 1)] = d;
+    }
+
+    fn clear(&mut self) {
+        self.blocks.clear();
+    }
+
+    /// The sites, by token list in increasing order.
+    fn iter(&self) -> impl Iterator<Item = (i32, &Def)> + '_ {
+        self.blocks.iter().enumerate().flat_map(|(i, b)| {
+            b.iter().flat_map(move |b| {
+                b.iter()
+                    .enumerate()
+                    .filter(|(_, d)| d.file != u32::MAX)
+                    .map(move |(j, d)| (((i << DEFS_BLOCK_BITS) | j) as i32, d))
+            })
+        })
+    }
+
+    fn values_mut(&mut self) -> impl Iterator<Item = &mut Def> + '_ {
+        self.blocks
+            .iter_mut()
+            .flatten()
+            .flat_map(|b| b.iter_mut().filter(|d| d.file != u32::MAX))
+    }
+}
+
 #[derive(Default)]
 struct St {
     notes: Vec<Arc<Note>>,
@@ -265,7 +334,7 @@ struct St {
     def_at: Option<(u32, i32, i32)>,
     /// Token list (a macro's `def_ref`) -> where it was defined (a `Site`,
     /// its name kept once in `files`: `\def`s come by the million).
-    defs: HashMap<i32, Def, BuildHasherDefault<crate::iso::FastHasher>>,
+    defs: Defs,
     /// The run now going (`new_run`): definitions made in an
     /// earlier one are in its line numbering.
     gen: u32,
@@ -504,7 +573,7 @@ pub fn sites_at(id: u64) -> SitesSnapshot {
 pub fn sites_snapshot() -> SitesSnapshot {
     with(|s| SitesSnapshot {
         files: s.files.clone(),
-        defs: s.defs.iter().map(|(k, d)| (*k, *d)).collect(),
+        defs: s.defs.iter().map(|(k, d)| (k, *d)).collect(),
     })
 }
 
@@ -951,7 +1020,7 @@ impl Globals {
                 };
                 if t == 5 {
                     f.name = cs_name(self, r.name_field);
-                    f.def = with(|st| st.defs.get(&r.start_field).map(|d| st.site(d)))
+                    f.def = with(|st| st.defs.get(r.start_field).map(|d| st.site(d)))
                         .filter(|s| s.print == fingerprint(self, r.start_field))
                         .map(|s| Pos {
                             file: s.file,
@@ -1563,5 +1632,33 @@ mod tests {
         unwrap_lines(&mut t, 79, 0);
         assert_eq!(t.len(), 79 + 2 + 3);
         assert!(t.ends_with(b"abc\n\nd"));
+    }
+
+    #[test]
+    fn defs_table_keeps_the_newest_site_of_each_list() {
+        let site = |file: u32, line: i32| Def {
+            file,
+            line,
+            col: 1,
+            print: 7,
+            gen: 0,
+        };
+        let mut d = Defs::default();
+        assert!(d.get(5).is_none() && d.get(-1).is_none() && d.get(1 << 30).is_none());
+        d.insert(4_999_889, site(0, 10));
+        d.insert(300, site(1, 20));
+        d.insert(255, site(2, 30));
+        d.insert(300, site(3, 40));
+        d.insert(-3, site(4, 50));
+        assert_eq!(d.get(300).map(|x| (x.file, x.line)), Some((3, 40)));
+        assert!(d.get(301).is_none() && d.get(-3).is_none());
+        let keys: Vec<i32> = d.iter().map(|(k, _)| k).collect();
+        assert_eq!(keys, vec![255, 300, 4_999_889]);
+        for x in d.values_mut() {
+            x.line += 1;
+        }
+        assert_eq!(d.get(255).map(|x| x.line), Some(31));
+        d.clear();
+        assert!(d.get(300).is_none() && d.iter().next().is_none());
     }
 }
