@@ -12,8 +12,12 @@ pinned random seed, SOURCE_DATE_EPOCH, FLASHTEX_* only for the engine (tools/par
 `run_engine`); four passes, so the .aux files have settled. The last pass's log is normalised as
 P-T1 does (`normalise_log`: the banner and the work directory) and split as P-T1 does
 (`split_accounting`) into the strict log and the accounting lines, and each part is compared with
-the oracle's, the memory-usage lines one by one. OUT_DIR gets report.md, report.json and every log
-(gzipped)."""
+the oracle's, the memory-usage lines one by one and field by field: B and D are dyn_used (what
+LAZY-FLUSH recomputes), A and C var_used and E hi_mem_min-lo_mem_max-1 (which SyncTeX's extra node
+words in TeX Live's pdfTeX move; etrip normalises the lines for that reason). The PR's engine is
+also compared with its base (`main`, the running count): every line and the whole log. Exit 1 if
+the PR's engine prints another dyn_used than pdfTeX or anything else than its base. OUT_DIR gets
+report.md, report.json and every log (gzipped)."""
 import argparse, difflib, gzip, json, os, re, shutil, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -82,7 +86,14 @@ for spec in a.docs:
         d = list(difflib.unified_diff(o['strict'].split('\n'), p['strict'].split('\n'), 'pdftex', eng, lineterm='', n=1))
         if d:
             open(os.path.join(a.out, f'{name}-pdftex-vs-{eng}.strict.diff'), 'w').write('\n'.join(d) + '\n')
+        fields = lambda m: [tuple(int(x) for x in MEM.match(ln).groups()) for ln in m]  # noqa: E731
+        fo, fp = fields(o['mem']), fields(p['mem'])
         r = dict(memory_lines_equal=o['mem'] == p['mem'], first_memory_difference=first_mem,
+                 # B and D, dyn_used before and after the shipout's flush, and A, C and E (var_used,
+                 # hi_mem_min-lo_mem_max-1), which SyncTeX's node words move in TeX Live's pdfTeX
+                 dyn_used_equal=[(f[1], f[3]) for f in fo] == [(f[1], f[3]) for f in fp],
+                 var_fields_equal=[(f[0], f[2], f[4]) for f in fo] == [(f[0], f[2], f[4]) for f in fp],
+                 memory_lines_equal_to_main=(p['mem'] == parts['main']['mem']) if 'main' in parts else None,
                  accounting_block_equal=other_o == other_p, strict_log_equal=not d,
                  strict_diff_lines=sum(1 for ln in d if ln[:1] in '+-' and not ln.startswith(('+++', '---'))),
                  log_equal_to_main=(p['norm'] == parts['main']['norm']) if 'main' in parts else None)
@@ -98,16 +109,22 @@ for spec in a.docs:
 
 json.dump(report, open(os.path.join(a.out, 'report.json'), 'w'), indent=1)
 with open(os.path.join(a.out, 'report.md'), 'w') as f:
-    f.write('| document | engine | shipouts (pdfTeX/engine) | memory-usage lines | equal to pdfTeX\'s | '
-            'memory block equal | strict log equal | log equal to main\'s |\n|---|---|---|---|---|---|---|---|\n')
+    yn = lambda b: 'yes' if b else ('NO' if b is not None else '-')  # noqa: E731
+    f.write('| document | engine | shipouts (pdfTeX/engine) | memory-usage lines | all equal to pdfTeX\'s | '
+            'dyn_used (B, D) equal to pdfTeX\'s | var fields (A, C, E) equal | lines equal to main\'s | '
+            'memory block equal to pdfTeX\'s | strict log equal to pdfTeX\'s | whole log equal to main\'s |\n'
+            '|---|---|---|---|---|---|---|---|---|---|---|\n')
     for row in report:
         for eng, r in row['engines'].items():
             f.write(f"| {row['doc']} | {eng} | {row['shipouts']['pdftex']}/{row['shipouts'][eng]} | "
-                    f"{row['memory_lines'][eng]} | {'yes' if r['memory_lines_equal'] else 'NO, first at ' + str(r['first_memory_difference'])} | "
-                    f"{'yes' if r['accounting_block_equal'] else 'NO'} | "
+                    f"{row['memory_lines'][eng]} | "
+                    f"{'yes' if r['memory_lines_equal'] else 'NO, first at ' + str(r['first_memory_difference'])} | "
+                    f"{yn(r['dyn_used_equal'])} | {yn(r['var_fields_equal'])} | {yn(r['memory_lines_equal_to_main'])} | "
+                    f"{yn(r['accounting_block_equal'])} | "
                     f"{'yes' if r['strict_log_equal'] else 'NO (' + str(r['strict_diff_lines']) + ' lines)'} | "
-                    f"{r['log_equal_to_main']} |\n")
+                    f"{yn(r['log_equal_to_main'])} |\n")
 print(open(os.path.join(a.out, 'report.md')).read())
-bad = any(not (r['memory_lines_equal'] and r['accounting_block_equal'])
-          for row in report for r in row['engines'].values())
+# red if the PR's engine prints another dyn_used than pdfTeX, or anything else than its base
+bad = any(not r['dyn_used_equal'] or r['memory_lines_equal_to_main'] is False or r['log_equal_to_main'] is False
+          for row in report for e, r in row['engines'].items() if e != 'main')
 sys.exit(1 if bad else 0)
