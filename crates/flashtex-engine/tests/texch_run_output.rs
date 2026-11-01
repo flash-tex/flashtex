@@ -52,9 +52,10 @@ fn run(bin: &Path, dir: &Path, args: &[&str], job: &str, ours: bool) -> Out {
         code: out.status.code(),
         stdout: after_banner(&String::from_utf8_lossy(&out.stdout)),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        log: std::fs::read_to_string(dir.join(format!("{job}.log")))
+        // lossy: a log may hold bytes that are not UTF-8 (`-8bit`)
+        log: std::fs::read(dir.join(format!("{job}.log")))
             .ok()
-            .map(|l| after_banner(&l)),
+            .map(|l| after_banner(&String::from_utf8_lossy(&l))),
         dvi: std::fs::read(dir.join(format!("{job}.dvi"))).ok(),
     }
 }
@@ -157,6 +158,41 @@ fn batchmode_silences_mktextfm() {
     assert_eq!(y.stderr, "", "pdftex's mktextfm was not silent");
     assert_same("batchmode", &x, &y);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// enctex1.ch \[5.59\] and enctex2.ch \[49.1279\], which TeX Live's pdfTeX
+/// has with or without `-enc`: `xprn` decides when a character is printed,
+/// not when the string pool is made (the first 256 strings are pdftex.web's
+/// `^^A` forms), and `\message` makes its string with an unprintable
+/// character in its `^^` form, which the line-length test counts. #2039:
+/// a format built with a TCX file printed `^^A` under `-8bit`, and a
+/// message of unprintable characters broke the line in another place.
+#[test]
+fn xprn_decides_when_a_character_is_printed() {
+    let unprintable = "^^A".repeat(25);
+    let tex = format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\^=7 \\scrollmode\n\
+         \\catcode`\\^^A=12 \\catcode`\\^^e9=12 \\catcode`\\^^7f=12 \\catcode`\\^^0b=12\n\
+         \\message{{x}}\\message{{{unprintable}}}\\message{{x}}\n\
+         \\message{{[^^A][^^e9][^^0b][^^7f]}}\\errmessage{{x^^Ay}}\n\
+         \\immediate\\write16{{[^^A][^^e9]}}\\showthe\\catcode`^^A \\end\n"
+    );
+    for args in [
+        vec![],
+        vec!["-8bit"],
+        vec!["-translate-file=cp227.tcx"],
+    ] {
+        let Some((x, y, base)) = both("xprn", tex.as_bytes(), &args, "t") else {
+            return;
+        };
+        assert!(
+            y.log.as_deref().is_some_and(|l| l.contains("! x")),
+            "pdftex's log lacks the \\errmessage:\n{:?}",
+            y.log
+        );
+        assert_same(&format!("{args:?}"), &x, &y);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 #[test]
