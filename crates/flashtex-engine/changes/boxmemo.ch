@@ -287,6 +287,7 @@ copy_code: begin scan_register_num; fetch_box(q); cur_box:=copy_node_list(q);
 copy_code: begin scan_register_num; fetch_box(q);
   if bm_rec_on then flashtex_bm_box_use(cur_val,4);
   cur_box:=copy_node_list(q);
+  if bm_rec_on then flashtex_bm_copied(cur_val,cur_box);
 @z
 
 @x pdftex.web l.29936 - a span's recording notes the paragraph it begins, before and after the page builder runs
@@ -315,6 +316,19 @@ if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
 @y
 if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
 if bm_rec_on then if q<>register then flashtex_bm_reg_loc(l,e);
+@z
+
+@x pdftex.web l.32213 - a span's recording assigns a dimension of a box it did not make
+begin c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
+scan_normal_dimen;
+if b<>null then mem[b+c].sc:=cur_val;
+@y
+begin c:=cur_chr; scan_register_num; fetch_box(b);
+if bm_rec_on then flashtex_bm_box_use(cur_val,5);
+scan_optional_equals;
+scan_normal_dimen;
+if bm_rec_on then flashtex_bm_box_dimen(c,cur_val);
+if b<>null then mem[b+c].sc:=cur_val;
 @z
 
 @x pdftex.web l.32879 - new hyphenation exceptions are a new version of them
@@ -503,6 +517,8 @@ procedure flashtex_bm_switch; external;
 procedure flashtex_bm_command; external;
 procedure flashtex_bm_box(@!n:integer); external;
 procedure flashtex_bm_box_use(@!n:integer;@!k:integer); external;
+procedure flashtex_bm_box_dimen(@!c:integer;@!v:integer); external;
+procedure flashtex_bm_copied(@!n:integer;@!c:pointer); external;
 procedure flashtex_bm_reg_read(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_sa_read(@!p:pointer); external;
 procedure flashtex_bm_reg_loc(@!l:pointer;@!e:boolean); external;

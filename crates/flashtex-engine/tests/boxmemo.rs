@@ -426,6 +426,68 @@ fn spans_where_the_page_breaks() {
 }
 
 #[test]
+fn spans_change_a_foreign_boxs_dimension() {
+    // amsmath's `\resetMathstrut@` in miniature: the picture sets the
+    // height of a box it did not make (`\ht9`) from one it made, then
+    // copies it; and it reads a box register after a group that assigned
+    // it ended (the register holds the caller's box again: keyed). The
+    // caller changes box 9 between pictures: replayed only when it is as
+    // recorded, and the logs agree
+    let pic = "\\begin{pic}\\setbox0\\hbox{\\vrule height 7pt}\\ht9=\\ht0 \\copy9\n\
+               {\\setbox8\\hbox{\\vrule width 1pt}}\\kern\\wd8 \\global\\dimen2=\\ht9\n\
+               \\end{pic}\n";
+    let s = check_files(
+        "span-boxdim",
+        &[
+            ("p.tex", pic),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    "\\setbox9\\hbox{\\vrule width 2pt height 3pt}\\setbox8\\hbox{\\vrule width 4pt}\n\
+                     \\def\\three{\\n=0 x \\input p y \\message{[\\the\\dimen1|\\the\\dimen2|\\the\\ht9]}}\n\
+                     \\three\\three\\three\\setbox9\\hbox{\\vrule width 5pt height 3pt}\\three\\three\n\
+                     \\setbox8\\hbox{\\vrule width 6pt}\\three\\three\\par\\showlists\\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    );
+    // the first recording keys box 9 before its `\ht` changed (3pt), so the
+    // second call misses and records it as it stays (7pt); the third
+    // replays. A new box 9 and a new box 8 (read after its group ended)
+    // each cost one recording more
+    assert_eq!(stat(&s, "hits"), 2, "{s}");
+}
+
+#[test]
+fn spans_in_a_macros_argument() {
+    // `\scalebox{..}{\begin{pic}..\end{pic}}` in miniature: the picture is
+    // read token by token from the argument (a token list), then the
+    // argument goes on; and from a macro's body. Another argument, or a
+    // body whose picture reads a parameter (`#1`), is not replayed
+    let s = check_files(
+        "span-toks",
+        &[(
+            "t.tex",
+            &[
+                SPAN_PRELUDE,
+                "\\def\\wrap#1{[\\hbox{#1}]}\n\
+                 \\def\\body#1{\\begin{pic}\\vrule width 2pt\\kern#1\\end{pic}}\n\
+                 \\def\\fixed{\\begin{pic}\\vrule width 4pt height 1pt\\global\\advance\\n1 \\end{pic}z}\n\
+                 \\def\\one#1{\\n=0 x\\wrap{\\begin{pic}\\vrule width #1 height 2pt\\global\\advance\\n1 \\end{pic}y}\\message{[\\the\\n|\\the\\dimen1]}}\n\
+                 \\one{3pt}\\one{3pt}\\one{3pt}\\one{5pt}\\one{3pt}\n\
+                 \\n=0 \\fixed\\n=0 \\fixed\\n=0 \\fixed\\body{1pt}\\body{1pt}\\body{2pt}\\par\\showlists\\stop\n",
+            ]
+            .concat(),
+        )],
+        "pic",
+    );
+    assert!(stat(&s, "hits") >= 4, "{s}");
+}
+
+#[test]
 fn spans_fall_back_when_the_file_changed() {
     // the same file name and first line, its next line rewritten by
     // `\write` between the inputs: the recorded lines are not the file's,
