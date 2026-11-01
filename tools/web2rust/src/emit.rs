@@ -679,6 +679,15 @@ impl<'a> E<'a> {
                 s
             }
             Expr::Field(b, f) => {
+                // `mem[p].hh.rh`: the flattened getter on the outer record
+                // (`mem[p].hh_rh()`), which reads the field alone (see
+                // `narrow_load`), not `mem[p].hh().rh()`, which reads the
+                // whole word first.
+                if let Expr::Field(b2, f2) = &**b {
+                    if self.has_leaf_path(b2, &format!("{f2}.{f}")) {
+                        return format!("{}.{}_{}()", self.ex(b2), rid(f2), rid(f));
+                    }
+                }
                 let bt = self.ty_of(b);
                 if let Ty::Named(n) = &bt {
                     if let Some(q) = self.lay.packed.get(n) {
@@ -2574,6 +2583,14 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
             ),
         };
         let _ = set;
+        let get = match l.kind {
+            Scalar::I32 | Scalar::U8 => match narrow_load(l.bits, l.off, q.width) {
+                Some((ld, _)) if matches!(l.kind, Scalar::U8) => ld,
+                Some((ld, _)) => format!("({ld}) as i32"),
+                None => get,
+            },
+            _ => get,
+        };
         let _ = writeln!(s, "    #[inline(always)]");
         let _ = writeln!(s, "    pub fn {m}(&self) -> {ret} {{ {get} }}");
         let _ = writeln!(s, "    #[inline(always)]");
@@ -2655,6 +2672,38 @@ fn narrow_store(bits: u32, off: u32, width: u32) -> Option<String> {
          // SAFETY: the field is bytes k..k+{n} of this record, which `self` borrows mutably.\n        \
          unsafe {{ p.write_unaligned(v as {ty}) }}",
         n = bits / 8
+    ))
+}
+
+/// The getter of a field that is a whole byte, half-word or word of a packed
+/// record, as a load of that field alone (the bytes [`narrow_store`] writes),
+/// with its unsigned type; `None` for any other field. Read through the
+/// whole record (`(self.0 >> off) & mask`), two fields of one word read near
+/// each other become one load of the word, and a load that spans a narrow
+/// store still in flight (`info(p)` and `link(p)` of a token just made by
+/// `get_avail` and `back_input`) waits for it to reach the cache instead of
+/// taking its value from it (store-to-load forwarding). The value is the
+/// same: the field's bytes, zero-extended as the masked form zero-extends.
+fn narrow_load(bits: u32, off: u32, width: u32) -> Option<(String, &'static str)> {
+    let ty = match bits {
+        8 => "u8",
+        16 => "u16",
+        32 => "u32",
+        _ => return None,
+    };
+    if !off.is_multiple_of(bits) || off + bits > width || !(width == 32 || width == 64) {
+        return None;
+    }
+    let (le, be) = (off / 8, (width - off - bits) / 8);
+    Some((
+        format!(
+            "{{ let k = if cfg!(target_endian = \"little\") {{ {le} }} else {{ {be} }}; \
+             let p = (&self.0 as *const _ as *const u8).wrapping_add(k) as *const {ty}; \
+             // SAFETY: the field is bytes k..k+{n} of this record, which `self` borrows.\n        \
+             unsafe {{ p.read_unaligned() }} }}",
+            n = bits / 8
+        ),
+        ty,
     ))
 }
 
