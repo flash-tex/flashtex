@@ -1567,9 +1567,8 @@ impl Obs {
         // them where a scratch run reads its own: the old run's states are
         // marked (`carry_garbage`), and such a read redoes the compile from
         // scratch (`Session::compile_pass`; review of #1908, lane REVIEW).
-        let p2_rec = g.pending_record(pr.p2);
-        let dest_dims_dead = p2_rec
-            .as_ref()
+        let dest_dims_dead = g
+            .pending_record(pr.p2)
             .is_some_and(|r| r.matrix_uses == o.matrix_uses);
         let mut char_or = vec![];
         let mut stages = self
@@ -1600,8 +1599,11 @@ impl Obs {
             return Err("the new run shipped characters the old one had not".into());
         }
         // (the old run's pages from `P1` to `P2` are kept, and its states
-        // from `P2` are this run's)
-        carry_garbage(g, &o, p2_rec.map(|r| r.unset_reads))
+        // from `P2` are this run's. When the old run reads a destination's
+        // unset words anywhere after `P1`, the run from `P2` would likely
+        // read them too, and redo the compile: the run goes on from `P0`
+        // instead, its memory a scratch run's)
+        carry_garbage(g, &o, self.old_unset_reads_end)
     }
 
     /// The old run's last page checkpoint from `old` on (excluding `old`

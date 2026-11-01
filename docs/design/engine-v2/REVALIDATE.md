@@ -244,7 +244,9 @@ Three ways reach such a read, each measured against scratch runs:
   are not run again, so they cannot flag a read:
   - the convergence test, which keeps the old run's pages to its end, fails when the memory
     differed and the old run read such words after the convergence point;
-  - READ-REVALIDATE, which keeps them from P1 to P2, fails when the old run read such words there.
+  - READ-REVALIDATE, which keeps them from P1 to P2, fails when the old run read such words after
+    P1, there or later: the run from P2 would likely read them too and redo the compile, while the
+    run from P0 has a scratch run's memory.
 
 ### 7.3 Free cells (suspected, not reproduced)
 
@@ -258,8 +260,9 @@ Variable-size differences, should any arise, set the mark like any other.
 
 All of these equal scratch runs:
 
-- `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`: (a) and (b) of §6.3 are redone
-  from the format, and the keystrokes between them, with no matrix, are not.
+- `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`: in (a) of §6.3 the
+  revalidation fails and the run goes on from P0. (b) is redone from the format. The keystrokes
+  between them, with no matrix, revalidate.
 - `a_destination_kept_past_a_convergence_shipped_later_under_a_matrix`: converges, and the next
   compile, which puts the matrix in, is redone.
 - `a_destination_shipped_under_a_matrix_after_a_box_memo_replay`: redone, then BOX-MEMO stays off.
@@ -268,7 +271,8 @@ All of these equal scratch runs:
   `beamer_navigation_actions_converge` and `beamer_fragile_frames_restart_near_and_converge`
   still converge.
 
-Each of the three above fails without the redo (verified with the redo switched off).
+Each of the three failed without the redo (verified with the redo switched off; (a) then still
+revalidated).
 
 **Outside a host session** (`FLASHTEX_BOXMEMO=on` on the command line, a developer mode) nothing
 redoes the run. Such a read after a replay still differs from a run with BOX-MEMO off.

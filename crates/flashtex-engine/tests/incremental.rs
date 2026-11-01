@@ -6118,11 +6118,13 @@ fn a_revalidation_leaves_out_what_a_destination_never_set() {
 /// `matrixused`): with the old run's words, its PDF was not a scratch
 /// run's (`/XYZ 160.667` for `-3920.03`), (a) with the matrix in the old
 /// run after `P2` and (b) with no matrix anywhere until the edit put it in.
-/// Now the comparison marks the old run's states it goes on from
+/// Now (a) does not revalidate (the old run reads such words after the
+/// comparison: `carry_garbage`) and runs on from `P0`, and in (b) the
+/// comparison marks the old run's states it goes on from
 /// (`pdftex::garbage`), and the read of the destination's words in them
-/// redoes the compile from the format (`Session::garbage_redo`): (a) and
-/// (b) are such redos, the compiles between them with no matrix are not,
-/// and every compile equals scratch runs.
+/// redoes the compile from the format (`Session::garbage_redo`). The
+/// compiles between them, with no matrix, revalidate, and every compile
+/// equals scratch runs.
 #[test]
 fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
     let Some(e) = env() else {
@@ -6199,7 +6201,8 @@ fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
             &[("ch3.tex", if k % 2 == 0 { &typed } else { &plain })],
             &what,
         );
-        assert!(redone(&r), "{what}: not redone: {r}");
+        assert!(!redone(&r), "{what}: redone: {r}");
+        assert_ne!(field(&r, "revalidated"), "true", "{what}: {r}");
     }
     // (the next keystroke puts the matrix in, after the restart point the
     // previous compile took: the run from there ships the destination it
@@ -6219,6 +6222,7 @@ fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
         let what = format!("unturned edit {k}");
         let r = step(&[("ch3.tex", &t)], &what);
         assert!(!redone(&r), "{what}: redone: {r}");
+        assert_eq!(field(&r, "revalidated"), "true", "{what}: {r}");
     }
     // (b) (every compile since the last turned one kept its destination:
     // one typed now differs from it)
