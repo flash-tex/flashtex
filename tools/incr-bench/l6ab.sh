@@ -12,6 +12,9 @@
 #   L6AB_PERF      1: also a perf record of the first ref per document
 #   L6AB_MACRO     documents for one FLASHTEX_MACRO_PROFILE run per engine and variant
 #   L6AB_CACHE     where mkbook.py's archives are kept (default ~/.cache/flashtex-ci/l6ab)
+#   L6AB_TESTS     flashtex-engine test targets (names only), run in the last ref's worktree in the
+#                  release profile before any compile (`cargo test --release -p flashtex-engine
+#                  --test NAME`; the tail of each is in WORK/r/tests.txt)
 #   CARGO_TARGET_DIR_BASE  one target directory per ref slot: BASE-0, BASE-1, ...
 # Every build and compile runs under nice.
 set -euo pipefail
@@ -40,6 +43,14 @@ for ref in "$@"; do
   (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" nice -n 5 cargo build --release --locked -q \
      -p flashtex-engine -p flashtex-display-list)
   (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" bash tools/incr-bench/mkeng.sh "$n" >/dev/null)
+  if [ $((i + 1)) = $# ] && [ -n "${L6AB_TESTS:-}" ]; then
+    for t in $L6AB_TESTS; do
+      [[ $t =~ ^[a-z0-9_]+$ ]] || { echo "l6ab.sh: not a test name: $t" >&2; exit 2; }
+      if (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" nice -n 5 cargo test --release --locked -q -p flashtex-engine \
+            --test "$t" > "$WORK/r/test-$t.log" 2>&1); then r=ok; else r=FAILED; fi
+      { echo "test $t ($ref): $r"; tail -n 6 "$WORK/r/test-$t.log"; } | tee -a "$WORK/r/tests.txt"
+    done
+  fi
   git -C "$ROOT" worktree remove --force "$src"
   i=$((i + 1))
 done
@@ -56,4 +67,7 @@ for v in "${vs[@]}"; do [ -n "$v" ] && args+=(--variant "$v"); done
 [ "${L6AB_PERF:-0}" = 1 ] && args+=(--perf-record)
 [ -n "${L6AB_MACRO:-}" ] && args+=(--macro-profile "$L6AB_MACRO")
 for n in "${names[@]}"; do echo "$n: $(cat "$INCR_BENCH_DIR/$n/HEAD")"; done | tee "$WORK/r/engines.txt"
-nice -n 5 python3 "$ROOT/tools/incr-bench/l6ab.py" "${args[@]}"
+status=0
+nice -n 5 python3 "$ROOT/tools/incr-bench/l6ab.py" "${args[@]}" || status=$?
+if grep -q ': FAILED$' "$WORK/r/tests.txt" 2>/dev/null; then echo "l6ab.sh: a test failed" >&2; status=1; fi
+exit $status

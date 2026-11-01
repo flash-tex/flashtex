@@ -66,7 +66,7 @@ jobs:
           f=tools/incr-bench/l6ab.request
           [ -f "$f" ] || { echo "::error::a push to l6-ab/** needs $f"; exit 1; }
           # only these names, so the file cannot set anything else
-          grep -E '^(REFS|L6AB_DOCS|L6AB_VARIANTS|L6AB_REPS|L6AB_PERF|L6AB_MACRO)=' "$f" \
+          grep -E '^(REFS|L6AB_DOCS|L6AB_VARIANTS|L6AB_REPS|L6AB_PERF|L6AB_MACRO|L6AB_TESTS)=' "$f" \
             | sed -E "s/^([A-Z0-9_]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
           cat "$f"
       - name: perf, this runner's build directories
@@ -88,8 +88,10 @@ jobs:
       - name: summary
         if: always()
         run: |
-          [ -f "$RUNNER_TEMP/l6ab/r/summary.md" ] || exit 0
-          { echo '### L6 A/B (PC)'; cat "$RUNNER_TEMP/l6ab/r/engines.txt"; echo; cat "$RUNNER_TEMP/l6ab/r/summary.md"; } >> "$GITHUB_STEP_SUMMARY"
+          r=$RUNNER_TEMP/l6ab/r
+          if [ -f "$r/tests.txt" ]; then { echo '### tests'; echo '```'; cat "$r/tests.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          [ -f "$r/summary.md" ] || exit 0
+          { echo '### L6 A/B (PC)'; cat "$r/engines.txt"; echo; cat "$r/summary.md"; } >> "$GITHUB_STEP_SUMMARY"
       - name: keep the results
         if: always()
         uses: actions/upload-artifact@v4
