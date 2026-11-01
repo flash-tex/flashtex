@@ -891,7 +891,21 @@ impl Globals {
                 }
             }
             let alpha_ok = self.fixed_pdf_minor_version >= 4 || self.fixed_pdf_major_version > 1;
-            let pre = ahead::key(self, &png.name).and_then(|k| ahead::take(&k));
+            let t0 = std::time::Instant::now();
+            let pre = if ahead::buffer_ok(self) {
+                ahead::key(self, &png.name).and_then(|k| ahead::take(&k))
+            } else {
+                None
+            };
+            if std::env::var_os("FLASHTEX_PNG_AHEAD_DEBUG").is_some() {
+                // (stderr only: nothing the run writes changes)
+                eprintln!(
+                    "png-ahead: {} {}, waited {:.1} ms",
+                    png.name.to_string_lossy(),
+                    if pre.is_some() { "ahead" } else { "not ahead" },
+                    t0.elapsed().as_secs_f64() * 1e3
+                );
+            }
             let pre = pre.as_deref();
             match ct {
                 PNG_COLOR_TYPE_PALETTE => self.write_png_palette(png, cs_ref, pre),
@@ -958,7 +972,6 @@ mod ahead {
         mtime: Option<std::time::SystemTime>,
         params: PngParams,
         level: i32,
-        buf_size: i32,
     }
 
     /// The compressed streams of an image: the image's, and its mask's.
@@ -1010,9 +1023,6 @@ mod ahead {
             || !super::super::xpdf::LINKED
             || super::super::preview()
             || g.fixed_pdf_draftmode != 0
-            || g.pdf_os_mode
-            || g.pdf_buf_size <= 0
-            || g.pdf_buf_size % 8 != 0
         {
             return None;
         }
@@ -1027,8 +1037,15 @@ mod ahead {
             mtime: m.modified().ok(),
             params: PngParams::of(g),
             level,
-            buf_size: g.pdf_buf_size,
         })
+    }
+
+    /// Whether the PDF buffer keeps a pixel in one chunk now (its size a
+    /// multiple of 8; an image is written outside object streams), as the
+    /// worker assumed. (At `\\pdfximage` the buffer may be the object
+    /// stream's; only the writing matters.)
+    pub(super) fn buffer_ok(g: &Globals) -> bool {
+        !g.pdf_os_mode && g.pdf_buf_size > 0 && g.pdf_buf_size % 8 == 0
     }
 
     /// Start the work for `key` unless it is done or under way.
