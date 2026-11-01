@@ -471,9 +471,10 @@ consumer is `apps/mac/Sources/FlashTeXMac/DocumentFilesClient.swift` /
   `Snapshot::diff`. Where a document is opened in the ledger, the
   `RecoveryJournal` here is redundant for it; the journal remains useful for
   buffers that are not ledger-backed (included files, `.bib`).
-- `crates/document-runtime` submits complete unsaved project snapshots per
-  revision; `compile_payload(project_id, tracker.project_revision())` is that
-  snapshot.
+- `compile_payload(project_id, tracker.project_revision())` is the complete
+  unsaved project snapshot per revision that the retired `document-runtime`
+  crate submitted (deleted after S8; its recorded evidence is in
+  `docs/evidence/document-runtime-retired/`).
 
 ## Native project integration proposal (follow-up 2)
 
