@@ -39,6 +39,15 @@ echo "== the profile-guided build (scripts/build-engine-dist.sh)"
 scripts/build-engine-dist.sh --out "$WORK/dist" || {
   tail -n 30 target/pgo-train/fmt/pdflatex.log 2>/dev/null || true
   cp target/pgo-train/fmt/pdflatex.log "$WORK/r/pgo-format.log" 2>/dev/null || true
+  # where the instrumented engine stops (it segfaulted at once on GitHub's M1 VMs, with an 8 MB
+  # and a 64 MB stack alike: runs 41334149491, 41339976306)
+  if command -v lldb >/dev/null; then
+    (cd target/pgo-train/fmt && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 \
+       FLASHTEX_POOL="$ROOT/crates/flashtex-engine/pdftex.pool" LLVM_PROFILE_FILE="$WORK/tmp-%p.profraw" \
+       lldb --batch -o run -o "bt 40" -o "register read" -- "$ROOT/target/pgo-gen/release/flashtex-initex" -ini \
+       -jobname=pdflatex -progname=pdflatex -etex -translate-file=cp227.tcx pdflatex.ini </dev/null 2>&1 \
+       | tail -n 80 | tee "$WORK/r/pgo-crash.txt") || true
+  fi
   exit 1
 }
 mk pgo "$WORK/dist"
