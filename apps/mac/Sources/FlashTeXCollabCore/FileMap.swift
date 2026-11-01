@@ -101,7 +101,16 @@ public final class FileMap {
     var ops: [CollabID: FileOp] = [:]
     var log: [FileOp] = []
 
-    public init(replica: UInt64) { self.replica = replica }
+    /// Most entries; a create past it is `projectFull`.
+    public let maxFiles: Int
+
+    public init(replica: UInt64, maxFiles: Int = CollabLimits.maxFiles) {
+        self.replica = replica
+        self.maxFiles = maxFiles
+    }
+
+    /// Number of entries, deleted ones included.
+    public var count: Int { entries.count }
 
     /// Contract §2.6, over UTF-8 bytes. Never over Characters: a combining
     /// mark after `/` or `\` makes one grapheme of the pair, which would
@@ -163,6 +172,7 @@ public final class FileMap {
         case let .create(kind, path):
             guard Self.isValidPath(path) else { throw CollabError.malformed("invalid path") }
             guard entries[op.file] == nil else { throw CollabError.idConflict(op.id) }
+            guard entries.count < maxFiles else { throw CollabError.projectFull }
             entries[op.file] = Entry(kind: kind, path: (stamp, path), blob: nil, deleted: (stamp, false))
         case let .setPath(path):
             guard var e = entries[op.file] else { throw CollabError.unknownFile(op.file) }

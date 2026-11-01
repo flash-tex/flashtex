@@ -25,8 +25,21 @@ public struct DocVector: Equatable, Sendable {
 /// A whole project: the file map, a text CRDT per text file, a bounded
 /// pending buffer for out-of-order delivery, and state-vector sync.
 public final class CollabProject {
+    /// The project's caps (contract §2.4, §2.6); the contract's values are
+    /// the default, tests use smaller ones so they need not store 64 MiB.
+    public struct Caps: Equatable, Sendable {
+        public var maxFiles: Int
+        public var maxTextBytes: Int
+        public init(maxFiles: Int = CollabLimits.maxFiles, maxTextBytes: Int = CollabLimits.maxProjectTextBytes) {
+            self.maxFiles = maxFiles
+            self.maxTextBytes = maxTextBytes
+        }
+    }
+
     public let replica: UInt64
+    public let caps: Caps
     public let files: FileMap
+    let budget: TextBudget
     var texts: [FileID: TextDocument] = [:]
 
     enum PendingOp {
@@ -112,6 +125,7 @@ public final class CollabProject {
                 case .malformed: return "malformed"
                 case .documentFull: return "document_full"
                 case .pendingFull: return "pending_full"
+                case .projectFull: return "project_full"
                 }
             }
         }
@@ -129,10 +143,15 @@ public final class CollabProject {
         }
     }
 
-    public init(replica: UInt64) {
+    public init(replica: UInt64, caps: Caps = Caps()) {
         self.replica = replica
-        files = FileMap(replica: replica)
+        self.caps = caps
+        files = FileMap(replica: replica, maxFiles: caps.maxFiles)
+        budget = TextBudget(limit: caps.maxTextBytes)
     }
+
+    /// Stored text bytes across all text documents, tombstones included.
+    public var storedTextBytes: Int { budget.used }
 
     public func text(_ file: FileID) -> TextDocument? { texts[file] }
 
@@ -141,7 +160,9 @@ public final class CollabProject {
 
     private func noteFileOp(_ op: FileOp) {
         if case .create(.text, _) = op.kind, texts[op.file] == nil {
-            texts[op.file] = TextDocument(replica: replica)
+            let doc = TextDocument(replica: replica)
+            doc.budget = budget
+            texts[op.file] = doc
         }
     }
 

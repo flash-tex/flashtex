@@ -101,10 +101,16 @@ pub struct FileMap {
     ops: HashMap<Id, FileOp>,
     sv: StateVector,
     log: Vec<FileOp>,
+    /// Most entries; a create past it is [`CollabError::ProjectFull`].
+    max_files: usize,
 }
 
 impl FileMap {
     pub fn new(replica: u64) -> Self {
+        Self::with_max_files(replica, limits::MAX_FILES)
+    }
+
+    pub fn with_max_files(replica: u64, max_files: usize) -> Self {
         Self {
             replica,
             lamport: 0,
@@ -112,7 +118,17 @@ impl FileMap {
             ops: HashMap::new(),
             sv: StateVector::default(),
             log: Vec::new(),
+            max_files,
         }
+    }
+
+    /// Number of entries, deleted ones included.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn state_vector(&self) -> StateVector {
@@ -192,6 +208,9 @@ impl FileMap {
                 }
                 if self.entries.contains_key(&op.file) {
                     return Err(CollabError::IdConflict(op.id));
+                }
+                if self.entries.len() >= self.max_files {
+                    return Err(CollabError::ProjectFull);
                 }
                 self.entries.insert(
                     op.file,

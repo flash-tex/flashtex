@@ -114,6 +114,10 @@ pub struct TextDoc {
     /// Every applied operation, in application order (a causal order).
     log: Vec<TextOp>,
     bytes: usize,
+    /// Bytes this document may still add for its project's text cap
+    /// ([`super::limits::MAX_PROJECT_TEXT_BYTES`]); the project sets it
+    /// before every use. Unbounded for a document on its own.
+    room: usize,
 }
 
 impl TextDoc {
@@ -126,7 +130,17 @@ impl TextDoc {
             sv: StateVector::default(),
             log: Vec::new(),
             bytes: 0,
+            room: usize::MAX,
         }
+    }
+
+    /// Stored UTF-8 bytes, tombstones included.
+    pub fn stored_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub(crate) fn set_room(&mut self, room: usize) {
+        self.room = room;
     }
 
     pub fn replica(&self) -> u64 {
@@ -309,6 +323,9 @@ impl TextDoc {
                 if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES {
                     return Err(CollabError::DocumentFull);
                 }
+                if content.len() > self.room {
+                    return Err(CollabError::ProjectFull);
+                }
                 for (k, ch) in content.chars().enumerate() {
                     let k = k as u64;
                     let item = Item {
@@ -325,6 +342,7 @@ impl TextDoc {
                     self.integrate(item);
                 }
                 self.bytes += content.len();
+                self.room = self.room.saturating_sub(content.len());
             }
             TextOp::Delete { id, target, len } => {
                 for k in 0..*len {
@@ -526,7 +544,8 @@ impl TextDoc {
                 .iter()
                 .map(|&id| self.items[self.index_of(id).unwrap()].ch)
                 .collect();
-            if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES {
+            if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES || content.len() > self.room
+            {
                 continue;
             }
             let op = TextOp::Insert {

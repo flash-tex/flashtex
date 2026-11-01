@@ -103,6 +103,8 @@ Given an operation with id `(r, c)` and length n, and the document's state vecto
    dependency**.
 4. Insert: if both origins exist and `index(L) ≥ index(R)`: **malformed**.
 5. If stored content (UTF-8 bytes, tombstones included) would exceed 8 MiB: **document full**.
+   Otherwise, if the stored content of all the project's text documents together would exceed
+   64 MiB: **project full** (§2.4a).
 6. Integrate (§2.3) or tombstone, then `sv[r] = c + n`.
 
 Every rejection is deterministic given the same applied set, so all replicas reject alike (the
@@ -116,6 +118,23 @@ buffer holds each distinct operation once (an exact redelivery is not parked aga
 by count (65 536) and by bytes (16 MiB, counting each operation as its variable payload, insert
 content, path or media type, plus 64); an operation over either bound is refused as
 **pending full**, and the session should resynchronise that peer instead.
+
+### 2.4a Project caps
+
+A project holds at most **4096 file-map entries** (deleted ones included, since a deleted entry is
+kept) and at most **64 MiB of stored text** (UTF-8 bytes, tombstones included, summed over every
+text document). A create past the first, or text past the second, is refused as **project full**.
+Local edits are refused the same way, so a replica never broadcasts what its peers would refuse.
+Undo's re-insertion of deleted text skips a piece that does not fit, as it does at 8 MiB. Deleting
+frees nothing.
+
+These caps bound what a peer can make a replica hold. Without them a hostile Live Share hub could
+create files, or fill many documents each under 8 MiB, until the guest ran out of memory. Live
+Share hosts share at most 200 files and 32 MiB of sources (`LiveShare.maxSharedFiles`,
+`maxSharedBytes`). The file cap is about 20 times that, which leaves room for a long session's
+deletes and re-creates. The text cap is twice that, which leaves room for tombstones. Tests may
+construct a project with smaller caps (`ProjectCaps`, `CollabProject.Caps`); the values here are the
+default and the wire contract.
 
 ### 2.5 Relative positions
 
@@ -138,7 +157,7 @@ Each op consumes one counter. `lamport` ≥ 1; a replica's next op uses `max(lam
 are last-writer-wins registers ordered by stamp `(lamport, replica)`; the kind is fixed at creation;
 `create` sets `path` and `deleted = false` with its stamp. A set on an unknown file waits (**unknown
 file**); a second create of the same file id is an **id conflict**; `set_blob` on a text file and an
-invalid path are **malformed**. A valid path is 1–1024 bytes, `/`-separated, with no empty, `.` or
+invalid path are **malformed**; a create past the file cap (§2.4a) is **project full**, checked after both. A valid path is 1–1024 bytes, `/`-separated, with no empty, `.` or
 `..` segment, no `\` and no NUL. **The rule is over UTF-8 bytes**, never over grapheme clusters: a
 combining mark after `/` or `\` forms one grapheme with it, so a grapheme-based check would accept
 `../\u{301}etc/passwd` or `a\\\u{301}b` (the `hostile-paths` fixture has these). Comparisons are
@@ -216,7 +235,7 @@ expected: {project_digest, filemap_digest, files: [{file, path, kind, text?, dig
 rejected: [{doc, replica, counter, kind}], pending}}`. Each order (forward, reversed, shuffled with
 duplicates; forward only where the outcome depends on arrival, as for id conflicts) delivered to a
 fresh replica must reach `expected`: the same state, the same distinct refusals (`doc` is `files` or
-the file-id in hex; `kind` is `malformed`, `id_conflict`, `unknown_file`, `document_full` or
+the file-id in hex; `kind` is `malformed`, `id_conflict`, `unknown_file`, `document_full`, `project_full` or
 `pending_full`), and the same number of operations still waiting. Every frame must re-encode to the
 same bytes. Besides the scenario fixtures there are `hostile-paths`, `rejected-ops` and the legacy
 suites restated in collab-v1 (`legacy-*`: `adversarial.rs`, `interrupted_delivery.rs`,

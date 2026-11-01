@@ -68,6 +68,25 @@ public enum CollabLimits {
     /// be longer, and is split into runs of this size, which the unit-wise
     /// semantics make invisible.
     public static let maxRunScalars = 256
+    /// Most file-map entries in a project, deleted ones included (the
+    /// oracle's `MAX_FILES`). A Live Share host shares at most 200 files;
+    /// this leaves room for a long session's deletes and re-creates while
+    /// bounding what a hostile hub can make a guest hold.
+    public static let maxFiles = 4096
+    /// Most stored text, in UTF-8 bytes with tombstones, across all of a
+    /// project's text documents (the oracle's `MAX_PROJECT_TEXT_BYTES`):
+    /// twice the 32 MiB a Live Share host shares, room for a session's
+    /// tombstones; at most eight documents at `maxDocumentBytes`.
+    public static let maxProjectTextBytes = 64 * 1024 * 1024
+}
+
+/// What a project's text documents have stored together, against its cap;
+/// shared by the project and every one of its documents.
+final class TextBudget {
+    let limit: Int
+    var used = 0
+    init(limit: Int) { self.limit = limit }
+    func fits(_ n: Int) -> Bool { n <= limit - used }
 }
 
 /// Why an operation was not applied. None leaves the document changed.
@@ -84,6 +103,9 @@ public enum CollabError: Error, Equatable, Sendable {
     /// The document would exceed `CollabLimits.maxDocumentBytes`.
     case documentFull
     case pendingFull
+    /// The project would exceed `CollabLimits.maxFiles` entries or
+    /// `CollabLimits.maxProjectTextBytes` of stored text.
+    case projectFull
 
     public var isRetryable: Bool {
         switch self {
