@@ -6015,11 +6015,10 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
 /// 1). Here boxes made and dropped in a group when the chapter's size is
 /// odd do the same at every keystroke. The words are read only with a
 /// `\pdfsetmatrix` in effect, which the old run between the comparison and
-/// the restart point never had; #1908 left them out there, but the run
-/// from the restart point is live and can still ship the destination under
-/// a matrix (`a_kept_destination_shipped_under_a_matrix_after_a_revalidation`),
-/// so they are compared: no keystroke revalidates (review of #1908, lane
-/// REVIEW), and every compile equals scratch runs.
+/// the restart point never had: they are not compared there (a later read
+/// of them redoes the compile: lane REVIEW,
+/// `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`). Every
+/// keystroke revalidates, and every compile equals scratch runs.
 #[test]
 fn a_revalidation_leaves_out_what_a_destination_never_set() {
     let Some(e) = env() else {
@@ -6028,10 +6027,9 @@ fn a_revalidation_leaves_out_what_a_destination_never_set() {
     };
     // (case, what paragraphs 3-12 of chapter 3, on the comparison's page
     // and the next ones, have, whether the comparison holds: with a matrix
-    // in effect at a destination after it the words are compared; without
-    // one too, since review of #1908)
+    // in effect at a destination after it the words are compared)
     let cases = [
-        ("no matrix", "", false),
+        ("no matrix", "", true),
         (
             "a matrix after the comparison",
             "\\pdfsave\\pdfsetmatrix{1 0 0 1}\\pdfdest name{m\\the\\inputlineno} xyz\\pdfrestore ",
@@ -6120,7 +6118,11 @@ fn a_revalidation_leaves_out_what_a_destination_never_set() {
 /// `matrixused`): with the old run's words, its PDF was not a scratch
 /// run's (`/XYZ 160.667` for `-3920.03`), (a) with the matrix in the old
 /// run after `P2` and (b) with no matrix anywhere until the edit put it in.
-/// Every compile equals scratch runs.
+/// Now the comparison marks the old run's states it goes on from
+/// (`pdftex::garbage`), and the read of the destination's words in them
+/// redoes the compile from the format (`Session::garbage_redo`): (a) and
+/// (b) are such redos, the compiles between them with no matrix are not,
+/// and every compile equals scratch runs.
 #[test]
 fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
     let Some(e) = env() else {
@@ -6171,10 +6173,15 @@ fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
         let reference = dir.with_extension("ref");
         copy_dir(&dir, &reference);
         let r = h.cmd("compile");
-        eprintln!("{what}: revalidated {}", field(&r, "revalidated"));
+        eprintln!(
+            "{what}: revalidated {}, cold {}",
+            field(&r, "revalidated"),
+            field(&r, "cold_reason")
+        );
         check_against(&e, &dir, &reference, &r, what);
         r
     };
+    let redone = |r: &str| field(r, "cold_reason").contains("unset words");
     for k in 0..4 {
         let r = step(&refs, "settle");
         if r.contains("\"mode\":\"unchanged\"") || k == 3 {
@@ -6185,11 +6192,14 @@ fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
         chapter(3),
         chapter(3).replacen("paragraph 30 with", "paragraph 30 withx", 1),
     );
+    // (a)
     for k in 0..4 {
-        step(
+        let what = format!("edit {k}");
+        let r = step(
             &[("ch3.tex", if k % 2 == 0 { &typed } else { &plain })],
-            &format!("edit {k}"),
+            &what,
         );
+        assert!(redone(&r), "{what}: not redone: {r}");
     }
     // (the next keystroke puts the matrix in, after the restart point the
     // previous compile took: the run from there ships the destination it
@@ -6206,11 +6216,14 @@ fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
         } else {
             unturned(&plain)
         };
-        step(&[("ch3.tex", &t)], &format!("unturned edit {k}"));
+        let what = format!("unturned edit {k}");
+        let r = step(&[("ch3.tex", &t)], &what);
+        assert!(!redone(&r), "{what}: redone: {r}");
     }
-    // (every compile since the last turned one kept its destination: one
-    // typed now differs from it)
-    step(&[("ch3.tex", &typed)], "the matrix put in, a letter typed");
+    // (b) (every compile since the last turned one kept its destination:
+    // one typed now differs from it)
+    let r = step(&[("ch3.tex", &typed)], "the matrix put in, a letter typed");
+    assert!(redone(&r), "(b): not redone: {r}");
 }
 
 /// Review of #1908 (lane REVIEW), the convergence test's own rule: it
@@ -6218,17 +6231,12 @@ fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
 /// `\pdfsetmatrix` in effect, and the jump keeps the old run's checkpoints,
 /// with the old run's words in a destination kept in a box register. A
 /// later compile that puts a matrix around that box's shipout restarts at
-/// one of them and ships the old words, where a scratch run ships its own.
-/// Fails on main (the PDF differs by its `/XYZ`). Comparing the words in
-/// the convergence test makes it pass but stops three convergence tests
-/// (`a_link_broken_across_lines_does_not_stop_convergence`,
-/// `beamer_navigation_actions_converge`,
-/// `beamer_fragile_frames_restart_near_and_converge`): a sound fix that
-/// keeps them is a design decision (the run noticing such a read in a
-/// lineage that left the words out, and redoing the compile). Ignored
-/// until then.
+/// one of them and ships the old words, where a scratch run ships its own
+/// (before the detector: the PDF differed by its `/XYZ`). The jump marks
+/// the old run's states (`pdftex::garbage`), and the later compile's read
+/// of the words redoes it from the format. Every compile equals scratch
+/// runs.
 #[test]
-#[ignore = "known soundness hole (lane REVIEW): a destination's unset words kept past a convergence"]
 fn a_destination_kept_past_a_convergence_shipped_later_under_a_matrix() {
     let Some(e) = env() else {
         common::no_texlive();
@@ -6276,14 +6284,74 @@ fn a_destination_kept_past_a_convergence_shipped_later_under_a_matrix() {
         &[("doc.tex", &doc(false, false))],
         "the scratch box taken out",
     );
-    eprintln!("converged at {}", field(&r, "converged_at"));
-    compile_and_check(
+    assert_ne!(field(&r, "converged_at"), "null", "{r}");
+    let r = compile_and_check(
         &e,
         &mut h,
         &dir,
         &[("doc.tex", &doc(false, true))],
         "the matrix put in",
     );
+    assert!(
+        field(&r, "cold_reason").contains("unset words"),
+        "not redone: {r}"
+    );
+}
+
+/// Lane REVIEW: a BOX-MEMO replay neither makes nor frees its call's
+/// scratch nodes, so a destination made after it, where the normal path's
+/// scratch box was, has other unset words, and a `\pdfsetmatrix` in effect
+/// at its shipout reads them (in INITEX with `FLASHTEX_BOXMEMO=on` the
+/// PDF was 2,767 bytes against 2,779 with it off). In the host the replay
+/// marks the memory (`pdftex::garbage`), and the read redoes the compile
+/// from the format with BOX-MEMO off: the PDF equals scratch's.
+#[test]
+fn a_destination_shipped_under_a_matrix_after_a_box_memo_replay() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("boxmemo-dest-matrix");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\usepackage{hyperref}\n\\newcount\\k\n\
+             \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1 height 3pt depth 2pt}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\\begin{document}\n",
+        );
+        for i in 0..30 {
+            s.push_str(&para(i, if i == 10 { word } else { "alpha" }));
+            if i >= 10 {
+                s.push_str(
+                    "\\measure{2pt}\\global\\advance\\k by 1 \\noindent\\pdfsave\\pdfsetmatrix{-1 0 0 -1}\
+                     \\hbox{\\pdfdest name{d\\the\\k} xyz\\relax}\\pdfrestore\\par\n",
+                );
+            }
+        }
+        s + "\\end{document}\n"
+    };
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_BOXMEMO_NAMES", "measure")]);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("gamma"))], "an edit");
+    assert!(
+        field(&r, "cold_reason").contains("unset words"),
+        "not redone: {r}"
+    );
+    // (BOX-MEMO is off for the session from there: no redo)
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("alpha"))],
+        "its revert",
+    );
+    assert!(!field(&r, "cold_reason").contains("unset words"), "{r}");
 }
 
 /// Review of #1724: a whole read between `\document`'s start and S₀'s

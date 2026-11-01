@@ -41,8 +41,8 @@ use crate::persist::{Codec, Reader};
 use crate::system::{self, FileRead, ReadLog, StatSig, Stream};
 use std::collections::HashMap;
 
-/// v1: the first.
-pub const MAGIC: &[u8] = b"flashtex S1 v1";
+/// v1: the first. v2: the S₀ file's content by hash (`Head::s0_data`).
+pub const MAGIC: &[u8] = b"flashtex S1 v2";
 
 /// A read of the journal between S₀ and S₁: `system::FileRead` without its
 /// content (path, hash, signature, (closed_at, written_before, stamp, size)).
@@ -64,6 +64,11 @@ pub type RelocParts = (Vec<(i64, i64)>, Vec<(u64, u64, u64)>);
 pub struct Head {
     /// The S₀ it extends ([`key_tag`]).
     pub s0_tag: [u64; 2],
+    /// The content of the S₀ file it was written over (`super::data_hash`,
+    /// from that file's header): its chunks are those that differ from that
+    /// file's, so it holds over no other, even one with S₀'s key (review of
+    /// #1899, lane REVIEW).
+    pub s0_data: [u64; 2],
     pub key: Key,
     pub rec: ExtRecord,
     /// Pages shipped before S₁, and in the run it was taken from.
@@ -108,7 +113,8 @@ crate::codec_struct!(Head {
     places,
     side,
     reloc,
-    sizes
+    sizes,
+    s0_data
 });
 
 /// The image table's encoding.
@@ -165,12 +171,20 @@ struct S0Chunks {
     map: MappedFile,
     key: Key,
     at: HashMap<u32, usize>,
+    /// Its header's `super::data_hash`.
+    data: [u64; 2],
+}
+
+/// The content hash of the S₀ file at `path` (`super::data_hash`, from its
+/// header): what an S₁ written over it must name (`File::check`).
+pub fn s0_data_hash(path: &str) -> Result<[u64; 2], String> {
+    S0Chunks::open(path).map(|c| c.data)
 }
 
 impl S0Chunks {
     fn open(path: &str) -> Result<S0Chunks, String> {
         let map = MappedFile::open(path)?;
-        let (key, present, pages, data_off) = {
+        let (key, present, pages, data, data_off) = {
             let bytes = map.bytes();
             let hlen =
                 u64::from_le_bytes(bytes.get(..8).ok_or("not an S0 file")?.try_into().unwrap())
@@ -190,17 +204,19 @@ impl S0Chunks {
             u64::dec(&mut r)?;
             let present = Vec::<u32>::dec(&mut r)?;
             let pages = Vec::<u32>::dec(&mut r)?;
+            let data = <[u64; 2]>::dec(&mut r)?;
             let data_off = (8 + hlen).next_multiple_of(S0_PAGE);
             if bytes.len() < data_off + pages.len() * S0_PAGE {
                 return Err("S0 file truncated".into());
             }
-            (key, present, pages, data_off)
+            (key, present, pages, data, data_off)
         };
         let offs = chunk_offsets(&present, &pages, data_off)?;
         Ok(S0Chunks {
             map,
             key,
             at: present.into_iter().zip(offs).collect(),
+            data,
         })
     }
 
@@ -504,6 +520,7 @@ pub fn prepare(g: &mut Globals, i: Input) -> Result<S0Image, String> {
     rec.dorm.epoch = 0;
     let head = Head {
         s0_tag: key_tag(i.s0_key),
+        s0_data: s0.data,
         key,
         rec,
         pages: i.pages as u64,
@@ -574,9 +591,11 @@ impl File {
     /// Whether S₁ is what a full run reaches from S₀ (`s0`, whose key the
     /// caller checked) in this process now, for a run that stops at page
     /// `stop_at` (pages shipped): `Err` says why not. Changes nothing.
+    #[allow(clippy::too_many_arguments)]
     pub fn check(
         &self,
         s0: &Key,
+        s0_data: [u64; 2],
         s0_rec: &ExtRecord,
         clock: (i64, i32),
         first_line: &[u8],
@@ -593,6 +612,9 @@ impl File {
         }
         if h.s0_tag != key_tag(s0) {
             return Err("S1 extends another S0".into());
+        }
+        if h.s0_data != s0_data {
+            return Err("S1 was written over another S0 file".into());
         }
         match stop_at {
             Some(s) if (h.pages as usize) < s => {}
