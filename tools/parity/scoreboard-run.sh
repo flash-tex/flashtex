@@ -7,18 +7,19 @@
 #   engines   new = crates/flashtex-engine's flashtex-initex (with its own
 #             pdflatex.fmt / pdftex.fmt, built as fmtutil does, like
 #             scripts/engine-parity.sh). The old engine (v1) was deleted in
-#             retirement stage S7, so nothing measures it any more: its parity
-#             cells read "missing", and T4's old column stays the committed
-#             one-off baseline (tools/parity/baselines/t4-v1-oneoff.json)
+#             retirement stage S7 (#1888), so nothing builds or runs it here:
+#             scoreboard.py reads the old column from the committed one-off v1
+#             baselines, T3 (tools/parity/baselines/t3-v1-oneoff.json, v1's last
+#             board run) and T4 (t4-v1-oneoff.json, decision 1)
 #   parity    tools/parity/parity.py on --tiers (default: fixtures arxiv
 #             templates, plus packages when its manifest exists)
 #   t2        tools/latex-suites/run.py through this host's pdfTeX (the
 #             baseline) and through the new engine
 #   smoke     tools/package-smoke/run.py, new engine
 #   fonts     tools/font-census/census.py, new engine
-#   t4        not run here: pass --t4-new/--t4-old with nightly.py output
-#             directories (nightly.yml's corpus-t4 or corpus-t4-mac.yml's
-#             artifacts). They must be at this checkout's commit, with the same
+#   t4        not run here: pass --t4-new with a nightly.py output directory
+#             (nightly.yml's corpus-t4 or corpus-t4-mac.yml's artifact). It must
+#             be at this checkout's commit, with the same
 #             engine binaries and this host's oracle (texlive.tlpdb and pdftex
 #             sha256, OUT/oracle.json): any other run reads INVALID
 #
@@ -27,7 +28,7 @@
 #
 # Usage: tools/parity/scoreboard-run.sh --out DIR [--work DIR] [--keep-work] [--jobs N]
 #          [--tiers "fixtures arxiv ..."] [--limit N] [--skip "t2 fonts ..."]
-#          [--t4-new DIR] [--t4-old DIR] [--sample-note TEXT] [--corpus-texmf DIR]
+#          [--t4-new DIR] [--sample-note TEXT] [--corpus-texmf DIR]
 #          [--build-engine] [--engine-dir DIR] [--collect] [--no-board]
 #          [--] [scoreboard.py args...]
 # The new engine is the T4 run's own binary (and formats) when --t4-new names one that is on
@@ -70,7 +71,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-OUT="" WORK="" KEEP_WORK=0 JOBS=2 TIERS="" LIMIT=0 SKIP="" T4NEW="" T4OLD="" NOTE="" CORPUS_TEXMF="" BUILD_ENGINE=0
+OUT="" WORK="" KEEP_WORK=0 JOBS=2 TIERS="" LIMIT=0 SKIP="" T4NEW="" NOTE="" CORPUS_TEXMF="" BUILD_ENGINE=0
 ENGINE_DIR="" COLLECT=0 NO_BOARD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -82,7 +83,6 @@ while [[ $# -gt 0 ]]; do
     --limit) LIMIT="${2:?}"; shift 2 ;;
     --skip) SKIP="${2:?}"; shift 2 ;;
     --t4-new) T4NEW="${2:?}"; shift 2 ;;
-    --t4-old) T4OLD="${2:?}"; shift 2 ;;
     --sample-note) NOTE="${2:?}"; shift 2 ;;
     --corpus-texmf) CORPUS_TEXMF="${2:?}"; shift 2 ;;
     --build-engine) BUILD_ENGINE=1; shift ;;
@@ -152,7 +152,7 @@ guard() {  # guard STAGE CMD...: CMD in the background, stopped when the disk ru
 # What this script makes under WORK; removed on exit (--keep-work keeps it).
 cleanup() {
   [[ $KEEP_WORK == 1 ]] && return
-  rm -rf "$WORK"/{eng,fmt,texmfvar,tmp,parity-new,parity-old}
+  rm -rf "$WORK"/{eng,fmt,texmfvar,tmp,parity-new}
   rmdir "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -229,7 +229,9 @@ fi
 # other commit INVALID (a stale or foreign run).
 SHA="$(git rev-parse HEAD)"
 
-ARGS=(--sha "new=$SHA" --sha "old=$SHA" --out "$OUT/board")
+# new only: no v1 run is made, so the board names no v1 commit of its own (the
+# baselines record theirs)
+ARGS=(--sha "new=$SHA" --out "$OUT/board")
 # The board's oracle, down to its texlive.tlpdb and pdftex binary (DESIGN §8): a T4
 # summary measured against any other reads INVALID (the version string alone is the
 # same on the PC and the Macs). The workflow writes OUT/oracle.json first.
@@ -341,7 +343,6 @@ fi
 
 # ---- T4 (from the nightly corpus job) ------------------------------------------
 [[ -n "$T4NEW" && -f "$T4NEW/summary.json" ]] && ARGS+=(--nightly "new=$T4NEW")
-[[ -n "$T4OLD" && -f "$T4OLD/summary.json" ]] && ARGS+=(--nightly "old=$T4OLD")
 
 if [[ -n $DISK_LOW ]]; then
   cleanup  # room for the board, which is small
