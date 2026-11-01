@@ -112,10 +112,14 @@ pub struct Profile {
     /// chunks and give the heap's free pages back (`trim_caches`,
     /// `malloc_trim`); `None`: never.
     pub trim_after_ms: Option<u64>,
-    /// Keep the host's page cache (every page's display list, for clients
-    /// that lack a page) gzip-packed, packed off the engine thread; and drop
+    /// Write S₀ and S₁ on the engine thread (no second copy alive) and drop
     /// the restores' spare tail buffers at the idle trim.
     pub lean: bool,
+    /// Keep the host's page cache (every page's display list, for clients
+    /// that lack a page) gzip-packed, packed off the engine thread (lane
+    /// MEMORY: about half its bytes; a client that lacks a page gets it
+    /// unpacked, the same bytes).
+    pub pack_pages: bool,
 }
 
 /// Balanced's budget: DESIGN.md §5.2's 1 GiB.
@@ -140,6 +144,7 @@ impl Profile {
                 prepare: true,
                 trim_after_ms: Some(500),
                 lean: true,
+                pack_pages: true,
             },
             Mode::Balanced => Profile {
                 mode,
@@ -151,6 +156,7 @@ impl Profile {
                 prepare: true,
                 trim_after_ms: Some(2000),
                 lean: false,
+                pack_pages: true,
             },
             Mode::HighPerformance => Profile {
                 mode,
@@ -165,6 +171,7 @@ impl Profile {
                 prepare: true,
                 trim_after_ms: None,
                 lean: false,
+                pack_pages: false,
             },
         };
         if let Some(v) = pinned.budget {
@@ -217,6 +224,7 @@ impl Profile {
                     .map_or(Json::Null, |t| Json::Int(t as i64)),
             ),
             ("lean", Json::Bool(self.lean)),
+            ("pack_pages", Json::Bool(self.pack_pages)),
             (
                 "allocator_returns_free_pages",
                 Json::Bool(allocator_returns_free_pages()),
@@ -350,6 +358,7 @@ mod tests {
         assert!(p.prepare);
         assert_eq!(p.trim_after_ms, Some(2000));
         assert!(!p.lean);
+        assert!(p.pack_pages);
     }
 
     #[test]
