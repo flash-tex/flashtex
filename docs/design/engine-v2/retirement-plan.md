@@ -46,7 +46,7 @@
 | Swift retiring in S6, sources (§1.4) | 7,027 in 16 files, of which S6a first moves about 213 lines to v3 files (VERIFIED) |
 | Workspace packages | 43: the 41 `crates/*` members, `tools/web2rust` and the implicit `flashtex-engine-build-id`. 34 after S2 (VERIFIED by reading the manifests; `cargo metadata` not run). |
 | Open PRs touching old-engine crates | **0** (#1120 closed 2026-10-06; VERIFIED) |
-| Stages | 12: S0 ✔, S1 ✔, S1b ✔, S2 ✔ (#1610), S3 ✔, S3r ✔ (#1611), S4 ✔, S5 ✔ (#1849), S6a ✔ (#1877), S6 ✔ (#1881), S7 ✔ (#1888), S8 |
+| Stages | 12: S0 ✔, S1 ✔, S1b ✔, S2 ✔ (#1610), S3 ✔, S3r ✔ (#1611), S4 ✔, S5 ✔ (#1849), S6a ✔ (#1877), S6 ✔ (#1881), S7 ✔ (#1888), S8 ✔ (#1902) |
 
 ### Stage table
 
@@ -65,7 +65,7 @@
 | 9 | **S6a** Shared types to v3 files | Move `V2PageText`'s line builder, `DisplayListLinks`'s URI policy and `MathHoverPreview`'s `padding` / `MathPreviewView` into v3-owned files (§1.4), as a rename with no behaviour change. Rewrite the v2-parity assertions in `EngineV3LinksTests`. | `swift build`; `EngineV3LinksTests`, `EngineV3AccessibilityTests`, `EngineV3SearchTests` and `EngineV3MathHoverTests` pass, not skipped | Commander assigns | — (a move) | S5 | ✔ done (#1877) |
 | 10 | **S6** App old route out | Delete the §1.4 Swift, the helper rows, menus, attach commands, user docs and the §5.5 defaults; retarget the tools (§1.8); remove the `.previous` engine, its blockers and banner from `EngineChoice` and rewrite their tests; `packaging-selftest.sh` must fail on a missing helper | **The S6 rows** (§4.4); the §6 licence preconditions (RQ19 closed 2026-10-11: the About and release-notes link, #1806); RQ6 ruled ✔; **the Unicode mode's M3 gate passed** (modes Q1) | Commander assigns | **yes** | S5, S6a, M3 | ✔ done (#1881): the §1.4 Swift, the controller route (RQ7), the helper rows, menus, attach commands, the engine choice and its fallback go; Unicode routing (A9), the RQ20 message and the one-time previous-engine notice (§5.3); `packaging-selftest.sh` fails on a missing helper |
 | 11 | **S7** Old engine deleted at once | One PR deletes the compiler, render-pipeline, the old `flashtex-cli`, perf-bench and every §1.3 orphan, with their CI, scripts, generated entries and env (§1.7, §1.8) | Full tier; `check-generated.py`; a release.yml dry-run; the §4.6 check; T7 has gated for ≥ 10 runs; RQ5 ruled ✔ (the generator script replaces `sync-supported-latex.sh` in this PR); RQ6 ✔ (`flashtex-v3` renamed to `flashtex` and packaged in this PR); 0 open old-path PRs | Commander assigns | **yes** | S6, queued as soon as it lands | ✔ done (#1888): the compiler, render-pipeline, the old `flashtex-cli`, perf-bench, class-geometry, vector-graphics, bibliography, font-engine, font-resources, tex-text-encoding and preview-controller (RQ7) go, with `tools/{real-world-corpus,visual-oracle,font-metric-sweep,kernel-math-gap}`, perf.yml, the old CI legs and scripts; **`pdf` and `font-discovery` stay**, because `crates/flashtex-xetex` (Unicode mode) links both (§1.3); `flashtex-v3` is `flashtex` and ships with its GPL source offer (RQ6); `supported-latex.json` comes from `gen-supported-latex.py` (RQ5) |
-| 12 | **S8** Oracles to `tests/`, final sweep | Move the §2 crates to `tests/oracles/` (RQ4); `license` fields (R5); the `gate.sh` mapping; docs | Full tier; the §4.6 check | Commander assigns | **yes** | S7 | — |
+| 12 | **S8** Oracles to `tests/`, final sweep | Move the §2 crates to `tests/oracles/` (RQ4); `license` fields (R5); the `gate.sh` mapping; docs | Full tier; the §4.6 check | Commander assigns | **yes** | S7 | ✔ done (#1902): the seven crates in `tests/oracles/` (renames; no expected-data file changed, and every generator re-run from there reproduces its data byte for byte); `license` on every package, enforced by check G; `gate.sh` maps `tests/oracles/<crate>/`; `retirement_refs.py` has stage S8, and no allow entry is deferred to a later stage |
 
 ### Owner decisions
 
@@ -786,7 +786,7 @@ RQ9 is superseded by RQ18. RQ11–RQ14 were never used.
 | R2. `supported-latex.json` loses its source at S7 | RQ5 ruled before S7 |
 | R3. Old-path PRs conflict with S7 | 0 open today; RQ10 |
 | R4. A Swift link to GPL | Check E (#1400), plus its four false-negative fixes (S1b) |
-| R5. Packages with `license = None` | S8 adds `license = "MIT"`; `cargo metadata` must show no `None` |
+| R5. Packages with `license = None` | S8 adds `license = "MIT"`; `cargo metadata` must show no `None`. *Done (#1902): check G of `check-license-boundary.sh` enforces it.* |
 | R6. Packaging breaks when rendering-core goes | S1 moved the verifier ✔; S2 deletes the `gate.sh` `cmp` step and runs `packaging-selftest.sh` |
 | R7. The P5 evidence is lane-run, not gated | §4.2: the official board, on one SHA (DESIGN R13) |
 | R8. Restoring a stage gets costly as changes stack on it | The revert check (§4.3), which can fail and is repeated at every later stage; `pre-retire-*` tags; S6 and S7 back to back |

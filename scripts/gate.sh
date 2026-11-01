@@ -197,6 +197,8 @@ fi
 
 # Map changed paths onto cargo packages.
 #   crates/<dir>/...        -> that crate's [package] name
+#   tests/oracles/<dir>/... -> likewise: the oracle crates DESIGN.md §10 keeps,
+#                              moved there by retirement stage S8 (plan §2, RQ4)
 #   Cargo.toml / Cargo.lock -> ROOT_MANIFEST=1 below, NOT a per-crate fan-out
 # A crate is standalone (its own workspace) iff it has its own Cargo.lock. Since
 # lane P0-RETIRE-VENDOR deleted the old pipeline's vendor/ and folded the three
@@ -213,8 +215,13 @@ root = sys.argv[1]
 with open(sys.argv[2], encoding="utf-8") as fh:
     changed = [l.strip() for l in fh if l.strip()]
 
+# The roots whose subdirectories are crates of the root workspace (its
+# `members` globs; tools/web2rust is the one member outside them).
+CRATE_ROOTS = ("crates", "tests/oracles")
+
 def crate_info(d):
-    m = os.path.join(root, "crates", d, "Cargo.toml")
+    """d: a crate directory relative to the repository, e.g. crates/pdf."""
+    m = os.path.join(root, d, "Cargo.toml")
     if not os.path.exists(m):
         return None
     txt = open(m, encoding="utf-8", errors="replace").read()
@@ -227,15 +234,16 @@ def crate_info(d):
     ed = re.search(r'^\s*edition\s*=\s*"([^"]+)"', tail, re.M)
     if not name:
         return None
-    standalone = os.path.exists(os.path.join(root, "crates", d, "Cargo.lock"))
-    ws = os.path.join("crates", d) if standalone else "."
+    standalone = os.path.exists(os.path.join(root, d, "Cargo.lock"))
+    ws = d if standalone else "."
     return (name.group(1), ws, ed.group(1) if ed else "2015")
 
 dirs = set()
 for p in changed:
-    parts = p.split("/")
-    if parts[0] == "crates" and len(parts) > 1:
-        dirs.add(parts[1])
+    for r in CRATE_ROOTS:
+        rest = p[len(r) + 1:].split("/") if p.startswith(r + "/") else []
+        if len(rest) > 1:
+            dirs.add(r + "/" + rest[0])
     # The XeTeX port (crates/flashtex-xetex, its own workspace) links the
     # pdfTeX engine's runtime and is web2rust's output: a change to either
     # must build and test it too, or an engine API change breaks it silently.
@@ -247,7 +255,7 @@ for p in changed:
     if p.startswith(("crates/flashtex-engine/", "tools/web2rust/", "crates/display-list-v3/",
                      "crates/project-manifest/", "crates/font-discovery/", "crates/pdf/",
                      "crates/flashtex-runtime/", "third_party/")):
-        dirs.add("flashtex-xetex")
+        dirs.add("crates/flashtex-xetex")
 
 out = []
 for d in sorted(dirs):
@@ -277,7 +285,11 @@ CHANGED_CRATES="$(printf '%s\n' "$CRATE_TABLE" | awk 'NF{print $1}' | sort -u | 
 # run after the merge (`rust workspace` in ci.yml, on push to main; the merge
 # queue runs only the gate since 2026-10-05). The standalone crates have their own lockfiles: unaffected.
 ROOT_MANIFEST=0
-if printf '%s\n' "$CHANGED_FILES" | grep -qxE 'Cargo\.(toml|lock)'; then
+# A here-string, not `printf | grep -q`: grep -q exits at its first match, and
+# under pipefail the writer's SIGPIPE turned the hit into a miss once the list
+# was long (S8's 840 changed files: Cargo.toml sorts first, so the workspace
+# check silently did not run).
+if grep -qxE 'Cargo\.(toml|lock)' <<< "$CHANGED_FILES"; then
   ROOT_MANIFEST=1
 fi
 CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
@@ -312,13 +324,17 @@ TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine
 # divergences were files of a crate then outside the root workspace, which
 # `cargo fmt --all` never visits).
 gate_fmt() {
-  local dirty_new=() dirty_old=() f ed crate rc=0
+  local dirty_new=() dirty_old=() f ed crate rc=0 was renames
   local list
   list="$(printf '%s\n' "$CHANGED_RS" | grep -v '^$' || true)"
   if [[ -z "$list" ]]; then
     echo "no .rs files changed against $BASE"
     return 0
   fi
+  # A renamed file's base is its old path: a crate moved as it was (S8 moved
+  # the oracle crates to tests/oracles/) keeps its rustfmt debt as debt, not
+  # as new. "R<score>\t<old>\t<new>" lines, merge base to the working tree.
+  renames="$(git diff -M --name-status --diff-filter=R "$(git merge-base "$BASE" HEAD)" -- '*.rs' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     # tools/web2rust's output (the engines' src/generated/) is never edited
@@ -330,9 +346,9 @@ gate_fmt() {
       continue
     fi
     ed=2021
-    crate="$(printf '%s\n' "$f" | awk -F/ '$1=="crates" {print $2}')"
-    if [[ -n "$crate" && -f "crates/$crate/Cargo.toml" ]]; then
-      ed="$(sed -n '/^\[package\]/,/^\[/p' "crates/$crate/Cargo.toml" \
+    crate="$(printf '%s\n' "$f" | awk -F/ '$1=="crates" {print $1"/"$2} $1=="tests" && $2=="oracles" {print $1"/"$2"/"$3}')"
+    if [[ -n "$crate" && -f "$crate/Cargo.toml" ]]; then
+      ed="$(sed -n '/^\[package\]/,/^\[/p' "$crate/Cargo.toml" \
             | sed -n 's/^edition *= *"\([0-9]*\)".*/\1/p' | head -1)"
       [[ -n "$ed" ]] || ed=2021
     fi
@@ -342,9 +358,11 @@ gate_fmt() {
       continue
     fi
     # Unformatted now. Was it unformatted at the base too?
-    if git cat-file -e "$BASE:$f" 2>/dev/null &&
-       ! git show "$BASE:$f" | rustfmt --edition "$ed" --emit stdout --quiet 2>/dev/null \
-         | diff -q - <(git show "$BASE:$f") >/dev/null 2>&1; then
+    was="$(awk -F'\t' -v f="$f" '$3 == f { print $2; exit }' <<< "$renames")"
+    was="${was:-$f}"
+    if git cat-file -e "$BASE:$was" 2>/dev/null &&
+       ! git show "$BASE:$was" | rustfmt --edition "$ed" --emit stdout --quiet 2>/dev/null \
+         | diff -q - <(git show "$BASE:$was") >/dev/null 2>&1; then
       dirty_old+=("$f")
     else
       dirty_new+=("$f")
@@ -379,7 +397,7 @@ gate_workspace_check() {
 
 gate_workspace_clippy() {
   local excludes=() d name
-  for d in crates/*/; do
+  for d in crates/*/ tests/oracles/*/; do
     d="${d%/}"
     [[ -f "$d/Cargo.toml" && ! -f "$d/Cargo.lock" ]] || continue  # root members only
     name="$(sed -n '/^\[package\]/,/^\[/p' "$d/Cargo.toml" \
@@ -573,17 +591,19 @@ fi
 
 # A stale build directory for a deleted crate makes every `cargo` command in the
 # repository fail with "failed to load manifest for workspace member", because
-# the root workspace globs crates/*. Say so once, up front, instead of letting
-# each step die with the same opaque error. (crates/assistant-context was
-# removed in 39118b9f0; a local target/ can outlive it.)
+# the root workspace globs crates/* and tests/oracles/*. Say so once, up front,
+# instead of letting each step die with the same opaque error.
+# (crates/assistant-context was removed in 39118b9f0, and S8 moved the oracle
+# crates from crates/ to tests/oracles/; a local target/ can outlive either.)
 STRAY=()
-for d in crates/*/; do
+for d in crates/*/ tests/oracles/*/; do
+  [[ -d "$d" ]] || continue
   [[ -f "$d/Cargo.toml" ]] && continue
   [[ -f "$d/Cargo.lock" ]] && continue
   STRAY+=("${d%/}")
 done
 if (( ${#STRAY[@]} )); then
-  echo "gate.sh: these directories are inside the root workspace glob (crates/*) but" >&2
+  echo "gate.sh: these directories are inside a root workspace glob (crates/*, tests/oracles/*) but" >&2
   echo "         have no Cargo.toml, so every cargo command here will fail:" >&2
   printf '           %s\n' "${STRAY[@]}" >&2
   echo "         They are leftover build output for crates that were deleted. Remove them:" >&2

@@ -60,7 +60,8 @@ uncommitted edits, because the point of a local gate is to catch the problem
 before the commit. `--committed-only` drops the uncommitted half; `--base <ref>`
 compares against something other than `origin/main`.
 
-A path under `crates/<dir>/` maps to that directory's cargo package. A crate
+A path under `crates/<dir>/` or `tests/oracles/<dir>/` (the oracle crates,
+moved there by retirement stage S8) maps to that directory's cargo package. A crate
 that has its own `Cargo.lock` is one of the three the root workspace excludes
 (`Cargo.toml`), and `gate.sh` runs cargo inside it rather than with `-p`.
 
@@ -137,11 +138,12 @@ If it passes, the required CI set will pass, with two exceptions worth knowing:
 * `--locked` is used everywhere, so a `Cargo.lock` that your change did not
   update is a failure in CI even if a plain `cargo build` succeeds locally.
 
-If `gate.sh` refuses to start with "these directories are inside the root
+If `gate.sh` refuses to start with "these directories are inside a root
 workspace glob but have no `Cargo.toml`", delete them: they are stale `target/`
-output for a crate that was removed from the repository, and because the root
-workspace globs `crates/*`, they make *every* cargo command in the checkout fail
-with `failed to load manifest for workspace member`.
+output for a crate that was removed or moved (retirement stage S8 moved the
+oracle crates from `crates/` to `tests/oracles/`), and because the root
+workspace globs `crates/*` and `tests/oracles/*`, they make *every* cargo
+command in the checkout fail with `failed to load manifest for workspace member`.
 
 
 ## The licence boundary
@@ -190,6 +192,15 @@ crate that is *itself* GPL-2-or-later, ships its own GPL `LICENSE`, and is not
 linked into any MIT product target — a GPL host-process binary, if the engine
 lane ever splits the host out of the library. It is empty today. Adding a line
 is a licensing decision, not a way to make a red gate green.
+
+The script also runs C (no MIT crate reaches poppler or MuPDF), D (the Typst
+host), E (the Mac app) and F (the makeindex port); `--list` describes each.
+**G — every package declares its licence.** Every package of the root
+workspace, of each excluded crate with its own `Cargo.lock` and of
+`typst-host/` must have a `license` SPDX expression or a `license-file`, so
+`cargo metadata` shows none as `None` (retirement plan R5, stage S8). This
+includes the oracle crates under `tests/oracles/`, which are MIT and which A
+keeps off the engine like every other crate.
 
 The owner arranges the legal review of §3 before public release; development
 proceeds meanwhile.

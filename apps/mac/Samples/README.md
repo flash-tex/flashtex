@@ -15,13 +15,9 @@ the old compiler's `recovered` status and diagnostics are visible. The app's
 engine is pdfLaTeX-compatible, so it typesets `$x^2$` and reports `\foo` as
 TeX's `Undefined control sequence`.
 
-`demo.tex` is a multipage document using only the compiler's supported LaTeX
-subset, with accented words and an em dash for UTF-8 source-navigation checks.
-Run `python3 apps/mac/Samples/make-demo-request.py` from the repository root
-to wrap that source in the runtime-v1 `demo-request.json`, invoke the compiler
-at the scratchpad binary path recorded in the script, and save its response as
-`demo-result.json`. The script uses only the Python 3 standard library, prints
-status, page count, and diagnostic count, and fails unless compilation is `ok`
-with zero diagnostics and at least two pages; rerun it after editing the
-source to refresh both JSON files. The app no longer opens result files: open
-`demo.tex` itself.
+`demo.tex` is a multipage document with accented words and an em dash for
+UTF-8 source-navigation checks; open it in the app. `demo-request.json` and
+`demo-result.json` are a runtime-v1 request wrapping it and the old engine's
+response, recorded before that engine retired (S7). The script that produced
+them drove the retired compiler, so it was removed in S8; the files stay as
+recorded samples and are no longer refreshed.
