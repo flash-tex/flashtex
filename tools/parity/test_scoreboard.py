@@ -68,7 +68,7 @@ def nightly(kind="tex", sha=SHA, engine_sha256="E-new", n=10, tiers=None, **over
     t = {"documents": n, "measured": n, "excluded": {}, "unmeasured": 0,
          "P-T1": [n, n] if kind == "tex" else None, "P-T1_not_evaluated": 0 if kind == "tex" else n,
          "P-T1_over_cap": 0, "P-T2": [n, n] if kind == "tex" else [0, n],
-         "L0": [n, n], "L1": [n, n], "L2": [n, n], "L3": [n, n], "L4": [0, n]}
+         "L0": [n, n], "L1": [n, n], "L2": [n, n], "L3": [n, n], "L4": [0, n], "crashes": 0}
     d = {"schema": "flashtex-nightly/1", "git_sha": sha, "host": {"node": "h1", "label": "linux-x"},
          "engine": {"kind": kind, "version": kind, "sha256": engine_sha256},
          "fingerprint": {"oracle_pdftex_version": "pdfTeX 1.40.29"},
@@ -427,6 +427,18 @@ class Review1299(unittest.TestCase):
         stages = {s["id"]: s for s in sb.load_stages()}
         self.assertIn("T1 (lockstep) has 0 new differences", stages["S5"]["other_preconditions"])
 
+    def test_6_s5_and_s6_carry_their_app_parity_rows(self):
+        stages = {s["id"]: s for s in sb.load_stages()}
+        self.assertEqual(stages["S5"].get("app_parity_gate"), "S5")
+        self.assertEqual(stages["S6"].get("app_parity_gate"), "S6")
+        self.assertIsNone(sb.app_parity_state(None))
+        ap = sb.app_parity_state("S5")
+        self.assertIn(ap["state"], ("met", "not met"))
+        self.assertEqual(ap["state"] == "met", ap["why"] == [])
+        board = complete_board(self.tmp)
+        for st in board["retirement"]:
+            self.assertIn("app_parity", st)
+
 
 BACKEND = ("latex3/l3kernel[config-backend]@etex-dvips: PASS %d / FAIL %d / SKIP 0\n%s"
            "latex3/l3kernel[config-backend]@etex-dvisvgm: PASS %d / FAIL %d / SKIP 0\n%s"
@@ -612,6 +624,18 @@ class Parsers(unittest.TestCase):
         self.assertIn("color", r["note"])
         self.assertTrue(sb.parse_package_smoke("a equal\n")["documents"]["invalid"])
         self.assertTrue(sb.parse_package_smoke("a equal\n3 documents, 0 differ\n")["documents"]["invalid"])
+
+    def test_package_smoke_reference_failures_are_excluded(self):
+        why = "the reference does not compile it on this TeX Live; the candidate fails identically"
+        r = sb.parse_package_smoke("a equal\nb EXCLUDED (%s: exit 1)\nc equal\n"
+                                   "3 documents, 0 differ, 1 excluded (%s)\n" % (why, why), expected=3)["documents"]
+        self.assertEqual((r["passed"], r["of"]), (2, 2))
+        self.assertEqual(r["excluded"], {why: 1})
+        self.assertIsNone(r.get("partial"))
+        self.assertIn("excluded: b", r["note"])
+        # the summary must count them
+        r = sb.parse_package_smoke("a equal\nb EXCLUDED (x: exit 1)\n2 documents, 0 differ\n", expected=2)
+        self.assertTrue(r["documents"]["invalid"])
 
     def test_smoke_subset_is_partial(self):
         r = sb.parse_package_smoke("a equal\n1 documents, 0 differ\n", expected=59)["documents"]
@@ -913,6 +937,505 @@ class Decision1(unittest.TestCase):
             sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out, "--t4-v1-baseline", "none"])
         with open(os.path.join(out, "scoreboard.json")) as f:
             self.assertEqual(row(json.load(f), "nightly-5k", "L0")["verdict"], "missing")
+
+
+class OwnerBar(unittest.TestCase):
+    """P5-BOARD-T4: the owner's bar (DESIGN §13, 2026-10-05): P-T2 >= 99% and P-T1 >= 98% on
+    arXiv and T4, zero crashes on T4; a red tier opens or updates one p5-red issue; the gate
+    fails the run unless the board is all green."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def arxiv(self, pt1, pt2, n=1000):
+        return board_for(tempfile.mkdtemp(), {"arxiv": summary(n, pt1, pt2, (n, n, n, n))},
+                         {"arxiv": summary(n, pt1_na=CLI_NA, pt2=(0, n), levels=(1, 1, 0, 0))},
+                         sizes={"arxiv": n})
+
+    def test_pt_rates_against_the_bar(self):
+        b = self.arxiv((980, 1000), (990, 1000))  # exactly at the bar
+        self.assertEqual(row(b, "arxiv", "P-T1")["verdict"], "ahead (old n/a)")
+        self.assertEqual(row(b, "arxiv", "P-T2")["verdict"], "ahead")
+        self.assertEqual(row(b, "arxiv", "P-T2")["target"], "new >= old; >= 99% (owner bar)")
+        self.assertEqual(row(b, "arxiv", "P-T1")["target"], ">= 98% (owner bar; old n/a)")
+        b = self.arxiv((979, 1000), (989, 1000))  # one document under, though new > old
+        self.assertEqual(row(b, "arxiv", "P-T1")["verdict"], "below bar (old n/a)")
+        self.assertEqual(row(b, "arxiv", "P-T2")["verdict"], "below bar")
+        self.assertEqual(b["red_tiers"], ["arxiv"])
+        # the bar is on counts, not the rounded percent (98.95% shows as 99.0%)
+        self.assertFalse(sb.bar_met("arxiv", "P-T2", sb.cell("measured", 1979, 2000)))
+        # rows the bar does not cover are unchanged
+        self.assertTrue(sb.bar_met("templates", "P-T2", sb.cell("measured", 1, 2)))
+
+    def test_below_bar_opens_a_labelled_issue_and_edit_relabels(self):
+        b = self.arxiv((979, 1000), (990, 1000))
+        acts = sb.plan_issues(b, [])
+        self.assertEqual([(a[0], a[2]) for a in acts], [("create", "arxiv")])
+        self.assertIn("below bar", acts[0][3])
+        calls = []
+        sb.apply_issues(acts, "o/r", gh=lambda args, stdin=None: calls.append(args) or "https://x/1\n")
+        self.assertEqual(calls[0][:3], ["label", "create", sb.ISSUE_LABEL])
+        self.assertIn("--label", calls[1])
+        self.assertEqual(calls[1][calls[1].index("--label") + 1], "p5-red")
+        calls = []
+        acts = sb.plan_issues(b, [{"number": 9, "title": "old title", "body": sb.MARKER % "arxiv"}])
+        sb.apply_issues(acts, "o/r", gh=lambda args, stdin=None: calls.append(args) or "")
+        self.assertEqual(calls[1][:3], ["issue", "edit", "9"])
+        self.assertIn("--add-label", calls[1])
+        # recovered: closed, and no label call is needed
+        calls = []
+        good = self.arxiv((1000, 1000), (1000, 1000))
+        acts = sb.plan_issues(good, [{"number": 9, "title": "t", "body": sb.MARKER % "arxiv"}])
+        sb.apply_issues(acts, "o/r", gh=lambda args, stdin=None: calls.append(args) or "")
+        self.assertEqual([c[:3] for c in calls], [["issue", "close", "9"]])
+
+    def test_t4_crash_row(self):
+        t = nightly()["tiers"]["nightly-5k"]
+        t.update(crashes=1, crash_examples=["2101.00001v1"])
+        tiers, _ = sb.load_nightly(write_json(self.tmp, "s.json", nightly(tiers={"nightly-5k": t})), SIZES)
+        c = tiers["nightly-5k"]["crashes"]
+        self.assertEqual((c["passed"], c["of"]), (9, 10))
+        self.assertIn("2101.00001v1", c["note"])
+        na = sb.cell("n/a", note=sb.NO_V1_CRASHES)
+        self.assertEqual(sb.verdict("nightly-5k", "crashes", c, na, True), "below bar (old n/a)")
+        self.assertEqual(sb.verdict("nightly-5k", "crashes", sb.cell("measured", 10, 10), na, True),
+                         "ahead (old n/a)")
+        self.assertEqual(sb.target_of("nightly-5k", "crashes"), "0 crashes (owner bar)")
+        # the v1 one-off baseline has no crash count: n/a, with the bar named
+        base = {"tier": "nightly-5k", "status": "PROVISIONAL", "measured_date": "2026-10-01",
+                "source": ["https://example.invalid/m"], "v1": {"L0": [1, 4]}}
+        old = sb.t4_v1_cells(base, "nightly-5k", {"crashes": c, "L0": c})
+        self.assertEqual(old["crashes"]["status"], "n/a")
+        t["crashes"] = 11
+        with self.assertRaises(sb.FormatError):
+            sb.load_nightly(write_json(self.tmp, "bad.json", nightly(tiers={"nightly-5k": t})), SIZES)
+
+    def test_crash_count_recovered_from_an_older_summary(self):
+        d = tempfile.mkdtemp()
+        t = nightly()["tiers"]["nightly-5k"]
+        del t["crashes"]
+        p = write_json(d, "summary.json", nightly(tiers={"nightly-5k": t}))
+        c = sb.load_nightly(p, SIZES)[0]["nightly-5k"]["crashes"]
+        self.assertEqual(c["status"], "not run")  # no documents.json: not counted, never green
+        recs = [{"tier": "nightly-5k", "id": "a", "cause": "L0: exit 101"},
+                {"tier": "nightly-5k", "id": "b", "cause": "L0: exit 1: ! Undefined control sequence."},
+                {"tier": "nightly-5k", "id": "c", "first_difference": "P-T1: the candidate's traced pass did not "
+                 "run: the traced pass crashed: its log stops before the end of the run (3 s)"},
+                {"tier": "arxiv", "id": "d", "cause": "L0: exit -11"},
+                {"tier": "nightly-5k", "id": "e", "cause": "L0: exit 101", "excluded": "oracle: pdflatex exit 1"},
+                {"tier": "nightly-5k", "id": "f", "cause": "L0: exit None (timeout)"}]
+        write_json(d, "documents.json", {"documents": recs})
+        c = sb.load_nightly(p, SIZES)[0]["nightly-5k"]["crashes"]
+        # every way of not finishing, by kind; an oracle-excluded document never ran
+        self.assertEqual((c["passed"], c["of"]), (6, 10))
+        self.assertIn("recovered from documents.json", c["partial"])
+        for k in ("panic 1", "exit 1", "traced pass cut short 1", "timeout 1"):
+            self.assertIn(k, c["note"])
+
+    def test_crash_row_counts_every_kind_over_the_documents_run(self):
+        t = nightly(n=10)["tiers"]["nightly-5k"]
+        t.update(documents=14, measured=10, excluded={"oracle": 4}, crashes=3,
+                 crash_kinds={"timeout": 1, "worker died": 1, "exit": 1}, crash_examples=["a", "b", "c"])
+        c = sb.load_nightly(write_json(self.tmp, "k.json", nightly(tiers={"nightly-5k": t})), SIZES)[0]
+        c = c["nightly-5k"]["crashes"]
+        self.assertEqual((c["passed"], c["of"]), (7, 10))  # of: what the engine ran, not 14
+        self.assertEqual(c["excluded"], {"oracle": 4})
+        self.assertIn("exit 1, timeout 1, worker died 1", c["note"])
+
+    def test_cross_oracle_v1_baseline_is_stated(self):
+        base = {"tier": "nightly-5k", "status": "PROVISIONAL", "measured_date": "2026-10-01",
+                "source": ["https://example.invalid/m"], "v1": {"L0": [1, 4]},
+                "oracle": {"tlpdb_sha256": "ca39e6791582" + "0" * 52, "texlive_root": "/usr/local/texlive/2026"}}
+        new = {"L0": sb.cell("measured", 4, 4)}
+        pc = {"tlpdb_sha256": "909745461c89" + "0" * 52, "texlive_root": "/home/kubar/texlive/2026"}
+        c = sb.t4_v1_cells(base, "nightly-5k", new, board_oracle=pc)["L0"]
+        self.assertIn("CROSS-ORACLE", c["note"])
+        self.assertIn("ca39e6791582", sb.fmt_cell(c))
+        self.assertIn("909745461c89", sb.fmt_cell(c))
+        same = sb.t4_v1_cells(base, "nightly-5k", new, board_oracle=base["oracle"])["L0"]
+        self.assertNotIn("CROSS-ORACLE", same["note"])
+        # the committed baseline names the Mac's oracle
+        self.assertEqual(sb.load_t4_v1_baseline(sb.T4_V1_BASELINE)["oracle"]["tlpdb_sha256"][:12], "ca39e6791582")
+
+    def test_unfetched_documents_make_the_tier_partial(self):
+        b = board_for(self.tmp, {"templates": summary(8, (8, 8), (8, 8), (8, 8, 8, 8), excluded={"fetch": 2})},
+                      {"templates": summary(8, pt1_na=CLI_NA, pt2=(0, 8), levels=(0, 0, 0, 0), excluded={"fetch": 2})})
+        r = row(b, "templates", "L1")
+        self.assertIn("2 document(s) unmeasured", r["new"]["partial"])
+        self.assertFalse(b["all_green"])
+
+    def test_nightly_counts_crashes(self):
+        import nightly as nt
+        kind = lambda r: (nt.crash_of(r) or (None,))[0]  # noqa: E731
+        self.assertEqual(nt.crash_of({"candidate": {"exit": 101}}), ("panic", "exit 101 (panic)"))
+        self.assertEqual(nt.crash_of({"candidate": {"exit": -11}}), ("signal", "killed by signal 11"))
+        self.assertEqual(kind({"candidate": {"exit": None, "timed_out": True}}), "timeout")
+        self.assertEqual(kind({"candidate": {"exit": 1, "stderr_tail": "exit 1: ! Emergency stop."}}), "exit")
+        self.assertEqual(kind({"candidate": {"exit": 2}}), "exit")
+        self.assertEqual(kind({"worker_died": True, "candidate": {"status": "died"}}), "worker died")
+        self.assertEqual(kind({"candidate": {"exit": 0, "stderr_tail":
+                                             "the traced pass did not finish in the capture's 600 s limit"}}), "timeout")
+        self.assertEqual(kind({"candidate": {"exit": 0, "stderr_tail":
+                                             "the traced pass crashed: its log stops before the end (2 s)"}}),
+                         "traced pass cut short")
+        self.assertIsNone(nt.crash_of({"candidate": {"exit": 0, "stderr_tail": ""}}))
+        # never reached the engine: excluded by the oracle, or unmeasured
+        self.assertIsNone(nt.crash_of({"excluded": "oracle: pdflatex exit 1", "candidate": {"exit": 101}}))
+        recs = [{"id": "x", "crash": "exit 101 (panic)", "crash_kind": "panic"}, {"id": "y"},
+                {"id": "z", "excluded": "fetch: gone", "unmeasured": True}]
+        row_ = nt.tier_row(recs)
+        self.assertEqual((row_["crashes"], row_["crash_kinds"], row_["crash_examples"], row_["measured"]),
+                         (1, {"panic": 1}, ["x"], 2))
+
+    def test_workflow_one_official_host_and_the_gate(self):
+        with open(os.path.join(REPO, ".github", "workflows", "p5-scoreboard.yml")) as f:
+            wf = f.read()
+        jobs = jobs_of(wf)
+        auto = jobs["pick"].split("auto)", 1)[1].split(";;", 1)[0]
+        self.assertIn("route=pc", auto)
+        self.assertNotIn("route=mac", auto)  # never a silent Mac stand-in
+        pub = jobs["publish"]
+        self.assertIn("--require-green", pub)
+        self.assertLess(pub.index("--issues \"$ISSUES\""), pub.index("--require-green"))  # issues first
+        self.assertIn("OFFICIAL: ${{ needs.pick.outputs.route == 'pc' }}", pub)
+        self.assertIn("|| 'off' }}", pub.split("ISSUES:", 1)[1].split("\n", 1)[0])  # a Mac board files none
+        self.assertIn("--slice=flashtex.slice", jobs["scoreboard"])
+        # the PC off: the hosted route (its own oracle, T4 in the same run), which gates but files no issue
+        self.assertIn("route=hosted", auto)
+        self.assertIn("route == 'hosted'", pub.split("GATE:", 1)[1].split("\n", 1)[0])
+        self.assertNotIn("hosted", pub.split("ISSUES:", 1)[1].split("\n", 1)[0])
+        board = jobs["hosted-board"]
+        self.assertIn("--collect", board)
+        self.assertIn("--t4-new", board)
+        self.assertIn("--issues off", board)
+        self.assertNotIn(": write", board + jobs["hosted-part"] + jobs["hosted-t4"] + jobs["hosted-build"])
+
+    def test_gate_from_board(self):
+        b = self.arxiv((979, 1000), (990, 1000))
+        path = write_json(self.tmp, "board.json", b)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = sb.main(["--from-board", path, "--issues", "off", "--require-green"])
+        self.assertEqual(rc, 1)
+        self.assertIn("::error::P5 scoreboard gate", out.getvalue())
+        self.assertIn("arxiv", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sb.main(["--from-board", path, "--issues", "off"]), 0)  # no gate asked
+        green = complete_board(tempfile.mkdtemp())
+        self.assertTrue(green["all_green"], red(green))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sb.main(["--from-board", write_json(self.tmp, "g.json", green), "--issues", "off",
+                                      "--require-green"]), 0)
+
+
+def parity_run(root, name, tiers, kind="tex", host="h1", oracle="pdfTeX 1.40.29", excluded=None, docs=True):
+    """A parity.py --out directory whose documents.json carries real records.
+    tiers: {tier: [(id, level, P-T2)]}; excluded: {tier: {id: reason}}. The summary is
+    parity.py's own count of those records, so the two always agree."""
+    d = os.path.join(root, name)
+    os.makedirs(d)
+    sm, dj = {}, {}
+    for tier, recs in tiers.items():
+        ex = (excluded or {}).get(tier, {})
+        c = sb.parity_record_counts([{"id": i, "level": lv, "P-T2": p} for i, lv, p in recs])
+        n = len(recs)
+        sm[tier] = summary(n, pt1_na=CLI_NA if kind == "flashtex-cli" else None,
+                           pt1=None if kind == "flashtex-cli" else (n, n), pt2=tuple(c["P-T2"]),
+                           levels=tuple(c[m][0] for m in ("L0", "L1", "L2", "L3")),
+                           excluded={"oracle": len(ex)} if ex else None)
+        dj[tier] = ([{"id": i, "tier": tier, "level": lv, "pt": {"P-T2": p}} for i, lv, p in recs]
+                    + [{"id": i, "tier": tier, "level": None, "excluded": why} for i, why in ex.items()])
+    meta = {"engine_kind": kind, "engine_version": kind + " 1", "host": host, "oracle_pdftex_version": oracle,
+            "command": "parity.py --tier fixtures", "date": "2026-10-31",
+            "flashtex_sha256": "E-new" if kind == "tex" else "E-old",
+            "started_utc": "2026-10-31T14:00:36Z", "platform": "Linux"}
+    with open(os.path.join(d, "scoreboard.json"), "w") as f:
+        json.dump({"schema": "flashtex-parity/1", "meta": meta,
+                   "tiers": {t: {"summary": s} for t, s in sm.items()}}, f)
+    if docs:
+        with open(os.path.join(d, "documents.json"), "w") as f:
+            json.dump(dj, f)
+    return d
+
+
+NO_MANIFEST = {t: 0 for t in ("arxiv", "templates", "packages")}  # synthetic tiers: never short
+
+
+class T3V1Baseline(unittest.TestCase):
+    """SCOREBOARD-POST: v1 was deleted in S7 (#1888), so the T3 parity tiers' old column is the
+    committed one-off measurement of v1's last board run, tools/parity/baselines/t3-v1-oneoff.json,
+    compared (rates) with the new run restricted to the baseline's own documents."""
+
+    IDS = ["a", "b", "c", "d"]
+    ORACLE = {"tlpdb_sha256": "90" * 32, "pdftex_sha256": "1c" * 32, "texlive_root": "/home/x/texlive/2026"}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def v1_records(self):
+        return [("a", 3, False), ("b", 1, False), ("c", -1, False), ("d", -1, False)]
+
+    def baseline_obj(self, tiers=("fixtures", "arxiv")):
+        recs = [{"id": i, "level": lv, "P-T2": p} for i, lv, p in self.v1_records()]
+        t = {"measured": 4, "documents": 5, "excluded": {"oracle": 1}, "excluded_ids": {"e": "oracle: x"},
+             "v1": sb.parity_record_counts(recs), "P-T1_not_evaluated": CLI_NA,
+             "id_list_sha256": sb.id_list_sha256(self.IDS), "records": recs}
+        return {"schema": sb.T3_V1_SCHEMA, "status": "FINAL",
+                "decision": {"date": "2026-11-01", "url": "https://example.invalid/r", "remeasure_when": "never"},
+                "measured_date": "2026-10-31", "source": ["https://example.invalid/run/7"],
+                "run": {"id": 7, "commit": SHA, "artifact": "p5-scoreboard"},
+                "engine": {"kind": "flashtex-cli"}, "oracle": dict(self.ORACLE),
+                "tiers": {tier: copy.deepcopy(t) for tier in tiers}}
+
+    def baseline(self, mutate=None, **over):
+        b = self.baseline_obj()
+        b.update(over)
+        if mutate:
+            mutate(b)
+        return sb.load_t3_v1_baseline(write_json(self.tmp, "t3-%d.json" % len(os.listdir(self.tmp)), b))
+
+    def board(self, t3_v1, new_recs=None, old=False, oracle=None, docs=True, tiers=("fixtures", "arxiv")):
+        """The new engine's parity run on `tiers` (default: all four of IDS at L3 and P-T2, plus
+        one outside the baseline), with no v1 run unless `old`."""
+        recs = new_recs if new_recs is not None else [(i, 3, True) for i in self.IDS + ["z"]]
+        d = tempfile.mkdtemp()
+        new = parity_run(d, "new", {t: recs for t in tiers}, excluded={t: {"e": "oracle: x"} for t in tiers},
+                         docs=docs)
+        srcs = {"new": [("parity",) + sb.load_parity(new, NO_MANIFEST)], "old": []}
+        if old:
+            o = parity_run(d, "old", {t: self.v1_records() for t in tiers}, kind="flashtex-cli")
+            srcs["old"].append(("parity",) + sb.load_parity(o, NO_MANIFEST))
+        return sb.build(srcs, shas={"new": SHA}, stages=STAGES, t3_v1=t3_v1, oracle=oracle)
+
+    def test_committed_baseline_is_v1s_last_board_run(self):
+        b = sb.load_t3_v1_baseline(sb.T3_V1_BASELINE)
+        self.assertIsInstance(b, dict, b)
+        self.assertEqual(b["status"], "FINAL")
+        self.assertEqual(b["run"]["id"], 41203982275)
+        self.assertEqual(b["run"]["commit"], "5a42ab270243440446e4f103e17a63350a8cf788")
+        self.assertEqual(b["measured_date"], "2026-10-31")
+        self.assertEqual(b["engine"]["kind"], "flashtex-cli")
+        self.assertEqual(b["oracle"]["tlpdb_sha256"][:12], "909745461c89")
+        got = {t: (v["measured"], v["v1"]) for t, v in b["tiers"].items()}
+        self.assertEqual(got, {
+            "fixtures": (88, {"P-T2": [0, 88], "L0": [84, 88], "L1": [84, 88], "L2": [74, 88], "L3": [64, 88]}),
+            "arxiv": (127, {"P-T2": [0, 127], "L0": [2, 127], "L1": [1, 127], "L2": [0, 127], "L3": [0, 127]}),
+            "templates": (17, {"P-T2": [0, 17], "L0": [2, 17], "L1": [2, 17], "L2": [0, 17], "L3": [0, 17]}),
+            "packages": (88, {"P-T2": [0, 88], "L0": [11, 88], "L1": [9, 88], "L2": [6, 88], "L3": [3, 88]})})
+        for t in b["tiers"].values():
+            self.assertEqual(t["documents"], t["measured"] + len(t["excluded_ids"]))
+            self.assertEqual(sum(t["excluded"].values()), len(t["excluded_ids"]))
+
+    def test_compares_on_its_ids_and_goes_green(self):
+        b = self.board(self.baseline())
+        for tier in ("fixtures", "arxiv"):
+            for m in sb.T3_V1_METRICS:
+                r = row(b, tier, m)
+                self.assertEqual(r["verdict"], "ahead (v1 one-off)", (tier, m))
+                self.assertIn("v1 one-off (last v1 run, p5-scoreboard 7, 2026-10-31); new 4/4 on the "
+                              "baseline's 4 IDs", sb.fmt_cell(r["old"]))
+            self.assertEqual(row(b, tier, "P-T1")["verdict"], "ahead (old n/a)")
+        self.assertEqual(row(b, "fixtures", "L2")["old"]["passed"], 1)
+        self.assertEqual([r for r in red(b) if r[0] in ("fixtures", "arxiv")], [])
+        self.assertEqual(b["partial"], [])
+        md = sb.render_md(b)
+        self.assertIn("Old column: v1 was deleted in retirement stage S7 (#1888)", md)
+        self.assertIn("T3 from v1's last run, p5-scoreboard 7", md)
+        self.assertNotIn("old 0123456", sb.render_summary(b))  # no v1 commit is claimed for this board
+
+    def test_a_whole_green_board_from_baselines_alone(self):
+        d = tempfile.mkdtemp()
+        tiers = {t: [(i, 3, True) for i in self.IDS] for t in sb.T3_TIERS}
+        new = parity_run(d, "new", tiers)
+        nn = write_json(d, "n.json", nightly())
+        srcs = {"new": [("parity",) + sb.load_parity(new, {t: 4 for t in sb.T3_TIERS}),
+                        ("latex-suites", {"latex-suites": sb.parse_latex_suites(T2_OK, None,
+                                                                                sb.parse_latex_list(LIST))},
+                         {"host": "h1"}),
+                        ("package-smoke", {"package-smoke": sb.parse_package_smoke(
+                            "a equal\nb equal\n2 documents, 0 differ\n", expected=2)}, {"host": "h1"}),
+                        ("fonts", {"fonts": sb.load_fonts(census(d))}, {"host": "h1"}),
+                        ("nightly",) + sb.load_nightly(nn, SIZES)], "old": []}
+        b0 = self.baseline_obj(tiers=sb.T3_TIERS)
+        t3 = sb.load_t3_v1_baseline(write_json(self.tmp, "all.json", b0))
+        t4 = Decision1("baseline")
+        t4.tmp = self.tmp
+        t4v1 = t4.provisional(new_same_slice={m: [4, 4] for m in sb.T3_V1_METRICS})
+        b = sb.build(srcs, shas={"new": SHA}, stages=STAGES, t3_v1=t3, t4_v1=t4v1)
+        self.assertEqual(red(b), [])
+        self.assertEqual(b["red"], 0)
+        # the PROVISIONAL T4 baseline keeps the board partial; the T3 rows are not
+        self.assertTrue(all("nightly-5k" in p for p in b["partial"]), b["partial"])
+
+    def test_restricted_to_the_baseline_ids(self):
+        # the whole new run is perfect except on the baseline's IDs, where L1 falls to 1/4 (v1: 2/4)
+        recs = [("a", 3, True), ("b", 0, True), ("c", 0, True), ("d", 0, True)] + [
+            ("x%d" % i, 3, True) for i in range(20)]
+        b = self.board(self.baseline(), new_recs=recs)
+        self.assertEqual(row(b, "fixtures", "L1")["verdict"], "behind")
+        self.assertEqual(row(b, "fixtures", "L0")["verdict"], "ahead (v1 one-off)")
+        self.assertEqual(row(b, "fixtures", "L3")["verdict"], "equal (v1 one-off)")  # 1/4 against 1/4
+        self.assertEqual(row(b, "fixtures", "L1")["new"]["passed"], 21)  # the row's own cell is the whole run
+        self.assertIn("fixtures", b["behind_tiers"])
+        self.assertFalse(b["all_green"])
+
+    def test_owner_bar_still_holds_on_arxiv(self):
+        recs = [(i, 3, True) for i in self.IDS] + [("x%d" % i, 3, i > 1) for i in range(98)]  # 100/102 P-T2
+        b = self.board(self.baseline(), new_recs=recs)
+        self.assertEqual(row(b, "arxiv", "P-T2")["verdict"], "below bar")
+        self.assertEqual(row(b, "fixtures", "P-T2")["verdict"], "ahead (v1 one-off)")  # no bar there
+        self.assertIn("arxiv", b["red_tiers"])
+
+    def test_arxiv_l1_target_still_holds(self):
+        recs = [(i, 3, True) for i in self.IDS] + [("x%d" % i, 0, True) for i in range(40)]  # L1 4/44
+        self.assertEqual(row(self.board(self.baseline(), new_recs=recs), "arxiv", "L1")["verdict"],
+                         "below target")
+
+    def test_ids_missing_from_the_new_run_are_partial(self):
+        b = self.board(self.baseline(), new_recs=[(i, 3, True) for i in self.IDS[1:]])
+        r = row(b, "fixtures", "L0")
+        self.assertEqual(r["verdict"], "ahead (v1 one-off)")
+        self.assertIn("3 of the v1 one-off baseline's 4 IDs", r["old"]["partial"])
+        self.assertFalse(b["all_green"])
+
+    def test_without_documents_json_is_missing(self):
+        d = tempfile.mkdtemp()
+        new = parity_run(d, "new", {"fixtures": [(i, 3, True) for i in self.IDS]})
+        _, ident = sb.load_parity(new, {})
+        cells = sb.t3_v1_cells(self.baseline(), "fixtures", {"L0": None}, None)
+        self.assertEqual(cells["L0"]["status"], "missing")
+        self.assertIn("documents.json is needed", cells["L0"]["note"])
+        self.assertTrue(ident["documents_path"].endswith("documents.json"))
+
+    def test_tier_not_in_the_baseline_is_missing(self):
+        b = self.board(self.baseline(), tiers=("fixtures", "templates"))
+        r = row(b, "templates", "L1")
+        self.assertEqual(r["verdict"], "missing")
+        self.assertIn("tier templates is not in the v1 one-off baseline", sb.fmt_cell(r["old"]))
+
+    def test_new_l4_is_not_compared_with_nothing(self):
+        cells = sb.t3_v1_cells(self.baseline(), "fixtures", {"L4": None, "P-T1": None},
+                               write_json(self.tmp, "docs.json", {"fixtures": []}))
+        self.assertEqual(cells["L4"]["status"], "missing")
+        self.assertEqual(cells["P-T1"]["status"], "n/a")
+
+    def test_malformed_or_absent_baseline_is_not_green(self):
+        bad = [dict(schema="other"), dict(status="PROVISIONAL"), dict(oracle={}), dict(run={"id": 7}),
+               dict(decision={"date": "2026-11-01"}), dict(source=[]), dict(tiers={}),
+               dict(mutate=lambda b: b["tiers"].update(nightly=b["tiers"]["fixtures"])),
+               dict(mutate=lambda b: b["tiers"]["fixtures"]["v1"]["L0"].__setitem__(0, 3)),  # not its records
+               dict(mutate=lambda b: b["tiers"]["fixtures"]["v1"].pop("L3")),
+               dict(mutate=lambda b: b["tiers"]["fixtures"].update(measured=5)),
+               dict(mutate=lambda b: b["tiers"]["fixtures"].update(id_list_sha256="ab" * 32)),
+               dict(mutate=lambda b: b["tiers"]["fixtures"]["records"].append(
+                   dict(b["tiers"]["fixtures"]["records"][0]))),
+               dict(mutate=lambda b: b["tiers"]["fixtures"]["records"][0].update(level=4)),
+               dict(mutate=lambda b: b["tiers"]["fixtures"]["records"][0].update({"P-T2": None}))]
+        for over in bad:
+            t = self.baseline(**over)
+            self.assertIsInstance(t, str, over)
+            self.assertIn("malformed", t)
+            b = self.board(t)
+            self.assertEqual(row(b, "fixtures", "L1")["verdict"], "missing", over)
+            self.assertIn("malformed", sb.fmt_cell(row(b, "fixtures", "L1")["old"]))
+            self.assertFalse(b["all_green"])
+        self.assertIn("unreadable", sb.load_t3_v1_baseline(os.path.join(self.tmp, "nope.json")))
+        self.assertIsNone(sb.load_t3_v1_baseline(None))
+        # no baseline at all (--t3-v1-baseline none): the old column is simply absent
+        self.assertEqual(row(self.board(None), "fixtures", "L1")["old"], None)
+        self.assertEqual(row(self.board(None), "fixtures", "L1")["verdict"], "missing")
+
+    def test_a_v1_run_wins_over_the_baseline(self):
+        b = self.board(self.baseline(), old=True, new_recs=[(i, 3, True) for i in self.IDS])
+        self.assertEqual(row(b, "fixtures", "L1")["old"]["status"], "measured")
+        self.assertEqual(row(b, "fixtures", "L1")["verdict"], "ahead")
+
+    def test_cross_oracle_is_stated(self):
+        other = dict(self.ORACLE, tlpdb_sha256="ca" * 32, texlive_root="/usr/local/texlive/2026")
+        c = row(self.board(self.baseline(), oracle=other), "fixtures", "L0")
+        self.assertIn("CROSS-ORACLE, v1 measured against texlive.tlpdb 909090909090", sb.fmt_cell(c["old"]))
+        self.assertEqual(c["verdict"], "ahead (v1 one-off)")
+        same = row(self.board(self.baseline(), oracle=self.ORACLE), "fixtures", "L0")
+        self.assertNotIn("CROSS-ORACLE", sb.fmt_cell(same["old"]))
+
+    def test_cli_reads_the_committed_baseline_by_default(self):
+        d = tempfile.mkdtemp()
+        new = parity_run(d, "new", {"fixtures": [("x", 3, True)]})
+        out = os.path.join(d, "board")
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--parity", "new=" + new, "--sha", "new=" + SHA, "--out", out])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            board = json.load(f)
+        old = row(board, "fixtures", "L0")["old"]
+        self.assertEqual(old["status"], "baseline")
+        self.assertEqual([old["passed"], old["of"]], [84, 88])
+        self.assertIn("88 IDs", sb.fmt_cell(old))
+        self.assertIn("0 of the v1 one-off baseline's 88 IDs", old["partial"] or "")  # "x" is not one of them
+        self.assertEqual(board["t3_v1_baseline"]["run"]["id"], 41203982275)
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--parity", "new=" + new, "--sha", "new=" + SHA, "--out", out, "--t3-v1-baseline", "none"])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            self.assertEqual(row(json.load(f), "fixtures", "L0")["verdict"], "missing")
+
+    def test_builder_copies_the_run_verbatim(self):
+        import make_t3_v1_baseline as mk
+        art = tempfile.mkdtemp()
+        parity_run(art, "parity-old", {"fixtures": self.v1_records()}, kind="flashtex-cli",
+                   excluded={"fixtures": {"e": "oracle: x"}})
+        write_json(art, "oracle.json", self.ORACLE)
+        out = os.path.join(self.tmp, "built.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(mk.main(["--artifact", art, "--run-id", "7", "--artifact-id", "8", "--event",
+                                      "schedule", "--created", "2026-10-31T13:05:22Z", "--no-board", "--commit", SHA,
+                                      "--out", out]), 0)
+        b = sb.load_t3_v1_baseline(out)
+        self.assertIsInstance(b, dict, b)
+        self.assertEqual(b["tiers"]["fixtures"]["v1"], self.baseline_obj()["tiers"]["fixtures"]["v1"])
+        self.assertEqual(b["tiers"]["fixtures"]["excluded_ids"], {"e": "oracle: x"})
+        self.assertEqual(b["oracle"], self.ORACLE)
+        self.assertEqual(set(b["run"]["files_sha256"]), {"parity-old/scoreboard.json",
+                                                         "parity-old/documents.json", "oracle.json"})
+        # a new-engine run is not v1, and a board that disagrees with the run is refused
+        art2 = tempfile.mkdtemp()
+        parity_run(art2, "parity-old", {"fixtures": self.v1_records()})
+        write_json(art2, "oracle.json", self.ORACLE)
+        with self.assertRaises(SystemExit):
+            mk.build(art2, 7, 8, "schedule", "x", SHA)
+        os.makedirs(os.path.join(art, "board"))
+        board = {"all_green": True, "engines": {"old": {"git_sha": SHA}},
+                 "rows": [{"tier": "fixtures", "metric": "L0", "old": {"passed": 3, "of": 4}}]}
+        write_json(os.path.join(art, "board"), "scoreboard.json", board)
+        with self.assertRaises(SystemExit):
+            mk.build(art, 7, 8, "schedule", "x", SHA, os.path.join(art, "board", "scoreboard.json"))
+        board["rows"][0]["old"]["passed"] = 2  # agrees now, but names another v1 commit
+        write_json(os.path.join(art, "board"), "scoreboard.json", dict(board, engines={"old": {"git_sha": "f" * 40}}))
+        with self.assertRaises(SystemExit):
+            mk.build(art, 7, 8, "schedule", "x", SHA, os.path.join(art, "board", "scoreboard.json"))
+        write_json(os.path.join(art, "board"), "scoreboard.json", board)
+        self.assertEqual(mk.build(art, 7, 8, "schedule", "x", SHA, os.path.join(art, "board", "scoreboard.json"))
+                         ["run"]["commit"], SHA)
+
+
+class NoV1AfterS7(unittest.TestCase):
+    """S7 deleted v1: nothing in the board or the nightly builds, runs or downloads it, and the
+    board names no v1 commit as if a v1 run had happened."""
+
+    def read(self, *rel):
+        with open(os.path.join(REPO, *rel)) as f:
+            return f.read()
+
+    def test_driver_and_workflows(self):
+        run = self.read("tools", "parity", "scoreboard-run.sh")
+        self.assertNotIn("--t4-old", run)
+        self.assertNotIn('"old=$SHA"', run)
+        self.assertNotIn("--parity \"old=", run)
+        self.assertNotIn("-p flashtex-cli", run)
+        for wf in ("p5-scoreboard.yml", "nightly.yml"):
+            text = self.read(".github", "workflows", wf)
+            self.assertNotIn("corpus-t4-v1", text, wf)
+            self.assertNotIn("t4-old", text, wf)
+            self.assertNotIn("--old-engine", text, wf)
+            self.assertNotIn("-p flashtex-cli", text, wf)
 
 
 if __name__ == "__main__":

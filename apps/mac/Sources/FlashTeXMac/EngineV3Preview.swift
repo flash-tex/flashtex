@@ -99,8 +99,12 @@ private struct PreviewV3StatusHUD: View {
             case .failed(let why):
                 Text(why).foregroundStyle(.red)
             }
-            if !session.environmentNote.isEmpty, session.phase == .ready, model.previewDebugStatus {
-                Text(session.environmentNote)
+            if model.previewDebugStatus {
+                // The v2 pane's debug strip, as v3 has it (gap C25): host,
+                // compiles, pages, latency and the environment note.
+                Text(session.debugLine)
+                    .foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                    .accessibilityIdentifier("engine-v3.debug-status")
             }
         }
         .font(.caption)
@@ -154,6 +158,8 @@ struct EngineV3ScrollView: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.updateNSView", probe) }
         let revision = session.layoutRevision // observed: page count/sizes changed
         let pages = scroll.documentView as? EngineV3PagesView
         pages?.setAppearance(dark ? .dark : .light)
@@ -252,7 +258,7 @@ final class EngineV3PageView: NSView {
     weak var owner: EngineV3PagesView?
     var index = 0
     /// The page's lines and, once a client asked, their elements, for the content `hash`.
-    var axCache: (hash: [UInt8], lines: [V2PageText.Line], elements: [PreviewAXElement]?)?
+    var axCache: (hash: [UInt8], lines: [PreviewPageText.Line], elements: [PreviewAXElement]?)?
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -268,6 +274,8 @@ final class EngineV3PageView: NSView {
         wantsLayer = true
         tiles.container.frame = l.bounds
         l.addSublayer(tiles.container)
+        // Tiles are framed for the page layer's flip on screen, as the label is.
+        tiles.pageShownFlipped = { [weak self] in self?.layerShownFlipped ?? true }
         // "page N" at the bottom right, over the page (the v2 pane's label, gap C17).
         label.fontSize = 11
         label.font = NSFont.systemFont(ofSize: 11)
@@ -294,10 +302,36 @@ final class EngineV3PageView: NSView {
         return CGRect(x: pad, y: bounds.height - h - pad, width: max(0, bounds.width - 2 * pad), height: h)
     }
 
+    /// The label's place depends on the superview it is shown in: placed
+    /// again on a new superview.
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        placeLabel()
+        CATransaction.commit()
+    }
+
+    /// Whether the hosted layer is flipped on screen. Not read from the live
+    /// layer tree: AppKit attaches a layer-hosting view's layer to its
+    /// superview's layer on a later pass, with no callback here (no
+    /// `kCAOnOrderIn`, `layout()` or move-to-window), and until then the
+    /// layer has no superlayer and reads unflipped (a label placed then sat
+    /// at the top of the page: testEachPageIsLabelled, 6 of 25 hosted
+    /// rounds on 2026-10-12). Once attached, the layer is shown flipped
+    /// exactly as the superview is: AppKit sets the hosted layer's own
+    /// `geometryFlipped` to make it so. That flag is AppKit's, and it is
+    /// transient while detached: true for a fresh view, false for one
+    /// removed and added again. It is reset when the layer attaches, so it
+    /// is not read here (EngineV3PageFlipTests; hosted measurements,
+    /// 2026-10-12).
+    var layerShownFlipped: Bool {
+        superview?.isFlipped ?? layer?.contentsAreFlipped() ?? isFlipped
+    }
+
     private func placeLabel() {
-        // The hosted layer's own geometry: y up unless the layer tree is flipped.
+        // The hosted layer's own geometry: y up unless it is shown flipped.
         var f = labelFrameInView
-        if let l = layer, !l.contentsAreFlipped() { f.origin.y = bounds.height - f.maxY }
+        if !layerShownFlipped { f.origin.y = bounds.height - f.maxY }
         label.frame = f
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -312,20 +346,47 @@ final class EngineV3PageView: NSView {
     }
 
     /// The layer shows (or is about to show) a stored bitmap of an instant
-    /// reopen: dimmed whatever the session's marks, until a compile's
+    /// reopen: stale whatever the session's marks, until a compile's
     /// raster of the page is committed.
     var showsStored = false { didSet { if showsStored != oldValue { applyStale() } } }
     private var marked = false
-    /// Dimmed as stale: VoiceOver's page label says so.
+    /// Stale: VoiceOver's page label says so at once, whether or not the
+    /// page is dimmed yet (`PreviewStaleDimming`).
     var axStale: Bool { marked || showsStored }
+    /// Whether the dimmed look is on the layer now.
+    private(set) var showsStaleLook = false
+    /// Dims the page once it has stayed stale for `PreviewStaleDimming.delay`.
+    /// (nonisolated(unsafe): invalidated in deinit; a view deallocates on main.)
+    nonisolated(unsafe) private var dimTimer: Timer?
+    /// Settings > "Dim pages that are being updated" (`PagesView` passes changes on).
+    var dimsStale = PreviewStaleDimming.enabled { didSet { if dimsStale != oldValue { applyStale() } } }
+    /// Tests: the delay before a stale page is dimmed (nil: dim at once).
+    var dimDelay: TimeInterval? = PreviewStaleDimming.delay
 
     func setStale(_ stale: Bool) {
         marked = stale
         applyStale()
     }
 
+    /// Clearing is immediate; dimming waits out the delay (a page re-rastered
+    /// within it, as while typing, never flashes) and is off with the setting.
     private func applyStale() {
-        let stale = marked || showsStored
+        guard axStale, dimsStale else { dimTimer?.invalidate(); dimTimer = nil; setStaleLook(false); return }
+        guard !showsStaleLook, dimTimer == nil else { return }
+        guard let delay = dimDelay else { setStaleLook(true); return }
+        let t = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.dimTimer = nil
+                self.setStaleLook(self.axStale && self.dimsStale)
+            }
+        }
+        RunLoop.main.add(t, forMode: .common) // fires while the preview is being scrolled too
+        dimTimer = t
+    }
+
+    private func setStaleLook(_ stale: Bool) {
+        showsStaleLook = stale
         guard (layer?.opacity ?? 1) != (stale ? 0.45 : 1) || (layer?.borderWidth ?? 0) != (stale ? 2 : 0) else { return }
         // No implicit animation: a fresh page shows at full opacity in the
         // frame that carries it, not over the default 0.25 s fade.
@@ -335,6 +396,8 @@ final class EngineV3PageView: NSView {
         layer?.borderWidth = stale ? 2 : 0
         layer?.borderColor = stale ? NSColor.systemOrange.cgColor : nil
     }
+
+    deinit { dimTimer?.invalidate() }
 }
 
 final class EngineV3PagesView: NSView {
@@ -370,7 +433,11 @@ final class EngineV3PagesView: NSView {
     /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
     /// per point, whatever the pane width and zoom.
     static let fixedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V3_PPP"].flatMap(Double.init)
-    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent)
+    /// `.workItem`: each raster's autoreleased objects (the IOSurface and
+    /// the contents it replaced) go when its block ends, not whenever GCD
+    /// drains the worker thread's pool.
+    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent,
+                                                   autoreleaseFrequency: .workItem)
     private let margin: CGFloat = 16, gap: CGFloat = 12
     override var isFlipped: Bool { true }
 
@@ -379,15 +446,23 @@ final class EngineV3PagesView: NSView {
         super.init(frame: .zero)
         setAccessibilityRole(.group)
         setAccessibilityLabel("PDF preview")
+        staleDimmingObserver = PreviewStaleDimming.observe { [weak self] on in
+            self?.pageViews.values.forEach { $0.dimsStale = on }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// Settings > "Dim pages that are being updated", applied live.
+    nonisolated(unsafe) private var staleDimmingObserver: NSObjectProtocol?
 
     override func viewDidMoveToWindow() {
         if window == nil { link?.invalidate(); link = nil } // armVsync makes another when needed
         relayout()
     }
 
-    deinit { link?.invalidate() }
+    deinit {
+        link?.invalidate()
+        if let staleDimmingObserver { NotificationCenter.default.removeObserver(staleDimmingObserver) }
+    }
     /// Another screen's backing scale: pixels per point (and tiles) change.
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); relayout() }
     override func viewDidEndLiveResize() { relayout() }
@@ -731,6 +806,8 @@ final class EngineV3PagesView: NSView {
     /// stays where it is in the viewport.
     func relayout(revision: Int? = nil, anchor: CGPoint? = nil) {
         guard let session else { return }
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.relayout", probe) }
         let n = session.pageCount
         let avail = available
         // `pageSize`: a compiled page, or a stored one of an instant reopen.
@@ -783,7 +860,9 @@ final class EngineV3PagesView: NSView {
         frames = f
         scale = newScale
         fitScale = fit
-        laidOut = (revision ?? laidOut?.revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail, widest)
+        // Laid out from the session as it is now: its current revision (so
+        // SwiftUI's update for that revision lays out nothing again).
+        laidOut = (revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail, widest)
         if let model = session.model, abs(model.previewFitScale - CGFloat(fit)) > 1e-6 { model.previewFitScale = CGFloat(fit) }
         publishFitPage()
         if frame.size != CGSize(width: width, height: height) { setFrameSize(CGSize(width: width, height: height)) }
@@ -801,6 +880,15 @@ final class EngineV3PagesView: NSView {
                 clip.scroll(to: origin)
                 scroll.reflectScrolledClipView(clip)
             }
+        }
+        // A reopen's stored page (EngineV3Snapshot.visiblePage): once, at
+        // the first layout with a width (frames at their real scale)
+        if let p = session.restoreScrollPage, p < frames.count, Self.hadWidth(avail, widest: widest, margin: margin),
+           let scroll = enclosingScrollView {
+            session.restoreScrollPage = nil
+            let clip = scroll.contentView
+            clip.scroll(to: CGPoint(x: clip.bounds.minX, y: min(max(0, frames[p].minY - gap / 2), max(0, height - clip.bounds.height))))
+            scroll.reflectScrolledClipView(clip)
         }
         updateVisible()
         if caretMark != nil { drawCaretMark() } // EngineV3CaretMark.swift: page points to the new layout
@@ -845,9 +933,10 @@ final class EngineV3PagesView: NSView {
     /// backdrop's when tiled.
     private var wholeScale: Double { tiled ? min(pixelsPerPoint, EngineV3TileGrid.backdropPixelsPerPoint) : pixelsPerPoint }
 
-    /// Page indexes intersecting the visible rect, plus one screen around it.
+    /// Page indexes intersecting the visible rect, plus the performance
+    /// mode's screens around it (one in Balanced; PerformanceMode.swift).
     private func visibleIndexes() -> [Int] {
-        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height)
+        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height * PerformanceMode.current.overscanScreens)
         return frames.indices.filter { frames[$0].intersects(r) }
     }
 
@@ -940,9 +1029,11 @@ final class EngineV3PagesView: NSView {
         // VoiceOver: a page landmark with its text (EngineV3Accessibility.swift).
         v.owner = self
         v.index = i
-        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         v.tiles.onCommitted = { [weak self] compile, t0, t1 in self?.recordCommit(compileID: compile, page: i, installNs: t0, commitNs: t1) }
         addSubview(v)
+        // After it has its superview: the label's place depends on it
+        // (EngineV3PageView.layerShownFlipped).
+        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         pageViews[i] = v
         return v
     }
@@ -1095,7 +1186,13 @@ final class EngineV3PagesView: NSView {
             if changed, let compile, let committed { recordCommit(compileID: compile, page: i, installNs: image.committedNs == nil ? t0 : image.installNs, commitNs: committed) }
             return frames[i].intersects(visibleRect)
         }
-        if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 { relayout() }
+        if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 {
+            // Laid out once at the end of the drain (`flushLayout`), for every
+            // page that arrived in it; whether it is on screen is known then.
+            layoutPending = true
+            if changed { arrivedBeforeLayout[i] = compileID }
+            return true
+        }
         // Rastered by the relayout — except a refused raster, which is redrawn below.
         if pendingCompile[i] == nil, !redraw { return i < frames.count && frames[i].intersects(visibleRect) }
         if i < frames.count, pageViews[i] == nil, frames[i].intersects(visibleRect.insetBy(dx: 0, dy: -visibleRect.height)) {
@@ -1110,6 +1207,26 @@ final class EngineV3PagesView: NSView {
         }
         pendingCompile[i] = nil
         return false
+    }
+
+    /// A page arrived past the laid-out ones (or resized): lay out at the
+    /// end of the drain (`EngineV3Session.flushEvents`).
+    private var layoutPending = false
+    /// The changed pages that waited for that layout, with their compile.
+    private var arrivedBeforeLayout: [Int: Int] = [:]
+
+    /// The layout the drain's pages need, once; a changed page that turned
+    /// out off screen is reported so (its keystroke sample is not waited for).
+    func flushLayout() {
+        guard layoutPending else { return }
+        layoutPending = false
+        relayout()
+        let arrived = arrivedBeforeLayout
+        arrivedBeforeLayout = [:]
+        for (i, compile) in arrived {
+            if pageViews[i] == nil { pendingCompile[i] = nil }
+            if !(i < frames.count && frames[i].intersects(visibleRect)) { session?.latency.offscreen(compile: compile) }
+        }
     }
 
     func formArrived(_ id: UInt32) {

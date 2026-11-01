@@ -54,7 +54,7 @@ fn synthetic_plus_sign_png() -> Vec<u8> {
 
 /// Rough structural sanity check: every `{` is eventually closed by a `}`,
 /// ignoring escaped braces (`\{`, `\}`), which LaTeX uses for literal
-/// symbols. This is not a real parser -- see crates/compiler for that -- but
+/// symbols. This is not a real parser -- the engine is that -- but
 /// it catches a truncated or mismatched proposal without asserting on exact
 /// content.
 fn braces_are_balanced(latex: &str) -> bool {

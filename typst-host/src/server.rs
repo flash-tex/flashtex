@@ -74,6 +74,9 @@ pub struct Host {
     /// The last compile's work after its DONE (the lock's check, eviction),
     /// in ms: reported with the next compile, which it may have delayed.
     tail: std::cell::Cell<(f64, f64)>,
+    /// Draw classes without a pixel gate row as complete (`--draw-ungated`;
+    /// DESIGN.md §15.5).
+    ungated: bool,
 }
 
 /// The watchdog watches a compile while this lives.
@@ -241,12 +244,20 @@ impl Host {
             watchdog: None,
             evict: 3,
             tail: Default::default(),
+            ungated: false,
         }
     }
 
     /// Where packages come from (spec §11.8, [`crate::packages`]).
     pub fn with_packages(mut self, opts: PackageOptions) -> Host {
         self.packages = Arc::new(Packages::new(opts));
+        self
+    }
+
+    /// Draw what has no 2×/3× pixel gate row yet as complete (for
+    /// measuring those rows; DESIGN.md §15.5).
+    pub fn with_ungated(mut self, on: bool) -> Host {
+        self.ungated = on;
         self
     }
 
@@ -337,7 +348,7 @@ impl Host {
         };
 
         // HELLO (spec §6.2).
-        let (minor, program_refs, accept_packages) = match rx.recv() {
+        let (minor, accept, accept_packages) = match rx.recv() {
             Ok(Msg::Frame(kind::C_HELLO, body, _)) => {
                 let j = std::str::from_utf8(&body)
                     .ok()
@@ -365,14 +376,20 @@ impl Host {
                     return c.flush();
                 }
                 let minor = (minor.clamp(0, LATEST_MINOR as i64)) as u32;
-                // 3.3 `accept` (spec §11.7): FONT `program_from`.
-                let refs = minor >= 3
-                    && j.as_ref()
-                        .and_then(|j| j.get("accept"))
-                        .and_then(Json::as_array)
-                        .is_some_and(|a| {
-                            a.iter().any(|c| c.as_str() == Some(convert::PROGRAM_REFS))
-                        });
+                // 3.3 `accept` (spec §11.7): FONT `program_from`, colour
+                // spaces and alpha (§11.3), the line state (§11.4).
+                let accepts = |token: &str| {
+                    minor >= 3
+                        && j.as_ref()
+                            .and_then(|j| j.get("accept"))
+                            .and_then(Json::as_array)
+                            .is_some_and(|a| a.iter().any(|c| c.as_str() == Some(token)))
+                };
+                let refs = convert::Accept {
+                    program_refs: accepts(convert::PROGRAM_REFS),
+                    color_spaces: accepts(flashtex_display_list::accept::COLOR_SPACES),
+                    line_state: accepts(flashtex_display_list::accept::LINE_STATE),
+                };
                 // `packages-v1` (spec §11.8): PACKAGE messages.
                 let pkgs = j
                     .as_ref()
@@ -417,7 +434,7 @@ impl Host {
         self.packages.set_listener(Some(Box::new(move |ev| {
             let _ = ptx.send(Msg::Package(ev));
         })));
-        let r = self.serve_session(&mut c, &rx, minor, program_refs, accept_packages);
+        let r = self.serve_session(&mut c, &rx, minor, accept, accept_packages);
         self.packages.set_listener(None);
         r
     }
@@ -427,7 +444,7 @@ impl Host {
         c: &mut Conn,
         rx: &mpsc::Receiver<Msg>,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
         accept_packages: bool,
     ) -> io::Result<()> {
         let mut job: Option<Job> = None;
@@ -447,7 +464,7 @@ impl Host {
                     Some(d) => match rx.recv_timeout(d) {
                         Ok(m) => m,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
-                            self.verify_idle(c, &mut job, minor, program_refs)?;
+                            self.verify_idle(c, &mut job, minor, accept)?;
                             c.flush()?;
                             let te = Instant::now();
                             comemo::evict(self.evict);
@@ -477,7 +494,7 @@ impl Host {
                         }
                     };
                     let queued_ms = ms(received);
-                    self.compile(c, &mut job, req, minor, program_refs, superseded, queued_ms)?;
+                    self.compile(c, &mut job, req, minor, accept, superseded, queued_ms)?;
                     c.flush()?;
                 }
                 Msg::Package(ev) => {
@@ -500,7 +517,7 @@ impl Host {
         job: &mut Option<Job<'f>>,
         req: Request,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
         superseded: bool,
         queued_ms: f64,
     ) -> io::Result<()> {
@@ -636,7 +653,7 @@ impl Host {
             output,
             warnings,
             minor,
-            program_refs,
+            accept,
         )
     }
 
@@ -650,7 +667,7 @@ impl Host {
         c: &mut Conn,
         job: &mut Option<Job<'f>>,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
     ) -> io::Result<()> {
         let Some(j) = job.as_mut() else {
             return Ok(());
@@ -721,7 +738,7 @@ impl Host {
             output,
             warnings,
             minor,
-            program_refs,
+            accept,
         )
     }
 
@@ -737,7 +754,7 @@ impl Host {
         output: SourceResult<PagedDocument>,
         warnings: EcoVec<SourceDiagnostic>,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
     ) -> io::Result<()> {
         let Finish {
             t0,
@@ -782,7 +799,10 @@ impl Host {
                 let caps = ClientCaps {
                     minor,
                     opentype_programs: req.opentype,
-                    program_refs,
+                    program_refs: accept.program_refs,
+                    color_spaces: accept.color_spaces,
+                    line_state: accept.line_state,
+                    ungated: self.ungated,
                     program_budget: Some(self.program_budget),
                 };
                 let th = Instant::now();
@@ -1097,6 +1117,8 @@ fn hello(minor: u32, fonts: usize, packages: &Json) -> Json {
             "opentype-glyphs",
             "origins-f64",
             "page-meta",
+            "color-spaces",
+            "line-state",
             convert::PROGRAM_REFS,
         ]);
     }

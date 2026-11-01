@@ -20,9 +20,10 @@ enum DesignFixtures {
             .appendingPathComponent("design-snapshots-pairs-\(UUID().uuidString).json")))
     }
 
-    /// The demo project (3 rendered pages) with two additional open
-    /// documents, one of them edited: enough tabs, outline content and
-    /// preview to render the shell honestly.
+    /// The demo project's documents with two additional open documents, one
+    /// of them edited: enough tabs and outline content to render the shell
+    /// honestly. Nothing is typeset (no engine session runs in a test), so
+    /// the preview column shows its resting state.
     static func project() -> ShellModel {
         let model = ShellModel()
         if let root = ShellModel.locateRepoRoot() {
@@ -39,7 +40,6 @@ enum DesignFixtures {
         if let r = (model.activeText as NSString?)?.range(of: "two readers"), r.location != NSNotFound {
             model.caretUTF16 = r.location
         }
-        model.previewV2 = false // the fixture result is v1 pages; render them
         model.previewZoom = 1 // fit width; never the machine's persisted zoom
         model.darkPreview = false // never inherit the machine's preference into a snapshot
         model.problemsVisible = false // rest state: the bottom panel earns its space only with content
@@ -51,10 +51,10 @@ enum DesignFixtures {
     /// notes and help, warnings, and a FlashTeX gap.
     static func projectWithProblems() -> ShellModel {
         let model = project()
-        model.result?.diagnostics = sampleDiagnostics
-        // A new result id: the editor-marks memo keys on it (a real reply
-        // always brings one), so the synthetic diagnostics reach the gutter.
-        model.resultID = (model.resultID ?? "fixture") + "+diagnostics"
+        // The engine's rows, compiled from the fixture's entry text (as a
+        // DONE publishes them), so the synthetic diagnostics reach the gutter.
+        model.engineV3Diagnostics = sampleDiagnostics
+        model.setEngineV3CompiledDocuments([model.project.entryPath: model.entryText])
         model.problemsVisible = true
         // Select the grouped error so the snapshot shows the in-row
         // disclosure (notes, help, recovery under the selected problem).
@@ -65,15 +65,15 @@ enum DesignFixtures {
         return model
     }
 
-    /// `project()` presented as a healthy live worker result rather than a
-    /// fixture: the resting preview the design calls for — no header rows,
-    /// no badge, no page readout over the pages until the reader hovers or
-    /// scrolls, and no zoom percentage or capability warnings floating over
-    /// the pages at all (design-principles §8, owner feedback on #653 and
-    /// on the follow-up "⚠ ⚠ 87 %" pill).
+    /// `project()` at rest: the resting preview the design calls for — no
+    /// header rows, no badge, no page readout over the pages until the
+    /// reader hovers or scrolls, and no zoom percentage or capability
+    /// warnings floating over the pages at all (design-principles §8, owner
+    /// feedback on #653 and on the follow-up "⚠ ⚠ 87 %" pill). It was the
+    /// fixture presented as a live worker result; with one engine there is
+    /// no fixture/live distinction left (#1236 S6), so it is `project()`.
     static func liveProject() -> ShellModel {
         let model = project()
-        model.previewSource = .worker("flashtex-compiler")
         model.flushChrome()
         return model
     }
@@ -84,11 +84,7 @@ enum DesignFixtures {
         let model = ShellModel()
         model.documents = [.init(path: "main.tex", text: "\\begin{document}\nA fresh start.\n\\end{document}\n")]
         model.activePath = "main.tex"
-        model.result = nil
-        model.resultID = nil
-        model.previewSource = .none
         model.loadError = nil
-        model.previewV2 = false
         model.darkPreview = false
         model.previewZoom = 1
         model.problemsVisible = false

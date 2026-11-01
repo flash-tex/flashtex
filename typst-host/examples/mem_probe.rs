@@ -131,6 +131,9 @@ fn main() {
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        color_spaces: false,
+        line_state: false,
+        ungated: false,
     };
     let cold = seeded::standard(&world)
         .output

@@ -1,8 +1,8 @@
 //! rendering-v2 display list → exact export.
 //!
-//! Consumes the `display_list` envelope written by `flashtex-render --v2`
-//! (`crates/render-pipeline`, shaped after `protocol/rendering-v2.schema.json`
-//! and `crates/rendering-core`'s model) and builds an [`ExactDocument`]:
+//! Consumes the `display_list` envelope the retired old engine wrote
+//! (shaped after `protocol/rendering-v2.schema.json`; that engine was
+//! deleted in old-engine retirement S7) and builds an [`ExactDocument`]:
 //!
 //! - `coordinate_unit` must be `bp_2pow20`: signed integer ticks, 2^20 per
 //!   PDF point, y downward from the page's top-left corner. Every tick value
@@ -106,7 +106,7 @@ use std::path::{Path, PathBuf};
 pub const TICKS_PER_BP: i128 = 1 << 20;
 pub const COORDINATE_UNIT: &str = "bp_2pow20";
 /// Directories searched for font bytes after `--font-dir`, `FLASHTEX_FONT_DIRS`
-/// and `FLASHTEX_LM_DIR` (the same list `flashtex-render` uses).
+/// and `FLASHTEX_LM_DIR` (the same list the old engine used).
 pub const DEFAULT_FONT_DIRS: [&str; 12] = [
     "/usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm",
     "/usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm-math",
@@ -680,11 +680,11 @@ struct FontEntry {
 /// How a font file matched the envelope's `sha256`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashForm {
-    /// SHA-256 over the file bytes (rendering-core's validator, the contract
+    /// SHA-256 over the file bytes (the rendering-v2 validator, the contract
     /// for a single-face file and for face 0 of a collection).
     Bytes,
     /// SHA-256 over the file bytes followed by the big-endian `u32` face index
-    /// (font-engine's `content_sha256`). This is how `flashtex-render`
+    /// (the old font engine's `content_sha256`). This is how the old engine
     /// identifies a collection member other than face 0, so that the
     /// members of one `.ttc` never share an id; for face 0 it is an older
     /// producer form, still accepted and reported.
@@ -826,7 +826,7 @@ pub fn from_v2(envelope: &str, options: &V2Options) -> Result<(ExactDocument, V2
 /// [`from_v2`] with the absolute project directory `image` item paths
 /// resolve under (`display-list-v2-images`); `None` refuses every image
 /// item. A separate entry point keeps [`V2Options`] (built with a struct
-/// literal by `crates/rendering-core`) unchanged.
+/// literal by the rendering-v2 validator) unchanged.
 pub fn from_v2_rooted(
     envelope: &str,
     options: &V2Options,
@@ -967,7 +967,7 @@ pub fn from_v2_rooted(
                     })?;
                     if entry.format == "core14-afm" {
                         return Err(format!(
-                            "{iw}: font {} ({font_id}) is format core14-afm, which carries no program bytes; the exact route needs the font program (render-pipeline: ship bytes or emit a real font resource)",
+                            "{iw}: font {} ({font_id}) is format core14-afm, which carries no program bytes; the exact route needs the font program (producer: ship bytes or emit a real font resource)",
                             entry.postscript_name
                         ));
                     }
@@ -1329,7 +1329,7 @@ pub fn from_v2_rooted(
         // only a deviation for face 0.
         if hash_form == HashForm::BytesAndFaceIndex && face_index == 0 {
             report.notes.push(format!(
-                "font {}: sha256 matched SHA-256(bytes || face_index), font-engine's content hash, not SHA-256(bytes) as rendering-core's validator requires (render-pipeline deviation)",
+                "font {}: sha256 matched SHA-256(bytes || face_index), the old font engine's content hash, not SHA-256(bytes) as the rendering-v2 validator requires (producer deviation)",
                 entry.postscript_name
             ));
         }

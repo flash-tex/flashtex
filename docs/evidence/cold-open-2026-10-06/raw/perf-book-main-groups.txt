@@ -1,0 +1,7 @@
+total 135.5 G
+   78.5 G  57.9%  TeX interpreter + rest
+   23.5 G  17.4%  display list emit
+   21.6 G  15.9%  checkpoint/arena
+    6.2 G   4.6%  malloc/memmove
+    4.0 G   2.9%  pdf writer + zlib
+    1.6 G   1.2%  diag/macroprof/intrinsics bookkeeping

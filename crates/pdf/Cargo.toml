@@ -2,6 +2,7 @@
 name = "flashtex-pdf"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 description = "Original FlashTeX PDF writer: runtime-v1 positioned pages to a hand-written PDF 1.4 document."
 publish = false
 
@@ -14,7 +15,3 @@ name = "flashtex-pdf"
 path = "src/main.rs"
 
 [dependencies]
-
-[[bin]]
-name = "flashtex-pdf-exact"
-path = "src/bin/flashtex-pdf-exact.rs"

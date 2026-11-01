@@ -248,8 +248,44 @@ class TestTimeout(unittest.TestCase):
             dict(os.environ), timeout=2)
         dt = time.monotonic() - t0
         self.assertTrue(timed_out)
+        self.assertIn("after 2 s", timed_out)
         self.assertLess(dt, 25)  # must not wait out the 30 s sleep
         self.assertIsNotNone(rc)
+
+    def test_silent_l3build_hits_the_idle_timeout(self):
+        # The cap is far away; the stall timeout ends a run that prints
+        # nothing (a hung test), and says which timeout it was.
+        fake = make_fake_l3build("echo start\nexec sleep 30\n")
+        t0 = time.monotonic()
+        _, lines, timed_out = run_capture(
+            [fake, "check"], os.path.expanduser("~"), dict(os.environ),
+            timeout=600, idle=2)
+        self.assertLess(time.monotonic() - t0, 25)
+        self.assertEqual(timed_out, "no output for 2 s")
+        self.assertEqual(lines, ["start\n"])
+
+    def test_output_keeps_a_slow_run_alive(self):
+        # One line a second for 5 s outlives a 2 s stall timeout: only
+        # silence counts, not the directory's total time.
+        fake = make_fake_l3build(
+            "for i in 1 2 3 4 5; do echo \"  t$i ($i/5)\"; sleep 1; done\n")
+        rc, lines, timed_out = run_capture(
+            [fake, "check"], os.path.expanduser("~"), dict(os.environ),
+            timeout=600, idle=2)
+        self.assertFalse(timed_out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(lines), 5)
+
+    def test_cap_still_ends_a_chatty_run(self):
+        # Output every 0.5 s never trips the stall timeout, so the cap
+        # must still end it.
+        fake = make_fake_l3build("while :; do echo tick; sleep 0.5; done\n")
+        t0 = time.monotonic()
+        _, _, timed_out = run_capture(
+            [fake, "check"], os.path.expanduser("~"), dict(os.environ),
+            timeout=3, idle=2)
+        self.assertLess(time.monotonic() - t0, 25)
+        self.assertEqual(timed_out, "after 3 s")
 
     def test_process_group_is_killed(self):
         # A grandchild `sleep` shares the process group (no setsid of its
@@ -302,6 +338,38 @@ class TestTimeout(unittest.TestCase):
             self.assertIn("timeout", notes[t])
         with open(logpath, encoding="utf-8") as fh:
             self.assertIn("TIMEOUT", fh.read())
+
+    def test_run_l3build_idle_timeout_keeps_finished_verdicts(self):
+        # t1 passes, then t2 hangs: the stall timeout fails t2 alone and
+        # says so; t1's pass stands.
+        workdir = tempfile.mkdtemp(prefix="idle-workdir-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        for name in ("t1", "t2"):
+            with open(os.path.join(workdir, "testfiles", name + ".lvt"),
+                      "w", encoding="utf-8") as fh:
+                fh.write("% " + name + "\n")
+        engine = make_fake_engine("exit 0\n")
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\n'
+            'echo "Running checks on"\n'
+            'echo "  t1 (1/2)"\n'
+            'echo "  t2 (2/2)"\n'
+            'exec sleep 30\n')
+        fd, logpath = tempfile.mkstemp(prefix="idle-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        t0 = time.monotonic()
+        _, ran, failed, notes, timedout, _ = run_l3build(
+            workdir, ["t1", "t2"], engine, logpath, timeout=600, idle=2,
+            l3build_exe=fake)
+        self.assertLess(time.monotonic() - t0, 25)
+        self.assertEqual(ran, ["t1", "t2"])
+        self.assertEqual(timedout, {"t2"})
+        self.assertEqual(set(failed), {"t2"})
+        self.assertEqual(notes["t2"], "timeout (no output for 2 s)")
+        with open(logpath, encoding="utf-8") as fh:
+            self.assertIn("TIMEOUT (no output for 2 s)", fh.read())
 
     def test_unfiltered_timeout_uses_l3build_selection(self):
         # An unfiltered `l3build check` runs l3build_selection (every

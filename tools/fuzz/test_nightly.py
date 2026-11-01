@@ -46,6 +46,30 @@ else:
 """
 
 
+
+# The matching rules (prefix `*`, `fuzzers` scoping) are tested against this
+# fixture, the entries known-findings.json held when they were written (#1219,
+# the Type 1 stack overflow of #1237, #1220). The live file lists only bugs
+# that are still open, so tests must not depend on what it holds.
+FIXTURE_KNOWN_FINDINGS = [
+    {"signature": "panic:crates/flashtex-engine/src/generated/body_0.rs:1033",
+     "note": "fixture: #1219"},
+    {"signature": "signal:SIGABRT:thread 'main' (N*",
+     "note": "fixture: Type 1 self-recursive subr stack overflow (#1237)",
+     "fuzzers": ["type1"]},
+    {"signature": "fontcount-diff:*", "note": "fixture: #1220 family"},
+]
+
+
+def fixture_known_findings(case):
+    """Write FIXTURE_KNOWN_FINDINGS to a temp file owned by `case`."""
+    d = tempfile.mkdtemp(prefix="known-findings-")
+    case.addCleanup(shutil.rmtree, d, True)
+    path = os.path.join(d, "known-findings.json")
+    with open(path, "w") as fh:
+        json.dump(FIXTURE_KNOWN_FINDINGS, fh)
+    return path
+
 class NightlyTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -106,8 +130,7 @@ class NightlyTest(unittest.TestCase):
     def test_scoped_known_findings(self):
         # Entries may carry a "fuzzers" list scoping them to findings
         # from those fuzzers; entries without it stay global.
-        patterns = nightly.load_known_findings(os.path.join(
-            nightly.HERE, "known-findings.json"))
+        patterns = nightly.load_known_findings(fixture_known_findings(self))
         stack = ("signal:SIGABRT:thread 'main' (NNNNNNNN) "
                  "has overflowed its stack")
         self.assertTrue(nightly.is_known(stack, patterns, fuzzer="type1"))
@@ -219,8 +242,7 @@ class NightlyTest(unittest.TestCase):
     def test_stack_overflow_matches_any_digit_count(self):
         # The Type 1 stack-overflow entry must not pin an 8-digit thread
         # id: 7- and 9-digit ids are known too (still scoped to type1).
-        patterns = nightly.load_known_findings(os.path.join(
-            nightly.HERE, "known-findings.json"))
+        patterns = nightly.load_known_findings(fixture_known_findings(self))
         for digits in (7, 9):
             sig = ("signal:SIGABRT:thread 'main' (%s) "
                    "has overflowed its stack" % ("N" * digits))
@@ -687,6 +709,23 @@ time.sleep(300)
 print("done: 0 iterations: equal=0")
 sys.stdout.flush()
 """
+
+
+class KnownFindingsFileTest(unittest.TestCase):
+    """tools/fuzz/known-findings.json itself: every entry silences real
+    findings every night, so each must be well formed and say why."""
+
+    def test_entries_are_well_formed(self):
+        with open(os.path.join(nightly.HERE, "known-findings.json")) as fh:
+            data = json.load(fh)
+        self.assertIsInstance(data, list)
+        names = {f["name"] for f in nightly.FUZZERS}
+        for entry in data:
+            self.assertIsInstance(entry, dict, entry)
+            self.assertTrue(entry.get("signature"), entry)
+            self.assertTrue(entry.get("note"), entry)
+            for fuzzer in entry.get("fuzzers", []):
+                self.assertIn(fuzzer, names, entry)
 
 
 if __name__ == "__main__":

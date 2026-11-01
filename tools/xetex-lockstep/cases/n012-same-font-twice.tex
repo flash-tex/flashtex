@@ -1,0 +1,10 @@
+% n012-same-font-twice: a native font loaded twice is one font; \fontname and \the\font
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\a="[lmroman10-regular.otf]" \font\b="[lmroman10-regular.otf]"
+\font\c="[lmroman10-regular.otf]" at 10.0001pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\meaning\a][\meaning\b]}
+\setbox0=\hbox{\a x\b x\c x}
+\lsshipbox0
+\end

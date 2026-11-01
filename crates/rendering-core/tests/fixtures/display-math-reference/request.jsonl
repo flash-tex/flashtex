@@ -1,1 +1,0 @@
-{"protocol_version": 1, "id": "display-math-acceptance", "type": "compile", "payload": {"project_id": "display-math-acceptance", "revision": 1, "entry_path": "main.tex", "documents": [{"path": "main.tex", "text": "\\begin{document}\nBefore the display.\n\\[\n\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n\\]\nAfter the display.\n\\end{document}\n"}]}}

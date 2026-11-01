@@ -208,17 +208,18 @@ pub fn parse(argv: &[String]) -> RunOptions {
             }
             "etex" => o.etex = true,
             "output-comment" => {
-                // texmfmp.c truncates to 255 characters with kpathsea's
-                // WARNING2 (`warning: `, the message, `.`).
-                let mut v = v;
-                if v.len() >= 256 {
+                // texmfmp.c truncates to 255 bytes (`strncpy`, which may
+                // split a UTF-8 character) with kpathsea's WARNING2
+                // (`warning: `, the message, `.`).
+                let mut b = v.clone().into_bytes();
+                if b.len() >= 256 {
                     eprintln!(
                         "warning: Comment truncated to 255 characters from {}. ({v}).",
-                        v.len()
+                        b.len()
                     );
-                    v.truncate(255);
+                    b.truncate(255);
                 }
-                o.output_comment = Some(v);
+                o.output_comment = Some(b);
             }
             "draftmode" => o.draftmode = true,
             "output-format" => match v.as_str() {

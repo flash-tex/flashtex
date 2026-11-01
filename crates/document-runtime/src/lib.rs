@@ -798,7 +798,7 @@ fn safe_path(p: &str) -> bool {
 /// Textual checks for a forwarded project root: absolute, UTF-8 (by type),
 /// bounded, no NUL/control characters and no empty, `.` or `..` components.
 /// Existence, directory-ness and symlink canonicalization are the caller's
-/// filesystem checks (preview-controller canonicalizes before forwarding).
+/// filesystem checks (the caller canonicalizes before forwarding).
 pub fn validate_project_root(root: &str) -> Result<(), String> {
     let components = root.strip_prefix('/').map(|rest| rest.split('/'));
     let ok = root.len() <= 4096

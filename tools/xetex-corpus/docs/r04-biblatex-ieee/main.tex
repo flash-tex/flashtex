@@ -1,0 +1,11 @@
+% biblatex-ieee (style=ieee) with biber; hyperref
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage[style=ieee]{biblatex}
+\usepackage{hyperref}
+\addbibresource{refs.bib}
+\begin{document}
+IEEE style \cite{knuth1984,lamport1994}, \cite{kew2005}, and a URL entry \cite{unicode16}.
+\printbibliography
+\end{document}

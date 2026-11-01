@@ -1,7 +1,0 @@
-Inline math: ab , α + β, and
-
-√
-
-x inside a sentence of text.
-
-

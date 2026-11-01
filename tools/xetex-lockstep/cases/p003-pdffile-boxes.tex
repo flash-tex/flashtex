@@ -1,0 +1,27 @@
+% p003-pdffile-boxes: \XeTeXpdffile: pages (clamped, negative), crop/media/bleed/trim/art boxes, inherited boxes, Rotate, \XeTeXpdfpagecount
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+\input prelude
+\def\space{ }
+\message{[\the\XeTeXpdfpagecount p-pages.pdf ][\the\XeTeXpdfpagecount nosuchfile.pdf ]}
+\setbox0=\vbox{
+\hbox{\XeTeXpdffile p-pages.pdf }
+\hbox{\XeTeXpdffile p-pages.pdf page 1 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 crop }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 bleed }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 trim }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 art }
+\hbox{\XeTeXpdffile p-pages.pdf page 3 }
+\hbox{\XeTeXpdffile p-pages.pdf page 3 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 4 }
+\hbox{\XeTeXpdffile p-pages.pdf page 4 trim }
+\hbox{\XeTeXpdffile p-pages.pdf page 5 art }
+\hbox{\XeTeXpdffile p-pages.pdf page 9 }
+\hbox{\XeTeXpdffile p-pages.pdf page -1 }
+\hbox{\XeTeXpdffile p-pages.pdf page -2 bleed scaled 500 }
+\hbox{\XeTeXpdffile p-pages.pdf page -9 }
+\hbox{\XeTeXpdffile p-pages.pdf page 0 rotated 45 width 3in }
+}
+\lsshipbox0
+\end

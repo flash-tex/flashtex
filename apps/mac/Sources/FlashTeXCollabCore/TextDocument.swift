@@ -176,6 +176,13 @@ public final class TextDocument {
     var deleteRuns: [UInt64: [DeleteRun]] = [:]
     var log: [LogEntry] = []
     var storedBytes = 0
+    /// Called for every change to the visible text while set, in the order
+    /// the changes happen, each in UTF-16 units of the text as it was just
+    /// before it: so replaying them one by one on an `NSTextStorage` (or a
+    /// `UITextView`) that held the old text yields the new one. An editor
+    /// sets it around remote integration and undo, never around its own
+    /// edits (it already has those). Nil costs nothing.
+    public var changeObserver: ((TextChange) -> Void)?
 
     public init(replica: UInt64) {
         self.replica = replica
@@ -289,6 +296,25 @@ public final class TextDocument {
             for c in p.children {
                 if c === child { break }
                 r += c.raw
+            }
+            child = p
+        }
+        return r
+    }
+
+    /// Visible UTF-16 units before `item`.
+    func visibleUTF16Rank(_ item: Item) -> Int {
+        var r = 0
+        let leaf = item.leaf!
+        for it in leaf.items {
+            if it === item { break }
+            r += it.visU16
+        }
+        var child = leaf
+        while let p = child.parent {
+            for c in p.children {
+                if c === child { break }
+                r += c.vu16
             }
             child = p
         }
@@ -443,6 +469,9 @@ public final class TextDocument {
 
     func markDeleted(_ item: Item) {
         guard !item.deleted else { return }
+        if let observer = changeObserver {
+            observer(TextChange(location: visibleUTF16Rank(item), length: item.u16, text: ""))
+        }
         item.leaf!.add(raw: 0, vis: -item.len, u16: -item.u16, u8: -item.bytes.count)
         item.deleted = true
     }
@@ -494,6 +523,11 @@ public final class TextDocument {
             start = end
         }
         storedBytes += bytes.count
+        if let observer = changeObserver, let (it, off) = lookup(id) {
+            let within = UTF8Scan.utf16Count(it.bytes[..<UTF8Scan.byteIndex(it.bytes, scalar: off)])
+            observer(TextChange(location: visibleUTF16Rank(it) + within, length: 0,
+                                text: String(decoding: bytes, as: UTF8.self)))
+        }
     }
 
     // MARK: Local edits

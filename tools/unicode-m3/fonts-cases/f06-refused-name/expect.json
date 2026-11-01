@@ -1,0 +1,8 @@
+{
+ "expect_fonts": [
+  "texgyreheros-regular.otf"
+ ],
+ "forbid_fonts": [
+  "Bad"
+ ]
+}

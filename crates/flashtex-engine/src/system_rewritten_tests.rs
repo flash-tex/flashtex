@@ -64,3 +64,67 @@ fn rewritten_at_is_cheap() {
     assert!(hits > 2000);
     assert!(per < 1e-4, "{per} s a question");
 }
+
+/// Lane BEAMER: `instances_at` puts back, for each file opened before `n`
+/// and again from `n` on, its last instance before `n`; it refuses one
+/// open for output at `n` or whose instance was not kept.
+#[test]
+fn instances_at_gives_the_last_instance_before_n() {
+    let arc = |s: &str| Some(std::sync::Arc::new(s.as_bytes().to_vec()));
+    truncate_opens(0);
+    append_opens_kept(
+        &["a.vrb", "x.aux", "a.vrb", "a.vrb", "y.toc"].map(String::from),
+        &[arc("one"), None, arc("two"), None],
+    );
+    // before any open, after the first, between the second and the third
+    assert_eq!(instances_at(0, &[]), Ok(vec![]));
+    let got = instances_at(1, &[]).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        (got[0].0.as_str(), got[0].1.as_slice()),
+        ("a.vrb", &b"one"[..])
+    );
+    let got = instances_at(3, &[]).unwrap();
+    assert_eq!(got[0].1.as_slice(), b"two");
+    // open for output there: its instance is not done with
+    assert_eq!(
+        instances_at(3, &["a.vrb".to_string()]),
+        Err("a.vrb".to_string())
+    );
+    // after the last open: nothing to put back
+    assert_eq!(instances_at(4, &[]), Ok(vec![]));
+    // an instance not kept
+    truncate_opens(3);
+    forget_open_instances(&["a.vrb".to_string()]);
+    append_opens(&["a.vrb".to_string()]);
+    assert_eq!(instances_at(3, &[]), Err("a.vrb".to_string()));
+    truncate_opens(0);
+}
+
+/// `instances_at` on `rewritten_at_is_cheap`'s opens, each instance kept.
+#[test]
+fn instances_at_is_cheap() {
+    let mut o: Vec<String> = (0..2600).map(|i| format!("chapter{i}.aux")).collect();
+    for k in 0..400 {
+        o.insert(k * 7, "doc-tmp.tex".to_string());
+    }
+    let kept: Vec<_> = o
+        .iter()
+        .map(|_| Some(std::sync::Arc::new(vec![0u8; 16])))
+        .collect();
+    truncate_opens(0);
+    append_opens_kept(&o, &kept);
+    let t = std::time::Instant::now();
+    let mut put = 0;
+    for n in 0..3000 {
+        put += instances_at(n, &[]).unwrap().len();
+    }
+    let per = t.elapsed().as_secs_f64() / 3000.0;
+    eprintln!(
+        "instances_at: {:.3} us a question (3,000 opens), {put} put back",
+        per * 1e6
+    );
+    assert!(put > 2000);
+    assert!(per < 1e-4, "{per} s a question");
+    truncate_opens(0);
+}

@@ -1,0 +1,8 @@
+% [fonts] fixture (M3): a document that loads unicode-math keeps its own
+% math font (Latin Modern Math); fonts.math is not applied.
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\begin{document}
+Text, and math: $\sum_{n=1}^\infty \frac{1}{n^2} = \frac{\pi^2}{6}$.
+\end{document}

@@ -81,8 +81,8 @@ public struct DL3SourceIndex: Sendable {
             case .span(let s): span = s
             case .matrix(let n): m = page.matrix(n)
             case .glyph(let f, let code, let x, let y, let col):
-                guard let font = prepared.fonts[f], Int(code) < 256 else { continue }
-                let g: CGGlyph = font.cgFont == nil ? 1 : font.glyphs[Int(code)]
+                guard let font = prepared.fonts[f], font.glyphIdCount > 0 || Int(code) < 256 else { continue }
+                let g: CGGlyph = font.cgFont == nil ? 1 : font.glyph(Int(code))
                 let key = UInt64(f) << 16 | UInt64(code)
                 let met: (bbox: CGRect, advance: CGFloat, upem: CGFloat)
                 if let hit = metrics[key] { met = hit } else if let t3 = font.type3?[Int(code)] {

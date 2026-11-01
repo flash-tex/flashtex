@@ -46,6 +46,20 @@
 #      the "check C" of the old-engine retirement plan (#1236, R4); C was
 #      taken by then.
 #
+#   F. The makeindex port (crates/makeindex, package flashtex-makeindex) is
+#      under the MakeIndex Distribution Notice, neither MIT nor GPL: no crate
+#      but the GPL engine has it in its `cargo metadata` resolve graph,
+#      other than through the engine (which check A already confines).
+#
+#   G. Every package of the repository's own cargo workspaces (the root one,
+#      the crates it excludes that keep their own Cargo.lock, and
+#      typst-host/) declares its licence: a `license` SPDX expression or a
+#      `license-file`, so `cargo metadata` shows none as None. The licence
+#      boundary above is argued per crate, and an undeclared one is the gap
+#      (old-engine retirement plan R5, stage S8). The oracle crates under
+#      tests/oracles/ (DESIGN.md §10, moved there in S8) are MIT; check A
+#      keeps them, like every other crate, off the engine.
+#
 # The engine crate is created by another lane. Until crates/flashtex-engine
 # exists, check A says so and passes; check B runs regardless, because what it
 # enforces holds today and is what keeps the boundary cheap to defend later.
@@ -101,12 +115,14 @@ if [[ -z "$ENGINE_PKG" ]]; then
 else
   # Any crate that keeps its own Cargo.lock is its own workspace, and its graph
   # must be resolved separately or the check has a blind spot exactly where the
-  # CLI lives. Since lane P0-RETIRE-VENDOR retired
-  # crates/render-pipeline/vendor/ and folded those three lockfiles into the root
-  # one, there are none -- the root workspace globs all 38 crates. The loop stays
-  # so the check keeps covering any that reappear.
+  # CLI lives. Since lane P0-RETIRE-VENDOR retired the old engine's vendored
+  # copies and folded their lockfiles into the root one, there are none -- the
+  # root workspace globs every crate under crates/ and tests/oracles/
+  # (crates/flashtex-xetex is excluded and has its own lockfile, so the loop
+  # below covers it). The loop
+  # stays so the check keeps covering any that reappear.
   WORKSPACES="."
-  for c in crates/*/; do
+  for c in crates/*/ tests/oracles/*/; do
     [[ -f "${c}Cargo.lock" ]] || continue
     WORKSPACES="$WORKSPACES ${c%/}"
   done
@@ -145,7 +161,9 @@ if not nodes:
     print("ERROR\t%s\tcargo metadata returned no resolve graph" % ws)
     raise SystemExit(0)
 
-engine_ids = {i for i, n in name_of.items() if n == engine}
+# The engine and the GPL runtime it shares with the XeTeX-derived engine
+# (crates/flashtex-runtime, moved out of it): reaching either is reaching GPL.
+engine_ids = {i for i, n in name_of.items() if n in (engine, "flashtex-runtime")}
 if not engine_ids:
     print("CLEAN\t%s\t%s is not in this workspace's graph at all" % (ws, engine))
     raise SystemExit(0)
@@ -207,7 +225,7 @@ fi
 # day it appears.
 GPL_PKGS=""
 [[ -n "$ENGINE_PKG" ]] && GPL_PKGS="$ENGINE_PKG"
-for c in crates/*/; do
+for c in crates/*/ tests/oracles/*/; do
   [[ -f "${c}Cargo.toml" ]] || continue
   is_gpl=0
   for lic in "${c}LICENSE" "${c}LICENSE.md" "${c}LICENSE.txt" "${c}COPYING"; do
@@ -386,7 +404,7 @@ fi
 # ---------------------------------------------------------------------------
 C_WORKSPACES=""
 [[ -f Cargo.toml ]] && C_WORKSPACES="."
-for c in crates/*/; do
+for c in crates/*/ tests/oracles/*/; do
   [[ -f "${c}Cargo.lock" ]] || continue
   C_WORKSPACES="$C_WORKSPACES ${c%/}"
 done
@@ -495,7 +513,7 @@ if [[ ! -f typst-host/Cargo.toml ]]; then
   ok "D  typst-host/ does not exist in this checkout"
 else
   gpl_dirs=""
-  for c in crates/*/; do
+  for c in crates/*/ tests/oracles/*/; do
     n="$(pkg_name "${c}Cargo.toml")"
     [[ -n "$n" ]] || continue
     for g in $GPL_PKGS; do
@@ -850,6 +868,106 @@ PY
   done < "$e_out"
   rm -f "$e_out"
 fi
+
+# ---------------------------------------------------------------------------
+# F. The makeindex port: only the engine links it
+# ---------------------------------------------------------------------------
+MKI_DIR="crates/makeindex"
+MKI_PKG="$(pkg_name "$MKI_DIR/Cargo.toml")"
+if [[ -z "$MKI_PKG" ]]; then
+  ok "F  $MKI_DIR does not exist, so nothing can depend on it"
+else
+  f_meta=""
+  if ! f_meta="$(cargo metadata --format-version 1 --locked 2>/dev/null)"; then
+    f_meta="$(cargo metadata --format-version 1 2>/dev/null || true)"
+  fi
+  f_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  printf '%s' "$f_meta" > "$f_file"
+  f_report="$(MKI="$MKI_PKG" ENGINE="${ENGINE_PKG:-flashtex-engine}" python3 - "$f_file" <<'PY'
+import collections, json, os, sys
+
+mki, engine = os.environ["MKI"], os.environ["ENGINE"]
+try:
+    meta = json.load(open(sys.argv[1], encoding="utf-8"))
+except ValueError:
+    print("FAIL\tcargo metadata failed; the dependency graph could not be checked")
+    raise SystemExit(0)
+name_of = {p["id"]: p["name"] for p in meta["packages"]}
+nodes = (meta.get("resolve") or {}).get("nodes") or []
+rev = collections.defaultdict(list)
+for n in nodes:
+    for dep in n.get("dependencies") or [d["pkg"] for d in n.get("deps", [])]:
+        rev[dep].append(n["id"])
+start = {i for i, n in name_of.items() if n == mki}
+seen, queue = set(start), collections.deque(start)
+while queue:
+    cur = queue.popleft()
+    if name_of.get(cur) == engine:
+        continue  # beyond the engine: check A's business
+    for up in rev.get(cur, ()):
+        if up not in seen:
+            seen.add(up)
+            queue.append(up)
+bad = sorted(name_of[i] for i in seen - start if name_of[i] != engine)
+if bad:
+    for b in bad:
+        print("FAIL\t%s depends on %s other than through %s" % (b, mki, engine))
+else:
+    print("OK\tonly %s links %s" % (engine, mki))
+PY
+)"
+  rm -f "$f_file"
+  while IFS="$(printf '\t')" read -r kind a; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      OK)   ok   "F  $a" ;;
+      *)    fail "F  $a" ;;
+    esac
+  done <<< "$f_report"
+fi
+
+# ---------------------------------------------------------------------------
+# G. Every package of our own workspaces declares its licence
+# ---------------------------------------------------------------------------
+G_WORKSPACES=""
+[[ -f Cargo.toml ]] && G_WORKSPACES="."
+for c in crates/*/ tests/oracles/*/; do
+  [[ -f "${c}Cargo.lock" ]] || continue
+  G_WORKSPACES="$G_WORKSPACES ${c%/}"
+done
+[[ -f typst-host/Cargo.toml ]] && G_WORKSPACES="$G_WORKSPACES typst-host"
+if [[ -z "$G_WORKSPACES" ]]; then
+  ok "G  no cargo workspace in this checkout"
+fi
+for ws in $G_WORKSPACES; do
+  # --no-deps: the workspace's own packages only (crates.io ones are D3's).
+  g_meta=""
+  if ! g_meta="$(cd "$ROOT/$ws" && cargo metadata --no-deps --format-version 1 --offline 2>/dev/null)"; then
+    fail "G [$ws]  cargo metadata failed; the packages' licences could not be read"
+    continue
+  fi
+  g_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  printf '%s' "$g_meta" > "$g_file"
+  g_report="$(python3 - "$g_file" <<'PY'
+import json, sys
+
+meta = json.load(open(sys.argv[1], encoding="utf-8"))
+bad = sorted(p["name"] for p in meta["packages"] if not p.get("license") and not p.get("license_file"))
+for b in bad:
+    print("FAIL\t%s declares no licence (add license = \"MIT\", or license-file for other terms)" % b)
+if not bad:
+    print("OK\tall %d packages declare a licence" % len(meta["packages"]))
+PY
+)"
+  rm -f "$g_file"
+  while IFS="$(printf '\t')" read -r kind a; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      OK)   ok   "G [$ws]  $a" ;;
+      *)    fail "G [$ws]  $a" ;;
+    esac
+  done <<< "$g_report"
+done
 
 echo
 if (( FAILURES )); then

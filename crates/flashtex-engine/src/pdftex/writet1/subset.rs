@@ -59,6 +59,9 @@ pub(super) struct Embedded {
     pub bytes: Vec<u8>,
     pub length1: i32,
     pub length2: i32,
+    /// Where the subset tag was written into `bytes` (the font name's
+    /// prefix), for a copy given another tag (`super::cache`).
+    pub tag_at: Option<usize>,
 }
 
 /// `writet1`'s body: embed `font` as `job` asks.
@@ -81,6 +84,7 @@ pub(super) fn embed(font: &[u8], job: Job, host: &mut dyn Host) -> Result<Embedd
         synthetic: false,
         standard_encoding: false,
         fontname_offset: 0,
+        tag_at: None,
         length1: 0,
         length2: 0,
         cs: Charstrings::default(),
@@ -101,6 +105,7 @@ pub(super) fn embed(font: &[u8], job: Job, host: &mut dyn Host) -> Result<Embedd
         bytes: t.out.bytes,
         length1: t.length1,
         length2: t.length2,
+        tag_at: t.tag_at,
     })
 }
 
@@ -183,6 +188,8 @@ struct Type1<'a, 'h> {
     standard_encoding: bool,
     /// Where the font name's subset tag goes (`t1_fontname_offset`).
     fontname_offset: i32,
+    /// Where the subset tag was written, from the start of `out.bytes`.
+    tag_at: Option<usize>,
     length1: i32,
     length2: i32,
     cs: Charstrings,
@@ -620,6 +627,7 @@ impl Type1<'_, '_> {
             if let (true, Some(at)) = (self.fontname_offset != 0, at) {
                 if let Some(slot) = self.out.bytes.get_mut(at..at + 6) {
                     slot.copy_from_slice(&tag);
+                    self.tag_at = Some(at);
                 }
             }
         }
@@ -960,7 +968,7 @@ fn token_pair(stored: &[u8]) -> Option<(&'static [u8], &'static [u8])> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::pdftex::mapfile::{F_SUBSETTED, F_TYPE1};
 
@@ -1034,7 +1042,7 @@ mod tests {
 
     /// The font as a PFA: the private part encrypted after four zero
     /// bytes, in hexadecimal, then the zeros and `cleartomark`.
-    fn pfa() -> Vec<u8> {
+    pub(in super::super) fn pfa() -> Vec<u8> {
         let sealed = cipher::encrypt(Cipher::EEXEC, [0; 4].into_iter().chain(private()));
         let mut font = CLEAR.to_vec();
         for chunk in sealed.chunks(32) {

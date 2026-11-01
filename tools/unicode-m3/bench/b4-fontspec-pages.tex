@@ -1,0 +1,17 @@
+% Unicode bench (M3, INCREMENTAL.md §1's fourth row): fontspec, about eleven
+% pages of text with sections.
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{lipsum}
+\begin{document}
+\section{One}
+The quick brown fox jumps over the lazy dog. EDITPOINT This paragraph is the
+one the latency harness edits.
+\lipsum[1-15]
+\section{Two}
+\lipsum[16-35]
+\section{Three}
+\lipsum[36-60]
+\section{Four}
+\lipsum[61-100]
+\end{document}

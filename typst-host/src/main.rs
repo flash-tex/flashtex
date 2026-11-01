@@ -25,7 +25,7 @@ fn usage() -> ExitCode {
         "usage: flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts] \
          [--font-program-budget BYTES] [--package-cache DIR] [--package-path DIR]... \
          [--package-mirror URL] [--offline] [--seeded on|off] [--verify off|every|idle[:MS]] \
-         [--watchdog-secs S] [--watchdog-cold-secs S] [--rss-ceiling-mb MB] [--evict AGE]"
+         [--watchdog-secs S] [--watchdog-cold-secs S] [--rss-ceiling-mb MB] [--evict AGE] [--draw-ungated]"
     );
     ExitCode::from(2)
 }
@@ -43,6 +43,7 @@ fn main() -> ExitCode {
     };
     let mut seeded = true;
     let mut evict = 3;
+    let mut ungated = false;
     let mut limits = flashtex_typst_host::watchdog::Limits::default();
     let mut verify = Verify::Idle(std::time::Duration::from_millis(1000));
     let mut args = std::env::args().skip(1);
@@ -109,6 +110,9 @@ fn main() -> ExitCode {
                     limits.wall_cold = d;
                 }
             }
+            // Classes without a 2×/3× pixel gate row drawn as complete
+            // (DESIGN.md §15.5): for measuring those rows only.
+            "--draw-ungated" => ungated = true,
             "--evict" => match args.next().and_then(|v| v.parse::<usize>().ok()) {
                 Some(n) => evict = n,
                 None => return usage(),
@@ -135,7 +139,8 @@ fn main() -> ExitCode {
         .with_seeded(seeded)
         .with_verify(verify)
         .with_watchdog(limits)
-        .with_evict(evict);
+        .with_evict(evict)
+        .with_ungated(ungated);
     if let Some(b) = budget {
         host = host.with_program_budget(b);
     }

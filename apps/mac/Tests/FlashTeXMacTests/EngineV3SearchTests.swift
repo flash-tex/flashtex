@@ -29,7 +29,7 @@ final class EngineV3SearchTests: XCTestCase {
     }
 
     func testForwardAndReverseAcrossAnInput() async throws {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built") }
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built") }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-search-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

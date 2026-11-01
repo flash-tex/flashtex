@@ -8,8 +8,7 @@ import FlashTeXProtocol
 /// offered (never applied) when the file is opened again. Real files in temp
 /// directories; the rooted `flashtex-project-files` helper where the entry
 /// document's saves go through it (skipped, never faked, when it is not
-/// built); the real preview controller + compiler for the Fable-found case
-/// (a file not named `main.tex` through the helper).
+/// built).
 @MainActor
 final class DirtySnapshotsTests: XCTestCase {
     static var repoRoot: URL {
@@ -99,7 +98,6 @@ final class DirtySnapshotsTests: XCTestCase {
         try "v1\n".write(to: url, atomically: true, encoding: .utf8)
 
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model.openTex(at: url), .opened)
         XCTAssertEqual(model.activePath, "paper.tex")
@@ -144,7 +142,6 @@ final class DirtySnapshotsTests: XCTestCase {
         // Relaunch (a fresh model, same store): opening the file offers the
         // snapshot; the disk text is what opened.
         let model2 = ShellModel()
-        model2.detachWorker()
         model2.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model2.openTex(at: url), .opened)
         XCTAssertEqual(model2.activeText, "v2 (external)\n")
@@ -176,7 +173,6 @@ final class DirtySnapshotsTests: XCTestCase {
         // Nothing left to offer; a moot snapshot (text equal to disk) is dropped on open.
         model2.dirtySnapshots.write(.init(file: url.path, text: "v1 edited\n", diskSha256: nil, savedAt: Date(), reason: "moot"))
         let model3 = ShellModel()
-        model3.detachWorker()
         model3.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model3.openTex(at: url), .opened)
         XCTAssertEqual(model3.files.offeredSnapshots, [])
@@ -186,7 +182,6 @@ final class DirtySnapshotsTests: XCTestCase {
         // Explicit discard of an offered snapshot.
         model3.dirtySnapshots.write(.init(file: url.path, text: "leftover\n", diskSha256: nil, savedAt: Date(), reason: "old"))
         let model4 = ShellModel()
-        model4.detachWorker()
         model4.files.policy = .executable(helper, arguments: [])
         XCTAssertEqual(model4.openTex(at: url), .opened)
         let leftover = try XCTUnwrap(model4.files.offeredSnapshots.first)
@@ -219,7 +214,6 @@ final class DirtySnapshotsTests: XCTestCase {
         try "Two.\n".write(to: two, atomically: true, encoding: .utf8)
 
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .disabled(reason: "test: direct")
         XCTAssertEqual(model.openTex(at: main), .opened)
         let p = model.project
@@ -261,12 +255,12 @@ final class DirtySnapshotsTests: XCTestCase {
         // A member saved with exactly the kept text consumes its snapshot; a
         // refused member save keeps the buffer durably.
         p.switchDocument(to: "chapter.tex")
-        let saved = await p.saveDocument("chapter.tex")
+        let saved = p.saveDocumentNow("chapter.tex")
         XCTAssertEqual(saved, .saved(path: "chapter.tex", sha256: SourceDigest.sha256Hex("Chapter, edited.\n")))
         XCTAssertNil(model.dirtySnapshots.read(for: chapter))
         try "Chapter, external.\n".write(to: chapter, atomically: true, encoding: .utf8)
         model.updateActiveText("Chapter, edited more.\n")
-        guard case .conflict = await p.saveDocument("chapter.tex") else { return XCTFail("expected a conflict") }
+        guard case .conflict = p.saveDocumentNow("chapter.tex") else { return XCTFail("expected a conflict") }
         XCTAssertEqual(model.dirtySnapshots.read(for: chapter)?.text, "Chapter, edited more.\n")
         XCTAssertEqual(try disk(chapter), "Chapter, external.\n")
 
@@ -274,7 +268,6 @@ final class DirtySnapshotsTests: XCTestCase {
         // on open, each member's when it is opened; restores go to the right
         // document and leave everything else untouched.
         let model2 = ShellModel()
-        model2.detachWorker()
         model2.files.policy = .disabled(reason: "test: direct")
         XCTAssertEqual(model2.openTex(at: main), .opened)
         XCTAssertEqual(model2.files.offeredSnapshots.map(\.file), [main.path])
@@ -315,7 +308,6 @@ final class DirtySnapshotsTests: XCTestCase {
 
     func testAnUnsavedBufferWithoutAFileCannotBeKeptAndSaysSo() {
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .disabled(reason: "test")
         model.updateActiveText("typed into the seeded buffer\n")
         model.updateActiveText("typed into the seeded buffer, more\n")
@@ -329,111 +321,5 @@ private extension DirtySnapshotStore {
     func summaryIsReadable(for url: URL) -> Bool {
         guard let s = read(for: url) else { return false }
         return s.summary.contains(url.lastPathComponent) && s.summary.contains("bytes")
-    }
-}
-
-/// The Fable-found case, updated for the entry-name fix: a file not named
-/// `main.tex` now keeps its real name, so the preview controller is rooted
-/// at the file's own directory (`controllerRoutesFiles` is true) and its
-/// ledger IS the durable home of the text: the reviewed reload imports
-/// through the helper, discarded text lives in undo history (never the
-/// snapshot store), and a detach/reattach of the helper with a dirty buffer
-/// makes the text durable again on the new helper. Skipped unless
-/// `FLASHTEX_PREVIEW_CONTROLLER` and `FLASHTEX_COMPILER` point at built
-/// binaries.
-@MainActor
-final class DirtySnapshotsControllerTests: XCTestCase {
-    static var helper: URL? {
-        ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_CONTROLLER"].map { URL(fileURLWithPath: $0) }
-    }
-
-    /// Waits on a helper process (the real preview controller and compiler); generous because a loaded runner
-    /// delays process start-up and replies by seconds, not because anything is timed.
-    private func waitUntil(_ what: String, timeout: TimeInterval = 60, _ cond: () -> Bool) async throws {
-        let start = Date()
-        while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the real helper"); throw XCTSkip("timeout: \(what)") }
-            try await Task.sleep(nanoseconds: 30_000_000)
-        }
-    }
-
-    func testFileNotNamedMainTexIsLedgerRoutedAndKeepsDirtyTextAcrossReloadDetachAndReattach() async throws {
-        guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
-              ShellModel.locateCompiler() != nil else {
-            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
-        }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("snap-pc-\(UUID().uuidString)").resolvingSymlinksInPath()
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("project"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        setenv("FLASHTEX_DIRTY_SNAPSHOTS", root.appendingPathComponent("snapshots").path, 1)
-        defer { unsetenv("FLASHTEX_DIRTY_SNAPSHOTS") }
-        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", root.appendingPathComponent("ledger").path, 1)
-        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
-        let tex = root.appendingPathComponent("project/paper.tex")
-        let v1 = "\\begin{document}\nA paper.\n\\end{document}\n"
-        try v1.write(to: tex, atomically: true, encoding: .utf8)
-
-        let model = ShellModel()
-        model.autoCompile = true
-        XCTAssertEqual(model.openTex(at: tex), .opened)
-        model.attachController(at: helper)
-        try await waitUntil("initial preview") { model.result?.revision == model.editorRevision && model.controllerState.durable["paper.tex"] != nil && model.inFlightRevision == nil }
-        XCTAssertTrue(model.controllerRoutesFiles, "the entry keeps its real name, so the helper is rooted at the file's directory")
-
-        // Dirty edit (durable in the helper's ledger), then an external
-        // change: the conflict comes from the helper's file_status, and no
-        // dirty snapshot is written because the ledger IS this file's
-        // durable home (the text is recoverable through undo history).
-        let edited = "\\begin{document}\nA paper, edited.\n\\end{document}\n"
-        model.updateActiveText(edited)
-        try await waitUntil("edit durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["paper.tex"]?.values.contains { $0 == edited } == true }
-        let v2 = "\\begin{document}\nChanged outside.\n\\end{document}\n"
-        try v2.write(to: tex, atomically: true, encoding: .utf8)
-        do { let got = await model.refreshDiskStatus(); XCTAssertEqual(got, .modified) }
-        XCTAssertEqual(model.files.conflict?.kind, .modifiedExternally)
-        XCTAssertEqual(model.files.conflict?.viaHelper, true)
-        XCTAssertNil(model.dirtySnapshots.read(for: tex), "the ledger route keeps the dirty text in the ledger, not the snapshot store")
-        XCTAssertEqual(model.activeText, edited)
-
-        // Reviewed reload goes through the helper's ledger import; the
-        // discarded text stays recoverable in memory (and in undo history),
-        // and the helper compiles the reloaded text as a new durable revision.
-        let review = try XCTUnwrap(model.prepareReload())
-        XCTAssertTrue(review.viaController)
-        XCTAssertEqual(review.diskText, v2)
-        do { let got = await model.confirmReload(review); XCTAssertEqual(got, .blockedByUnsavedEdits) }
-        do { let got = await model.confirmReload(review, dirty: .discard); XCTAssertEqual(got, .opened) }
-        XCTAssertEqual(model.activeText, v2)
-        XCTAssertFalse(model.isDirty)
-        XCTAssertEqual(model.recoverableBuffer, .init(url: tex, text: edited))
-        XCTAssertNil(model.dirtySnapshots.read(for: tex), "a ledger-routed reload keeps the prior text in undo history, not the snapshot store")
-        try await waitUntil("preview of the reloaded text") { model.controllerAttached && model.compiledDocuments["paper.tex"]?.sameBytes(as: v2) == true && model.inFlightRevision == nil }
-        XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), v2, "reload never writes")
-
-        // Detach the helper with a dirty buffer, reattach: the text survives in
-        // the editor and becomes durable again on the new helper.
-        let dirty = "\\begin{document}\nChanged outside, then typed.\n\\end{document}\n"
-        model.updateActiveText(dirty)
-        try await waitUntil("typed text durable") { model.inFlightRevision == nil && model.controllerState.textByDurable["paper.tex"]?.values.contains { $0 == dirty } == true }
-        model.detachController()
-        XCTAssertFalse(model.controllerAttached)
-        XCTAssertEqual(model.activeText, dirty)
-        XCTAssertTrue(model.isDirty)
-        model.attachController(at: helper)
-        defer { model.detachController() }
-        try await waitUntil("reattached and durable") {
-            model.controllerState.ready && model.inFlightRevision == nil
-                && model.controllerState.durable["paper.tex"].map { model.controllerState.textByDurable["paper.tex"]?[$0.revision]?.sameBytes(as: dirty) == true } == true
-        }
-        XCTAssertEqual(model.activeText, dirty)
-        XCTAssertTrue(model.isDirty, "durable on the helper is not saved to the file")
-        XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), v2)
-        try await waitUntil("preview of the dirty text") { model.compiledDocuments["paper.tex"]?.sameBytes(as: dirty) == true }
-        // The real file is what a save writes (Fable finding), and that
-        // consumes nothing but the snapshot of exactly the saved text.
-        model.saveTexInteractive()
-        try await waitUntil("save") { !model.isDirty || model.captureNote?.contains("failed") == true }
-        XCTAssertEqual(try String(contentsOf: tex, encoding: .utf8), dirty, model.captureNote ?? "-")
-        XCTAssertNil(model.dirtySnapshots.read(for: tex), "nothing was ever snapshotted on the ledger route; discarded text lives in undo history")
     }
 }
