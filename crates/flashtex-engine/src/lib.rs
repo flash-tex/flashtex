@@ -69,6 +69,8 @@ pub mod iso;
 #[cfg(not(feature = "tex82"))]
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
+pub mod lazyflush;
+#[cfg(not(feature = "tex82"))]
 pub mod lineshift;
 pub mod lookupproof;
 #[cfg(not(feature = "tex82"))]
