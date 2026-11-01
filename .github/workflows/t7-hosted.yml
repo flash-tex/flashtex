@@ -88,12 +88,24 @@ jobs:
       - name: t7 x2-late rows
         run: |
           set +e
-          for i in 1 2; do
+          for i in 1; do
             python3 tools/incr-bench/t7.py --engine m1 --docs infdesc-x2 --sites x2-late --gate hosted --keys 8 \
               --typing-keys 16 --phases letter@site,typing@50ms@site,typing@100ms@site,typing@150ms@site \
               --out /tmp/fth-realdoc/t7-out-$i 2>&1 | tee /tmp/fth-realdoc/t7-$i.log
             cat /tmp/fth-realdoc/t7-out-$i/table.md >> "$GITHUB_STEP_SUMMARY" || true
           done
+          exit 0
+      - name: profile the host while it types (sample)
+        run: |
+          set +e
+          python3 tools/incr-bench/t7.py --engine m1 --docs infdesc-x2 --sites x2-late --gate hosted \
+            --typing-keys 40 --phases typing@100ms@site,typing@150ms@site \
+            --out /tmp/fth-realdoc/t7-prof > /tmp/fth-realdoc/t7-prof.log 2>&1 &
+          until pgrep -f "fth-realdoc/m1/dl3-keys" >/dev/null; do sleep 1; done
+          pid=$(pgrep -f "fth-realdoc/m1/flashtex-host" | head -1)
+          /usr/bin/sample "$pid" 600 1 -file /tmp/fth-realdoc/host.sample >/dev/null 2>&1
+          wait
+          ls -la /tmp/fth-realdoc/host.sample
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
@@ -102,3 +114,5 @@ jobs:
           path: |
             /tmp/fth-realdoc/t7-out-*
             /tmp/fth-realdoc/t7-*.log
+            /tmp/fth-realdoc/t7-prof
+            /tmp/fth-realdoc/host.sample
