@@ -209,7 +209,7 @@ fn watched_as(path: &str) -> Option<std::borrow::Cow<'_, str>> {
                 crate::os::cwd()
                     .ok()
                     .and_then(|c| c.to_str().map(str::to_string))
-                    .filter(|c| c.starts_with('/'))
+                    .filter(|c| names_here(c))
             });
             let cwd = cwd.as_deref()?.trim_end_matches('/');
             Some(match rest {
@@ -224,6 +224,20 @@ fn watched_as(path: &str) -> Option<std::borrow::Cow<'_, str>> {
         return None;
     }
     Some(p)
+}
+
+/// Whether `dir` (absolute) names the process's working directory now, in
+/// which the system resolves a relative path: the watches are on the name
+/// (`os::cwd` is taken once per compile, `os::cwd_scope`), so a name that
+/// went elsewhere -- the directory renamed under the process -- watches
+/// nothing relative. (A rename after this is an event of the directory's
+/// own on its watch, and this is asked again at the next check.)
+fn names_here(dir: &str) -> bool {
+    dir.starts_with('/')
+        && match (std::fs::metadata("."), std::fs::metadata(dir)) {
+            (Ok(a), Ok(b)) => a.is_dir() && file_id(&a) == file_id(&b),
+            _ => false,
+        }
 }
 
 /// `path`'s signature: inside a [`check`], the kept one where the events
@@ -1005,8 +1019,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// Lane FIND-PHASE: a document's own files, relative to the working
-    /// directory, deep under directories other programs write in. Entries
+    /// Lane FIND-PHASE: a document's own files, deep under directories
+    /// other programs write in. Entries
     /// made and removed further up leave a path served (no `stat`); every
     /// change that can change what it names is seen at the next check: the
     /// file rewritten in place with its time put back, another file renamed
@@ -1028,7 +1042,7 @@ mod tests {
         std::fs::write(doc.join("real2/h.tex"), b"other").unwrap();
         std::os::unix::fs::symlink(doc.join("real"), doc.join("ln")).unwrap();
         let (pf, ph) = (s(&f), s(&doc.join("ln/h.tex")));
-        let (rel, missing) = ("./a/b/f.tex", s(&doc.join("a/b/new.tex")));
+        let missing = s(&doc.join("a/b/new.tex"));
         std::env::set_var("FLASHTEX_RACY_MS", "0");
         enable();
         assert!(enabled());
@@ -1038,24 +1052,17 @@ mod tests {
                 .as_ref()
                 .is_some_and(|w| w.kept(path).is_some_and(|e| e.sig.is_some()))
         };
-        // a check in the document's directory (as the hosts' compiles are)
-        let check_in_doc = || {
-            let c = check();
-            CWD.with(|w| *w.borrow_mut() = Some(Some(s(&doc))));
-            c
-        };
         let all = || {
             (
                 sig(&pf).map(|s| s.len),
-                sig(rel).map(|s| s.len),
                 sig(&ph).map(|s| s.len),
                 sig(&missing).map(|s| s.len),
             )
         };
         let start = std::time::Instant::now();
         loop {
-            let _c = check_in_doc();
-            assert_eq!(all(), (Some(3), Some(3), Some(2), None));
+            let _c = check();
+            assert_eq!(all(), (Some(3), Some(2), None));
             if [&pf, &ph, &missing].iter().all(|p| vouched(p)) {
                 break;
             }
@@ -1065,8 +1072,6 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        // the relative path is the absolute one's entry
-        assert!(vouched(&pf));
         // Entries made and removed above the file's directory: still served.
         for k in 0..3 {
             for dir in [&d, &doc, &doc.join("a")] {
@@ -1074,9 +1079,9 @@ mod tests {
                 std::fs::write(&junk, b"j").unwrap();
                 std::fs::remove_file(&junk).unwrap();
             }
-            let _c = check_in_doc();
+            let _c = check();
             assert!(vouched(&pf), "an entry made further up unvouched it");
-            assert_eq!(all(), (Some(3), Some(3), Some(2), None));
+            assert_eq!(all(), (Some(3), Some(2), None));
         }
         // in place, the same length, the time put back
         {
@@ -1088,40 +1093,87 @@ mod tests {
         }
         let old = StatSig::of_within(&pf, 0).unwrap();
         {
-            let _c = check_in_doc();
+            let _c = check();
             assert!(!vouched(&pf));
             assert!(sig(&pf).is_some_and(|s| s.same_fields(&old)));
-            assert!(sig(rel).is_some_and(|s| s.same_fields(&old)));
         }
         // another file renamed over it
         std::fs::write(doc.join("a/b/tmp"), b"three!").unwrap();
         std::fs::rename(doc.join("a/b/tmp"), &f).unwrap();
         {
-            let _c = check_in_doc();
-            assert_eq!(all(), (Some(6), Some(6), Some(2), None));
+            let _c = check();
+            assert_eq!(all(), (Some(6), Some(2), None));
         }
         // a directory on the way replaced
         std::fs::rename(doc.join("a"), doc.join("a-old")).unwrap();
         std::fs::create_dir_all(doc.join("a/b")).unwrap();
         std::fs::write(&f, b"four").unwrap();
         {
-            let _c = check_in_doc();
-            assert_eq!(all(), (Some(4), Some(4), Some(2), None));
+            let _c = check();
+            assert_eq!(all(), (Some(4), Some(2), None));
         }
         // a symbolic link on the way pointed elsewhere
         std::fs::remove_file(doc.join("ln")).unwrap();
         std::os::unix::fs::symlink(doc.join("real2"), doc.join("ln")).unwrap();
         {
-            let _c = check_in_doc();
-            assert_eq!(all(), (Some(4), Some(4), Some(5), None));
+            let _c = check();
+            assert_eq!(all(), (Some(4), Some(5), None));
         }
         // a missing file made
         std::fs::write(&missing, b"new!!!!").unwrap();
         {
-            let _c = check_in_doc();
-            assert_eq!(all(), (Some(4), Some(4), Some(5), Some(7)));
+            let _c = check();
+            assert_eq!(all(), (Some(4), Some(5), Some(7)));
             assert!(readable(&missing));
         }
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A relative path is watched as the working directory's entry, while
+    /// the check's name for the directory is the process's (`names_here`).
+    #[test]
+    fn relative_paths_are_watched_in_the_working_directory() {
+        let here = std::env::current_dir().unwrap();
+        let here = here.to_str().unwrap().to_string();
+        assert!(names_here(&here));
+        assert!(!names_here(std::env::temp_dir().to_str().unwrap()));
+        assert!(!names_here("relative"));
+        enable();
+        {
+            let _c = check();
+            assert_eq!(
+                watched_as("./src/fswatch.rs").as_deref(),
+                Some(format!("{here}/src/fswatch.rs").as_str())
+            );
+            assert_eq!(
+                watched_as("././src").as_deref(),
+                Some(format!("{here}/src").as_str())
+            );
+            assert_eq!(watched_as(".").as_deref(), Some(here.as_str()));
+            assert_eq!(watched_as("src/../src"), None);
+            assert_eq!(watched_as("/a/./b"), None);
+        }
+        // (the crate's own source, which nothing writes while the tests run)
+        let abs = format!("{here}/src/fswatch.rs");
+        let start = std::time::Instant::now();
+        loop {
+            let _c = check();
+            let s = sig("./src/fswatch.rs");
+            assert!(s.is_some());
+            let served = W
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|w| w.kept(&abs).is_some_and(|e| e.sig.is_some()));
+            if served {
+                assert_eq!(sig(&abs).map(|s| s.len), s.map(|s| s.len));
+                break;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "a relative path served from the watches"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }
