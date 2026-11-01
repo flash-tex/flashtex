@@ -444,6 +444,11 @@ fn put_varint(out: &mut Vec<u8>, mut v: u64) {
 
 #[inline]
 fn get_varint(b: &[u8], p: &mut usize) -> u64 {
+    let x = b[*p];
+    if x < 0x80 {
+        *p += 1;
+        return x as u64;
+    }
     let mut v = 0u64;
     let mut s = 0;
     loop {
@@ -482,6 +487,21 @@ fn put_mask(out: &mut Vec<u8>, mask: &[u64; MASK_WORDS]) {
         out.push(s);
         out.push(l);
     }
+}
+
+/// The bytes of the coded mask at `b[p]` (`put_mask`).
+#[inline]
+fn mask_len(b: &[u8], p: usize) -> usize {
+    match b[p] {
+        RAW_MASK => 1 + 8 * MASK_WORDS,
+        r => 1 + 2 * r as usize,
+    }
+}
+
+#[inline]
+fn get_zigzag(b: &[u8], p: &mut usize) -> i64 {
+    let z = get_varint(b, p);
+    (z >> 1) as i64 ^ -((z & 1) as i64)
 }
 
 #[inline]
@@ -547,12 +567,44 @@ impl Deltas {
         self.iter_block(0)
     }
 
+    /// The deltas' chunks, in order (their masks skipped, not decoded).
+    fn chunks(&self) -> impl Iterator<Item = u32> + '_ {
+        let mut it = self.iter_block(0);
+        it.skip_masks = true;
+        it.map(|d| d.c)
+    }
+
+    /// `f` on each delta whose chunk `want` takes, in order; the others'
+    /// masks are skipped, not decoded (the walks that look for a few chunks
+    /// in every log: `rewound_until`, the prepared restore).
+    #[inline]
+    fn for_each_where(&self, want: impl Fn(u32) -> bool, mut f: impl FnMut(Delta)) {
+        let b = &self.hdr;
+        let (mut c, mut at, mut p) = (0u32, 0u32, 0usize);
+        for k in 0..self.n {
+            if k.is_multiple_of(DELTA_BLOCK) {
+                let e = self.idx[k / DELTA_BLOCK];
+                (c, at, p) = (e.0, e.2, e.1 as usize);
+            } else {
+                c += get_varint(b, &mut p) as u32;
+                at = (at as i64 + get_zigzag(b, &mut p)) as u32;
+            }
+            if want(c) {
+                let mask = get_mask(b, &mut p);
+                f(Delta { c, at, mask });
+            } else {
+                p += mask_len(b, p);
+            }
+        }
+    }
+
     /// From the first delta of block `b`.
     fn iter_block(&self, b: usize) -> DeltaIter<'_> {
         DeltaIter {
             d: self,
             k: b * DELTA_BLOCK,
             p: self.idx.get(b).map_or(0, |e| e.1 as usize),
+            skip_masks: false,
             prev: Delta {
                 c: 0,
                 at: 0,
@@ -581,6 +633,8 @@ struct DeltaIter<'a> {
     d: &'a Deltas,
     k: usize,
     p: usize,
+    /// Leave the masks empty, skipping their bytes (`Deltas::chunks`).
+    skip_masks: bool,
     prev: Delta,
 }
 
@@ -599,11 +653,15 @@ impl Iterator for DeltaIter<'_> {
             (e.0, e.2)
         } else {
             let c = self.prev.c + get_varint(b, &mut self.p) as u32;
-            let z = get_varint(b, &mut self.p);
-            let gap = (z >> 1) as i64 ^ -((z & 1) as i64);
+            let gap = get_zigzag(b, &mut self.p);
             (c, (self.prev.at as i64 + gap) as u32)
         };
-        let mask = get_mask(b, &mut self.p);
+        let mask = if self.skip_masks {
+            self.p += mask_len(b, self.p);
+            [0; MASK_WORDS]
+        } else {
+            get_mask(b, &mut self.p)
+        };
         self.prev = Delta { c, at, mask };
         self.k += 1;
         Some(self.prev)
@@ -676,10 +734,7 @@ struct Log {
 impl Log {
     /// The chunks the log holds.
     fn chunk_ids(&self) -> impl Iterator<Item = u32> + '_ {
-        self.entries
-            .iter()
-            .map(|e| e.0)
-            .chain(self.deltas.iter().map(|d| d.c))
+        self.entries.iter().map(|e| e.0).chain(self.deltas.chunks())
     }
 
     /// Heap bytes of the sealed part.
@@ -812,8 +867,9 @@ fn rewound_until(
                 };
             }
         }
-        for d in log.deltas.iter() {
-            if bit(&want, d.c as usize) {
+        log.deltas.for_each_where(
+            |c| bit(&want, c as usize),
+            |d| {
                 let i = slot[d.c as usize] as usize;
                 // SAFETY: a chunk of `buf`.
                 unsafe {
@@ -823,8 +879,8 @@ fn rewound_until(
                         &mut done[i],
                     )
                 };
-            }
-        }
+            },
+        );
     }
     Some(buf)
 }
@@ -4289,6 +4345,16 @@ mod tests {
             assert_eq!((a.c, a.at, a.mask), (b.c, b.at, b.mask));
         }
         assert!(d.heap_bytes() < v.len() * std::mem::size_of::<Delta>());
+        let cs: Vec<u32> = d.chunks().collect();
+        assert_eq!(cs, v.iter().map(|x| x.c).collect::<Vec<_>>());
+        let mut some = vec![];
+        d.for_each_where(|c| c % 3 == 0, |x| some.push((x.c, x.at, x.mask)));
+        let want: Vec<_> = v
+            .iter()
+            .filter(|x| x.c % 3 == 0)
+            .map(|x| (x.c, x.at, x.mask))
+            .collect();
+        assert_eq!(some, want);
         for (k, x) in v.iter().enumerate() {
             let f = d.find(x.c).expect("found");
             assert_eq!((f.c, f.at, f.mask), (x.c, x.at, x.mask));
