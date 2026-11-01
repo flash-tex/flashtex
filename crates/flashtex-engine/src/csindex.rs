@@ -96,15 +96,14 @@ impl Host {
 fn fingerprint(name: &[i32]) -> u64 {
     const K: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut h = (name.len() as u64).wrapping_mul(K);
-    let mut words = name.chunks_exact(8);
-    for w in &mut words {
+    let (words, rest) = name.as_chunks::<8>();
+    for w in words {
         let mut x = 0u64;
         for (i, &c) in w.iter().enumerate() {
             x |= (c as u8 as u64) << (8 * i);
         }
         h = (h.rotate_left(23) ^ x).wrapping_mul(K);
     }
-    let rest = words.remainder();
     if !rest.is_empty() {
         let mut x = 0u64;
         for (i, &c) in rest.iter().enumerate() {
