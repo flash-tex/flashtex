@@ -11,6 +11,8 @@
 #   L6AB_REPS      measured compiles per cell (default 3)
 #   L6AB_PERF      1: also a perf record of the first ref per document
 #   L6AB_MACRO     documents for one FLASHTEX_MACRO_PROFILE run per engine and variant
+#   L6AB_HOST_DOCS documents also opened through the socket host as the app opens them (coldopen.py),
+#                  L6AB_HOST_REPS times per cell (default L6AB_REPS)
 #   L6AB_CACHE     where mkbook.py's archives are kept (default ~/.cache/flashtex-ci/l6ab)
 #   L6AB_TESTS     flashtex-engine test targets (names only), run in the last ref's worktree in the
 #                  release profile before any compile (`cargo test --release -p flashtex-engine
@@ -58,7 +60,7 @@ done
 python3 "$ROOT/tools/incr-bench/mkdocs.py" >/dev/null
 DOCS=${L6AB_DOCS:-plain-100,full-100,beamer-30,fx:beamer-madrid,fx:framed-tikz-theorems}
 for b in infdesc infdesc-x2; do
-  case ",$DOCS,${L6AB_MACRO:-}," in *",$b,"*) python3 "$ROOT/tools/incr-bench/mkbook.py" "$b" | tail -1 ;; esac
+  case ",$DOCS,${L6AB_MACRO:-},${L6AB_HOST_DOCS:-}," in *",$b,"*) python3 "$ROOT/tools/incr-bench/mkbook.py" "$b" | tail -1 ;; esac
 done
 
 args=(--engines "$(IFS=,; echo "${names[*]}")" --docs "$DOCS" --reps "${L6AB_REPS:-3}" --out "$WORK/r")
@@ -66,6 +68,7 @@ IFS=';' read -r -a vs <<< "${L6AB_VARIANTS:-}"
 for v in "${vs[@]}"; do [ -n "$v" ] && args+=(--variant "$v"); done
 [ "${L6AB_PERF:-0}" = 1 ] && args+=(--perf-record)
 [ -n "${L6AB_MACRO:-}" ] && args+=(--macro-profile "$L6AB_MACRO")
+[ -n "${L6AB_HOST_DOCS:-}" ] && args+=(--host-docs "$L6AB_HOST_DOCS" --host-reps "${L6AB_HOST_REPS:-0}")
 for n in "${names[@]}"; do echo "$n: $(cat "$INCR_BENCH_DIR/$n/HEAD")"; done | tee "$WORK/r/engines.txt"
 status=0
 nice -n 5 python3 "$ROOT/tools/incr-bench/l6ab.py" "${args[@]}" || status=$?

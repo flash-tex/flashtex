@@ -66,7 +66,7 @@ jobs:
           f=tools/incr-bench/l6ab.request
           [ -f "$f" ] || { echo "::error::a push to l6-ab/** needs $f"; exit 1; }
           # only these names, so the file cannot set anything else
-          grep -E '^(REFS|L6AB_DOCS|L6AB_VARIANTS|L6AB_REPS|L6AB_PERF|L6AB_MACRO|L6AB_TESTS)=' "$f" \
+          grep -E '^(REFS|L6AB_DOCS|L6AB_VARIANTS|L6AB_REPS|L6AB_PERF|L6AB_MACRO|L6AB_TESTS|L6AB_HOST_DOCS|L6AB_HOST_REPS)=' "$f" \
             | sed -E "s/^([A-Z0-9_]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
           cat "$f"
       - name: perf, this runner's build directories

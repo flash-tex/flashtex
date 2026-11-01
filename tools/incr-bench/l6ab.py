@@ -14,6 +14,8 @@ usage: l6ab.py --engines A,B [--docs D,...] [--variant NAME=ENV ...] [--reps N] 
               {out}, {doc}, {eng} and {variant} in a value are filled in per run
               (default: one variant, base, with nothing set)
   --reps      measured compiles per (engine, variant, document), interleaved (default 3)
+  --host-docs documents also opened as the app opens them, through the socket host (coldopen.py:
+              every pass of a first open, the engine thread's instructions); --host-reps each
 
 Each document is settled first (engine A, the first variant, three passes, so its .aux and
 the other auxiliary files hold), and every measured run is one compile of a fresh copy of
@@ -54,6 +56,8 @@ ap.add_argument('--reps', type=int, default=3)
 ap.add_argument('--out', required=True)
 ap.add_argument('--perf-record', action='store_true')
 ap.add_argument('--macro-profile', default='')
+ap.add_argument('--host-docs', default='', help='documents also opened through the socket host (coldopen.py)')
+ap.add_argument('--host-reps', type=int, default=0, help='host opens per cell (default: --reps)')
 a = ap.parse_args()
 
 engines = a.engines.split(',')
@@ -215,6 +219,42 @@ for doc in [x for x in a.macro_profile.split(',') if x]:
                          pre=('nice', '-n', '0'))
 
 
+# The app's path: a document's first open through the socket host (coldopen.py: a fresh copy, a
+# fresh S0 cache, every pass of the open), the engine thread's instructions summed over its passes.
+host_docs = [x for x in a.host_docs.split(',') if x]
+host_rows = []
+if host_docs:
+    hout = open(os.path.join(a.out, 'host.jsonl'), 'w')
+    for rep in range(a.host_reps or a.reps):
+        for doc in host_docs:
+            src, main = source(doc)
+            for eng in engines:
+                for vname, venv in variants:
+                    one = f'{WORK}/host-one.jsonl'
+                    if os.path.exists(one):
+                        os.unlink(one)
+                    p = subprocess.run(['python3', f'{S}/coldopen.py', f'{IB}/{eng}', src, main, one,
+                                        '--external-tools', 'auto', '--tag', f'{doc} {eng} {vname}',
+                                        '--timeout', str(LIMIT)],
+                                       env=dict(os.environ, **expand(venv, doc, eng, vname)),
+                                       capture_output=True, text=True)
+                    lines = [x for x in open(one).read().splitlines() if x.startswith('{')] \
+                        if os.path.exists(one) else []
+                    r = json.loads(lines[0]) if p.returncode == 0 and lines else {}
+                    row = dict(doc=doc, engine=eng, variant=vname, rep=rep, status=p.returncode,
+                               instr_g=r.get('instr_g_all'), done_ms=r.get('done_ms'),
+                               first_page_ms=r.get('first_page_ms'), passes=r.get('passes_all'),
+                               pages=r.get('pages'), peak_rss=r.get('peak_rss'), load1=r.get('load1'))
+                    if p.returncode != 0:
+                        row['error'] = (p.stderr or p.stdout)[-400:]
+                    host_rows.append(row)
+                    hout.write(json.dumps(row) + '\n')
+                    hout.flush()
+                    print(f"host {doc} {eng} {vname} rep {rep}: {row['instr_g']} G instr, done {row['done_ms']} ms, "
+                          f"passes {row['passes']}, status {p.returncode}", flush=True)
+    hout.close()
+
+
 def med(xs):
     xs = [x for x in xs if x is not None]
     return statistics.median(xs) if xs else None
@@ -249,6 +289,23 @@ with open(os.path.join(a.out, 'summary.md'), 'w') as s:
     bad = [doc for doc in docs if len({r['pdf'] for r in rows if r['doc'] == doc}) != 1]
     s.write('\nPDF identity: ' + ('every engine and variant gave the same bytes on every document.\n' if not bad
                                   else f"**differs** on {', '.join(bad)}.\n"))
+    if host_rows:
+        s.write('\nFirst opens through the socket host (coldopen.py), the engine thread\'s instructions over '
+                'every pass, medians; Δ against the first engine and first variant.\n\n'
+                '| document | engine | variant | instructions | Δ | DONE | passes | failed |\n'
+                '|---|---|---|---:|---:|---:|---:|---:|\n')
+        for doc in host_docs:
+            mine = [r for r in host_rows if r['doc'] == doc]
+            b = med([r['instr_g'] for r in mine if r['engine'] == engines[0] and r['variant'] == variants[0][0]])
+            for eng in engines:
+                for vname, _ in variants:
+                    rs = [r for r in mine if r['engine'] == eng and r['variant'] == vname]
+                    i, d = med([r['instr_g'] for r in rs]), med([r['done_ms'] for r in rs])
+                    dl = f'{100 * (i / b - 1):+.2f} %' if i and b else '-'
+                    s.write(f"| {doc} | {eng} | {vname} | {fmt(i, 1, 'G')} | {dl} | "
+                            f"{fmt(d, 1000, 's') if d else '-'} | {med([r['passes'] for r in rs])} | "
+                            f"{sum(r['status'] != 0 for r in rs)} |\n")
 print(open(os.path.join(a.out, 'summary.md')).read())
 shutil.rmtree(WORK, ignore_errors=True)
-sys.exit(1 if any(len({r['pdf'] for r in rows if r['doc'] == doc}) != 1 for doc in docs) else 0)
+sys.exit(1 if any(len({r['pdf'] for r in rows if r['doc'] == doc}) != 1 for doc in docs)
+         or any(r['status'] != 0 for r in host_rows) else 0)
