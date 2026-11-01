@@ -178,3 +178,24 @@ fn ordinary_math_and_lookalike_control_words_are_unaffected() {
     accepted(r"\inputencoding{utf8}"); // starts with "input", is not \input
     accepted(r"\foreach \x in {1,...,5} { \draw (\x,0) circle (1pt); }");
 }
+
+#[test]
+fn control_sequence_names_built_or_rescanned_at_run_time_are_rejected() {
+    // Each builds a denied control sequence without spelling it, as
+    // `\csname` would; pdflatex runs the first, third and fourth forms
+    // (checked against TeX Live 2026 with `\write16` for `\write18`).
+    rejected(r"\UseName{immediate}\UseName{write}18{touch /tmp/pwned}");
+    rejected(r"\ExpandArgs{c}\relax{input}{/etc/passwd}");
+    rejected(r"\expandafter\scantokens\expandafter{\string\inpu t{/etc/passwd}}");
+    // expl3 syntax makes `_` and `:` letters: `\sys_shell_now:n` and
+    // `\file_input:n` are then single control words the scan cannot see.
+    rejected(r"\ExplSyntaxOn \sys_shell_now:n{touch /tmp/pwned} \ExplSyntaxOff");
+    // etoolbox's name builders (loaded by biblatex and many classes).
+    rejected(r"\csuse{input}{/etc/passwd}");
+    rejected(r"\cslet{x}\relax");
+    rejected(r"\csdef{x}{y}");
+    // eTeX's line read sits with `\read`.
+    rejected(r"\readline0 to\x");
+    // Lookalikes stay accepted.
+    accepted(r"\readlines \scantoken \Usename \csuses");
+}

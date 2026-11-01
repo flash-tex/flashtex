@@ -48,8 +48,13 @@ const MAX_SAFE_INTEGER: u64 = (1u64 << 53) - 1;
 /// escape (`write`/`immediate`), file I/O (`input`/`include`/`openin`/
 /// `openout`/`closein`/`closeout`/`read`), anything that changes how
 /// subsequent characters or names are read or expand (`catcode`, the
-/// `\def`-family, `\let`, `\csname`), the `@`-namespace unlock that reaches
-/// internal kernel commands (`\makeatletter`/`\makeatother`), and the
+/// `\def`-family, `\let`, `\csname`), every other way to reach a control
+/// sequence by a name built at run time, which would bypass this list as
+/// `\csname` would (LaTeX's `\UseName`/`\ExpandArgs`, eTeX's
+/// `\scantokens` rescanning `\string` output, etoolbox's `\cs...` family),
+/// the `@`-namespace unlock that reaches internal kernel commands
+/// (`\makeatletter`/`\makeatother`) and its expl3 counterpart
+/// (`\ExplSyntaxOn`, under which `\sys_shell_now:n` is one word), and the
 /// top-level document declarations (`\documentclass`/`\usepackage`) that a
 /// body-only edit has no business emitting (packages belong in
 /// `required_dependencies` for a human to add).
@@ -63,6 +68,7 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
     "closein",
     "closeout",
     "read",
+    "readline",
     "catcode",
     "def",
     "edef",
@@ -79,8 +85,20 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
     "toksdef",
     "csname",
     "endcsname",
+    "UseName",
+    "ExpandArgs",
+    "scantokens",
+    "csuse",
+    "csdef",
+    "csgdef",
+    "csedef",
+    "csxdef",
+    "cslet",
+    "csletcs",
+    "letcs",
     "makeatletter",
     "makeatother",
+    "ExplSyntaxOn",
     "documentclass",
     "usepackage",
 ];
