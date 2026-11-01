@@ -673,8 +673,7 @@ impl Watch {
                 break;
             }
             any = true;
-            for k in 0..n as usize {
-                let ev = evs[k];
+            for &ev in &evs[..n as usize] {
                 let gone = ev.flags & libc::EV_ERROR != 0
                     || ev.fflags & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE) != 0;
                 self.bump(ev.udata as usize, gone);
