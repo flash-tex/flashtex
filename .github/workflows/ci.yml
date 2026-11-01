@@ -379,12 +379,19 @@ jobs:
           # app's engine-v3 code or tests, the display-list-v3 protocol (both
           # sides), the host itself, or this file. Not on every engine change:
           # engine parity covers the typesetting, and this is a ~20 minute
-          # hosted macOS job. Never in the gate.
+          # hosted macOS job. In the merge queue (Commander, 2026-11-01: it
+          # gates main, as a light pull request no longer runs it; dropping it
+          # is how app lag and freeze bugs reach the owner) when the GROUP
+          # touches apps/, the engine host, the incremental engine (incr*),
+          # the display list on either side, or this file, and `CI required`
+          # needs it there.
           v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice|ProjectMode)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|flashtex-xetex/src/host/|display-list-v3/)|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
+          v3_gate_paths='^(apps/|crates/flashtex-engine/src/(host/|incr|displaylist/)|crates/flashtex-xetex/src/host/|crates/display-list-v3/|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
           v3_app=false
           case "$tier" in
             all) v3_app=true ;;
             pr) [ "$run" = "true" ] && touches "$v3_app_paths" && v3_app=true ;;
+            gate) [ "$run" = "true" ] && touches "$v3_gate_paths" && v3_app=true ;;
           esac
 
           # The parity fixtures on macOS (parity-fixtures and its hosted twin):
@@ -1169,7 +1176,9 @@ jobs:
   # neither, so there every test behind EngineV3TestHost.require() (and the
   # ones that look for a host themselves) SKIPS -- app-parity rows A15, A16,
   # A19, A20, A21 and B3 among them. Here FLASHTEX_REQUIRE_HOST=1 makes a
-  # missing host or TeX a failure, so a green run means they ran.
+  # missing host or TeX a failure, so a green run means they ran. Required
+  # in the merge queue when the group touches the app, the engine host,
+  # incr* or the display list (plan's v3_app; Commander, 2026-11-01).
   #
   # GitHub-hosted macos-26, never a self-hosted Mac: these tests open windows
   # (the team's Macs are laptops, the owner's among them; preview-parity.yml).
@@ -1409,6 +1418,10 @@ jobs:
       - rust-workspace
       - rust-standalone
       - mac-app
+      # the engine-v3 host tests: required in the merge queue when the group
+      # touches the app, the engine host, incr* or the display list (plan's
+      # v3_app), and after the merge
+      - mac-v3-host
       - ipad
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1436,6 +1449,11 @@ jobs:
                   and "success" not in (needs["engine-parity"]["result"],
                                         needs["engine-parity-hosted"]["result"])):
               bad["engine-parity (either runner, every shard)"] = "did not run"
+          # The engine-v3 host tests in the merge queue: when plan says the
+          # group needs them (v3_app), they must have run and passed.
+          if (os.environ["EVENT"] == "merge_group" and plan_out.get("v3_app") == "true"
+                  and needs["mac-v3-host"]["result"] != "success"):
+              bad["mac-v3-host (engine-v3 host tests)"] = needs["mac-v3-host"]["result"]
           # The parity fixtures on macOS: when plan says this run needs them
           # (parity_fixtures), one of their two jobs must have run and passed.
           # Both skipped is a pass only when plan said they were not needed.
