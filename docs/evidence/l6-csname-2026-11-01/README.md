@@ -46,10 +46,14 @@ the index answers what the chain walk answers is in the change file.
 
 ## Soundness (VERIFIED where marked)
 
-- `tests/csindex.rs` runs 400,000 random lookups with names entered and not entered. It includes
+- `tests/csindex.rs` passed (VERIFIED: PC runner, release profile, run 41335465409), and so did
+  `search_string`, `checkpoint`, `intrinsics` and `boxmemo` on this branch.
+  `tests/csindex.rs` runs 400,000 random lookups with names entered and not entered. It includes
   restores, with the index kept from a later state, and names taken out as `readset.rs` takes
   them. It runs against an engine without the index: the same answer at every step, and the same
   tables throughout. It also runs with `FLASHTEX_CSX=verify`, which walks the chain for every answer
   the index gives and panics on a difference.
 - Byte-identical PDFs across main, index on and index off on all six documents above (VERIFIED).
+  The same holds with `FLASHTEX_CSX=verify` on beamer-madrid, which found no difference. Verify
+  mode costs +1.5 % instructions (run 41335465409).
 - The incremental gates (soundness sweeps with BOX-MEMO on, verify and off) are in the PR.
