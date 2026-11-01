@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           f=tools/incr-bench/tpab.request
           [ -f "$f" ] || { echo "::error::no $f"; exit 1; }
-          grep -E '^(REFS|TPAB_DOCS|TPAB_REPS|TPAB_PERF|TPAB_ANNOTATE|TPAB_ANNOTATE_EVENT|TPAB_EVENTS|TPAB_STDERR|TPAB_STDERR_ENV)=' "$f" \
+          grep -E '^(REFS|TPAB_DOCS|TPAB_REPS|TPAB_PERF|TPAB_ANNOTATE|TPAB_ANNOTATE_EVENT|TPAB_EVENTS|TPAB_STDERR|TPAB_STDERR_ENV|TPAB_CLEANUP)=' "$f" \
             | sed -E "s/^([A-Z0-9_]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
           cat "$f"
       - name: perf, pdftex, the build directories
@@ -51,7 +51,16 @@ jobs:
           cat /proc/sys/kernel/perf_event_paranoid || true
           nproc; uptime; free -g | head -2
           echo "CARGO_TARGET_DIR_BASE=$HOME/.cache/flashtex-agents/throughput/target" >> "$GITHUB_ENV"
+      - name: the lane's scratch removed (TPAB_CLEANUP=1)
+        if: env.TPAB_CLEANUP == '1'
+        run: |
+          set -euo pipefail
+          d="$HOME/.cache/flashtex-agents/throughput"
+          du -sh "$d" 2>/dev/null || true
+          rm -rf -- "$d"
+          ls -la "$HOME/.cache/flashtex-agents/" || true
       - name: build each ref, then the compiles
+        if: env.TPAB_CLEANUP != '1'
         run: |
           set -o pipefail
           refs=()
