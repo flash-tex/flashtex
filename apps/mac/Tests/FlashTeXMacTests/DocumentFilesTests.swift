@@ -366,6 +366,23 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.activeText, "Hello edited\n")
     }
 
+    /// A UTF-8 file that starts with a byte-order mark: opened, it is
+    /// unchanged on disk (not "modified externally"), and it saves.
+    func testUTF8FileWithAByteOrderMarkIsUnchangedAndSaves() throws {
+        let dir = try tempDir("bom")
+        let url = dir.appendingPathComponent("paper.tex")
+        try (Data([0xEF, 0xBB, 0xBF]) + Data("Hello\n".utf8)).write(to: url)
+        let model = ShellModel()
+        model.files.policy = .disabled(reason: "test: no helper binary")
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        XCTAssertEqual(model.checkDiskStatus(), .unchanged, "the file as opened")
+        XCTAssertNil(model.files.conflict)
+        model.updateActiveText(model.activeText + "More.\n")
+        XCTAssertTrue(model.saveTex(), model.captureNote ?? "")
+        XCTAssertNil(model.files.conflict)
+        XCTAssertEqual(model.checkDiskStatus(), .unchanged, "after its own save")
+    }
+
     // MARK: lost and late replies (fake helper)
 
     func testHangingHelperKeepsTheDirtyBufferAndIsRestartedNextTime() throws {

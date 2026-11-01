@@ -156,7 +156,7 @@ extension ShellModel {
     /// bound to the open document's root must not be rebound for it).
     private static func diskText(at url: URL) -> String? {
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return String(data: data, encoding: .utf8)
+        return String(exactUTF8: data)
     }
 
     /// Keeps `text` (the unsaved buffer of `url`) durably. `reason` is shown
