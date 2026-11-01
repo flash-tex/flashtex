@@ -306,6 +306,21 @@ pub fn take_restore_steps() -> [u64; 5] {
     RESTORE_STEPS.with(|c| c.replace([0; 5]))
 }
 
+thread_local! {
+    /// Every [`Globals::restore`] since the last [`take_restores`]: its
+    /// [`RESTORE_STEPS`], then its rewind (`arena::take_rewind_stats`: how,
+    /// chunks, threads, the copying's µs). Measurement only (lane
+    /// TYPING-50MS); a few entries a compile, at most [`RESTORES_MAX`].
+    static RESTORES: std::cell::RefCell<Vec<[u64; 9]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+const RESTORES_MAX: usize = 16;
+
+/// [`RESTORES`], cleared.
+pub fn take_restores() -> Vec<[u64; 9]> {
+    RESTORES.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
 /// Newer work may be waiting for the engine (the host's server thread).
 pub fn hint_preempt() {
     PREEMPT_HINT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1333,14 +1348,21 @@ impl Globals {
         {
             let us = |d: std::time::Duration| d.as_micros() as u64;
             let all = t0.elapsed();
-            RESTORE_STEPS.with(|c| {
-                c.set([
-                    us(t_drop),
-                    us(t_tails - t_drop),
-                    us(t_pre - t_tails),
-                    us(t_branch - t_pre),
-                    us(all - t_branch),
-                ])
+            let steps = [
+                us(t_drop),
+                us(t_tails - t_drop),
+                us(t_pre - t_tails),
+                us(t_branch - t_pre),
+                us(all - t_branch),
+            ];
+            RESTORE_STEPS.with(|c| c.set(steps));
+            let [kind, chunks, threads, copy] = crate::arena::take_rewind_stats();
+            RESTORES.with(|c| {
+                let mut v = c.borrow_mut();
+                if v.len() < RESTORES_MAX {
+                    let [a, b, c, d, e] = steps;
+                    v.push([a, b, c, d, e, kind, chunks, threads, copy]);
+                }
             });
         }
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {

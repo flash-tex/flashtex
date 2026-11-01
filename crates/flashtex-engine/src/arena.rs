@@ -1136,6 +1136,7 @@ impl Core {
                 }
             }
         };
+        let t = std::time::Instant::now();
         if workers == 1 {
             job(0, parts.pop().unwrap());
         } else {
@@ -1146,6 +1147,7 @@ impl Core {
                 }
             });
         }
+        set_rewind_stats(1, n, workers, t);
         self.slot = slot;
         redo
     }
@@ -1436,7 +1438,9 @@ impl Core {
                 std::ptr::copy_nonoverlapping(src.0 as *const u64, live.0, CHUNK_WORDS);
             }
         };
-        run_jobs(work.len(), self.workers(), &job);
+        let t = std::time::Instant::now();
+        let threads = run_jobs(work.len(), self.workers(), &job);
+        set_rewind_stats(2, work.len(), threads, t);
         redo
     }
 
@@ -1644,6 +1648,7 @@ impl Core {
                 old_logs.len()
             );
         }
+        set_rewind_stats(3, redo.len(), 0, std::time::Instant::now());
         self.ids.push(old_ids[0]);
         self.logs.push(Log::default());
         self.clear_saved();
@@ -2058,10 +2063,11 @@ const PARALLEL_MIN: usize = if cfg!(miri) {
 /// Run `job(0..n)` on up to `workers` scoped threads. A restore is bound by
 /// memory bandwidth and independent per chunk; below the threshold spawning
 /// costs more than it saves.
-fn run_jobs(n: usize, workers: usize, job: &(dyn Fn(usize) + Sync)) {
+/// Returns the threads it ran on.
+fn run_jobs(n: usize, workers: usize, job: &(dyn Fn(usize) + Sync)) -> usize {
     if workers <= 1 || n < PARALLEL_MIN {
         (0..n).for_each(job);
-        return;
+        return 1;
     }
     let per = n.div_ceil(workers);
     std::thread::scope(|s| {
@@ -2073,6 +2079,25 @@ fn run_jobs(n: usize, workers: usize, job: &(dyn Fn(usize) + Sync)) {
             }
         }
     });
+    workers
+}
+
+thread_local! {
+    /// The last restore's rewind (`take_rewind_stats`, measurement only):
+    /// how (1 rewound from the logs, 2 prepared, 3 a lazy reattach's redo
+    /// taken back), the chunks it wrote, the threads, and the µs of the
+    /// copying itself (the rest of `restore_branch` is the setup around it).
+    static REWIND_STATS: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
+}
+
+/// [`REWIND_STATS`], cleared.
+pub fn take_rewind_stats() -> [u64; 4] {
+    REWIND_STATS.with(|c| c.replace([0; 4]))
+}
+
+fn set_rewind_stats(kind: u64, chunks: usize, threads: usize, t: std::time::Instant) {
+    let us = t.elapsed().as_micros() as u64;
+    REWIND_STATS.with(|c| c.set([kind, chunks as u64, threads as u64, us]));
 }
 
 // ---------------------------------------------------------------------------
