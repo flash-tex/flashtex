@@ -74,7 +74,7 @@ jobs:
           key: realdoc-books-${{ hashFiles('tools/parity/corpus/books.json') }}
       - name: build the hosts (engine and runtime sources of each SHA in ENGINES)
         env:
-          ENGINES: "inst=9b8d93e921ae68195a266d7c2e4f3bd68aa69e99 move=bc9be1d6343828344da8fb415ef038ba7b7e2d6f watch=7e83a9bd36307933f24577a561e095244f15abfa"
+          ENGINES: "inst=9b8d93e921ae68195a266d7c2e4f3bd68aa69e99 move=bc9be1d6343828344da8fb415ef038ba7b7e2d6f"
         run: |
           set -euo pipefail
           sysctl -n machdep.cpu.brand_string hw.ncpu || true
@@ -85,11 +85,11 @@ jobs:
           done
           git checkout HEAD -- crates/flashtex-engine/src crates/flashtex-runtime/src
           python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null
-      - name: t7 x2-late rows, interleaved (inst = #1959 with every restore in DONE; move = the lazy moves; watch = move + the document's files behind the barrier)
+      - name: t7 x2-late rows, interleaved (inst = #1959 with every restore in DONE; move = the lazy moves)
         run: |
           set +e
           for i in 1 2; do
-            for e in inst move watch; do
+            for e in inst move; do
               python3 tools/incr-bench/t7.py --engine $e --docs infdesc-x2 --sites x2-late --gate hosted --keys 8 \
                 --typing-keys 16 --phases letter@site,typing@50ms@site,typing@100ms@site,typing@150ms@site \
                 --out /tmp/fth-realdoc/t7-$e-$i 2>&1 | tee /tmp/fth-realdoc/t7-$e-$i.log
@@ -97,10 +97,10 @@ jobs:
             done
           done
           exit 0
-      - name: t7 typing@50ms with the engine's and the watcher's debug logs (watch)
+      - name: t7 typing@50ms with the engine's and the watcher's debug logs (move)
         run: |
           set +e
-          FLASHTEX_INCR_DEBUG=1 FLASHTEX_FSWATCH_DEBUG=1 python3 tools/incr-bench/t7.py --engine watch --docs infdesc-x2 --sites x2-late --gate hosted \
+          FLASHTEX_INCR_DEBUG=1 FLASHTEX_FSWATCH_DEBUG=1 python3 tools/incr-bench/t7.py --engine move --docs infdesc-x2 --sites x2-late --gate hosted \
             --typing-keys 16 --phases typing@50ms@site --out /tmp/fth-realdoc/t7-dbg 2>&1 | tail -5
           FLASHTEX_FSWATCH_DEBUG=1 python3 tools/incr-bench/t7.py --engine move --docs infdesc-x2 --sites x2-late --gate hosted \
             --typing-keys 16 --phases typing@50ms@site --out /tmp/fth-realdoc/t7-dbg-move 2>&1 | tail -5
