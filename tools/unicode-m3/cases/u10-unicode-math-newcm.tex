@@ -1,0 +1,18 @@
+% Unicode corpus (M3): unicode-math with New Computer Modern Math: matrices,
+% cases, braces, wide accents, big operators.
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\setmainfont{NewCM10-Book.otf}[BoldFont=NewCM10-Bold.otf, ItalicFont=NewCM10-BookItalic.otf]
+\setmathfont{NewCMMath-Book.otf}
+\begin{document}
+\begin{gather}
+  \begin{pmatrix} a & b \\ c & d \end{pmatrix}^{-1}
+  = \frac{1}{ad-bc}\begin{bmatrix} d & -b \\ -c & a \end{bmatrix} \\
+  |x| = \begin{cases} x & x \ge 0 \\ -x & x < 0 \end{cases} \\
+  \overbrace{1+2+\dots+n}^{n\text{ terms}} = \underbrace{\frac{n(n+1)}{2}}_{\text{Gauss}} \\
+  \widehat{xyz}\ \widetilde{abc}\ \overline{AB}\ \vec{v}\ \dot{x}\ \ddot{y} \\
+  \prod_{i=1}^{n} p_i \quad \bigcup_{k} A_k \quad \oint_{\partial\Omega}\omega
+  \quad \lim_{x\to 0}\frac{\sin x}{x} = 1 \quad \operatorname{tr}(AB)=\operatorname{tr}(BA)
+\end{gather}
+\end{document}

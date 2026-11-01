@@ -1,0 +1,237 @@
+{
+ "schema": "flashtex-parity/1",
+ "meta": {
+  "date": "2026-10-03",
+  "started_utc": "2026-10-03T15:40:30Z",
+  "flashtex": "/tmp/bv3/eng/flashtex-initex",
+  "flashtex_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)\nFlashTeX's engine is a translation of pdfTeX 1.40.29's pdftex.web\n(TeX Live 2026) by tools/web2rust, with kpathsea from TeX Live.\nCopyright 2026 Han The Thanh (pdfTeX) et al.\nThere is NO warranty.  Redistribution of this software is\ncovered by the terms of the GNU General Public License,\nversion 2 or (at your option) any later version.",
+  "engine_kind": "tex",
+  "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+  "oracle_pdftex": "/Library/TeX/texbin/pdftex",
+  "oracle_pdftex_version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "pt": "on",
+  "pt1_max_log_mb": 256.0,
+  "pt1_skip": [],
+  "pt1_timeout": 3600,
+  "capture": "tools/parity/capture.py (stand-in until tools/lockstep lands)",
+  "qpdf": "qpdf version 12.4.1",
+  "shell_escape": "default",
+  "argv0": "pdftex",
+  "engine_env": [
+   "FLASHTEX_FORMATS",
+   "FLASHTEX_POOL"
+  ],
+  "flashtex_sha256": "4104d0e4bf49d92f70495b53a857e419be6b2468a2411e7f42b79a56cf0152cf",
+  "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "rasterizer": "gs",
+  "font_dirs": "/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a91ec23192808d68c/apps/mac/Fonts",
+  "tfm_dirs": "/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a91ec23192808d68c/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a91ec23192808d68c/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/euler:/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a91ec23192808d68c/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols:/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a91ec23192808d68c/apps/mac/Fonts/texmf/fonts/tfm/public/cm:/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a91ec23192808d68c/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
+  "host": "MacBook-Pro-644.local",
+  "platform": "Darwin 25.3.0 arm64",
+  "wall_seconds": 1933.6,
+  "jobs": 4,
+  "shard": null,
+  "limit": null,
+  "spread": null,
+  "pt1_sample": {},
+  "pt1_sample_seed": "flashtex-pt1-sample/1",
+  "command": "python3 tools/parity/parity.py --tier beamer --engine /tmp/bv3/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/tmp/bv3/fmt --engine-env FLASHTEX_POOL=/tmp/bv3/eng/pdftex.pool --oracle-pdftex /Library/TeX/texbin/pdftex --texbin /Library/TeX/texbin --pt on --raster none -j 4 --cache /tmp/bv3/cache --pt1-timeout 3600 --out /tmp/bv3/parity-beamer --work /tmp/bv3/pw-bm",
+  "levels": {
+   "pos_tol_bp": 0.5,
+   "raster_delta": 64,
+   "raster_fraction": 0.0002,
+   "dpi": 144
+  }
+ },
+ "tiers": {
+  "beamer": {
+   "summary": {
+    "documents": 25,
+    "measured": 24,
+    "excluded": {
+     "oracle": 1
+    },
+    "pt": {
+     "excluded": {},
+     "P-T1": {
+      "evaluated": 24,
+      "passed": 24,
+      "percent": 100.0,
+      "not_evaluated": null,
+      "skipped": 0,
+      "streamed": 23,
+      "harness_errors": 0
+     },
+     "P-T2": {
+      "evaluated": 24,
+      "passed": 24,
+      "percent": 100.0,
+      "not_evaluated": null,
+      "skipped": 0
+     },
+     "seeded_conversions": {
+      "documents": 0,
+      "files": 0
+     },
+     "accounting": {
+      "evaluated": 24,
+      "differ": 24,
+      "lines_removed": 1273
+     }
+    },
+    "headline_L3_percent": 100.0,
+    "at_least": {
+     "L0": {
+      "documents": 24,
+      "percent": 100.0
+     },
+     "L1": {
+      "documents": 24,
+      "percent": 100.0
+     },
+     "L2": {
+      "documents": 24,
+      "percent": 100.0
+     },
+     "L3": {
+      "documents": 24,
+      "percent": 100.0
+     },
+     "L4": {
+      "documents": null,
+      "percent": null
+     }
+    },
+    "independent_checks": {
+     "L0": {
+      "evaluated": 24,
+      "passed": 24
+     },
+     "L1": {
+      "evaluated": 24,
+      "passed": 24
+     },
+     "L2": {
+      "evaluated": 24,
+      "passed": 24
+     },
+     "L3": {
+      "evaluated": 24,
+      "passed": 24
+     },
+     "L4": {
+      "evaluated": 0,
+      "passed": 0
+     }
+    },
+    "glyph_error_bp": {
+     "n": 113603,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 0.0
+    },
+    "glyph_error_bp_same_page_count": {
+     "n": 113603,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 0.0
+    },
+    "within_0_5bp_percent": 100.0,
+    "glyphs_placed_percent": 100.0,
+    "first_diverging_page": {},
+    "level_histogram": {
+     "L3": 24
+    }
+   },
+   "missing": [],
+   "causes": [
+    {
+     "rank": 1,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 24,
+     "sole": 24,
+     "share": 24.0,
+     "next_level": {
+      "L4": 24
+     },
+     "tiers": {
+      "beamer": 24
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "tl-lecture-print",
+      "tl-metropolis-demo",
+      "tl-lecture-beamer",
+      "tl-conference-ornate-en"
+     ]
+    }
+   ],
+   "constructs": [
+    {
+     "rank": 1,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 24,
+     "sole": 24,
+     "share": 24.0,
+     "next_level": {
+      "L4": 24
+     },
+     "tiers": {
+      "beamer": 24
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "tl-lecture-print",
+      "tl-metropolis-demo",
+      "tl-lecture-beamer",
+      "tl-conference-ornate-en"
+     ]
+    }
+   ]
+  }
+ },
+ "causes": [
+  {
+   "rank": 1,
+   "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+   "documents": 24,
+   "sole": 24,
+   "share": 24.0,
+   "next_level": {
+    "L4": 24
+   },
+   "tiers": {
+    "beamer": 24
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "tl-lecture-print",
+    "tl-metropolis-demo",
+    "tl-lecture-beamer",
+    "tl-conference-ornate-en"
+   ]
+  }
+ ],
+ "constructs": [
+  {
+   "rank": 1,
+   "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+   "documents": 24,
+   "sole": 24,
+   "share": 24.0,
+   "next_level": {
+    "L4": 24
+   },
+   "tiers": {
+    "beamer": 24
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "tl-lecture-print",
+    "tl-metropolis-demo",
+    "tl-lecture-beamer",
+    "tl-conference-ornate-en"
+   ]
+  }
+ ]
+}

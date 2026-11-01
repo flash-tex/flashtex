@@ -122,16 +122,17 @@ overlapped → refused with the actionable note, Insert at caret recovers.
 ## `supported_features` (demo gate, issue #2)
 
 `CaptureFeatures.swift` is the checked-in list sent with every
-`capture_convert`: what the compiler renders at
-origin/agent/claude/compiler-foundation `49e6eb43` (`COMMAND_GLYPHS` — 60
-symbols, re-derived by `CaptureFeaturesTests` from `git show` when the commit
-is present — plus `$…$`, `\[…\]`/`equation`, `\frac`, `\sqrt`, `^`/`_`,
-`\left…\right`, `\section`/`\subsection`, `\textbf`/`\emph`/`\textit`,
-`itemize`/`enumerate`, `\label`/`\ref`), an explicit NOT-supported list
-(amsmath/amssymb environments, `\mathbb`, `\text`, `\bigl`, `\quad`, TikZ,
-tables, macros), the OUTPUT rule (every formula wrapped in `$…$` or `\[…\]`)
-and the RULE that unsupported constructs are reported in `ambiguities`, never
-substituted. 20 entries, each ≤128 bytes (the bridge's limits).
+`capture_convert`. The bridge does not forward it: it gives the provider its
+own list for the document's engine (`crates/bridge/src/features.rs`). The
+Mac's list is still sent for wire compatibility, and it is the bridge's
+new-engine list byte for byte (`NEW_ENGINE_FEATURES`; `CaptureFeaturesTests`
+pins the two together): four POLICY entries, because the engine typesets what
+pdfLaTeX does with the document's own packages — any construct pdfLaTeX
+typesets with the packages the document loads, math in `$…$`, `\[…\]` or
+`equation`, amsmath environments and `\mathbb`-like commands only when the
+document loads their package, and never a new `\usepackage` or macro (such
+a construct is reported as unsupported). The bridge accepts at most 64
+entries of at most 128 bytes each (`crates/bridge/src/context.rs`).
 
 ## Tests
 
@@ -179,5 +180,8 @@ markers) stays exact; its controls are keyboard-walked by
   as an external extension (`docs/extensibility.md`); the reviewed-proposal
   shapes the iPad reference view reads from `examples/review-workflow.json`
   are unaffected.
-- **`crates/diagnostic-explanations` (`flashtex-explain`):** unchanged; it is
-  rule-based (no model, no network) and stays bundled (`make-app.sh --explain`).
+- **`crates/diagnostic-explanations` (`flashtex-explain`):** rule-based (no
+  model, no network). The crate is no longer in this repository and the app
+  does not bundle it (`make-app.sh --explain` left in retirement stage S6);
+  the Problems panel's explanations of TeX's messages come from the app's own
+  table (`EngineV3Explain.swift`).

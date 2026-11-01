@@ -528,8 +528,11 @@ fn config() -> (Mode, Vec<Vec<u8>>) {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.as_bytes().to_vec())
                     .collect(),
+                // (not those BOX-MEMO takes where it is on: the hosts,
+                // `boxmemo::owns`, BOX-MEMO.md §12.2)
                 Err(_) => DEFAULT_NAMES
                     .iter()
+                    .filter(|s| !crate::boxmemo::owns(s.as_bytes()))
                     .map(|s| s.as_bytes().to_vec())
                     .collect(),
             };
@@ -1480,7 +1483,9 @@ impl Globals {
     /// `macro_call`, entered from `big_switch`'s `get_x_token` for a
     /// candidate: replay it (and return true), or let it expand.
     pub fn flashtex_intr_call(&mut self) -> bool {
-        if self.intr_rec_on {
+        // (inside a BOX-MEMO recording neither replay nor record: its
+        // recorder must see every read, docs/design/engine-v2/BOX-MEMO.md §1)
+        if self.intr_rec_on || self.bm_rec_on {
             return false;
         }
         let cs = self.cur_cs;

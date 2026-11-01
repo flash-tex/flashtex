@@ -38,6 +38,29 @@ final class EngineV3PageCaptureTests: XCTestCase {
         XCTAssertEqual(d.pages, []); XCTAssertEqual(d.settle, 5, "a negative settle keeps the default"); XCTAssertFalse(d.exitWhenDone)
     }
 
+    /// Lane BEAMER-V3: tiles (`FLASHTEX_V3_CAPTURE_TILES`) and one edit typed
+    /// once settled (`FLASHTEX_V3_CAPTURE_EDIT='needle|text'`, `\n` a newline).
+    func testCaptureConfigParsesTilesAndAnEdit() throws {
+        let c = try XCTUnwrap(EngineV3PageCapture.Config.parse([
+            "FLASHTEX_V3_CAPTURE_OUT": "/tmp/cap", "FLASHTEX_V3_CAPTURE_TILES": "1",
+            "FLASHTEX_V3_CAPTURE_EDIT": "of frame 20.|\\n    \\item<4-> Four|x",
+        ]))
+        XCTAssertTrue(c.tiles)
+        XCTAssertEqual(c.edit, .init(needle: "of frame 20.", text: "\n    \\item<4-> Four|x"), "split at the first bar; \\n is a newline")
+        let d = try XCTUnwrap(EngineV3PageCapture.Config.parse(["FLASHTEX_V3_CAPTURE_OUT": "/tmp/cap", "FLASHTEX_V3_CAPTURE_EDIT": "|x"]))
+        XCTAssertNil(d.edit, "no needle")
+        XCTAssertFalse(d.tiles)
+        XCTAssertNil(EngineV3PageCapture.Config.parse(["FLASHTEX_V3_CAPTURE_OUT": "/tmp/cap", "FLASHTEX_V3_CAPTURE_EDIT": "no bar"])?.edit)
+    }
+
+    /// The pages an edit changed: a different hash, or a page that appeared or went.
+    func testChangedPagesAfterAnEdit() {
+        let before: [Int: [UInt8]] = [0: [1], 1: [2], 2: [3]]
+        XCTAssertEqual(EngineV3PageCapture.changedPages(before: before, after: [0: [1], 1: [9], 2: [3], 3: [4]], countBefore: 3, countAfter: 4), [2, 4])
+        XCTAssertEqual(EngineV3PageCapture.changedPages(before: before, after: [0: [1], 1: [2]], countBefore: 3, countAfter: 2), [3])
+        XCTAssertEqual(EngineV3PageCapture.changedPages(before: before, after: before, countBefore: 3, countAfter: 3), [])
+    }
+
     func testWindowFrameSpec() {
         XCTAssertEqual(AppDelegate.windowFrame("40, 40,1500,1000"), NSRect(x: 40, y: 40, width: 1500, height: 1000))
         XCTAssertNil(AppDelegate.windowFrame("40,40,1500"))

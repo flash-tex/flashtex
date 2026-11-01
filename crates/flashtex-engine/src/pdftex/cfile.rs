@@ -113,6 +113,11 @@ impl CFile {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+
+    /// The file's contents, as read when it was opened.
+    pub fn bytes(&self) -> &[u8] {
+        &self.data
+    }
 }
 
 /// A file name as the C code sees it (bytes) as a path.

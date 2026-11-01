@@ -190,6 +190,22 @@ fn run(bin: &Path, dir: &Path, args: &[&str], ours: bool) {
             "FLASHTEX_POOL",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
         );
+    } else {
+        // TeX Live's pdftex reads uninitialized memory: with gamma applied to
+        // a PNG of fewer than 8 bits per sample, libpng's png_combine_row
+        // keeps the destination's bits after the last pixel of a row, and
+        // writepng.c's row buffer is a fresh malloc, so the padding bits of
+        // png-gray4.png (37 pixels wide) are whatever the heap held. On glibc
+        // that depends on the heap's history, which depends on the lengths of
+        // the paths kpathsea expands from HOME: png-gamma.pdf differed under
+        // the gate's `mktemp -d` HOME and not under /home/<user> (measured on
+        // NixOS, TeX Live 2026). Every fresh allocation zero-filled
+        // (MALLOC_PERTURB_=255 fills with 0xff ^ 255, and without the tcache
+        // every allocation goes through that fill) gives the zero padding
+        // this engine writes, whatever HOME is. glibc only; macOS's malloc
+        // ignores both variables.
+        c.env("MALLOC_PERTURB_", "255")
+            .env("GLIBC_TUNABLES", "glibc.malloc.tcache_count=0");
     }
     c.status().unwrap();
 }

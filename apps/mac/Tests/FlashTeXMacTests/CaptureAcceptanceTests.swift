@@ -11,14 +11,14 @@ import NearbyClient
 /// (`--enable-grok` is never passed), so nothing here talks to a network
 /// beyond loopback, and no edit is ever applied without the explicit approval
 /// call. Skipped cleanly when the helper environment variables are absent:
-/// `FLASHTEX_BRIDGE` (+ optional `FLASHTEX_EDIT_LEDGER`) for the bridge tests,
-/// `FLASHTEX_PREVIEW_CONTROLLER` + `FLASHTEX_COMPILER` for the helper route.
+/// `FLASHTEX_BRIDGE` (+ optional `FLASHTEX_EDIT_LEDGER`).
 ///
 /// What is new here (the audit in `coordination/mac-capture-acceptance.md`
 /// lists what older tests already cover): the reconnect/resend path through
 /// the nearby listener with the real bridge journal as the ledger, an app
-/// relaunch between receipt and insert, a stale-anchor capture decided by the
-/// real bridge, and a reviewed insert riding the real preview-controller route.
+/// relaunch between receipt and insert, and a stale-anchor capture decided by
+/// the real bridge. (The reviewed insert through the old engine's preview
+/// controller retired with that engine, #1236 S6.)
 @MainActor
 final class CaptureAcceptanceTests: XCTestCase {
     // These cases assert the explicit-pin contract (destination_query answers null
@@ -359,6 +359,12 @@ final class CaptureAcceptanceTests: XCTestCase {
         XCTAssertTrue(model.proposals.isEmpty)
         XCTAssertEqual(model.activeText, edited)
         XCTAssertTrue(model.appliedCaptureIDs.isEmpty)
+        // The listener reports the refusal on its own queue, independently of the
+        // reply the client already holds: wait for the event instead of racing it
+        // (merge group 36938964123 read the log one hop early).
+        try await waitUntil("the listener's captureRefused event") {
+            h.snapshot.contains { if case .captureRefused(Self.pairId?, "acceptance-stale-1"?, "destination_reselection_required", _) = $0 { return true }; return false }
+        }
         XCTAssertTrue(h.snapshot.contains { if case .captureRefused(Self.pairId?, "acceptance-stale-1"?, "destination_reselection_required", _) = $0 { return true }; return false }, "\(h.snapshot)")
 
         // Reselection: a new pin (new id, current revision) is what the companion must capture against.
@@ -398,111 +404,5 @@ final class CaptureAcceptanceTests: XCTestCase {
         if let d = bridge.durable { XCTAssertEqual(d.text, appended) }
         await r.shutdown()
         model.detachBridge()
-    }
-
-    // MARK: (c) explicit insert through the real preview-controller route
-
-    /// A reviewed proposal (the shared sample) is inserted at the pinned anchor
-    /// only by the explicit approval; the editor's adoption is one edit that
-    /// rides the durable helper route: exactly one new durable revision whose
-    /// text carries the insertion once, compiled from that text. A duplicate
-    /// approval never inserts again, and the revert the editor's ⌘Z produces
-    /// reaches the helper as the next ordinary edit while the tombstone stays.
-    /// (That the adoption is a single NSUndoManager step is covered by
-    /// `SourceEditorViewTests.testCaptureInsertionIsOneUndoStepDeliveredToTheModelOnce`.)
-    func testExplicitInsertRidesTheRealPreviewControllerAsOneDurableEdit() async throws {
-        guard let helper = Self.env("FLASHTEX_PREVIEW_CONTROLLER"), ShellModel.locateCompiler() != nil else {
-            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
-        }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("capture-acceptance-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root.appendingPathComponent("project"), withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let tex = root.appendingPathComponent("project/main.tex")
-        let before = "\\begin{document}\nHello durable world.\n\\end{document}\n"
-        try before.write(to: tex, atomically: true, encoding: .utf8)
-        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", root.appendingPathComponent("ledger").path, 1)
-        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
-        let load = loadAverage()
-
-        let model = ShellModel()
-        model.autoCompile = true
-        XCTAssertEqual(model.openTex(at: tex), .opened)
-        model.attachController(at: helper)
-        defer { model.detachController() }
-        XCTAssertTrue(model.controllerAttached)
-        try await waitUntil("initial durable document + preview") {
-            model.controllerState.durable["main.tex"] != nil && model.result?.revision == model.editorRevision && model.inFlightRevision == nil
-        }
-        let durableBefore = try XCTUnwrap(model.controllerState.durable["main.tex"]).revision
-        XCTAssertEqual(model.controllerState.textByDurable["main.tex"]?[durableBefore], before)
-
-        // Pin at the start of the body line ("\begin{document}\n" is 17 UTF-16 units and bytes).
-        model.caretUTF16 = 17
-        model.pinAnchorAtCaret()
-        let anchor = try XCTUnwrap(model.anchor)
-        XCTAssertEqual(anchor.byteOffset, 17)
-        let sample = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Samples/capture-proposal.json")
-        let proposal = try RuntimeV1.decodeCaptureProposal(Data(contentsOf: sample)).payload
-        model.enqueue(proposal)
-        XCTAssertEqual(model.reviewing?.captureId, "sample-capture-1")
-        // Reviewing changes nothing: no staged edit, no durable revision, buffer untouched.
-        try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertNil(model.pendingEdit)
-        XCTAssertEqual(model.activeText, before)
-        XCTAssertEqual(model.controllerState.durable["main.tex"]?.revision, durableBefore, "no durable edit without approval")
-
-        // Explicit Insert.
-        let outcome = model.approveProposal(proposal, latex: proposal.latex)
-        XCTAssertEqual(outcome, .inserted(byteOffset: 17))
-        let pending = try XCTUnwrap(model.pendingEdit)
-        XCTAssertEqual(pending.nsRange, NSRange(location: 17, length: 0))
-        // A capture goes through `captureInsertion`, not `insertionText`: it
-        // normalises the proposal for the caret it lands on. Byte 17 is the
-        // start of the line holding "Hello durable world.", so the caret is
-        // inline text and the sample's `\begin{equation}` is rewritten to
-        // `$…$` -- display there would split the sentence.
-        XCTAssertEqual(pending.text, Insertion.captureInsertion(proposal.latex, into: before, atByte: 17).text)
-        XCTAssertEqual(model.activeText, before, "the editor has not adopted it yet")
-        XCTAssertEqual(model.controllerState.durable["main.tex"]?.revision, durableBefore, "nothing durable until the editor adopts the edit")
-        let after = "\\begin{document}\n" + pending.text + "Hello durable world.\n\\end{document}\n"
-        let sentAt = Date()
-        model.editApplied(pending, newText: after) // what the editor does after registering the undo step
-        XCTAssertNil(model.pendingEdit)
-        XCTAssertEqual(model.activeText, after)
-        try await waitUntil("insertion durable + previewed") {
-            model.controllerState.durable["main.tex"]?.revision == durableBefore + 1 && model.inFlightRevision == nil && model.result?.revision == model.editorRevision
-        }
-        let durable = try XCTUnwrap(model.controllerState.durable["main.tex"])
-        XCTAssertEqual(durable.revision, durableBefore + 1, "exactly one durable edit for the insertion")
-        let durableText = try XCTUnwrap(model.controllerState.textByDurable["main.tex"]?[durable.revision])
-        XCTAssertEqual(durableText, after)
-        XCTAssertEqual(durableText.components(separatedBy: "\\int_0^1 x^2").count - 1, 1, "the LaTeX appears exactly once")
-        XCTAssertEqual(durable.sha256, SourceDigest.sha256Hex(after))
-        XCTAssertEqual(model.compiledDocuments["main.tex"], after, "the preview was compiled from the inserted text")
-        XCTAssertFalse(model.previewIsStale)
-        XCTAssertTrue(model.appliedCaptureIDs.contains("sample-capture-1"))
-        XCTAssertEqual(model.anchor?.byteOffset, 17 + pending.text.utf8.count, "anchor advances past the insertion")
-        print("measured: capture insert → durable+preview via flashtex-preview-controller in \(String(format: "%.0f", Date().timeIntervalSince(sentAt) * 1000)) ms; 1-min load \(load)")
-
-        // Duplicate approval never inserts twice, on any route.
-        model.enqueue(proposal)
-        XCTAssertTrue(model.proposals.isEmpty)
-        XCTAssertEqual(model.approveProposal(proposal, latex: proposal.latex), .duplicate)
-        XCTAssertNil(model.pendingEdit)
-        XCTAssertEqual(model.controllerState.durable["main.tex"]?.revision, durableBefore + 1)
-
-        // The editor's ⌘Z restores `before` as an ordinary edit: it reaches the helper in
-        // order as the next durable revision; the tombstone still refuses a re-insert.
-        model.updateActiveText(before)
-        try await waitUntil("revert durable") {
-            model.controllerState.durable["main.tex"]?.revision == durableBefore + 2 && model.inFlightRevision == nil && model.result?.revision == model.editorRevision
-        }
-        XCTAssertEqual(model.controllerState.textByDurable["main.tex"]?[durableBefore + 2], before)
-        XCTAssertEqual(model.compiledDocuments["main.tex"], before)
-        model.enqueue(proposal)
-        XCTAssertTrue(model.proposals.isEmpty, "tombstone survives the undo")
-        XCTAssertEqual(model.approveProposal(proposal, latex: proposal.latex), .duplicate)
-        XCTAssertEqual(model.activeText, before)
     }
 }

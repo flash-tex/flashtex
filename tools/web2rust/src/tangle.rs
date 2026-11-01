@@ -352,13 +352,18 @@ pub struct Options {
     /// half of what a WEB change file does (see `--const` for Pascal
     /// constants); `mem_bot` for the trip test is the motivating case.
     pub macros: Vec<(String, i64)>,
+    /// The number of the first multi-character pool string: 256 as TANGLE
+    /// numbers them, 65536 as Omega's `otangle` does, which TeX Live tangles
+    /// xetex.web with (XeTeX's first 65536 strings are its characters).
+    pub first_string: i64,
 }
 
 pub struct Tangled {
     pub tokens: Vec<Tok>,
     /// WEB section number of each token in `tokens`.
     pub secs: Vec<u32>,
-    /// Pool strings in the order TANGLE numbers them; index 0 is string 256.
+    /// Pool strings in the order TANGLE numbers them; index 0 is string 256
+    /// (`Options::first_string`).
     pub pool: Vec<Vec<u8>>,
     pub checksum: i64,
     /// WEB commentary (the TeX part) of each section; index 0 unused.
@@ -394,6 +399,7 @@ struct Reader {
     module_of: Vec<Option<String>>,
     names: HashMap<String, Rc<str>>,
     macro_overrides: HashMap<String, i64>,
+    first_string: i64,
     /// Section of each macro's `@d`.
     macro_sec: HashMap<Rc<str>, u32>,
 }
@@ -427,7 +433,7 @@ impl Reader {
         if let Some(v) = self.pool_index.get(&content) {
             return *v;
         }
-        let n = 256 + self.pool.len() as i64;
+        let n = self.first_string + self.pool.len() as i64;
         let l = content.len() as i64;
         self.checksum = self.checksum + self.checksum + l;
         while self.checksum > CHECK_SUM_PRIME {
@@ -1227,6 +1233,7 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
         module_of: vec![None],
         names: HashMap::new(),
         macro_overrides: opts.macros.iter().cloned().collect(),
+        first_string: opts.first_string,
         macro_sec: HashMap::new(),
     };
     // Skip limbo.

@@ -1,0 +1,7 @@
+Local sweeps, verify flags on (FLASHTEX_VERIFY_JUMP/OLDCACHE/PREPARED/RELOC=1), J=2, macOS 26.3.1 M1 Max,
+engine: main eef38988c + #1755 + #1756 + #1757 (combined head 65f0992e5; the final heads differ only by a clippy-only iterator rewrite)
+soundness-a.txt: {"compiles": 8800, "ok": 8800, "bad": 0, "conv": 1480, "acct": 35, "err": 0, "interrupted": 0, "skipped": 0} soundness A exit 0
+soundness-c.txt: {"compiles": 1974, "ok": 1974, "bad": 0, "conv": 92, "acct": 1141, "err": 0, "interrupted": 0, "skipped": 0} soundness C exit 0
+soundness-d.txt: {"compiles": 1675, "ok": 1467, "bad": 0, "conv": 164, "acct": 798, "err": 0, "interrupted": 208, "skipped": 0} soundness D exit 0
+soundness-lookup.txt: {"compiles": 60, "ok": 60, "bad": 0, "conv": 22, "acct": 0, "err": 0, "interrupted": 0, "skipped": 0} soundness lookup exit 0
+soundness-lookup-d.txt: {"compiles": 30, "ok": 19, "bad": 0, "conv": 3, "acct": 0, "err": 0, "interrupted": 11, "skipped": 0} soundness lookup-d exit 0

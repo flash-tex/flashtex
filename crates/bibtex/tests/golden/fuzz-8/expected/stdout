@@ -1,0 +1,21 @@
+x$ is an unknown function---line 684 of file mystyle.bst
+I was expecting a `,' or a `}'---line 14 of file db0.bib
+ : 
+ : @weird(k0,
+(Error may have been on previous line)
+I'm skipping whatever remains of this entry
+Warning--entry type for "k0" isn't style-file defined
+--line 14 of file db0.bib
+Repeated entry---line 5 of file db1.bib
+ : @techreport{k0
+ :               ,
+I'm skipping whatever remains of this entry
+Illegal end of database file---line 67 of file db1.bib
+ : }
+ :  
+I'm skipping whatever remains of this entry
+"" is a string literal, not an integer, for entry K0
+while executing---line 1345 of file mystyle.bst
+You can't pop an empty literal stack for entry K0
+while executing---line 1345 of file mystyle.bst
+(There were 6 error messages)

@@ -1,0 +1,14 @@
+This is makeindex, version 2.18 [TeX Live 2026] (kpathsea + Thai support).
+Scanning style file ./head.ist........
+** Input style error (file = ./head.ist, line = 9):
+   -- Unknown specifier unknown_thing.
+** Input style error (file = ./head.ist, line = 9):
+   -- No closing delimiter or too many letters.
+** Input style error (file = ./head.ist, line = 11):
+   -- Unknown specifier '.
+done (8 attributes redefined, 3 ignored).
+Scanning input file doc.idx....done (6 entries accepted, 0 rejected).
+Sorting entries....done (16 comparisons).
+Generating output file doc.ind....done (27 lines written, 0 warnings).
+Output written in doc.ind.
+Transcript written in doc.ilg.

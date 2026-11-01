@@ -16,8 +16,8 @@ import FlashTeXPreviewV3
 // `\pdfgentounicode` writes into a PDF), read from the TeX Live the engine
 // already uses (D12); the Adobe Glyph List's rules (`uniXXXX`, `uXXXX`,
 // suffixes, `_` ligatures) cover the rest. Lines are the v2 pane's grouping
-// (`V2PageText.lines(words:rules:)`) over the glyphs, so both panes read a
-// page alike.
+// (`PreviewPageText.lines(words:rules:)`, EngineV3PageText.swift) over the
+// glyphs, so both panes read a page alike.
 
 /// Glyph name → text. Pure apart from locating the table once.
 enum EngineV3GlyphText {
@@ -126,8 +126,8 @@ enum EngineV3GlyphText {
 
     /// The outline program's glyph name for `code` in `font` (nil for Type 3).
     static func name(font: DL3RenderFont, code: UInt16) -> String? {
-        guard Int(code) < 256, let cg = font.cgFont else { return nil }
-        let g = font.glyphs[Int(code)]
+        guard let cg = font.cgFont else { return nil }
+        let g = font.glyph(Int(code))
         guard g != 0 else { return nil }
         return cg.name(for: g) as String?
     }
@@ -136,7 +136,7 @@ enum EngineV3GlyphText {
     /// a Type 3 (bitmap) font has no names, so only its letters and digits,
     /// which every TeX text encoding puts at their ASCII codes.
     static func text(font: DL3RenderFont, code: UInt16) -> String? {
-        guard Int(code) < 256 else { return nil }
+        guard font.glyphIdCount > 0 || Int(code) < 256 else { return nil }
         if font.cgFont != nil { return name(font: font, code: code).flatMap { text(forName: $0) } }
         guard let u = Unicode.Scalar(UInt32(code)), u.isASCII, CharacterSet.alphanumerics.contains(u) else { return nil }
         return String(Character(u))
@@ -149,6 +149,13 @@ enum EngineV3GlyphText {
         "acute": "\u{0301}", "grave": "\u{0300}", "circumflex": "\u{0302}", "dieresis": "\u{0308}", "tilde": "\u{0303}",
         "macron": "\u{0304}", "breve": "\u{0306}", "dotaccent": "\u{0307}", "ring": "\u{030A}", "caron": "\u{030C}",
         "cedilla": "\u{0327}", "ogonek": "\u{0328}", "hungarumlaut": "\u{030B}",
+    ]
+
+    /// The mark an accent glyph makes under the letter instead of over it:
+    /// `\d{o}` (a `period` or `dotaccent` below: dot below), `\b{o}` (a
+    /// `macron` below: macron below).
+    static let belowAccents: [String: Character] = [
+        "period": "\u{0323}", "dotaccent": "\u{0323}", "macron": "\u{0331}",
     ]
 }
 
@@ -184,11 +191,12 @@ enum EngineV3PageText {
     /// `\c{c}` below) becomes that letter's combining mark, whatever its
     /// vertical offset, and the letter is normalised to NFC ("é"), so it
     /// reads as the letter a T1 font's precomposed glyph gives.
-    static func words(_ glyphs: [Glyph]) -> [V2PageText.Word] {
+    static func words(_ glyphs: [Glyph]) -> [PreviewPageText.Word] {
         var marks: [Int: [Character]] = [:] // base position → marks
         var dropped = Set<Int>()
         for (k, a) in glyphs.enumerated() {
-            guard let name = a.name, let mark = EngineV3GlyphText.combiningAccents[name] else { continue }
+            guard let name = a.name,
+                  EngineV3GlyphText.combiningAccents[name] != nil || EngineV3GlyphText.belowAccents[name] != nil else { continue }
             let box = a.ink.isEmpty ? a.cell : a.ink
             // The letter it sits on: a neighbour in painting order whose cell
             // spans the accent's centre, within reach above or below.
@@ -203,10 +211,19 @@ enum EngineV3PageText {
                 if best == nil || d < best!.d { best = (j, d) }
             }
             guard let base = best?.k else { continue }
+            // Wholly below the letter's baseline (y down) and close under it
+            // (`\d`, `\b`: within 0.8 em): the mark below. Further down it is
+            // not this letter's (a period on the next line); a period anywhere
+            // else is punctuation, not an accent.
+            let drop = Double(box.minY) - glyphs[base].baseline
+            if drop > 0.8 * glyphs[base].em { continue }
+            let below = drop > 0
+            guard let mark = below ? (EngineV3GlyphText.belowAccents[name] ?? EngineV3GlyphText.combiningAccents[name])
+                                   : EngineV3GlyphText.combiningAccents[name] else { continue }
             marks[base, default: []].append(mark)
             dropped.insert(k)
         }
-        var out: [V2PageText.Word] = []
+        var out: [PreviewPageText.Word] = []
         out.reserveCapacity(glyphs.count)
         for (k, g) in glyphs.enumerated() where !dropped.contains(k) {
             var text = g.text
@@ -216,8 +233,8 @@ enum EngineV3PageText {
                 if text == "\u{0131}" { text = "i" } else if text == "\u{0237}" { text = "j" }
                 text = (text + String(m)).precomposedStringWithCanonicalMapping
             }
-            out.append(V2PageText.Word(itemIndex: g.index, text: text, rect: g.cell, fontSizePt: g.em, baseline: g.baseline,
-                                       sources: [], syntheticReason: nil))
+            out.append(PreviewPageText.Word(itemIndex: g.index, text: text, rect: g.cell, fontSizePt: g.em, baseline: g.baseline,
+                                            sources: [], syntheticReason: nil))
         }
         return out
     }
@@ -232,8 +249,8 @@ enum EngineV3PageText {
         }
     }
 
-    static func lines(_ prepared: DL3PreparedPage, index: DL3SourceIndex) -> [V2PageText.Line] {
-        V2PageText.lines(words: words(glyphs(prepared, index: index)), rules: rules(prepared.page))
+    static func lines(_ prepared: DL3PreparedPage, index: DL3SourceIndex) -> [PreviewPageText.Line] {
+        PreviewPageText.lines(words: words(glyphs(prepared, index: index)), rules: rules(prepared.page))
     }
 }
 
@@ -244,7 +261,7 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     var previewPageIsLoaded: Bool { owner?.session?.pages[index] != nil }
 
     /// The page's lines (cached by the page's content hash).
-    var axLines: [V2PageText.Line] {
+    var axLines: [PreviewPageText.Line] {
         guard let session = owner?.session, let prepared = session.pages[index], let ix = session.sourceIndex(page: index) else { return [] }
         if let c = axCache, c.hash == prepared.page.hash { return c.lines }
         let lines = EngineV3PageText.lines(prepared, index: ix)
@@ -258,8 +275,8 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     override func accessibilityRoleDescription() -> String? { PreviewAccessibility.pageRoleDescription }
     override func accessibilityLabel() -> String? {
         let total = owner?.session?.pageCount ?? 0
-        guard previewPageIsLoaded else { return V2PageText.elidedPageLabel(number: index + 1, totalPages: total) }
-        return V2PageText.pageLabel(number: index + 1, totalPages: total, lineCount: axLines.count) + (axStale ? ", stale" : "")
+        guard previewPageIsLoaded else { return PreviewPageText.elidedPageLabel(number: index + 1, totalPages: total) }
+        return PreviewPageText.pageLabel(number: index + 1, totalPages: total, lineCount: axLines.count) + (axStale ? ", stale" : "")
     }
     /// The page's text, one line per line ("read page" from the landmark).
     override func accessibilityValue() -> Any? { axLines.map(\.text).joined(separator: "\n") }
@@ -294,16 +311,16 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
         for (ax, line) in zip(els, axLines) { ax.setViewFrame(axFrame(line)) }
     }
 
-    private func axFrame(_ line: V2PageText.Line) -> CGRect {
+    private func axFrame(_ line: PreviewPageText.Line) -> CGRect {
         let w = owner?.session?.pages[index]?.widthPt ?? 0
         let s = w > 0 ? bounds.width / CGFloat(w) : 1
         return CGRect(x: line.rect.minX * s, y: line.rect.minY * s, width: max(1, line.rect.width * s), height: max(1, line.rect.height * s))
     }
 
-    private func configure(_ ax: PreviewAXElement, line: V2PageText.Line) {
+    private func configure(_ ax: PreviewAXElement, line: PreviewPageText.Line) {
         ax.setViewFrame(axFrame(line))
         let n = index + 1
-        ax.setAccessibilityLabel(V2PageText.lineLabel(page: n, line: line))
+        ax.setAccessibilityLabel(PreviewPageText.lineLabel(page: n, line: line))
         ax.setAccessibilityValue(line.text)
         ax.setAccessibilityHelp("Page \(n), line \(line.number)")
         // The click a mouse user makes on the line's first glyph: reverse search.

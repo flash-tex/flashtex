@@ -38,7 +38,7 @@ job), in `--state` (default `$FLASHTEX_NIGHTLY_HOME`, else
     baseline/<host label>-<utc>.json every baseline it replaced
 
 A run key is the SHA-256 of the engine binary, every harness module
-parity.py imports (tools/parity, tools/real-world-corpus, tools/visual-oracle),
+parity.py imports (all in tools/parity since S7),
 the contents of every file or directory named by --engine-env (the formats,
 the pool), the oracle's identity, the manifests and the settings. A job that
 stops (timeout, reboot) and is started again with the same inputs resumes at
@@ -95,10 +95,21 @@ BASELINE_SCHEMA = "flashtex-nightly-baseline/2"
 FINGERPRINT_KEYS = ("oracle_pdftex_version", "pdflatex", "shell_escape", "argv0", "pt", "levels", "pt1_sample",
                     "pt1_sample_seed", "pt1_max_log_mb")
 # the harness: every module parity.py imports lives in one of these
-HARNESS_DIRS = (HERE, os.path.join(REPO, "tools", "real-world-corpus"), os.path.join(REPO, "tools", "visual-oracle"))
+HARNESS_DIRS = (HERE,)
 # exclusions that mean "not measured" (the harness failed), unlike the
 # oracle's own exclusions (pdflatex fails, or never converges)
 UNMEASURED = ("fetch:", "harness error:")
+# The owner's P5 bar (DESIGN §13, 2026-10-05) is zero crashes on T4. The `crashes` row
+# counts every way the engine failed to finish a document the oracle compiles, each kind
+# apart (crash_of, CRASH_KINDS): a Rust panic (exit 101), a signal (a negative exit), any
+# other non-zero exit (a fatal or TeX error pdfTeX did not hit: the oracle compiled the
+# document), a timeout, a traced pass whose log stops before the run's end, and a
+# worker that died scoring it (killed for memory?). Over the documents the engine ran:
+# a document the oracle excludes never reaches the engine (parity.score).
+PANIC_EXIT = 101
+TRACE_CRASH_PREFIX = "the traced pass crashed"
+TRACE_TIMEOUT_PREFIX = "the traced pass did not finish"
+CRASH_KINDS = ("panic", "signal", "exit", "timeout", "traced pass cut short", "worker died")
 # Resident memory of one worker scoring a document without a trace (oracle
 # and candidate PDFs parsed for L2/L3, qpdf, rasters): an allowance, not a
 # measurement; the traced part is measured (parity.PT1_MEMORY_FACTOR).
@@ -136,13 +147,17 @@ def read_json(path):
 
 
 def git_sha():
-    if os.environ.get("GITHUB_SHA"):
-        return os.environ["GITHUB_SHA"]
+    """The commit of the checkout that was measured. Not GITHUB_SHA first: a run that
+    checks out a pinned commit (corpus-t4-mac.yml's `sha`) measures that commit, not the
+    head of the ref it was dispatched on, and the board ties T4 to its commit."""
     try:
-        return subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True,
-                              timeout=30).stdout.strip() or None
+        sha = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True,
+                             timeout=30).stdout.strip()
+        if re.fullmatch(r"[0-9a-f]{40}", sha):
+            return sha
     except (OSError, subprocess.SubprocessError):
-        return None
+        pass
+    return os.environ.get("GITHUB_SHA") or None
 
 
 # ----------------------------------------------------------------------------
@@ -312,6 +327,23 @@ def memory_bound_gib(args):
     return args.jobs * (WORKER_GIB + PT1_FACTOR() * args.pt1_max_log_mb / 1024)
 
 
+def low_disk(args):
+    """'DIR (N GB free)' for the first of the state, the work directory and the parity
+    cache whose disk is under --min-free-gb, else None. A shard fetches and caches its
+    e-prints, sources, oracle PDFs and references: about 0.7 GB per 100 nightly-5k
+    documents (measured on 25 on a Mac, 2026-10-03), so about 35 GB for the corpus."""
+    if not args.min_free_gb:
+        return None
+    for d in (args.state, args.work, pcorpus.default_cache()):
+        while d and not os.path.isdir(d):
+            d = os.path.dirname(d)
+        if d:
+            free = shutil.disk_usage(d).free / 2 ** 30
+            if free < args.min_free_gb:
+                return f"{d} ({free:.1f} GB free)"
+    return None
+
+
 def cmd_run(args):
     if not args.pt1_max_log_mb:
         log("refusing: a nightly run needs an in-memory budget for traced logs (--pt1-max-log-mb); without one, "
@@ -357,6 +389,11 @@ def cmd_run(args):
             log(f"shard {k}: scoring again for {len(again)} unmeasured documents ({', '.join(again[:3])} ...)")
         if args.deadline_minutes and time.time() - started > 60 * args.deadline_minutes:
             log(f"deadline of {args.deadline_minutes} min reached before shard {k}; re-run to resume")
+            break
+        low = low_disk(args)
+        if low:
+            print(f"::error::disk under --min-free-gb {args.min_free_gb:g} on {low}: starting no shard from "
+                  f"{k} on; free space, then re-run to resume")
             break
         tmp = sdir + ".partial"
         shutil.rmtree(tmp, ignore_errors=True)
@@ -474,6 +511,34 @@ def level_name(r):
     return None if lv is None else ("below L0" if lv < 0 else LEVELS[lv])
 
 
+def crash_of(r):
+    """(kind, why) for how the engine failed on a document it ran (CRASH_KINDS), or None.
+    A document excluded by the oracle or unmeasured never reached the engine."""
+    if r.get("excluded"):
+        return None
+    if r.get("worker_died"):
+        return "worker died", "the worker scoring it died (killed for memory?)"
+    cand = r.get("candidate") or {}
+    tail = str(cand.get("stderr_tail") or "")
+    if cand.get("timed_out"):
+        return "timeout", "timed out" + (": " + tail[:160] if tail else "")
+    code = cand.get("exit")
+    if isinstance(code, int) and not isinstance(code, bool):
+        if code == PANIC_EXIT:
+            return "panic", f"exit {code} (panic)"
+        if code < 0:
+            return "signal", f"killed by signal {-code}"
+        if code != 0:
+            return "exit", f"exit {code}, where the oracle compiled it" + (": " + tail[:160] if tail else "")
+    if tail.startswith(TRACE_CRASH_PREFIX):
+        return "traced pass cut short", tail[:200]
+    if tail.startswith(TRACE_TIMEOUT_PREFIX):
+        return "timeout", tail[:200]
+    if "panicked at" in tail:
+        return "panic", "panicked: " + tail[tail.index("panicked at"):][:180]
+    return None
+
+
 def compact(r):
     """The artifact's per-document record: results and causes, no logs."""
     pt = r.get("pt") or {}
@@ -488,6 +553,9 @@ def compact(r):
             out["pt1_not_evaluated"] = why[:200]
     if (r.get("excluded") or "").startswith(UNMEASURED):
         out["unmeasured"] = True
+    crash = crash_of(r)
+    if crash:
+        out["crash_kind"], out["crash"] = crash[0], crash[1][:300]
     if not full_pass(r):
         cls, cause = classify(r)
         out["class"], out["cause"] = cls, (cause or "")[:400]
@@ -508,12 +576,21 @@ def tier_row(recs):
     row = {"documents": len(recs), "measured": len(measured),
            "excluded": dict(collections.Counter(r["excluded"].split(":", 1)[0] for r in recs if r.get("excluded"))),
            "excluded_by_oracle": sum(1 for r in recs if r.get("excluded") and not r.get("unmeasured")),
-           "unmeasured": sum(1 for r in recs if r.get("unmeasured"))}
+           "unmeasured": sum(1 for r in recs if r.get("unmeasured")),
+           # the owner's bar: zero crashes (crash_of), over the documents the engine ran
+           # (`measured`: every one the oracle compiles and the harness scored)
+           "crashes": sum(1 for r in measured if r.get("crash")),
+           "crash_kinds": dict(collections.Counter(r.get("crash_kind") or "?" for r in measured if r.get("crash"))),
+           "crash_examples": [r["id"] for r in measured if r.get("crash")][:10]}
     for t in ("P-T1", "P-T2"):
         ev = [r for r in measured if r.get(t) is not None]
         row[t] = [sum(1 for r in ev if r[t]), len(ev)] if ev else None
         if t == "P-T1":
             row["P-T1_not_evaluated"] = sum(1 for r in measured if r.get("pt1_not_evaluated"))
+            # of those, the documents outside the fixed --pt1-sample: out of P-T1's
+            # denominator by rule (parity.in_pt1_sample), not skipped
+            row["P-T1_outside_sample"] = sum(1 for r in measured if str(r.get("pt1_not_evaluated") or "")
+                                             .startswith("not evaluated: outside the P-T1 sample"))
     for k, name in enumerate(LEVELS):
         row[name] = [sum(1 for r in measured if (r.get("level_index") if r.get("level_index") is not None
                                                  else -1) >= k), len(measured)]
@@ -616,6 +693,9 @@ def render_summary(s):
         ex = ", ".join(f"{k} {v}" for k, v in sorted(row["excluded"].items())) or "—"
         w(f"| {t} | {row['documents']} | {ex} | {cell(row['P-T1'])} | {cell(row['P-T2'])} | "
           + " | ".join(cell(row[n]) for n in LEVELS) + " |")
+    w("")
+    w("Engine crashes (panic, signal, or a traced log cut short; the bar is 0): " + "; ".join(
+        f"{t} {row.get('crashes', 'not counted')}" for t, row in s["tiers"].items()) + ".")
     w("")
     w("P-T1 not evaluated: " + "; ".join(
         f"{t} {row['P-T1_not_evaluated']}" for t, row in s["tiers"].items()) + ".")
@@ -864,6 +944,9 @@ def main(argv=None):
                    help="refuse to start when the worst-case memory bound (memory_bound_gib) is over this")
     r.add_argument("--work", default=None, help="scratch for the candidate runs (default <state>/work)")
     r.add_argument("--deadline-minutes", type=float, default=0, help="start no shard after this long")
+    r.add_argument("--min-free-gb", type=float, default=0,
+                   help="start no shard while the disk of the state, work or parity cache directory has "
+                        "less than this free (0: no check)")
     r.add_argument("--out", required=True, help="artifact directory")
     r.add_argument("parity_args", nargs=argparse.REMAINDER,
                    help="after --: passed to parity.py unchanged (--texmf, --cache, ...)")

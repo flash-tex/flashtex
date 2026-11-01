@@ -20,7 +20,7 @@ impl Globals {
                 if (self.error_line > ssup_error_line) {
                     self.error_line = ssup_error_line;
                 }
-                // §1898
+                // §1901
                 self.interaction_option = self.web2c_interaction_option();
                 self.file_line_error_style_p = self.web2c_file_line_error_style_p();
                 self.halt_on_error_p = self.web2c_halt_on_error_p();
@@ -236,25 +236,25 @@ impl Globals {
                     self.first = (self.last).wrapping_add(1i32);
                 }
                 // §1648
-                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 1685i32)) {
+                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 1684i32)) {
                     {
                         self.no_new_control_sequence = false;
                         // §1649
-                        self.primitive(1965i32, last_item, last_node_type_code);
-                        self.primitive(1966i32, last_item, eTeX_version_code);
-                        self.primitive(871i32, convert, eTeX_revision_code);
+                        self.primitive(1964i32, last_item, last_node_type_code);
+                        self.primitive(1965i32, last_item, eTeX_version_code);
+                        self.primitive(869i32, convert, eTeX_revision_code);
                         // §1657
-                        self.primitive(1968i32, assign_toks, every_eof_loc);
-                        self.primitive(1969i32, assign_int, 29379i32);
-                        self.primitive(1970i32, assign_int, 29380i32);
-                        self.primitive(1971i32, assign_int, 29381i32);
-                        self.primitive(1972i32, assign_int, 29382i32);
-                        self.primitive(1973i32, assign_int, 29383i32);
-                        self.primitive(1974i32, assign_int, 29384i32);
-                        self.primitive(1975i32, assign_int, 29385i32);
-                        self.primitive(1976i32, assign_int, 29386i32);
-                        self.primitive(1977i32, assign_int, 29387i32);
-                        self.primitive(1978i32, assign_int, 29388i32);
+                        self.primitive(1967i32, assign_toks, every_eof_loc);
+                        self.primitive(1968i32, assign_int, 29379i32);
+                        self.primitive(1969i32, assign_int, 29380i32);
+                        self.primitive(1970i32, assign_int, 29381i32);
+                        self.primitive(1971i32, assign_int, 29382i32);
+                        self.primitive(1972i32, assign_int, 29383i32);
+                        self.primitive(1973i32, assign_int, 29384i32);
+                        self.primitive(1974i32, assign_int, 29385i32);
+                        self.primitive(1975i32, assign_int, 29386i32);
+                        self.primitive(1976i32, assign_int, 29387i32);
+                        self.primitive(1977i32, assign_int, 29388i32);
                         // §1663
                         self.primitive(1992i32, last_item, current_group_level_code);
                         self.primitive(1993i32, last_item, current_group_type_code);
@@ -283,7 +283,7 @@ impl Globals {
                         // §1692
                         self.primitive(2013i32, set_page_int, 2i32);
                         // §1697
-                        self.primitive(1288i32, left_right, middle_noad);
+                        self.primitive(1287i32, left_right, middle_noad);
                         // §1701
                         self.primitive(2017i32, assign_int, 29389i32);
                         self.primitive(2018i32, valign, begin_L_code);
@@ -295,7 +295,7 @@ impl Globals {
                         // §1759
                         self.primitive(2032i32, read_to_cs, 1i32);
                         // §1762
-                        self.primitive(928i32, expand_after, 1i32);
+                        self.primitive(926i32, expand_after, 1i32);
                         self.primitive(2033i32, if_test, if_def_code);
                         self.primitive(2034i32, if_test, if_cs_code);
                         self.primitive(2035i32, if_test, if_font_char_code);
@@ -303,7 +303,7 @@ impl Globals {
                         self.primitive(2037i32, if_test, if_pdfabs_num_code);
                         self.primitive(2038i32, if_test, if_pdfabs_dim_code);
                         // §1770
-                        self.primitive(1603i32, prefix, 8i32);
+                        self.primitive(1602i32, prefix, 8i32);
                         // §1778
                         self.primitive(2044i32, last_item, 39i32);
                         self.primitive(2045i32, last_item, 40i32);
@@ -355,15 +355,23 @@ impl Globals {
                             if (!self.open_fmt_file()) {
                                 break 'l_final_end_f;
                             }
-                            if (!self.load_fmt_file()) {
+                            if (!self.flashtex_fmt_restore()) {
                                 {
-                                    { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
-                                    break 'l_final_end_f;
+                                    if (!self.load_fmt_file()) {
+                                        {
+                                            { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
+                                            break 'l_final_end_f;
+                                        }
+                                    }
+                                    self.flashtex_fmt_loaded();
                                 }
                             }
                             { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
                             if self.intr_on {
                                 self.flashtex_intr_loaded();
+                            }
+                            if self.bm_on {
+                                self.flashtex_bm_loaded();
                             }
                             while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 32i32)) {
                                 self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
@@ -372,10 +380,10 @@ impl Globals {
                     }
                 }
                 if (self.pdf_output_option != 0i32) {
-                    { let __v2336 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2336); }
+                    { let __v2348 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2348); }
                 }
                 if (self.pdf_draftmode_option != 0i32) {
-                    { let __v2337 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2337); }
+                    { let __v2349 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2349); }
                 }
                 self.pdf_init_map_file();
                 if (self.eTeX_mode == 1i32) {
@@ -387,7 +395,7 @@ impl Globals {
                 if ((self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix2338 = self.cur_input.limit_field; let __v2339 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2338) as usize)] = __v2339; }
+                    { let __ix2350 = self.cur_input.limit_field; let __v2351 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2350) as usize)] = __v2351; }
                 }
                 self.fix_date_and_time();
                 if self.trie_not_ready {

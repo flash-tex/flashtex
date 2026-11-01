@@ -15,4 +15,9 @@
 # and what MIT target it stays out of. The owner arranges the legal review of §3
 # before public release (§3, "Legal review").
 #
-# Empty on purpose.
+# flashtex-xetex (crates/flashtex-xetex, docs/design/xetex/PLAN.md, 2026-10-04):
+# the XeTeX port, GPL-2.0-or-later with its own LICENSE (a translation of
+# xetex.web that links the engine's runtime: the word space, kpathsea, the
+# command line). It is its own executable and its own cargo workspace; no MIT
+# target links it, and it reaches the app the way the engine does.
+flashtex-xetex

@@ -26,7 +26,7 @@ final class SyntaxPainterIMETests: XCTestCase {
         return (tv, painter)
     }
 
-    /// One composition step, like `IMEHarness.compose`.
+    /// One composition step (setMarkedText at the end of the marked range).
     private func compose(_ tv: NSTextView, _ text: String) {
         tv.setMarkedText(text as NSString,
                          selectedRange: NSRange(location: (text as NSString).length, length: 0),
@@ -99,7 +99,7 @@ final class SyntaxPainterIMETests: XCTestCase {
         drain()
         XCTAssertTrue(tv.hasMarkedText())
 
-        // Cancel exactly like `IMEHarness.cancel`: the empty `setMarkedText`
+        // Cancel as AppKit does: the empty `setMarkedText`
         // removes the marked characters through a character storage edit
         // (editedCharacters, delta -1), then `unmarkText` is a no-op.
         compose(tv, "")

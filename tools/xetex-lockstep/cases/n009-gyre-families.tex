@@ -1,0 +1,12 @@
+% n009-gyre-families: TeX Gyre Heros, Pagella italic, Cursor and Latin Modern Mono in one paragraph
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\font\a="[texgyreheros-regular.otf]" \font\b="[texgyrepagella-italic.otf]"
+\font\c="[texgyrecursor-regular.otf]" \font\d="[lmmono10-regular.otf]"
+\font\e="[texgyreheros-bold.otf]" \font\f="[texgyrebonum-regular.otf]"
+\setbox0=\vbox{\a We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones. \b We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones. \c office \d office \e We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones. \f We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones.\par}
+\lsshipbox0
+\end

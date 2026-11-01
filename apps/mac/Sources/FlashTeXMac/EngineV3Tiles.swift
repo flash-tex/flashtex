@@ -31,8 +31,9 @@ enum EngineV3TileGrid {
     /// scroll step usually finds its next row ready.
     static let prefetchPixels: CGFloat = 256
     /// Tile jobs run here in order (visible tiles first); each job draws its
-    /// tiles in parallel.
-    static let queue = DispatchQueue(label: "flashtex.engine-v3.tiles", qos: .userInteractive)
+    /// tiles in parallel. `.workItem`: a job's autoreleased tiles and kept
+    /// rasters are released when the job ends.
+    static let queue = DispatchQueue(label: "flashtex.engine-v3.tiles", qos: .userInteractive, autoreleaseFrequency: .workItem)
 
     struct Index: Hashable { var column: Int; var row: Int }
 
@@ -74,7 +75,15 @@ enum EngineV3TileGrid {
     /// New contents of pages drawn whole held back by the redraw throttle.
     @MainActor static var deferredSources = 0
     /// Per new source (page entering, zoom step, edit): ms from its first tile job queued to its first tiles on screen.
-    @MainActor static var firstTileMs: [Double] = []
+    /// Kept for the scroll bench; the app appends on every page entering a
+    /// zoom, so only the newest `firstTileKeep` are kept (the bench reads far
+    /// fewer), never one per source for the whole session.
+    @MainActor private(set) static var firstTileMs: [Double] = []
+    static let firstTileKeep = 4_096
+    @MainActor static func noteFirstTile(ms: Double) {
+        firstTileMs.append(ms)
+        if firstTileMs.count > firstTileKeep + 512 { firstTileMs.removeFirst(firstTileMs.count - firstTileKeep) }
+    }
     @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0; skippedTiles = 0; firstTileMs = []; failedTiles = 0; deferredSources = 0 }
 }
 
@@ -178,8 +187,10 @@ final class EngineV3RasterHolder: @unchecked Sendable {
     /// pressure, so tests count these apart from the draws a source makes.
     private(set) var redrawnAfterPurge = 0
 
-    /// Kept rasters over all pages: at most this many (`FLASHTEX_V3_KEPT_RASTERS`).
-    static let budget = max(1, Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_KEPT_RASTERS"] ?? "") ?? 2)
+    /// Kept rasters over all pages: at most this many (`FLASHTEX_V3_KEPT_RASTERS`, else the
+    /// performance mode's: 1, 2 or 8, PerformanceMode.swift).
+    static var budget: Int { max(1, keptOverride ?? PerformanceMode.current.keptRasters) }
+    private static let keptOverride = Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_KEPT_RASTERS"] ?? "")
     /// Holders with a raster, least recently cut first (tile queue only).
     nonisolated(unsafe) private static var lru: [EngineV3RasterHolder] = []
 
@@ -331,6 +342,19 @@ final class EngineV3PageTiles {
         container.masksToBounds = true
     }
 
+    /// Whether the page layer the container is in is flipped on screen
+    /// (EngineV3PageView.layerShownFlipped: from the view hierarchy, since
+    /// AppKit attaches the page's layer to the tree on a later pass and the
+    /// detached tree reads unflipped). Unset (a container outside a page
+    /// view), the live tree's.
+    var pageShownFlipped: (@MainActor () -> Bool)?
+
+    /// Whether the container is flipped on screen: tiles are framed for it.
+    var shownFlipped: Bool {
+        guard let page = pageShownFlipped else { return container.contentsAreFlipped() }
+        return page() != container.isGeometryFlipped
+    }
+
     /// Queued jobs of a torn-down page skip undrawn; its raster is freed.
     deinit {
         _ = generation.bump()
@@ -346,6 +370,8 @@ final class EngineV3PageTiles {
     }
 
     func tileImage(_ i: EngineV3TileGrid.Index) -> IOSurface? { layers[i]?.contents as! IOSurface? }
+    /// Tiles up that show an earlier content of the same geometry (evidence, tests).
+    var staleCount: Int { stale.count }
 
     /// Shows `new` (a new content, scale or backing scale; the same source
     /// is a no-op) and requests the missing visible tiles.
@@ -539,7 +565,7 @@ final class EngineV3PageTiles {
     private func install(_ surfaces: [IOSurface?], at indices: [EngineV3TileGrid.Index], source s: EngineV3TileSource, compile: Int?, t0: UInt64) {
         let (pw, ph) = s.pixelSize
         let ds = CGFloat(s.pixelsPerViewPoint)
-        let flipped = container.contentsAreFlipped()
+        let flipped = shownFlipped
         let height = container.bounds.height
         let filter: CALayerContentsFilter = pinching || s.stretched ? .linear : .nearest
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -570,7 +596,7 @@ final class EngineV3PageTiles {
         if n > 0, awaitingFirst, let shown = shownNs {
             awaitingFirst = false
             shownNs = nil
-            EngineV3TileGrid.firstTileMs.append(Double(MonotonicClock.nowNs() &- shown) / 1e6)
+            EngineV3TileGrid.noteFirstTile(ms: Double(MonotonicClock.nowNs() &- shown) / 1e6)
         }
         if let compile, compile == pendingCompile {
             pendingCompile = nil
@@ -601,7 +627,7 @@ final class EngineV3PageTiles {
     private func reframeOutgoing(_ s: EngineV3TileSource) {
         guard !outgoing.isEmpty else { return }
         let k = CGFloat(s.screenPixelsPerPoint / s.displayScale)
-        let flipped = container.contentsAreFlipped(), height = container.bounds.height
+        let flipped = shownFlipped, height = container.bounds.height
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for o in outgoing {
             let r = CGRect(x: o.points.minX * k, y: o.points.minY * k, width: o.points.width * k, height: o.points.height * k)

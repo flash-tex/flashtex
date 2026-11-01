@@ -27,7 +27,7 @@
 //! subscripts (`web2rust-trip.args` has no `--index-type`), so it leaves this
 //! module out.
 
-use crate::arena::Arr;
+use crate::arena::{Arr, ArrView};
 use std::ops::{Index, IndexMut};
 
 /// A subscript of the generated code (see the module documentation).
@@ -63,6 +63,26 @@ impl<T> IndexMut<U> for Arr<T> {
     #[inline(always)]
     fn index_mut(&mut self, i: U) -> &mut T {
         &mut self[i.0]
+    }
+}
+
+impl<T> Index<U> for ArrView<T> {
+    type Output = T;
+    #[inline(always)]
+    fn index(&self, i: U) -> &T {
+        if CHECKED {
+            self.get(i.0)
+        } else {
+            // SAFETY: as in `read`: only the benchmarking feature gets here.
+            unsafe { self.get_unchecked(i.0) }
+        }
+    }
+}
+
+impl<T> IndexMut<U> for ArrView<T> {
+    #[inline(always)]
+    fn index_mut(&mut self, i: U) -> &mut T {
+        self.get_mut(i.0)
     }
 }
 

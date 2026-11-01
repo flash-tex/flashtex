@@ -1,0 +1,20 @@
+% u05-unicode-math: unicode-math with several math fonts, large operators, extensible delimiters, accents
+\documentclass{article}
+\usepackage{unicode-math}
+\setmathfont{latinmodern-math.otf}
+\setmathfont{STIXTwoMath-Regular.otf}[version=stix]
+\setmathfont{texgyrepagella-math.otf}[version=pagella]
+\setmathfont{LibertinusMath-Regular.otf}[version=libertinus]
+\newcommand\sample{%
+\[ \sum_{n=1}^{\infty}\frac{1}{n^2}=\frac{\pi^2}{6},\quad \int_0^1\!\!\int_0^1 f(x,y)\,dx\,dy,\quad
+   \prod_{k} \bigcup_{i} A_i ,\quad \oint_{\partial\Omega}\omega \]
+\[ \left( \frac{a}{b} \right) \left[ \frac{\frac{1}{2}}{\frac{3}{4}} \right] \left\{ \begin{matrix} a & b \\ c & d \\ e & f \end{matrix} \right\}
+   \left\| \sum_{i=1}^{N} x_i \right\| \quad \sqrt{\frac{x^2+y^2}{z}} \quad \sqrt[3]{\int_a^b g} \]
+\[ \hat{a}\ \widehat{xyz}\ \tilde{b}\ \widetilde{abc}\ \bar{c}\ \overline{x+y}\ \vec{v}\ \dot{x}\ \ddot{y}\
+   \overbrace{a+b+c}^{3}\ \underbrace{x+y}_{2}\ \mathbb{R}\ \mathcal{F}\ \mathfrak{g}\ \symbf{\alpha} \]}
+\begin{document}
+Latin Modern Math: \sample
+STIX Two: {\mathversion{stix}\sample}
+Pagella: {\mathversion{pagella}\sample}
+Libertinus: {\mathversion{libertinus}\sample}
+\end{document}

@@ -56,19 +56,28 @@ impl Sha256 {
             self.n = 0;
         }
         let whole = data.len() / 64 * 64;
-        self.blocks(&data[..whole]);
-        data = &data[whole..];
+        if whole > 0 {
+            self.blocks(&data[..whole]);
+            data = &data[whole..];
+        }
         self.buf[..data.len()].copy_from_slice(data);
         self.n = data.len();
     }
 
     pub fn finish(mut self) -> [u8; 32] {
+        // 0x80, zeros to 56 bytes into a block, the length in bits: in one
+        // update (byte by byte, the padding cost a small hash its time)
         let bits = self.len.wrapping_mul(8);
-        self.update(&[0x80]);
-        while self.n != 56 {
-            self.update(&[0]);
-        }
-        self.update(&bits.to_be_bytes());
+        let pad = if self.n < 56 {
+            56 - self.n
+        } else {
+            120 - self.n
+        };
+        let mut tail = [0u8; 72];
+        tail[0] = 0x80;
+        tail[pad..pad + 8].copy_from_slice(&bits.to_be_bytes());
+        self.update(&tail[..pad + 8]);
+        debug_assert_eq!(self.n, 0);
         let mut out = [0u8; 32];
         for (i, w) in self.h.iter().enumerate() {
             out[4 * i..4 * i + 4].copy_from_slice(&w.to_be_bytes());
@@ -77,13 +86,23 @@ impl Sha256 {
     }
 
     /// Compress whole 64-byte blocks: with the ARMv8 SHA-256 instructions
-    /// where the CPU has them (every Apple silicon Mac), else in software.
+    /// where the CPU has them (every Apple silicon Mac), or x86's SHA
+    /// extensions (AMD since Zen, Intel since Ice Lake and the Atoms), else
+    /// in software.
     fn blocks(&mut self, data: &[u8]) {
         #[cfg(target_arch = "aarch64")]
         {
             if std::arch::is_aarch64_feature_detected!("sha2") {
                 // SAFETY: the CPU has the SHA-256 instructions.
                 unsafe { compress_arm(&mut self.h, data) };
+                return;
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if x86_sha() {
+                // SAFETY: the CPU has the SHA extensions, SSSE3 and SSE4.1.
+                unsafe { compress_x86(&mut self.h, data) };
                 return;
             }
         }
@@ -141,30 +160,165 @@ unsafe fn compress_arm(h: &mut [u32; 8], data: &[u8]) {
     for block in data.as_chunks::<64>().0 {
         let (abcd0, efgh0) = (abcd, efgh);
         let p = block.as_ptr();
-        let mut m = [
-            vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p))),
-            vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(16)))),
-            vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(32)))),
-            vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(48)))),
-        ];
-        for i in 0..16 {
-            let t = vaddq_u32(m[i % 4], vld1q_u32(K.as_ptr().add(4 * i)));
-            let prev = abcd;
-            abcd = vsha256hq_u32(prev, efgh, t);
-            efgh = vsha256h2q_u32(efgh, prev, t);
-            if i < 12 {
-                m[i % 4] = vsha256su1q_u32(
-                    vsha256su0q_u32(m[i % 4], m[(i + 1) % 4]),
-                    m[(i + 2) % 4],
-                    m[(i + 3) % 4],
-                );
-            }
+        let mut m0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p)));
+        let mut m1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(16))));
+        let mut m2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(32))));
+        let mut m3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p.add(48))));
+        // Written out, four rounds a step, the message words in four
+        // registers that take turns: as a loop over an array LLVM kept the
+        // words in memory and branched every step (1.3 GB/s on an M1 Max,
+        // 2.15 written out; OpenSSL's assembly 2.3).
+        macro_rules! rounds {
+            ($w:ident, $i:literal) => {{
+                let t = vaddq_u32($w, vld1q_u32(K.as_ptr().add(4 * $i)));
+                let prev = abcd;
+                abcd = vsha256hq_u32(prev, efgh, t);
+                efgh = vsha256h2q_u32(efgh, prev, t);
+            }};
         }
+        // the four words after those of `$a`..`$d` (FIPS 180-4 §6.2.2 step
+        // 1), into `$a`
+        macro_rules! schedule {
+            ($a:ident, $b:ident, $c:ident, $d:ident) => {
+                $a = vsha256su1q_u32(vsha256su0q_u32($a, $b), $c, $d)
+            };
+        }
+        rounds!(m0, 0);
+        schedule!(m0, m1, m2, m3);
+        rounds!(m1, 1);
+        schedule!(m1, m2, m3, m0);
+        rounds!(m2, 2);
+        schedule!(m2, m3, m0, m1);
+        rounds!(m3, 3);
+        schedule!(m3, m0, m1, m2);
+        rounds!(m0, 4);
+        schedule!(m0, m1, m2, m3);
+        rounds!(m1, 5);
+        schedule!(m1, m2, m3, m0);
+        rounds!(m2, 6);
+        schedule!(m2, m3, m0, m1);
+        rounds!(m3, 7);
+        schedule!(m3, m0, m1, m2);
+        rounds!(m0, 8);
+        schedule!(m0, m1, m2, m3);
+        rounds!(m1, 9);
+        schedule!(m1, m2, m3, m0);
+        rounds!(m2, 10);
+        schedule!(m2, m3, m0, m1);
+        rounds!(m3, 11);
+        schedule!(m3, m0, m1, m2);
+        rounds!(m0, 12);
+        rounds!(m1, 13);
+        rounds!(m2, 14);
+        rounds!(m3, 15);
         abcd = vaddq_u32(abcd, abcd0);
         efgh = vaddq_u32(efgh, efgh0);
     }
     vst1q_u32(h.as_mut_ptr(), abcd);
     vst1q_u32(h.as_mut_ptr().add(4), efgh);
+}
+
+/// Whether the CPU has what [`compress_x86`] uses (detected once).
+#[cfg(target_arch = "x86_64")]
+fn x86_sha() -> bool {
+    static HAS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HAS.get_or_init(|| {
+        std::arch::is_x86_feature_detected!("sha")
+            && std::arch::is_x86_feature_detected!("ssse3")
+            && std::arch::is_x86_feature_detected!("sse4.1")
+    })
+}
+
+/// [`Sha256::blocks`] with x86's SHA extensions. The state is kept as the
+/// instructions want it, (a, b, e, f) and (c, d, g, h) in one register each;
+/// `sha256rnds2` does two rounds, so each group of four message words takes
+/// two of them, the second on the upper half of the words-plus-constants
+/// vector. `sha256msg1`/`sha256msg2` extend the message schedule (FIPS
+/// 180-4 §6.2.2 step 1) four words at a time. The PC's page content hashes
+/// (lane P4-PAGE-COST) ran in the software rounds.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
+unsafe fn compress_x86(h: &mut [u32; 8], data: &[u8]) {
+    use std::arch::x86_64::*;
+    // big-endian words: reverse the bytes of each 32-bit lane
+    let bswap = _mm_set_epi64x(0x0c0d_0e0f_0809_0a0b, 0x0405_0607_0001_0203);
+    // (a, b, c, d), (e, f, g, h) -> (a, b, e, f), (c, d, g, h), each with its
+    // first word in the top lane
+    let dcba = _mm_loadu_si128(h.as_ptr() as *const __m128i);
+    let hgfe = _mm_loadu_si128(h.as_ptr().add(4) as *const __m128i);
+    let cdab = _mm_shuffle_epi32(dcba, 0xb1);
+    let efgh = _mm_shuffle_epi32(hgfe, 0x1b);
+    let mut abef = _mm_alignr_epi8(cdab, efgh, 8);
+    let mut cdgh = _mm_blend_epi16(efgh, cdab, 0xf0);
+    for block in data.as_chunks::<64>().0 {
+        let (abef0, cdgh0) = (abef, cdgh);
+        let p = block.as_ptr() as *const __m128i;
+        let mut m0 = _mm_shuffle_epi8(_mm_loadu_si128(p), bswap);
+        let mut m1 = _mm_shuffle_epi8(_mm_loadu_si128(p.add(1)), bswap);
+        let mut m2 = _mm_shuffle_epi8(_mm_loadu_si128(p.add(2)), bswap);
+        let mut m3 = _mm_shuffle_epi8(_mm_loadu_si128(p.add(3)), bswap);
+        // Written out, as compress_arm's steps are (a loop over an array
+        // was not unrolled here either: LLVM peeled a few steps and looped).
+        macro_rules! rounds {
+            ($w:ident, $i:literal) => {{
+                let wk = _mm_add_epi32(
+                    $w,
+                    _mm_loadu_si128(K.as_ptr().add(4 * $i) as *const __m128i),
+                );
+                cdgh = _mm_sha256rnds2_epu32(cdgh, abef, wk);
+                abef = _mm_sha256rnds2_epu32(abef, cdgh, _mm_shuffle_epi32(wk, 0x0e));
+            }};
+        }
+        // the four words after those of `$a`..`$d`, into `$a`
+        macro_rules! schedule {
+            ($a:ident, $b:ident, $c:ident, $d:ident) => {
+                $a = _mm_sha256msg2_epu32(
+                    _mm_add_epi32(_mm_sha256msg1_epu32($a, $b), _mm_alignr_epi8($d, $c, 4)),
+                    $d,
+                )
+            };
+        }
+        rounds!(m0, 0);
+        rounds!(m1, 1);
+        rounds!(m2, 2);
+        rounds!(m3, 3);
+        schedule!(m0, m1, m2, m3);
+        rounds!(m0, 4);
+        schedule!(m1, m2, m3, m0);
+        rounds!(m1, 5);
+        schedule!(m2, m3, m0, m1);
+        rounds!(m2, 6);
+        schedule!(m3, m0, m1, m2);
+        rounds!(m3, 7);
+        schedule!(m0, m1, m2, m3);
+        rounds!(m0, 8);
+        schedule!(m1, m2, m3, m0);
+        rounds!(m1, 9);
+        schedule!(m2, m3, m0, m1);
+        rounds!(m2, 10);
+        schedule!(m3, m0, m1, m2);
+        rounds!(m3, 11);
+        schedule!(m0, m1, m2, m3);
+        rounds!(m0, 12);
+        schedule!(m1, m2, m3, m0);
+        rounds!(m1, 13);
+        schedule!(m2, m3, m0, m1);
+        rounds!(m2, 14);
+        schedule!(m3, m0, m1, m2);
+        rounds!(m3, 15);
+        abef = _mm_add_epi32(abef, abef0);
+        cdgh = _mm_add_epi32(cdgh, cdgh0);
+    }
+    let feba = _mm_shuffle_epi32(abef, 0x1b);
+    let dchg = _mm_shuffle_epi32(cdgh, 0xb1);
+    _mm_storeu_si128(
+        h.as_mut_ptr() as *mut __m128i,
+        _mm_blend_epi16(feba, dchg, 0xf0),
+    );
+    _mm_storeu_si128(
+        h.as_mut_ptr().add(4) as *mut __m128i,
+        _mm_alignr_epi8(dchg, feba, 8),
+    );
 }
 
 /// SHA-256 of `data`.
@@ -213,7 +367,8 @@ mod tests {
         let data: Vec<u8> = (0..5000u32)
             .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
             .collect();
-        for n in [0, 1, 55, 56, 63, 64, 65, 127, 128, 1000, 5000] {
+        // (every padding length, and one or more blocks in a single update)
+        for n in (0..=200).chain([1000, 4097, 5000]) {
             let mut soft = Sha256::new();
             for b in data[..n / 64 * 64].as_chunks::<64>().0 {
                 soft.block(b);
@@ -221,6 +376,14 @@ mod tests {
             soft.len = (n / 64 * 64) as u64;
             soft.update(&data[n / 64 * 64..n]);
             assert_eq!(soft.finish(), sha256(&data[..n]), "length {n}");
+        }
+        // Any split into updates gives the same hash.
+        for size in [1, 7, 63, 64, 65, 200, 1000] {
+            let mut s = Sha256::new();
+            for chunk in data.chunks(size) {
+                s.update(chunk);
+            }
+            assert_eq!(s.finish(), sha256(&data), "updates of {size}");
         }
         let million = vec![b'a'; 1_000_000];
         assert_eq!(

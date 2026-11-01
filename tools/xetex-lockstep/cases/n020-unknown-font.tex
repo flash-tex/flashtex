@@ -1,0 +1,9 @@
+% n020-unknown-font: a bracketed font file that does not exist, and one that is not a font
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\font\a="[nosuchfont.otf]"
+\setbox0=\hbox{x}
+\lsshipbox0
+\end

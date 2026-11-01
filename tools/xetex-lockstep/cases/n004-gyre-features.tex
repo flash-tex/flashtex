@@ -1,0 +1,12 @@
+% n004-gyre-features: OpenType features of TeX Gyre Termes: smcp, onum, -liga, -kern, script and language, a bad option
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\a="[texgyretermes-regular.otf]:+smcp;+onum"
+\font\b="[texgyretermes-regular.otf]:-liga;-kern"
+\font\c="[texgyretermes-regular.otf]:script=latn;language=DEU;+liga"
+\font\d="[texgyretermes-regular.otf]:+frac;+sups"
+\font\e="[texgyretermes-regular.otf]:nosuchoption;+zzzz"
+\setbox0=\hbox{\a Office 1234 \b office AVA \c office \d 1/2 3/4 \e office}
+\lsshipbox0
+\end

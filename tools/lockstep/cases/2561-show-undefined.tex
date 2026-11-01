@@ -1,0 +1,8 @@
+% 2561-show-undefined: \show of an undefined control sequence prints the one-line `> \cs=undefined.` form and the `l.NN` context, with no `! OK.` line (tex.web §§1291, 1294)
+% new versus 005-meaning-string-number: 005 observes only defined meanings through \message; here \show runs on an undefined name
+% lockstep: no-halt
+\input prelude
+\show\bar
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

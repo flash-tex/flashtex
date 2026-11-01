@@ -1,0 +1,295 @@
+{
+  "appFootprintMaxBytes" : 79710592,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 1,
+      "image" : "page-0001.png",
+      "incomplete" : true,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:8",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:8" : 30
+      },
+      "waitedMs" : 52.16407775878906
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 15,
+      "image" : "page-0002.png",
+      "incomplete" : true,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:14",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:14" : 577
+      },
+      "waitedMs" : 51.159024238586426
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 15,
+      "image" : "page-0003.png",
+      "incomplete" : true,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:14",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:14" : 596
+      },
+      "waitedMs" : 52.11007595062256
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 16,
+      "image" : "page-0004.png",
+      "incomplete" : true,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:14",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:14" : 642
+      },
+      "waitedMs" : 51.58090591430664
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0005.png",
+      "incomplete" : true,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:21",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:21" : 825
+      },
+      "waitedMs" : 52.09708213806152
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0006.png",
+      "incomplete" : true,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:21",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:21" : 827
+      },
+      "waitedMs" : 51.01001262664795
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0007.png",
+      "incomplete" : true,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:21",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:21" : 340
+      },
+      "waitedMs" : 51.87702178955078
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0008.png",
+      "incomplete" : true,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 187
+      },
+      "waitedMs" : 51.36096477508545
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0009.png",
+      "incomplete" : true,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 188
+      },
+      "waitedMs" : 51.34403705596924
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0010.png",
+      "incomplete" : true,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:28",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 198
+      },
+      "waitedMs" : 51.126956939697266
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0011.png",
+      "incomplete" : true,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:28",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 200
+      },
+      "waitedMs" : 51.539063453674316
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0012.png",
+      "incomplete" : true,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:28",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 199
+      },
+      "waitedMs" : 50.80902576446533
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0013.png",
+      "incomplete" : true,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:28",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 200
+      },
+      "waitedMs" : 51.149964332580566
+    },
+    {
+      "bitmapPixelsPerPoint" : 2.8608044979122744,
+      "current" : true,
+      "forms" : 2,
+      "image" : "page-0014.png",
+      "incomplete" : true,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 2.8608044979122744,
+      "reverseAtCentre" : "main.tex:28",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 60
+      },
+      "waitedMs" : 51.70595645904541
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/allowframebreaks\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 3395.898,
+      "mode" : "cold",
+      "ms" : 4285.722125,
+      "pages" : 14,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 28
+    }
+  ],
+  "firstPageMs" : 1619.919,
+  "firstPixelsMs" : 270.930125,
+  "forward" : {
+    "14" : 2,
+    "21" : 5,
+    "28" : 8,
+    "8" : 1
+  },
+  "hostFootprintEndBytes" : 204867712,
+  "hostFootprintMaxBytes" : 204867712,
+  "incompletePages" : [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14
+  ],
+  "load" : [
+    9.0458984375,
+    14.42529296875,
+    25.1259765625
+  ],
+  "pages" : 14,
+  "settledMs" : 4285.722125,
+  "status" : "done"
+}

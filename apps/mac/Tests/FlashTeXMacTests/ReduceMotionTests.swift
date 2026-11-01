@@ -84,7 +84,7 @@ final class ReduceMotionTests: XCTestCase {
             let smaller = PreviewPageLayout(pages: base.pages, scale: base.scale * 0.8)
             let target = try XCTUnwrap(smaller.frame(of: 2)).minY + 0.3 * 792 * smaller.scale
             let before = probe.corrections.count
-            let changed = Date()
+            let settledBefore = probe.trace.filter { $0.event.hasPrefix("settled") }.count
             probe.layoutDidChange(to: smaller)
             XCTAssertEqual(probe.corrections.count, before + 1, "one synchronous correction")
             XCTAssertEqual(A.visibleTop(scroll), target, accuracy: 1)
@@ -97,7 +97,12 @@ final class ReduceMotionTests: XCTestCase {
             var origin = scroll.contentView.bounds.origin
             origin.y += (scroll.documentView?.isFlipped == true ? 60 : -60)
             scroll.contentView.setBoundsOrigin(origin) // no reflectScrolledClipView: no scroller re-tile
-            XCTAssertLessThan(Date().timeIntervalSince(changed), PreviewAnchorProbe.settleWindow, "the drift happened inside the settle window")
+            // Inside the settle window by construction: the settle step is a
+            // main-queue timer and nothing above yielded the main thread. Checked
+            // on the trace, not the wall clock, which a loaded runner stretches
+            // past 150 ms without changing the order.
+            XCTAssertEqual(probe.trace.filter { $0.event.hasPrefix("settled") }.count, settledBefore,
+                           "the drift happened before the settle step ran: \(probe.trace.map(\.event))")
             XCTAssertEqual(A.visibleTop(scroll), target + 60, accuracy: 1)
             try await settle(PreviewAnchorProbe.settleWindow + 0.15)
             scroll.contentView.postsBoundsChangedNotifications = true

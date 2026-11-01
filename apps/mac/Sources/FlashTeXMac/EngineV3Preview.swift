@@ -24,57 +24,94 @@ struct PreviewV3Pane: View {
     static func ground(dark: Bool) -> Color { dark ? DS.Preview.darkGround : DS.Colors.surfaceGround }
 
     var body: some View {
-        let session = model.engineV3
+        let _ = ViewBodyProbe.note("PreviewV3Pane") // KeystrokeInvalidationTests
+        // Two children that each read their own state: a compile changes the
+        // status line (and the stale count) on every keystroke, which must not
+        // re-run the scroll view's update, and a caret-follow request or a
+        // zoom must not re-evaluate the status HUD (P5-KEYSTROKE-MAIN).
         ZStack(alignment: .bottomLeading) {
-            EngineV3ScrollView(session: session, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
-                .background(Self.ground(dark: model.darkPreview))
-            VStack(alignment: .leading, spacing: 2) {
-                if !session.projectTrusted {
-                    // Owner decision 9A: a downloaded project runs no shell commands until trusted.
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.shield")
-                        Text("This project came from another computer\(session.trustOtherCount > 0 ? ", with \(session.trustOtherCount) other downloaded file\(session.trustOtherCount == 1 ? "" : "s") in its folder that it can read" : ""), so it compiles with shell escape off. Trust \(session.trustOtherCount > 0 ? "them" : "it") to allow restricted \\write18, as pdflatex does.")
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Trust This Project") { session.trustProject() }
-                            .accessibilityIdentifier("engine-v3.trust")
-                    }
-                    .padding(.bottom, 4)
+            PreviewV3Scroll()
+            PreviewV3StatusHUD()
+        }
+        .onAppear { model.engineV3.start(model: model) }
+    }
+}
+
+/// The pages (PreviewV3Pane).
+struct PreviewV3Scroll: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        let _ = ViewBodyProbe.note("PreviewV3Scroll") // KeystrokeInvalidationTests
+        EngineV3ScrollView(session: model.engineV3, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
+            .background(PreviewV3Pane.ground(dark: model.darkPreview)) // the dark preview's ground under the toggle (gap C10)
+    }
+}
+
+/// The status line over the pages (PreviewV3Pane): trust, phase, errors, tools.
+private struct PreviewV3StatusHUD: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        let session = model.engineV3
+        VStack(alignment: .leading, spacing: 2) {
+            if !session.projectTrusted {
+                // Owner decision 9A: a downloaded project runs no shell commands until trusted.
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.shield")
+                    Text("This project came from another computer\(session.trustOtherCount > 0 ? ", with \(session.trustOtherCount) other downloaded file\(session.trustOtherCount == 1 ? "" : "s") in its folder that it can read" : ""), so it compiles with shell escape off. Trust \(session.trustOtherCount > 0 ? "them" : "it") to allow restricted \\write18, as pdflatex does.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Trust This Project") { session.trustProject() }
+                        .accessibilityIdentifier("engine-v3.trust")
                 }
-                switch session.phase {
-                case .idle:
-                    Text("Engine v3 preview: idle")
-                case .starting(let since):
+                .padding(.bottom, 4)
+            }
+            switch session.phase {
+            case .idle:
+                Text("Engine v3 preview: idle")
+            case .starting(let since):
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    TimelineView(.periodic(from: since, by: 0.5)) { ctx in
+                        Text("\(session.environmentNote) \(Int(ctx.date.timeIntervalSince(since)))s")
+                    }
+                }
+            case .ready:
+                Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
+                if session.compileRunningLong {
+                    // A compile that runs long can always be ended (gap A15).
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
-                        TimelineView(.periodic(from: since, by: 0.5)) { ctx in
-                            Text("\(session.environmentNote) \(Int(ctx.date.timeIntervalSince(since)))s")
-                        }
+                        Text("Compiling…")
+                        Button("Stop Compile") { session.stopCompile() }
+                            .accessibilityIdentifier("engine-v3.stop-compile")
                     }
-                case .ready:
-                    Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
-                    if let e = session.firstError {
-                        Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
-                    }
-                    if session.errorCount + session.warningCount > 0 {
-                        Text("\(session.errorCount) error\(session.errorCount == 1 ? "" : "s"), \(session.warningCount) warning\(session.warningCount == 1 ? "" : "s")")
-                    }
-                    if let t = session.toolNote { // bibtex, biber, makeindex (protocol 3.2)
-                        Text(t).lineLimit(2)
-                    }
-                case .failed(let why):
-                    Text(why).foregroundStyle(.red)
                 }
-                if !session.environmentNote.isEmpty, session.phase == .ready, model.previewDebugStatus {
-                    Text(session.environmentNote)
+                if let e = session.firstError {
+                    Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
                 }
+                if session.errorCount + session.warningCount > 0 {
+                    Text("\(session.errorCount) error\(session.errorCount == 1 ? "" : "s"), \(session.warningCount) warning\(session.warningCount == 1 ? "" : "s")")
+                }
+                if let t = session.toolNote { // bibtex, biber, makeindex (protocol 3.2)
+                    Text(t).lineLimit(2)
+                }
+            case .failed(let why):
+                Text(why).foregroundStyle(.red)
             }
-            .font(.caption)
-            .padding(6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-            .padding(8)
-            .accessibilityElement(children: .combine)
+            if model.previewDebugStatus {
+                // The v2 pane's debug strip, as v3 has it (gap C25): host,
+                // compiles, pages, latency and the environment note.
+                Text(session.debugLine)
+                    .foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                    .accessibilityIdentifier("engine-v3.debug-status")
+            }
         }
-        .onAppear { session.start(model: model) }
+        .font(.caption)
+        .padding(6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .padding(8)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -110,6 +147,7 @@ struct EngineV3ScrollView: NSViewRepresentable {
         NotificationCenter.default.addObserver(pages, selector: #selector(EngineV3PagesView.userScrolled),
                                                name: NSScrollView.willStartLiveScrollNotification, object: scroll)
         session.view = pages
+        session.scheduleCaretMark() // the caret on the page (EngineV3CaretMark.swift): not a SwiftUI input
         return scroll
     }
 
@@ -120,6 +158,8 @@ struct EngineV3ScrollView: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.updateNSView", probe) }
         let revision = session.layoutRevision // observed: page count/sizes changed
         let pages = scroll.documentView as? EngineV3PagesView
         pages?.setAppearance(dark ? .dark : .light)
@@ -218,7 +258,7 @@ final class EngineV3PageView: NSView {
     weak var owner: EngineV3PagesView?
     var index = 0
     /// The page's lines and, once a client asked, their elements, for the content `hash`.
-    var axCache: (hash: [UInt8], lines: [V2PageText.Line], elements: [PreviewAXElement]?)?
+    var axCache: (hash: [UInt8], lines: [PreviewPageText.Line], elements: [PreviewAXElement]?)?
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -234,6 +274,65 @@ final class EngineV3PageView: NSView {
         wantsLayer = true
         tiles.container.frame = l.bounds
         l.addSublayer(tiles.container)
+        // Tiles are framed for the page layer's flip on screen, as the label is.
+        tiles.pageShownFlipped = { [weak self] in self?.layerShownFlipped ?? true }
+        // "page N" at the bottom right, over the page (the v2 pane's label, gap C17).
+        label.fontSize = 11
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.alignmentMode = .right
+        label.zPosition = 5
+        l.addSublayer(label)
+    }
+
+    /// The page's "page N" label (`DS.Preview` label colours, for the page's appearance).
+    let label = CATextLayer()
+
+    func setLabel(number: Int, dark: Bool, contentsScale: CGFloat) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        label.string = "page \(number)"
+        label.foregroundColor = NSColor(white: dark ? 0.7 : 0.35, alpha: 1).cgColor // DS.Preview.darkLabel / lightLabel
+        label.contentsScale = contentsScale
+        placeLabel()
+    }
+
+    /// The label's place in this (flipped) view: the bottom right, inset 4 pt (DS.Space.xs).
+    var labelFrameInView: CGRect {
+        let h: CGFloat = 14, pad: CGFloat = 4
+        return CGRect(x: pad, y: bounds.height - h - pad, width: max(0, bounds.width - 2 * pad), height: h)
+    }
+
+    /// The label's place depends on the superview it is shown in: placed
+    /// again on a new superview.
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        placeLabel()
+        CATransaction.commit()
+    }
+
+    /// Whether the hosted layer is flipped on screen. Not read from the live
+    /// layer tree: AppKit attaches a layer-hosting view's layer to its
+    /// superview's layer on a later pass, with no callback here (no
+    /// `kCAOnOrderIn`, `layout()` or move-to-window), and until then the
+    /// layer has no superlayer and reads unflipped (a label placed then sat
+    /// at the top of the page: testEachPageIsLabelled, 6 of 25 hosted
+    /// rounds on 2026-10-12). Once attached, the layer is shown flipped
+    /// exactly as the superview is: AppKit sets the hosted layer's own
+    /// `geometryFlipped` to make it so. That flag is AppKit's, and it is
+    /// transient while detached: true for a fresh view, false for one
+    /// removed and added again. It is reset when the layer attaches, so it
+    /// is not read here (EngineV3PageFlipTests; hosted measurements,
+    /// 2026-10-12).
+    var layerShownFlipped: Bool {
+        superview?.isFlipped ?? layer?.contentsAreFlipped() ?? isFlipped
+    }
+
+    private func placeLabel() {
+        // The hosted layer's own geometry: y up unless it is shown flipped.
+        var f = labelFrameInView
+        if !layerShownFlipped { f.origin.y = bounds.height - f.maxY }
+        label.frame = f
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -241,25 +340,53 @@ final class EngineV3PageView: NSView {
         super.setFrameSize(newSize)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         tiles.container.frame = CGRect(origin: .zero, size: newSize)
+        placeLabel()
         CATransaction.commit()
         axRescaled()
     }
 
     /// The layer shows (or is about to show) a stored bitmap of an instant
-    /// reopen: dimmed whatever the session's marks, until a compile's
+    /// reopen: stale whatever the session's marks, until a compile's
     /// raster of the page is committed.
     var showsStored = false { didSet { if showsStored != oldValue { applyStale() } } }
     private var marked = false
-    /// Dimmed as stale: VoiceOver's page label says so.
+    /// Stale: VoiceOver's page label says so at once, whether or not the
+    /// page is dimmed yet (`PreviewStaleDimming`).
     var axStale: Bool { marked || showsStored }
+    /// Whether the dimmed look is on the layer now.
+    private(set) var showsStaleLook = false
+    /// Dims the page once it has stayed stale for `PreviewStaleDimming.delay`.
+    /// (nonisolated(unsafe): invalidated in deinit; a view deallocates on main.)
+    nonisolated(unsafe) private var dimTimer: Timer?
+    /// Settings > "Dim pages that are being updated" (`PagesView` passes changes on).
+    var dimsStale = PreviewStaleDimming.enabled { didSet { if dimsStale != oldValue { applyStale() } } }
+    /// Tests: the delay before a stale page is dimmed (nil: dim at once).
+    var dimDelay: TimeInterval? = PreviewStaleDimming.delay
 
     func setStale(_ stale: Bool) {
         marked = stale
         applyStale()
     }
 
+    /// Clearing is immediate; dimming waits out the delay (a page re-rastered
+    /// within it, as while typing, never flashes) and is off with the setting.
     private func applyStale() {
-        let stale = marked || showsStored
+        guard axStale, dimsStale else { dimTimer?.invalidate(); dimTimer = nil; setStaleLook(false); return }
+        guard !showsStaleLook, dimTimer == nil else { return }
+        guard let delay = dimDelay else { setStaleLook(true); return }
+        let t = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.dimTimer = nil
+                self.setStaleLook(self.axStale && self.dimsStale)
+            }
+        }
+        RunLoop.main.add(t, forMode: .common) // fires while the preview is being scrolled too
+        dimTimer = t
+    }
+
+    private func setStaleLook(_ stale: Bool) {
+        showsStaleLook = stale
         guard (layer?.opacity ?? 1) != (stale ? 0.45 : 1) || (layer?.borderWidth ?? 0) != (stale ? 2 : 0) else { return }
         // No implicit animation: a fresh page shows at full opacity in the
         // frame that carries it, not over the default 0.25 s fade.
@@ -269,6 +396,8 @@ final class EngineV3PageView: NSView {
         layer?.borderWidth = stale ? 2 : 0
         layer?.borderColor = stale ? NSColor.systemOrange.cgColor : nil
     }
+
+    deinit { dimTimer?.invalidate() }
 }
 
 final class EngineV3PagesView: NSView {
@@ -276,7 +405,10 @@ final class EngineV3PagesView: NSView {
     /// Published to the reader thread: which pages it may rasterise as they arrive.
     var rasterPlan: EngineV3RasterPlan?
     private var pageViews: [Int: EngineV3PageView] = [:]
-    private var link: CADisplayLink?
+    /// The vsync link (`armVsync`): its target holds this view weakly; it is
+    /// invalidated when the view leaves its window and in deinit
+    /// (nonisolated(unsafe): deinit is nonisolated; a view deallocates on main).
+    nonisolated(unsafe) private var link: CADisplayLink?
     private lazy var boost = EngineV3FrameRateBoost(view: self)
     /// Pages changed by a keystroke's compile, not yet rastered: the compile id.
     private var pendingCompile: [Int: Int] = [:]
@@ -286,12 +418,26 @@ final class EngineV3PagesView: NSView {
     var zoom: CGFloat = 1
     /// The fit-to-width scale of the last layout (the HUD's zoom readout).
     private(set) var fitScale: Double = 1
-    /// The inputs of the last layout: page count/size revision, zoom, width.
-    private var laidOut: (revision: Int, zoom: CGFloat, width: CGFloat)?
+    /// The inputs of the last layout: page count/size revision, zoom, width,
+    /// and the widest page then (bp).
+    private var laidOut: (revision: Int, zoom: CGFloat, width: CGFloat, widest: Double)?
+    /// The reading position of the last layout that had a width, held while
+    /// the pane lays out without one (collapsed), for the next layout with a
+    /// width to restore (its y; its x starts again at the pages' left edge).
+    private var heldReading: Reading?
+    /// A page point, where it is in the viewport, and its page's frame then.
+    /// (`scale`: the layout's. A point outside its page, in a margin or the
+    /// gap below it, keeps its distance in points from the page's edge: the
+    /// margins and gaps do not scale. `anchored`.)
+    private typealias Reading = (page: Int, point: CGPoint, offset: CGPoint, was: CGRect, scale: Double)
     /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
     /// per point, whatever the pane width and zoom.
     static let fixedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V3_PPP"].flatMap(Double.init)
-    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent)
+    /// `.workItem`: each raster's autoreleased objects (the IOSurface and
+    /// the contents it replaced) go when its block ends, not whenever GCD
+    /// drains the worker thread's pool.
+    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent,
+                                                   autoreleaseFrequency: .workItem)
     private let margin: CGFloat = 16, gap: CGFloat = 12
     override var isFlipped: Bool { true }
 
@@ -300,10 +446,23 @@ final class EngineV3PagesView: NSView {
         super.init(frame: .zero)
         setAccessibilityRole(.group)
         setAccessibilityLabel("PDF preview")
+        staleDimmingObserver = PreviewStaleDimming.observe { [weak self] on in
+            self?.pageViews.values.forEach { $0.dimsStale = on }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// Settings > "Dim pages that are being updated", applied live.
+    nonisolated(unsafe) private var staleDimmingObserver: NSObjectProtocol?
 
-    override func viewDidMoveToWindow() { relayout() }
+    override func viewDidMoveToWindow() {
+        if window == nil { link?.invalidate(); link = nil } // armVsync makes another when needed
+        relayout()
+    }
+
+    deinit {
+        link?.invalidate()
+        if let staleDimmingObserver { NotificationCenter.default.removeObserver(staleDimmingObserver) }
+    }
     /// Another screen's backing scale: pixels per point (and tiles) change.
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); relayout() }
     override func viewDidEndLiveResize() { relayout() }
@@ -389,6 +548,12 @@ final class EngineV3PagesView: NSView {
     // MARK: reverse search (preview → source)
 
     override func mouseDown(with event: NSEvent) {
+        // Double-click: Fit Width, as on the v2 pane (gap C4); its first
+        // click has already done what a single click does.
+        if event.clickCount == 2 {
+            session?.model?.previewFitWidth()
+            return
+        }
         let p = convert(event.locationInWindow, from: nil)
         guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return super.mouseDown(with: event) }
         let f = frames[i]
@@ -454,10 +619,21 @@ final class EngineV3PagesView: NSView {
     /// Over a link: the pointing hand and the link's target as the tooltip (v2's affordance).
     func hover(at p: CGPoint?) {
         let found: DL3Link? = p.flatMap { self.link(at: $0) }
+        // Elsewhere on a page: where the text under the pointer comes from
+        // (the v2 pane's source tooltip, gap C16).
+        let tip = found.map(EngineV3Links.tooltip(for:)) ?? p.flatMap { sourceTooltip(at: $0) }
+        if toolTip != tip { toolTip = tip }
         guard found != hoveredLink else { return }
         hoveredLink = found
-        toolTip = found.map(EngineV3Links.tooltip(for:))
         (found == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
+    }
+
+    /// "main.tex, line 3, column 7" for the glyph under a point of this view, or nil.
+    func sourceTooltip(at p: CGPoint) -> String? {
+        guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return nil }
+        let f = frames[i]
+        guard let src = session.source(page: i, at: CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)) else { return nil }
+        return "\(src.path), line \(src.line)" + (src.col.map { ", column \($0 + 1)" } ?? "") + " (click to go there)"
     }
 
 
@@ -553,6 +729,13 @@ final class EngineV3PagesView: NSView {
     /// The Pages rotor (EngineV3Accessibility.swift).
     lazy var pagesRotor = EngineV3PagesRotor(pane: self)
 
+    // The caret on the page (EngineV3CaretMark.swift).
+    var caretKey: CaretKey?
+    var caretMark: EngineV3CaretMark?
+    lazy var caretMarkLayer = EngineV3CaretMarkLayer()
+    /// The pages the pane holds a view for (near the visible area).
+    var heldPageIndexes: [Int] { pageViews.keys.sorted() }
+
     /// Page `i`'s view, when the pane holds one (near the visible area).
     func heldPageView(_ i: Int) -> EngineV3PageView? { pageViews[i] }
 
@@ -563,14 +746,50 @@ final class EngineV3PagesView: NSView {
     /// Fit Page (⌘⇧9, gap C2): the zoom at which the tallest page fills the
     /// pane's height (v1's rule), published as the pane or the pages change.
     private func publishFitPage() {
-        guard let session, let model = session.model, let h = enclosingScrollView?.contentSize.height, h > 2 * margin, fitScale > 0 else { return }
+        guard let session, let model = session.model, let scroll = enclosingScrollView, fitScale > 0 else { return }
         let tallest = (0 ..< session.pageCount).compactMap { session.pageSize($0).map { Double($0.height) } }.max() ?? 792
         guard tallest > 0 else { return }
-        let fitPage = (h - 2 * margin) / CGFloat(tallest * fitScale)
+        let (h, bar) = Self.heights(scroll)
+        guard h > 2 * margin else { return }
+        let fitPage = Self.fitPageZoom(height: h, horizontalScroller: bar, margin: margin, pageHeight: CGFloat(tallest * fitScale))
         if abs(model.previewFitPageZoom - fitPage) > 1e-6 { model.previewFitPageZoom = fitPage }
     }
 
+    /// The pane's height without a horizontal scroller, and what a legacy
+    /// horizontal scroller takes of it (0 for overlay scrollers).
+    static func heights(_ scroll: NSScrollView) -> (CGFloat, CGFloat) {
+        func height(_ bar: AnyClass?) -> CGFloat {
+            NSScrollView.contentSize(forFrameSize: scroll.frame.size, horizontalScrollerClass: bar, verticalScrollerClass: nil,
+                                     borderType: scroll.borderType, controlSize: .regular, scrollerStyle: scroll.scrollerStyle).height
+        }
+        let h = height(nil)
+        return (h, max(0, h - height(NSScroller.self)))
+    }
+
+    /// Fit Page's zoom (over fit-to-width) for a pane `height` tall: the
+    /// tallest page (`pageHeight` at fit-to-width) fills it less the
+    /// margins. Above 1 the pages are wider than the pane, and a legacy
+    /// horizontal scroller (`horizontalScroller` pt) takes its height: the
+    /// page then fits what is left, or, if that brings it back within the
+    /// pane's width (no scroller), the width (zoom 1).
+    nonisolated static func fitPageZoom(height: CGFloat, horizontalScroller bar: CGFloat, margin: CGFloat, pageHeight: CGFloat) -> CGFloat {
+        let z = (height - 2 * margin) / pageHeight
+        guard z > 1 + 1e-9, bar > 0 else { return z }
+        return max((height - bar - 2 * margin) / pageHeight, 1)
+    }
+
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
+    /// The fit-to-width scale never goes below this.
+    nonisolated static let fitFloor = 0.1
+    /// Whether a layout `available` wide had a real fit scale rather than
+    /// `fitFloor`: room beside the two margins for the widest page at more
+    /// than the floor. Over 2 × `margin` is not enough: up to 2 × `margin` +
+    /// 0.1 × `widest` (68.4 pt for a 364 bp beamer slide, 93.2 pt for a
+    /// letter page) the fit is still the floor.
+    nonisolated static func hadWidth(_ available: CGFloat?, widest: Double, margin: CGFloat) -> Bool {
+        guard let available, widest > 0 else { return false }
+        return Double(available - 2 * margin) / widest > fitFloor
+    }
     private var backingScale: CGFloat { window?.backingScaleFactor ?? 2 }
 
     /// Lays out again only when its inputs changed (SwiftUI's updateNSView).
@@ -587,11 +806,13 @@ final class EngineV3PagesView: NSView {
     /// stays where it is in the viewport.
     func relayout(revision: Int? = nil, anchor: CGPoint? = nil) {
         guard let session else { return }
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.relayout", probe) }
         let n = session.pageCount
         let avail = available
         // `pageSize`: a compiled page, or a stored one of an instant reopen.
         let widest = (0 ..< n).compactMap { session.pageSize($0).map { Double($0.width) } }.max() ?? 612
-        let fit = max(0.1, Double((avail - 2 * margin) / widest))
+        let fit = max(Self.fitFloor, Double((avail - 2 * margin) / widest))
         let bs = backingScale
         let newScale = Self.fixedPixelsPerPoint.map { $0 / Double(bs) } ?? fit * Double(PreviewZoom.clamped(zoom))
         let scaleChanged = abs(newScale - scale) > 1e-9
@@ -599,14 +820,31 @@ final class EngineV3PagesView: NSView {
         // Kept on a scale change, and also when the pages above the anchor
         // change size at the same scale (a reflow that changes a page's
         // height, a page that arrives with its real size): gap C7.
-        var keep: (page: Int, point: CGPoint, offset: CGPoint, was: CGRect)?
-        if !frames.isEmpty, let clip = enclosingScrollView?.contentView {
-            let a = anchor ?? CGPoint(x: visibleRect.midX, y: visibleRect.minY)
+        // Not from a layout without a width (the pane before its first real
+        // layout pass, a collapsed pane): its frames are at the floor scale,
+        // so its "anchor" is an arbitrary page point (kept, it scrolled a page
+        // wider than the pane, zoom above fit, to its right edge at launch).
+        // Leaving a layout with a width for one without (collapsing the pane)
+        // holds the reading position instead, and the next layout with a
+        // width (re-expanding) restores its y; its x is reset to the pages'
+        // left edge, as at launch. At launch nothing is held: top left.
+        var keep: Reading?
+        var keepX = true
+        if !frames.isEmpty, let clip = enclosingScrollView?.contentView,
+           Self.hadWidth(laidOut?.width, widest: laidOut?.widest ?? 0, margin: margin) {
+            // (The view's top centre; from the clip view when nothing of the
+            // pages is visible: the pane has just been collapsed.)
+            let v = visibleRect
+            let a = anchor ?? (v.isEmpty ? CGPoint(x: clip.bounds.minX + (laidOut?.width ?? 0) / 2, y: clip.bounds.minY) : CGPoint(x: v.midX, y: v.minY))
             let i = frames.firstIndex { $0.maxY + gap >= a.y } ?? frames.count - 1
             let f = frames[i]
             keep = (i, CGPoint(x: (a.x - f.minX) / scale, y: (a.y - f.minY) / scale),
-                    CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY), f)
+                    CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY), f, scale)
+        } else if let held = heldReading {
+            keep = held
+            keepX = false
         }
+        heldReading = Self.hadWidth(avail, widest: widest, margin: margin) ? nil : keep
         func px(_ v: CGFloat) -> CGFloat { (v * bs).rounded() / bs }
         let width = max(avail, CGFloat(widest * newScale) + 2 * margin)
         var y = margin
@@ -622,7 +860,9 @@ final class EngineV3PagesView: NSView {
         frames = f
         scale = newScale
         fitScale = fit
-        laidOut = (revision ?? laidOut?.revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail)
+        // Laid out from the session as it is now: its current revision (so
+        // SwiftUI's update for that revision lays out nothing again).
+        laidOut = (revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail, widest)
         if let model = session.model, abs(model.previewFitScale - CGFloat(fit)) > 1e-6 { model.previewFitScale = CGFloat(fit) }
         publishFitPage()
         if frame.size != CGSize(width: width, height: height) { setFrameSize(CGSize(width: width, height: height)) }
@@ -630,18 +870,44 @@ final class EngineV3PagesView: NSView {
             if i >= n { v.tiles.removeAll(); v.removeFromSuperview(); pageViews[i] = nil; continue }
             v.frame = frames[i] // (updateVisible re-rasters a bitmap whose scale is not `wholeScale`)
         }
-        if let keep, keep.page < frames.count, scaleChanged || frames[keep.page].origin != keep.was.origin, let scroll = enclosingScrollView {
+        if let keep, keep.page < frames.count, scaleChanged || !keepX || frames[keep.page].origin != keep.was.origin, let scroll = enclosingScrollView {
             let clip = scroll.contentView
             let fr = frames[keep.page]
-            let p = CGPoint(x: fr.minX + keep.point.x * newScale, y: fr.minY + keep.point.y * newScale)
-            let origin = CGPoint(x: min(max(0, p.x - keep.offset.x), max(0, width - clip.bounds.width)),
+            let p = Self.anchored(keep.point, old: keep.was, oldScale: keep.scale, new: fr, newScale: newScale)
+            let origin = CGPoint(x: keepX ? min(max(0, p.x - keep.offset.x), max(0, width - clip.bounds.width)) : 0,
                                  y: min(max(0, p.y - keep.offset.y), max(0, height - clip.bounds.height)))
             if origin != clip.bounds.origin {
                 clip.scroll(to: origin)
                 scroll.reflectScrolledClipView(clip)
             }
         }
+        // A reopen's stored page (EngineV3Snapshot.visiblePage): once, at
+        // the first layout with a width (frames at their real scale)
+        if let p = session.restoreScrollPage, p < frames.count, Self.hadWidth(avail, widest: widest, margin: margin),
+           let scroll = enclosingScrollView {
+            session.restoreScrollPage = nil
+            let clip = scroll.contentView
+            clip.scroll(to: CGPoint(x: clip.bounds.minX, y: min(max(0, frames[p].minY - gap / 2), max(0, height - clip.bounds.height))))
+            scroll.reflectScrolledClipView(clip)
+        }
         updateVisible()
+        if caretMark != nil { drawCaretMark() } // EngineV3CaretMark.swift: page points to the new layout
+    }
+
+    /// Where page point `point` (page units at `oldScale`, from the page's
+    /// top left; outside the page in a margin or gap) of a page laid out at
+    /// `old` lies once it is laid out at `new`: inside the page it scales;
+    /// left/above or right/below the page it keeps its distance in points
+    /// from that edge (the margins and the gap between pages are fixed).
+    nonisolated static func anchored(_ point: CGPoint, old: CGRect, oldScale: Double, new: CGRect, newScale: Double) -> CGPoint {
+        func axis(_ v: CGFloat, oldLength: CGFloat, newStart: CGFloat, newLength: CGFloat) -> CGFloat {
+            let length = oldLength / CGFloat(oldScale) // page units
+            if v < 0 { return newStart + v * CGFloat(oldScale) }
+            if v > length { return newStart + newLength + (v - length) * CGFloat(oldScale) }
+            return newStart + v * CGFloat(newScale)
+        }
+        return CGPoint(x: axis(point.x, oldLength: old.width, newStart: new.minX, newLength: new.width),
+                       y: axis(point.y, oldLength: old.height, newStart: new.minY, newLength: new.height))
     }
 
     /// The end of a pinch: lays out at `newZoom` (the transform is removed in
@@ -667,9 +933,10 @@ final class EngineV3PagesView: NSView {
     /// backdrop's when tiled.
     private var wholeScale: Double { tiled ? min(pixelsPerPoint, EngineV3TileGrid.backdropPixelsPerPoint) : pixelsPerPoint }
 
-    /// Page indexes intersecting the visible rect, plus one screen around it.
+    /// Page indexes intersecting the visible rect, plus the performance
+    /// mode's screens around it (one in Balanced; PerformanceMode.swift).
     private func visibleIndexes() -> [Int] {
-        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height)
+        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height * PerformanceMode.current.overscanScreens)
         return frames.indices.filter { frames[$0].intersects(r) }
     }
 
@@ -695,6 +962,17 @@ final class EngineV3PagesView: NSView {
             if v.rasterScale != whole || v.hashKey != currentHash(i) { raster(i, compileID: nil) } else { updateTiles(i, compileID: nil) }
         }
         EngineV3ScrollBench.startIfRequested(from: self)
+        // The caret's page may have come into view (or gone): mark it again,
+        // on the next turn (once for a scroll's many calls), and only when it
+        // can change: no mark yet (its line may be on a page now held), its
+        // page no longer held, or a page before it newly held (the mark is
+        // on the first held page that shows the line). A scroll with the
+        // mark on screen builds no page's glyph index.
+        if let k = caretKey, k.pages != heldPageIndexes {
+            let held = heldPageIndexes
+            let stays = caretMark.map { m in held.contains(m.page) && !held.contains { $0 < m.page && !k.pages.contains($0) } } ?? false
+            if !stays { session.scheduleCaretMark() }
+        }
     }
 
     /// Brings page `i`'s tiles in line with the scale, its content and the
@@ -753,6 +1031,9 @@ final class EngineV3PagesView: NSView {
         v.index = i
         v.tiles.onCommitted = { [weak self] compile, t0, t1 in self?.recordCommit(compileID: compile, page: i, installNs: t0, commitNs: t1) }
         addSubview(v)
+        // After it has its superview: the label's place depends on it
+        // (EngineV3PageView.layerShownFlipped).
+        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         pageViews[i] = v
         return v
     }
@@ -778,7 +1059,10 @@ final class EngineV3PagesView: NSView {
         guard a != pageAppearance else { return }
         pageAppearance = a
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        for (_, v) in pageViews { v.layer?.backgroundColor = a.background }
+        for (i, v) in pageViews {
+            v.layer?.backgroundColor = a.background
+            v.setLabel(number: i + 1, dark: a == .dark, contentsScale: backingScale)
+        }
         CATransaction.commit()
         updateVisible()
     }
@@ -852,14 +1136,14 @@ final class EngineV3PagesView: NSView {
     /// The next display-link frame after a commit: the frame that shows it.
     private func armVsync() {
         if link == nil {
-            let l = displayLink(target: self, selector: #selector(frameTick(_:)))
+            let l = displayLink(target: EngineV3WeakLinkTarget(self) { $0.frameTick($1) }, selector: #selector(EngineV3WeakLinkTarget.tick(_:)))
             l.add(to: .main, forMode: .common)
             link = l
         }
         link?.isPaused = false
     }
 
-    @objc private func frameTick(_ l: CADisplayLink) {
+    private func frameTick(_ l: CADisplayLink) {
         // CADisplayLink times are CACurrentMediaTime(): mach absolute time, the same clock.
         session?.latency.vsync(targetNs: UInt64(l.targetTimestamp * 1e9))
         l.isPaused = true
@@ -902,7 +1186,13 @@ final class EngineV3PagesView: NSView {
             if changed, let compile, let committed { recordCommit(compileID: compile, page: i, installNs: image.committedNs == nil ? t0 : image.installNs, commitNs: committed) }
             return frames[i].intersects(visibleRect)
         }
-        if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 { relayout() }
+        if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 {
+            // Laid out once at the end of the drain (`flushLayout`), for every
+            // page that arrived in it; whether it is on screen is known then.
+            layoutPending = true
+            if changed { arrivedBeforeLayout[i] = compileID }
+            return true
+        }
         // Rastered by the relayout — except a refused raster, which is redrawn below.
         if pendingCompile[i] == nil, !redraw { return i < frames.count && frames[i].intersects(visibleRect) }
         if i < frames.count, pageViews[i] == nil, frames[i].intersects(visibleRect.insetBy(dx: 0, dy: -visibleRect.height)) {
@@ -917,6 +1207,26 @@ final class EngineV3PagesView: NSView {
         }
         pendingCompile[i] = nil
         return false
+    }
+
+    /// A page arrived past the laid-out ones (or resized): lay out at the
+    /// end of the drain (`EngineV3Session.flushEvents`).
+    private var layoutPending = false
+    /// The changed pages that waited for that layout, with their compile.
+    private var arrivedBeforeLayout: [Int: Int] = [:]
+
+    /// The layout the drain's pages need, once; a changed page that turned
+    /// out off screen is reported so (its keystroke sample is not waited for).
+    func flushLayout() {
+        guard layoutPending else { return }
+        layoutPending = false
+        relayout()
+        let arrived = arrivedBeforeLayout
+        arrivedBeforeLayout = [:]
+        for (i, compile) in arrived {
+            if pageViews[i] == nil { pendingCompile[i] = nil }
+            if !(i < frames.count && frames[i].intersects(visibleRect)) { session?.latency.offscreen(compile: compile) }
+        }
     }
 
     func formArrived(_ id: UInt32) {

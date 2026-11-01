@@ -29,9 +29,9 @@ final class ShellSnapshotTests: XCTestCase {
     }
 
     /// A healthy live preview at rest: the pages carry no chrome at all —
-    /// the page/zoom HUD is transient (hover, scroll, zoom) and the state
-    /// badge appears only when the pages are not the worker's current
-    /// result. The fixture shot above is the pinned-HUD counterpart.
+    /// the page/zoom HUD is transient (hover, scroll, zoom) and the engine's
+    /// state line appears only when it has something to say. (With one
+    /// engine this is the same model as `testMainWindow`, #1236 S6.)
     func testMainWindowLivePreview() {
         let model = DesignFixtures.liveProject()
         assertWindowSurfaceBothAppearances(ContentView().environment(model).environmentObject(DesignFixtures.nearby()), named: "shell-live",

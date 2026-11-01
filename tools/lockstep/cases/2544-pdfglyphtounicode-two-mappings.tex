@@ -1,0 +1,9 @@
+% 2544-pdfglyphtounicode-two-mappings: two \pdfglyphtounicode calls each trace as an extension command (pdftex.web §§1524, 1592)
+% new versus 1252-pdfoutline: that log shows a \pdfdest whatsit inside the shipped box and one post-ship {\pdfoutline}; this log shows {\pdfglyphtounicode} twice before the ship with no whatsits
+\input prelude
+\pdfglyphtounicode{ff}{FB00}
+\pdfglyphtounicode{fi}{FB01}
+\message{2544 glyph-done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end
