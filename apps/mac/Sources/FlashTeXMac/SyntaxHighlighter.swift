@@ -72,6 +72,8 @@ struct SyntaxTheme: Sendable {
 final class SyntaxPainter {
     static let key = NSAttributedString.Key.foregroundColor
     static let padding = 4_000
+    /// `window(for:)` before the view is on screen: either side of the caret.
+    static let offScreenPadding = 16_000
 
     private(set) var highlighter = SyntaxHighlighter()
     /// Disjoint, sorted ranges whose temporary colours match the highlighter.
@@ -134,6 +136,23 @@ final class SyntaxPainter {
         guard enabled else { conceal?.didReset(); return }
         extend(to: Self.window(for: tv))
         conceal?.didReset()
+        if !Self.isOnScreen(tv) { paintWhenOnScreen() }
+    }
+
+    /// `attach` runs from `makeNSView`, before the text view has a window or
+    /// a size: the window painted then is only the caret's neighbourhood
+    /// (`window(for:)`). Paint the real visible window once the view is on
+    /// screen (a scroll would too, via `scrolled`; the first display may come
+    /// without one). Bounded: about two seconds of run-loop turns.
+    private func paintWhenOnScreen(turns: Int = 120) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let tv = self.textView else { return }
+            if Self.isOnScreen(tv) { self.scrolled() } else if turns > 0 { self.paintWhenOnScreen(turns: turns - 1) }
+        }
+    }
+
+    static func isOnScreen(_ tv: NSTextView) -> Bool {
+        tv.window != nil && !tv.visibleRect.isEmpty && tv.layoutManager != nil && tv.textContainer != nil
     }
 
     func clear() {
@@ -321,7 +340,15 @@ final class SyntaxPainter {
     static func window(for tv: NSTextView) -> NSRange {
         let length = tv.textStorage?.length ?? 0
         guard let lm = tv.layoutManager, let container = tv.textContainer, tv.window != nil,
-              !tv.visibleRect.isEmpty else { return NSRange(location: 0, length: length) }
+              !tv.visibleRect.isEmpty else {
+            // Not on screen yet (`attach` from `makeNSView`): the caret's
+            // neighbourhood, not the whole buffer. Painting a whole book here
+            // left ~490 K temporary-attribute runs in the layout manager at
+            // 3 MB, which every later keystroke paid for (lane REVIEW-APP).
+            let caret = min(max(0, tv.selectedRange().location), length)
+            let start = max(0, caret - offScreenPadding), end = min(length, caret + offScreenPadding)
+            return NSRange(location: start, length: end - start)
+        }
         let glyphs = lm.glyphRange(forBoundingRect: tv.visibleRect, in: container)
         let visible = lm.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
         let start = max(0, visible.location - padding)
