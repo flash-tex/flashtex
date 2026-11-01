@@ -475,11 +475,68 @@ final class LiveShareController {
     }
 
     private func write(_ file: FileID, path: String, session: CollabSession, root: URL) throws {
-        guard allowed[file] == path, let text = session.text(of: file),
-              let url = Self.safeTarget(root: root, path: path, creating: true) else { return }
-        if let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
-        try Self.writeNoFollow(Data(text.utf8), to: url)
+        guard allowed[file] == path, let text = session.text(of: file) else { return }
+        // Only to skip an unchanged file; the write itself is confined.
+        if let url = Self.safeTarget(root: root, path: path),
+           let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
+        guard let url = try Self.writeConfined(Data(text.utf8), root: root, path: path) else { return }
         if isHost { markGuestEdited(url) }
+    }
+
+    /// Writes `data` at `path` under `root`, or returns nil when `path` may
+    /// not be written there (`safeParts`, a link or a non-folder on the
+    /// way, a link or a non-file at the target). The check and the write
+    /// are one walk, so nothing can redirect the write after its check:
+    /// each folder is opened relative to the one before with
+    /// `O_NOFOLLOW | O_DIRECTORY` (made with `mkdirat` when missing), and
+    /// the file is written to a new temporary name in the last open folder
+    /// (`O_CREAT | O_EXCL | O_NOFOLLOW`) and renamed over the target with
+    /// `renameat` on that same folder. A folder swapped for a link once it
+    /// is open no longer matters: the write goes where the check was made.
+    /// The target's extended attributes (a quarantine mark) are kept.
+    /// `afterCheck` runs between the walk and the write (tests).
+    @discardableResult
+    static func writeConfined(_ data: Data, root: URL, path: String, afterCheck: (() -> Void)? = nil) throws -> URL? {
+        guard let parts = safeParts(path), let name = parts.last else { return nil }
+        func failure() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        var dir = open(root.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard dir >= 0 else { throw failure() }
+        defer { close(dir) }
+        for part in parts.dropLast() {
+            var next = openat(dir, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if next < 0, errno == ENOENT {
+                guard mkdirat(dir, part, 0o755) == 0 || errno == EEXIST else { throw failure() }
+                next = openat(dir, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            // ELOOP (a link) or ENOTDIR (a file): refused, as safeTarget does.
+            guard next >= 0 else { return nil }
+            close(dir)
+            dir = next
+        }
+        var st = stat()
+        if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0 {
+            guard st.st_mode & S_IFMT == S_IFREG else { return nil }
+        } else if errno != ENOENT {
+            throw failure()
+        }
+        afterCheck?()
+        let temp = ".\(name).liveshare-\(UUID().uuidString)"
+        let fd = openat(dir, temp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { throw failure() }
+        var renamed = false
+        defer { if !renamed { unlinkat(dir, temp, 0) } }
+        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        try h.write(contentsOf: data)
+        // Keep what the file carried; never block on a FIFO swapped in.
+        let old = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if old >= 0 {
+            _ = fcopyfile(old, fd, nil, copyfile_flags_t(COPYFILE_XATTR))
+            close(old)
+        }
+        try h.close()
+        guard renameat(dir, temp, dir, name) == 0 else { throw failure() }
+        renamed = true
+        return root.appendingPathComponent(path)
     }
 
     /// Writes through a new temporary file (`O_CREAT | O_EXCL | O_NOFOLLOW`,
@@ -535,6 +592,17 @@ final class LiveShareController {
         path.precomposedStringWithCanonicalMapping.folding(options: [.caseInsensitive], locale: nil)
     }
 
+    /// The segments of `path` when its text may name a shared file:
+    /// `FileMap.isValidPath`, no segment starting with `.`, a text-source
+    /// extension. Nil otherwise.
+    static func safeParts(_ path: String) -> [String]? {
+        guard FileMap.isValidPath(path) else { return nil }
+        let parts = path.split(separator: "/").map(String.init)
+        guard !parts.contains(where: { $0.hasPrefix(".") }),
+              let last = parts.last, sharedExtensions.contains((last as NSString).pathExtension.lowercased()) else { return nil }
+        return parts
+    }
+
     /// Where `path` may be written under `root`, or nil. Refused: anything
     /// `FileMap.isValidPath` refuses; any segment starting with `.` (no
     /// `.git/config`, no `.latexmkrc`); a file that is not a text source;
@@ -542,10 +610,7 @@ final class LiveShareController {
     /// part resolves outside the root. `creating` makes missing folders
     /// (each checked first).
     static func safeTarget(root: URL, path: String, creating: Bool = false) -> URL? {
-        guard FileMap.isValidPath(path) else { return nil }
-        let parts = path.split(separator: "/").map(String.init)
-        guard !parts.contains(where: { $0.hasPrefix(".") }),
-              let last = parts.last, sharedExtensions.contains((last as NSString).pathExtension.lowercased()) else { return nil }
+        guard let parts = safeParts(path) else { return nil }
         let fm = FileManager.default
         let realRoot = root.resolvingSymlinksInPath().path
         var url = root
