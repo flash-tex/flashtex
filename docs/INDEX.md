@@ -78,8 +78,6 @@ latency. Every consumer must retain source/project/revision and resource identit
 
 - `crates/edit-ledger/README.md`: authoritative durable source, receipts, history,
   background service and restart handling. Do not build a second independent undo ledger.
-- `crates/document-runtime/README.md`: persistent original compiler transport, stale
-  response suppression and replay metrics; native paint is excluded from its timings.
 - `crates/project-index/README.md`: exact-revision source navigation and lexical
   bibliography/rename facilities; lexical results do not establish TeX expansion semantics.
 - `crates/pdf/README.md`: FlashTeX's own font-file readers and PDF writer; Unicode
