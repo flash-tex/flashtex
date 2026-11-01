@@ -128,10 +128,9 @@ pub fn exclude(prefix: &str) {
 /// write just before it): else `stat`ed. (FLASHTEX_FSWATCH_DOC=off keeps
 /// them `stat`ed every time, as [`exclude`] does.)
 ///
-/// The sentinel is `.flashtex-fswatch` in `sentinel_dir` (the document's
-/// output directory, which the host writes anyway; written in place, so
-/// that the directory's entries do not change).
-pub fn barrier(prefix: &str, sentinel_dir: &str) {
+/// The sentinel is written in a private temporary directory, so document
+/// and output files cannot replace it.
+pub fn barrier(prefix: &str) {
     if std::env::var("FLASHTEX_FSWATCH_DOC").is_ok_and(|v| v == "off") {
         exclude(prefix);
         return;
@@ -140,11 +139,6 @@ pub fn barrier(prefix: &str, sentinel_dir: &str) {
         let p = prefix.trim_end_matches('/').to_string();
         if !p.is_empty() && !w.barriered.contains(&p) {
             w.barriered.push(p);
-        }
-        let d = std::path::PathBuf::from(sentinel_dir);
-        if w.sentinel_dir.as_ref() != Some(&d) {
-            w.sentinel_dir = Some(d);
-            w.sentinel = None;
         }
     }
 }
@@ -310,7 +304,7 @@ struct Watch {
     /// The barrier's sentinel file, its watch and that watch's generation
     /// after the last barrier.
     sentinel: Option<(std::fs::File, u32, u64)>,
-    /// Where the sentinel is made ([`barrier`]).
+    /// Private directory where the sentinel is made.
     sentinel_dir: Option<std::path::PathBuf>,
 }
 
@@ -370,28 +364,37 @@ impl Watch {
     #[cfg(unix)]
     fn write_sentinel(&mut self) -> bool {
         use std::os::unix::fs::FileExt;
+        if self.sentinel_dir.as_ref().is_some_and(|d| !d.is_dir()) {
+            self.sentinel = None;
+            self.sentinel_dir = None;
+        }
         if self.sentinel.is_none() {
-            let Some(d) = self.sentinel_dir.clone() else {
+            let opened = (|| {
+                let d = match &self.sentinel_dir {
+                    Some(d) => d.clone(),
+                    None => {
+                        let d = private_sentinel_dir()?;
+                        self.sentinel_dir = Some(d.clone());
+                        d
+                    }
+                };
+                let f = d.join(".flashtex-fswatch");
+                // (made once: later, written in place)
+                if !f.is_file() {
+                    std::fs::write(&f, b"0").ok()?;
+                }
+                let p = std::fs::canonicalize(&f).ok()?.to_str()?.to_string();
+                let h = std::fs::OpenOptions::new().write(true).open(&p).ok()?;
+                let (i, gen) = self.target(&p)?;
+                Some((h, i, gen))
+            })();
+            let Some(opened) = opened else {
+                if let Some(d) = self.sentinel_dir.take() {
+                    let _ = std::fs::remove_dir_all(d);
+                }
                 return false;
             };
-            let f = d.join(".flashtex-fswatch");
-            // (made once: later, written in place)
-            if !f.is_file() && std::fs::write(&f, b"0").is_err() {
-                return false;
-            }
-            let Some(p) = std::fs::canonicalize(&f)
-                .ok()
-                .and_then(|c| c.to_str().map(str::to_string))
-            else {
-                return false;
-            };
-            let Ok(h) = std::fs::OpenOptions::new().write(true).open(&p) else {
-                return false;
-            };
-            let Some((i, gen)) = self.target(&p) else {
-                return false;
-            };
-            self.sentinel = Some((h, i, gen));
+            self.sentinel = Some(opened);
         }
         #[cfg(test)]
         if DROP_SENTINEL.with(|c| c.replace(false)) {
@@ -546,6 +549,34 @@ impl Watch {
         }
         count(3);
     }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        if let Some(d) = &self.sentinel_dir {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn private_sentinel_dir() -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut path = std::ffi::CString::new(
+        std::env::temp_dir()
+            .join("flashtex-fswatch-XXXXXX")
+            .as_os_str()
+            .as_bytes(),
+    )
+    .ok()?
+    .into_bytes_with_nul();
+    // SAFETY: mkdtemp replaces the six Xs in this writable, NUL-terminated buffer.
+    if unsafe { libc::mkdtemp(path.as_mut_ptr().cast()) }.is_null() {
+        return None;
+    }
+    path.pop(); // NUL
+    Some(std::ffi::OsString::from_vec(path).into())
 }
 
 /// `path` is `dir` or under it.
@@ -955,7 +986,7 @@ mod tests {
         std::env::set_var("FLASHTEX_RACY_MS", "0");
         enable();
         exclude(d.join("out").to_str().unwrap());
-        barrier(d.to_str().unwrap(), d.join("out").to_str().unwrap());
+        barrier(d.to_str().unwrap());
         let served = |path: &str| {
             W.lock()
                 .unwrap()
@@ -985,10 +1016,16 @@ mod tests {
             }
         };
         drop(until_served());
-        assert!(
-            std::path::Path::new(&d.join("out/.flashtex-fswatch")).is_file(),
-            "the sentinel is in the output directory"
-        );
+        let sentinel_dir = W
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .sentinel_dir
+            .clone()
+            .unwrap();
+        assert!(sentinel_dir.join(".flashtex-fswatch").is_file());
+        assert!(!sentinel_dir.starts_with(&d));
         // written immediately before the check, in place, the same length
         // and its time put back: seen
         let mtime = std::fs::metadata(&f).unwrap().modified().unwrap();
@@ -1033,6 +1070,102 @@ mod tests {
             assert_eq!(sig(&p).map(|s| s.len), Some(3));
         }
         drop(until_served());
+        let mut g = W.lock().unwrap();
+        let w = g.as_mut().unwrap();
+        w.sentinel = None;
+        if let Some(dir) = w.sentinel_dir.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn barrier_recovers_after_private_dir_is_deleted() {
+        let mut w = Watch::new().unwrap();
+        w.barriered
+            .push(std::env::temp_dir().to_string_lossy().into_owned());
+        w.sync();
+        assert!(w.current);
+        let old = w.sentinel_dir.clone().unwrap();
+        std::fs::remove_dir_all(&old).unwrap();
+        w.sync();
+        assert!(w.current, "the next sync restores the barrier");
+        assert_ne!(w.sentinel_dir.as_ref(), Some(&old));
+        assert!(w.sentinel_dir.as_ref().unwrap().is_dir());
+    }
+
+    #[test]
+    fn symlink_sentinel_does_not_write_outside_the_project() {
+        use std::os::unix::fs::symlink;
+
+        let d = std::env::temp_dir().join(format!("fswatch-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("out")).unwrap();
+        let outside = d.with_extension("outside");
+        std::fs::write(&outside, b"ABCDEF").unwrap();
+        symlink(&outside, d.join("out/.flashtex-fswatch")).unwrap();
+        enable();
+        barrier(d.to_str().unwrap());
+        let mut g = W.lock().unwrap();
+        let w = g.as_mut().unwrap();
+        w.sentinel = None;
+        w.sync();
+        assert_eq!(std::fs::read(&outside).unwrap(), b"ABCDEF");
+        w.sentinel = None;
+        if let Some(dir) = w.sentinel_dir.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        drop(g);
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_file(&outside);
+    }
+
+    #[test]
+    fn fifo_sentinel_does_not_block() {
+        let d = std::env::temp_dir().join(format!("fswatch-fifo-{}", std::process::id()));
+        if std::env::var_os("FLASHTEX_FSWATCH_FIFO_CHILD").is_some() {
+            enable();
+            assert!(enabled());
+            barrier(d.to_str().unwrap());
+            let _c = check();
+            *W.lock().unwrap() = None;
+            return;
+        }
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("out")).unwrap();
+        use std::os::unix::ffi::OsStrExt;
+        let fifo =
+            std::ffi::CString::new(d.join("out/.flashtex-fswatch").as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("fswatch::tests::fifo_sentinel_does_not_block")
+            .env("FLASHTEX_FSWATCH_FIFO_CHILD", d.join("out"))
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let start = std::time::Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if start.elapsed() > std::time::Duration::from_secs(3) {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("check blocked on a FIFO sentinel");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(status.success());
+        use std::io::Read;
+        let mut output = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut output)
+            .unwrap();
+        assert!(output.contains("1 passed"), "child ran no test: {output}");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

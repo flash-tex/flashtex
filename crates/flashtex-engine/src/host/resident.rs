@@ -849,8 +849,7 @@ impl Engine {
         std::env::set_current_dir(&job.root).map_err(|e| format!("{}: {e}", job.root.display()))?;
         // (the output directory, which the run writes at every compile, is
         // stat'ed at every check; the document's directory is served only
-        // behind each check's barrier, whose sentinel is in the output
-        // directory: `fswatch`)
+        // behind each check's barrier: `fswatch`)
         let out = job.root.join(&job.out_dir);
         let _ = std::fs::create_dir_all(&out);
         let out_c = std::fs::canonicalize(&out).unwrap_or_else(|_| out.clone());
@@ -859,7 +858,7 @@ impl Engine {
         }
         let root_c = std::fs::canonicalize(&job.root).unwrap_or_else(|_| job.root.clone());
         for d in [&job.root, &root_c] {
-            crate::fswatch::barrier(&d.to_string_lossy(), &out_c.to_string_lossy());
+            crate::fswatch::barrier(&d.to_string_lossy());
         }
         let mut argv = vec!["pdftex".to_string()];
         argv.extend(job.argv());
