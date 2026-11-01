@@ -997,7 +997,12 @@ impl Engine {
             &server::font_formats(&req).join(","),
         ));
         // (a save of this S₀ still being written by this process: wait for it)
-        let s1_path = s0_path.as_ref().map(|p| p.with_extension("s1"));
+        // (`FLASHTEX_S1=off`: a reopen never uses a stored S₁, which is
+        // still saved)
+        let s1_path = s0_path
+            .as_ref()
+            .map(|p| p.with_extension("s1"))
+            .filter(|_| std::env::var("FLASHTEX_S1").as_deref() != Ok("off"));
         if doc.compiles == 0 {
             for p in s0_path.iter().chain(&s1_path) {
                 super::s0write::flush(
