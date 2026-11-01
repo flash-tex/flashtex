@@ -41,6 +41,24 @@ into a chapter (docspec.py) and whose preamble edits into the main file. The pha
                                             to page 1, to every page seen and to DONE once the tools
                                             settle. The books only, unless `open` is named in --phases
 
+Real documents (realdocs.json, mkreal.py; lane REAL-DOC-GATE, 2026-10-24): documents people wrote,
+named in --docs: infdesc-x2 (the owner's 1,142 pages), a long arXiv paper, a real beamer deck and a
+book-class thesis. The owner found typing on page 883 of infdesc-x2 taking 32 s and freezing the
+editor, which no generated document showed. A real document has SITES, places in it to type
+(realdocs.json: a file, and the page or the line there, from the oracle's pdflatex run), and
+runs two phases at each site and nothing else:
+
+  letter@SITE                               letter@middle's edit at the site, each key after DONE
+  typing@50ms@SITE                          typing@50ms's at the site: keys 50 ms apart, on a clock
+
+Their target is DESIGN.md §1.2's for the slowest supported Mac (owner, 2026-10-06): key -> preview
+commit <= 20 ms p95 for keys 50 ms apart on 1,000-page documents and on Infinite Descent x2
+(realdocs.json `target_ms`), here to the edited page's PAGE frame. A row passes only when the
+edited page arrives within it for every key and, typing@, every key is painted by its own compile.
+A host page count other than the oracle's (realdocs.json `pages`) is a warning: T4's question. `--sites A,B` keeps those
+sites only (the PR CI's quick row: --docs infdesc-x2 --sites x2-late --phases typing@50ms@site).
+`--phases` names a real document's phases by kind: letter@site, typing@50ms@site.
+
 Documents: plain-N and full-N (gen.py) and two beamer decks (genbeamer.py, lane BEAMER-LATENCY):
 beamer-5, the owner's five-frame deck, and beamer-30, thirty frames with a theme, sections and
 overlays. A beamer frame's body is typeset at `\\end{frame}`, so dl3-keys cannot place a frame's
@@ -144,7 +162,13 @@ TYPING_PHASES = [
 ]
 TYPING_NAMES = {p for p, _ in TYPING_PHASES}
 PREAMBLE = ('preamble', ['--kind', 'preamble', '--at', '0.5'])
-PHASE_NAMES = ['open'] + [p for p, _ in BODY_PHASES] + [p for p, _ in TYPING_PHASES] + [PREAMBLE[0], 'reopen']
+# a real document's phases, by kind (realdocs.json; `--phases` names these): at each of its sites
+REAL_KINDS = [('letter@site', ['--kind', 'letter']), ('typing@50ms@site', ['--kind', 'letter', '--interval-ms', '50']),
+              ('typing@150ms@site', ['--kind', 'letter', '--interval-ms', '150'])]
+PHASE_NAMES = (['open'] + [p for p, _ in BODY_PHASES] + [p for p, _ in TYPING_PHASES] + [PREAMBLE[0], 'reopen']
+               + [k for k, _ in REAL_KINDS])
+REAL_SPEC = os.path.join(S, 'realdocs.json')
+REAL = json.load(open(REAL_SPEC)) if os.path.exists(REAL_SPEC) else dict(target_ms=20.0, docs={})
 # §1.2: the host's share of the edit gate (decision 1), the preamble row
 TARGET = {'edit': 11.0, 'preamble': 400.0}
 REOPEN_APP_TARGET = 100.0  # the app's row (stored pages), for reference only
@@ -425,6 +449,29 @@ def located(args, lines):
     return args[:i] + ['--line', str(line), '--page', str(page)] + args[i + 2:]
 
 
+def is_typing(name):
+    """A continuous-typing phase (typing@Nms, and a real document's typing@50ms@SITE)."""
+    return name.startswith('typing@')
+
+
+def real_phases(doc, sites=None):
+    """A real document's phases: (name, dl3-keys arguments, kind) for each kind at each site
+    (realdocs.json), in the file's order; `sites` keeps those only."""
+    out = []
+    for site, s in REAL['docs'][doc]['sites'].items():
+        if sites and site not in sites:
+            continue
+        where = (['--line', str(s['line']), '--page', str(s['page'])] if 'line' in s else
+                 ['--page', str(s['page'])] if 'page' in s else ['--at', str(s.get('at', 0.5))])
+        where += ['--edit', s['edit']] if s.get('edit') else []
+        # as the app compiles a trusted project: makeindex, bibtex, biber run, and each compile lasts
+        # until their follow-ups settle (without them infdesc-x2 has no index: 1,140 pages, not 1,152)
+        where += ['--external-tools', 'auto']
+        for kind, args in REAL_KINDS:
+            out.append((kind.replace('@site', '@' + site), args + where, kind))
+    return out
+
+
 def phase_order(order, i, seed):
     """The in-body phases for the i-th document."""
     ph = list(BODY_PHASES)
@@ -460,21 +507,28 @@ def run_phases(a, eng, doc, out, i, res):
     log = f'{out}/raw/{doc}.host-stderr'
     hostargs = a.host_args.split()
     lines = edit_lines(f'{IB}/docs/{doc}')
-    if 'open' in a.phases and (doc in BOOKS or a.open_named):
+    if 'open' in a.phases and (doc in BOOKS or getattr(a, 'open_named', False)):
         res['open'] = cold_open(a, eng, doc, out, hostargs)
+    real = doc in REAL['docs']
+    if real:
+        phases = real_phases(doc, getattr(a, 'sites', None))
+        res['real'] = dict(target_ms=REAL['target_ms'], oracle_pages=REAL['docs'][doc].get('pages'),
+                           gate=getattr(a, 'gate', 'wall'), pr_gate=REAL.get('pr_gate', {}))
+    else:
+        phases = [(n, x, n) for n, x in phase_order(a.order, i, a.seed)]
     h = Host(eng, sock, s0, log, hostargs)
     res['host_startup'], res['host_ready_ms'] = h.startup, round(h.ready_ms, 1)
     rss = []
     try:
-        for name, args in phase_order(a.order, i, a.seed):
-            if name not in a.phases:
+        for name, args, kind in phases:
+            if kind not in a.phases:
                 continue
             res['order'].append(name)
-            n = a.preamble if name == 'preamble' else a.typing_keys if name in TYPING_NAMES else a.keys
+            n = a.preamble if name == 'preamble' else a.typing_keys if is_typing(name) else a.keys
             l0 = load1()
             t = time.time()
             # (a preamble edit goes into the main file; the others into a book's chapter)
-            recs, err = keys(eng, sock, work, located(args, lines) + (edit if name != 'preamble' else []) +
+            recs, err = keys(eng, sock, work, located(args, lines) + (edit if name != 'preamble' and '--edit' not in args else []) +
                              ['--keys', str(n), '--gap-ms', str(a.gap_ms)],
                              f'{out}/raw/{doc}-{name}.jsonl', a.timeout)
             opens = [r for r in recs if 'open' in r]
@@ -483,7 +537,7 @@ def run_phases(a, eng, doc, out, i, res):
                 res['pages'] = opens[-1]['host'].get('pages')
             res['phases'][name] = dict(keys=[r for r in recs if 'key' in r], where=err, load=[l0, load1()],
                                        wall_s=round(time.time() - t, 1))
-            if name in TYPING_NAMES:
+            if is_typing(name):
                 # (the compiles' DONEs come as lines of their own; the summary line counts the
                 # keystrokes never painted)
                 res['phases'][name]['dones'] = [r['done'] for r in recs if 'done' in r]
@@ -496,7 +550,7 @@ def run_phases(a, eng, doc, out, i, res):
         res['killed_at_limit'] = h.killed_at_limit
         res['rss_peak'] = max((r for r in rss if r), default=None)
     # reopen: edit on disk, a new host from the persisted S0, page 1
-    if a.reopen and 'reopen' in a.phases:
+    if a.reopen and 'reopen' in a.phases and not real:
         at = body_line(open(src).read(), 0.5, int(located(['--at', '0.5'], lines)[1]) if lines else None)
         ef = f'{work}/{docspec.edit_file(IB, doc)}'
         for k in range(a.reopen):
@@ -568,6 +622,13 @@ def off_cpu(host):
     return max(0.0, fp - q - cpu)
 
 
+def target_of(d, pre=False):
+    """A row's target: a real document's (realdocs.json), else §1.2's host share or preamble row."""
+    if d.get('real'):
+        return float(d['real']['target_ms'])
+    return TARGET['preamble' if pre else 'edit']
+
+
 def typing_row(d, name, ph):
     """A continuous-typing phase: each keystroke's time to the watched page from its own compile or a
     later one (what the user sees: dl3-keys --interval-ms), how many were not painted by their own
@@ -583,11 +644,28 @@ def typing_row(d, name, ph):
     painters = [by_id[k['by']] for k in ks if k.get('by') in by_id]
     queue = [x['stages']['queue'] for x in painters
              if isinstance((x.get('stages') or {}).get('queue'), (int, float))]
-    return dict(doc=d['doc'], edit=name, metric='edited page (host share), typing', target=TARGET['edit'],
-                gated=True, n=n, missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own,
+    return dict(doc=d['doc'], edit=name, metric='edited page (host share), typing', target=target_of(d),
+                gated=True, n=n, **real_fields(d), missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own,
                 queue=stats(queue), off_cpu=stats([x for x in map(off_cpu, painters) if x is not None]),
                 cancelled=sum(1 for x in dones if x.get('status') == 'cancelled'),
                 load=ph['load'], pages=d.get('pages'), rss=d.get('rss_peak'))
+
+
+def real_fields(d, hosts=()):
+    """A real document's row fields: the oracle's page count, the gate profile (`wall`: the target;
+    `hosted`: realdocs.json's `pr_gate`), and per keystroke the pages re-typeset and the engine
+    thread's instructions to the edited page (DONE's `rerun_pages`, `stages.edited_instr_k`)."""
+    if not d.get('real'):
+        return {}
+    instr = [x['stages']['edited_instr_k'] / 1e3 for x in hosts
+             if isinstance((x.get('stages') or {}).get('edited_instr_k'), (int, float))]
+    out = dict(real=True, oracle_pages=d['real'].get('oracle_pages'), gate=d['real'].get('gate', 'wall'),
+               pr_gate=REAL.get('pr_gate') or d['real'].get('pr_gate', {}))  # (the budgets in force now)
+    if hosts:  # (a letter@ row: one DONE per keystroke; a typing@ row's compiles are superseded)
+        out.update(rerun_pages=stats([x['rerun_pages'] if x.get('rerun_pages') is not None else x.get('typeset_pages') or 0
+                                      for x in hosts]),
+                   edited_instr_m=stats(instr))
+    return out
 
 
 def gated_stat(m):
@@ -601,7 +679,7 @@ def summarise(raw):
     rows = []
     for d in raw:
         for name, ph in d['phases'].items():
-            if name in TYPING_NAMES:
+            if is_typing(name):
                 rows.append(typing_row(d, name, ph))
                 continue
             ks = ph['keys'][1:]
@@ -611,7 +689,7 @@ def summarise(raw):
             hosts = [k.get('host', {}) for k in ks]
             rows.append(dict(
                 doc=d['doc'], edit=name, metric='first visible page' if pre else 'edited page (host share)',
-                target=TARGET['preamble' if pre else 'edit'], gated=True, n=len(ks), missing=len(v) - len(got),
+                target=target_of(d, pre), gated=True, n=len(ks), missing=len(v) - len(got), **real_fields(d, hosts),
                 ms=stats(got),
                 first_page=stats([k['first_page_ms'] for k in ks if k.get('first_page_ms') is not None]),
                 done=stats([k['done_ms'] for k in ks if 'done_ms' in k]),
@@ -657,7 +735,21 @@ def verdict(rows, baseline):
             why.append('no samples')
         name, val = gated_stat(r['ms'])
         r['stat'] = name
-        if val is not None and r['target'] is not None and val > r['target']:
+        hosted = r.get('real') and r.get('gate') == 'hosted'
+        if hosted:
+            # the PR CI's profile (realdocs.json pr_gate): no wall clock, which a shared 3-vCPU VM makes
+            # noise; what the host did instead, the same on any machine
+            g = r.get('pr_gate', {})
+            rp, ins = (r.get('rerun_pages') or {}).get('max'), (r.get('edited_instr_m') or {}).get('max')
+            if 'rerun_pages' in r and rp is not None and rp > g.get('rerun_pages_max', 3):
+                why.append(f"re-typeset up to {rp} pages > {g.get('rerun_pages_max', 3)} (no convergence near the edit)")
+            if 'edited_instr_m' in r and g.get('edited_instr_m_max') and r['n']:
+                if ins is None:
+                    # a machine without thread PMU counters (a hosted VM): reported, not gated
+                    r['warning'] = 'no instruction count on this machine (stages.edited_instr_k): not gated'
+                elif ins > g['edited_instr_m_max']:
+                    why.append(f"up to {ins:.0f} M instructions to the edited page > {g['edited_instr_m_max']} M")
+        elif val is not None and r['target'] is not None and val > r['target']:
             why.append(f"{name} {val:.1f} ms > {r['target']:.0f} ms")
         if r.get('not_own'):
             why.append(f"{r['not_own']} of {r['n']} keystrokes not painted by their own compile")
@@ -665,9 +757,12 @@ def verdict(rows, baseline):
             why.append(f"{r['stale_unmarked']} compiles refreshed later pages without marking them stale")
         if r.get('incomplete'):
             why.append(f"{r['incomplete']} compiles ended without all pages current")
+        if r.get('real') and r.get('oracle_pages') and r.get('pages') != r['oracle_pages']:
+            # reported, not gated: a parity question (T4's), not a latency one
+            r['warning'] = f"{r.get('pages')} pages, the oracle {r['oracle_pages']}"
         if r.get('modes') and r['edit'].startswith('reopen') and r['modes'] != ['open']:
             why.append(f"reopen modes {r['modes']} (expected open: from S0)")
-        if baseline is not None and 'converged' in r and r['n']:
+        if baseline is not None and 'converged' in r and r['n'] and not r.get('real'):
             b = baseline.get(tag)
             if b is None:
                 r['warning'] = 'no baseline row'
@@ -726,7 +821,7 @@ def table(rows, issues):
 def baseline_of(rows):
     return {f"{r['doc']} {r['edit']}": dict(converged_rate=round(r['converged'] / r['n'], 3),
                                             typeset_pages_p50=r['typeset_pages']['p50'])
-            for r in rows if 'converged' in r and r['n']}
+            for r in rows if 'converged' in r and r['n'] and not r.get('real')}
 
 
 def report(summ, baseline, max_load, require_reference):
@@ -767,6 +862,10 @@ def main():
     ap.add_argument('--seed', type=int, default=7)
     ap.add_argument('--timeout', type=int, default=3600, help='per dl3-keys connection, s')
     ap.add_argument('--host-args', default='')
+    ap.add_argument('--sites', help="a real document's sites to type at (realdocs.json), comma list; default all")
+    ap.add_argument('--gate', choices=['wall', 'hosted'], default='wall',
+                    help="real documents' gate: wall (the ms target) or hosted (realdocs.json pr_gate: "
+                         "re-typeset pages, instructions to the edited page, every key its own compile)")
     ap.add_argument('--limit-gb', type=float, default=0.0,
                     help="kill a host whose resident memory passes this (mem_gate.sh); 0: no limit")
     ap.add_argument('--out')
@@ -799,11 +898,12 @@ def main():
     error = None
     a.open_named = a.phases is not None and 'open' in [p.strip() for p in a.phases.split(',')]
     a.phases = PHASE_NAMES if a.phases is None else [p.strip() for p in a.phases.split(',') if p.strip()]
+    a.sites = [x.strip() for x in a.sites.split(',') if x.strip()] if a.sites else None
     bad = [p for p in a.phases if p not in PHASE_NAMES]
     if bad or not a.phases:
         error = f'unknown or empty --phases {bad or a.phases}; known: {",".join(PHASE_NAMES)}'
     docs = [d.strip() for d in a.docs.split(',') if d.strip()]
-    known = set(DOCS) | set(BOOKS) | (set(os.listdir(f'{IB}/docs')) if os.path.isdir(f'{IB}/docs') else set())
+    known = set(DOCS) | set(BOOKS) | set(REAL['docs']) | (set(os.listdir(f'{IB}/docs')) if os.path.isdir(f'{IB}/docs') else set())
     if not error and (not docs or [d for d in docs if d not in known]):
         error = f'unknown or empty --docs {[d for d in docs if d not in known] or docs}; known: {",".join(sorted(known))}'
     env_lines = [f'start {time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())} {uptime()}',
@@ -819,11 +919,15 @@ def main():
                                env=dict(os.environ, CARGO_BUILD_JOBS=jobs))
             if b.returncode or subprocess.run([f'{S}/mkeng.sh', a.engine], cwd=W).returncode:
                 error = 'build failed'
-        if not error and not all(os.path.exists(f'{IB}/docs/{d}/main.tex') for d in ('full-1000', 'beamer-30')):
+        if not error and any(d in DOCS for d in docs) and \
+                not all(os.path.exists(f'{IB}/docs/{d}/main.tex') for d in ('full-1000', 'beamer-30')):
             subprocess.run([sys.executable, f'{S}/mkdocs.py'], check=True)
-        books = [d for d in docs if d in BOOKS]
+        books = [d for d in docs if d in BOOKS and d not in REAL['docs']]
         if not error and books:
             subprocess.run([sys.executable, f'{S}/mkbook.py'] + books, check=True)
+        reals = [d for d in docs if d in REAL['docs']]
+        if not error and reals:
+            subprocess.run([sys.executable, f'{S}/mkreal.py'] + reals, check=True)
         for need in ('flashtex-host', 'dl3-keys', 'pdftex.pool'):
             if not error and not os.path.exists(f'{eng}/{need}'):
                 error = f'{eng}/{need} missing (run with --build, or mkeng.sh {a.engine})'
