@@ -395,7 +395,8 @@ final class EngineV3Session {
 
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-                self?.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp)
+                // Only this window's keys: another project window's typing is not this session's latency.
+                if let self, e.window == nil || e.window === self.view?.window { self.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp) }
                 return e
             }
         }
@@ -403,10 +404,11 @@ final class EngineV3Session {
             // ⌘-click in the editor: forward search to the preview (after the
             // click has moved the caret).
             clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] e in
-                if e.modifierFlags.contains(.command), let tv = e.window?.firstResponder as? NSTextView,
+                // (this window's editor only: every project window has a session)
+                if e.modifierFlags.contains(.command), let self, let w = e.window, w === self.view?.window, let tv = w.firstResponder as? NSTextView,
                    tv.accessibilityLabel() == "LaTeX source", let v = e.window?.contentView?.hitTest(e.locationInWindow),
                    v === tv || v.isDescendant(of: tv) {
-                    DispatchQueue.main.async { self?.model?.revealCaretInPreview() }
+                    DispatchQueue.main.async { [weak self] in self?.model?.revealCaretInPreview() }
                 }
                 return e
             }

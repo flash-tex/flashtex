@@ -688,6 +688,10 @@ extension ShellModel {
         return c
     }
 
+    /// A Live Share session runs in this window (without making the
+    /// controller: a window that never used Live Share has none).
+    var liveShareActive: Bool { (objc_getAssociatedObject(self, &Self.liveShareKey) as? LiveShareController)?.isActive ?? false }
+
     /// The editor's session link changed (a session started, ended or its
     /// project opened): nudge the editor pane to re-read it.
     func liveShareRebind() { liveShare.bumpGeneration() }
