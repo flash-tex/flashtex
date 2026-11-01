@@ -81,7 +81,7 @@ if [ "$PERF" = 1 ]; then
     "$WORK/r/perf-$n.jsonl" --external-tools auto --host-arg=--profile --host-arg=balanced --tag "perf-$n" \
     > "$WORK/r/perf.out" 2>&1 || true
   "${PERF_CMD[@]}" report -i "$WORK/r/perf.data" --no-children --sort symbol --stdio -F overhead,sym 2>/dev/null \
-    | grep -v '^#' | grep -v '^$' | head -120 > "$WORK/r/perf-top.txt" || true
+    | grep -v '^#' | grep -v '^$' | sort -t% -k1 -rn | head -150 > "$WORK/r/perf-top.txt" || true
   rm -f "$WORK/r/perf.data"
 fi
 
