@@ -82,22 +82,14 @@ jobs:
           git checkout 4459a3d3c -- $host_files
           cargo build --release -p flashtex-engine -p flashtex-display-list
           tools/incr-bench/mkeng.sh pr1959
-          git checkout df75c3a20 -- $host_files
-          cargo build --release -p flashtex-engine -p flashtex-display-list
-          tools/incr-bench/mkeng.sh main
           git checkout HEAD -- $host_files
           python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null
-      - name: t7 x2-late rows, interleaved
+      - name: t7 typing@50ms with the engine's debug log (#1959's host)
         run: |
           set +e
-          for i in 1 2; do
-            for e in main pr1959 branch; do
-              python3 tools/incr-bench/t7.py --engine $e --docs infdesc-x2 --sites x2-late --gate hosted --keys 8 \
-                --typing-keys 16 --phases letter@site,typing@50ms@site,typing@100ms@site,typing@150ms@site \
-                --out /tmp/fth-realdoc/t7-$e-$i 2>&1 | tee /tmp/fth-realdoc/t7-$e-$i.log
-              { echo "### $e round $i"; cat /tmp/fth-realdoc/t7-$e-$i/table.md; } >> "$GITHUB_STEP_SUMMARY" || true
-            done
-          done
+          FLASHTEX_INCR_DEBUG=1 python3 tools/incr-bench/t7.py --engine pr1959 --docs infdesc-x2 --sites x2-late \
+            --gate hosted --typing-keys 16 --phases typing@50ms@site --out /tmp/fth-realdoc/t7-dbg 2>&1 | tail -5
+          ls -la /tmp/fth-realdoc/t7-dbg/raw/
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
