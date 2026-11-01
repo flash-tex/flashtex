@@ -4344,7 +4344,7 @@ impl Session {
             for (name, n) in g.arena.chain_words_by_region() {
                 v.push((format!("logw_{name}"), n as i64));
             }
-            for (k, c) in ["deadlog_all", "deadlog_mem", "deadlog_dead"]
+            for (k, c) in ["deadlog_all", "deadlog_mem", "deadlog_dead", "deadlog_chain"]
                 .iter()
                 .zip(crate::checkpoint::DEADLOG.iter())
             {

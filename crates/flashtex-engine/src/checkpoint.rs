@@ -427,7 +427,8 @@ pub fn drop_spare_tails() {
 /// Bytes the spare tail buffers hold (memory accounting).
 /// Measurement only (`Globals::deadlog_measure`): sealed words, those in
 /// `mem`, and those dead in the state their log restores.
-pub static DEADLOG: [std::sync::atomic::AtomicU64; 3] = [
+pub static DEADLOG: [std::sync::atomic::AtomicU64; 4] = [
+    std::sync::atomic::AtomicU64::new(0),
     std::sync::atomic::AtomicU64::new(0),
     std::sync::atomic::AtomicU64::new(0),
     std::sync::atomic::AtomicU64::new(0),
@@ -1107,7 +1108,7 @@ impl Globals {
             return;
         }
         thread_local! {
-            static PREV: std::cell::RefCell<Option<(CheckpointId, Vec<u64>)>> =
+            static PREV: std::cell::RefCell<Option<(CheckpointId, Vec<u64>, Vec<u64>)>> =
                 const { std::cell::RefCell::new(None) };
         }
         let Some((off, bytes)) = self
@@ -1119,16 +1120,24 @@ impl Globals {
         else {
             return;
         };
+        let n = crate::generated::consts::mem_max as usize + 1;
+        // the words the sealed log holds (changed since its checkpoint), and
+        // the chain: dead at every checkpoint since their last change (S)
+        let mut written = vec![0u64; n.div_ceil(64)];
+        let mut prev_chain: Option<Vec<u64>> = None;
         PREV.with(|p| {
-            if let Some((pid, bits)) = p.borrow().as_ref() {
-                if let Some((a, i, d)) = self.arena.last_sealed_dead(*pid, off, bytes, bits) {
+            if let Some((pid, bits, chain)) = p.borrow().as_ref() {
+                if let Some((a, i, d, c)) =
+                    self.arena.last_sealed_dead(*pid, off, bytes, bits, chain, &mut written)
+                {
                     DEADLOG[0].fetch_add(a as u64, std::sync::atomic::Ordering::Relaxed);
                     DEADLOG[1].fetch_add(i as u64, std::sync::atomic::Ordering::Relaxed);
                     DEADLOG[2].fetch_add(d as u64, std::sync::atomic::Ordering::Relaxed);
+                    DEADLOG[3].fetch_add(c as u64, std::sync::atomic::Ordering::Relaxed);
+                    prev_chain = Some(chain.clone());
                 }
             }
         });
-        let n = crate::generated::consts::mem_max as usize + 1;
         let mut bits = vec![0u64; n.div_ceil(64)];
         let set = |bits: &mut Vec<u64>, lo: usize, hi: usize| {
             let hi = hi.min(n);
@@ -1168,7 +1177,18 @@ impl Globals {
         }
         set(&mut bits, (lo_max + 1).max(0) as usize, hi_min.max(0) as usize);
         set(&mut bits, (mem_end + 1).max(0) as usize, n);
-        PREV.with(|p| *p.borrow_mut() = Some((id, bits)));
+        // S at this checkpoint: dead now, and changed in the interval just
+        // sealed or in S at the one before (a log restores a word's value
+        // from the first log after the target holding it)
+        let chain: Vec<u64> = match prev_chain {
+            Some(pc) => bits
+                .iter()
+                .zip(written.iter().zip(pc.iter()))
+                .map(|(d, (w, c))| d & (w | c))
+                .collect(),
+            None => vec![0u64; bits.len()],
+        };
+        PREV.with(|p| *p.borrow_mut() = Some((id, bits, chain)));
     }
 
     /// Memory accounting (`crate::memstat`, lane P4-MEMORY): the word

@@ -2908,13 +2908,14 @@ impl Arena {
     /// one, if its checkpoint is `id`: (its words, those in the `bytes` at
     /// byte `off` of the space, and of those the words whose bit is set in
     /// `dead`, indexed from `off` in words).
-    pub fn last_sealed_dead(&self, id: CheckpointId, off: usize, bytes: usize, dead: &[u64]) -> Option<(usize, usize, usize)> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn last_sealed_dead(&self, id: CheckpointId, off: usize, bytes: usize, dead: &[u64], chain: &[u64], written: &mut [u64]) -> Option<(usize, usize, usize, usize)> {
         let core = self.core();
         let n = core.logs.len();
         if n < 2 || core.ids.get(n - 2) != Some(&id) {
             return None;
         }
-        let (mut all, mut inr, mut dd) = (0, 0, 0);
+        let (mut all, mut inr, mut dd, mut ch) = (0, 0, 0, 0);
         for d in &core.logs[n - 2].deltas {
             let base = (d.c as usize) << CHUNK_SHIFT;
             for (mi, &m) in d.mask.iter().enumerate() {
@@ -2930,11 +2931,17 @@ impl Arena {
                         if dead.get(p >> 6).is_some_and(|w| w >> (p & 63) & 1 == 1) {
                             dd += 1;
                         }
+                        if chain.get(p >> 6).is_some_and(|w| w >> (p & 63) & 1 == 1) {
+                            ch += 1;
+                        }
+                        if let Some(w) = written.get_mut(p >> 6) {
+                            *w |= 1 << (p & 63);
+                        }
                     }
                 }
             }
         }
-        Some((all, inr, dd))
+        Some((all, inr, dd, ch))
     }
 
     pub fn open_log_by_region(&self) -> Vec<(&'static str, usize)> {
