@@ -196,6 +196,30 @@ final class ProjectWindowsTests: XCTestCase {
         XCTAssertTrue(windows.captures === windows.captures, "one sink for the app: switching windows never re-attaches the listener")
     }
 
+    // MARK: a closed project's copy
+
+    func testAReleasedCopyIsTakenOverByTheNextSessionOfThisRun() throws {
+        let project = dir.appendingPathComponent("released", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let first = EngineV3Mirror(source: project, session: EngineV3Session.takeSerial())
+        defer { try? FileManager.default.removeItem(at: first.base) }
+        XCTAssertFalse(first.takenOver)
+        let unreleased = EngineV3Mirror(source: project, session: EngineV3Session.takeSerial())
+        XCTAssertNotEqual(unreleased.base, first.base, "a copy this instance still holds is never taken over")
+        try? FileManager.default.removeItem(at: unreleased.base)
+
+        first.release()
+        let owner = try String(contentsOf: first.base.appendingPathComponent("owner"), encoding: .utf8)
+        XCTAssertEqual(owner, EngineV3.instanceOwner + EngineV3Mirror.releasedSuffix)
+        let next = EngineV3Mirror(source: project, session: EngineV3Session.takeSerial())
+        XCTAssertTrue(next.takenOver)
+        XCTAssertEqual(next.base, first.base, "the released copy, with its paths (and so the host's S₀)")
+        XCTAssertEqual(try String(contentsOf: next.base.appendingPathComponent("owner"), encoding: .utf8), EngineV3.instanceOwner)
+        next.release()
+        next.release() // once released it is no longer this instance's: nothing changes
+        XCTAssertEqual(try String(contentsOf: next.base.appendingPathComponent("owner"), encoding: .utf8), EngineV3.instanceOwner + EngineV3Mirror.releasedSuffix)
+    }
+
     // MARK: restoration
 
     func testTheNextLaunchReopensTheWindowsWithTheirDocumentsAndFrames() async throws {

@@ -126,6 +126,10 @@ final class ProjectWindows {
     /// let go. While the app quits the list is kept as it was, for the next launch.
     func closed(_ id: ProjectWindowID) {
         guard let i = entries.firstIndex(where: { $0.id == id }) else { return }
+        // Its host ends now and its project copy is released for a later
+        // reopen (EngineV3Session.end); while quitting the next launch takes
+        // the copies over anyway, and the app's exit ends the hosts.
+        if !terminating { entries[i].model.engineV3.end() }
         entries.remove(at: i)
         if frontmostID == id { frontmostID = byRecency.first?.id }
         saveRestorable()

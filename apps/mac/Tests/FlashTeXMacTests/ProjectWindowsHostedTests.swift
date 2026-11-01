@@ -252,6 +252,51 @@ final class ProjectWindowsHostedTests: XCTestCase {
         XCTAssertEqual(b.engineV3.hostPID, pids[1])
     }
 
+    /// Closing a project's window and opening the project again in the
+    /// same run reuses its project copy (EngineV3Session.end,
+    /// EngineV3Mirror.release): the new window's session takes the copy
+    /// over, with its `.aux` and paths, so the host starts from its S₀ and
+    /// not from the format. The cold and warm first compiles are printed
+    /// (`MultiWindowReopen:`).
+    func testReopeningAClosedProjectInTheSameRunTakesItsCopyOver() throws {
+        try EngineV3TestHost.require()
+        let windows = makeWindows()
+        let url = dir.appendingPathComponent("book/main.tex")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try EditorInstantTests.book(sections: 120).write(to: url, atomically: true, encoding: .utf8)
+        var pids: [Int32] = []
+        defer { for pid in pids where !DeallocationProbe.processGone(pid) { kill(pid, SIGKILL) } }
+        /// Opens the book in a window of its own, waits for its first compile: its copy and the time it took.
+        func openAndCompile(_ name: String) throws -> (copy: URL, ms: Double, id: ProjectWindowID) {
+            try autoreleasepool {
+                let t0 = MonotonicClock.nowNs()
+                let first = windows.entries.isEmpty ? windows.model(for: ProjectWindowID()) : nil
+                let model = try XCTUnwrap(windows.open(url, from: first).model)
+                let id = try XCTUnwrap(windows.entry(for: model)?.id)
+                model.engineV3Enabled = true
+                _ = try show(id, of: windows)
+                let s = model.engineV3
+                try waitUntil("the \(name) compile", timeout: 300) {
+                    if case .failed(let why) = s.phase { XCTFail("the \(name) host did not start: \(why)"); return true }
+                    return s.phase == .ready && s.doneCount > 0 && !s.compiling && s.pageCount > 1
+                }
+                pids.append(try XCTUnwrap(s.hostPID))
+                return (try XCTUnwrap(s.projectCopy), Double(MonotonicClock.nowNs() &- t0) / 1e6, id)
+            }
+        }
+        let cold = try openAndCompile("cold")
+        let owner = cold.copy.deletingLastPathComponent().appendingPathComponent("owner")
+        close(cold.id, of: windows)
+        try waitUntil("the closed window's copy released", timeout: 30) {
+            (try? String(contentsOf: owner, encoding: .utf8))?.hasSuffix(EngineV3Mirror.releasedSuffix) == true
+        }
+        XCTAssertTrue(DeallocationProbe.waitForExit(pids[0], timeout: 20), "the closed window's host still runs")
+        let warm = try openAndCompile("warm")
+        XCTAssertEqual(warm.copy.standardizedFileURL.path, cold.copy.standardizedFileURL.path, "the reopened project took its released copy over")
+        XCTAssertEqual(try String(contentsOf: owner, encoding: .utf8), EngineV3.instanceOwner, "claimed again by this instance")
+        print("MultiWindowReopen: {\"cold_ms\": \(Int(cold.ms)), \"warm_ms\": \(Int(warm.ms))}")
+    }
+
     /// Physical footprint of `pid` (Activity Monitor's Memory) in MB, 0 if unknown.
     static func footprintMB(_ pid: Int32) -> Double {
         (Double(EngineV3PageCapture.footprint(pid: pid)) / 1_048_576 * 10).rounded() / 10
