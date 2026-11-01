@@ -127,6 +127,10 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // instructions a call): recorded anywhere and taken from the intrinsics
     // (`RECORD_ANYWHERE`, §12.2)
     "pdfstringdefPreHook",
+    // (lane BEAMER-FRAME) xkeyval's `\setkeys` after its options are read:
+    // `\beamercolorbox` calls it three times for its defaults and options,
+    // which was 46 % of metropolis's Blocks frame (BOX-MEMO.md §15)
+    "XKV@setkeys",
 ];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
@@ -1127,6 +1131,91 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
     }
     let mut out = Vec::with_capacity(n);
     walk(ops, &end, 0, n, None, &mut out);
+    out
+}
+
+/// A value made fresh for its assignment: a pointer no location holds yet,
+/// so `eq_define` never finds it already there (e-TeX's "reassigning"
+/// compares `equiv` with it), and its word does not depend on the state.
+fn fresh(v: &Val) -> bool {
+    matches!(v, Val::FreshList(_) | Val::FreshGlue(_) | Val::FreshShape(_))
+}
+
+/// [`compress_groups`]' operations with each run of local assignments of
+/// fresh values to one location at the call's own level made as one: the
+/// first of them, with the value of the last (BOX-MEMO.md §15). xkeyval's
+/// `\setkeys` defines its scratch macros (`\XKV@tempa`, `\XKV@resa`, the
+/// key's name and family, ...) again for every key, at the level it was
+/// called at: 24 k operations a key on metropolis's Blocks frame, of which
+/// a few hundred values survive.
+///
+/// The first `eq_define` of such a run decides the location's save-stack
+/// entry: `eq_save` when the location was last assigned at another level,
+/// else `eq_destroy` of its value (tex.web §277; a fresh value is never
+/// "reassigning"). Every later one finds the location at the call's level
+/// and `eq_destroy`s the run's previous value. So the run leaves the save
+/// entry of its first assignment, where it was made among the others, and
+/// the value of its last; the values in between are made and freed again,
+/// which changes only the free lists and the usage statistics, as §11.2's
+/// elision does. A run ends (the next assignment starts another) at
+/// anything else that touches or reads the location: an assignment of
+/// another kind or of a value from the state, a value from the state that
+/// reads it (`\let` of it, a glue it holds), a kept group that assigns it,
+/// a control sequence entered there, and, for every location, an `End` or
+/// `Begin` of the caller's group (the call's level changes).
+fn compress_call_level(ops: Vec<Op>) -> Vec<Op> {
+    fn reads(v: &Val) -> Option<i32> {
+        match v {
+            Val::LetCs(q) => Some(*q),
+            Val::GlueFrom(a, _) if *a > 0 => Some(*a),
+            _ => None,
+        }
+    }
+    let mut out: Vec<Op> = Vec::with_capacity(ops.len());
+    // (each location's run at the call's level: the index of its first
+    // assignment in `out`)
+    let mut open: HashMap<i32, usize, IntHash> = HashMap::default();
+    let mut depth = 0i32;
+    for o in ops {
+        match &o {
+            // (inside a group, every assignment is at another level: it
+            // ends the location's run, below)
+            Op::Begin(_) => depth += 1,
+            Op::End => {
+                if depth == 0 {
+                    // the caller's group ends: the call's level is another
+                    open.clear();
+                } else {
+                    depth -= 1;
+                }
+            }
+            Op::Def { p, v, kind, .. } => {
+                if let Some(q) = reads(v) {
+                    open.remove(&q);
+                }
+                if depth == 0 && *kind <= 1 && fresh(v) {
+                    if let Some(&j) = open.get(p) {
+                        if matches!(&out[j], Op::Def { kind: k0, .. } if *k0 == *kind) {
+                            out[j] = o;
+                            continue;
+                        }
+                    }
+                    open.insert(*p, out.len());
+                } else {
+                    open.remove(p);
+                }
+            }
+            Op::Sa { v, .. } => {
+                if let Some(q) = reads(v) {
+                    open.remove(&q);
+                }
+            }
+            Op::NewCs { p, .. } => {
+                open.remove(p);
+            }
+        }
+        out.push(o);
+    }
     out
 }
 
@@ -3638,7 +3727,7 @@ impl Globals {
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
-                fast: compress_groups(&rec.ops),
+                fast: compress_call_level(compress_groups(&rec.ops)),
                 new_cs: rec
                     .ops
                     .iter()
@@ -4159,6 +4248,97 @@ mod tests {
         assert_eq!(
             compress_groups(&ops),
             vec![def(1, 10, 1), def(3, 31, 3), def(4, 40, 3), def(6, 60, 1)]
+        );
+    }
+
+    fn list(p: i32, tok: i32) -> Op {
+        Op::Def {
+            p,
+            t: 111,
+            v: Val::FreshList(vec![tok]),
+            kind: 0,
+        }
+    }
+
+    #[test]
+    fn a_run_of_fresh_local_values_is_its_first_assignment_with_its_last_value() {
+        // \def\a{1}\def\b{1}\def\a{2}\def\a{3}: \a's entry where its first
+        // assignment made it, with its last value
+        let ops = vec![list(1, 1), list(2, 1), list(1, 2), list(1, 3)];
+        assert_eq!(compress_call_level(ops), vec![list(1, 3), list(2, 1)]);
+        // a \let of \a reads the value it has there: the run ends before it
+        let let_a = Op::Def {
+            p: 5,
+            t: 0,
+            v: Val::LetCs(1),
+            kind: 0,
+        };
+        let ops = vec![list(1, 1), list(1, 2), let_a.clone(), list(1, 3), list(1, 4)];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![list(1, 2), let_a.clone(), list(1, 4)]
+        );
+        // a word (it may be the value already there: "reassigning", no save
+        // entry), a global assignment, a kept group that assigns it, a
+        // control sequence entered there: each ends the run
+        let word = def(1, 7, 1);
+        let global = Op::Def {
+            p: 1,
+            t: 111,
+            v: Val::FreshList(vec![9]),
+            kind: 2,
+        };
+        let ops = vec![
+            list(1, 1),
+            list(1, 2),
+            global.clone(),
+            list(1, 3),
+            Op::Begin(1),
+            list(1, 4),
+            Op::End,
+            list(1, 5),
+            list(1, 6),
+            Op::NewCs { p: 1, name: vec![1, 2] },
+            list(1, 7),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![
+                list(1, 2),
+                global,
+                list(1, 3),
+                Op::Begin(1),
+                list(1, 4),
+                Op::End,
+                list(1, 6),
+                Op::NewCs { p: 1, name: vec![1, 2] },
+                list(1, 7),
+            ]
+        );
+        let ops = vec![def(3, 1, 1), def(3, 2, 1), word.clone(), word.clone()];
+        assert_eq!(compress_call_level(ops.clone()), ops);
+        // a group that leaves \a alone does not end its run; the caller's
+        // group ending ends every run
+        let ops = vec![
+            list(1, 1),
+            Op::Begin(1),
+            list(2, 1),
+            Op::End,
+            list(1, 2),
+            Op::End,
+            list(1, 3),
+            list(1, 4),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![
+                list(1, 2),
+                Op::Begin(1),
+                list(2, 1),
+                Op::End,
+                Op::End,
+                list(1, 4),
+            ]
         );
     }
 
