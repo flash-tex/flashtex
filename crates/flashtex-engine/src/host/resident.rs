@@ -2128,11 +2128,24 @@ fn give_back_free_memory() {
 /// (truncated or extended to the new length) rather than all of it.
 fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), String> {
     use crate::system::StatSig;
+    let any = |k: &str| {
+        req.get(k)
+            .and_then(Json::as_array)
+            .is_some_and(|a| !a.is_empty())
+    };
+    if !any("buffers") && !any("edits") {
+        return Ok(());
+    }
+    // (symlinks resolved: a link in the project may lead out of it)
+    let croot = root
+        .canonicalize()
+        .map_err(|e| format!("root {}: {e}", root.display()))?;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
         if !server::inside(rel) {
             return Err(format!("{p}: a path inside root"));
         }
+        server::resolved_inside(&croot, root, rel)?;
         Ok(root.join(rel))
     };
     let sig = |path: &Path| StatSig::of(&path.to_string_lossy());
@@ -2168,12 +2181,25 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 steps[i] += t.elapsed().as_micros() as u64;
                 *t = Instant::now();
             };
+            let existed = std::fs::symlink_metadata(path).is_ok();
             let r = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(false)
                 .open(path)
                 .and_then(|f| {
+                    // (a link swapped in since `target`'s check: the file
+                    // opened is checked where it is, before a byte is
+                    // written, and one this open made is removed again)
+                    if let Some(at) = server::opened_outside(&f, &croot) {
+                        if !existed {
+                            let _ = std::fs::remove_file(&at);
+                        }
+                        return Err(std::io::Error::other(format!(
+                            "leads outside root, to {}",
+                            at.display()
+                        )));
+                    }
                     lap(0, &mut t);
                     let n = data.len() as u64;
                     let r = match old {

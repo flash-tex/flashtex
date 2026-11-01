@@ -1189,6 +1189,69 @@ pub(crate) fn inside(p: &Path) -> bool {
         && p.components().next().is_some()
 }
 
+/// `root.join(rel)`, `rel` already [`inside`], with its symlinks resolved,
+/// is inside `croot` (`root` canonicalized): the nearest of its ancestors
+/// that exists (a link counting, dangling or not) resolves into the root.
+/// The names after that one do not exist yet, and hold no `..`. A dangling
+/// link is refused wherever it points (it cannot be resolved); one that
+/// stays inside the root is followed, as a write through it would be.
+pub(crate) fn resolved_inside(croot: &Path, root: &Path, rel: &Path) -> Result<(), String> {
+    let full = root.join(rel);
+    let mut there = full.as_path();
+    while std::fs::symlink_metadata(there).is_err() {
+        match there.parent() {
+            Some(p) => there = p,
+            None => break,
+        }
+    }
+    match there.canonicalize() {
+        Ok(real) if real.starts_with(croot) => Ok(()),
+        Ok(real) => Err(format!(
+            "{}: leads outside root, to {}",
+            rel.display(),
+            real.display()
+        )),
+        Err(e) => Err(format!(
+            "{}: leads outside root (a link that does not resolve: {e})",
+            rel.display()
+        )),
+    }
+}
+
+/// Where the open file `f` is, when that is outside `croot`: the check
+/// after the open, against a link swapped in since [`resolved_inside`]
+/// (`None`: inside, or the system cannot say).
+pub(crate) fn opened_outside(f: &std::fs::File, croot: &Path) -> Option<PathBuf> {
+    let at = fd_path(f)?;
+    (!at.starts_with(croot)).then_some(at)
+}
+
+#[cfg(target_os = "macos")]
+fn fd_path(f: &std::fs::File) -> Option<PathBuf> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes a NUL-terminated path of at most PATH_MAX
+    // bytes into `buf`.
+    let r = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) };
+    if r == -1 {
+        return None;
+    }
+    let n = buf.iter().position(|&b| b == 0)?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..n])))
+}
+
+#[cfg(target_os = "linux")]
+fn fd_path(f: &std::fs::File) -> Option<PathBuf> {
+    use std::os::fd::AsRawFd;
+    std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn fd_path(_: &std::fs::File) -> Option<PathBuf> {
+    None
+}
+
 /// The font keys a `COMPILE` says the client holds.
 pub(crate) fn have_fonts(req: &Json) -> Vec<String> {
     req.get("have_fonts")
@@ -1532,6 +1595,41 @@ mod job_tests {
             kv.push(("halt_on_error".to_string(), h));
         }
         Json::Obj(kv)
+    }
+
+    /// `resolved_inside` follows links (to a directory, a file, a dangling
+    /// one) and `opened_outside` finds a file opened through a link swapped
+    /// in after the check.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn symlinks_out_of_the_root_are_found_before_and_after_the_open() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("flashtex-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(root.join("sub/a.tex"), "a").unwrap();
+        std::fs::write(away.join("b.tex"), "b").unwrap();
+        symlink(&away, root.join("out")).unwrap();
+        symlink(away.join("b.tex"), root.join("b.tex")).unwrap();
+        symlink(away.join("none.tex"), root.join("none.tex")).unwrap();
+        symlink(root.join("sub"), root.join("alias")).unwrap();
+        let croot = root.canonicalize().unwrap();
+        let ok = |p: &str| resolved_inside(&croot, &root, Path::new(p)).is_ok();
+        assert!(ok("sub/a.tex") && ok("sub/new.tex") && ok("new/deeper.tex"));
+        assert!(ok("alias/a.tex") && ok("alias/new.tex"));
+        assert!(!ok("out/b.tex") && !ok("out/new.tex") && !ok("out/x/y.tex"));
+        assert!(!ok("b.tex") && !ok("none.tex"));
+        let inside = std::fs::File::open(root.join("sub/a.tex")).unwrap();
+        assert_eq!(opened_outside(&inside, &croot), None);
+        // (`sub` replaced by a link out after a check passed)
+        std::fs::remove_dir_all(root.join("sub")).unwrap();
+        symlink(&away, root.join("sub")).unwrap();
+        let swapped = std::fs::File::open(root.join("sub/b.tex")).unwrap();
+        let at = opened_outside(&swapped, &croot).expect("found outside");
+        assert!(at.ends_with("away/b.tex"), "{}", at.display());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Strict mode (lane ERROR-RECOVERY): `halt_on_error` is pdflatex's
