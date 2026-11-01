@@ -49,6 +49,7 @@ ap.add_argument('--out', required=True)
 ap.add_argument('--perf-record', action='store_true')
 ap.add_argument('--arxiv-cache', default=os.path.expanduser('~/.cache/flashtex-agents/throughput/parity'))
 ap.add_argument('--no-pdftex', action='store_true')
+ap.add_argument('--annotate', default='', help='DOC:SYM,SYM: perf annotate of the first engine on DOC')
 a = ap.parse_args()
 
 engines = a.engines.split(',')
@@ -218,6 +219,35 @@ if a.perf_record and PERF:
             f.write(f'# {eng}: {n} samples of 200000 instructions:u over {len(docs)} documents\n')
             for (dso, sym), k in c.most_common(200):
                 f.write(f'{100 * k / n:7.2f}% {k:9d} {dso:24s} {sym}\n')
+
+
+if a.annotate and PERF:
+    doc, _, syms = a.annotate.partition(':')
+    seed, main = seeds[doc]
+    d = f'{WORK}/perf'
+    copy_tree(seed, d)
+    data = f'{WORK}/perf-ann.data'
+    compile_once(engines[0], d, main,
+                 pre=('perf', 'record', '-q', '-e', 'instructions:u', '-c', '20000', '-o', data, '--'))
+    for sym in [x for x in syms.split(',') if x]:
+        full = sym if '::' in sym else f'<flashtex_engine::generated::globals::Globals>::{sym}'
+        rep = subprocess.run(['perf', 'annotate', '-i', data, '--stdio', '-M', 'intel', full],
+                             capture_output=True, text=True).stdout.splitlines()
+        # the hot instructions, each with the 6 lines before it (the source lines perf interleaves)
+        keep = set()
+        for k, x in enumerate(rep):
+            m = re.match(r'\s*([\d.]+)\s*:', x)
+            if m and float(m.group(1)) >= 0.25:
+                keep.update(range(max(0, k - 6), k + 2))
+        with open(os.path.join(a.out, f'annotate-{doc.replace(":", "_")}-{sym}.txt'), 'w') as f:
+            f.write('\n'.join(rep[:3]) + '\n')
+            last = -2
+            for k in sorted(keep):
+                if k != last + 1:
+                    f.write('    ...\n')
+                f.write(rep[k][:220] + '\n')
+                last = k
+    os.unlink(data)
 
 
 def med(xs):

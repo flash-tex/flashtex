@@ -25,18 +25,29 @@ mkdir -p "$INCR_BENCH_DIR"
 CACHE=${TPAB_CACHE:-$HOME/.cache/flashtex-agents/throughput}
 mkdir -p "$CACHE/parity"
 TBASE=${CARGO_TARGET_DIR_BASE:-$WORK/target}
+# TPAB_ANNOTATE: line tables for perf annotate (the perf profile's setting; same codegen)
+if [ -n "${TPAB_ANNOTATE:-}" ]; then
+  export CARGO_PROFILE_RELEASE_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_STRIP=none
+  TBASE=$TBASE-lines
+fi
 
 names=()
 i=0
-for ref in "$@"; do
-  n="e$i-$(echo "$ref" | tr -c 'A-Za-z0-9._\n-' '_' | tail -c 40)"
+for spec in "$@"; do
+  # REF or REF@FEATURE,FEATURE (flashtex-engine's benchmarking features, e.g. unchecked-reads)
+  ref=${spec%%@*}
+  feat=""
+  [ "$spec" != "$ref" ] && feat=${spec#*@}
+  n="e$i-$(echo "$spec" | tr -c 'A-Za-z0-9._\n-' '_' | tail -c 40)"
   names+=("$n")
   src="$WORK/src-$i"
   git -C "$ROOT" worktree remove --force "$src" 2>/dev/null || true
   git -C "$ROOT" worktree add --detach "$src" "$ref" >/dev/null
-  echo "build $ref = $(git -C "$src" rev-parse --short HEAD) ($(git -C "$src" log -1 --format=%s | head -c 90))"
+  echo "build $spec = $(git -C "$src" rev-parse --short HEAD) ($(git -C "$src" log -1 --format=%s | head -c 90))"
+  fargs=()
+  [ -n "$feat" ] && fargs=(--features "$(echo "$feat" | sed -E 's/(^|,)/ flashtex-engine\//g')")
   (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" nice -n 5 cargo build --release --locked -q \
-     -p flashtex-engine -p flashtex-display-list)
+     -p flashtex-engine -p flashtex-display-list "${fargs[@]}")
   (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" bash tools/incr-bench/mkeng.sh "$n" >/dev/null)
   git -C "$ROOT" worktree remove --force "$src"
   i=$((i + 1))
@@ -53,5 +64,6 @@ case ",$DOCS," in *,plain-*|*,full-*) python3 "$ROOT/tools/incr-bench/mkdocs.py"
 args=(--engines "$(IFS=,; echo "${names[*]}")" --docs "$DOCS" --reps "${TPAB_REPS:-3}" --out "$WORK/r"
       --arxiv-cache "$CACHE/parity")
 [ "${TPAB_PERF:-0}" = 1 ] && args+=(--perf-record)
+[ -n "${TPAB_ANNOTATE:-}" ] && args+=(--annotate "$TPAB_ANNOTATE")
 for n in "${names[@]}"; do echo "$n: $(cat "$INCR_BENCH_DIR/$n/HEAD")"; done | tee "$WORK/r/engines.txt"
 nice -n 5 python3 "$ROOT/tools/incr-bench/tpab.py" "${args[@]}"
