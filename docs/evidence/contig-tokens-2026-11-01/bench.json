@@ -2,7 +2,7 @@
   "comment": "lane CONTIG-TOKENS: what contig-bench.yml builds and measures. builds: name -> git ref (src/generated/ is regenerated before the build); engines: name (no '-') -> build + extra environment; parts: the bench matrix (engines: the engines a part runs, default all)",
   "builds": {
     "main": "3f835f488514786f1a46c4a5a62563cb05a0ddae",
-    "proto": "d493663ffecd76078a1595249ce9e9c7f52e8d93"
+    "proto": "d362f538139fafaadae739f5cdc28ad755a463f4"
   },
   "engines": {
     "main": {"build": "main", "env": {}},
