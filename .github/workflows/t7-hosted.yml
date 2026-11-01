@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
       - name: main's host (the branch's base)
         if: matrix.host == 'main'
-        run: git checkout df75c3a20 -- crates/flashtex-engine/src/incr.rs crates/flashtex-engine/tests/host_incremental.rs
+        run: git checkout df75c3a20 -- crates/flashtex-engine/src/incr.rs crates/flashtex-engine/src/host/resident.rs crates/flashtex-engine/src/host/tools.rs crates/flashtex-engine/tests/host_incremental.rs
       - name: Install BasicTeX and the packages Infinite Descent loads
         run: |
           set -euo pipefail
