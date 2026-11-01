@@ -92,11 +92,24 @@ SHELL_ESCAPE = None
 # every cache key says so. P-T1 compares the error messages and the recovery
 # like any other line.
 HALT_ON_ERROR = True
+# In every cache key made without HALT_ON_ERROR (none other carries it). 2: the
+# output PDF is removed before each pass (drop_stale_pdf).
+NO_HALT_V = 2
 
 
 def interaction_args():
     """The interaction flags of every pass of every engine."""
     return ["-interaction=nonstopmode"] + (["-halt-on-error"] if HALT_ON_ERROR else [])
+
+
+def drop_stale_pdf(pdf):
+    """Without HALT_ON_ERROR, remove the output PDF before a pass, so a pass that
+    exits 1 counts as compiled only with a PDF it wrote itself: a TeX Live doc
+    directory ships its document's PDF beside it (copy_dir), and a fatal error
+    (fontspec under pdfTeX) writes none. Halting passes are left as they were,
+    so their cache entries and verdicts stay valid."""
+    if not HALT_ON_ERROR and os.path.isfile(pdf):
+        os.remove(pdf)
 
 
 def compiled_exit(code):

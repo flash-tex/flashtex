@@ -321,7 +321,9 @@ def oracle_reference(doc, texbin, cache, log):
     argv = [exe] + ptiers.pcapture.interaction_args() + [f"-jobname={os.path.basename(stem)}",
             ptiers.pcapture.first_line(doc["entry"])]  # the pinned seed (capture.SEED), as every pass
     key = hashlib.sha256(json.dumps({"tree": tree_hash(doc["dir"]), "entry": doc["entry"], "pdflatex": version,
-                                     "argv": argv[1:], "passes": ORACLE_PASSES, "v": 1}).encode()).hexdigest()
+                                     "argv": argv[1:], "passes": ORACLE_PASSES, "v": 1,
+                                     **({} if ptiers.pcapture.HALT_ON_ERROR else
+                                        {"no_halt_v": ptiers.pcapture.NO_HALT_V})}).encode()).hexdigest()
     odir = os.path.join(cache, "oracle", key[:2], key)
     meta_path = os.path.join(odir, "oracle.json")
     if os.path.isfile(meta_path):
@@ -342,6 +344,7 @@ def oracle_reference(doc, texbin, cache, log):
     previous = None
     t0 = time.time()
     for _ in range(ORACLE_PASSES):
+        ptiers.pcapture.drop_stale_pdf(produced)
         code, _, _, _, timed_out = harness.run(argv, env=env, timeout=ORACLE_TIMEOUT, cwd=work)
         meta["passes"] += 1
         if timed_out or not ptiers.pcapture.compiled_exit(code) or not os.path.isfile(produced):

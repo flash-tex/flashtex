@@ -156,6 +156,7 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=
     t0 = time.time()
     previous = None
     for _ in range(PASSES):
+        pcapture.drop_stale_pdf(pdf)
         code, timed_out = pcapture.run_engine(engine, FMT, args, workdir, extra_env, timeout=PASS_TIMEOUT)
         meta["passes"] += 1
         if timed_out or not pcapture.compiled_exit(code) or not os.path.isfile(pdf):
@@ -231,6 +232,7 @@ def oracle_key(doc, version, trace, tree_hash, v=ORACLE_CACHE_V):
          "seed": pcapture.SEED, "v": v}
     if not pcapture.HALT_ON_ERROR:  # only then, so every halting entry keeps its key
         k["halt_on_error"] = False
+        k["no_halt_v"] = pcapture.NO_HALT_V
     return sha(json.dumps(k, sort_keys=True))
 
 
