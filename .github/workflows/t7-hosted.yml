@@ -72,28 +72,31 @@ jobs:
         with:
           path: /tmp/fth-realdoc/cache
           key: realdoc-books-${{ hashFiles('tools/parity/corpus/books.json') }}
-      - name: build the three hosts
+      - name: build the hosts (engine sources of each SHA in ENGINES)
+        env:
+          ENGINES: "inst=9b8d93e921ae68195a266d7c2e4f3bd68aa69e99"
         run: |
           set -euo pipefail
           sysctl -n machdep.cpu.brand_string hw.ncpu || true
-          host_files="crates/flashtex-engine/src/incr.rs crates/flashtex-engine/src/iso.rs crates/flashtex-engine/src/host/resident.rs crates/flashtex-engine/src/host/tools.rs"
-          cargo build --release -p flashtex-engine -p flashtex-display-list
-          tools/incr-bench/mkeng.sh branch
-          git checkout 4459a3d3c -- $host_files
-          cargo build --release -p flashtex-engine -p flashtex-display-list
-          tools/incr-bench/mkeng.sh pr1959
-          git checkout HEAD -- $host_files
+          for e in $ENGINES; do
+            git checkout "${e#*=}" -- crates/flashtex-engine/src
+            cargo build --release -p flashtex-engine -p flashtex-display-list
+            tools/incr-bench/mkeng.sh "${e%%=*}"
+          done
+          git checkout HEAD -- crates/flashtex-engine/src
           python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null
-      - name: t7 typing@50ms with the engine's debug log (#1959's host)
+      - name: t7 typing rows (DONE stages list every restore)
         run: |
           set +e
-          FLASHTEX_INCR_DEBUG=1 python3 tools/incr-bench/t7.py --engine pr1959 --docs infdesc-x2 --sites x2-late \
-            --gate hosted --typing-keys 16 --phases typing@50ms@site --out /tmp/fth-realdoc/t7-dbg 2>&1 | tail -5
-          ls -la /tmp/fth-realdoc/t7-dbg/raw/
+          python3 tools/incr-bench/t7.py --engine inst --docs infdesc-x2 --sites x2-late --gate hosted \
+            --typing-keys 16 --phases typing@50ms@site,typing@150ms@site --out /tmp/fth-realdoc/t7-inst 2>&1 | tail -5
+          FLASHTEX_INCR_DEBUG=1 python3 tools/incr-bench/t7.py --engine inst --docs infdesc-x2 --sites x2-late --gate hosted \
+            --typing-keys 16 --phases typing@50ms@site --out /tmp/fth-realdoc/t7-dbg 2>&1 | tail -5
+          ls -la /tmp/fth-realdoc/t7-inst/raw/ /tmp/fth-realdoc/t7-dbg/raw/
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: t7-x2late-ab3
+          name: t7-x2late-restores
           path: |
             /tmp/fth-realdoc/t7-*
