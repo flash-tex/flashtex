@@ -1,0 +1,225 @@
+
+## TOP 192.43M (880838 calls)
+   107.42M x1002  <-  encode@display-list-v3/src/page.rs:423 | dl_emit@flashtex-engine/src/displaylist/mod.rs:1314 | dl_shipout_end@flashtex-engine/src/displaylist/mod.rs:1172
+    16.78M x264  <-  put@flashtex-engine/src/arena.rs:2190 | diff_branch_inner@flashtex-engine/src/arena.rs:3257 | diff_branch_until@flashtex-engine/src/arena.rs:2954
+    13.04M x10  <-  save_to@flashtex-engine/src/system.rs:234 | {closure#0}@flashtex-engine/src/system.rs:395 | before_write@flashtex-engine/src/system.rs:388
+    10.73M x131  <-  {closure#1}@flashtex-engine/src/boxmemo.rs:2762 | {closure#0}<>@flashtex-engine/src/boxmemo.rs:2740 | bm_with_rec<>@flashtex-engine/src/boxmemo.rs:2740
+    10.73M x131  <-  {closure#1}@flashtex-engine/src/boxmemo.rs:2762 | {closure#0}<>@flashtex-engine/src/boxmemo.rs:2740 | bm_with_rec<>@flashtex-engine/src/boxmemo.rs:2740
+
+## TOP 59.52M (4049 calls)
+     6.44M x262  <-  {closure#5}@flashtex-engine/src/boxmemo.rs:3050 | {closure#0}<>@flashtex-engine/src/boxmemo.rs:2740 | bm_with_rec<>@flashtex-engine/src/boxmemo.rs:2740
+    50.48M x960  <-  seal@flashtex-engine/src/arena.rs:1005 | checkpoint@flashtex-engine/src/arena.rs:922 | checkpoint@flashtex-engine/src/arena.rs:2752
+     5.01M x985  <-  seal@flashtex-engine/src/arena.rs:1005 | checkpoint@flashtex-engine/src/arena.rs:922 | checkpoint@flashtex-engine/src/arena.rs:2752
+     1.51M x33  <-  seal@flashtex-engine/src/arena.rs:1006 | checkpoint@flashtex-engine/src/arena.rs:922 | checkpoint@flashtex-engine/src/arena.rs:2752
+     1.19M x23  <-  merge_sealed@flashtex-engine/src/arena.rs:704 | retain@flashtex-engine/src/arena.rs:2008 | retain@flashtex-engine/src/arena.rs:2802
+   879.79K x890  <-  merge_sealed@flashtex-engine/src/arena.rs:704 | retain_branch@flashtex-engine/src/arena.rs:1972 | retain_branch@flashtex-engine/src/arena.rs:2794
+
+## TOP 14.95M (472399 calls)
+   200.87K x30  <-  seal@flashtex-engine/src/arena.rs:1006 | checkpoint@flashtex-engine/src/arena.rs:922 | checkpoint@flashtex-engine/src/arena.rs:2752
+    14.00M x3  <-  read_tail_into@flashtex-engine/src/checkpoint.rs:773 | take@flashtex-engine/src/checkpoint.rs:363 | restore@flashtex-engine/src/checkpoint.rs:1280
+   625.01K x1  <-  {closure#0}@flashtex-engine/src/boxmemo.rs:1265 | seen_note@flashtex-engine/src/boxmemo.rs:1253 | bm_meaning_is@flashtex-engine/src/boxmemo.rs:1877
+    67.07K x15851  <-  bm_tokens@flashtex-engine/src/boxmemo.rs:1315 | bm_val@flashtex-engine/src/boxmemo.rs:2895 | flashtex_bm_def@flashtex-engine/src/boxmemo.rs:3045
+    67.07K x15851  <-  bm_tokens@flashtex-engine/src/boxmemo.rs:1315 | bm_val@flashtex-engine/src/boxmemo.rs:2895 | flashtex_bm_def@flashtex-engine/src/boxmemo.rs:3045
+    40.08K x1  <-  after_run@flashtex-engine/src/incr.rs:7687 | incremental@flashtex-engine/src/incr.rs:7307 | compile_pass@flashtex-engine/src/incr.rs:5418
+
+## TOP 8.19M (152498 calls)
+    25.15K x1834  <-  bm_tokens@flashtex-engine/src/boxmemo.rs:1315 | bm_val@flashtex-engine/src/boxmemo.rs:2895 | flashtex_bm_def@flashtex-engine/src/boxmemo.rs:3045
+     2.60M x30785  <-  flashtex_bm_id@flashtex-engine/src/boxmemo.rs:2806 | id_lookup@flashtex-engine/src/generated/body_1.rs:6268 | expand@flashtex-engine/src/generated/body_2.rs:3976
+     2.60M x30785  <-  flashtex_bm_id@flashtex-engine/src/boxmemo.rs:2806 | id_lookup@flashtex-engine/src/generated/body_1.rs:6268 | expand@flashtex-engine/src/generated/body_2.rs:3976
+   746.74K x7467  <-  flashtex_bm_id@flashtex-engine/src/boxmemo.rs:2806 | id_lookup@flashtex-engine/src/generated/body_1.rs:6268 | expand@flashtex-engine/src/generated/body_2.rs:3976
+   746.74K x7467  <-  flashtex_bm_id@flashtex-engine/src/boxmemo.rs:2806 | id_lookup@flashtex-engine/src/generated/body_1.rs:6268 | expand@flashtex-engine/src/generated/body_2.rs:3976
+   330.87K x7991  <-  flashtex_bm_id@flashtex-engine/src/boxmemo.rs:2806 | id_lookup@flashtex-engine/src/generated/body_1.rs:6268 | expand@flashtex-engine/src/generated/body_2.rs:3976
+
+## TOP 7.82M (264 calls)
+   330.87K x7991  <-  flashtex_bm_id@flashtex-engine/src/boxmemo.rs:2806 | id_lookup@flashtex-engine/src/generated/body_1.rs:6268 | expand@flashtex-engine/src/generated/body_2.rs:3976
+     3.91M x131  <-  {closure#1}@flashtex-engine/src/boxmemo.rs:3641 | bm_commit@flashtex-engine/src/boxmemo.rs:3568 | bm_finish@flashtex-engine/src/boxmemo.rs:3520
+
+## TOP 6.53M (12202 calls)
+     3.91M x131  <-  {closure#1}@flashtex-engine/src/boxmemo.rs:3641 | bm_commit@flashtex-engine/src/boxmemo.rs:3568 | bm_finish@flashtex-engine/src/boxmemo.rs:3520
+     1.53M x1081  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+     1.44M x970  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+     1.31M x912  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+   571.82K x1116  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+   539.83K x1000  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+
+## TOP 5.59M (340089 calls)
+   497.05K x942  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+     4.08M x1  <-  read_logical@flashtex-engine/src/system.rs:444 | {closure#0}@flashtex-engine/src/system.rs:5009 | note_file_timed@flashtex-engine/src/system.rs:4980
+   401.61K x12  <-  read_program@flashtex-engine/src/displaylist/mod.rs:2185 | dl_font_key@flashtex-engine/src/displaylist/mod.rs:1840 | font_problem@flashtex-engine/src/displaylist/mod.rs:1568
+   201.54K x2  <-  read_logical@flashtex-engine/src/system.rs:444 | {closure#0}@flashtex-engine/src/system.rs:5009 | note_file_timed@flashtex-engine/src/system.rs:4980
+   177.10K x2  <-  read_logical@flashtex-engine/src/system.rs:444 | {closure#0}@flashtex-engine/src/incr.rs:5903 | {closure#2}@flashtex-engine/src/incr.rs:5903
+   177.01K x1940  <-  snapshot@flashtex-engine/src/system.rs:5400 | alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3162
+
+## TOP 5.49M (5 calls)
+    88.50K x970  <-  snapshot@flashtex-engine/src/system.rs:5494 | byte@flashtex-engine/src/checkpoint.rs:714 | visit_files<>@flashtex-engine/src/generated/globals.rs:3158
+     1.52M x1  <-  {closure#0}@flashtex-engine/src/diag.rs:507 | {closure#0}<>@flashtex-engine/src/diag.rs:314 | sites_snapshot@flashtex-engine/src/diag.rs:505
+     1.50M x1  <-  {closure#0}@flashtex-engine/src/diag.rs:507 | {closure#0}<>@flashtex-engine/src/diag.rs:314 | sites_snapshot@flashtex-engine/src/diag.rs:505
+     1.40M x1  <-  {closure#0}@flashtex-engine/src/diag.rs:507 | {closure#0}<>@flashtex-engine/src/diag.rs:314 | sites_snapshot@flashtex-engine/src/diag.rs:505
+
+## TOP 4.16M (69 calls)
+     1.08M x1  <-  {closure#0}@flashtex-engine/src/diag.rs:507 | {closure#0}<>@flashtex-engine/src/diag.rs:314 | sites_snapshot@flashtex-engine/src/diag.rs:505
+
+## TOP 4.10M (2010 calls)
+     4.16M x22  <-  check@flashtex-engine/src/iso.rs:3033 | {closure#21}@flashtex-engine/src/incr.rs:1872 | with_dormant<>@flashtex-engine/src/iso.rs:395
+
+## TOP 4.10M (63012 calls)
+     4.10M x1002  <-  dl_emit@flashtex-engine/src/displaylist/mod.rs:1281 | dl_shipout_end@flashtex-engine/src/displaylist/mod.rs:1172 | pdfshipoutend@flashtex-engine/src/pdftex/utils.rs:859
+     2.16M x15  <-  {closure#0}@flashtex-engine/src/diag.rs:1233 | {closure#0}<>@flashtex-engine/src/diag.rs:314 | with<>@flashtex-engine/src/diag.rs:314
+   411.66K x10  <-  {closure#15}@flashtex-engine/src/displaylist/mod.rs:1339 | {closure#0}<>@flashtex-engine/src/displaylist/mod.rs:458 | with<>@flashtex-engine/src/displaylist/mod.rs:458
+   278.59K x242  <-  put@flashtex-engine/src/arena.rs:2189 | diff_branch_inner@flashtex-engine/src/arena.rs:3257 | diff_branch_until@flashtex-engine/src/arena.rs:2954
+   213.01K x13  <-  {closure#0}@flashtex-engine/src/displaylist/mod.rs:592 | {closure#0}<>@flashtex-engine/src/displaylist/mod.rs:458 | with<>@flashtex-engine/src/displaylist/mod.rs:458
+   125.50K x89  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+
+## TOP 3.18M (454 calls)
+    99.77K x206  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+     1.21M x54  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:0
+   516.84K x16  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:2313
+   393.89K x83  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:0
+   319.66K x10  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:2313
+   317.64K x70  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:2314
+
+## TOP 2.52M (1 calls)
+   151.66K x37  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:2314
+
+## TOP 2.50M (136 calls)
+     2.52M x1  <-  bm_start@flashtex-engine/src/boxmemo.rs:2609 | flashtex_bm_call@flashtex-engine/src/boxmemo.rs:0 | macro_call@flashtex-engine/src/generated/body_2.rs:3474
+   625.01K x22  <-  {closure#21}@flashtex-engine/src/incr.rs:1872 | with_dormant<>@flashtex-engine/src/iso.rs:395 | same_words@flashtex-engine/src/incr.rs:1889
+   625.01K x22  <-  {closure#21}@flashtex-engine/src/incr.rs:1872 | with_dormant<>@flashtex-engine/src/iso.rs:395 | same_words@flashtex-engine/src/incr.rs:1889
+   625.01K x22  <-  {closure#21}@flashtex-engine/src/incr.rs:1872 | with_dormant<>@flashtex-engine/src/iso.rs:395 | same_words@flashtex-engine/src/incr.rs:1889
+
+## TOP 2.47M (29096 calls)
+   625.01K x22  <-  {closure#21}@flashtex-engine/src/incr.rs:1872 | with_dormant<>@flashtex-engine/src/iso.rs:395 | same_words@flashtex-engine/src/incr.rs:1889
+     1.22M x12969  <-  walk@flashtex-engine/src/boxmemo.rs:1123 | compress_groups@flashtex-engine/src/boxmemo.rs:1129 | {closure#1}@flashtex-engine/src/boxmemo.rs:3641
+     1.22M x12969  <-  walk@flashtex-engine/src/boxmemo.rs:1123 | compress_groups@flashtex-engine/src/boxmemo.rs:1129 | {closure#1}@flashtex-engine/src/boxmemo.rs:3641
+    18.85K x1571  <-  {closure#1}@flashtex-engine/src/boxmemo.rs:1047 | net@flashtex-engine/src/boxmemo.rs:1070 | walk@flashtex-engine/src/boxmemo.rs:1098
+
+## TOP 2.08M (3 calls)
+    18.85K x1571  <-  {closure#1}@flashtex-engine/src/boxmemo.rs:1047 | net@flashtex-engine/src/boxmemo.rs:1070 | walk@flashtex-engine/src/boxmemo.rs:1098
+
+## TOP 2.08M (108 calls)
+     2.08M x1  <-  new@flashtex-engine/src/generated/globals.rs:1984 | cold@flashtex-engine/src/incr.rs:6738 | compile_pass@flashtex-engine/src/incr.rs:5173
+
+## TOP 1.80M (126 calls)
+     2.08M x22  <-  branch_old_chunks@flashtex-engine/src/arena.rs:3071 | pending_old_chunks@flashtex-engine/src/checkpoint.rs:868 | {closure#20}@flashtex-engine/src/incr.rs:1869
+
+## TOP 1.25M (70 calls)
+     1.80M x22  <-  diff_branch_until@flashtex-engine/src/arena.rs:2954 | diff_pending_until@flashtex-engine/src/checkpoint.rs:846 | same_words@flashtex-engine/src/incr.rs:1699
+   625.00K x22  <-  drop_free_mem@flashtex-engine/src/incr.rs:2812 | same_words@flashtex-engine/src/incr.rs:1786 | {closure#16}@flashtex-engine/src/incr.rs:1244
+
+## TOP 1.25M (257225 calls)
+   625.00K x22  <-  drop_free_mem@flashtex-engine/src/incr.rs:2815 | same_words@flashtex-engine/src/incr.rs:1786 | {closure#16}@flashtex-engine/src/incr.rs:1244
+   327.66K x30697  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+   300.23K x28081  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+   280.12K x26146  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+   121.46K x30844  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+   111.58K x28219  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+
+## TOP 1.14M (6028 calls)
+   105.34K x26284  <-  deref_mut<>@flashtex-engine/src/pdftex/shared.rs:61 | get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66
+   507.94K x970  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:131 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+   507.94K x970  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:131 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+    63.89K x1002  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:131 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+
+## TOP 1.05M (118 calls)
+    63.36K x1001  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:131 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+   430.42K x43  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:0
+   236.27K x15  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:2314
+   208.53K x13  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:0
+    97.99K x5  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | midline_checkpoint@flashtex-engine/src/checkpoint.rs:2777
+    59.06K x4  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:2314
+
+## TOP 1.05M (3 calls)
+    20.75K x1  <-  checkpoint@flashtex-engine/src/checkpoint.rs:1076 | hook_checkpoint@flashtex-engine/src/checkpoint.rs:2496 | flashtex_checkpoint_hook@flashtex-engine/src/checkpoint.rs:2321
+
+## TOP 1.04M (6 calls)
+     1.05M x3  <-  
+   520.42K x1  <-  new@flashtex-engine/src/generated/globals.rs:1984 | cold@flashtex-engine/src/incr.rs:6738 | compile_pass@flashtex-engine/src/incr.rs:5173
+
+## TOP 740.27K (1 calls)
+   520.42K x1  <-  new@flashtex-engine/src/generated/globals.rs:1984 | cold@flashtex-engine/src/incr.rs:6738 | compile_pass@flashtex-engine/src/incr.rs:5173
+
+## TOP 696.38K (2119 calls)
+   740.27K x1  <-  new@flashtex-engine/src/pdftex/fmtable.rs:247 | mapped@flashtex-engine/src/pdftex/fmtable.rs:198 | get@flashtex-engine/src/pdftex/mapfile.rs:387
+   278.54K x1  <-  clone@flashtex-engine/src/readset.rs:83 | restore@flashtex-engine/src/checkpoint.rs:1307 | incremental@flashtex-engine/src/incr.rs:6889
+   278.54K x1  <-  clone@flashtex-engine/src/readset.rs:83 | restore@flashtex-engine/src/checkpoint.rs:1307 | incremental@flashtex-engine/src/incr.rs:6889
+    69.65K x1  <-  observer@flashtex-engine/src/incr.rs:6652 | incremental@flashtex-engine/src/incr.rs:6831 | incremental@flashtex-engine/src/incr.rs:7233
+
+## TOP 648.79K (4025 calls)
+    69.65K x1  <-  observer@flashtex-engine/src/incr.rs:6653 | incremental@flashtex-engine/src/incr.rs:6831 | incremental@flashtex-engine/src/incr.rs:7233
+   330.98K x1002  <-  {closure#15}@flashtex-engine/src/displaylist/mod.rs:1345 | {closure#0}<>@flashtex-engine/src/displaylist/mod.rs:458 | with<>@flashtex-engine/src/displaylist/mod.rs:458
+
+## TOP 506.23K (1602 calls)
+   317.81K x970  <-  Memo) -@flashtex-engine/src/displaylist/mod.rs:1426 | {closure#2}@flashtex-engine/src/displaylist/mod.rs:1250 | {closure#0}<>@flashtex-engine/src/displaylist/mod.rs:458
+
+## TOP 372.10K (12460 calls)
+   506.23K x801  <-  undumptounicode@flashtex-engine/src/pdftex/tounicode.rs:484 | load_fmt_file@flashtex-engine/src/generated/body_7.rs:9841 | tex_body@flashtex-engine/src/generated/main_body.rs:360
+    68.61K x1081  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+    61.57K x970  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+    61.57K x970  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+    57.92K x912  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+    43.39K x1001  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+
+## TOP 354.56K (15 calls)
+    28.93K x1117  <-  get_or_insert<>@flashtex-engine/src/pdftex/shared.rs:132 | {closure#0}@flashtex-engine/src/pdftex/avlstuff.rs:66 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
+   177.28K x1  <-  clone@flashtex-engine/src/readset.rs:82 | restore@flashtex-engine/src/checkpoint.rs:1307 | incremental@flashtex-engine/src/incr.rs:6889
+
+## TOP 307.40K (36 calls)
+   177.28K x1  <-  clone@flashtex-engine/src/readset.rs:82 | restore@flashtex-engine/src/checkpoint.rs:1307 | incremental@flashtex-engine/src/incr.rs:6889
+   289.84K x33  <-  bm_commit@flashtex-engine/src/boxmemo.rs:3568 | bm_finish@flashtex-engine/src/boxmemo.rs:3520 | main_control@flashtex-engine/src/generated/body_7.rs:7510
+
+## TOP 273.74K (130341 calls)
+    17.56K x2  <-  bm_commit@flashtex-engine/src/boxmemo.rs:3568 | bm_finish@flashtex-engine/src/boxmemo.rs:3520 | main_control@flashtex-engine/src/generated/body_7.rs:7510
+   262.14K x6  <-  {closure#0}@flashtex-engine/src/system.rs:4514 | terminal_capture_byte@flashtex-engine/src/system.rs:4512 | put_byte@flashtex-engine/src/system.rs:696
+     1.54K x4  <-  file_id@flashtex-engine/src/diag.rs:286 | {closure#2}@flashtex-engine/src/diag.rs:807 | {closure#0}<>@flashtex-engine/src/diag.rs:314
+     1.54K x4  <-  list@flashtex-runtime/src/resolver.rs:947 | searched@flashtex-runtime/src/resolver.rs:1219 | remember@flashtex-runtime/src/resolver.rs:1462
+     1.54K x1  <-  file_id@flashtex-engine/src/displaylist/mod.rs:230 | {closure#1}@flashtex-engine/src/displaylist/mod.rs:1000 | {closure#0}<>@flashtex-engine/src/displaylist/mod.rs:458
+
+## TOP 246.02K (11858 calls)
+     1.54K x1  <-  file_id@flashtex-engine/src/displaylist/mod.rs:240 | {closure#1}@flashtex-engine/src/displaylist/mod.rs:1000 | {closure#0}<>@flashtex-engine/src/displaylist/mod.rs:458
+   207.79K x970  <-  clone@flashtex-engine/src/pdftex/avlstuff.rs:44 | clone@flashtex-engine/src/pdftex/mod.rs:80 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+    26.14K x1002  <-  clone@flashtex-engine/src/pdftex/avlstuff.rs:44 | clone@flashtex-engine/src/pdftex/mod.rs:80 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+
+## TOP 219.62K (2 calls)
+    10.37K x48  <-  clone@flashtex-engine/src/pdftex/avlstuff.rs:44 | clone@flashtex-engine/src/pdftex/mod.rs:80 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+   185.07K x1  <-  new@flashtex-engine/src/pdftex/fmtable.rs:242 | mapped@flashtex-engine/src/pdftex/fmtable.rs:198 | get@flashtex-engine/src/pdftex/mapfile.rs:387
+
+## TOP 193.95K (34917 calls)
+    34.55K x1  <-  new@flashtex-engine/src/pdftex/fmtable.rs:243 | mapped@flashtex-engine/src/pdftex/fmtable.rs:198 | get@flashtex-engine/src/pdftex/mapfile.rs:387
+    32.01K x1  <-  flashtex_kpse_has_alias@flashtex-runtime/kpathsea-config/flashtex_kpse.c:423 | remember@flashtex-runtime/src/resolver.rs:1413 | memo_lookup<>@flashtex-runtime/src/resolver.rs:1318
+    32.01K x1  <-  flashtex_kpse_has_alias@flashtex-runtime/kpathsea-config/flashtex_kpse.c:423 | remember@flashtex-runtime/src/resolver.rs:1413 | memo_lookup<>@flashtex-runtime/src/resolver.rs:1318
+    10.32K x267  <-  flashtex_kpse_format@flashtex-runtime/kpathsea-config/flashtex_kpse.c:229 | new@flashtex-runtime/src/resolver.rs:1175 | for_texlive@flashtex-runtime/src/resolver.rs:973
+     8.07K x1  <-  flashtex_kpse_format@flashtex-runtime/kpathsea-config/flashtex_kpse.c:229 | new@flashtex-runtime/src/resolver.rs:1175 | for_texlive@flashtex-runtime/src/resolver.rs:973
+     8.07K x1  <-  flashtex_kpse_format@flashtex-runtime/kpathsea-config/flashtex_kpse.c:229 | new@flashtex-runtime/src/resolver.rs:1175 | for_texlive@flashtex-runtime/src/resolver.rs:973
+
+## TOP 193.74K (19 calls)
+     6.01K x1  <-  flashtex_kpse_format@flashtex-runtime/kpathsea-config/flashtex_kpse.c:229 | new@flashtex-runtime/src/resolver.rs:1175 | for_texlive@flashtex-runtime/src/resolver.rs:973
+   117.74K x12  <-  writet1@flashtex-engine/src/pdftex/writet1/mod.rs:145 | write_fontfile@flashtex-engine/src/pdftex/writefont.rs:393 | write_fontdescriptor@flashtex-engine/src/pdftex/writefont.rs:447
+    68.52K x6  <-  writet1@flashtex-engine/src/pdftex/writet1/mod.rs:145 | write_fontfile@flashtex-engine/src/pdftex/writefont.rs:393 | write_fontdescriptor@flashtex-engine/src/pdftex/writefont.rs:447
+
+## TOP 185.07K (1 calls)
+     7.48K x1  <-  writet1@flashtex-engine/src/pdftex/writet1/mod.rs:145 | write_fontfile@flashtex-engine/src/pdftex/writefont.rs:393 | write_fontdescriptor@flashtex-engine/src/pdftex/writefont.rs:447
+
+## TOP 181.17K (21002 calls)
+   185.07K x1  <-  mapped@flashtex-engine/src/pdftex/fmtable.rs:198 | get@flashtex-engine/src/pdftex/mapfile.rs:387 | {closure#0}@flashtex-engine/src/pdftex/mapfile.rs:963
+   133.46K x4070  <-  alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3151 | capture_ext@flashtex-engine/src/checkpoint.rs:981
+    16.75K x4204  <-  alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3151 | capture_ext@flashtex-engine/src/checkpoint.rs:981
+     9.62K x970  <-  alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3148 | capture_ext@flashtex-engine/src/checkpoint.rs:981
+     7.70K x970  <-  alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3146 | capture_ext@flashtex-engine/src/checkpoint.rs:981
+     4.42K x234  <-  alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3151 | capture_ext@flashtex-engine/src/checkpoint.rs:981
+
+## TOP 175.37K (12254 calls)
+     1.60K x329  <-  alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3151 | capture_ext@flashtex-engine/src/checkpoint.rs:981
+    73.73K x12  <-  embed@flashtex-engine/src/pdftex/writet1/cache.rs:212 | writet1@flashtex-engine/src/pdftex/writet1/mod.rs:145 | write_fontfile@flashtex-engine/src/pdftex/writefont.rs:393
+    36.86K x6  <-  embed@flashtex-engine/src/pdftex/writet1/cache.rs:212 | writet1@flashtex-engine/src/pdftex/writet1/mod.rs:145 | write_fontfile@flashtex-engine/src/pdftex/writefont.rs:393
+    24.58K x4  <-  Entry) -@flashtex-engine/src/pdftex/writet1/cache.rs:77 | {closure#2}@flashtex-engine/src/pdftex/writet1/cache.rs:179 | embed@flashtex-engine/src/pdftex/writet1/cache.rs:179
+    23.09K x970  <-  snapshot@flashtex-engine/src/system.rs:5407 | alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3146
+     6.14K x1  <-  embed@flashtex-engine/src/pdftex/writet1/cache.rs:212 | writet1@flashtex-engine/src/pdftex/writet1/mod.rs:145 | write_fontfile@flashtex-engine/src/pdftex/writefont.rs:393
+
+## TOP 152.32K (12010 calls)
+     2.90K x1002  <-  snapshot@flashtex-engine/src/system.rs:5407 | alpha@flashtex-engine/src/checkpoint.rs:710 | visit_files<>@flashtex-engine/src/generated/globals.rs:3146
+   123.14K x970  <-  clone@flashtex-engine/src/pdftex/utils.rs:20 | clone@flashtex-engine/src/pdftex/mod.rs:78 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+    15.49K x1002  <-  clone@flashtex-engine/src/pdftex/utils.rs:20 | clone@flashtex-engine/src/pdftex/mod.rs:78 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+     6.91K x54  <-  clone@flashtex-engine/src/pdftex/utils.rs:20 | clone@flashtex-engine/src/pdftex/mod.rs:78 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+     2.69K x73  <-  clone@flashtex-engine/src/pdftex/utils.rs:20 | clone@flashtex-engine/src/pdftex/mod.rs:78 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+     1.15K x37  <-  clone@flashtex-engine/src/pdftex/utils.rs:20 | clone@flashtex-engine/src/pdftex/mod.rs:78 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216
+     1.02K x59  <-  clone@flashtex-engine/src/pdftex/utils.rs:20 | clone@flashtex-engine/src/pdftex/mod.rs:78 | {closure#0}@flashtex-engine/src/pdftex/mod.rs:216 | {closure#0}<>@flashtex-engine/src/pdftex/mod.rs:96
