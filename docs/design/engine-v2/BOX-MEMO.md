@@ -857,4 +857,10 @@ less those whose value is global, "retaining") the status it had then.
 - `a_box_made_in_a_group_is_not_the_calls_after_it`: the hole above, nested groups and sparse
   registers. Replays only where the box of before the call is the same.
 
-`DEFAULT_NAMES` adds `f@nch@head` and `f@nch@foot`.
+**Names.** `DEFAULT_NAMES` adds `f@nch@head` and `f@nch@foot`, and cleveref's
+`cref@constructprefix`. The macro profile of the window after the head and foot replayed
+(instruction clock) put about a fifth of it in cleveref: every `\refstepcounter` and every `\label`
+(through hyperref's `firstaid` hooks) makes the counter's prefix again, walking the reset lists
+(`\cref@resetby`, `\cref@isinresetlist`, `\@whilesw`), 1-3 M instructions a call. The call makes
+only assignments at its own level (`\@tempstack`, `\@tempa`, its result macro) and reads counters
+and `\cl@...` lists, all in the key; it needed nothing new.

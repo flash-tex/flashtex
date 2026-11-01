@@ -133,6 +133,10 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // at the call's level, §16)
     "f@nch@head",
     "f@nch@foot",
+    // cleveref's counter prefix, made again at every `\refstepcounter` and
+    // `\label` (the reset lists walked by `\cref@isinresetlist`): only
+    // assignments, 1-3 M instructions a call
+    "cref@constructprefix",
 ];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
