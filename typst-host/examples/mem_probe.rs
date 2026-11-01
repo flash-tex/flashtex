@@ -133,6 +133,8 @@ fn main() {
         program_budget: None,
         color_spaces: false,
         line_state: false,
+        image_data: false,
+        image_budget: None,
         ungated: false,
     };
     let cold = seeded::standard(&world)
