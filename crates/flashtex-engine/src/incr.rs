@@ -3141,6 +3141,19 @@ impl Observer for Obs {
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
+        if true {
+            let w = self.preempt.as_ref().is_some_and(|p| p(self.pass, self.new_pages.len()));
+            eprintln!(
+                "[tail] {:.1} ms {why:?} page {} pass {} newer {w} protect {} has {} seen {} after_s0 {}",
+                self.t0.elapsed().as_secs_f64() * 1e3,
+                self.pages_so_far(),
+                self.pass,
+                self.protecting(),
+                self.preempt.is_some(),
+                self.newer_seen,
+                self.preempt_after_s0
+            );
+        }
         if let Some(p) = &self.progress {
             p(self.pass, self.pages_so_far(), g);
         }

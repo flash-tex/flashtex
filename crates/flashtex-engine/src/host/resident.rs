@@ -880,6 +880,12 @@ impl Engine {
             server::error(&out, None, "request", "COMPILE needs an integer id");
             return self.resume_deferred(&conn);
         };
+        if true {
+            eprintln!(
+                "[tail] COMPILE {id} queue {queue_ms:.1} ms, queued {}",
+                conn.queued.load(Ordering::SeqCst)
+            );
+        }
         let job = match Job::parse(&req, conn.id) {
             Ok(j) => j,
             Err(e) => {

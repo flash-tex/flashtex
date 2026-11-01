@@ -2867,11 +2867,18 @@ impl Globals {
     pub fn resume_to_end(&mut self) -> Result<ExitStatus, String> {
         self.catch_exit(|g| {
             g.ckpt_resuming = true;
+            let tt = Some(std::time::Instant::now());
             g.main_control();
+            let t1 = tt.map(|t| t.elapsed().as_secs_f64() * 1e3);
             g.final_cleanup();
+            let t2 = tt.map(|t| t.elapsed().as_secs_f64() * 1e3);
             g.close_files_and_terminate();
+            let t3 = tt.map(|t| t.elapsed().as_secs_f64() * 1e3);
             g.ready_already = 0;
             g.flush_outputs();
+            if let (Some(a), Some(b), Some(c)) = (t1, t2, t3) {
+                eprintln!("[tail] resume: main_control {a:.1} final_cleanup {b:.1} close {c:.1} ms");
+            }
         })
     }
 
