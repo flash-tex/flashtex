@@ -861,15 +861,23 @@ high mark, where each must leave the same one), the paragraph, the journal and t
 `tests/boxmemo.rs` (`spans_*`, off/on/verify logs and PDFs equal, `full_differences` 0); the
 `FLASHTEX_BOXMEMO_SPANS` sweeps (sweeps.yml `boxmemo=on|verify|off`, `boxmemo_spans`).
 
-### 15.8 Measured (this Mac, mac-m5pro-kabir; CPU seconds to the edited page, picbench keys)
+### 15.8 Measured (this Mac, mac-m5pro-kabir, shared with other lanes' builds; CPU to the edited page)
 
-- arXiv 2501.08950v2 (pgfplots, 27 pages), typing at "as we al", three type/revert pairs: off
-  1.28 s, then 0.65–0.68 s a key; spans 1.89 s for the first (recording), then 0.44–0.47 s a key.
-  Every compile compared with a scratch compile: 0 differences.
-- fixtures/real-world/tikzcd-shaded-notes, four edit points: 15–17 → 4–5 ms; 54–77 → 29–47 ms;
-  50–62 → 37–43 ms; 35–45 → 19–22 ms; 0 verification differences.
-- What is still refused on 2501.08950v2: pictures inside a macro's argument (`\scalebox{..}{\begin..}`,
-  a token-list F: `SpanLevel`), two plots over 8 MB (`Large`), one `LongList`.
+picbench (iserve keystrokes, a type and a revert per key, three keys; every compile's PDF compared with
+a scratch compile: 0 differences in every row), this branch at 73b09e755 with spans on against
+origin/main at f53095ff2 (BOX-MEMO on in both):
+
+- arXiv 2501.08950v2 (pgfplots, 27 pages), at "as we al": off 1.28 s, then 0.68–0.71 s a key; spans
+  2.51 s for the first (recording), then 0.44–0.48 s a key.
+- fixtures/real-world/tikzcd-shaded-notes, four edit points (ms, after the first two keys): 18–20 → 4–5;
+  57–64 → 23–29; 57–62 → 21–24; 37–44 → 6–7. The first one or two keys at a point are slower (they
+  record): up to 78 ms against 38.
+- arXiv 2501.07239v1 (40 pictures, in figures far from the edit; at 205f8b049): 52–57 ms either way.
+- arXiv 2501.07413v3 (65 pictures in tabulars; at 205f8b049): no span kept (the box-dimension refusal of §15.6),
+  86–108 ms off, 99–115 ms on: the recording attempts cost about 10 %, within this machine's noise.
+- The command line, verification mode, 2501.08950v2: 5 535 calls verified on the whole state, 0
+  differences; the INITEX tests and four test documents (pictures inline, in display math, `center`,
+  `minipage`, `figure`, tikz-cd): 0 full differences, PDFs identical to the base engine's.
 
 ### 15.9 Open
 
