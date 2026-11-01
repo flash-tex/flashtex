@@ -95,6 +95,10 @@ pub mod kind {
     pub const LOCATE: u8 = 0x06;
     /// `profile-v1` (capability-gated, spec §6.9): choose a performance mode.
     pub const C_PROFILE: u8 = 0x07;
+    // (0x08: the app's `TRIM`, `trim-v1`, which no host here implements)
+    /// `viewport-v1` (capability-gated, spec §6.3.1): the page the client
+    /// shows now, between compiles; no reply.
+    pub const C_VIEWPORT: u8 = 0x09;
     // host -> client
     pub const HELLO: u8 = 0x41;
     pub const STARTED: u8 = 0x42;
@@ -144,6 +148,7 @@ pub mod kind {
             RESOLVE => "resolve",
             LOCATE => "locate",
             C_PROFILE => "client-profile",
+            C_VIEWPORT => "client-viewport",
             HELLO => "hello",
             STARTED => "started",
             FONT => "font",

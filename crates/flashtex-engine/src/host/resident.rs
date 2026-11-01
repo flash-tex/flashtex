@@ -425,7 +425,9 @@ impl Live {
         // it again. A compile's first delivery of a page is always sent,
         // even when unchanged (the client learns the page is current, and
         // the edited page comes first).
-        let delivered = self.target.as_ref().is_some_and(|t| (i as u32) < t.next);
+        // (no compile: an idle run's page, `Engine::viewport`, the same as
+        // the cache's keeps its version, so a client holding it is not sent it)
+        let delivered = self.target.as_ref().is_none_or(|t| (i as u32) < t.next);
         let changed = self
             .pages
             .get(i)
@@ -729,6 +731,7 @@ impl Engine {
                     id,
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
+                Req::Viewport { conn, page } => self.viewport(conn, page),
             }
             if compiled && self.profile.keep_warm_ms > 0 {
                 hot_until = Some(
@@ -778,6 +781,41 @@ impl Engine {
         let _ = std::fs::remove_dir_all(&dir);
         r?;
         Ok(t.elapsed().as_secs_f64())
+    }
+
+    /// `VIEWPORT` (spec §6.3.1): the client shows `page` now. Far from the
+    /// last edit, retention kept one page checkpoint in a few
+    /// (`incr::Options::far`); while nothing waits, the run from the kept one
+    /// before `page` is made again, nothing changed, so that its checkpoints
+    /// around `page` exist when a key comes (`incr::Session::redensify`).
+    /// A COMPILE from the client stops it at its next checkpoint, and that
+    /// compile keeps what it typeset. Never a compile of its own: no reply,
+    /// and the pages it ships go to the cache only, as they were.
+    fn viewport(&mut self, conn: Arc<server::Conn>, page: usize) {
+        let Some(d) = self.doc.as_mut() else { return };
+        if d.session.is_paused() || conn.queued.load(Ordering::SeqCst) > 0 {
+            return;
+        }
+        let c = conn.clone();
+        d.session
+            .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
+                c.queued.load(Ordering::SeqCst) > 0
+            })));
+        let t = Instant::now();
+        let r = {
+            let _busy = crate::busy::enter(crate::busy::Part::Prepare);
+            d.session.redensify(page)
+        };
+        d.session.set_preempt(None);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            eprintln!(
+                "[host] VIEWPORT {page}: {:?}, {:.1} ms",
+                r.as_ref().map(|r| r
+                    .as_ref()
+                    .map(|r| (r.restart_pages, r.converged_at, r.paused))),
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
     }
 
     /// The resident engine's options under the current performance mode.
