@@ -6194,14 +6194,96 @@ fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
     // (the next keystroke puts the matrix in, after the restart point the
     // previous compile took: the run from there ships the destination it
     // kept from the old run)
-    let unturned = |s: &str| s.replace("\\pdfsave\\pdfsetmatrix{-1 0 0 -1}\\box3\\pdfrestore", "\\box3");
+    let unturned = |s: &str| {
+        s.replace(
+            "\\pdfsave\\pdfsetmatrix{-1 0 0 -1}\\box3\\pdfrestore",
+            "\\box3",
+        )
+    };
     for k in 0..4 {
-        let t = if k % 2 == 0 { unturned(&typed) } else { unturned(&plain) };
+        let t = if k % 2 == 0 {
+            unturned(&typed)
+        } else {
+            unturned(&plain)
+        };
         step(&[("ch3.tex", &t)], &format!("unturned edit {k}"));
     }
     // (every compile since the last turned one kept its destination: one
     // typed now differs from it)
     step(&[("ch3.tex", &typed)], "the matrix put in, a letter typed");
+}
+
+/// Review of #1908 (lane REVIEW), the convergence test's own rule: it
+/// leaves a destination's unset words out when the old run's future has no
+/// `\pdfsetmatrix` in effect, and the jump keeps the old run's checkpoints,
+/// with the old run's words in a destination kept in a box register. A
+/// later compile that puts a matrix around that box's shipout restarts at
+/// one of them and ships the old words, where a scratch run ships its own.
+/// Fails on main (the PDF differs by its `/XYZ`). Comparing the words in
+/// the convergence test makes it pass but stops three convergence tests
+/// (`a_link_broken_across_lines_does_not_stop_convergence`,
+/// `beamer_navigation_actions_converge`,
+/// `beamer_fragile_frames_restart_near_and_converge`): a sound fix that
+/// keeps them is a design decision (the run noticing such a read in a
+/// lineage that left the words out, and redoing the compile). Ignored
+/// until then.
+#[test]
+#[ignore = "known soundness hole (lane REVIEW): a destination's unset words kept past a convergence"]
+fn a_destination_kept_past_a_convergence_shipped_later_under_a_matrix() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("converge-dest-matrix-later");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |scratch: bool, turned: bool| {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for i in 0..60 {
+            if i == 8 {
+                if scratch {
+                    s.push_str("\\begingroup\\setbox0\\hbox{abc}\\endgroup");
+                }
+                s.push_str("\\global\\setbox3\\hbox{\\pdfdest name{keep} xyz\\relax}\n");
+            }
+            s.push_str(&para(i, "alpha"));
+        }
+        s.push_str(if turned {
+            "\\noindent\\pdfsave\\pdfsetmatrix{-1 0 0 -1}\\box3\\pdfrestore\\par\n"
+        } else {
+            "\\box3\n"
+        });
+        s + "\\end{document}\n"
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc(true, false))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc(false, false))],
+        "the scratch box taken out",
+    );
+    eprintln!("converged at {}", field(&r, "converged_at"));
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc(false, true))],
+        "the matrix put in",
+    );
 }
 
 /// Review of #1724: a whole read between `\document`'s start and S₀'s
