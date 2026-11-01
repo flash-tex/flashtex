@@ -5857,22 +5857,27 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             + &(0..40).map(|i| para(c, i)).collect::<String>()
     };
     // (case, what goes before `\include{ch3}`, after the last chapter, at
-    // the start of the third, whether the comparison holds)
+    // the start of the third, whether the comparison holds: `None`, either.
+    // A read at the chapter's start is a second window: the first, from
+    // before `\include`, can hold at the read point after `\include`'s
+    // read when a checkpoint lies between the two reads -- the segment
+    // checkpoints' timing decides -- and the second, from there, fails at
+    // the chapter's own read; lane LATE-EDIT)
     let cases = [
-        ("only \\include's lookup", "", "", "", true),
+        ("only \\include's lookup", "", "", "", Some(true)),
         (
             "compared",
             "\\ifnum\\pdffilesize{ch3.tex}>0 \\relax\\fi\n",
             "",
             "",
-            true,
+            Some(true),
         ),
         (
             "typeset on a page of its own",
             "The third chapter has \\pdffilesize{ch3.tex} bytes.\\clearpage\n",
             "",
             "",
-            false,
+            Some(false),
         ),
         (
             // (the state at the next page is the same: only the page shipped
@@ -5881,7 +5886,7 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "",
             "",
             "This chapter has \\pdffilesize{ch3.tex} bytes.\n\n",
-            false,
+            None,
         ),
         (
             // (the state is the same: only the log and the terminal differ)
@@ -5889,7 +5894,7 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "",
             "",
             "\\typeout{The size of chapter 3: \\pdffilesize{ch3.tex}}\n",
-            false,
+            None,
         ),
         (
             // (review of #1736: a file written and closed in the window, read
@@ -5899,7 +5904,7 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "Size file: \\input{sz.txt}\n",
             "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
              \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
-            false,
+            None,
         ),
         (
             "written to a file, its digest typeset",
@@ -5907,21 +5912,21 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "Digest \\pdfmdfivesum file {sz.txt}.\n",
             "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
              \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
-            false,
+            None,
         ),
         (
             "kept",
             "\\edef\\chsz{\\pdffilesize{ch3.tex}}\n",
             "Stored size \\chsz.\n",
             "",
-            false,
+            Some(false),
         ),
         (
             "a date kept",
             "\\edef\\chmd{\\pdffilemoddate{ch3.tex}}\n",
             "Stored date \\chmd.\n",
             "",
-            false,
+            Some(false),
         ),
     ];
     for (i, (case, before, after, head, held)) in cases.iter().enumerate() {
@@ -5981,13 +5986,125 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
             // (where it does not hold: tried and failed, or no window)
             eprintln!("{what}: revalidated {}", field(&r, "revalidated"));
+            match held {
+                Some(true) => {
+                    assert_eq!(field(&r, "revalidated"), "true", "{what}: {r}");
+                    // (compared at the read point after `\include`'s read,
+                    // not at the end of the chapter's first page; a file
+                    // read whole twice has one, after the first read, which
+                    // the window to it does not cover: "compared")
+                    if i == 0 {
+                        assert_eq!(field(&r, "revalidated_at_read"), "true", "{what}: {r}");
+                    }
+                }
+                Some(false) => assert_ne!(field(&r, "revalidated"), "true", "{what}: {r}"),
+                None => {}
+            }
+        }
+        step(&[("ch3.tex", &chapter(3))], &format!("{case}: revert"));
+    }
+}
+
+/// Lane LATE-EDIT (Infinite Descent x2, the late page): a destination
+/// `\pdfdest` makes (hyperref's anchors) has three words it sets only at
+/// the shipout, holding whatever the memory held. Two runs that allocated
+/// differently before it leave different words there: on the book a
+/// BOX-MEMO replay (it frees no scratch nodes) made the revalidation's
+/// comparison at the chapter's next page fail at the keystroke after the
+/// first, and the run went on from the chapter's start (4 pages instead of
+/// 1). Here boxes made and dropped in a group when the chapter's size is
+/// odd do the same at every keystroke. The words are read only with a
+/// `\pdfsetmatrix` in effect, which the old run between the comparison and
+/// the restart point never had: they are not compared there. Every
+/// keystroke revalidates, and every compile equals scratch runs.
+#[test]
+fn a_revalidation_leaves_out_what_a_destination_never_set() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // (case, what paragraphs 3-12 of chapter 3, on the comparison's page
+    // and the next ones, have, whether the comparison holds: with a matrix
+    // in effect at a destination after it the words are compared)
+    let cases = [
+        ("no matrix", "", true),
+        (
+            "a matrix after the comparison",
+            "\\pdfsave\\pdfsetmatrix{1 0 0 1}\\pdfdest name{m\\the\\inputlineno} xyz\\pdfrestore ",
+            false,
+        ),
+    ];
+    for (n, (case, matrix, held)) in cases.iter().enumerate() {
+        let para =
+            |c: usize, i: usize| {
+                format!(
+                "\\hypertarget{{t{c}-{i}}}{{Chapter {c}}} paragraph {i} with the word theta, and \
+                 enough text to fill a few lines of the page so that the chapter ships several \
+                 pages; math $a^{i}+b$ and more {}words to make it long enough.\n\n",
+                if (3..=12).contains(&i) && c == 3 { matrix } else { "" }
+            )
+            };
+        // (a scratch box made and dropped when the size is odd: the
+        // destination made next, kept in a box register past the next page
+        // and shipped at the chapter's end, takes its node's place, holding
+        // its dimensions)
+        let chapter = |c: usize| -> String {
+            format!(
+                "\\chapter{{Chapter {c}}}\n\\begingroup\\ifodd\\pdffilesize{{ch{c}.tex}} \
+                 \\setbox0\\hbox{{abc}}\\fi\\endgroup\
+                 \\global\\setbox3\\hbox{{\\pdfdest name{{keep{c}}} xyz\\relax}}\n"
+            ) + &(0..40).map(|i| para(c, i)).collect::<String>()
+                + "\\box3\n"
+        };
+        let dir = e.dir.join(format!("revalidate-dest-{n}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = "\\documentclass[openany]{book}\n\\usepackage{hyperref}\n\
+                   \\begin{document}\n\\tableofcontents\n\\include{ch1}\n\\include{ch2}\n\
+                   \\include{ch3}\n\\include{ch4}\n\\end{document}\n";
+        let mut files: Vec<(String, String)> = (1..=4)
+            .map(|c| (format!("ch{c}.tex"), chapter(c)))
+            .collect();
+        files.push(("doc.tex".into(), doc.into()));
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let mut h = Host::start(&e, &dir);
+        let mut step = |files: &[(&str, &str)], what: &str| {
+            for (name, text) in files {
+                std::fs::write(dir.join(name), text).unwrap();
+            }
+            let reference = dir.with_extension("ref");
+            copy_dir(&dir, &reference);
+            let r = h.cmd("compile");
+            check_against(&e, &dir, &reference, &r, what);
+            r
+        };
+        for k in 0..4 {
+            let r = step(&refs, &format!("{case}: settle"));
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        // (a letter typed and deleted, as the app's typing does)
+        let (plain, typed) = (
+            chapter(3),
+            chapter(3).replacen("paragraph 30 with", "paragraph 30 withx", 1),
+        );
+        for k in 0..4 {
+            let what = format!("{case}: edit {k}");
+            let r = step(
+                &[("ch3.tex", if k % 2 == 0 { &typed } else { &plain })],
+                &what,
+            );
+            assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
             if *held {
                 assert_eq!(field(&r, "revalidated"), "true", "{what}: {r}");
             } else {
                 assert_ne!(field(&r, "revalidated"), "true", "{what}: {r}");
             }
         }
-        step(&[("ch3.tex", &chapter(3))], &format!("{case}: revert"));
     }
 }
 

@@ -118,3 +118,73 @@ dropped it, nothing differs.
   scratch. With the output and terminal comparisons disabled, "written to the log" gives a log
   unlike scratch.
 - **Evidence:** the measurements and sweeps are in the pull request.
+
+## 6. Revision 2: the comparison at a read point (lane LATE-EDIT, 2026-11-01)
+
+### 6.1 The problem (measured)
+
+*Infinite Descent* ×2, a letter on its late page (0-based 887, `x2/book/real-numbers/inequalities.tex`
+line 110; t7's `letter@x2-late`). The section is `\input` just after a `\newpage`, so P0 is the
+page checkpoint before the `\input` and P1 is the end of the section's first page.
+
+- **Every keystroke typeset that page again** (a TikZ number line and a list), compared the whole
+  state at its end, reattached, and only then restarted near the edit. The host's DONE
+  `stages.edited_instr_k`, counted from the last restore, showed 205 M instructions to the edited
+  page. From the compile's start (`stages.to_edited_instr_k`, added here) it was about
+  1,070 M (M5 Pro, loaded; instruction counts do not move with load).
+- **The keystroke after the first at a new place** failed the comparison on a destination's unset
+  words (§6.3) and went on from P0: 7 pages re-typeset and about 2 G instructions to the edited
+  page.
+
+### 6.2 P1 at a read point
+
+- **The point.** `Point::FileRead` is a checkpoint taken at the first `build_page` after the body
+  read one of the user's files whole for a value (`\pdffilesize`, `\pdffilemoddate`;
+  `Globals::note_value_read`), whatever the time since the last checkpoint. Both runs reach it at
+  the same place when they run alike: it depends on nothing but what the run did. Retention
+  (`thin`) keeps these checkpoints as it keeps the preamble's line checkpoints. Only the first
+  `FILE_READ_POINTS` = 4 whole reads of a file ask for one (the journal, cut back at every
+  restore, counts them), so a document that reads a size in a loop keeps a few per file; LaTeX
+  takes a file's size once or twice per `\input` or `\include`. The engine's own outputs (the
+  `.aux` and `.toc` that `\end{document}` and `\tableofcontents` read; `system::is_own_output`)
+  ask for none: what a run reads of one changes with every pass.
+- **The rule.** The candidates for P1 are, in order, the old run's read points between P0 and the
+  page checkpoint, then the page checkpoint, as before. The first candidate for which the window
+  P0..P1 covers the changed file's reads (P1 passes `consumed_nothing_changed` with it left out)
+  and some later checkpoint P2 passes too is taken.
+- **The comparison** is the same as at a page (§2): the outputs, terminal and journal since P0,
+  the C parts, the whole word space. The new run's read point with as many reads made as the old
+  run's P1 had is the place compared (`Probe::at`); one with more reads, or a shipout, before it
+  ends the probe as a failed comparison, and the run goes on from P0 as an ordinary restart.
+- **Why it is as sound.** §3 holds for any checkpoint both runs take at the same point of their
+  execution; a page's end was only the first such point the old run kept. A read point is
+  another: if the runs reached it differently, the comparison of input positions, journal and
+  state fails.
+
+Also: when no word of the space differs and the only chunks either run wrote since P0 that the
+comparison has not compared are the display list's side table's, those chunks are compared word
+for word (`same_words`). Equal, every node's source position is the old run's, which is all the
+structural comparison would check; its walk of the live structures took 15 ms there with nothing
+to explain.
+
+### 6.3 A destination's unset words
+
+`\pdfdest` leaves the words `do_dest` writes at the shipout unset: they hold whatever the memory
+held, which differs between runs that allocated differently (`crate::iso`). They are read only
+with a `\pdfsetmatrix` in effect (`matrix_uses` counts each time `matrixused` is true). The
+comparison now leaves them out when the old run's record at P2 has the same `matrix_uses` as at
+P1: the old pages a restart at P2 keeps never read them, and from P2 the run is live from the old
+run's state, as from any restart point. With a matrix in effect between P1 and P2 they are
+compared as before.
+
+### 6.4 Tests
+
+- `a_size_read_that_left_nothing_does_not_hold_the_restart_back`: the cases that held still hold,
+  now at the read point (`revalidated_at_read`). Where the chapter itself reads its size again
+  at its start, the first window can now hold at the read point after `\include`'s read, and a
+  second window, from there, fails at the chapter's own read; whether a checkpoint lies between
+  the two reads depends on the segment checkpoints' timing, so those cases are allowed either
+  way. Every compile equals scratch runs.
+- `a_revalidation_leaves_out_what_a_destination_never_set`: a destination kept in a box register
+  past the comparison, made where a scratch box of the size's parity was dropped; every keystroke
+  revalidates, and with a matrix in effect after the comparison none does.

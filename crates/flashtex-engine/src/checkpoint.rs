@@ -202,6 +202,14 @@ pub enum Point {
     /// newest one before the edited line instead of from the format
     /// (PREAMBLE-FAST; `incr::Session::preamble_restart`).
     PreambleLine,
+    /// After the document's body read one of the user's files whole for a
+    /// value (`\pdffilesize`, `\pdffilemoddate`: LaTeX's `\input` takes
+    /// the file's size), at the first `build_page` after that read,
+    /// whatever the time since the last checkpoint (lane LATE-EDIT): a
+    /// place both runs reach alike, where READ-REVALIDATE compares a run
+    /// restarted before the read with the old one (`crate::revalidate`)
+    /// instead of at the next page's end.
+    FileRead,
 }
 
 /// What an [`Observer`] asks of the run after a checkpoint.
@@ -251,6 +259,9 @@ const REQ_NOTE_SHIPOUT: i32 = 4;
 const REQ_TIMED: i32 = 5;
 const REQ_AUX: i32 = 6;
 const REQ_SEGMENT: i32 = 7;
+/// `Point::FileRead`s asked for by the whole reads of one file, at most
+/// (`Globals::note_value_read`).
+const FILE_READ_POINTS: usize = 4;
 const REQ_AUX_DONE: i32 = 8;
 const REQ_PREAMBLE_LINE: i32 = 9;
 /// `\document`'s body was pushed (`ckpt_on_arm`): the `.aux` point of a run
@@ -581,6 +592,10 @@ pub struct Layer {
     /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
     /// edited page has shipped).
     pub segment_hold: bool,
+    /// A whole read of one of the user's files in the body
+    /// (`note_value_read`) since the last `Point::FileRead`: the next
+    /// `build_page` takes one.
+    pub file_read_due: bool,
     /// Lines read (`input_ln`) so far, and when the last checkpoint was
     /// taken: a segment checkpoint needs a line read since the last one
     /// (two checkpoints with the same input consumed are the same restart
@@ -1009,6 +1024,9 @@ impl Globals {
         system::forget_open_instances(&open_outputs(rec));
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
+        // (a read before the restore target asks for nothing: a run from
+        // there takes no `Point::FileRead` for it)
+        self.layer().file_read_due = false;
         self.layer().rs.truncate(rec.rs);
         // (`crate::midline`: set again from a mid-line point's record)
         self.layer().main_read.set(None);
@@ -2161,6 +2179,25 @@ impl Globals {
         self.ckpt_on_shipout = if on { REQ_SHIPOUT } else { 0 };
     }
 
+    /// `\pdffilesize` or `\pdffilemoddate` read `path` whole: in the body,
+    /// with segment checkpoints on, one of the first `FILE_READ_POINTS`
+    /// such reads of one of the user's files, not one the engine writes
+    /// (`system::is_own_output`), asks for a `Point::FileRead`
+    /// at the next `build_page` (LaTeX's `\input` and `\include` take a
+    /// file's size once or twice, `\__file_seen_` aside; a document reading
+    /// one size in a loop asks a few times only, so retention, which keeps
+    /// these, keeps a few per file).
+    pub fn note_value_read(&mut self, path: &str) {
+        if self.ckpt_on_segment == REQ_SEGMENT
+            && self.layer_ref().is_some_and(|l| l.s0.is_some())
+            && system::is_user_file(path)
+            && !system::is_own_output(path)
+            && system::whole_reads_of(path) <= FILE_READ_POINTS
+        {
+            self.layer().file_read_due = true;
+        }
+    }
+
     /// Take a checkpoint after `build_page` whenever `min_s` of engine
     /// time has passed since the last one (`Point::Segment`); `None`: never.
     pub fn checkpoint_segments(&mut self, min_s: Option<f64>) {
@@ -2374,6 +2411,11 @@ impl Globals {
                     self.layer().stats.segments += 1;
                     self.hook_checkpoint(Point::Segment);
                 }
+            }
+            REQ_SEGMENT if self.layer().file_read_due => {
+                self.layer().file_read_due = false;
+                self.layer().stats.segments += 1;
+                self.hook_checkpoint(Point::FileRead);
             }
             REQ_SEGMENT => {
                 let l = self.layer();

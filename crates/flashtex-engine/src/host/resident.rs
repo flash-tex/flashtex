@@ -1558,6 +1558,11 @@ impl Engine {
                     if let Some(e) = rep.edited_instr {
                         st.push(("edited_instr_k".to_string(), k(e)));
                     }
+                    // (from the compile's start: the find, a revalidation's
+                    // window and the restore included)
+                    if let Some(e) = rep.edited_mark.filter(|&e| e >= a.0) {
+                        st.push(("to_edited_instr_k".to_string(), k(e - a.0)));
+                    }
                     if let Some(e) = rep.typeset_instr {
                         st.push(("typeset_instr_k".to_string(), k(e)));
                     }
