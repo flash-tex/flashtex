@@ -34,6 +34,13 @@ struct EditorTextShadow {
         self.length16 = length16
     }
 
+    /// Whether `other` is this shadow's text itself (the same UTF-8 storage),
+    /// not merely equal: O(1).
+    func holds(_ other: String) -> Bool {
+        var a = text, b = other
+        return a.withUTF8 { ab in b.withUTF8 { bb in ab.count == bb.count && ab.baseAddress == bb.baseAddress } }
+    }
+
     /// Follows one storage edit (`storage` is the text after it; `r` the
     /// edited range in it; `delta` the change in length). False when it
     /// cannot: the shadow must then be dropped.

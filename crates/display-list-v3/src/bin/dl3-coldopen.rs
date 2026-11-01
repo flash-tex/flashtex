@@ -299,6 +299,30 @@ fn main() {
             ),
         ),
         ("tool_runs".into(), Json::Int(tool_runs)),
+        // the open's S₁ (lane COLD-OPEN: the pages before it, or why the
+        // stored one was not used; where its fill converged; the mode, and
+        // why the stored S0 was not used)
+        (
+            "s1".into(),
+            dones
+                .iter()
+                .find(|d| d.0 == 1)
+                .map(|d| {
+                    Json::Arr(
+                        [
+                            "s1_pages",
+                            "s1_error",
+                            "s1_fill_converged",
+                            "mode",
+                            "s0_error",
+                        ]
+                        .iter()
+                        .map(|k| d.2.get(k).cloned().unwrap_or(Json::Null))
+                        .collect(),
+                    )
+                })
+                .unwrap_or(Json::Null),
+        ),
         ("settled_ms".into(), n(settled.as_ref().map(|s| s.0))),
         (
             "pass_starts_ms".into(),

@@ -28,8 +28,16 @@ final class DiagnosticsPanelState {
     /// The occurrence (zero-based, document order) each group stands on;
     /// missing means the first.
     var occurrence: [String: Int] = [:]
+    /// The list's table (ProblemsTable.swift): a click on a row gives it the keyboard.
+    @ObservationIgnored weak var table: NSTableView?
 
     init() {}
+
+    /// A click on a row: it is selected and the list has the keyboard (as a List row's click).
+    func select(_ id: String) {
+        if selection != id { selection = id }
+        if let table, table.window?.firstResponder !== table { table.window?.makeFirstResponder(table) }
+    }
 
     func currentOccurrence(of group: EditorDiagnostics.Group) -> Int {
         min(max(occurrence[group.id] ?? 0, 0), max(group.count - 1, 0))
@@ -50,11 +58,45 @@ extension FocusedValues {
 // MARK: - Pure text rules (tested without a window)
 
 extension EditorDiagnostics {
+    /// The line of a byte of the compiled texts, for the rows' "main.tex
+    /// line 41". Made with the rows (`ProblemsModel`), it looks lines up in
+    /// an index of each text; made from `texts:` alone, it counts them. A
+    /// row counted from the start of a 4.5 MB book for each of its labels at
+    /// every update (APP-MAIN-THREAD).
+    struct Lines: @unchecked Sendable {
+        /// The texts the lines are of.
+        let texts: [String: String]
+        private let indexes: [String: EngineV3LineStarts]
+
+        /// Counting in `texts` at each lookup (a few rows, the clipboard).
+        init(texts: [String: String]) { self.texts = texts; indexes = [:] }
+
+        /// An index of each text of `paths` (the rows' files), made here once.
+        init(indexing texts: [String: String], paths: Set<String>) {
+            self.texts = texts
+            var ix: [String: EngineV3LineStarts] = [:]
+            for p in paths { if let t = texts[p] { ix[p] = EngineV3LineStarts(t) } }
+            indexes = ix
+        }
+
+        static let none = Lines(texts: [:])
+
+        /// The one-based line of byte `offset` of `path`'s text; nil without the text or out of range.
+        func line(ofByte offset: Int, in path: String) -> Int? {
+            if let ix = indexes[path] { return ix.line(ofByte: offset) }
+            return texts[path].flatMap { EditorDiagnostics.lineNumber(ofByte: offset, in: $0) }
+        }
+    }
+
     /// "main.tex line 41" / "main.tex bytes 10..<20" / "no source" for
     /// occurrence `k` of `group` — the location part of `occurrenceLabel`.
     static func occurrenceLocation(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic],
                                    texts: [String: String] = [:]) -> String {
-        let label = occurrenceLabel(k, of: group, in: diagnostics, texts: texts)
+        occurrenceLocation(k, of: group, in: diagnostics, lines: Lines(texts: texts))
+    }
+
+    static func occurrenceLocation(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic], lines: Lines) -> String {
+        let label = occurrenceLabel(k, of: group, in: diagnostics, lines: lines)
         let prefix = "\(k + 1) of \(group.count): "
         return label.hasPrefix(prefix) ? String(label.dropFirst(prefix.count)) : label
     }
@@ -63,9 +105,14 @@ extension EditorDiagnostics {
     /// else "12 places, 3 of 12, main.tex line 41".
     static func groupInfo(_ group: Group, occurrence k: Int, in diagnostics: [RuntimeV1.Diagnostic],
                           texts: [String: String] = [:]) -> DiagnosticRowAccessibility.GroupInfo? {
+        groupInfo(group, occurrence: k, in: diagnostics, lines: Lines(texts: texts))
+    }
+
+    static func groupInfo(_ group: Group, occurrence k: Int, in diagnostics: [RuntimeV1.Diagnostic],
+                          lines: Lines) -> DiagnosticRowAccessibility.GroupInfo? {
         guard group.count > 1 else { return nil }
         let k = min(max(k, 0), group.count - 1)
-        return .init(count: group.count, occurrence: k, location: occurrenceLocation(k, of: group, in: diagnostics, texts: texts))
+        return .init(count: group.count, occurrence: k, location: occurrenceLocation(k, of: group, in: diagnostics, lines: lines))
     }
 
     /// One "path:line: message" line per diagnostic (`path:line:` from the
@@ -141,9 +188,17 @@ extension EditorDiagnostics {
                                  index: Int? = nil, total: Int? = nil,
                                  status: RuntimeV1.Status, explanation: String? = nil,
                                  texts: [String: String] = [:]) -> DiagnosticRowAccessibility {
+        rowAccessibility(group, occurrence: k, in: diagnostics, index: index, total: total, status: status,
+                         explanation: explanation, lines: Lines(texts: texts))
+    }
+
+    static func rowAccessibility(_ group: Group, occurrence k: Int, in diagnostics: [RuntimeV1.Diagnostic],
+                                 index: Int? = nil, total: Int? = nil,
+                                 status: RuntimeV1.Status, explanation: String? = nil,
+                                 lines: Lines) -> DiagnosticRowAccessibility {
         let d = diagnostics[group.first]
-        let info = groupInfo(group, occurrence: k, in: diagnostics, texts: texts)
-        let location = d.source == nil ? nil : occurrenceLocation(0, of: group, in: diagnostics, texts: texts)
+        let info = groupInfo(group, occurrence: k, in: diagnostics, lines: lines)
+        let location = d.source == nil ? nil : occurrenceLocation(0, of: group, in: diagnostics, lines: lines)
         return DiagnosticRowAccessibility(d, index: index ?? group.first, total: total ?? diagnostics.count, status: status,
                                          explanation: explanation, group: info, location: location, gap: isGap(d))
     }
@@ -218,8 +273,7 @@ extension ShellModel {
         let diags = displayedDiagnostics
         // The panel's list may be up to `problemsListInterval` older than the
         // diagnostics: its group's indices are found again by the group's identity.
-        let group = problemsList == diags ? listed
-            : EditorDiagnostics.groups(of: diags, documentOrder: documents.map(\.path)).first { $0.id == listed.id } ?? listed
+        let group = problems === engineV3Problems ? listed : engineV3Problems.group(id: listed.id) ?? listed
         guard group.occurrences.indices.contains(k) else { return }
         panel.selection = group.id
         panel.occurrence[group.id] = k
@@ -337,7 +391,7 @@ extension ShellModel {
         // The call comes from the host's DONE (EngineV3Session), after its
         // rows are published.
         guard engineV3Enabled else { resetDiagnosticsAnnouncer(); return }
-        let summary = EditorDiagnostics.spokenSummary(displayedDiagnostics)
+        let summary = engineV3Problems.spokenSummary
         if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) { announceDiagnostics(message) }
         armDiagnosticsFlushIfNeeded(nowNs: nowNs)
     }
@@ -415,6 +469,8 @@ struct DiagnosticsCommands: Commands {
 /// the body of `ContentView.diagnosticsList(_:)`.
 struct DiagnosticsListView: View {
     @Environment(ShellModel.self) private var model
+    /// The finished model (`ShellModel.problems`), or nil for `diagnostics`.
+    let problems: ProblemsModel?
     let diagnostics: [RuntimeV1.Diagnostic]
     @State private var panel: DiagnosticsPanelState
 
@@ -432,9 +488,24 @@ struct DiagnosticsListView: View {
     let showsHeader: Bool
     let maxHeight: CGFloat
 
+    /// The list of a finished model (the Problems panel): its groups and
+    /// counts were made with its rows (`ProblemsModel`), not here.
+    init(problems: ProblemsModel, panel: DiagnosticsPanelState? = nil,
+         severityFilter: RuntimeV1.Severity? = nil, showsHeader: Bool = true,
+         maxHeight: CGFloat = DS.Layout.diagnosticsListMaxHeight) {
+        self.problems = problems
+        self.diagnostics = problems.diagnostics
+        self.severityFilter = severityFilter
+        self.showsHeader = showsHeader
+        self.maxHeight = maxHeight
+        _panel = State(initialValue: panel ?? DiagnosticsPanelState())
+    }
+
+    /// The list of `diagnostics`, grouped here in the listing's order.
     init(diagnostics: [RuntimeV1.Diagnostic], panel: DiagnosticsPanelState? = nil,
          severityFilter: RuntimeV1.Severity? = nil, showsHeader: Bool = true,
          maxHeight: CGFloat = DS.Layout.diagnosticsListMaxHeight) {
+        self.problems = nil
         self.diagnostics = diagnostics
         self.severityFilter = severityFilter
         self.showsHeader = showsHeader
@@ -443,65 +514,35 @@ struct DiagnosticsListView: View {
     }
 
     var body: some View {
-        let diags = diagnostics
         // Change-only / throttled reads (ShellModel mirrors, ShellChrome): `documents`,
         // `result` and `editorMarkReport` change on every keystroke or reply and
         // re-evaluated this List (an AppKit table) with each of them.
-        let all = EditorDiagnostics.groups(of: diags, documentOrder: model.chrome.listing.map(\.path))
-            .filter { severityFilter == nil || $0.severity == severityFilter }
-        // The first `rowLimit` groups (errors sort first). A list of thousands
-        // of rows cost the main thread ~100 ms at each compile's reply, longer
-        // than the time between keys (EDITOR-FREEZE, a 1,152-page book).
-        let groups = all.count > Self.rowLimit ? Array(all.prefix(Self.rowLimit)) : all
+        let problems = self.problems ?? ProblemsModel(diagnostics: diagnostics, texts: model.compiledDocuments, documentOrder: model.chrome.listing.map(\.path))
+        let diags = problems.diagnostics
+        let groups = problems.groups(severityFilter)
         let status = model.resultStatus ?? .ok
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader {
-                Text("Diagnostics (\(diags.count)\(all.count < diags.count ? " in \(all.count) groups" : "")) — the preview above is still shown; errors are not hidden")
+                Text("Diagnostics (\(diags.count)\(problems.groups.count < diags.count ? " in \(problems.groups.count) groups" : "")) — the preview above is still shown; errors are not hidden")
                     .font(DS.Fonts.header).padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
             }
             if let carriedLine = model.chrome.carriedLine {
                 Text("Underlines \(carriedLine); the list below is the failed result's.")
                     .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).padding(.horizontal, DS.Space.m).padding(.bottom, DS.Space.xs)
             }
-            List(groups, selection: $panel.selection) { g in
-                // A row holds its own group's diagnostics, not the list's:
-                // SwiftUI compares each row's inputs when the list changes,
-                // and a row holding the whole list made that rows × diagnostics
-                // (EDITOR-FREEZE: seconds per compile with thousands of rows).
-                DiagnosticRow(group: g, occurrences: g.occurrences.map { diags[$0] }, total: diags.count, status: status, panel: panel)
-                    .listRowSeparator(.hidden)
-            }
-            // Small and bounded, so `List` stays (brief §2) with the density
-            // levers: plain style, hidden scroll ground, 24pt rows on the
-            // panel surface.
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .background(DS.Colors.surfacePrimary)
-            .environment(\.defaultMinListRowHeight, DS.Row.problem)
-            .accessibilityIdentifier(Self.listIdentifier)
-            // The list is named and its value is the count summary, so VoiceOver
-            // says "Diagnostics, 3 errors, 1 warning" on landing — before any row.
-            .accessibilityLabel(Self.listLabel)
-            .accessibilityValue(EditorDiagnostics.spokenSummary(diags))
-            .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: maxHeight)
-            .onKeyPress(.return) { model.goToSelectedOccurrence(panel: panel); return .handled }
-            .onKeyPress(.escape) { model.returnKeyboardToEditor(); return .handled }
-            // The text is made when ⌘C is pressed: made here, it read the
-            // editor's documents and every compile's diagnostics, so each key
-            // and each reply re-evaluated this list (EDITOR-FREEZE).
-            .onCopyCommand { [NSItemProvider(object: model.diagnosticsCopyText(panel: panel) as NSString)] }
-            if all.count > groups.count {
-                Text("Showing the first \(groups.count) of \(all.count) problems, errors first. ⌘⌥C copies them all.")
-                    .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
-                    .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xxs)
-                    .accessibilityIdentifier("diagnostics.list.limit")
-            }
+            // Every group, each row made and drawn only while it is on screen
+            // (ProblemsTable.swift): a SwiftUI List made all 3,000 rows of a
+            // long book at each update, so #1890 showed only 200. The table
+            // is named, with the count summary as its value, so VoiceOver
+            // says "Diagnostics, 3 errors, 1 warning" on landing; Return,
+            // Esc and ⌘C (its text made when pressed) are the table's.
+            ProblemsTable(model: model, problems: problems, groups: groups, filter: severityFilter, status: status,
+                          panel: panel, selection: panel.selection, revision: model.problemsRevision)
+                .background(DS.Colors.surfacePrimary)
+                .frame(minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: maxHeight)
         }
         .focusedSceneValue(\.diagnosticsPanel, panel)
     }
-
-    /// The most rows the list shows.
-    static let rowLimit = 200
 }
 
 /// One row of `DiagnosticsListView`: a group of diagnostics.
@@ -522,7 +563,10 @@ struct DiagnosticRow: View {
                                 recovery: group.recovery, occurrences: Array(occurrences.indices))
     }
 
-    var body: some View { row(group, local: local, status: status) }
+    var body: some View {
+        let _ = ViewBodyProbe.note("DiagnosticRow") // EngineV3ProblemsPipelineTests: only the rows on screen are made
+        row(group, local: local, status: status)
+    }
 
     /// "3 of 12: main.tex line 41" for a group, "main.tex line 3" for one
     /// diagnostic when the compiled text is known (an author never thinks in
@@ -531,7 +575,7 @@ struct DiagnosticRow: View {
                           group: DiagnosticRowAccessibility.GroupInfo?) -> String {
         if g.count > 1 { return "\(k + 1) of \(g.count): \(group?.location ?? "no source")" }
         guard let src = d.source else { return "no source mapping" }
-        if let text = model.problemsTexts[src.path], let line = EditorDiagnostics.lineNumber(ofByte: src.startByte, in: text) {
+        if let line = model.problemsLines.line(ofByte: src.startByte, in: src.path) {
             return "\(src.path) line \(line)"
         }
         return "\(src.path) bytes \(src.startByte)..<\(src.endByte)"
@@ -544,7 +588,7 @@ struct DiagnosticRow: View {
         let i = g.first
         let d = diags[0]
         let selected = panel.selection == g.id
-        let group = EditorDiagnostics.groupInfo(lg, occurrence: k, in: diags, texts: model.problemsTexts)
+        let group = EditorDiagnostics.groupInfo(lg, occurrence: k, in: diags, lines: model.problemsLines)
         let gap = EditorDiagnostics.isGap(d) // FlashTeX gap, not an authoring error: grey puzzle piece
         // Whether Fix… can apply depends on the editor's text, which changes
         // with every key. Only a row whose diagnostic has a mechanical edit
@@ -562,7 +606,10 @@ struct DiagnosticRow: View {
             HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                 Image(systemName: gap ? "puzzlepiece.extension" : d.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(gap ? DS.Colors.textSecondary : d.severity == .error ? DS.Colors.severityError : DS.Colors.severityWarning)
-                Text(g.title)
+                // One line until selected: every unselected row has one
+                // height, so the table sizes thousands of rows without making
+                // them (ProblemsTable); the selected row shows it all.
+                Text(g.title).lineLimit(selected ? nil : 1)
                 Spacer(minLength: DS.Space.m)
                 // Row actions are JetBrains inline links, not bezelled push
                 // buttons (owner on #653: no glass/bezel controls).
@@ -605,7 +652,7 @@ struct DiagnosticRow: View {
                 if g.count > 1 {
                     Menu("\(g.count) places") {
                         ForEach(0..<g.count, id: \.self) { j in
-                            Button(EditorDiagnostics.occurrenceLabel(j, of: lg, in: diags, texts: model.problemsTexts)) {
+                            Button(EditorDiagnostics.occurrenceLabel(j, of: lg, in: diags, lines: model.problemsLines)) {
                                 model.goToOccurrence(j, of: g, panel: panel)
                             }
                             .disabled(EditorDiagnostics.occurrence(j, of: lg, in: diags) == nil)
@@ -642,15 +689,15 @@ struct DiagnosticRow: View {
         .frame(minHeight: DS.Row.problem - 2 * DS.Space.xxs)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { model.goToOccurrence(k, of: g, panel: panel) }
+        .simultaneousGesture(TapGesture().onEnded { panel.select(g.id) }) // a click selects, as in a List
         .contextMenu {
             if d.source != nil { Button("Go to source") { model.goToOccurrence(k, of: g, panel: panel) } }
         }
         .controlSize(.small) // 30 TeX diagnostics must fit a 260 pt panel: small trailing controls, tight rows
-        .tag(g.id)
         .modifier(SecondaryLabelHelp(text: secondaryHelp))
         .accessibleDiagnostic(EditorDiagnostics.rowAccessibility(lg, occurrence: k, in: diags, index: i, total: total, status: status,
                                                                  explanation: nil,
-                                                                 texts: model.problemsTexts)) {
+                                                                 lines: model.problemsLines)) {
             model.goToOccurrence(k, of: g, panel: panel)
         } // FlashTeXAccessibility: one spoken element, "Go to source" as the default action
     }
