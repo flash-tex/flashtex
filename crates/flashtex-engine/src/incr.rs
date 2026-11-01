@@ -356,6 +356,12 @@ pub struct Report {
     pub restore_flt: Option<(u64, u64)>,
     pub paused_flt: Option<(u64, u64)>,
     pub edited_instr: Option<u64>,
+    /// The engine thread's instruction count (`os::thread_counts`, from
+    /// its start) at the edited page's shipout: with the count at the
+    /// compile's start, every instruction to the edited page, a
+    /// revalidation's window and the find before the restore included
+    /// (the host's `stages.to_edited_instr_k`).
+    pub edited_mark: Option<u64>,
     pub test_instr: Option<u64>,
     /// Of `edited_instr`, from the engine's resumption after the restore
     /// to the edited page's shipout: the typesetting alone.
@@ -609,6 +615,7 @@ struct Obs {
     edited: Option<(usize, f64, f64)>,
     instr0: Option<u64>,
     edited_instr: Option<u64>,
+    edited_mark: Option<u64>,
     test_instr: Option<u64>,
     /// The counts when the engine resumed after the restore, and from
     /// there to the edited page (`Report::typeset_instr`).
@@ -3253,6 +3260,7 @@ impl Observer for Obs {
                 crate::macroprof::window_close(g);
             }
             self.edited_instr = self.instr0.zip(now).map(|(a, b)| b.0 - a);
+            self.edited_mark = now.map(|c| c.0);
             self.typeset_instr = self.instr_go.zip(now).map(|(a, b)| (b.0 - a.0, b.1 - a.1));
         }
         // READ-REVALIDATE: at its page, the comparison with the old run
@@ -6022,6 +6030,7 @@ impl Session {
             cpu0: thread_cpu_s(),
             instr0: crate::os::thread_counts().map(|c| c.0),
             edited_instr: None,
+            edited_mark: None,
             test_instr: None,
             instr_go: None,
             typeset_instr: None,
@@ -6955,6 +6964,7 @@ impl Session {
         if rep.edited.is_none() {
             rep.edited = obs.edited;
             rep.edited_instr = obs.edited_instr;
+            rep.edited_mark = obs.edited_mark;
             rep.typeset_instr = obs.typeset_instr.map(|c| c.0);
             rep.typeset_cycles = obs.typeset_instr.map(|c| c.1);
         }
@@ -7279,6 +7289,7 @@ impl Session {
             if obs.dormant.is_some() && rep.edited.is_none() {
                 rep.edited = o2.edited;
                 rep.edited_instr = o2.edited_instr;
+                rep.edited_mark = o2.edited_mark;
                 rep.page_times.extend(o2.page_times.iter().copied());
             }
             rep.status = st;
