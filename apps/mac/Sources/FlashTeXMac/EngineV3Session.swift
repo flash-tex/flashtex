@@ -214,6 +214,9 @@ final class EngineV3Session {
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
     /// The document `pdfFallback`'s pages come from (`DL3Renderer.openPDF`: its bytes, for per-thread copies).
     @ObservationIgnored private var pdfFallbackDocument: CGPDFDocument?
+    /// Bumped by each fallback load and page drop: a PDF read off main for
+    /// an earlier one is dropped (`loadFallbacks`).
+    @ObservationIgnored private var fallbackLoad = 0
     /// Pages drawn from the compile's PDF (tests, evidence).
     var pdfFallbackCount: Int { pdfFallback.count }
     /// The main thread's time in the last DONE, and in its PDF fallback
@@ -519,8 +522,15 @@ final class EngineV3Session {
             if !bundleConsentShown { bundleConsentShown = true }
             return
         }
-        EngineV3HostProcess.killStaleHosts(log: log)
-        EngineV3Mirror.removeAbandoned(log: log)
+        // Off main (a dead instance's copies can be many files): neither
+        // races the host launched below (its pid file names this live app;
+        // `killStaleHosts`) nor this session's copy (claims are serialized and
+        // a claimed copy is this instance's: `EngineV3Mirror.claim`).
+        let say = Self.logOnMain(self)
+        Self.cleanupQueue.async {
+            EngineV3HostProcess.killStaleHosts(log: say)
+            EngineV3Mirror.removeAbandoned(log: say)
+        }
         phase = .starting(since: Date())
         bundleProgressNote = nil
         environmentNote = EngineChoice.texLiveInstalled() || EngineV3Bundle.configured() == nil
@@ -1178,6 +1188,17 @@ final class EngineV3Session {
     }
 
     static let walkQueue = DispatchQueue(label: "flashtex.engine-v3.walk", qos: .userInitiated)
+    /// Cleanup at a host launch (stale hosts, exited instances' project
+    /// copies): its own queue, so a long removal never delays a walk.
+    static let cleanupQueue = DispatchQueue(label: "flashtex.engine-v3.cleanup", qos: .utility)
+    /// Whole-file reads of a run's PDF (the export's, the fallback pages').
+    static let readQueue = DispatchQueue(label: "flashtex.engine-v3.read", qos: .userInitiated)
+
+    /// A log for work off main: each line reaches `session.log` on main.
+    static func logOnMain(_ session: EngineV3Session) -> @Sendable (String) -> Void {
+        let ref = EngineV3WeakRef(session)
+        return { line in EngineV3Session.onMain { ref.value?.log(line) } }
+    }
     @ObservationIgnored private var walkToken = 0
     @ObservationIgnored private var walkInFlight = false
 
@@ -1382,11 +1403,17 @@ final class EngineV3Session {
             // Another project (or file) in this window: a fresh copy, every
             // document sent again as a buffer, the old pages gone.
             var made = false
-            if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot, session: serial); made = true }
+            if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot, session: serial, settleLater: true); made = true }
             // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
-            // A copy just taken over keeps its output (its .aux, checked by
-            // `takeOver`): the point of taking it over.
-            if let p = project { let keep = made && p.takenOver; Self.walkQueue.async { p.clear(keepingOutput: keep) } }
+            // A copy just taken over keeps its output (its .aux) when it is
+            // whole (checked there first, `settleTakeOver`): the point of taking it over.
+            if let p = project {
+                let keep = made && p.takenOver
+                Self.walkQueue.async {
+                    if made { p.settleTakeOver() }
+                    p.clear(keepingOutput: keep)
+                }
+            }
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
             toolDiagnostics = []; problemsClearTeX = true; toolNote = nil; toolCycleID = -1
@@ -1598,15 +1625,28 @@ final class EngineV3Session {
         let pdf = j["pdf"]?.string
         if status == "cancelled" {
             finishExport(.failure(.cancelled))
-        } else if let pdf, let data = try? Data(contentsOf: URL(fileURLWithPath: pdf)), !data.isEmpty {
-            finishExport(.success(data))
-        } else {
-            finishExport(.failure(.failed("the engine wrote no PDF (status \(status))\(firstError.map { ": " + $0 } ?? "")")))
+            loadFallbacks(pdf: pdf)
+            sendHeld()
+            return
         }
-        // The export wrote the preview's PDF path (same output directory and
-        // job name): pages drawn from the PDF take theirs from the new file.
-        loadFallbacks(pdf: pdf)
-        sendHeld()
+        // The whole PDF is read off main. Until it is, the stage stays
+        // `.running`: compiles are held, as the next run rewrites this file.
+        let ref = EngineV3WeakRef(self)
+        Self.readQueue.async {
+            let data = pdf.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
+            EngineV3Session.onMain {
+                guard let self = ref.value, case .running(let now) = self.exportStage, now == id else { return }
+                if let data, !data.isEmpty {
+                    self.finishExport(.success(data))
+                } else {
+                    self.finishExport(.failure(.failed("the engine wrote no PDF (status \(status))\(self.firstError.map { ": " + $0 } ?? "")")))
+                }
+                // The export wrote the preview's PDF path (same output directory and
+                // job name): pages drawn from the PDF take theirs from the new file.
+                self.loadFallbacks(pdf: pdf, data: data)
+                self.sendHeld()
+            }
+        }
     }
 
     /// Sends what was held while the export ran (its run is over).
@@ -2444,6 +2484,7 @@ final class EngineV3Session {
     /// indexes, may answer a lookup.
     private func dropPages() {
         pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; fallbackCandidates = []
+        fallbackLoad &+= 1 // a PDF still being read is not this document's
         glyphIndexes.removeAll()
     }
 
@@ -2480,14 +2521,28 @@ final class EngineV3Session {
     }
 
     /// Pages the display list cannot draw exactly render from the compile's PDF.
-    private func loadFallbacks(pdf: String?) {
-        let start = DispatchTime.now().uptimeNanoseconds
-        defer { lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
+    /// The PDF (whole: `DL3PDFBytes`) is read and opened off main, `data`
+    /// when the caller has read it already; its pages are taken on main if
+    /// no later load or page drop came first (`fallbackLoad`).
+    private func loadFallbacks(pdf: String?, data: Data? = nil) {
+        fallbackLoad &+= 1
         let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms) == true }.sorted()
-        guard !need.isEmpty, let pdf, let doc = DL3Renderer.openPDF(URL(fileURLWithPath: pdf)) else { return }
-        pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
-        for i in need { if let p = DL3Renderer.page(of: doc, at: i + 1) { pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
-        view?.fallbacksChanged(need)
+        guard !need.isEmpty, let pdf else { return }
+        let token = fallbackLoad
+        let ref = EngineV3WeakRef(self)
+        Self.readQueue.async {
+            let doc = data.flatMap { DL3Renderer.openPDF(data: $0) } ?? DL3Renderer.openPDF(URL(fileURLWithPath: pdf))
+            EngineV3Session.onMain {
+                guard let self = ref.value, token == self.fallbackLoad, let doc else { return }
+                let start = DispatchTime.now().uptimeNanoseconds
+                defer { self.lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
+                let still = need.filter { self.fallbackCandidates.contains($0) && self.pages[$0]?.needsPDFFallback(forms: self.forms) == true }
+                guard !still.isEmpty else { return }
+                self.pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
+                for i in still { if let p = DL3Renderer.page(of: doc, at: i + 1) { self.pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
+                self.view?.fallbacksChanged(still)
+            }
+        }
     }
 
     nonisolated static func onMain(_ block: @escaping @MainActor () -> Void) {
@@ -2935,6 +2990,8 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     let output: URL
     /// The copy is the project's last one, taken over (`takeOver`).
     let takenOver: Bool
+    /// Taken over with `settleLater`: `settleTakeOver` is still to run.
+    private let unsettled: Bool
 
     /// The copy of `source` owned by THIS app instance, with an `owner` file
     /// ("pid start-sec start-usec"). Another running instance (the same
@@ -2951,11 +3008,19 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// is keyed by: reopening a document compiles once from S₀, not from
     /// the format once per `.aux` pass from nothing (for a book, three
     /// passes that each re-typeset every page).
-    init(source: URL?, session: Int = 0) {
+    ///
+    /// `settleLater`: only the claim happens here (a rename and a few small
+    /// reads: the session makes its copy on the main thread); whether the
+    /// taken copy's output is whole (a walk of its output folder) and its
+    /// emptying when not are left to `settleTakeOver`, which the caller runs
+    /// once, before anything reads the copy (the session: first on the walk
+    /// queue, ahead of the project's walk and so of its first compile).
+    init(source: URL?, session: Int = 0, settleLater: Bool = false) {
         self.source = source
         let key = Self.key(source)
-        let taken = source == nil ? nil : Self.takeOver(key: key, source: source)
+        let taken = source == nil ? nil : Self.takeOver(key: key, source: source, settle: !settleLater)
         takenOver = taken != nil
+        unsettled = settleLater && taken != nil
         base = taken
             ?? EngineV3.cacheDirectory.appendingPathComponent("projects/\(key)-\(getpid())-\(session)", isDirectory: true)
         root = base.appendingPathComponent("src", isDirectory: true)
@@ -3046,12 +3111,14 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// The copies of exited instances, by project key (the newest first):
     /// directories `<key>-...` whose owner file names an instance that has
-    /// exited (not this one).
-    static func exitedCopies() -> [String: [(url: URL, owner: String, modified: Date)]] {
+    /// exited (not this one). `key`: only that project's (the others' owner
+    /// files and stamps are not read).
+    static func exitedCopies(key: String? = nil) -> [String: [(url: URL, owner: String, modified: Date)]] {
         let dir = EngineV3.cacheDirectory.appendingPathComponent("projects", isDirectory: true)
         let fm = FileManager.default
         var r: [String: [(url: URL, owner: String, modified: Date)]] = [:]
         for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            if let key, !name.hasPrefix(key + "-") { continue }
             let base = dir.appendingPathComponent(name)
             guard let owner = try? String(contentsOf: base.appendingPathComponent("owner"), encoding: .utf8),
                   owner != EngineV3.instanceOwner, !EngineV3.ownerAlive(owner) else { continue }
@@ -3071,7 +3138,13 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// renamed away (one rename succeeds, whoever else tries), checked to
     /// still name the exited `owner`, and written anew. `false`: another
     /// instance claimed it first (or something else changed it).
+    ///
+    /// In this process, claims are made one at a time (`claimLock`): the
+    /// cleanup (`removeAbandoned`, off the main thread) and a session taking
+    /// a copy over (on main) never both rename one owner file, so a copy is
+    /// either taken over or removed, and a copy taken over is never removed.
     static func claim(_ base: URL, from owner: String) -> Bool {
+        claimLock.lock(); defer { claimLock.unlock() }
         let fm = FileManager.default
         let file = base.appendingPathComponent("owner")
         let held = base.appendingPathComponent("owner.claim-\(getpid())-\(UUID().uuidString)")
@@ -3088,17 +3161,33 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// The newest copy of the project `key` whose instance has exited,
     /// claimed for this instance (`claim`), if there is one. Its output is
     /// kept only if it is whole for this project folder (`outputIsWhole`).
-    static func takeOver(key: String, source: URL?) -> URL? {
-        for c in exitedCopies()[key] ?? [] where claim(c.url, from: c.owner) {
-            if !outputIsWhole(c.url, source: source) {
-                let fm = FileManager.default
-                let out = c.url.appendingPathComponent("out", isDirectory: true)
-                for name in (try? fm.contentsOfDirectory(atPath: out.path)) ?? [] { try? fm.removeItem(at: out.appendingPathComponent(name)) }
-            }
-            try? FileManager.default.removeItem(at: c.url.appendingPathComponent(stampName))
+    /// `settle` false: that check is left to `settleTakeOver`.
+    static func takeOver(key: String, source: URL?, settle: Bool = true) -> URL? {
+        for c in exitedCopies(key: key)[key] ?? [] where claim(c.url, from: c.owner) {
+            if settle { settleTakenOver(c.url, source: source) }
             return c.url
         }
         return nil
+    }
+
+    static let claimLock = NSLock()
+
+    /// A copy just taken over: its output stays only if it is whole (else
+    /// it is emptied), and its stamp goes (the next compile stamps it).
+    static func settleTakenOver(_ base: URL, source: URL?) {
+        if !outputIsWhole(base, source: source) {
+            let fm = FileManager.default
+            let out = base.appendingPathComponent("out", isDirectory: true)
+            for name in (try? fm.contentsOfDirectory(atPath: out.path)) ?? [] { try? fm.removeItem(at: out.appendingPathComponent(name)) }
+        }
+        try? FileManager.default.removeItem(at: base.appendingPathComponent(stampName))
+    }
+
+    /// What `init(settleLater: true)` left of the take-over; once, before
+    /// anything reads the copy. Nothing for a copy not taken over so.
+    func settleTakeOver() {
+        guard unsettled else { return }
+        Self.settleTakenOver(base, source: source)
     }
 
     /// Whether the copy is still there (something outside may remove it).
@@ -3116,8 +3205,9 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// until it is `keptCopyDays` old. Copies without an owner file (made
     /// by an older build that may still be running) and copies of running
     /// instances are left alone. Each copy is claimed before it is removed
-    /// (`claim`), so a copy another instance takes over at the same moment
-    /// stays.
+    /// (`claim`), so a copy another instance (or a session of this one)
+    /// takes over at the same moment stays. It may remove many files: the
+    /// session runs it on `EngineV3Session.cleanupQueue`, never on main.
     static func removeAbandoned(log: (String) -> Void) {
         let old = Date().addingTimeInterval(-Double(keptCopyDays) * 86_400)
         var kept: [(url: URL, owner: String, modified: Date)] = []
