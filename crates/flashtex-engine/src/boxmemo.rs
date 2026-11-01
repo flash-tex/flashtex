@@ -131,6 +131,10 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // `\beamercolorbox` calls it three times for its defaults and options,
     // which was 46 % of metropolis's Blocks frame (BOX-MEMO.md §15)
     "XKV@setkeys",
+    // beamer's `\usebeamercolor` after its optional argument: eight
+    // `\colorlet`s and a `\color`, whose `\aftergroup\reset@color` and
+    // trailing `\ignorespaces` a recording now takes (§15.2, §15.3)
+    "\\beamer@usebeamercolor",
 ];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
@@ -231,6 +235,8 @@ enum Op {
         p: i32,
         name: Vec<i32>,
     },
+    /// `save_for_after(t)` at the call's own level (`\\aftergroup`, §15.3).
+    AfterGroup(i32),
 }
 
 thread_local! {
@@ -1077,7 +1083,7 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
                 }
                 Op::Sa { kind, .. } if *kind > 1 => return None,
                 Op::Sa { .. } => {}
-                Op::NewCs { .. } | Op::End => return None,
+                Op::NewCs { .. } | Op::End | Op::AfterGroup(_) => return None,
             }
             i += 1;
         }
@@ -1213,6 +1219,7 @@ fn compress_call_level(ops: Vec<Op>) -> Vec<Op> {
             Op::NewCs { p, .. } => {
                 open.remove(p);
             }
+            Op::AfterGroup(_) => {}
         }
         out.push(o);
     }
@@ -1796,6 +1803,82 @@ impl Globals {
             }
         }
         v
+    }
+
+    /// Whether [`bm_push_list`](Self::bm_push_list) of `e` would make
+    /// `want`, compared in place (an offer's KR check makes nothing).
+    fn bm_list_is(&self, e: i32, want: &[i32]) -> bool {
+        if e == 0 {
+            return want == [-1];
+        }
+        let mut p = self.bm_link(e);
+        match want.split_first() {
+            // (more than `bm_tokens` keeps)
+            Some((&-2, [])) => {
+                let mut n = 0usize;
+                while p != 0 {
+                    n += 1;
+                    if n > MAX_LIST + 1 {
+                        return true;
+                    }
+                    p = self.bm_link(p);
+                }
+                false
+            }
+            Some((&n, toks)) if n >= 0 && toks.len() == n as usize => {
+                for &x in toks {
+                    if p == 0 || self.bm_info(p) != x {
+                        return false;
+                    }
+                    p = self.bm_link(p);
+                }
+                p == 0
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `glue` (a specification) is kept as `want`: `[-1, e]` for a
+    /// static one, else its fields (as [`bm_reg_value`](Self::bm_reg_value)).
+    fn bm_glue_is(&self, q: i32, want: &[i32]) -> bool {
+        if q <= LO_MEM_STAT_MAX {
+            want == [-1, q]
+        } else {
+            want == self.bm_glue_fields(q)
+        }
+    }
+
+    /// `bm_reg_value(r) == want`, without making the value.
+    fn bm_reg_is(&self, r: RegId, want: &[i32]) -> bool {
+        match r {
+            RegId::Eqtb(p) => {
+                let w = self.bm_eq(p);
+                if (k::skip_base..k::mu_skip_base + 256).contains(&p) {
+                    self.bm_glue_is(w.hh().rh(), want)
+                } else if (TOKS_BASE..TOKS_BASE + 256).contains(&p) {
+                    self.bm_list_is(w.hh().rh(), want)
+                } else {
+                    want == [w.int()]
+                }
+            }
+            RegId::Sa(t, n) => {
+                let e = self.bm_sa_find(t, n);
+                match t {
+                    INT_VAL | DIMEN_VAL => {
+                        want == [if e == 0 { 0 } else { self.mem[(e + 2) as usize].int() }]
+                    }
+                    GLUE_VAL | MU_VAL => self.bm_glue_is(
+                        if e == 0 {
+                            k::zero_glue
+                        } else {
+                            self.bm_link(e + 1)
+                        },
+                        want,
+                    ),
+                    _ => self.bm_list_is(if e == 0 { 0 } else { self.bm_link(e + 1) }, want),
+                }
+            }
+        }
     }
 
     /// The sparse array element of type `t` and number `n`, or 0, found as
@@ -2525,7 +2608,11 @@ impl Globals {
                     None => true,
                     Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
                 }) && e.voids.iter().all(|&n| self.bm_box_value(n) == 0)
-                    && e.kr.iter().all(|(r, v)| self.bm_reg_value(*r) == *v)
+                    && e.kr.iter().all(|(r, v)| {
+                        let ok = self.bm_reg_is(*r, v);
+                        debug_assert_eq!(ok, self.bm_reg_value(*r) == *v);
+                        ok
+                    })
                     && e.kb
                         .iter()
                         .chain(&e.holes)
@@ -2927,6 +3014,21 @@ impl Globals {
             return self.bm_abort("Group");
         }
         self.bm_with_rec(|r| r.ops.push(Op::End));
+    }
+
+    /// `save_for_after(t)` (`\\aftergroup`), during a recording: a token
+    /// saved at the call's own level outlives the call (it is inserted when
+    /// the caller's group ends: xcolor's `\\set@color` saves
+    /// `\\reset@color`), an effect the replay's `save_for_after` makes
+    /// again, in its place among the save-stack entries (§15.3). One saved
+    /// in a group of the call is inserted at that group's end, inside it.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_after(&mut self, t: i32) {
+        let level = self.bm_with_rec(|r| r.start.cur_level).unwrap_or(0);
+        if self.cur_level == level {
+            self.bm_with_rec(|r| r.ops.push(Op::AfterGroup(t)));
+        }
     }
 
     #[cold]
@@ -3382,6 +3484,30 @@ impl Globals {
         // trailer), and a replay runs it again
         if c == k::ignore_spaces && chr == 0 {
             let base = self.bm_with_rec(|r| r.base).unwrap_or(i32::MAX);
+            // (the body's last tokens may be `\\fi`s, which `\\ignorespaces`
+            // expands before it reads past the body: xcolor's `\\color` ends
+            // in `\\ignorespaces`, and beamer's `\\usebeamercolor` calls it in
+            // a conditional, `\\else\\color{#1}\\fi`. They are expanded here, as
+            // its `get_x_token` would, and then the recording ends: §15.2)
+            if base != i32::MAX && !self.bm_exhausted(base) && self.bm_only_fis_left(base) {
+                let now = (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs);
+                while self.bm_rec_on && !self.bm_exhausted(base) {
+                    self.get_next();
+                    if self.cur_cmd != k::fi_or_else {
+                        // (not reached: `bm_only_fis_left`) the token goes
+                        // back, for `\\ignorespaces` to read
+                        self.back_input();
+                        self.bm_abort("Trailer");
+                        break;
+                    }
+                    self.expand();
+                }
+                // `main_control` goes on with `\\ignorespaces`
+                (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs) = now;
+                if !self.bm_rec_on {
+                    return;
+                }
+            }
             if base != i32::MAX && self.bm_exhausted(base) {
                 let tok = self.cur_tok;
                 return self.bm_finish(Some(tok));
@@ -3448,15 +3574,18 @@ impl Globals {
 
     /// The save-stack entries a call left at its own level: only those of
     /// local assignments (`eq_save`'s `restore_old_value` and
-    /// `restore_zero`, e-TeX's `restore_sa`), not an `\\aftergroup` token
-    /// or a group boundary. Walked down from the top as `unsave` pops them.
+    /// `restore_zero`, e-TeX's `restore_sa`) and `\\aftergroup` tokens
+    /// (`insert_token`, each an `Op::AfterGroup`), not a group boundary. Walked down from the top as `unsave` pops them.
     fn bm_saves_only(&self, lo: i32, hi: i32) -> bool {
         let mut k = hi - 1;
         while k >= lo {
             let w = self.save_stack[k as usize].hh();
             match w.b0() {
                 t if t == k::restore_old_value => k -= 2,
-                t if t == k::restore_zero || t == k::restore_sa => k -= 1,
+                // (and `\\aftergroup` tokens, `Op::AfterGroup`)
+                t if t == k::restore_zero || t == k::restore_sa || t == k::insert_token => {
+                    k -= 1
+                }
                 _ => return false,
             }
         }
@@ -3476,6 +3605,37 @@ impl Globals {
                 self.input_stack[j as usize]
             };
             l.state_field == TOKEN_LIST && l.loc_field == 0 && l.index_field != V_TEMPLATE
+        })
+    }
+
+    /// Whether every token left in the input levels from the body's on is a
+    /// control sequence that means `\\fi` now (a primitive's location, or a
+    /// `\\let` of it), and no level is a file or an alignment template.
+    fn bm_only_fis_left(&self, base: i32) -> bool {
+        (base..=self.input_ptr).all(|j| {
+            let l = if j == self.input_ptr {
+                self.cur_input
+            } else {
+                self.input_stack[j as usize]
+            };
+            if l.state_field != TOKEN_LIST || l.index_field == V_TEMPLATE {
+                return false;
+            }
+            let mut q = l.loc_field;
+            let mut n = 0;
+            while q != 0 {
+                let t = self.bm_info(q);
+                if t < k::cs_token_flag || n > 64 {
+                    return false;
+                }
+                let w = self.bm_eq(t - k::cs_token_flag).hh();
+                if w.b0() != k::fi_or_else || w.rh() != k::fi_code {
+                    return false;
+                }
+                q = self.bm_link(q);
+                n += 1;
+            }
+            true
         })
     }
 
@@ -4108,6 +4268,7 @@ impl Globals {
                     }
                 }
                 Op::NewCs { p, name } => self.bm_make_cs(*p, name),
+                Op::AfterGroup(t) => self.save_for_after(*t),
             }
         }
         if let Some(b) = last_badness {
