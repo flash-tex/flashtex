@@ -13,11 +13,12 @@
 #   pr (pull_request, and push to any branch but main)       for reviewers
 #     build, the crates the branch touches (fmt/clippy/tests), the licence
 #     boundary, the bundled inventory and the generated-table gates; trip,
-#     etrip, pdfTeX's regression tests (Linux); the NEW engine's parity
+#     etrip, pdfTeX's regression tests (Linux); the engine's parity
 #     (GitHub-hosted, sharded) when the branch touches the engine or its
 #     harnesses (`engine` below). Hosted macOS jobs only when the branch
 #     touches apps/ (`apple` below): the Mac app and the iPad companion, and
-#     the OLD engine's parity fixtures when it also touches their paths.
+#     the engine's parity fixtures on macOS (against baseline-fixtures.json)
+#     when it also touches their paths (`parity_fixtures` below).
 #
 #   gate (merge_group; manual with gate_only)       target <= 12 min engine,
 #                                                    <= 5 min otherwise
@@ -32,7 +33,7 @@
 #   post (push to main; manual without gate_only; and nightly.yml)
 #     the Mac app, the iPad companion, the Rust workspace on Linux and macOS,
 #     flashtex-xetex, the macOS legs of trip, etrip and pdfTeX's regression
-#     tests, the parity fixtures on macOS, and the new engine's parity (GitHub-hosted, which also keeps the caches
+#     tests, the parity fixtures on macOS, and the engine's parity (GitHub-hosted, which also keeps the caches
 #     warm for pull requests). Fixed forward: a failure opens or updates the
 #     `main-red` issue, naming the pull requests the push merged
 #     (scripts/ci/main-red.sh). Policy: the PR's owner fixes forward within
