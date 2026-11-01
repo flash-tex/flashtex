@@ -629,6 +629,12 @@ def target_of(d, pre=False):
     return TARGET['preamble' if pre else 'edit']
 
 
+# A keystroke the typist (dl3-keys --interval-ms) sent more than this late after its due time:
+# the client's clock slipped (lane BEAMER, 2026-11-01: on the hosted M1 the typist woke 100 ms and
+# more late and sent keys in bursts, until it left macOS's background band).
+LATE_MS = 5
+
+
 def typing_row(d, name, ph):
     """A continuous-typing phase: each keystroke's time to the watched page from its own compile or a
     later one (what the user sees: dl3-keys --interval-ms), how many were not painted by their own
@@ -641,11 +647,14 @@ def typing_row(d, name, ph):
     n = len(ks) + unpainted - (1 if unpainted and not any(k.get('key') == 0 for k in ph['keys']) else 0)
     lat = [k['edited_page_ms'] for k in ks if k.get('edited_page_ms') is not None]
     own = sum(1 for k in ks if k.get('by') == first + k['key'])
+    # keystrokes the client sent late (dl3-keys' `sent_late_ms`): a burst of keys sent together
+    # supersedes all but its last, whatever the host does
+    late = sum(1 for k in ks if (k.get('sent_late_ms') or 0) > LATE_MS)
     painters = [by_id[k['by']] for k in ks if k.get('by') in by_id]
     queue = [x['stages']['queue'] for x in painters
              if isinstance((x.get('stages') or {}).get('queue'), (int, float))]
     return dict(doc=d['doc'], edit=name, metric='edited page (host share), typing', target=target_of(d),
-                gated=True, n=n, **real_fields(d), missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own,
+                gated=True, n=n, **real_fields(d), missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own, sent_late=late,
                 queue=stats(queue), off_cpu=stats([x for x in map(off_cpu, painters) if x is not None]),
                 cancelled=sum(1 for x in dones if x.get('status') == 'cancelled'),
                 load=ph['load'], pages=d.get('pages'), rss=d.get('rss_peak'))
@@ -753,6 +762,9 @@ def verdict(rows, baseline):
             why.append(f"{name} {val:.1f} ms > {r['target']:.0f} ms")
         if r.get('not_own'):
             why.append(f"{r['not_own']} of {r['n']} keystrokes not painted by their own compile")
+        if r.get('sent_late'):
+            why.append(f"{r['sent_late']} of {r['n']} keystrokes sent over {LATE_MS} ms late by the client "
+                       "(its clock, not the host: a harness fault)")
         if r.get('stale_unmarked'):
             why.append(f"{r['stale_unmarked']} compiles refreshed later pages without marking them stale")
         if r.get('incomplete'):
