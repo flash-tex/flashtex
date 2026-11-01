@@ -145,6 +145,11 @@ jobs:
       # 'true' when the Xcode jobs (Mac app, iPad) run: after the merge, and
       # on a pull request or branch push that touches apps/.
       apple: ${{ steps.p.outputs.apple }}
+      # Of the Xcode jobs, which this run needs: the Mac app (mac_app) and the
+      # iPad companion (ipad); both after the merge, on a pull request only
+      # when their own app's files change (see `mac_app=` in the script).
+      mac_app: ${{ steps.p.outputs.mac_app }}
+      ipad: ${{ steps.p.outputs.ipad }}
       # 'true' when the engine-v3 host tests run (mac-v3-host): after the
       # merge and on manual runs; on a pull request or branch push only when
       # it touches the app's engine-v3 code or tests, the display-list-v3
@@ -332,6 +337,22 @@ jobs:
             all) apple=true ;;
             pr) [ "$run" = "true" ] && touches '^(apps/|tools/parity/app[-_]parity[-_]rows)' && apple=true ;;
           esac
+          # Which of the two Xcode jobs a pull request needs (lane GATES,
+          # 2026-11-01: GitHub's hosted macOS runs five jobs at once for the
+          # whole organisation, and every Mac-app pull request also queued the
+          # iPad companion's 10-15 minutes). The iPad companion (apps/ios, a
+          # project of its own: it builds nothing of apps/mac) only when
+          # apps/ios or this file changes; the Mac app when anything else under
+          # apps/ (or the app-parity rows) does. After the merge, both.
+          mac_app=false; ipad=false
+          case "$tier" in
+            all) mac_app=true; ipad=true ;;
+            pr)
+              if [ "$apple" = "true" ]; then
+                touches '^(apps/ios/|\.github/workflows/ci\.yml$)' && ipad=true
+                touches '^(apps/([^i]|i[^o]|io[^s]|ios[^/])|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)' && mac_app=true
+              fi ;;
+          esac
 
           # The engine-v3 host tests (mac-v3-host): the app's EngineV3* and
           # EngineChoice suites against a real flashtex-host and a TeX, which
@@ -401,6 +422,8 @@ jobs:
             echo "engine_hosted=$engine_hosted"
             echo "parity_fixtures=$parity_fixtures"
             echo "apple=$apple"
+            echo "mac_app=$mac_app"
+            echo "ipad=$ipad"
             echo "v3_app=$v3_app"
             echo "rust_os=$rust_os"
             echo "trip_os=$trip_os"
@@ -1015,7 +1038,7 @@ jobs:
     # manual runs; before it, only on a pull request or branch push that
     # touches apps/ (plan's `apple`). Not in the merge queue: at 19-24 minutes
     # it was the gate's slowest job.
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.apple == 'true'
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.mac_app == 'true'
     # Xcode 26 / Swift 6.x on the macos-26 GitHub image (plan's mac_runner;
     # never self-hosted, so a fork pull request that touches apps/ is safe).
     runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
@@ -1230,8 +1253,9 @@ jobs:
   ipad:
     name: iPad companion (simulator build + tests)
     needs: [plan]
-    # When the Mac app runs (plan's `apple`; see mac-app).
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.apple == 'true'
+    # After the merge; on a pull request only when apps/ios or this file
+    # changes (plan's `ipad`).
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.ipad == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
     timeout-minutes: 60
     steps:
