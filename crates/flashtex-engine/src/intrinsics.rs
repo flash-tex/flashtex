@@ -803,7 +803,8 @@ impl Globals {
         } else {
             self.equiv_of(p)
         };
-        self.intr_data[b + 3] = self.holds_for(slot, p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
+        self.intr_data[b + 3] =
+            self.holds_for(slot, p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
         if self.intr_data[b + 3] == 0 {
             let m = self.sf(slot, F_MISMATCH) + 1;
             self.set_sf(slot, F_MISMATCH, m);
