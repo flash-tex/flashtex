@@ -2,6 +2,7 @@
 name = "flashtex-pdf"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 description = "Original FlashTeX PDF writer: runtime-v1 positioned pages to a hand-written PDF 1.4 document."
 publish = false
 

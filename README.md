@@ -321,8 +321,9 @@ crates/
   flashtex-build/    the `flashtex` command line: build / check / watch
   display-list-v3/   the page protocol the hosts speak (MIT)
   bridge/            iPad capture receipt, conversion, reviewed edits (flashtex-bridge)
-  math-layout/, paragraph-layout/, page-builder/, tex-expansion/, tex-boxes/, …   kept as test oracles
   project-files/, edit-ledger/, project-index/, …
+tests/oracles/       MIT crates kept only as test oracles (math-layout, paragraph-layout,
+                     page-builder, tex-expansion, tex-boxes, …); nothing ships them
 apps/mac/            the SwiftUI/AppKit IDE, bundled fonts and TeX metrics, packaging scripts
 apps/ios/            FlashTeXPad, the iPad capture companion
 protocol/            wire fixtures and protocol proposals
