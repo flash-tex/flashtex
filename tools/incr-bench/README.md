@@ -164,8 +164,10 @@ codes are in `t7.py`'s docstring. Choices that a reader of the table needs:
   p95** (the app's ≤ 4 ms share is the app benchmark's). Viewport set to the edited page,
   keystrokes `--gap-ms` (300) apart after each `DONE`, the host's keep-warm default (decision 10) on.
 - **Typing** (`typing@50ms`, `@60ms`, `@80ms`, `@100ms`, `@150ms`; 50 ms ≈ 240 wpm, the owner's
-  2026-10-06 bar): letter@middle's edit typed on a clock
-  (`dl3-keys --interval-ms`), whatever the host is doing, 40 keystrokes (`--typing-keys`). Most
+  2026-10-06 bar): at letter@middle's place, two letters typed and deleted in turn on a clock
+  (`dl3-keys --interval-ms`: "x", "xy", "y", none, so that no key's text is that of the three before
+  it, as a user's keys rarely are), whatever the host is doing, 40 keystrokes (`--typing-keys`, a
+  multiple of 4). Most
   arrive while the previous compile's background work runs (re-typesetting to convergence, the
   tests, the jump, the next restore prepared), as when a user types. The in-body rows never meet
   that case, since each of their keystrokes waits for `DONE` and 300 ms more. A keystroke's time

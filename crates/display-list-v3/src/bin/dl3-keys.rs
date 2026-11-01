@@ -36,7 +36,9 @@
 //! exits 2 with a message.
 //!
 //! `--interval-ms MS` types on a clock instead (keystroke k sent at k * MS,
-//! whatever the host is doing, as a user types): each keystroke's latency
+//! whatever the host is doing, as a user types; with `--kind letter`, two
+//! letters typed and deleted in turn, `--keys` a multiple of 4, so that no
+//! keystroke's text is that of the three before it): each keystroke's latency
 //! is the time to the watched page's first `PAGE` from its own compile or a
 //! later one (what the app paints), so compiles superseded before their
 //! edited page show as waiting keystrokes; `unpainted` counts those never
@@ -424,7 +426,35 @@ fn main() {
             std::process::exit(2)
         }
     };
+    // `--interval-ms` with `--kind letter`: two letters typed and deleted in
+    // turn ("x", "xy", "y", none; `--keys` a multiple of 4), so that no
+    // keystroke's text is the one of two keystrokes before. With a letter
+    // typed and deleted, every other keystroke's text is the one before
+    // the last; when the host drops the compile in between (its key came
+    // with the next one), the next compile's edited page is the one the
+    // client holds already, and the host sends nothing: the client shows
+    // the right text, but the key reads as not painted by its own compile
+    // (lane TYPING-50MS). A user's keys rarely undo each other so.
+    let cycle4 = kind == "letter" && arg("--interval-ms").is_some();
+    if cycle4 && !keys.is_multiple_of(4) {
+        eprintln!("dl3-keys: --interval-ms with --kind letter types 4 keys a cycle: --keys {keys} is not a multiple of 4");
+        std::process::exit(2)
+    }
     let edit = |k: usize| {
+        if cycle4 {
+            // (x inserted, y after it, x deleted, y deleted)
+            let (off, delete, insert) = match k % 4 {
+                0 => (at_byte, 0, "x"),
+                1 => (at_byte + 1, 0, "y"),
+                _ => (at_byte, 1, ""),
+            };
+            return Edit {
+                path: efile.clone(),
+                offset: off,
+                delete,
+                insert: insert.into(),
+            };
+        }
         let (from, to) = if k.is_multiple_of(2) {
             (&old, &new)
         } else {

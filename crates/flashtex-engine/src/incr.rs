@@ -668,18 +668,23 @@ struct Obs {
     /// (`cold`), so that the next compile restarts from S₀ or later.
     preempt_after_s0: bool,
     /// Newer work does not stop this run before its first changed page has
-    /// shipped (or [`PROTECT_PAGES`] pages have, when no page changed):
-    /// the first pass of an incremental compile whose predecessor newer
-    /// work stopped before it shipped a changed page
-    /// (`Session::starved`). Typing faster than the edited page arrives
-    /// would else preempt every compile before its page, and nothing would
-    /// be painted until the typing stopped; at most every other compile is
-    /// held so, and typing slower than that is preempted at once (lane
-    /// LIVE-30MS). Stopping later than asked changes nothing the engine
-    /// computes.
+    /// shipped (or [`PROTECT_PAGES`] pages have, when no page changed): the
+    /// first pass of every incremental compile (lane TYPING-50MS; a cancel
+    /// still stops it). Each keystroke's compile paints its edited page
+    /// before the next keystroke's compile starts: when that page alone
+    /// takes less than the time between keys, every key is painted by its
+    /// own compile, and when it takes longer, a key waits at most for the
+    /// page in progress and the keys that came meanwhile go into one
+    /// compile. LIVE-30MS protected a compile only after one that newer
+    /// work had stopped before its page, so that at most every other
+    /// compile was held: a compile that was not protected and reached its
+    /// page after the next key came painted nothing, and with the previous
+    /// compile's background work in the way (a convergence test or jump to
+    /// stop) every other key was then lost even when its page took less
+    /// than the interval. Stopping later than asked changes nothing the
+    /// engine computes.
     protect_edit: bool,
-    /// The first pass of an incremental compile: its end says whether the
-    /// next one is protected (`Session::starved`).
+    /// The first pass of an incremental compile.
     first_incremental: bool,
     /// The hold before the edited page is over (`on_checkpoint`): from
     /// here on held segment checkpoints are taken near the cursor only
@@ -3679,9 +3684,6 @@ pub struct Session {
     /// `\begin{document}`'s end, as beamer's `pdftitle` does, fails them
     /// all; every [`PRE_PATCH_RETRY`]th keystroke tries again).
     pre_patch_miss: Option<(i32, u32)>,
-    /// The last compile's first pass was stopped by newer work before it
-    /// shipped a changed page: the next one is protected (`Obs::protect_edit`).
-    starved: bool,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
     /// The last lookup of the journal whose answer changed, as `changes`
@@ -3820,7 +3822,6 @@ impl Session {
             stale_midline: vec![],
             pre_bad: None,
             pre_patch_miss: None,
-            starved: false,
             lookup_dirs: vec![],
             changed_lookup_last: None,
             line_shifts: vec![],
@@ -4981,7 +4982,8 @@ impl Session {
         // counts none: that one is the edit's, which moves the retention
         // cursor, holds segment checkpoints, opens BOX-MEMO's recording
         // window until a changed page -- none, here: all 880 pages of
-        // *Infinite Descent ×2*'s fill -- and decides `starved`)
+        // *Infinite Descent ×2*'s fill -- and is protected from newer work
+        // until one ships: `Obs::protect_edit`)
         self.pass = rep.passes.max(1) + 1;
         let p = self.compile_pass(Instant::now(), None);
         self.s1_filling = false;
@@ -7066,7 +7068,7 @@ impl Session {
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
         obs.first_incremental = self.pass == 1;
-        obs.protect_edit = self.pass == 1 && self.starved;
+        obs.protect_edit = self.pass == 1;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
@@ -7545,15 +7547,6 @@ impl Session {
         let obs: Box<Obs> = obs
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
             .ok_or("the run lost its observer")?;
-        if obs.first_incremental && obs.edited.is_none() {
-            // (decided once, at its first stop: a protected run ships its
-            // changed page before newer work stops it)
-            // A protected run is never followed by another: at most every
-            // other compile is held (`Obs::protect_edit`).
-            self.starved = status == STOPPED && obs.preempted && !obs.protect_edit;
-        } else if obs.first_incremental {
-            self.starved = false;
-        }
         rep.tests += obs.tests;
         rep.test_s += obs.test_s;
         rep.page_times.extend(obs.page_times.iter().copied());
