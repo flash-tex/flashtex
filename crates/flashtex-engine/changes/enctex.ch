@@ -26,7 +26,11 @@
 % Without `-enc' the \mubyte tables are empty (|mubyte_write| is all
 % zero), |mubyte_log| is 0 and nothing sets |special_printing|, so the
 % branches that use them never run; they are kept as enctex1.ch has them.
-% #2039: the string-pool difference these made (32 strings) is in its notes.
+% TeX Live's string pool also holds the 18 strings of encTeX's and ML\TeX's
+% own code (\mubyte, \noconvert, \xordcode & co., \charsubdef and its
+% substitution messages), which only `-enc' and `-mltex' reach; this
+% engine's pool does not (#2039), so its \tracingstats capacities are 18
+% strings and 410 characters above pdfTeX's.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 

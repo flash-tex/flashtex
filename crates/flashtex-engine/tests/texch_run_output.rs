@@ -177,11 +177,7 @@ fn xprn_decides_when_a_character_is_printed() {
          \\message{{[^^A][^^e9][^^0b][^^7f]}}\\errmessage{{x^^Ay}}\n\
          \\immediate\\write16{{[^^A][^^e9]}}\\showthe\\catcode`^^A \\end\n"
     );
-    for args in [
-        vec![],
-        vec!["-8bit"],
-        vec!["-translate-file=cp227.tcx"],
-    ] {
+    for args in [vec![], vec!["-8bit"], vec!["-translate-file=cp227.tcx"]] {
         let Some((x, y, base)) = both("xprn", tex.as_bytes(), &args, "t") else {
             return;
         };
@@ -207,7 +203,8 @@ fn a_format_s_strings_do_not_decide_what_8bit_prints() {
         return;
     };
     let base = common::fresh_dir("flashtex-texch-run-xprn-fmt");
-    let fmt = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\catcode`\\^^A=12 \\catcode`\\^^e9=12 \
+    let fmt =
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\catcode`\\^^A=12 \\catcode`\\^^e9=12 \
                \\catcode`\\^^7f=12 \\dump\n";
     let doc = "\\scrollmode\\message{[^^A][^^e9][^^7f]}\\errmessage{x^^Ay}\
                \\immediate\\write16{[^^A]}\\end\n";
@@ -252,7 +249,11 @@ fn a_format_s_strings_do_not_decide_what_8bit_prints() {
         ));
     }
     let (x, y) = (&out[0], &out[1]);
-    assert!(y.2.contains("[\u{1}]"), "pdftex printed no byte 1:\n{}", y.2);
+    assert!(
+        y.2.contains("[\u{1}]"),
+        "pdftex printed no byte 1:\n{}",
+        y.2
+    );
     assert_eq!(x.2, y.2, "the log differs from pdftex's");
     assert_eq!(x.1, y.1, "the terminal output differs from pdftex's");
     assert_eq!(x.0, y.0, "the exit status differs from pdftex's");
