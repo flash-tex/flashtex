@@ -4174,6 +4174,78 @@ fn compile_or_error(c: &mut Client, r: &CompileRequest) -> Result<Json, Json> {
     }
 }
 
+/// Lane TEST-GAPS: `host::server::Job::parse`'s refusals: a root that is
+/// not an absolute directory, a main file outside it or missing, a format
+/// given as a path. Each is an ERROR naming it, the connection goes on,
+/// and a valid compile after them runs.
+#[test]
+fn a_compile_of_a_bad_root_main_or_format_is_refused() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-job");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    std::fs::write(base.join("outside.tex"), article(1)).unwrap();
+    let host = start_host("job");
+    let mut c = Client::connect(&host.1).unwrap();
+    let rel = |id: i64, root: &str, main: &str| {
+        let mut r = CompileRequest::new(id, root, main);
+        r.output_dir = Some(out.to_str().unwrap().into());
+        r
+    };
+    let proj_s = proj.to_str().unwrap();
+    let mut fmt = rel(5, proj_s, "main.tex");
+    fmt.format = "../pdflatex".into();
+    let cases = [
+        (
+            "a relative root",
+            rel(1, "proj", "main.tex"),
+            "root proj is not an absolute directory".to_string(),
+        ),
+        (
+            "a root that is a file",
+            rel(2, proj.join("main.tex").to_str().unwrap(), "main.tex"),
+            format!(
+                "root {} is not an absolute directory",
+                proj.join("main.tex").display()
+            ),
+        ),
+        (
+            "a main file outside the root",
+            rel(3, proj_s, "../outside.tex"),
+            "main must be a path inside root".to_string(),
+        ),
+        (
+            "a missing main file",
+            rel(4, proj_s, "missing.tex"),
+            "missing.tex does not exist in root".to_string(),
+        ),
+        (
+            "a format path",
+            fmt,
+            "format is a name, not a path".to_string(),
+        ),
+    ];
+    for (what, r, why) in cases {
+        let e = compile_or_error(&mut c, &r)
+            .map(|d| d.to_string())
+            .expect_err(what)
+            .to_string();
+        assert!(e.contains(&why), "{what}: {e}");
+    }
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(6, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Lane TEST-GAPS: `host::resident::apply_changes`'s refusals. A buffer
 /// whose path leaves the project (`..`, absolute) and an edit past the
 /// file's end are refused with an ERROR that names them, and nothing is
