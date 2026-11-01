@@ -329,7 +329,7 @@ final class EngineV3Session {
     /// This session's number in the process (its project copy's name).
     @ObservationIgnored let serial: Int = EngineV3Session.takeSerial()
     nonisolated(unsafe) private static var nextSerial = 0
-    private static let serialLock = NSLock()
+    nonisolated private static let serialLock = NSLock()
     nonisolated static func takeSerial() -> Int { serialLock.lock(); defer { serialLock.unlock() }; nextSerial += 1; return nextSerial }
     /// The project copy the host compiles (tests).
     var projectCopy: URL? { project?.root }
