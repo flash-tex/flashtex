@@ -875,7 +875,7 @@ origin/main at f53095ff2 (BOX-MEMO on in both):
 - arXiv 2501.07239v1 (40 pictures, in figures far from the edit; at 205f8b049): 52–57 ms either way.
 - arXiv 2501.07413v3 (65 pictures in tabulars; at 205f8b049): no span kept (the box-dimension refusal of §15.6),
   86–108 ms off, 99–115 ms on: the recording attempts cost about 10 %, within this machine's noise.
-- The command line, verification mode, 2501.08950v2: 5 535 calls verified on the whole state, 0
+- The command line, verification mode, 2501.08950v2: 5 535 calls verified on the whole state (the registered macros: no picture repeats in one run), 0
   differences; the INITEX tests and four test documents (pictures inline, in display math, `center`,
   `minipage`, `figure`, tikz-cd): 0 full differences, PDFs identical to the base engine's.
 
