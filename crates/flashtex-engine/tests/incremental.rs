@@ -244,6 +244,20 @@ fn check_against_env(
     what: &str,
     env: &[(&str, &str)],
 ) {
+    check_against_mode(e, dir, reference, report, what, env, true)
+}
+
+/// `check_against_env`, the scratch runs in preview mode or not (a host
+/// started with `--no-preview`).
+fn check_against_mode(
+    e: &Env,
+    dir: &Path,
+    reference: &Path,
+    report: &str,
+    what: &str,
+    env: &[(&str, &str)],
+    preview: bool,
+) {
     let mut seen = vec![];
     for _ in 0..5 {
         seen.push(dir_state(reference));
@@ -251,7 +265,9 @@ fn check_against_env(
         c.args(ARGS).current_dir(reference);
         engine_env(&mut c, e);
         c.envs(env.iter().copied());
-        c.env("FLASHTEX_PREVIEW", "1");
+        if preview {
+            c.env("FLASHTEX_PREVIEW", "1");
+        }
         c.stdin(Stdio::null()).stdout(Stdio::null());
         c.status().unwrap();
         if seen.contains(&dir_state(reference)) {
@@ -6482,5 +6498,231 @@ fn a_link_broken_across_lines_does_not_stop_convergence() {
             .all(|r| field(r, "converged_at") == "null"),
         "{:#?}",
         runs[1]
+    );
+}
+
+/// CRC-32 (PNG's chunk check), bit by bit.
+fn crc32(data: &[u8]) -> u32 {
+    let mut c = 0xFFFF_FFFFu32;
+    for &b in data {
+        c ^= b as u32;
+        for _ in 0..8 {
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
+        }
+    }
+    !c
+}
+
+/// An 8-bit RGBA PNG, `w` by `h`, its pixels from `seed`, its IDAT stored
+/// (deflate without compression): images of one size are files of one
+/// length. With alpha, `write_png` decodes it (it never copies it), so its
+/// streams are compressed ahead (`writepng::ahead`).
+fn rgba_png(w: u32, h: u32, seed: u8) -> Vec<u8> {
+    fn chunk(out: &mut Vec<u8>, t: &[u8; 4], d: &[u8]) {
+        out.extend((d.len() as u32).to_be_bytes());
+        let mut td = t.to_vec();
+        td.extend_from_slice(d);
+        out.extend_from_slice(&td);
+        out.extend(crc32(&td).to_be_bytes());
+    }
+    let mut raw = vec![];
+    for y in 0..h {
+        raw.push(0); // filter: none
+        for x in 0..w {
+            let v = (x * 7 + y * 13) as u8 ^ seed;
+            raw.extend([v, v.wrapping_mul(3), seed, (x * 255 / w) as u8]);
+        }
+    }
+    let mut z = vec![0x78, 0x01];
+    let parts: Vec<&[u8]> = raw.chunks(65535).collect();
+    for (i, p) in parts.iter().enumerate() {
+        z.push((i + 1 == parts.len()) as u8);
+        let n = p.len() as u16;
+        z.extend(n.to_le_bytes());
+        z.extend((!n).to_le_bytes());
+        z.extend_from_slice(p);
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for &x in &raw {
+        a = (a + x as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+    z.extend(((b << 16) | a).to_be_bytes());
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = w.to_be_bytes().to_vec();
+    ihdr.extend(h.to_be_bytes());
+    ihdr.extend([8, 6, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &z);
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+/// A host that compresses (`--no-preview`), with `writepng::ahead`'s
+/// report of each image stream on its stderr, in `err`.
+fn compressing_host(e: &Env, dir: &Path, err: &Path) -> Host {
+    let f = std::fs::File::create(err).unwrap();
+    Host::start_full(
+        e,
+        dir,
+        &["--no-preview"],
+        &[("FLASHTEX_PNG_AHEAD_DEBUG", "1")],
+        Stdio::from(f),
+    )
+}
+
+/// `compile_and_check` for a compressing host: the scratch runs compress
+/// too, without streams compressed ahead.
+fn compile_and_check_compressed(
+    e: &Env,
+    h: &mut Host,
+    dir: &Path,
+    files: &[(&str, &str)],
+    what: &str,
+) -> String {
+    for (name, text) in files {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let reference = dir.with_extension("ref");
+    copy_dir(dir, &reference);
+    let report = h.cmd("compile");
+    let env = [("FLASHTEX_PNG_AHEAD", "0")];
+    check_against_mode(e, dir, &reference, &report, what, &env, false);
+    report
+}
+
+/// Review of #2040 (Commander): a PNG's streams compressed ahead must never
+/// reach a run whose file differs from the one they were made from. The
+/// image is overwritten between two keystrokes with other pixels at the
+/// same length, its modification time put back: drawn at once on the first
+/// page, and from a box set at the start but drawn only on the last page
+/// (a restore between `\pdfximage` and the writing). Every compile equals
+/// scratch runs.
+#[test]
+fn an_image_overwritten_between_two_keystrokes_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("png-overwritten");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = dir.join("img.png");
+    std::fs::write(&img, rgba_png(160, 120, 1)).unwrap();
+    let body: String = (0..30).map(|i| para(i, "kappa")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\newsavebox\\late\n\
+         \\begin{{document}}\n\\sbox\\late{{\\includegraphics[width=2cm]{{img}}}}\n\
+         \\includegraphics[width=3cm]{{img}}\n\n{body}\\usebox\\late\n\\end{{document}}\n"
+    );
+    let err = dir.with_extension("err");
+    let mut h = compressing_host(&e, &dir, &err);
+    for k in 0..4 {
+        let r = compile_and_check_compressed(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // a keystroke in the middle: a restore after the box was set
+    let k1 = doc.replacen(
+        "Paragraph 15 with the word kappa",
+        "Paragraph 15 with the word kappb",
+        1,
+    );
+    assert_ne!(k1, doc);
+    let r = compile_and_check_compressed(&e, &mut h, &dir, &[("doc.tex", &k1)], "keystroke 1");
+    assert!(!r.contains("\"mode\":\"cold\""), "{r}");
+    // the image overwritten in place, the same length, its time put back
+    let mtime = std::fs::metadata(&img).unwrap().modified().unwrap();
+    let other = rgba_png(160, 120, 77);
+    assert_eq!(other.len() as u64, std::fs::metadata(&img).unwrap().len());
+    {
+        use std::io::{Seek, Write};
+        let mut f = std::fs::File::options().write(true).open(&img).unwrap();
+        f.seek(std::io::SeekFrom::Start(0)).unwrap();
+        f.write_all(&other).unwrap();
+        f.set_modified(mtime).unwrap();
+    }
+    let k2 = k1.replacen(
+        "Paragraph 16 with the word kappa",
+        "Paragraph 16 with the word kappc",
+        1,
+    );
+    assert_ne!(k2, k1);
+    compile_and_check_compressed(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &k2)],
+        "overwritten, keystroke 2",
+    );
+    // and a keystroke after that, the image unchanged since
+    let k3 = k2.replacen(
+        "Paragraph 17 with the word kappa",
+        "Paragraph 17 with the word kappd",
+        1,
+    );
+    compile_and_check_compressed(&e, &mut h, &dir, &[("doc.tex", &k3)], "keystroke 3");
+    drop(h);
+    let log = std::fs::read_to_string(&err).unwrap();
+    assert!(
+        log.contains("img.png ahead"),
+        "no stream was compressed ahead: the test no longer tests it\n{log}"
+    );
+}
+
+/// Review of #2040 (Commander): the settings are part of a result's key.
+/// One file, `\pdfximage`d at three levels (one changed again before its
+/// page is shipped, so it is written at another level than it was read
+/// at); then an edit before the first `\pdfximage` changes the level it
+/// is read and written at, and is reverted. Every compile equals scratch
+/// runs.
+#[test]
+fn an_edit_before_pdfximage_that_changes_the_compress_level_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("png-level");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("img.png"), rgba_png(160, 120, 5)).unwrap();
+    let before: String = (0..8).map(|i| para(i, "sigma")).collect();
+    let after: String = (8..16).map(|i| para(i, "sigma")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\begin{{document}}\n\
+         {before}\\pdfcompresslevel=9\n\n\\includegraphics[width=3cm]{{img}}\n\\newpage\n\
+         \\pdfcompresslevel=2\n\\includegraphics[width=3cm]{{img}}\n\\newpage\n\
+         \\includegraphics[width=2cm]{{img}}\\pdfcompresslevel=6\n\\newpage\n\
+         {after}\\end{{document}}\n"
+    );
+    let err = dir.with_extension("err");
+    let mut h = compressing_host(&e, &dir, &err);
+    for k in 0..4 {
+        let r = compile_and_check_compressed(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let edited = doc.replacen("\\pdfcompresslevel=9", "\\pdfcompresslevel=1", 1);
+    assert_ne!(edited, doc);
+    let r = compile_and_check_compressed(&e, &mut h, &dir, &[("doc.tex", &edited)], "level 9 to 1");
+    assert!(!r.contains("\"mode\":\"cold\""), "{r}");
+    compile_and_check_compressed(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    let late = doc.replacen(
+        "Paragraph 12 with the word sigma",
+        "Paragraph 12 with the word sigmb",
+        1,
+    );
+    compile_and_check_compressed(&e, &mut h, &dir, &[("doc.tex", &late)], "a keystroke after");
+    drop(h);
+    let log = std::fs::read_to_string(&err).unwrap();
+    assert!(
+        log.contains("img.png ahead"),
+        "no stream was compressed ahead: the test no longer tests it\n{log}"
     );
 }

@@ -29,6 +29,8 @@ struct PngColor {
 
 super::xpdf::linked_or_unlinked! {
     fn ftpng_open(name: *const c_char, err: *mut c_int) -> *mut FtPng;
+    fn ftpng_open_mem(data: *const u8, len: usize, err: *mut c_int) -> *mut FtPng;
+    fn ftpng_fd(p: *mut FtPng) -> c_int;
     fn ftpng_close(p: *mut FtPng);
     fn ftpng_get(p: *mut FtPng, what: c_int) -> c_ulong;
     fn ftpng_valid(p: *mut FtPng, flag: c_ulong) -> c_ulong;
@@ -391,11 +393,11 @@ impl Globals {
             3 => self.pdftex_fail("libpng: png_create_info_struct() failed"),
             _ => self.png_internal_error(),
         }
-        let ahead_key = ahead::key(self, &cname);
         let png = PngImage {
             raw: std::cell::Cell::new(raw),
             name: cname,
         };
+        let ahead_key = ahead::key(self, &png);
         // resolution support
         e.width = png.width() as i32;
         e.height = png.height() as i32;
@@ -893,7 +895,7 @@ impl Globals {
             let alpha_ok = self.fixed_pdf_minor_version >= 4 || self.fixed_pdf_major_version > 1;
             let t0 = std::time::Instant::now();
             let pre = if ahead::buffer_ok(self) {
-                ahead::key(self, &png.name).and_then(|k| ahead::take(&k))
+                ahead::key(self, png).and_then(|k| ahead::take(&k))
             } else {
                 None
             };
@@ -906,7 +908,7 @@ impl Globals {
                     t0.elapsed().as_secs_f64() * 1e3
                 );
             }
-            let pre = pre.as_deref();
+            let pre = pre.as_deref().map(|d| &d.streams);
             match ct {
                 PNG_COLOR_TYPE_PALETTE => self.write_png_palette(png, cs_ref, pre),
                 PNG_COLOR_TYPE_GRAY => self.write_png_plain(png, cs_ref, b"/DeviceGray\n", pre),
@@ -952,24 +954,67 @@ impl Globals {
 /// bytes depend only on its bytes and the level, not on how they reach
 /// zlib (`write_zip` gives them a PDF buffer at a time), so they are the
 /// bytes `write_zip` would write. When `write_png` reaches the stream, it
-/// takes the result if everything the worker assumed still holds -- the file
-/// (its length and modification time), the parameters, the level, no
-/// preview or draft mode, a PDF buffer whose size keeps a pixel's bytes in
-/// one chunk -- and `write_zip` writes those bytes where it would have
-/// compressed (`super::output`). Anything else, or a worker that failed,
-/// and the stream is made as before. The dictionaries are written as before
-/// in every case.
+/// takes the result if everything the worker assumed still holds -- the
+/// file, the parameters, the level, no preview or draft mode, a PDF buffer
+/// whose size keeps a pixel's bytes in one chunk -- and `write_zip` writes
+/// those bytes where it would have compressed (`super::output`). Anything
+/// else, or a worker that failed, and the stream is made as before. The
+/// dictionaries are written as before in every case.
+///
+/// **The file.** A resident host restores checkpoints, so a result may be
+/// taken by a later run than the one that started it, before or after the
+/// file changed. A result is keyed by the file's identity (`os::file_stat`:
+/// size, modification and status-change times, inode, device) as the
+/// handle the engine reads it through gives it, and by every setting the
+/// streams depend on (`PngParams`, the level); `write_png` takes the key
+/// afresh from its own handle and the run's settings when it writes, so a
+/// `\pdfximage` of the file with other settings, or a file rewritten, is
+/// another key. The worker reads the file's bytes once, with the same
+/// identity before and after, decodes those bytes (`ftpng_open_mem`) and
+/// keeps their hash; `take` gives a result only while the file's name
+/// still has that identity and its bytes that hash (`hashcache`: hashed
+/// again while the identity is within the racy window of now, when a
+/// same-length rewrite within one tick would keep it). Results for a file
+/// whose identity has moved on are dropped when it is opened again. Unix
+/// only: elsewhere a file has no inode and no status-change time to tell
+/// a handle's file from its name's.
 mod ahead {
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
-    /// What a result was computed from.
+    /// A file as `os::file_stat` gives it.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    struct Ident {
+        size: u64,
+        mtime_ns: i128,
+        ctime_ns: i128,
+        ino: u64,
+        dev: u64,
+    }
+
+    impl Ident {
+        fn of(m: &std::fs::Metadata) -> Ident {
+            let s = crate::os::file_stat(m);
+            Ident {
+                size: s.size,
+                mtime_ns: s.mtime_ns,
+                ctime_ns: s.ctime_ns,
+                ino: s.ino,
+                dev: s.dev,
+            }
+        }
+
+        fn of_path(name: &CString) -> Option<Ident> {
+            Some(Ident::of(&std::fs::metadata(name.to_str().ok()?).ok()?))
+        }
+    }
+
+    /// What a result was computed from: the file and every setting.
     #[derive(Clone, PartialEq, Eq, Hash, Debug)]
     pub(super) struct Key {
         name: CString,
-        len: u64,
-        mtime: Option<std::time::SystemTime>,
+        file: Ident,
         params: PngParams,
         level: i32,
     }
@@ -980,9 +1025,25 @@ mod ahead {
         Alpha(Vec<u8>, Vec<u8>),
     }
 
+    impl Streams {
+        fn len(&self) -> usize {
+            match self {
+                Streams::Plain(a) => a.len(),
+                Streams::Alpha(a, b) => a.len() + b.len(),
+            }
+        }
+    }
+
+    /// A result: the streams, and the hash of the file's bytes they were
+    /// made from.
+    pub(super) struct Done {
+        pub(super) streams: Streams,
+        hash: [u64; 2],
+    }
+
     #[derive(Default)]
     struct Job {
-        done: Mutex<Option<Option<Arc<Streams>>>>,
+        done: Mutex<Option<Option<Arc<Done>>>>,
         cv: Condvar,
     }
 
@@ -1002,6 +1063,17 @@ mod ahead {
         T.get_or_init(Default::default)
     }
 
+    /// The bytes a finished job holds.
+    fn held(j: &Job) -> usize {
+        match j.done.lock() {
+            Ok(d) => d
+                .as_ref()
+                .and_then(|d| d.as_ref())
+                .map_or(0, |d| d.streams.len()),
+            Err(_) => 0,
+        }
+    }
+
     /// Workers running at once: the other cores.
     fn permits() -> &'static (Mutex<usize>, Condvar) {
         static P: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
@@ -1016,10 +1088,32 @@ mod ahead {
         *ON.get_or_init(|| std::env::var("FLASHTEX_PNG_AHEAD").as_deref() != Ok("0"))
     }
 
-    /// The key of image `name` as the run stands now, if a result could be
-    /// used for it.
-    pub(super) fn key(g: &mut Globals, name: &CString) -> Option<Key> {
-        if !enabled()
+    /// The identity of the file `png`'s handle reads (opened again by name
+    /// after a restore, as the engine's own reads would open it).
+    #[cfg(unix)]
+    fn handle_ident(png: &PngImage) -> Option<Ident> {
+        use std::os::unix::io::FromRawFd;
+        // SAFETY: a live handle.
+        let fd = unsafe { ftpng_fd(png.h()) };
+        if fd < 0 {
+            return None;
+        }
+        // SAFETY: the handle's open descriptor, borrowed: never closed here.
+        let f = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+        f.metadata().ok().map(|m| Ident::of(&m))
+    }
+
+    #[cfg(not(unix))]
+    fn handle_ident(_png: &PngImage) -> Option<Ident> {
+        None
+    }
+
+    /// The key of image `png` as the run and its file stand now, if a
+    /// result could be used for it: the file its handle reads, which its
+    /// name still names.
+    pub(super) fn key(g: &mut Globals, png: &PngImage) -> Option<Key> {
+        if !cfg!(unix)
+            || !enabled()
             || !super::super::xpdf::LINKED
             || super::super::preview()
             || g.fixed_pdf_draftmode != 0
@@ -1030,11 +1124,13 @@ mod ahead {
         if level <= 0 {
             return None;
         }
-        let m = std::fs::metadata(name.to_str().ok()?).ok()?;
+        let file = handle_ident(png)?;
+        if Ident::of_path(&png.name)? != file {
+            return None;
+        }
         Some(Key {
-            name: name.clone(),
-            len: m.len(),
-            mtime: m.modified().ok(),
+            name: png.name.clone(),
+            file,
             params: PngParams::of(g),
             level,
         })
@@ -1048,13 +1144,23 @@ mod ahead {
         !g.pdf_os_mode && g.pdf_buf_size > 0 && g.pdf_buf_size % 8 == 0
     }
 
-    /// Start the work for `key` unless it is done or under way.
+    /// Start the work for `key` unless it is done or under way. Results for
+    /// the file under an identity it no longer has go.
     pub(super) fn start(key: Key) {
         let job = {
             let mut t = table().lock().unwrap_or_else(|e| e.into_inner());
             if t.jobs.contains_key(&key) {
                 return;
             }
+            let mut freed = 0;
+            t.jobs.retain(|k, j| {
+                let stale = k.name == key.name && k.file != key.file;
+                if stale {
+                    freed += held(j);
+                }
+                !stale
+            });
+            t.bytes = t.bytes.saturating_sub(freed);
             if t.bytes > KEEP {
                 // the finished ones go; one under way is still waited for
                 t.jobs.retain(|_, j| match j.done.lock() {
@@ -1087,14 +1193,16 @@ mod ahead {
                     *m.lock().unwrap_or_else(|e| e.into_inner()) += 1;
                     cv.notify_one();
                 }
-                if let Some(s) = &r {
-                    let n = match &**s {
-                        Streams::Plain(a) => a.len(),
-                        Streams::Alpha(a, b) => a.len() + b.len(),
-                    };
-                    table().lock().unwrap_or_else(|e| e.into_inner()).bytes += n;
+                {
+                    // counted while the table holds the job
+                    let mut t = table().lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(d) = &r {
+                        if t.jobs.get(&k).is_some_and(|j| Arc::ptr_eq(j, &job)) {
+                            t.bytes += d.streams.len();
+                        }
+                    }
+                    *job.done.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
                 }
-                *job.done.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
                 job.cv.notify_all();
             });
         if spawned.is_err() {
@@ -1106,19 +1214,29 @@ mod ahead {
         }
     }
 
-    /// The result for `key`, waiting for its worker; `None` if there is none.
-    pub(super) fn take(key: &Key) -> Option<Arc<Streams>> {
+    /// The result for `key`, waiting for its worker, while the file's name
+    /// still has the identity and the bytes it was made from; `None` if
+    /// there is none.
+    pub(super) fn take(key: &Key) -> Option<Arc<Done>> {
         let job = table()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .jobs
             .get(key)?
             .clone();
-        let mut d = job.done.lock().unwrap_or_else(|e| e.into_inner());
-        while d.is_none() {
-            d = job.cv.wait(d).unwrap_or_else(|e| e.into_inner());
+        let d = {
+            let mut d = job.done.lock().unwrap_or_else(|e| e.into_inner());
+            while d.is_none() {
+                d = job.cv.wait(d).unwrap_or_else(|e| e.into_inner());
+            }
+            d.clone().flatten()?
+        };
+        let path = key.name.to_str().ok()?;
+        let m = std::fs::metadata(path).ok()?;
+        if Ident::of(&m) != key.file {
+            return None;
         }
-        d.clone().flatten()
+        (crate::hashcache::hash_file_from(path, &m).ok()? == d.hash).then_some(d)
     }
 
     /// The image stream, of a result for a plain or palette image.
@@ -1166,12 +1284,29 @@ mod ahead {
         ok.then_some(out)
     }
 
-    /// The streams `write_png` would compress for the image of `key`, or
-    /// `None` when it copies the file's data instead (or libpng fails).
-    fn compute(key: &Key) -> Option<Streams> {
+    /// The streams `write_png` would compress for the image of `key`, with
+    /// the hash of the bytes they were made from, or `None` when it copies
+    /// the file's data instead, the file changed while it was read, or
+    /// libpng fails.
+    fn compute(key: &Key) -> Option<Done> {
+        // the file's bytes, read while it has the key's identity
+        if Ident::of_path(&key.name)? != key.file {
+            return None;
+        }
+        let bytes = std::fs::read(key.name.to_str().ok()?).ok()?;
+        if bytes.len() as u64 != key.file.size || Ident::of_path(&key.name)? != key.file {
+            return None;
+        }
+        let hash = crate::persist::hash128(&bytes);
+        let streams = compute_from(key, &bytes)?;
+        Some(Done { streams, hash })
+    }
+
+    /// `compute`'s streams, decoded from the file's `bytes`.
+    fn compute_from(key: &Key, bytes: &[u8]) -> Option<Streams> {
         let mut err: c_int = 0;
-        // SAFETY: a NUL-terminated name.
-        let raw = unsafe { ftpng_open(key.name.as_ptr(), &mut err) };
+        // SAFETY: `bytes` outlives the handle (`png`, dropped at the end).
+        let raw = unsafe { ftpng_open_mem(bytes.as_ptr(), bytes.len(), &mut err) };
         if raw.is_null() || err != 0 {
             return None;
         }
