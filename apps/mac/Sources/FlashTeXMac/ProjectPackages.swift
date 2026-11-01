@@ -166,6 +166,9 @@ final class ProjectPackagesState {
         for d in diagnostics {
             let texts = [d.message] + (d.notes ?? [])
             for text in texts {
+                // (one scan for the three phrases below; each row's notes hold TeX's box display)
+                guard text.hasPrefix("packages ") || EditorDiagnostics.bytesContain(text, "File `")
+                        || EditorDiagnostics.bytesContain(text, "no project file found") else { continue }
                 if let file = texMissingFile(in: text) {
                     // TeX's wording under the new engine: LaTeX Error: File `x.sty' not found.
                     for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count)), ext) }

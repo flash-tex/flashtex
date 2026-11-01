@@ -1879,6 +1879,41 @@ fn a_cold_run_stops_no_earlier_than_s0() {
     check_against(&e, &dir, &reference, &r2, "stopped at S₀");
 }
 
+/// COLD-OPEN (#1891): segment checkpoints far from the cursor are held, and
+/// newer work that arrives in the middle of such a page still stops the run
+/// at the next segment point, not at the page's end. The preemption is
+/// one-shot (asked once, as the host's news is consumed): taken by the held
+/// segment's own question, it must stop the run there. Then the compile
+/// goes on to a from-scratch run's output.
+#[test]
+fn newer_work_far_from_the_cursor_stops_at_a_held_segment() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let mut doc = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for i in 0..700 {
+        doc.push_str(&para(i, "delta"));
+    }
+    doc.push_str("\\end{document}\n");
+    let dir = e.dir.join("held-far-stop");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), &doc).unwrap();
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    // (a segment point at every `build_page` that read a line)
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_SEGMENT_S", "0.000001")]);
+    // page 25 is far from the cursor (0) of a run from scratch; the first
+    // question there is page 25's own checkpoint, the second a held segment
+    // point of page 26
+    let r = h.cmd("compile-interrupt 1 25 2");
+    assert!(r.contains("\"preempted\":true"), "not stopped: {r}");
+    assert_eq!(field(&r, "pages"), "25", "stopped at a later page: {r}");
+    let r2 = h.cmd("compile");
+    check_against(&e, &dir, &reference, &r2, "after a stop at a held segment");
+}
+
 /// `k` in lower-case roman numerals (control sequence names of letters).
 fn roman(mut k: usize) -> String {
     let mut s = String::new();
@@ -3404,6 +3439,98 @@ fn a_file_written_and_read_back_converges_after_a_stopped_run() {
             first.contains("\"paused\":true"),
             "{what}: not stopped: {first}"
         );
+    }
+}
+
+/// *Infinite Descent* ×2's hints (`hints_doc`, the book twice): the first
+/// copy writes `\jobname.hnt` through its body, closes it and reads it at
+/// its end; the second copy writes to the closed stream (the log) and reads
+/// the same file again at its end. `hint` is in the hint written at
+/// paragraph 40 (the first copy), `word` in paragraph 75 (the second).
+fn hints_x2_doc(hint: &str, word: &str) -> String {
+    let mut s = String::from(
+        "\\documentclass{article}\n\\newwrite\\hnt\n\
+         \\AtBeginDocument{\\immediate\\openout\\hnt=\\jobname.hnt}\n\\begin{document}\n",
+    );
+    let read = "\\immediate\\closeout\\hnt\n\\clearpage\\input{\\jobname.hnt}\n\\clearpage\n\n";
+    for i in 0..150 {
+        if i == 60 || i == 140 {
+            s.push_str(read);
+        }
+        s.push_str(&para(i, if i == 75 { word } else { "lorem" }));
+        if i % 20 == 0 {
+            let h = if i == 40 { hint } else { "lorem" };
+            s.push_str(&format!("\\immediate\\write\\hnt{{Hint {i}: {h}.}}\n"));
+        }
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// BARRIER-DENSITY: the old run's later read of a file both runs wrote and
+/// closed, open in neither at the convergence point, was a barrier (test
+/// (b'): "a file the runs write"), though the file held the same bytes in
+/// both: on *Infinite Descent* ×2 every keystroke in the second copy kept
+/// the old run's pages only up to the second copy's read of the hints, and
+/// re-typeset the ~48 pages from there. Now the read is compared by the
+/// hash of what the old run found there (`FileRead::seen`) with the file
+/// now: (i) an edit in the second copy converges and keeps the old run's
+/// pages to the end. (ii) An edit of a hint the first copy writes changes
+/// the file: the run converges after the first copy's read and keeps the
+/// old run's pages only up to the second copy's, which it typesets again.
+/// Every compile equals scratch runs.
+#[test]
+fn a_file_read_again_after_its_close_converges() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("hints-x2");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = hints_x2_doc("lorem", "lorem");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (i) the same letters: the fonts' used characters stay the same
+    for (word, what) in [
+        ("lorme", "(i) an edit in the second copy"),
+        ("lorem", "(i) its revert"),
+    ] {
+        let doc = hints_x2_doc("lorem", word);
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        let rerun: usize = field(&r, "rerun_pages").parse().unwrap();
+        assert!(
+            conv + 2 < pages && field(&r, "rerun_from") == "null" && rerun * 4 < pages,
+            "{what}: re-typeset from the read of the unchanged hints again: {r}"
+        );
+    }
+    // (ii) the hints change: what the second copy reads differs
+    for (hint, what) in [
+        ("lorme", "(ii) an edit of a hint"),
+        ("lorem", "(ii) its revert"),
+    ] {
+        let doc = hints_x2_doc(hint, "lorem");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], what);
+        // (it converges after the first copy's read, which it typeset
+        // again, and before the second's)
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        let kept: usize = field(&r, "rerun_from").parse().unwrap_or_else(|_| {
+            panic!("{what}: kept the old run's read of the changed hints: {r}")
+        });
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        assert!(conv < kept && kept < pages, "{what}: {r}");
     }
 }
 
@@ -6029,4 +6156,96 @@ fn a_dormant_line_is_kept_until_it_is_read() {
             assert!(r.contains("\"mode\":\"incremental\""), "piece: {r}");
         }
     }
+}
+
+/// INFDESC-883: pdfTeX leaks memory, and the convergence test must not
+/// fail on it. A link broken across lines leaves about 64 words of `mem`
+/// allocated that nothing points at again (pdflatex's `\tracingstats=2`:
+/// the words in use after each page grow by that much per such link). An
+/// edit makes the restarted run allocate at other addresses than the old
+/// run, so a later page's leak lands in another cell than the old run's
+/// there; before the dead-cell rule (`crate::iso::garbage`) every test
+/// after the next such link failed ("mem[...] differs outside what the
+/// walk compared") and the compile typeset the document to its end (on
+/// *Infinite Descent* ×2, 254 pages: the owner's 32-second keystroke).
+/// Both ways are checked against scratch runs; with the rule the edit
+/// converges a few pages after the edited one.
+#[test]
+fn a_link_broken_across_lines_does_not_stop_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let para = |i: usize, word: &str| {
+        format!(
+            "Paragraph {i} says {word} and links to \\href{{https://example.com/{i}}}{{a \
+             link whose text is long enough to break across two lines of this \
+             paragraph, as a cross-reference in a book often does}} before going \
+             on with a few more words of ordinary text.\n\n"
+        )
+    };
+    let doc = |word: &str| {
+        let body: String = (0..200)
+            .map(|i| para(i, if i == 3 { word } else { "nothing" }))
+            .collect();
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{{hyperref}}\n\
+             \\begin{{document}}\n{body}\\end{{document}}\n"
+        )
+    };
+    let mut runs = vec![];
+    for (name, env) in [
+        ("leak-rule", vec![]),
+        ("leak-norule", vec![("FLASHTEX_NO_DEAD_CELLS", "1")]),
+    ] {
+        let dir = e.dir.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start_env(&e, &dir, &env);
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        let mut reports = vec![];
+        for (k, word) in ["alphb", "alphc", "alpha"].into_iter().enumerate() {
+            let what = format!("{name} edit {k}");
+            reports.push(compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &doc(word))],
+                &what,
+            ));
+        }
+        runs.push(reports);
+    }
+    let pages: usize = field(&runs[0][0], "pages").parse().unwrap();
+    assert!(pages >= 12, "the document is {pages} pages");
+    for r in &runs[0] {
+        let rerun: usize = field(r, "rerun_pages").parse().unwrap();
+        assert!(
+            field(r, "converged_at") != "null",
+            "the edit did not converge: {r}"
+        );
+        assert!(
+            rerun * 2 < pages,
+            "the edit re-typeset {rerun} of {pages} pages: {r}"
+        );
+    }
+    assert!(
+        runs[0].iter().any(|r| field(r, "dead_cells") != "0"),
+        "no convergence needed the dead-cell rule: the document no longer tests it"
+    );
+    // without the rule the edits typeset to the end (the test's premise:
+    // the leak is what stopped them; the revert may converge, its run
+    // allocating as the settled one did)
+    assert!(
+        runs[1][..2]
+            .iter()
+            .all(|r| field(r, "converged_at") == "null"),
+        "{:#?}",
+        runs[1]
+    );
 }

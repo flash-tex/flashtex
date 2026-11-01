@@ -169,7 +169,33 @@ enum EditorDiagnostics {
     /// a gap and the other issue-#76 codes are not; unknown codes and a missing
     /// `code` fall back to the message phrases (the compiler's own wording).
     static func isGap(_ message: String) -> Bool {
-        gapPhrases.contains { message.contains($0) }
+        // A byte search (the phrases are ASCII): Foundation's `contains` here
+        // was most of counting a long book's thousands of rows, which the
+        // panel, the status bar and VoiceOver each do at every reply.
+        var m = message
+        return m.withUTF8 { b in gapPhraseBytes.contains { Self.contains(b, $0) } }
+    }
+    private static let gapPhraseBytes: [[UInt8]] = gapPhrases.map { Array($0.utf8) }
+    /// Whether `s` holds the bytes of `needle` (a byte search; for ASCII phrases).
+    static func bytesContain(_ s: String, _ needle: String) -> Bool {
+        var m = s
+        let n = Array(needle.utf8)
+        return m.withUTF8 { contains($0, n) }
+    }
+    private static func contains(_ b: UnsafeBufferPointer<UInt8>, _ needle: [UInt8]) -> Bool {
+        let n = needle.count
+        guard n > 0, b.count >= n else { return n == 0 }
+        let first = needle[0]
+        var i = 0
+        while i <= b.count - n {
+            if b[i] == first {
+                var j = 1
+                while j < n, b[i + j] == needle[j] { j += 1 }
+                if j == n { return true }
+            }
+            i += 1
+        }
+        return false
     }
     static func isGap(_ diagnostic: RuntimeV1.Diagnostic) -> Bool {
         isGap(code: diagnostic.code, message: diagnostic.message)
@@ -420,13 +446,18 @@ extension EditorDiagnostics {
         let recovery: String?
         let occurrences: [Int]
 
+        /// Made once: the panel's List asks for every row's id at each update.
+        let id: String
+
+        init(severity: RuntimeV1.Severity, message: String, code: String?, recovery: String?, occurrences: [Int]) {
+            self.severity = severity; self.message = message; self.code = code
+            self.recovery = recovery; self.occurrences = occurrences
+            if let code, !code.isEmpty { id = "\(severity.rawValue):\(code):\(message)" } else { id = "\(severity.rawValue):\(message)" }
+        }
+
         var count: Int { occurrences.count }
         /// Index of the first occurrence (document order); the row's explanation and quick fix use it.
         var first: Int { occurrences[0] }
-        var id: String {
-            if let code, !code.isEmpty { return "\(severity.rawValue):\(code):\(message)" }
-            return "\(severity.rawValue):\(message)"
-        }
         /// "12× \in is not supported in math mode", or just the message for one.
         var title: String { count > 1 ? "\(count)× " + message : message }
     }
@@ -441,7 +472,11 @@ extension EditorDiagnostics {
     /// `groups(of:)` over any diagnostics list (the panel shows the result's
     /// diagnostics followed by the shell's own layout diagnostics).
     static func groups(of diagnostics: [RuntimeV1.Diagnostic], documentOrder: [String] = []) -> [Group] {
-        func rank(_ path: String) -> Int { documentOrder.firstIndex(of: path) ?? documentOrder.count }
+        // A path's place in the listing, looked up (the sort asks for it
+        // n log n times; a scan of a big project's listing each time was most
+        // of a 1,152-page book's Problems update, EDITOR-FREEZE).
+        let ranks = Dictionary(documentOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        func rank(_ path: String) -> Int { ranks[path] ?? documentOrder.count }
         var order: [String] = []
         var members: [String: [Int]] = [:]
         for (i, d) in diagnostics.enumerated() {
@@ -467,11 +502,13 @@ extension EditorDiagnostics {
                          code: (codes.count == 1 && !codes.contains("")) ? diagnostics[sorted[0]].code : nil,
                          recovery: recoveries.count == 1 ? diagnostics[sorted[0]].recovery : nil, occurrences: sorted)
         }
-        groups.sort {
-            let ba = listBucket(diagnostics[$0.first]), bb = listBucket(diagnostics[$1.first])
-            if ba != bb { return ba < bb }
-            return before($0.first, $1.first)
+        // Each group's bucket once, not at every comparison (it reads the message).
+        let buckets = groups.map { listBucket(diagnostics[$0.first]) }
+        let sorted = groups.indices.sorted { a, b in
+            if buckets[a] != buckets[b] { return buckets[a] < buckets[b] }
+            return before(groups[a].first, groups[b].first)
         }
+        groups = sorted.map { groups[$0] }
         return groups
     }
 

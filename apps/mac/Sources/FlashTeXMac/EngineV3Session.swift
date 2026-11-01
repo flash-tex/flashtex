@@ -285,6 +285,11 @@ final class EngineV3Session {
     @ObservationIgnored private var project: EngineV3Mirror?
     /// The page the view shows (sent as `viewport`).
     @ObservationIgnored var visiblePage = 0
+    /// A reopen's stored page to scroll to (`EngineV3Snapshot.visiblePage`),
+    /// until the view has laid out with a width and scrolled there
+    /// (`EngineV3PagesView.relayout`). Until then the compile sends it as
+    /// its `viewport`.
+    @ObservationIgnored var restoreScrollPage: Int?
     @ObservationIgnored let latency = EngineV3Latency()
     /// What the reader thread may rasterise immediately (pages on screen, at which scale).
     @ObservationIgnored let rasterPlan = EngineV3RasterPlan()
@@ -1223,10 +1228,12 @@ final class EngineV3Session {
         // first page it costs the edited page ~6 ms (plain-10: host first
         // page p50 14.5 -> 20.3 ms, measured) and gains nothing: send it only
         // when the view is further down. FLASHTEX_V3_VIEWPORT=1/0 forces it (A/B).
+        // (a reopen's stored page while the view has not scrolled there yet)
+        let viewed = restoreScrollPage ?? visiblePage
         switch ProcessInfo.processInfo.environment["FLASHTEX_V3_VIEWPORT"] {
-        case "1": req.viewport = visiblePage
+        case "1": req.viewport = viewed
         case "0": break
-        default: if visiblePage > 0 { req.viewport = visiblePage }
+        default: if viewed > 0 { req.viewport = viewed }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
         // Live Share: a session copy, or any project while a session runs,
@@ -1671,6 +1678,7 @@ final class EngineV3Session {
 
     /// TeX's rows of the last compile, then the tools' (Problems panel).
     private func publishProblems(model: ShellModel) {
+        problemsOwed = false
         let rows = texProblems + Self.problems(toolDiagnostics, model: model, projectRoot: project?.root)
         if model.engineV3Diagnostics != rows { model.engineV3Diagnostics = rows }
     }
@@ -1696,7 +1704,7 @@ final class EngineV3Session {
             case "ok", "warnings": toolNote = nil
             default: toolNote = "\(name)\(file): \(status)\(j["message"]?.string.map { " (" + $0 + ")" } ?? "")"
             }
-            if let model { publishProblems(model: model) }
+            problemsOwed = true // published once per drain (`flushEvents`)
         case "skip":
             toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
             if EngineV3Biber.isConsentRequest(j["reason"]?.string ?? ""), let p = EngineV3Biber.currentPin(), !EngineV3Biber.consented(p) {
@@ -1707,7 +1715,7 @@ final class EngineV3Session {
             lastSettledID = max(lastSettledID, id)
             if toolNote?.hasPrefix("Running ") == true { toolNote = nil }
             if j["limit"]?.bool == true { toolNote = "Bibliography and index: stopped after \(j["rounds"]?.int ?? 5) rounds." }
-            if let model { publishProblems(model: model) }
+            problemsOwed = true // published once per drain (`flushEvents`)
             maybeSendExport()
         default: break
         }
@@ -1728,8 +1736,14 @@ final class EngineV3Session {
     /// page that arrived in it (a page past the laid-out ones used to lay out
     /// all of them: O(pages²) over a cold compile).
     func flushEvents() {
+        // The tools' rows changed in this drain: the Problems list (thousands
+        // of rows in a long book) follows once, not once per TOOL frame.
+        if problemsOwed, let model { publishProblems(model: model) }
         view?.flushLayout()
     }
+
+    /// A tool's rows changed since the Problems list was last published.
+    @ObservationIgnored private var problemsOwed = false
 
     /// Hands host events to the main thread as the reader thread does (tests:
     /// `EditorInstantTests` feeds a synthetic compile through it).
@@ -1979,7 +1993,22 @@ final class EngineV3Session {
         guard pages.isEmpty, let key, let root = model.project.projectRoot,
               let found = EngineV3Snapshot.loadDocuments(projectKey: key, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
         showStored(found)
+        restoreCaret(found.0, model: model)
         validateStored(found, root: root)
+    }
+
+    /// Puts the editor's caret back where the snapshot's session left it:
+    /// its documents hash as they did, so the offset is still the same
+    /// place (no line table is built). Not when the document is not open
+    /// or cannot be switched to.
+    func restoreCaret(_ s: EngineV3Snapshot, model: ShellModel) {
+        guard let path = s.caretPath, let at = s.caretUTF16,
+              let doc = model.documents.first(where: { $0.path == path }), at <= doc.text.utf16.count else { return }
+        if path != model.activePath, case .refused = model.project.switchDocument(to: path) { return }
+        let ns = NSRange(location: at, length: 0)
+        model.selection = .init(path: path, nsRange: ns, token: (model.selection?.token ?? 0) + 1)
+        model.caretUTF16 = at
+        model.caretLengthUTF16 = 0
     }
 
     /// Checks a shown snapshot's other input files on the snapshot queue;
@@ -2011,6 +2040,9 @@ final class EngineV3Session {
         snapshot = found
         log("snapshot: \(found.0.pages.count) pages from \(found.1.lastPathComponent) (view \(view != nil)) at +\(Double(MonotonicClock.nowNs() &- (openStartNs ?? 0)) / 1e6) ms")
         pageCount = found.0.pages.count
+        // where the user was: scrolled to at the first layout with a width,
+        // and the open's compile typesets it first (`viewport`)
+        if let v = found.0.visiblePage, v > 0, v < pageCount { restoreScrollPage = v }
         markStale([])
         layoutRevision &+= 1
         view?.relayout()
@@ -2046,6 +2078,9 @@ final class EngineV3Session {
         let formsCopy = forms, main = mainFile
         let ppp = view?.currentPixelsPerPoint ?? 2
         let dark = model.darkPreview
+        // (a reopen uses it only when the documents hash as `docs` does, and
+        // only within the text: `restoreCaret`)
+        let caret = (path: model.activePath, utf16: model.caretUTF16)
         let item = DispatchWorkItem {
             let docs = EngineV3Snapshot.hashes(texts)
             // An input changed since the sync (outside the app): the pages
@@ -2054,7 +2089,8 @@ final class EngineV3Session {
             let others = EngineV3Snapshot.others(synced, documents: docs.keys)
             guard let now = EngineV3Snapshot.inputs(root: root), EngineV3Snapshot.others(now, documents: docs.keys) == others else { return }
             EngineV3Snapshot.save(projectKey: key, main: main, documents: docs, inputs: others, sizes: sizes, pages: chosen,
-                                  forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark)
+                                  forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark,
+                                  visiblePage: visible, caret: caret)
         }
         snapshotSave = item
         Self.snapshotQueue.asyncAfter(deadline: .now() + 1.5, execute: item)
@@ -2152,13 +2188,32 @@ final class EngineV3Session {
         // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
-        func rel(_ file: String) -> String { Self.relativeToCopy(file, roots: roots) }
+        // Each file once (a `realpath` per row and trace frame was a fifth of a long book's DONE).
+        var relative: [String: String] = [:]
+        func rel(_ file: String) -> String {
+            if let r = relative[file] { return r }
+            let r = Self.relativeToCopy(file, roots: roots)
+            relative[file] = r
+            return r
+        }
         // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
         let folds = EngineV3DiagPresent.folds(diags, kept: kept)
         let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))
         let projectTexts: [String: String] = texts ?? Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
         func text(_ file: String) -> String? { texts?[file] ?? model.documents.first(where: { $0.path == file })?.text }
         var lines = EngineV3LineIndexes()
+        // Made once for all the rows (EDITOR-FREEZE: a long book's thousands
+        // of rows each searched every text at each DONE, seconds on main): a
+        // macro's project definition, by name and place, and the labels by key.
+        var definitions: [String: (site: EngineV3DiagPresent.Site, body: Range<Int>?)?] = [:]
+        func definition(_ name: String, near: (path: String, line: Int)?) -> (site: EngineV3DiagPresent.Site, body: Range<Int>?)? {
+            let key = near.map { "\(name)\u{0}\($0.path)\u{0}\($0.line)" } ?? name
+            if let hit = definitions[key] { return hit }
+            let found = EngineV3DiagPresent.definition(of: name, in: projectTexts, near: near)
+            definitions[key] = .some(found)
+            return found
+        }
+        var labelSites: [String: [EngineV3DiagPresent.Site]]?
         return diags.enumerated().compactMap { i, d in
             guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
             guard folds[i] == nil else { return nil }
@@ -2199,8 +2254,7 @@ final class EngineV3Session {
                 // The definition in the project's text: where the engine says it was made (#1593),
                 // else (the engine names no site) the project's one definition of it.
                 let near = f.def.flatMap { l in l.file.map { (path: rel($0), line: l.line ?? Int.max) } }
-                let found = near.flatMap { EngineV3DiagPresent.definition(of: name, in: projectTexts, near: $0) }
-                    ?? (def == nil ? EngineV3DiagPresent.definition(of: name, in: projectTexts) : nil)
+                let found = near.flatMap { definition(name, near: $0) } ?? (def == nil ? definition(name, near: nil) : nil)
                 if let found {
                     def = found.site.label
                     labels.append(.init(source: found.site.source, text: "\(name) is defined at \(found.site.label)", primary: false))
@@ -2227,9 +2281,12 @@ final class EngineV3Session {
             if stopped.contains(i), let stop = EngineV3Explain.explanation(code: "tex/emergency-stop", message: "") {
                 row.notes = (row.notes ?? []) + [stop]
             }
-            let named = EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) })
+            // (read only for TeX's undefined control sequence: `packageHint` and `fix` below)
+            let named = d.code == EngineV3Fixes.undefinedCode ? EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }) : nil
             // A plain-language explanation and, where mechanical, a fix (EngineV3Explain.swift).
-            var explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts, undefinedName: named)
+            if d.code == "latex/multiply-defined-label", labelSites == nil, let texts { labelSites = EngineV3DiagPresent.labelSites(in: texts) }
+            var explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts, undefinedName: named,
+                                                  labelSites: labelSites)
             if let defFix, explained.help?.replacement == nil {
                 if let tex = explained.help?.message, !tex.isEmpty { explained.notes = (explained.notes ?? []) + [tex] }
                 explained.help = defFix

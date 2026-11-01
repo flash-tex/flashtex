@@ -1305,11 +1305,18 @@ pub fn biber_messages(log: &str) -> Vec<Message> {
 
 /// makeindex's `.ilg`: `## Warning (input = F, line = N; ...):` and `!!
 /// Input index error (file = F, line = N):`, each followed by `   -- message`.
+///
+/// Both are warnings. An input index error (scanid.c's `IDX_ERROR`) rejects
+/// one entry and makeindex goes on: it writes the `.ind` and exits 0, which
+/// latexmk takes as a success. TeX Live's makeindex says the same of the
+/// `.idx` pdflatex writes (Infinite Descent's `latex.idx`: `\index` keys
+/// holding a second `!` or `@`, 12 of 222 entries rejected by both). What
+/// says makeindex failed is its exit status (`status: error`).
 pub fn makeindex_messages(log: &str) -> Vec<Message> {
     let mut v = vec![];
     let lines: Vec<&str> = log.lines().collect();
     for (i, l) in lines.iter().enumerate() {
-        let error = if l.starts_with("## Warning") {
+        let rejected = if l.starts_with("## Warning") {
             false
         } else if l.starts_with("!! ") {
             true
@@ -1324,12 +1331,15 @@ pub fn makeindex_messages(log: &str) -> Vec<Message> {
         };
         let file = field("input = ").or_else(|| field("file = "));
         let line = field("line = ").and_then(|n| n.parse().ok());
-        let message = lines
+        let mut message = lines
             .get(i + 1)
             .map(|n| n.trim().trim_start_matches("-- ").to_string())
             .unwrap_or_else(|| l.to_string());
+        if rejected {
+            message.push_str(" (entry left out of the index)");
+        }
         v.push(Message {
-            error,
+            error: false,
             message,
             file,
             line,
@@ -1410,7 +1420,12 @@ Scanning input file main.idx...\n\
    -- Unmatched range closing operator ).\n";
         let m = makeindex_messages(ilg);
         assert_eq!(m.len(), 2);
-        assert!(m[0].error);
+        // a rejected entry: makeindex goes on and exits 0, a warning
+        assert!(!m[0].error && !m[1].error, "{m:?}");
+        assert!(
+            m[0].message.ends_with("(entry left out of the index)"),
+            "{m:?}"
+        );
         assert_eq!(m[0].line, Some(3));
         assert_eq!(m[0].file.as_deref(), Some("main.idx"));
         assert!(m[1].message.starts_with("Unmatched"));
