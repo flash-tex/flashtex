@@ -1355,8 +1355,10 @@ jobs:
     # 2026-11-01: 100+ cancelled runs stayed queued; only force-cancel
     # cleared them). A cancelled run reports nothing: the newer run, or the
     # merge queue's next group, carries the check. A run whose jobs failed or
-    # timed out is not cancelled, so this still runs and fails there.
-    if: ${{ !cancelled() }}
+    # timed out is not cancelled, so this still runs and fails there. In the
+    # merge queue (and on main) it stays always(): GitHub counts a skipped
+    # required check as passed, so a cancelled gate run must report failure.
+    if: ${{ always() && (github.event_name == 'merge_group' || github.ref == 'refs/heads/main' || !cancelled()) }}
     needs:
       - plan
       - build
