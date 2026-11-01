@@ -3572,7 +3572,13 @@ fn s1_compile_until_unchanged(
 /// viewport, compiles until nothing changes, and is left idle until both
 /// are written.
 fn s1_store(proj: &Path, out: &Path, cache: &Path, name: &str) {
-    let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    s1_store_env(proj, out, cache, name, &[]);
+}
+
+/// [`s1_store`] with more of the host's environment.
+fn s1_store_env(proj: &Path, out: &Path, cache: &Path, name: &str, env: &[(&str, &str)]) {
+    let mut cache_env = vec![("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    cache_env.extend_from_slice(env);
     let host = start_host_env(name, &cache_env);
     let mut c = Client::connect(&host.1).unwrap();
     let mut view = View::default();
@@ -3844,6 +3850,90 @@ fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
         let _ = std::fs::remove_dir_all(&p2);
         let _ = std::fs::remove_dir_all(&o2);
     }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Lane COLD-OPEN: BOX-MEMO records only in an edit's window, in a session
+/// reopened from S₁ too. Its open from S₀ left the window unset, which
+/// records every registered call, and its fill ran as an edit's first pass,
+/// whose window stays open until a changed page (none, in a fill). The
+/// replays of those recordings made the fill's state another than S₁'s
+/// writer's (cells allocated where it had them free), so on *Infinite
+/// Descent ×2* the fill of an S₁ stored by a cold session never converged
+/// and ran to the end, and its recording made it half as slow again. With a
+/// registered macro called before S₁ and after it, the reopen records
+/// nothing, its fill converges, and the pages, the PDF and the log equal a
+/// scratch compile's.
+#[test]
+fn a_reopen_from_s1_records_no_calls_and_its_fill_converges() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1m");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    let main = main
+        .replacen(
+            "\\begin{document}\n",
+            "\\def\\mk#1{\\expandafter\\gdef\\csname mk@#1\\endcsname{#1!}}\n\
+             \\begin{document}\n\\mk{alpha}\n",
+            1,
+        )
+        .replacen("The end.\n", "\\mk{omega}The end.\n", 1);
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    let memo = [("FLASHTEX_BOXMEMO", "on"), ("FLASHTEX_BOXMEMO_NAMES", "mk")];
+    s1_store_env(&proj, &out, &cache, "s1ma", &memo);
+    let mut env = vec![("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    env.extend_from_slice(&memo);
+    let host = start_host_env("s1mb", &env);
+    let scratch = start_host("s1ms");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let o = s1_compile_until_unchanged(&mut c, &mut view, &proj, &out, &mut id);
+    assert!(
+        o.done.int_field("s1_pages").is_some(),
+        "S1 not used: {}",
+        o.done
+    );
+    assert!(
+        o.done.int_field("s1_fill_converged").is_some(),
+        "the fill did not converge: {}",
+        o.done
+    );
+    // (offers, hits, recordings committed, control sequences entered)
+    let recorded = o
+        .done
+        .get("stages")
+        .and_then(|s| s.get("boxmemo"))
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.get(2).and_then(|n| n.as_i64()));
+    assert_eq!(recorded, Some(0), "the reopen recorded calls: {}", o.done);
+    let (p2, o2) = snapshot(&base, &proj, &out, "m1");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "the reopen",
+    );
+    let (pdf, log) = (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    );
+    let _ = c.bye();
+    drop(host);
+    let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+    assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
+    assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
 }
 

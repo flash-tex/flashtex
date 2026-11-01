@@ -3619,6 +3619,15 @@ impl Session {
             key.check_arm()
         })?;
         self.clock = clock;
+        // BOX-MEMO records only in an edit's window, as after a run from the
+        // format (`cold`): left unset, this thread's first run recorded every
+        // registered call (the window's "anywhere", the command line's), and
+        // on *Infinite Descent ×2* an open from S₁ recorded 65,000 calls.
+        // A run's replays depend on what was recorded before them, so S₁'s
+        // fill, replaying those, did not reach the state S₁'s writer had
+        // (unreached cells allocated where it had them free: "mem[553]
+        // differs outside what the walk compared") and ran to the end.
+        crate::boxmemo::record_window(false);
         self.s1_open = None;
         self.s1_fill_due = false;
         self.s1_info = None;
@@ -4614,7 +4623,12 @@ impl Session {
         self.s1_fill_due = false;
         self.reemit_from = Some(s0);
         self.s1_filling = true;
-        self.pass = rep.passes + 1;
+        // (never a compile's first pass, even after an open whose report
+        // counts none: that one is the edit's, which moves the retention
+        // cursor, holds segment checkpoints, opens BOX-MEMO's recording
+        // window until a changed page -- none, here: all 880 pages of
+        // *Infinite Descent ×2*'s fill -- and decides `starved`)
+        self.pass = rep.passes.max(1) + 1;
         let p = self.compile_pass(Instant::now(), None);
         self.s1_filling = false;
         let p = p?;
