@@ -3740,6 +3740,10 @@ enum S1Change {
     PdfShort,
     /// S₁ saved by another engine build (its key's build).
     Build,
+    /// The stored S₁ file cut short, or its magic changed (lane TEST-GAPS:
+    /// `host::s1::File::read`'s refusals).
+    S1Short,
+    S1Magic,
 }
 
 /// Lane COLD-OPEN: a reopen from a persisted S₁ (`host::s1`). A host with
@@ -3777,7 +3781,7 @@ fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
     let scratch = start_host("s1s");
     let early = main.find("Start}\n\n").unwrap() + "Start}\n\n".len();
     let late = main.find("\\section{Last}").unwrap();
-    let cases: [(S1Change, bool, Option<&str>); 9] = [
+    let cases: [(S1Change, bool, Option<&str>); 11] = [
         (S1Change::Nothing, true, None),
         (S1Change::MainLate, true, None),
         (S1Change::Side, false, Some("side.tex changed")),
@@ -3795,6 +3799,8 @@ fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
             Some("is not the one S1 was taken with"),
         ),
         (S1Change::Build, false, Some("another engine build")),
+        (S1Change::S1Short, false, Some("S1 file truncated")),
+        (S1Change::S1Magic, false, Some("not an S1 file")),
     ];
     for (k, (change, from_s1, why)) in cases.into_iter().enumerate() {
         let what = format!("{change:?}");
@@ -3859,6 +3865,19 @@ fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
                 let mut d = std::fs::read(&s1_file).unwrap();
                 let at = 8 + 8 + b"flashtex S1 v1".len() + 16;
                 d[at] ^= 1;
+                std::fs::write(&s1_file, d).unwrap();
+            }
+            S1Change::S1Short => {
+                // (the header whole, the chunks after it not)
+                let d = std::fs::read(&s1_file).unwrap();
+                let hlen = u64::from_le_bytes(d[..8].try_into().unwrap()) as usize;
+                std::fs::write(&s1_file, &d[..8 + hlen]).unwrap();
+            }
+            S1Change::S1Magic => {
+                // (a letter of the magic, after the header length and the
+                // magic's own length)
+                let mut d = std::fs::read(&s1_file).unwrap();
+                d[8 + 8] ^= 0x20;
                 std::fs::write(&s1_file, d).unwrap();
             }
         }
@@ -4488,5 +4507,423 @@ fn an_edited_form_drawn_on_every_page_equals_a_scratch_compile() {
     let _ = c.bye();
     let _ = c2.bye();
     drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A `COMPILE` the host may refuse: the ERROR it sent, or the DONE of the
+/// compile it ran (its pages not kept).
+fn compile_or_error(c: &mut Client, r: &CompileRequest) -> Result<Json, Json> {
+    c.compile(r).unwrap();
+    loop {
+        match c
+            .next_event()
+            .unwrap()
+            .expect("the host closed the connection")
+        {
+            Event::Error(e) => return Err(e),
+            Event::Done(d) => return Ok(d),
+            _ => {}
+        }
+    }
+}
+
+/// Lane TEST-GAPS: a preamble edit after a reopen from S₁ (`incr::
+/// Session::compile_pass`): S₀'s key fails, and with no checkpoint before
+/// S₀ and no history before S₁ the compile runs from the format (`mode`
+/// cold, `cold_reason` naming the file). Its pages, the PDF and the log
+/// equal a scratch compile's.
+#[test]
+fn a_preamble_edit_after_a_reopen_from_s1_runs_cold() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1p");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    s1_store(&proj, &out, &cache, "s1pa");
+    let env = [
+        ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ("FLASHTEX_S1_FILL", "off"),
+    ];
+    let host = start_host_env("s1pb", &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut r = req(1, &proj, &out, "main.tex");
+    r.viewport = Some(S1_VIEW);
+    let o = compile(&mut c, &mut view, &r);
+    assert!(
+        o.done.int_field("s1_pages").is_some(),
+        "S1 not used: {}",
+        o.done
+    );
+    let at = main.find("\\begin{document}").unwrap();
+    let mut r = req(2, &proj, &out, "main.tex");
+    r.viewport = Some(S1_VIEW);
+    r.edits = vec![Edit {
+        path: "main.tex".into(),
+        offset: at as u64,
+        delete: 0,
+        insert: "\\newcommand\\gapsx{x}\n".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("mode"), Some("cold"), "{}", o.done);
+    let why = o.done.str_field("cold_reason").unwrap_or_default();
+    assert!(
+        why.contains("main.tex"),
+        "cold for another reason: {}",
+        o.done
+    );
+    for id in 3..8 {
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.viewport = Some(S1_VIEW);
+        if compile(&mut c, &mut view, &r).done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let (p2, o2) = snapshot(&base, &proj, &out, "s1px");
+    let scratch = start_host("s1ps");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "a preamble edit after S1",
+    );
+    let (pdf, log) = (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    );
+    let _ = c.bye();
+    drop(host);
+    let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+    assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
+    assert!(log == log0, "the log differs from a scratch compile's");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Lane TEST-GAPS: `host::server::Job::parse`'s refusals: a root that is
+/// not an absolute directory, a main file outside it or missing, a format
+/// given as a path. Each is an ERROR naming it, the connection goes on,
+/// and a valid compile after them runs.
+#[test]
+fn a_compile_of_a_bad_root_main_or_format_is_refused() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-job");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    std::fs::write(base.join("outside.tex"), article(1)).unwrap();
+    let host = start_host("job");
+    let mut c = Client::connect(&host.1).unwrap();
+    let rel = |id: i64, root: &str, main: &str| {
+        let mut r = CompileRequest::new(id, root, main);
+        r.output_dir = Some(out.to_str().unwrap().into());
+        r
+    };
+    let proj_s = proj.to_str().unwrap();
+    let mut fmt = rel(5, proj_s, "main.tex");
+    fmt.format = "../pdflatex".into();
+    let cases = [
+        (
+            "a relative root",
+            rel(1, "proj", "main.tex"),
+            "root proj is not an absolute directory".to_string(),
+        ),
+        (
+            "a root that is a file",
+            rel(2, proj.join("main.tex").to_str().unwrap(), "main.tex"),
+            format!(
+                "root {} is not an absolute directory",
+                proj.join("main.tex").display()
+            ),
+        ),
+        (
+            "a main file outside the root",
+            rel(3, proj_s, "../outside.tex"),
+            "main must be a path inside root".to_string(),
+        ),
+        (
+            "a missing main file",
+            rel(4, proj_s, "missing.tex"),
+            "missing.tex does not exist in root".to_string(),
+        ),
+        (
+            "a format path",
+            fmt,
+            "format is a name, not a path".to_string(),
+        ),
+    ];
+    for (what, r, why) in cases {
+        let e = compile_or_error(&mut c, &r)
+            .map(|d| d.to_string())
+            .expect_err(what)
+            .to_string();
+        assert!(e.contains(&why), "{what}: {e}");
+    }
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(6, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Lane TEST-GAPS: `host::resident::apply_changes`'s refusals. A buffer
+/// whose path leaves the project (`..`, absolute) and an edit past the
+/// file's end are refused with an ERROR that names them, and nothing is
+/// written; the next compile, with a valid edit, equals a scratch compile.
+#[test]
+fn buffers_and_edits_outside_the_project_or_the_file_are_refused() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-apply");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = article(3);
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    let host = start_host("apply");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let outside = base.join("escape.tex");
+    let abs = outside.to_str().unwrap().to_string();
+    // (what, the buffers, the edits, the refusal)
+    type Case = (&'static str, Vec<(String, String)>, Vec<Edit>, String);
+    let cases: [Case; 3] = [
+        (
+            "a buffer in the parent directory",
+            vec![("../escape.tex".into(), "x".into())],
+            vec![],
+            "../escape.tex: a path inside root".into(),
+        ),
+        (
+            "a buffer at an absolute path",
+            vec![(abs.clone(), "x".into())],
+            vec![],
+            format!("{abs}: a path inside root"),
+        ),
+        (
+            "an edit past the file's end",
+            vec![],
+            vec![Edit {
+                path: "main.tex".into(),
+                offset: main.len() as u64,
+                delete: 1,
+                insert: "x".into(),
+            }],
+            "main.tex: edit outside the file".into(),
+        ),
+    ];
+    for (k, (what, buffers, edits, why)) in cases.into_iter().enumerate() {
+        let mut r = req(2 + k as i64, &proj, &out, "main.tex");
+        r.buffers = buffers;
+        r.edits = edits;
+        let e = compile_or_error(&mut c, &r)
+            .map(|d| d.to_string())
+            .expect_err(what)
+            .to_string();
+        assert!(e.contains(&why), "{what}: {e}");
+        assert!(
+            !outside.exists(),
+            "{what}: a file outside the project was written"
+        );
+        assert_eq!(
+            std::fs::read_to_string(proj.join("main.tex")).unwrap(),
+            main,
+            "{what}: main.tex changed"
+        );
+    }
+    // a valid edit still applies, and equals a scratch compile
+    let at = main.find("\\end{document}").unwrap() as u64;
+    let mut r = req(9, &proj, &out, "main.tex");
+    r.edits = vec![Edit {
+        path: "main.tex".into(),
+        offset: at,
+        delete: 0,
+        insert: "An appended sentence.\n".into(),
+    }];
+    let d = compile(&mut c, &mut view, &r).done;
+    assert_eq!(d.str_field("status"), Some("ok"), "{d}");
+    assert!(
+        std::fs::read_to_string(proj.join("main.tex"))
+            .unwrap()
+            .contains("An appended sentence."),
+        "the edit was not applied"
+    );
+    let (p2, o2) = snapshot(&base, &proj, &out, "applyx");
+    let scratch = start_host("applys");
+    compare_with_scratch(
+        &scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", "the edit",
+    );
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Lane TEST-GAPS: S₁'s save refusals (`incr::Session::prepare_s1`), which
+/// the next DONE reports (`s1_save`). A host with an S₀ cache compiles the
+/// document at `viewport` until nothing changes; `between` runs right after
+/// (before the host is idle); once S₀ is stored and the host has been idle,
+/// a compile's DONE says why no S₁ was stored, and none is. That compile's
+/// pages equal a scratch compile's.
+fn s1_refused(tag: &str, viewport: u32, between: &dyn Fn(&Path), why: &str) {
+    let base = common::fresh_dir(&format!("flashtex-host-s1r-{tag}"));
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    let host = start_host_env(
+        &format!("s1r{tag}"),
+        &[("FLASHTEX_S0_CACHE", cache.to_str().unwrap())],
+    );
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let at = |id: i64| {
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.viewport = Some(viewport);
+        r
+    };
+    for _ in 0..6 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &at(id));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    between(&proj);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !stored(&cache, "s0") && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut said = None;
+    while said.is_none() && Instant::now() < deadline {
+        // (idle: the host tries S₁ 2 s after it stops keeping warm, 2 s
+        // after the last request)
+        std::thread::sleep(Duration::from_secs(7));
+        id += 1;
+        let o = compile(&mut c, &mut view, &at(id));
+        said = o.done.get("s1_save").map(|s| s.to_string());
+    }
+    let said = said.unwrap_or_else(|| panic!("{tag}: no S1 save was tried"));
+    assert!(said.contains(why), "{tag}: the save went otherwise: {said}");
+    assert!(!stored(&cache, "s1"), "{tag}: an S1 was stored");
+    let (p2, o2) = snapshot(&base, &proj, &out, &format!("s1r{tag}"));
+    let scratch = start_host(&format!("s1rs{tag}"));
+    compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", tag);
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn an_s1_save_near_the_document_start_is_refused() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    // (S₁ at least `S1_MIN_PAGES` = 4 pages in, `S1_MARGIN` = 2 before the
+    // viewport)
+    s1_refused("near", 5, &|_| {}, "the viewport is near the start");
+}
+
+#[test]
+fn an_s1_save_after_an_input_changed_is_refused() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    // (side.tex changed after the last compile, before the host was idle:
+    // the last run is not what the files now give)
+    let edit = |proj: &Path| {
+        let p = proj.join("side.tex");
+        let t = std::fs::read_to_string(&p).unwrap();
+        std::fs::write(&p, t.replace("A side file", "A side file, edited")).unwrap();
+    };
+    s1_refused("dirty", S1_VIEW, &edit, "the last run's inputs changed");
+}
+
+/// A stored S₁ is refused for a reopen at a viewport before it ("the
+/// viewport is before S1", `host::s1::File::check`): the reopen runs from
+/// S₀, and its pages, PDF and log equal a scratch compile's.
+#[test]
+fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1v");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    s1_store(&proj, &out, &cache, "s1va");
+    let host = start_host_env("s1vb", &[("FLASHTEX_S0_CACHE", cache.to_str().unwrap())]);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    // (S₁ is at least 4 pages in, `S1_MIN_PAGES`)
+    let mut r = req(1, &proj, &out, "main.tex");
+    r.viewport = Some(2);
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("mode"), Some("open"), "{}", o.done);
+    assert_eq!(o.done.int_field("s1_pages"), None, "S1 used: {}", o.done);
+    let e = o.done.str_field("s1_error").unwrap_or_default();
+    assert!(
+        e.contains("the viewport is before S1"),
+        "refused for another reason: {e:?}"
+    );
+    for id in 2..6 {
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.viewport = Some(2);
+        if compile(&mut c, &mut view, &r).done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let (p2, o2) = snapshot(&base, &proj, &out, "s1vx");
+    let scratch = start_host("s1vs");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "viewport 2",
+    );
+    let (pdf, log) = (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    );
+    let _ = c.bye();
+    drop(host);
+    let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+    assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
+    assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
 }
