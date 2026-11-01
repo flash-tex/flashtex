@@ -62,12 +62,6 @@ pub struct Probe {
     pub anchor: Option<crate::checkpoint::Point>,
     pub then_patch: Option<Arc<crate::readset::Patch>>,
     pub then_probe: Option<Box<Probe>>,
-    /// Compare at the run's `n`-th checkpoint of this kind after the
-    /// restart (`Point::WholeRead`, the old run's `p1`) instead of at
-    /// `page`; and if that comparison fails, go on with `fallback`, the
-    /// page's (INFDESC-883).
-    pub at: Option<(crate::checkpoint::Point, usize)>,
-    pub fallback: Option<Box<Probe>>,
     pub p1: CheckpointId,
     pub p2: CheckpointId,
     /// The restart point's record (`P0`).
