@@ -7249,7 +7249,11 @@ impl Session {
                         // run is this one's up to `p2` (`crate::revalidate`)
                         drop(o);
                         let (edits, changed, shifts, fixed_writes) = again.ok_or("no edits")?;
-                        if let Err(e) = g.reattach_pending() {
+                        // (lazily: the restore to `p2` follows, which moves
+                        // there from the reattach's target when the restore
+                        // to it moved back from `p2`, `arena::Ahead`; the
+                        // compile makes a reattach it leaves whole)
+                        if let Err(e) = g.reattach_pending_lazily() {
                             return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
                         }
                         crate::os::phase_mark('j');

@@ -1214,15 +1214,15 @@ impl Globals {
         let _m = crate::memstat::scope(crate::memstat::tag::BRANCH);
         let t0 = std::time::Instant::now();
         // A lazy reattach (`reattach_pending_lazily`) stays lazy only for a
-        // restore to its target, and only while what the host state's
-        // capture reads of the word space is the scalars (filled from the
-        // state): the conditionals' lines `lineshift::marks` reads from
-        // `mem` when they nest deeper than its tags.
-        if self
-            .arena
-            .lazy_target()
-            .is_some_and(|t| t != id || crate::lineshift::marks_read_mem(self))
-        {
+        // restore to its target, or one the arena moves to from there over
+        // the logs between the two (`arena::Ahead`), and only while what the
+        // host state's capture reads of the word space is the scalars
+        // (filled from the state): the conditionals' lines
+        // `lineshift::marks` reads from `mem` when they nest deeper than its
+        // tags.
+        if self.arena.lazy_target().is_some_and(|t| {
+            (t != id && !self.arena.lazy_moves_to(id)) || crate::lineshift::marks_read_mem(self)
+        }) {
             self.arena.materialize();
         }
         system::file_trace(|| format!("restore {id}"));
