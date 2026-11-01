@@ -234,6 +234,12 @@ except subprocess.TimeoutExpired:
     host.kill()
 with open(a.out, 'a') as f:
     f.write(json.dumps(rec) + '\n')
+if os.environ.get('KEEP_ERR'):
+    # the host's own lines (FLASHTEX_INCR_DEBUG=1: one per compile and VIEWPORT), beside OUT
+    keep = [l for l in open(f'{W}/h.err', errors='replace') if l.startswith('[host]') or 'VIEWPORT' in l]
+    tag = f"{a.name}-far{os.environ.get('FLASHTEX_FAR', '')}-j{a.jump_ms}"
+    with open(os.path.join(os.path.dirname(os.path.abspath(a.out)), f'{tag}.err.txt'), 'w') as f:
+        f.writelines(keep[-3000:])
 mb = lambda v: round((v or 0) / 2**20)  # noqa: E731
 print(f"{a.name}: open {mb(rec['open_proc'].get('VmRSS'))} MB, typed {mb(rec['typed_proc'].get('VmRSS'))}, "
       f"steady {mb(rec['steady_proc'].get('VmRSS'))}, peak {mb(rec['peak_hwm'])}, s0 disk {mb(rec['disk_s0'])} MB, "
