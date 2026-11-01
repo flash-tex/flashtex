@@ -1211,6 +1211,16 @@ impl Globals {
     /// checkpoints, the word space's redo log, its output files' tails) so
     /// that `redo_to` can jump back to it.
     pub fn restore(&mut self, id: CheckpointId) -> Result<(), String> {
+        self.restore_via(id, None)
+    }
+
+    /// `restore(id)` where a restore to the later checkpoint `then` is
+    /// likely next (`Arena::restore_branch_via`): the same result.
+    pub fn restore_via(
+        &mut self,
+        id: CheckpointId,
+        then: Option<CheckpointId>,
+    ) -> Result<(), String> {
         let _m = crate::memstat::scope(crate::memstat::tag::BRANCH);
         let t0 = std::time::Instant::now();
         // A lazy reattach (`reattach_pending_lazily`) stays lazy only for a
@@ -1322,7 +1332,10 @@ impl Globals {
         let rs_old = self.layer().rs.clone();
         self.spill_scalars();
         let t_pre = t0.elapsed();
-        let branch = self.arena.restore_branch(id)?;
+        let branch = match then {
+            Some(t) => self.arena.restore_branch_via(id, t)?,
+            None => self.arena.restore_branch(id)?,
+        };
         self.fill_scalars();
         let t_branch = t0.elapsed();
         let detached_ids: std::collections::HashSet<CheckpointId> =

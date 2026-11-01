@@ -6926,7 +6926,9 @@ impl Session {
             system::guard_every_output(true);
             g.restore_discard(r)
         } else {
-            g.restore(r)
+            // (a comparison that holds restores to `p2` next: by way of
+            // there, which that restore then moves ahead to, `arena::Ahead`)
+            g.restore_via(r, probe.as_ref().map(|p| p.p2))
         };
         crate::os::phase_mark('r');
         if let Err(e) = restored {

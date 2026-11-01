@@ -3093,6 +3093,31 @@ impl Arena {
         self.core_mut().restore_discard(id)
     }
 
+    /// `restore_branch(id)` where a restore to the later checkpoint `then`
+    /// is likely next (a READ-REVALIDATE compile's, after its comparison):
+    /// the same branch and state, but by way of `then` -- a restore there,
+    /// a reattach of it that waits (`Lazy`), and a move back to `id`
+    /// (`Ahead`) -- so that the restore to `then` moves ahead instead of
+    /// rewinding the old run's future again (lane TYPING-50MS). The rewind
+    /// is the same logs as the plain restore's, in two parts.
+    pub fn restore_branch_via(
+        &mut self,
+        id: CheckpointId,
+        then: CheckpointId,
+    ) -> Result<Branch, String> {
+        let c = self.core_lazy();
+        let later = match (c.index_of(id), c.index_of(then)) {
+            (Some(k), Some(k2)) => k2 > k,
+            _ => false,
+        };
+        if c.lazy.is_some() || !later || std::env::var_os("FLASHTEX_NO_LAZY_MOVE").is_some() {
+            return self.restore_branch(id);
+        }
+        let b = c.restore_branch(then)?;
+        c.reattach_lazy(b)?;
+        c.restore_branch(id)
+    }
+
     pub fn restore_branch(&mut self, id: CheckpointId) -> Result<Branch, String> {
         // (materializes a lazy reattach to another target itself)
         self.core_lazy().restore_branch(id)
@@ -5148,6 +5173,31 @@ mod tests {
         assert!(arr[..] == copies[6][..]);
         a.reattach(br).unwrap();
         assert!(arr[..] == end[..]);
+        // a restore by way of a later checkpoint (`restore_branch_via`): the
+        // plain restore's state and branch, and the restore to the later one
+        // moves ahead
+        for (n, (p0, p2)) in [(2usize, 6usize), (0, 11), (10, 11)]
+            .into_iter()
+            .enumerate()
+        {
+            let s = 500 + 100 * n as u64;
+            let br = a.restore_branch_via(ids[p0], ids[p2]).unwrap();
+            assert!(arr[..] == copies[p0][..], "to {p0} by way of {p2}");
+            assert_eq!(a.checkpoint_ids(), &ids[..=p0]);
+            new_run(&mut a, &mut arr, s);
+            a.reattach_lazy(br).unwrap();
+            assert!(a.lazy_moves_to(ids[p2]));
+            let br = a.restore_branch(ids[p2]).unwrap();
+            assert!(arr[..] == copies[p2][..], "then to {p2}");
+            new_run(&mut a, &mut arr, s + 20);
+            a.reattach(br).unwrap();
+            assert!(arr[..] == end[..]);
+            let br = a.restore_branch_via(ids[p0], ids[p2]).unwrap();
+            new_run(&mut a, &mut arr, s + 40);
+            a.reattach(br).unwrap();
+            assert!(arr[..] == end[..], "its branch reattaches to the end");
+            assert_eq!(a.checkpoint_ids(), &ids[..]);
+        }
         for (i, &id) in ids.iter().enumerate().rev() {
             a.restore_discard(id).unwrap();
             assert!(arr[..] == copies[i][..], "restore {i} after the moves");
