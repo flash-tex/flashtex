@@ -97,13 +97,11 @@ jobs:
             done
           done
           exit 0
-      - name: t7 typing@50ms with the engine's and the watcher's debug logs (move)
+      - name: t7 typing@50ms with the engine's debug log (move)
         run: |
           set +e
-          FLASHTEX_INCR_DEBUG=1 FLASHTEX_FSWATCH_DEBUG=1 python3 tools/incr-bench/t7.py --engine move --docs infdesc-x2 --sites x2-late --gate hosted \
+          FLASHTEX_INCR_DEBUG=1 python3 tools/incr-bench/t7.py --engine move --docs infdesc-x2 --sites x2-late --gate hosted \
             --typing-keys 16 --phases typing@50ms@site --out /tmp/fth-realdoc/t7-dbg 2>&1 | tail -5
-          FLASHTEX_FSWATCH_DEBUG=1 python3 tools/incr-bench/t7.py --engine move --docs infdesc-x2 --sites x2-late --gate hosted \
-            --typing-keys 16 --phases typing@50ms@site --out /tmp/fth-realdoc/t7-dbg-move 2>&1 | tail -5
           ls -la /tmp/fth-realdoc/t7-dbg/raw/
           exit 0
       - uses: actions/upload-artifact@v4
