@@ -41,8 +41,9 @@ use crate::persist::{Codec, Reader};
 use crate::system::{self, FileRead, ReadLog, StatSig, Stream};
 use std::collections::HashMap;
 
-/// v1: the first.
-pub const MAGIC: &[u8] = b"flashtex S1 v1";
+/// v1: the first; v2: the generation of the S₀ file it was saved over
+/// (`Head::s0_gen`).
+pub const MAGIC: &[u8] = b"flashtex S1 v2";
 
 /// A read of the journal between S₀ and S₁: `system::FileRead` without its
 /// content (path, hash, signature, (closed_at, written_before, stamp, size)).
@@ -89,6 +90,10 @@ pub struct Head {
     /// overrides), applied after it is loaded.
     pub reloc: RelocParts,
     pub sizes: (u64, u64),
+    /// The generation of the S₀ file it was saved over
+    /// (`super::new_generation`), whose chunks it leaves out where they are
+    /// the same.
+    pub s0_gen: [u64; 2],
 }
 
 crate::codec_struct!(Head {
@@ -108,7 +113,8 @@ crate::codec_struct!(Head {
     places,
     side,
     reloc,
-    sizes
+    sizes,
+    s0_gen
 });
 
 /// The image table's encoding.
@@ -163,6 +169,7 @@ pub(super) fn chunk_offsets(
 /// A persisted S₀'s key and chunks, as a reopen loads them.
 struct S0Chunks {
     map: MappedFile,
+    gen: [u64; 2],
     key: Key,
     at: HashMap<u32, usize>,
 }
@@ -170,7 +177,7 @@ struct S0Chunks {
 impl S0Chunks {
     fn open(path: &str) -> Result<S0Chunks, String> {
         let map = MappedFile::open(path)?;
-        let (key, present, pages, data_off) = {
+        let (gen, key, present, pages, data_off) = {
             let bytes = map.bytes();
             let hlen =
                 u64::from_le_bytes(bytes.get(..8).ok_or("not an S0 file")?.try_into().unwrap())
@@ -179,6 +186,7 @@ impl S0Chunks {
             if Vec::<u8>::dec(&mut r)? != S0_MAGIC {
                 return Err("not an S0 file".into());
             }
+            let gen = <[u64; 2]>::dec(&mut r)?;
             let key = Key::dec(&mut r)?;
             ExtRecord::dec(&mut r)?;
             Vec::<(String, Vec<u8>)>::dec(&mut r)?;
@@ -194,11 +202,12 @@ impl S0Chunks {
             if bytes.len() < data_off + pages.len() * S0_PAGE {
                 return Err("S0 file truncated".into());
             }
-            (key, present, pages, data_off)
+            (gen, key, present, pages, data_off)
         };
         let offs = chunk_offsets(&present, &pages, data_off)?;
         Ok(S0Chunks {
             map,
+            gen,
             key,
             at: present.into_iter().zip(offs).collect(),
         })
@@ -520,6 +529,7 @@ pub fn prepare(g: &mut Globals, i: Input) -> Result<S0Image, String> {
         side,
         reloc: i.reloc,
         sizes: (g.arena.len_bytes() as u64, g.arena.scalar_bytes() as u64),
+        s0_gen: s0.gen,
     };
     let mut h = vec![];
     MAGIC.to_vec().enc(&mut h);
@@ -578,6 +588,7 @@ impl File {
         &self,
         s0: &Key,
         s0_rec: &ExtRecord,
+        s0_gen: [u64; 2],
         clock: (i64, i32),
         first_line: &[u8],
         stop_at: Option<usize>,
@@ -593,6 +604,11 @@ impl File {
         }
         if h.s0_tag != key_tag(s0) {
             return Err("S1 extends another S0".into());
+        }
+        // (the same key, another save: its chunks may differ where S₁
+        // left them out)
+        if h.s0_gen != s0_gen {
+            return Err("S1 extends another save of S0".into());
         }
         match stop_at {
             Some(s) if (h.pages as usize) < s => {}
