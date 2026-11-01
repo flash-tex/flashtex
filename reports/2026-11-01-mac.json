@@ -6,7 +6,7 @@
    "git_sha": "5a42ab270243440446e4f103e17a63350a8cf788",
    "runs": [
     {
-     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/pdftex.pool --out /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/parity-new --work /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/parity-new",
+     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner/_work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/kubar/.flashtex-actions-runner/_work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/kubar/.flashtex-actions-runner/_work/_temp/p5/work/eng/pdftex.pool --out /home/kubar/.flashtex-actions-runner/_work/_temp/p5/parity-new --work /home/kubar/.flashtex-actions-runner/_work/_temp/p5/work/parity-new",
      "date": "2026-11-01",
      "engine_kind": "tex",
      "engine_sha256": "c23428dc1e20e65371ee84e57a1a01c90c8d0cfc4ddb19b42eac30c0768329b4",
@@ -19,7 +19,7 @@
     },
     {
      "date": "2026-10-31T15:25:07Z",
-     "documents_path": "/home/kubar/.flashtex-actions-runner-3/_work/_temp/t4-new/documents.json",
+     "documents_path": "/home/kubar/.flashtex-actions-runner/_work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "c23428dc1e20e65371ee84e57a1a01c90c8d0cfc4ddb19b42eac30c0768329b4",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
@@ -64,7 +64,7 @@
    "runs": []
   }
  },
- "host_label": "nixos-7800x3d-3 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools 66dec5e2f)",
+ "host_label": "nixos-7800x3d (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools a6b02e7a7)",
  "oracle": {
   "latex_format": "2026-06-01",
   "pdftex_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
