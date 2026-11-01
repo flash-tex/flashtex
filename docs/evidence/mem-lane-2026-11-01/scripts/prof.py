@@ -149,9 +149,12 @@ threading.Thread(target=watch, daemon=True).start()
 
 
 def keys(page, n):
-    args = [f'{E}/dl3-keys', '--socket', sock, '--root', W, '--main', a.main, '--output-dir', f'{W}/out',
+    # (one client for every engine: the protocol is the same, and the lane's
+    # client has --min-words)
+    client = f'{IB}/prof/dl3-keys' if os.path.exists(f'{IB}/prof/dl3-keys') else f'{E}/dl3-keys'
+    args = [client, '--socket', sock, '--root', W, '--main', a.main, '--output-dir', f'{W}/out',
             '--keys', str(n), '--gap-ms', str(a.gap_ms), '--no-viewport', '--page', str(page)] \
-        + (['--edit', a.edit, '--repeated'] if a.edit and n else [])
+        + (['--edit', EDITS[page_i[0] % len(EDITS)], '--repeated', '--min-words', '8'] if EDITS and n else [])
     r = subprocess.run(args, capture_output=True, text=True, env=env)
     last, ms = None, []
     for line in r.stdout.splitlines():
@@ -189,11 +192,14 @@ rec['open'], _ = keys(0, 0)
 rec['open_s'] = round(time.time() - t0, 2)
 rec['open_proc'] = status(pid)
 ms_all = []
+EDITS = [e for e in a.edit.split(',') if e]
+page_i = [0]
 INSTR = []
 last = rec['open']
 for p in (int(x) for x in a.pages.split(',')):
     if a.keys and host.poll() is None:
         r, ms = keys(p, a.keys)
+        page_i[0] += 1
         last = r or last
         ms_all += ms
 rec['typed'] = last

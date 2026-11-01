@@ -39,8 +39,9 @@ for ROUND in $(seq "${ROUNDS:-1}"); do for d in $DOCS; do for ENG in $ENGINES; d
       python3 "$P" "$ENG" "$d" "$J" --pages 0,300,600,999 --keys "${KEYS:-8}" || echo "$d failed" ;;
     infdesc-x2)
       ed=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("edit",""))' "$IB/docs/infdesc-x2/doc.json")
-      python3 "$P" "$ENG" infdesc-x2 "$J" --src "$IB/docs/infdesc-x2" --edit "$ed" --pages 0,0 \
-        --keys "${KEYS:-8}" || echo "infdesc-x2 failed" ;;
+      # a chapter of the first copy, then its copy in the second (~570 pages on), and back
+      python3 "$P" "$ENG" infdesc-x2 "$J" --src "$IB/docs/infdesc-x2" --edit "$ed,x2/$ed,$ed,x2/$ed" \
+        --pages 0,0,0,0 --keys "${KEYS:-8}" || echo "infdesc-x2 failed" ;;
     lowmem)
       python3 "$P" "$ENG" full-1000 "$J" --pages 0,300,600,999 --keys "${KEYS:-8}" --profile low-memory || true
       ed=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("edit",""))' "$IB/docs/infdesc-x2/doc.json")
