@@ -1,0 +1,78 @@
+{
+  "reviewed_main": "7fad3182b7e7bcb22c14bca85e826c6351d61607",
+  "source_sha256": "f725e23897df3c9645bde1ceaab0876d78ea6ef4a44fd0e80d60a5161fac9d9e",
+  "occurrences": {
+    "mid": [
+      {
+        "start_byte": 1341,
+        "end_byte": 1345
+      },
+      {
+        "start_byte": 1377,
+        "end_byte": 1381
+      },
+      {
+        "start_byte": 1466,
+        "end_byte": 1470
+      },
+      {
+        "start_byte": 1498,
+        "end_byte": 1502
+      }
+    ],
+    "vee": [
+      {
+        "start_byte": 2430,
+        "end_byte": 2434
+      },
+      {
+        "start_byte": 2504,
+        "end_byte": 2508
+      },
+      {
+        "start_byte": 2761,
+        "end_byte": 2765
+      },
+      {
+        "start_byte": 2875,
+        "end_byte": 2879
+      }
+    ],
+    "Rightarrow": [
+      {
+        "start_byte": 2416,
+        "end_byte": 2427
+      },
+      {
+        "start_byte": 2436,
+        "end_byte": 2447
+      },
+      {
+        "start_byte": 2491,
+        "end_byte": 2502
+      }
+    ],
+    "setminus": [
+      {
+        "start_byte": 3632,
+        "end_byte": 3641
+      },
+      {
+        "start_byte": 3665,
+        "end_byte": 3674
+      }
+    ],
+    "Longrightarrow": [
+      {
+        "start_byte": 2820,
+        "end_byte": 2835
+      }
+    ]
+  },
+  "files": {
+    "crates/compiler/src/math.rs": "8f3d1c8781575e791f383c9306a4fd746155f68bd34c2093ef78674517cb257f",
+    "crates/compiler/src/export.rs": "5bc403dc9cabb1e2f1afa25e403646e3031f00fc38355357b273cd4585920469",
+    "crates/math-layout/src/cm.rs": "9965f7f0c71c16e6d30e3fa8192ed3c742e59a3efa8779a280b347327ad45ee5",
+    "crates/math-layout/src/mathlist.rs": "293997ccedf7792c0c3a689bafb4e2bf2bac8bdc8a71f61282be5adf37b9c011"
+  }
+}

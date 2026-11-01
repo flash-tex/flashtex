@@ -1,0 +1,14 @@
+{
+  "base": "1c02a2bc50874770d15a4decbaa5c3a376ee3ae9",
+  "source_sha256": "f725e23897df3c9645bde1ceaab0876d78ea6ef4a44fd0e80d60a5161fac9d9e",
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/logical-compiler-preserved",
+  "binary_sha256": "ef545c94771675873ec78c9cedc4bb394ffcda251b239dd59dc66c004ea29d99",
+  "files": {
+    "request.jsonl": "f61ed236aad4a931b021461167dbf18860c2c6fa14755ae32ae3e7ebfdd06204",
+    "response.jsonl": "f3742f730927598967f7f6951f16b0936fdb6353757d8a11d06cd6733bbf9ae2",
+    "stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate.patch": "6b1eae35288f46af0f623b907ac0f24d53f6cdc21bd68c0b7bb86a8f35fd5bea",
+    "tests.log": "c7cb62e135a8e92b73bad532ac8c45baaf97f5e7e1f2887eca04ee997982d92e",
+    "README.md": "b0808a1a465095ab20e0b34561ba389f66da334bef5496a798704768b1918fe9"
+  }
+}

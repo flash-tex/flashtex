@@ -1,0 +1,288 @@
+{
+ "fixture": "27-lm-rm-sl.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Lead",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 174.626,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 204.633,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "roman,",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 217.668,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 253.229,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Several",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 277.344,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 313.109,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "set",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 343.116,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 360.082,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "this",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 373.127,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "shape",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 393.976,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "measure",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 423.398,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "the",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 463.638,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "widths",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "of",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 166.212,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "a",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 177.835,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "whole",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 186.422,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "line",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 214.936,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 234.032,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 253.69,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "continue",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 276.66,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "with",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 316.794,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "more",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 339.773,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 364.993,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "that",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 393.855,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "wrap",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 415.727,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "onto",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 440.947,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "the",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 463.647,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "following",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "line",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 175.828,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "of",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 194.654,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "text",
+   "font": "LMRomanSlant10-Regular",
+   "size": 9.9626,
+   "x": 205.998,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 227.02,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "roman",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 246.389,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "again.",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 277.409,
+   "baseline": 158.675
+  }
+ ],
+ "warnings": []
+}

@@ -1,0 +1,11 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\foreach \x in {0,...,6}
+  \foreach \y in {0,1,2}
+    \fill (\x*0.6,\y*0.6) circle (1.5pt);
+\foreach \x in {0,0.5,...,3} \draw (\x,2) -- (\x,2.5);
+\end{tikzpicture}
+\end{document}

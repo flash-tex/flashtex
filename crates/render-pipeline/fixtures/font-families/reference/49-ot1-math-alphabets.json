@@ -1,0 +1,120 @@
+{
+ "fixture": "49-ot1-math-alphabets.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Letters",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "ABC",
+   "font": "CMSS10",
+   "size": 9.9626,
+   "x": 182.691,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 204.562,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "T",
+   "font": "CMTT10",
+   "size": 9.9626,
+   "x": 214.523,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "x",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 219.753,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 227.659,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "diff",
+   "font": "CMTI10",
+   "size": 9.9626,
+   "x": 237.619,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 256.2,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "gA",
+   "font": "EUFM10",
+   "size": 9.9626,
+   "x": 266.171,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 280.55,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "A",
+   "font": "CMSS10",
+   "size": 9.9626,
+   "x": 290.511,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "2",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 297.153,
+   "baseline": 131.149
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 304.943,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "math.",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 316.563,
+   "baseline": 134.765
+  }
+ ],
+ "warnings": []
+}

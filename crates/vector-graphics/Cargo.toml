@@ -1,0 +1,12 @@
+[package]
+name = "flashtex-vector-graphics"
+version = "0.1.0"
+edition = "2024"
+description = "Original FlashTeX display primitives: geometry, paths, clips, a display list with hit-testing, and PDF/JSON serializers (proposal; not runtime-v1)."
+publish = false
+
+[lib]
+name = "flashtex_vector_graphics"
+path = "src/lib.rs"
+
+[dependencies]

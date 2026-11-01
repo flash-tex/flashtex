@@ -1,0 +1,106 @@
+{
+ "fixture": "04-col-lcr.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Left",
+    "x": 77.978,
+    "y_top": 95.063
+   },
+   {
+    "text": "Centre",
+    "x": 143.9109,
+    "y_top": 95.063
+   },
+   {
+    "text": "Right",
+    "x": 190.0126,
+    "y_top": 95.063
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 109.509
+   },
+   {
+    "text": "bb",
+    "x": 154.4745,
+    "y_top": 109.509
+   },
+   {
+    "text": "ccc",
+    "x": 202.8453,
+    "y_top": 109.509
+   },
+   {
+    "text": "wide",
+    "x": 77.978,
+    "y_top": 123.955
+   },
+   {
+    "text": "entry",
+    "x": 105.2885,
+    "y_top": 123.955
+   },
+   {
+    "text": "x",
+    "x": 157.8985,
+    "y_top": 123.955
+   },
+   {
+    "text": "12.5",
+    "x": 197.6472,
+    "y_top": 123.955
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 137.521
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 137.521
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 137.521
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 137.521
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

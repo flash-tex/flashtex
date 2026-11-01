@@ -1,0 +1,56 @@
+{
+ "fixture": "52-nest-inline-smallmatrix.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "a",
+    "x": 142.05,
+    "y_top": 80.134
+   },
+   {
+    "text": "b",
+    "x": 150.1667,
+    "y_top": 80.134
+   },
+   {
+    "text": "The",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "matrix",
+    "x": 96.0586,
+    "y_top": 83.955
+   },
+   {
+    "text": "is",
+    "x": 166.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "small.",
+    "x": 177.7663,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 142.465,
+    "y_top": 87.334
+   },
+   {
+    "text": "d",
+    "x": 149.7991,
+    "y_top": 87.334
+   }
+  ]
+ ],
+ "extension_columns": [
+  [
+   134.107,
+   156.148
+  ]
+ ]
+}

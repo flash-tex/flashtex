@@ -1,0 +1,36 @@
+{
+ "fixture": "03-bottom.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 621.226,
+   "width": 144.0,
+   "height": 72.003
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 228.937,
+   "baseline": 717.637
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 170.63,
+   "source_byte": 788
+  }
+ ]
+}

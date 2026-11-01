@@ -1,0 +1,86 @@
+{
+ "fixture": "51-nest-inline-pmatrix.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "a",
+    "x": 125.38,
+    "y_top": 82.61
+   },
+   {
+    "text": "b",
+    "x": 142.0455,
+    "y_top": 82.61
+   },
+   {
+    "text": "Let",
+    "x": 72.0,
+    "y_top": 89.933
+   },
+   {
+    "text": "A",
+    "x": 92.967,
+    "y_top": 89.933
+   },
+   {
+    "text": "=",
+    "x": 105.0657,
+    "y_top": 89.933
+   },
+   {
+    "text": "be",
+    "x": 159.359,
+    "y_top": 89.933
+   },
+   {
+    "text": "given",
+    "x": 175.2977,
+    "y_top": 89.933
+   },
+   {
+    "text": "in",
+    "x": 205.8623,
+    "y_top": 89.933
+   },
+   {
+    "text": "the",
+    "x": 219.5152,
+    "y_top": 89.933
+   },
+   {
+    "text": "running",
+    "x": 239.6716,
+    "y_top": 89.933
+   },
+   {
+    "text": "text",
+    "x": 283.2531,
+    "y_top": 89.933
+   },
+   {
+    "text": "here.",
+    "x": 307.637,
+    "y_top": 89.933
+   },
+   {
+    "text": "c",
+    "x": 125.933,
+    "y_top": 97.056
+   },
+   {
+    "text": "d",
+    "x": 141.4915,
+    "y_top": 97.056
+   }
+  ]
+ ],
+ "extension_columns": [
+  [
+   117.493,
+   147.57
+  ]
+ ]
+}

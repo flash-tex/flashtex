@@ -1,0 +1,15 @@
+\documentclass[10pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\pagestyle{empty}
+\begin{document}
+Before.
+\begin{equation} z = 0 \end{equation}
+\begin{subequations}\label{e:sub}
+\begin{align} a &= b \label{e:s1}\\ c &= d \end{align}
+\begin{equation} e = f \end{equation}
+\end{subequations}
+Refs \eqref{e:sub}, \eqref{e:s1}.
+\begin{equation} g = h \end{equation}
+\end{document}

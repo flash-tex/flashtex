@@ -1,0 +1,667 @@
+{
+ "binary_sha256": "f9bd41afc1d49aeafa2ae7efb7adc2d53da614f145e1afab1e3bd65d638717c9",
+ "cases": {
+  "comment": {
+   "returncode": 0,
+   "identical_to_evidence": true,
+   "diagnostics": [],
+   "runs": [
+    {
+     "text": "and",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 28,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 0
+      },
+      {
+       "gid": 77,
+       "origin_x": 140788438,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 1
+      },
+      {
+       "gid": 47,
+       "origin_x": 147607965,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 2
+      }
+     ]
+    }
+   ],
+   "evidence_runs": [
+    {
+     "text": "and",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 28,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 0
+      },
+      {
+       "gid": 77,
+       "origin_x": 140788438,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 1
+      },
+      {
+       "gid": 47,
+       "origin_x": 147607965,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 2
+      }
+     ]
+    }
+   ],
+   "display_sha256": "21dfe083b9ea3ae7d0aba61017227a505a8ecc32c51273ef86a955d42fd720f9"
+  },
+  "escaped": {
+   "returncode": 0,
+   "identical_to_evidence": false,
+   "diagnostics": [],
+   "runs": [
+    {
+     "text": "{x}",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 38,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6267951,
+       "cluster": 0
+      },
+      {
+       "gid": 116,
+       "origin_x": 140919024,
+       "baseline_y": 144444935,
+       "advance_x": 6481062,
+       "cluster": 1
+      },
+      {
+       "gid": 39,
+       "origin_x": 147397482,
+       "baseline_y": 144444935,
+       "advance_x": 6267951,
+       "cluster": 2
+      }
+     ]
+    }
+   ],
+   "evidence_runs": [
+    {
+     "text": "{x}",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 38,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6267951,
+       "cluster": 0
+      },
+      {
+       "gid": 116,
+       "origin_x": 140788438,
+       "baseline_y": 144444935,
+       "advance_x": 6481062,
+       "cluster": 1
+      },
+      {
+       "gid": 39,
+       "origin_x": 147266896,
+       "baseline_y": 144444935,
+       "advance_x": 6267951,
+       "cluster": 2
+      }
+     ]
+    }
+   ],
+   "display_sha256": "344f3b55138a88bcd1bf8f3ee5ed363b9e0ea5dcc10bc890bb6ad90e18a1bfc1"
+  },
+  "five": {
+   "returncode": 0,
+   "identical_to_evidence": true,
+   "diagnostics": [],
+   "runs": [
+    {
+     "text": "(a)+(b)+(c)+(d)+and",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 85,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 0
+      },
+      {
+       "gid": 28,
+       "origin_x": 139424473,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 1
+      },
+      {
+       "gid": 86,
+       "origin_x": 145561838,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 2
+      },
+      {
+       "gid": 89,
+       "origin_x": 153120951,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 3
+      },
+      {
+       "gid": 85,
+       "origin_x": 165453811,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 4
+      },
+      {
+       "gid": 35,
+       "origin_x": 170227211,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 5
+      },
+      {
+       "gid": 86,
+       "origin_x": 177046738,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 6
+      },
+      {
+       "gid": 89,
+       "origin_x": 184605851,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 7
+      },
+      {
+       "gid": 85,
+       "origin_x": 196938711,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 8
+      },
+      {
+       "gid": 43,
+       "origin_x": 201712110,
+       "baseline_y": 144444935,
+       "advance_x": 5453118,
+       "cluster": 9
+      },
+      {
+       "gid": 86,
+       "origin_x": 207167313,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 10
+      },
+      {
+       "gid": 89,
+       "origin_x": 214726427,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 11
+      },
+      {
+       "gid": 85,
+       "origin_x": 227059286,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 12
+      },
+      {
+       "gid": 47,
+       "origin_x": 231832686,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 13
+      },
+      {
+       "gid": 86,
+       "origin_x": 238652213,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 14
+      },
+      {
+       "gid": 89,
+       "origin_x": 246211326,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 15
+      },
+      {
+       "gid": 28,
+       "origin_x": 258544186,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 16
+      },
+      {
+       "gid": 77,
+       "origin_x": 264681551,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 17
+      },
+      {
+       "gid": 47,
+       "origin_x": 271501078,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 18
+      }
+     ]
+    }
+   ],
+   "evidence_runs": [
+    {
+     "text": "(a)+(b)+(c)+(d)+and",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 85,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 0
+      },
+      {
+       "gid": 28,
+       "origin_x": 139424473,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 1
+      },
+      {
+       "gid": 86,
+       "origin_x": 145561838,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 2
+      },
+      {
+       "gid": 89,
+       "origin_x": 153120951,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 3
+      },
+      {
+       "gid": 85,
+       "origin_x": 165453811,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 4
+      },
+      {
+       "gid": 35,
+       "origin_x": 170227211,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 5
+      },
+      {
+       "gid": 86,
+       "origin_x": 177046738,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 6
+      },
+      {
+       "gid": 89,
+       "origin_x": 184605851,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 7
+      },
+      {
+       "gid": 85,
+       "origin_x": 196938711,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 8
+      },
+      {
+       "gid": 43,
+       "origin_x": 201712110,
+       "baseline_y": 144444935,
+       "advance_x": 5453118,
+       "cluster": 9
+      },
+      {
+       "gid": 86,
+       "origin_x": 207167313,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 10
+      },
+      {
+       "gid": 89,
+       "origin_x": 214726427,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 11
+      },
+      {
+       "gid": 85,
+       "origin_x": 227059286,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 12
+      },
+      {
+       "gid": 47,
+       "origin_x": 231832686,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 13
+      },
+      {
+       "gid": 86,
+       "origin_x": 238652213,
+       "baseline_y": 144444935,
+       "advance_x": 4776179,
+       "cluster": 14
+      },
+      {
+       "gid": 89,
+       "origin_x": 246211326,
+       "baseline_y": 144444935,
+       "advance_x": 9552358,
+       "cluster": 15
+      },
+      {
+       "gid": 28,
+       "origin_x": 258544186,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 16
+      },
+      {
+       "gid": 77,
+       "origin_x": 264681551,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 17
+      },
+      {
+       "gid": 47,
+       "origin_x": 271501078,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 18
+      }
+     ]
+    }
+   ],
+   "display_sha256": "92b10191de5df6c2c38d1e7adcafd5c28f0e28cfd587202f21b85c4951b3465b"
+  },
+  "ligature": {
+   "returncode": 0,
+   "identical_to_evidence": false,
+   "diagnostics": [],
+   "runs": [
+    {
+     "text": "ffi",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 123,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 10229296,
+       "cluster": 0
+      }
+     ]
+    }
+   ],
+   "evidence_runs": [
+    {
+     "text": "ffi",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 55,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 3748235,
+       "cluster": 0
+      },
+      {
+       "gid": 55,
+       "origin_x": 138401661,
+       "baseline_y": 144444935,
+       "advance_x": 3748235,
+       "cluster": 1
+      },
+      {
+       "gid": 66,
+       "origin_x": 142152248,
+       "baseline_y": 144444935,
+       "advance_x": 3409765,
+       "cluster": 2
+      }
+     ]
+    }
+   ],
+   "display_sha256": "198f52bc0f0f6addde8264ff1e957dca185946a352671072448a7d0c82d132ed"
+  },
+  "scripts": {
+   "returncode": 0,
+   "identical_to_evidence": false,
+   "diagnostics": [
+    {
+     "code": "math_resource_profile",
+     "message": "lmmi8: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi8 design",
+     "severity": "warning",
+     "sources": []
+    }
+   ],
+   "runs": [
+    {
+     "text": "and",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 28,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 0
+      },
+      {
+       "gid": 77,
+       "origin_x": 140788438,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 1
+      },
+      {
+       "gid": 47,
+       "origin_x": 147607965,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 2
+      }
+     ]
+    },
+    {
+     "text": "2",
+     "font": "f73015c3827596586faa380c398501caf9b5bcbb6f40b46af6a51277ca97c9fc",
+     "size": 8357268,
+     "glyphs": [
+      {
+       "gid": 107,
+       "origin_x": 154427492,
+       "baseline_y": 139117365,
+       "advance_x": 4437709,
+       "cluster": 0
+      }
+     ]
+    },
+    {
+     "text": "i",
+     "font": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+     "size": 8357268,
+     "glyphs": [
+      {
+       "gid": 1304,
+       "origin_x": 154427492,
+       "baseline_y": 147544017,
+       "advance_x": 2883258,
+       "cluster": 0
+      }
+     ]
+    }
+   ],
+   "evidence_runs": [
+    {
+     "text": "and",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 28,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 0
+      },
+      {
+       "gid": 77,
+       "origin_x": 140788438,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 1
+      },
+      {
+       "gid": 47,
+       "origin_x": 147607965,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 2
+      }
+     ]
+    },
+    {
+     "text": "2i",
+     "font": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+     "size": 8357268,
+     "glyphs": [
+      {
+       "gid": 19,
+       "origin_x": 154427492,
+       "baseline_y": 138994622,
+       "advance_x": 4178634,
+       "cluster": 0
+      },
+      {
+       "gid": 1304,
+       "origin_x": 154427492,
+       "baseline_y": 147544017,
+       "advance_x": 2883258,
+       "cluster": 1
+      }
+     ]
+    }
+   ],
+   "display_sha256": "9a30f21325f003ff6b7cd9e502724f9964c973e7f59f2e43fb176377e8434aed"
+  },
+  "space": {
+   "returncode": 0,
+   "identical_to_evidence": false,
+   "diagnostics": [],
+   "runs": [
+    {
+     "text": "a",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 28,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 0
+      }
+     ]
+    },
+    {
+     "text": "b",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 35,
+       "origin_x": 144879963,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 0
+      }
+     ]
+    }
+   ],
+   "evidence_runs": [
+    {
+     "text": "a b",
+     "font": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+     "size": 12535902,
+     "glyphs": [
+      {
+       "gid": 28,
+       "origin_x": 134651073,
+       "baseline_y": 144444935,
+       "advance_x": 6142592,
+       "cluster": 0
+      },
+      {
+       "gid": 103,
+       "origin_x": 140788438,
+       "baseline_y": 144444935,
+       "advance_x": 4086704,
+       "cluster": 1
+      },
+      {
+       "gid": 35,
+       "origin_x": 144198207,
+       "baseline_y": 144444935,
+       "advance_x": 6819531,
+       "cluster": 2
+      }
+     ]
+    }
+   ],
+   "display_sha256": "e4bac1983b3a7aeb9ac9a326e896886943d13b0bca0a5f33e853be70d6bfec4f"
+  }
+ }
+}

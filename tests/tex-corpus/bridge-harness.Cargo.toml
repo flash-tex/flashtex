@@ -1,0 +1,10 @@
+[package]
+name = "flashtex-bridge-corpus"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+flashtex-bridge = { path = "../crates/bridge" }
+serde_json = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"

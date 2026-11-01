@@ -1,0 +1,14 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{llll}\toprule \multicolumn{2}{c}{G1} & \multicolumn{2}{c}{G2}\\\cmidrule(lr){1-2}\cmidrule(lr){3-4} a & b & c & d\\\midrule e & f & g & h\\\bottomrule\end{tabular}
+
+Text after the table.
+\end{document}

@@ -1,0 +1,19 @@
+[package]
+name = "flashtex-font-resources"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic immutable font resources for the experimental FlashTeX rendering-v2 profile"
+
+[dependencies]
+flashtex-project-files = { path = "../project-files" }
+serde_json = "1"
+flashtex-font-engine = { path = "../font-engine", default-features = false }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+sha2 = "0.10"

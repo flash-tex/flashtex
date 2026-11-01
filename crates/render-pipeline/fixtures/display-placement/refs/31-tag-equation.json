@@ -1,0 +1,68 @@
+{
+ "fixture": "31-tag-equation.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Before.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "a",
+    "x": 294.211,
+    "y_top": 146.72
+   },
+   {
+    "text": "=",
+    "x": 302.2468,
+    "y_top": 146.72
+   },
+   {
+    "text": "b",
+    "x": 312.7653,
+    "y_top": 146.72
+   },
+   {
+    "text": "(A)",
+    "x": 462.2562,
+    "y_top": 146.72
+   },
+   {
+    "text": "middle",
+    "x": 133.768,
+    "y_top": 164.653
+   },
+   {
+    "text": "c",
+    "x": 294.234,
+    "y_top": 176.608
+   },
+   {
+    "text": "=",
+    "x": 301.3154,
+    "y_top": 176.608
+   },
+   {
+    "text": "d",
+    "x": 311.824,
+    "y_top": 176.608
+   },
+   {
+    "text": "B.1",
+    "x": 462.6727,
+    "y_top": 176.608
+   },
+   {
+    "text": "end.",
+    "x": 133.768,
+    "y_top": 194.541
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

@@ -1,0 +1,134 @@
+{
+ "fixture": "30-ang.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "12",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 158.675
+  },
+  {
+   "page": 1,
+   "text": ".",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 158.675,
+   "baseline": 134.765,
+   "end": 161.442
+  },
+  {
+   "page": 1,
+   "text": "5",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 161.442,
+   "baseline": 134.765,
+   "end": 166.424
+  },
+  {
+   "page": 1,
+   "text": "◦",
+   "font": "CMSY7",
+   "size": 6.9738,
+   "x": 166.424,
+   "baseline": 131.149,
+   "end": 170.506
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 174.325,
+   "baseline": 134.765,
+   "end": 190.377
+  },
+  {
+   "page": 1,
+   "text": "90",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 193.694,
+   "baseline": 134.765,
+   "end": 203.657
+  },
+  {
+   "page": 1,
+   "text": "◦",
+   "font": "CMSY7",
+   "size": 6.9738,
+   "x": 203.659,
+   "baseline": 131.149,
+   "end": 207.741
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 211.56,
+   "baseline": 134.765,
+   "end": 227.612
+  },
+  {
+   "page": 1,
+   "text": "−",
+   "font": "CMSY10",
+   "size": 9.9626,
+   "x": 230.929,
+   "baseline": 134.765,
+   "end": 238.678
+  },
+  {
+   "page": 1,
+   "text": "45",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 238.678,
+   "baseline": 134.765,
+   "end": 248.641
+  },
+  {
+   "page": 1,
+   "text": "◦",
+   "font": "CMSY7",
+   "size": 6.9738,
+   "x": 248.643,
+   "baseline": 131.149,
+   "end": 252.725
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 256.544,
+   "baseline": 134.765,
+   "end": 272.596
+  },
+  {
+   "page": 1,
+   "text": "180",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 275.913,
+   "baseline": 134.765,
+   "end": 290.857
+  },
+  {
+   "page": 1,
+   "text": "◦",
+   "font": "CMSY7",
+   "size": 6.9738,
+   "x": 290.86,
+   "baseline": 131.149,
+   "end": 294.942
+  }
+ ],
+ "warnings": []
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "font_url": "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.004otf.zip",
+  "archive_sha256": "5b0236051d3728be6616f1b274e3b910473875b5a3ef9382f0ef00384ddb161b",
+  "font_sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+  "license_url": "https://www.gust.org.pl/fonts/licenses/GUST-FONT-LICENSE.txt",
+  "license_raw_sha256": "5eb61bb836bb1845ef668717cb15b382e997748ce2629e4388cc5e4c3fa4e433",
+  "license_lf_sha256": "9372accba7de09e11b7e1d0a6a27d6703c5e329a60218032805e0accca1b8eeb",
+  "pinned_license_matches_lf": false,
+  "temporary_asset_directory": "/tmp/flashtex-lm-official-27_umgtf",
+  "matching_rooted_test": "passed_with_explicit_sha_bound_aliases_and_unavailable_slots",
+  "required_explicit_aliases": {
+    "ff": "f_f",
+    "fi": "f_i",
+    "fl": "f_l",
+    "ffi": "f_f_i",
+    "ffl": "f_f_l"
+  },
+  "unavailable_slots": {
+    "156": "IJ",
+    "188": "ij",
+    "223": "Germandbls"
+  },
+  "license_terms_equal_after_url_whitespace_normalization": true,
+  "initial_matching_rooted_test": "executed_failed_CFF_glyph_name_absent",
+  "verified": {
+    "fi_slot": 28,
+    "fi_original_gid": 125,
+    "fi_interval": [
+      0,
+      2
+    ],
+    "AV_kern_fixword": -116509,
+    "AV_intervals": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ]
+    ],
+    "unavailable_slots_rejected": [
+      156,
+      188,
+      223
+    ]
+  }
+}

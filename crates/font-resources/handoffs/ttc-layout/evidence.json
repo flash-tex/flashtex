@@ -1,0 +1,22 @@
+{
+  "base_commit": "f2fdb08a153de5940cc535e06bc0c496f5bf4eb5",
+  "patch_sha256": "3a97f5c396dbf239b49d0f980dbc59ccbf8164fb94fcc1e15635a304cdac444e",
+  "files": {
+    "crates/font-engine/src/truetype.rs": {
+      "base_sha256": "4cc7590eeba66e3c7b055f00f430f7926a0dccb0ffdb21ca61db25cd9dcd2083",
+      "patched_sha256": "2d2e08fd77f67f6e185545731118751eea449a118a3c23e2a4f33999b5dce415"
+    },
+    "crates/font-engine/src/lib.rs": {
+      "base_sha256": "4604d8968b713fcd4e5a5f6b0600a13282a79bc3bc8d423881000483c7fd3bed",
+      "patched_sha256": "93a78ae5192d7cfd4d59b36dd324a20d9e1757df888d6ae8d4f922d10ba02432"
+    },
+    "crates/font-engine/tests/ttc_layout.rs": {
+      "base_sha256": "0222063f27fea65d9acfa49da4d8bedc592f780c34c328a94ee367a6135c578a",
+      "patched_sha256": "d3d1391bbb6370ae324a3daff7ac92ee22b79d14f1b60e8d4403b1c5889017c5"
+    }
+  },
+  "tests": "10 collection tests passed (8 original,2 new), unchanged malicious probe now rejects4 malformed cases and accepts valid directory",
+  "scratch": "/tmp/flashtex-ttc-peer-zyn1im67",
+  "production_status": "review patch only; no authoritative peer files or dependency changed",
+  "limits": "128faces,256tables/face,4096totaltables hard ceilings;8,388,608 conservative work charge with caller-lowerable bounds. Effective total may be lower due to work ceiling. TTC2 unsupported."
+}

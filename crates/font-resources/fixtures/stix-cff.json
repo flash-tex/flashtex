@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "measured_parser_geometry_regression_not_visual_oracle",
+  "font_path": "/usr/share/fonts/stix-fonts/STIXTwoText-Regular.otf",
+  "font_sha256": "c4864ca6ec071c2d31d0d8309001faa1ee3517fffb53a31a405a697b71f52ca1",
+  "font_byte_length": 292140,
+  "license_path": "/usr/share/licenses/stix-fonts/OFL.txt",
+  "license_sha256": "0c8825913b60d858aacdb33c4ca6660a7d64b0d6464702efbb19313f5765861a",
+  "license_identifier": "OFL-1.1",
+  "resource_distribution": "Installed system resource; no font or license bytes copied into this fixture",
+  "cff_range": [
+    5644,
+    177326
+  ],
+  "cff_sha256": "c5d11bab6a95e75a568e1b72fd30fdd5e4c95abe68a72f02c0c4329ee948b532",
+  "table_accessor_peer_sha": "2d6954b923340c788cd31f663fa8e7a845326dec",
+  "table_accessor": "flashtex_font_engine::TrueTypeFace::cff_table",
+  "glyph_count": 2221,
+  "hint_policy": "Unhinted",
+  "geometry_encoding": "cff-matrix-geometry-v1",
+  "geometry_sha256": "208426d17e11ddf2ffd5c074563d8b3e45729f3558f31ac8649fbf4df195fd2f",
+  "expected_accepted": 2221,
+  "expected_unsupported": 0,
+  "expected_invalid": 0,
+  "visual_parity": "unverified",
+  "hinted_raster_parity": "unverified",
+  "expected_commands": 55206
+}

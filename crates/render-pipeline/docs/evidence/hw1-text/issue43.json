@@ -1,0 +1,69 @@
+{
+ "binary_sha256": "70c698d3662b64244614121d5a506c6440c3c47cd39dc654dba2ba4c4c209f41",
+ "returncode": 0,
+ "results": {
+  "r1": {
+   "status": "recovered",
+   "diagnostics": [
+    [
+     "overfull_hbox",
+     "overfull line: 385223.21pt too wide (no hyphenation available)"
+    ]
+   ],
+   "items": 65622,
+   "first_text": [
+    "b"
+   ],
+   "last_text": [
+    "d"
+   ],
+   "reply_bytes": 10014341
+  },
+  "r2": {
+   "status": "failed",
+   "diagnostics": [
+    [
+     null,
+     "compile_result would be 40757895 bytes for 1 pages, over the 16777216-byte reply limit; sp"
+    ]
+   ],
+   "items": 0,
+   "first_text": [],
+   "last_text": null,
+   "reply_bytes": 351
+  },
+  "r3": {
+   "status": "ok",
+   "diagnostics": [],
+   "items": 4,
+   "first_text": [
+    "a"
+   ],
+   "last_text": [
+    "ffi"
+   ],
+   "reply_bytes": 798
+  },
+  "r4": {
+   "status": "recovered",
+   "diagnostics": [
+    [
+     "overfull_hbox",
+     "overfull line: 385226.60pt too wide (no hyphenation available)"
+    ],
+    [
+     "math_resource_profile",
+     "lmmi8: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outl"
+    ]
+   ],
+   "items": 65623,
+   "first_text": [
+    "b"
+   ],
+   "last_text": [
+    "i"
+   ],
+   "reply_bytes": 10014768
+  }
+ }
+}

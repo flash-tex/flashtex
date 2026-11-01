@@ -1,0 +1,13 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\tikzset{box/.style={draw=#1, thick, rounded corners=2pt}, box/.default=black,
+  dot/.style={fill, circle, inner sep=1.5pt}}
+\begin{document}
+\begin{tikzpicture}
+\node[box] at (0,0) {one};
+\node[box=red] at (2,0) {two};
+\node[dot] at (4,0) {};
+\node[dot, blue] at (4.5,0) {};
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,199 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.89s
+     Running unittests src/lib.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/flashtex_compiler-e347aa3aee22dc90)
+
+running 41 tests
+test export::tests::ordinary_text_and_latin1_encode_as_text ... ok
+test export::tests::every_math_symbol_has_a_decided_export_outcome ... ok
+test export::tests::unrepresentable_lists_each_offender_once ... ok
+test export::winansi_tests::characters_with_genuinely_no_base14_glyph_still_report ... ok
+test export::winansi_tests::typographic_punctuation_is_exportable ... ok
+test export::tests::the_fraction_rule_is_reported_not_substituted ... ok
+test incremental::tests::adding_usepackage_forces_full_recompile ... ok
+test incremental::tests::layout_constraint_change_forces_full_recompile ... ok
+test incremental::tests::malformed_edit_has_partial_output_and_source_diagnostics ... ok
+test incremental::tests::edit_inside_one_paragraph_matches_clean_build ... ok
+test incremental::tests::edit_spanning_paragraph_boundary_matches_clean_build ... ok
+test incremental::tests::edits_at_start_and_end_match_clean_build ... ok
+test incremental::tests::redefining_macro_invalidates_untouched_reader ... ok
+test incremental::tests::multibyte_insertion_shifts_later_spans_by_byte_delta ... ok
+test incremental::tests::scoped_macro_change_does_not_invalidate_global_reader ... ok
+test incremental::tests::heading_and_math_use_the_same_cursor_as_clean_layout ... ok
+test layout::tests::body_and_heading_faces_do_not_depend_on_numeric_font_size ... ok
+test layout::tests::core14_shaping_applies_kerning_and_keeps_document_byte_identity ... ok
+test layout::tests::fraction_stacks_smaller_children_and_advances_as_one_unit ... ok
+test layout::tests::inline_and_display_math_both_produce_positioned_items ... ok
+test layout::tests::scripts_attach_to_atoms_and_nested_scripts_decrease_in_size ... ok
+test layout::tests::unknown_command_and_unclosed_shift_recover_without_losing_content ... ok
+test layout::tests::every_math_item_span_is_a_valid_source_slice ... ok
+test layout::tests::shaping_missing_glyph_diagnostic_uses_document_not_relative_offset ... ok
+test lexer::tests::command_and_linebreak_are_distinguished ... ok
+test layout::tests::tall_math_increases_the_distance_to_the_next_line ... ok
+test lexer::tests::paragraph_break_needs_a_blank_line ... ok
+test lexer::tests::spans_are_utf8_bytes_not_char_counts ... ok
+test math::shift_tests::shifting_reaches_nested_spans ... ok
+test layout::tests::unsupported_shaping_is_an_explicit_source_mapped_error ... ok
+test parser::tests::group_local_macro_is_restored_when_the_group_closes ... ok
+test parser::tests::invalid_newcommand_and_renewcommand_relationships_are_diagnostic ... ok
+test parser::tests::macro_argument_keeps_argument_source_span ... ok
+test parser::tests::macros_expand_inside_supported_command_arguments ... ok
+test parser::tests::macro_expansion_in_math_does_not_fabricate_per_glyph_spans ... ok
+test parser::tests::nested_macros_expand_and_renewcommand_replaces_an_existing_macro ... ok
+test parser::tests::preamble_is_recorded_and_only_document_body_is_typeset ... ok
+test parser::tests::zero_argument_macro_maps_literal_output_to_invocation ... ok
+test protocol::font_literal_tests::every_font_literal_matches_its_serialised_value ... ok
+test parser::tests::self_referential_macro_hits_explicit_recursion_limit ... ok
+test incremental::tests::changed_line_count_repositions_later_blocks ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/acceptance.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/acceptance-c6370a322aca269f)
+
+running 11 tests
+test malformed_input_recovers_with_diagnostics_and_still_produces_output ... ok
+test unknown_protocol_version_and_type_produce_error_envelopes ... ok
+test math_and_unsupported_commands_are_reported_never_silent ... ok
+test realistic_preamble_is_informational_and_only_body_is_positioned ... ok
+test unsafe_paths_are_rejected ... ok
+test unicode_spans_are_utf8_bytes_that_slice_back_exactly ... ok
+test stray_closing_brace_is_reported_not_swallowed ... ok
+test repository_fixture_roundtrips ... ok
+test a_minimal_document_and_a_second_edited_revision_both_lay_out ... ok
+test warm_session_cache_is_bounded_and_stays_correct_after_eviction ... ok
+test bounded_reader_rejects_an_oversized_line_and_recovers_for_the_next_request ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/corpus_gate.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/corpus_gate-9b315407ffca1f7b)
+
+running 2 tests
+test every_corpus_case_matches_its_pinned_result ... ok
+test every_corpus_case_span_slices_its_own_document ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/layout_capabilities.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/layout_capabilities-69b17ddaacae6d07)
+
+running 8 tests
+test malformed_capability_fields_each_produce_an_explicit_diagnostic ... ok
+test font_hints_report_the_faces_selected_by_layout ... ok
+test omitted_capabilities_preserve_the_legacy_fraction_route ... ok
+test rules_v1_emits_a_sourced_top_left_rectangle_without_the_legacy_glyph ... ok
+test typed_rules_remove_only_the_fraction_export_warning ... ok
+test capability_switching_on_one_session_cannot_leak_typed_rules ... ok
+test unknown_and_unrequested_capabilities_never_change_shapes ... ok
+test incremental_and_clean_protocol_output_match_for_the_same_capability_set ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/logical_symbols.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/logical_symbols-2d9b4fa7140eff47)
+
+running 2 tests
+test logical_symbols_encode_and_keep_spans ... ok
+test logical_edits_and_unresolved_neighbors_remain_explicit ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/math_text.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/math_text-a052e83339d761ae)
+
+running 7 tests
+test comments_before_text_argument_do_not_hide_the_group ... ok
+test whitespace_comments_and_nested_literal_braces ... ok
+test macro_text_points_to_invocation_not_definition ... ok
+test literal_groups_are_distinct_roman_text_with_group_spans ... ok
+test scripts_macros_and_incremental_source_shifts_match_clean ... ok
+test multi_document_text_navigation_tracks_edits_and_document_order ... ok
+test malformed_and_unsupported_text_stays_diagnosed ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/membership.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/membership-6ca672821b0df876)
+
+running 2 tests
+test membership_symbol_and_export_are_explicit ... ok
+test membership_edits_match_clean_outputs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pinned_fixtures.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/pinned_fixtures-16ebcdbb4fe3607a)
+
+running 2 tests
+test regenerate_pinned_fixtures ... ignored, regenerates committed raw compile-result evidence
+test pinned_compile_results_are_byte_exact_without_normalization ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/quantifiers.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/quantifiers-07543a8d51c42860)
+
+running 2 tests
+test quantifiers_export_and_preserve_command_spans ... ok
+test quantifier_macro_bang_and_incremental_edits ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/recovery.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/recovery-95c0c7473e4a8a22)
+
+running 6 tests
+test generate_recovery_evidence ... ignored, regenerates the committed recovery evidence
+test broken_and_fixed_edits_remain_byte_identical_in_both_directions ... ok
+test every_wire_failure_replies_with_exact_status_and_explicit_diagnostics ... ok
+test every_source_recovery_class_replies_with_positioned_output_and_mapped_diagnostics ... ok
+test every_source_recovery_is_byte_identical_incrementally ... ok
+test recovery_evidence_is_current ... ok
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/references_and_figures.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/references_and_figures-9151b2af5174ec6d)
+
+running 9 tests
+test includegraphics_is_explicitly_unsupported ... ok
+test sections_and_subsections_number_and_reset ... ok
+test undefined_reference_is_visible_and_warns_with_key ... ok
+test equation_label_round_trip_and_right_margin_number ... ok
+test duplicate_label_warns_and_second_definition_wins ... ok
+test backward_and_forward_references_resolve ... ok
+test figure_caption_label_and_lists_render ... ok
+test inserting_top_section_recomputes_and_matches_full_build ... ok
+test forward_pageref_converges_to_the_labels_page ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/restart.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/restart-8b3836395108d1a9)
+
+running 4 tests
+test diagnostics_are_deterministic_across_restarts ... ok
+test repairing_a_document_returns_it_to_its_pre_breakage_output ... ok
+test a_restart_at_any_point_produces_identical_output ... ok
+test a_long_editing_session_never_drifts_from_a_clean_build ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+
+     Running tests/robustness.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/robustness-424facdfb662c640)
+
+running 5 tests
+test deeply_nested_input_does_not_blow_the_stack ... ok
+test no_malformed_request_line_panics_the_transport ... ok
+test no_generated_source_panics_incremental_reuse ... ok
+test a_request_is_answered_even_when_the_document_is_pathological ... ok
+test no_generated_source_panics_the_parser_or_layout ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/starred_sections.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/starred_sections-32c8766633824b2a)
+
+running 4 tests
+test starred_problem_macro_preserves_utf8_argument_spans ... ok
+test unsupported_heading_commands_remain_explicit ... ok
+test starred_sections_preserve_counters_and_previous_label_value ... ok
+test toggling_stars_matches_clean_compilation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/unsupported_inventory.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/unsupported_inventory-4ceb3a06bf1798d1)
+
+running 2 tests
+test generate_unsupported_inventory ... ignored, regenerates the committed unsupported-feature inventory
+test every_unsupported_feature_is_reported_explicitly ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

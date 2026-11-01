@@ -1,0 +1,31 @@
+{
+  "base": "1c02a2bc50874770d15a4decbaa5c3a376ee3ae9",
+  "replaces_all_prior_compiler_patches": true,
+  "clean_apply_all_ten_sources_match": true,
+  "source_hashes": {
+    "crates/compiler/src/parser.rs": "54df39c92470ad78980962b39218a09d3db629ac0c3761c4d0fc52be01e65ae4",
+    "crates/compiler/src/layout.rs": "bb1649dcecde7ab3f81bd82e29818c367b13a9bd907aec23cd928729e5deace0",
+    "crates/compiler/src/math.rs": "72bfaaf441d38275b5ff10d85e8976bb557610d195847efe5a13fe7fb5f9f427",
+    "crates/compiler/src/export.rs": "1bcff1801c37ed3dcebd99a939486e5afe7551133e86981c834463fe3282232f",
+    "crates/compiler/tests/starred_sections.rs": "bb7afbd5923a5a8c580842460c9bc080d3a469c288b3a148b6ba75f53b94017b",
+    "crates/compiler/tests/membership.rs": "7f5b656956e6a4b81eed2599081d5ae38aac8fc938fc503bd9cb3b750bdc9e7e",
+    "crates/compiler/tests/quantifiers.rs": "b690ad4cac506670378b0ba8f2fb01826c2d2733ab87667043bd02c7c0106fe5",
+    "crates/compiler/tests/logical_symbols.rs": "3b6172dd88ca242912fac9a75fdeb8b595e87ae19e256eda4f7e1f1fb5411871",
+    "crates/compiler/src/incremental.rs": "6192b6f676b5589b5bf04fe51f56000f2ea75764ef07340f38f5b70d5ca175cf",
+    "crates/compiler/tests/math_text.rs": "4f3ebad24a19076fb983600caf7ea9f0004e5da373f3fc05883ac3c92d7d0fdd"
+  },
+  "tests_passed": 104,
+  "ignored": 3,
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-text-runs/optimized-compiler-preserved",
+  "binary_sha256": "1d393dd19c4d814a3e79f0c4cfe20f488c28b98b4ef731aba0ac82a7b8fa4631",
+  "final_hw1_reply_equals_comment_candidate": true,
+  "hw1_diagnostics": 72,
+  "files": {
+    "candidate.patch": "78dd120040a1c0800685337d12c3178819dde3b722185bae1e701fc10aca8c9c",
+    "request.jsonl": "ea6ba8d872929cb541c89d8048b457460c3b7dc1554cf66832a70b4d0fa4a433",
+    "response.jsonl": "a5944743b052cb036456f5ff0662cb8d93aa683847dea3def0886361f3de70a5",
+    "stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests.log": "10e5e41eaac96341102607828ef36e811a6e4181a9dd85c61bcfc0b492f934b4",
+    "clippy.log": "c2c9ef0b6aa567b6f9d16e2c7a34f2343c2a3dc44cd3dd7477157eb6778b2638"
+  }
+}

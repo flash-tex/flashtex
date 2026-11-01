@@ -1,0 +1,114 @@
+{
+  "full_frame_bytes": 500288,
+  "metadata_frame_bytes": 326,
+  "observations": [
+    {
+      "encoding_ms": 0.573778,
+      "metadata_only": false,
+      "pair": 0
+    },
+    {
+      "encoding_ms": 0.0019010000000000001,
+      "metadata_only": true,
+      "pair": 0
+    },
+    {
+      "encoding_ms": 0.000688,
+      "metadata_only": true,
+      "pair": 1
+    },
+    {
+      "encoding_ms": 0.39528,
+      "metadata_only": false,
+      "pair": 1
+    },
+    {
+      "encoding_ms": 0.277684,
+      "metadata_only": false,
+      "pair": 2
+    },
+    {
+      "encoding_ms": 0.0008810000000000001,
+      "metadata_only": true,
+      "pair": 2
+    },
+    {
+      "encoding_ms": 0.000532,
+      "metadata_only": true,
+      "pair": 3
+    },
+    {
+      "encoding_ms": 0.250036,
+      "metadata_only": false,
+      "pair": 3
+    },
+    {
+      "encoding_ms": 0.25171699999999997,
+      "metadata_only": false,
+      "pair": 4
+    },
+    {
+      "encoding_ms": 0.000839,
+      "metadata_only": true,
+      "pair": 4
+    },
+    {
+      "encoding_ms": 0.000563,
+      "metadata_only": true,
+      "pair": 5
+    },
+    {
+      "encoding_ms": 0.270959,
+      "metadata_only": false,
+      "pair": 5
+    },
+    {
+      "encoding_ms": 0.250119,
+      "metadata_only": false,
+      "pair": 6
+    },
+    {
+      "encoding_ms": 0.000641,
+      "metadata_only": true,
+      "pair": 6
+    },
+    {
+      "encoding_ms": 0.000505,
+      "metadata_only": true,
+      "pair": 7
+    },
+    {
+      "encoding_ms": 0.260036,
+      "metadata_only": false,
+      "pair": 7
+    },
+    {
+      "encoding_ms": 0.259911,
+      "metadata_only": false,
+      "pair": 8
+    },
+    {
+      "encoding_ms": 0.00065,
+      "metadata_only": true,
+      "pair": 8
+    },
+    {
+      "encoding_ms": 0.000453,
+      "metadata_only": true,
+      "pair": 9
+    },
+    {
+      "encoding_ms": 0.24960200000000002,
+      "metadata_only": false,
+      "pair": 9
+    }
+  ],
+  "scope": "synthetic wire encoding with same500KB Unicode source; no ledger/native timing",
+  "source_bytes": 500000,
+  "source_sha256": "1d8b3b5f7f320d8d090623ce6876f53391e83a365d6b87c3e3838b4078fd9567",
+  "source_base": "6874316e",
+  "sha256": {
+    "crates/preview-controller/examples/edit_ack_probe.rs": "50e1a0e4965046250b9ea64592d0b960bd96d12ca0b2ae0a313e77c0a8efd2d1",
+    "crates/preview-controller/target/release/examples/edit_ack_probe": "2578410ed8bfc85502fd029373e6939e5bb5f2d8ebab5e93ef37b3b6452c6888"
+  }
+}

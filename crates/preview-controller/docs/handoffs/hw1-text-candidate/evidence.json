@@ -1,0 +1,40 @@
+{
+  "base": "1c02a2bc50874770d15a4decbaa5c3a376ee3ae9",
+  "cumulative_replaces_four_candidate_patch": true,
+  "clean_apply_all_ten_sources_match": true,
+  "source_hashes": {
+    "crates/compiler/src/parser.rs": "54df39c92470ad78980962b39218a09d3db629ac0c3761c4d0fc52be01e65ae4",
+    "crates/compiler/src/layout.rs": "bb1649dcecde7ab3f81bd82e29818c367b13a9bd907aec23cd928729e5deace0",
+    "crates/compiler/src/math.rs": "3edeaae0a39cc593541826bc98798f3927fd798ac396e08b9e9c99db36a9fd9c",
+    "crates/compiler/src/export.rs": "1bcff1801c37ed3dcebd99a939486e5afe7551133e86981c834463fe3282232f",
+    "crates/compiler/tests/starred_sections.rs": "bb7afbd5923a5a8c580842460c9bc080d3a469c288b3a148b6ba75f53b94017b",
+    "crates/compiler/tests/membership.rs": "7f5b656956e6a4b81eed2599081d5ae38aac8fc938fc503bd9cb3b750bdc9e7e",
+    "crates/compiler/tests/quantifiers.rs": "b690ad4cac506670378b0ba8f2fb01826c2d2733ab87667043bd02c7c0106fe5",
+    "crates/compiler/tests/logical_symbols.rs": "3b6172dd88ca242912fac9a75fdeb8b595e87ae19e256eda4f7e1f1fb5411871",
+    "crates/compiler/src/incremental.rs": "6192b6f676b5589b5bf04fe51f56000f2ea75764ef07340f38f5b70d5ca175cf",
+    "crates/compiler/tests/math_text.rs": "cf9cae0cf599eb28401fac65588d9e2f5dd42ffd78733e4a222ff4b7c539854c"
+  },
+  "source_sha256": "f725e23897df3c9645bde1ceaab0876d78ea6ef4a44fd0e80d60a5161fac9d9e",
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/compiler-preserved",
+  "binary_sha256": "3bde3a1ea90c67c18554e53afe3f6c32c17eb62ca25352859a81383064d55b89",
+  "tests_passed": 103,
+  "ignored": 3,
+  "hw1_diagnostics": 72,
+  "hw1_exact_text_groups": 5,
+  "files": {
+    "candidate.patch": "af8fd219e1cb9cbce0e69273e057e2889f7b3d776af55684aa4e5eb8f7d530a0",
+    "request.jsonl": "ea6ba8d872929cb541c89d8048b457460c3b7dc1554cf66832a70b4d0fa4a433",
+    "response.jsonl": "a5944743b052cb036456f5ff0662cb8d93aa683847dea3def0886361f3de70a5",
+    "stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "combined-tests.log": "a08346b2522c3d61cf968e7c2d2872e51efcbbd64bef18083b28579f8d63ed6c",
+    "clippy.log": "d084bee90d3939a7253fd016adf80d68cc22de1136bac00dc81ee306acbda38f",
+    "lib-tests.log": "5100cd71c33e4ce510ca3ab96b1da44258fee8f486b52da3c3f34b612375a060",
+    "text-tests.log": "d701cb6c8cfa8abce36633e76c69bb1c974820afc5f8623961cf1cc459fe5d5b",
+    "text-fixed-tests.log": "4b940c7acfd432fe9187bb34959ff9472e67f7d26a3f65b9b8c56c17f147c9d4",
+    "robustness.log": "93a1e8f399f881133fb4a6207afd36a379867e5d7d535b7427bac2b25d8745f3",
+    "text-spans.json": "e2ad563fcb77ae05b8ce7cdfeb0df9ae31088b5d965fa748e2423f1d3bfd7872",
+    "navigation-tests.log": "0179809a2749bd8b911332fde534fa45275d898187e964cf017578b6bf945df9",
+    "navigation-clippy.log": "429d85696c751d0659cef53c18ae38d40e13572a863c0a98369e237bf6b6c8cf"
+  },
+  "test_count_scope": "97 unchanged prior tests plus 6 current math_text tests; combined log contains earlier 4 math_text tests, not counted twice"
+}

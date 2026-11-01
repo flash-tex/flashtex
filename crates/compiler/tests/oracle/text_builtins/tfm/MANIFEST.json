@@ -1,0 +1,114 @@
+{
+ "cmmi10.tfm": {
+  "sha256": "e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645",
+  "source": "TL2026:fonts/tfm/public/cm/cmmi10.tfm"
+ },
+ "cmmi12.tfm": {
+  "sha256": "79563547084d85388e6909888f9fa7f5cad33bdda44ca6b25b362e1d301db539",
+  "source": "TL2026:fonts/tfm/public/cm/cmmi12.tfm"
+ },
+ "cmr10.tfm": {
+  "sha256": "87f2d8981927644cbecaf3d639e96e348ea4e7be49d8804468bd8ba9ff3f5244",
+  "source": "TL2026:fonts/tfm/public/cm/cmr10.tfm"
+ },
+ "cmr12.tfm": {
+  "sha256": "1ce8af37ed38e93940829d3540e494eaaddc5201758d036b9074467e70a738dc",
+  "source": "TL2026:fonts/tfm/public/cm/cmr12.tfm"
+ },
+ "cmr7.tfm": {
+  "sha256": "28f9f4d237bdae4babef4a59d90f17686a09d6f9df0b2c3c23b2ba15f20eee82",
+  "source": "TL2026:fonts/tfm/public/cm/cmr7.tfm"
+ },
+ "cmr8.tfm": {
+  "sha256": "4c5ae243ac0aa254e7ec7f0602cc2a4351e5011ff0cb6dc150a5f6de19585de6",
+  "source": "TL2026:fonts/tfm/public/cm/cmr8.tfm"
+ },
+ "cmsy10.tfm": {
+  "sha256": "0ca13d421ac7133271aed7c935099ecf3d1d08ac9e15f81acb34a16564ab8a46",
+  "source": "TL2026:fonts/tfm/public/cm/cmsy10.tfm"
+ },
+ "cmsy7.tfm": {
+  "sha256": "4f59bbf683e947c807158641621982dc83f55fec042fea7963d8ce9f9da98256",
+  "source": "TL2026:fonts/tfm/public/cm/cmsy7.tfm"
+ },
+ "cmsy8.tfm": {
+  "sha256": "84c37f07ca360c41ad0a0fba7387d279d72457c69bdae03653208c683d8de6bc",
+  "source": "TL2026:fonts/tfm/public/cm/cmsy8.tfm"
+ },
+ "ec-lmbx10.tfm": {
+  "sha256": "0895c940bd2e763b70dcab18ebf27fd3f93c2490f43b2a8c028fc7fc24b2e855",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmbx10.tfm"
+ },
+ "ec-lmbx7.tfm": {
+  "sha256": "37ae9162962552ae6fdc7d6f387e5d32b1bca12a8721791db03e179ef4297c4b",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmbx7.tfm"
+ },
+ "ec-lmr10.tfm": {
+  "sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmr10.tfm"
+ },
+ "ec-lmr12.tfm": {
+  "sha256": "299021120f0a29ef61278a2363903bd8defbb8faaade458eb79067342aecb56f",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmr12.tfm"
+ },
+ "ec-lmr7.tfm": {
+  "sha256": "8cbbca3361fad7a70510d9e506bed78c1288065c1d83adce828df8c31afeedaf",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmr7.tfm"
+ },
+ "ec-lmr8.tfm": {
+  "sha256": "9c60dbef6aea9e108bd6512f10bd2855331b31ffa49bfb6161bf4ee9ac570584",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmr8.tfm"
+ },
+ "ec-lmri10.tfm": {
+  "sha256": "372f968b4eeb47bf6a6c941c8793bce118d1800f12e194a351c7493ecc158f2a",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmri10.tfm"
+ },
+ "ec-lmss10.tfm": {
+  "sha256": "c410d9aa507694a4fd18e65e3983d1a96d6eff789c2c7d7816b841b9338f79b1",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmss10.tfm"
+ },
+ "ec-lmss8.tfm": {
+  "sha256": "391709abfb3118a625124b08a118e901a436ef1353925e6ef3fb04cb34851a9a",
+  "source": "TL2026:fonts/tfm/public/lm/ec-lmss8.tfm"
+ },
+ "lmbsy10.tfm": {
+  "sha256": "bc23667bef1678ddfcba4edc433231b5ca9c0d6a0a5c4bbc3e044ae2ec519c4f",
+  "source": "TL2026:fonts/tfm/public/lm/lmbsy10.tfm"
+ },
+ "lmbsy7.tfm": {
+  "sha256": "526ab5a41c5bfdbb9cda2ad6804ebf4847db5017b02b86f6f0dc05fbd448276b",
+  "source": "TL2026:fonts/tfm/public/lm/lmbsy7.tfm"
+ },
+ "lmmi10.tfm": {
+  "sha256": "d9fce8963e8cb075bf31a5715a8f4a54688f7026b3a06e882ff2eb9c0d110320",
+  "source": "TL2026:fonts/tfm/public/lm/lmmi10.tfm"
+ },
+ "lmmi12.tfm": {
+  "sha256": "06870b7e003008214eefcf9bc4215006faff9edf5d99bee75211de57620d1818",
+  "source": "TL2026:fonts/tfm/public/lm/lmmi12.tfm"
+ },
+ "lmmib10.tfm": {
+  "sha256": "09ba85c2fa364dcd2635f2282c000ecab84b237d02cfe7e224b2c7b6be60e3d7",
+  "source": "TL2026:fonts/tfm/public/lm/lmmib10.tfm"
+ },
+ "lmsy10.tfm": {
+  "sha256": "11f429b2c08f944627faa5942277297d7f8fef40edae2bae46cb238b838400ba",
+  "source": "TL2026:fonts/tfm/public/lm/lmsy10.tfm"
+ },
+ "lmsy7.tfm": {
+  "sha256": "3e92767469b4df54c985a533b8064789df60f21ab69d381dbf01bb608e3fbff8",
+  "source": "TL2026:fonts/tfm/public/lm/lmsy7.tfm"
+ },
+ "lmsy8.tfm": {
+  "sha256": "b6b96268d56481a5bc7cbb34b140ca1fa5017d2767acc4e11a94b30eabd114f7",
+  "source": "TL2026:fonts/tfm/public/lm/lmsy8.tfm"
+ },
+ "tcrm1000.tfm": {
+  "sha256": "748a696710f9bc67a3dbb825d863dc73a0fe802ec3473b28b11f222011028387",
+  "source": "TL2026:fonts/tfm/jknappen/ec/tcrm1000.tfm"
+ },
+ "ts1-lmr10.tfm": {
+  "sha256": "080be3dc1bf1bac9eb612e44718ea630d2bd2ebf4d8e8e00333a78b5332ca6b3",
+  "source": "TL2026:fonts/tfm/public/lm/ts1-lmr10.tfm"
+ }
+}

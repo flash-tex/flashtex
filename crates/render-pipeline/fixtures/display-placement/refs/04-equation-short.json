@@ -1,0 +1,73 @@
+{
+ "fixture": "04-equation-short.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Short",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "line:",
+    "x": 175.8581,
+    "y_top": 134.765
+   },
+   {
+    "text": "2",
+    "x": 283.88,
+    "y_top": 142.606
+   },
+   {
+    "text": "2",
+    "x": 305.768,
+    "y_top": 142.606
+   },
+   {
+    "text": "2",
+    "x": 328.592,
+    "y_top": 142.606
+   },
+   {
+    "text": "x",
+    "x": 278.186,
+    "y_top": 146.72
+   },
+   {
+    "text": "+",
+    "x": 290.563,
+    "y_top": 146.72
+   },
+   {
+    "text": "y",
+    "x": 300.5236,
+    "y_top": 146.72
+   },
+   {
+    "text": "=",
+    "x": 313.005,
+    "y_top": 146.72
+   },
+   {
+    "text": "z",
+    "x": 323.5235,
+    "y_top": 146.72
+   },
+   {
+    "text": "(1)",
+    "x": 464.749,
+    "y_top": 146.72
+   },
+   {
+    "text": "after.",
+    "x": 133.768,
+    "y_top": 164.653
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

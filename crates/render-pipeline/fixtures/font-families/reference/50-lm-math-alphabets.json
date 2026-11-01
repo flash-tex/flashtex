@@ -1,0 +1,120 @@
+{
+ "fixture": "50-lm-math-alphabets.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Letters",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "ABC",
+   "font": "LMSans10-Regular",
+   "size": 9.9626,
+   "x": 182.694,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 204.555,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "T",
+   "font": "LMMono10-Regular",
+   "size": 9.9626,
+   "x": 214.526,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "x",
+   "font": "LMMathItalic10-Regular",
+   "size": 9.9626,
+   "x": 219.756,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 227.662,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "diff",
+   "font": "LMRoman10-Italic",
+   "size": 9.9626,
+   "x": 237.622,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 255.815,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "gA",
+   "font": "EUFM10",
+   "size": 9.9626,
+   "x": 265.776,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 280.155,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "A",
+   "font": "LMSans10-Regular",
+   "size": 9.9626,
+   "x": 290.125,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "2",
+   "font": "LMRoman7-Regular",
+   "size": 6.9738,
+   "x": 296.765,
+   "baseline": 131.149
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 304.555,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "math.",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 316.175,
+   "baseline": 134.765
+  }
+ ],
+ "warnings": []
+}

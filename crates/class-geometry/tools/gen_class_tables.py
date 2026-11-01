@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+r"""Generate article class tables from real pdflatex into src/generated.rs.
+
+pdflatex is an ORACLE ONLY: run this script by hand on a machine with TeX
+Live; `cargo test` never runs TeX, it only reads the committed generated.rs.
+
+For each size (10pt, 11pt, 12pt) this writes a small probe document that
+loads `\documentclass[<size>]{article}` and prints (`\typeout`/`\the`, the
+same convention as `oracle/generate.py`) the layout parameters
+`class-geometry` already models (`PageParams` in `src/class.rs`, plus the
+body-font em/ex from `body_font`), all measured after `\begin{document}`.
+It runs pdflatex once per probe, parses the `.log` for the printed values,
+and emits `src/generated.rs`.
+
+Probe document (per size; `<size>` is 10pt/11pt/12pt):
+
+    \documentclass[<size>]{article}
+    \begin{document}
+    \typeout{FTDIM <name> \the\<name>}   % one line per plain length
+    \typeout{FTDIM parskip \the\parskip}
+    \typeout{FTDIM skipfootins \the\skip\footins}
+    \typeout{FTDIM em \the\fontdimen6\font}
+    \typeout{FTDIM ex \the\fontdimen5\font}
+    \@ifundefined{mathindent}{\typeout{FTMATH undefined}}
+                            {\typeout{FTMATH defined \the\mathindent}}
+    X
+    \end{document}
+
+TeX prints `\the<dimen>` with `print_scaled` (at most 5 decimals); the
+`pt_to_sp` conversion below re-parses that decimal with TeX's own
+`round_decimals`, which round-trips exactly (cf. `print_scaled_round_trips`
+in `src/tex.rs`).
+
+Usage: python3 tools/gen_class_tables.py [--keep DIR]
+"""
+import glob
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, "..", "src", "generated.rs")
+
+CLASS = "article"
+SIZES = ["10pt", "11pt", "12pt"]
+
+# Plain lengths probed with \the\<name>, in PageParams field order.
+DIMS = [
+    "paperwidth", "paperheight", "textwidth", "textheight",
+    "oddsidemargin", "evensidemargin", "topmargin", "headheight",
+    "headsep", "footskip", "topskip", "baselineskip", "parindent",
+    "marginparwidth", "marginparsep", "marginparpush", "columnsep",
+    "columnseprule", "maxdepth", "footnotesep", "overfullrule",
+    "leftmargini", "labelsep", "hoffset", "voffset",
+]
+
+# Glue registers probed with \the (full "natural plus stretch minus shrink").
+GLUES = [
+    ("parskip", r"\parskip"),
+    ("skipfootins", r"\skip\footins"),
+]
+
+UNITY = 65536
+TWO = 131072
+
+
+def find_pdflatex():
+    found = shutil.which("pdflatex")
+    if found:
+        return found
+    for candidate in ["/Library/TeX/texbin/pdflatex"]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    for candidate in sorted(glob.glob("/usr/local/texlive/*/bin/*/pdflatex")):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    sys.exit("pdflatex not found (checked $PATH, "
+             "/Library/TeX/texbin/pdflatex, /usr/local/texlive/*/bin/*/pdflatex)")
+
+
+def round_decimals(digits):
+    """TeX: The Program section 102 `round_decimals` (exact integer math)."""
+    a = 0
+    for d in reversed(digits):
+        a = (a + d * TWO) // 10
+    return (a + 1) // 2
+
+
+def pt_to_sp(text):
+    """Parse a TeX-printed `print_scaled` decimal like `4.30554pt` to sp."""
+    m = re.fullmatch(r"(-?)([0-9]*)(?:\.([0-9]*))?pt", text.strip())
+    if not m:
+        raise ValueError(f"not a TeX dimen: {text!r}")
+    neg, intpart, fracpart = m.groups()
+    ivalue = int(intpart) if intpart else 0
+    digits = [ord(c) - ord("0") for c in (fracpart or "")]
+    sp = ivalue * UNITY + round_decimals(digits)
+    return -sp if neg else sp
+
+
+def parse_glue(text):
+    """Parse `\the<skip>` output into (natural, stretch, shrink) sp."""
+    m = re.fullmatch(
+        r"(\S+pt)(?: plus (\S+pt))?(?: minus (\S+pt))?", text.strip())
+    if not m:
+        raise ValueError(f"not TeX glue: {text!r}")
+    nat, stretch, shrink = m.groups()
+    return (pt_to_sp(nat),
+            pt_to_sp(stretch) if stretch else 0,
+            pt_to_sp(shrink) if shrink else 0)
+
+
+def probe(size):
+    out = [f"\\documentclass[{size}]{{{CLASS}}}\n"]
+    out.append("\\begin{document}\n")
+    for d in DIMS:
+        out.append(f"\\typeout{{FTDIM {d} \\the\\{d}}}\n")
+    for name, reg in GLUES:
+        out.append(f"\\typeout{{FTDIM {name} \\the{reg}}}\n")
+    out.append("\\typeout{FTDIM em \\the\\fontdimen6\\font}\n")
+    out.append("\\typeout{FTDIM ex \\the\\fontdimen5\\font}\n")
+    out.append("\\makeatletter\\@ifundefined{mathindent}"
+               "{\\typeout{FTMATH undefined}}"
+               "{\\typeout{FTMATH defined \\the\\mathindent}}\\makeatother\n")
+    out.append("X\n\\end{document}\n")
+    return "".join(out)
+
+
+def rust_sp(sp, tex):
+    return f"Sp({sp}), // {tex}"
+
+
+def emit(tables, version):
+    """tables: {size: ({dim: (sp, tex)}, {glue: ((n, s, h), tex)}, math_or_None)}."""
+    lines = [
+        "// @generated by crates/class-geometry/tools/gen_class_tables.py -- do not edit.",
+        f"// Provenance: {version}; class `article` at 10pt/11pt/12pt with "
+        "default options (letter paper, oneside, onecolumn).",
+        "// Probe: `\\documentclass[<size>]{article}` printing `\\the<param>` "
+        "via `\\typeout{FTDIM ...}` after `\\begin{document}` (see the "
+        "generator script header for the full probe document).",
+        "// `columnwidth` is intentionally absent: it derives from "
+        "`textwidth`/`columnsep` via `PageParams::columnwidth`.",
+        "#![allow(clippy::all)]",
+        "",
+        "use crate::class::{BaseSize, Glue};",
+        "use crate::tex::Sp;",
+        "",
+        "/// `article` layout parameters measured from real pdflatex",
+        "/// (`PageParams` field order, plus the body-font em/ex).",
+        "/// Glue is `(natural, stretch, shrink)` in scaled points.",
+        "#[derive(Clone, Copy, Debug, PartialEq, Eq)]",
+        "pub struct ArticleLayout {",
+        "    pub size: BaseSize,",
+    ]
+    # Field order mirrors PageParams; glues become Glue, mathindent Option.
+    for d in DIMS:
+        lines.append(f"    pub {d}: Sp,")
+    lines += [
+        "    pub parskip: Glue,",
+        "    pub skip_footins: Glue,",
+        "    pub mathindent: Option<Sp>,",
+        "    pub em: Sp,",
+        "    pub ex: Sp,",
+        "}",
+    ]
+    for size in SIZES:
+        dims, glues, math = tables[size]
+        tag = size.replace("pt", "").upper()
+        lines += ["", f"/// `article`, `{size}`, default options, per pdflatex."]
+        lines.append(f"pub static ARTICLE_{tag}PT: ArticleLayout = ArticleLayout {{")
+        num = size.replace("pt", "")
+        lines.append(f"    size: BaseSize::Pt{num},")
+        for d in DIMS:
+            sp, tex = dims[d]
+            lines.append(f"    {d}: {rust_sp(sp, tex)}")
+        for field, key in (("parskip", "parskip"),
+                           ("skip_footins", "skipfootins")):
+            (n, s, h), tex = glues[key]
+            lines.append(f"    {field}: Glue {{ natural: Sp({n}), "
+                         f"stretch: Sp({s}), shrink: Sp({h}) }}, // {tex}")
+        if math is None:
+            lines.append("    mathindent: None, // \\mathindent undefined without fleqn")
+        else:
+            sp, tex = math
+            lines.append(f"    mathindent: Some(Sp({sp})), // {tex}")
+        for d in ("em", "ex"):
+            sp, tex = dims[d]
+            lines.append(f"    {d}: {rust_sp(sp, tex)}")
+        lines.append("};")
+    lines += [
+        "",
+        "/// The three generated `article` tables, by size.",
+        "pub static ARTICLE_TABLES: [&ArticleLayout; 3] =",
+        "    [&ARTICLE_10PT, &ARTICLE_11PT, &ARTICLE_12PT];",
+        "",
+        "/// Look up the generated `article` table for a base size.",
+        "pub fn article_layout(size: BaseSize) -> &'static ArticleLayout {",
+        "    match size {",
+        "        BaseSize::Pt10 => &ARTICLE_10PT,",
+        "        BaseSize::Pt11 => &ARTICLE_11PT,",
+        "        BaseSize::Pt12 => &ARTICLE_12PT,",
+        "    }",
+        "}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def run(keep):
+    pdflatex = find_pdflatex()
+    work = keep or tempfile.mkdtemp(prefix="class-geometry-tables-")
+    os.makedirs(work, exist_ok=True)
+    version = subprocess.run([pdflatex, "--version"], capture_output=True,
+                             text=True).stdout.splitlines()[0]
+    tables = {}
+    for size in SIZES:
+        ident = f"article-{size}"
+        with open(os.path.join(work, ident + ".tex"), "w") as f:
+            f.write(probe(size))
+        env = dict(os.environ, SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1")
+        subprocess.run([pdflatex, "-interaction=nonstopmode", "-halt-on-error",
+                        ident + ".tex"], cwd=work, capture_output=True, env=env)
+        log_path = os.path.join(work, ident + ".log")
+        log = open(log_path, errors="replace").read()
+        if "Output written" not in log:
+            sys.exit(f"{ident}: pdflatex failed; see {log_path}")
+        got = {}
+        for m in re.finditer(r"^FTDIM (\S+) (.+)$", log, re.M):
+            got[m.group(1)] = m.group(2).strip()
+        math = None
+        m = re.search(r"^FTMATH (undefined|defined (\S+))$", log, re.M)
+        if not m:
+            sys.exit(f"{ident}: no FTMATH line; see {log_path}")
+        if m.group(1) != "undefined":
+            math = (pt_to_sp(m.group(2)), m.group(2))
+        dims = {}
+        for d in DIMS:
+            if d not in got:
+                sys.exit(f"{ident}: missing FTDIM {d}; see {log_path}")
+            dims[d] = (pt_to_sp(got[d].split(" ")[0]), got[d])
+        dims["em"] = (pt_to_sp(got["em"]), got["em"])
+        dims["ex"] = (pt_to_sp(got["ex"]), got["ex"])
+        glues = {}
+        for name, _ in GLUES:
+            if name not in got:
+                sys.exit(f"{ident}: missing FTDIM {name}; see {log_path}")
+            glues[name] = (parse_glue(got[name]), got[name])
+        tables[size] = (dims, glues, math)
+    with open(OUT, "w") as f:
+        f.write(emit(tables, version))
+    print(f"{len(SIZES)} sizes -> {os.path.relpath(OUT)} (work dir {work})")
+    if not keep:
+        shutil.rmtree(work)
+
+
+if __name__ == "__main__":
+    keep = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--keep" else None
+    run(keep)

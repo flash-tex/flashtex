@@ -1,0 +1,7 @@
+{
+  "path": "main.tex",
+  "project_id": "p",
+  "revision": 3,
+  "source_sha256": "0d11312e9883c01f01dfd5d4fdaaa582c59ad7a6d3a532e75dc6478d4f48f35b",
+  "text": "\\documentclass[12pt]{article}\n\\begin{document}\nOffice AV fi. More text. Final edit.\n\\end{document}\n"
+}

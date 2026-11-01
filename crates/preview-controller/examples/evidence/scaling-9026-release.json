@@ -1,0 +1,71 @@
+{
+  "compiler_source_sha": "9026d8a1b9ffdcfa4d01f3cdb4d83c5e6096849f",
+  "compiler_sha256": "99ceadc7d03a8d9a7528dfa8b7c4332c3a373719220fb29c6fd14f3772251686",
+  "replay_sha256": "14b0b8ab21031195711d01ef31c6553de2773ebc6e99ad89e3f7c37a6cc25192",
+  "generator_sha256": "1dccadf0c17eeb6064c09f5b0dc27a16ab962794f0072307ca02e14cf88e155a",
+  "cases": [
+    {
+      "failure_detail": "",
+      "source_bytes": 5000,
+      "edits": 20,
+      "input_sha256": "559c2ee8964ab9c4b557ae8558650571ed3bff19a788a1e713957eb237d4a721",
+      "returncode": 0,
+      "completed_samples": 20,
+      "summary": {
+        "edits": 20,
+        "max_ms": 2.654918,
+        "measurement": "warm submission through received positioned result; compiler, pipe transport and polling combined",
+        "native_paint_measured": false,
+        "p50_ms": 1.89711,
+        "p95_ms": 2.588336,
+        "p99_ms": 2.654918,
+        "reference_pdf_measured": false,
+        "type": "summary"
+      },
+      "all_compiled_ok": true,
+      "classification": "complete",
+      "mismatch_classes": [
+        "none"
+      ]
+    },
+    {
+      "failure_detail": "",
+      "source_bytes": 50000,
+      "edits": 20,
+      "input_sha256": "bcc923ddcb7532f712e146c6209b179d872f20df505448832452331b70adde94",
+      "returncode": 0,
+      "completed_samples": 20,
+      "summary": {
+        "edits": 20,
+        "max_ms": 30.389996999999997,
+        "measurement": "warm submission through received positioned result; compiler, pipe transport and polling combined",
+        "native_paint_measured": false,
+        "p50_ms": 23.136219,
+        "p95_ms": 25.533134,
+        "p99_ms": 30.389996999999997,
+        "reference_pdf_measured": false,
+        "type": "summary"
+      },
+      "all_compiled_ok": true,
+      "classification": "complete",
+      "mismatch_classes": [
+        "none"
+      ]
+    },
+    {
+      "failure_detail": "compiler output malformed, truncated or oversized\n",
+      "source_bytes": 500000,
+      "edits": 20,
+      "input_sha256": "0a0fcf114762499998a920c8e97fc10feab552d09bb4e2d007e9a923ae8b7102",
+      "returncode": 1,
+      "completed_samples": 0,
+      "summary": null,
+      "all_compiled_ok": false,
+      "classification": "output_validation_failure",
+      "mismatch_classes": []
+    }
+  ],
+  "native_paint_measured": false,
+  "reference_pdf_measured": false,
+  "measurement": "Rust runtime submission to received positioned result; excludes editor save and native paint"
+}

@@ -1,0 +1,68 @@
+\documentclass{report}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Before any chapter.}\label{f0}
+\end{figure}
+
+\chapter{One}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{First in chapter one.}\label{f11}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{A table in chapter one.}\label{t11}
+\begin{tabular}{ll}
+a & b\\
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Second in chapter one.}
+\end{figure}
+
+\chapter*{Unnumbered}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{After a starred chapter.}\label{f13}
+\end{figure}
+
+\chapter{Two}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{First in chapter two.}\label{f21}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ll}
+a & b\\
+\end{tabular}
+\caption{A table in chapter two.}\label{t21}
+\end{table}
+
+Refs \ref{f0}, \ref{f11}, \ref{t11}, \ref{f13}, \ref{f21} and \ref{t21}.
+
+\end{document}

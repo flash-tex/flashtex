@@ -1,0 +1,25 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+
+\begin{document}
+\section{Text}
+Citations such as \cite{knuth84} and \cite{plass81} refer to the list below.
+
+\section*{References}
+\begin{thebibliography}{9}
+\bibitem{knuth84} Donald E. Knuth. \emph{The \TeX book}. Addison-Wesley, 1984.
+\bibitem{plass81} Donald E. Knuth and Michael F. Plass. Breaking paragraphs
+  into lines. \emph{Software: Practice and Experience}, 11(11):1119--1184, 1981.
+\bibitem{adapton} Matthew A. Hammer et al. Adapton: composable,
+  demand-driven incremental computation. In \emph{PLDI}, 2014.
+\end{thebibliography}
+
+\section{After the list}
+A paragraph after the bibliography, then a two-digit widest label.
+\begin{thebibliography}{99}
+\bibitem{one} First entry of the second list, wrapping onto a second line
+  because it is deliberately written to be longer than one measure.
+\bibitem{two} Second entry.
+\end{thebibliography}
+\end{document}

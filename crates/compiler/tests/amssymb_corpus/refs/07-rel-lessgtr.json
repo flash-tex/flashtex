@@ -1,0 +1,111 @@
+{
+ "fixture": "07-rel-lessgtr.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Mixed",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 107.7604,
+    "y_top": 83.955
+   },
+   {
+    "text": "≶",
+    "x": 117.2289,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 129.8512,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋚",
+    "x": 138.1517,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 150.7621,
+    "y_top": 83.955
+   },
+   {
+    "text": "⪋",
+    "x": 159.1235,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 171.7458,
+    "y_top": 83.955
+   },
+   {
+    "text": "≷",
+    "x": 181.1522,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 193.7625,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋛",
+    "x": 202.5113,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 215.1336,
+    "y_top": 83.955
+   },
+   {
+    "text": "⪌",
+    "x": 225.506,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 238.1163,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋘",
+    "x": 247.476,
+    "y_top": 83.955
+   },
+   {
+    "text": "h",
+    "x": 266.7394,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋙",
+    "x": 276.7902,
+    "y_top": 83.955
+   },
+   {
+    "text": "i",
+    "x": 296.0536,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 303.956,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

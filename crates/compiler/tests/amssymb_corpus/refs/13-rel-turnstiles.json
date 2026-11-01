@@ -1,0 +1,111 @@
+{
+ "fixture": "13-rel-turnstiles.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Logic",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 103.3728,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊨",
+    "x": 112.8414,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 123.4707,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊩",
+    "x": 131.7712,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 143.7169,
+    "y_top": 83.955
+   },
+   {
+    "text": "⊪",
+    "x": 152.0783,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 166.0288,
+    "y_top": 83.955
+   },
+   {
+    "text": "∣",
+    "x": 175.4352,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 181.4152,
+    "y_top": 83.955
+   },
+   {
+    "text": "∥",
+    "x": 190.152,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 198.125,
+    "y_top": 83.955
+   },
+   {
+    "text": "∴",
+    "x": 208.4973,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 219.7794,
+    "y_top": 83.955
+   },
+   {
+    "text": "∵",
+    "x": 229.1391,
+    "y_top": 83.955
+   },
+   {
+    "text": "h",
+    "x": 240.4332,
+    "y_top": 83.955
+   },
+   {
+    "text": "϶",
+    "x": 250.484,
+    "y_top": 83.955
+   },
+   {
+    "text": "i",
+    "x": 258.9387,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 266.8411,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

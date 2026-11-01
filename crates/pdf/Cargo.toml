@@ -14,3 +14,7 @@ name = "flashtex-pdf"
 path = "src/main.rs"
 
 [dependencies]
+
+[[bin]]
+name = "flashtex-pdf-exact"
+path = "src/bin/flashtex-pdf-exact.rs"

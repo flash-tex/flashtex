@@ -1,0 +1,217 @@
+{
+  "buffer_capacity": 8192,
+  "bytes": 1746207,
+  "exact_limit_and_overflow_checked": true,
+  "exact_output": true,
+  "native_latency": "not measured",
+  "observations": [
+    {
+      "buffered": false,
+      "ms": 5.9377249999999995,
+      "pair": 0
+    },
+    {
+      "buffered": true,
+      "ms": 2.6519429999999997,
+      "pair": 0
+    },
+    {
+      "buffered": true,
+      "ms": 2.6242560000000004,
+      "pair": 1
+    },
+    {
+      "buffered": false,
+      "ms": 6.103839,
+      "pair": 1
+    },
+    {
+      "buffered": false,
+      "ms": 6.572729,
+      "pair": 2
+    },
+    {
+      "buffered": true,
+      "ms": 2.741102,
+      "pair": 2
+    },
+    {
+      "buffered": true,
+      "ms": 2.729839,
+      "pair": 3
+    },
+    {
+      "buffered": false,
+      "ms": 5.604042,
+      "pair": 3
+    },
+    {
+      "buffered": false,
+      "ms": 5.8709299999999995,
+      "pair": 4
+    },
+    {
+      "buffered": true,
+      "ms": 2.6205410000000002,
+      "pair": 4
+    },
+    {
+      "buffered": true,
+      "ms": 2.606167,
+      "pair": 5
+    },
+    {
+      "buffered": false,
+      "ms": 6.794289,
+      "pair": 5
+    },
+    {
+      "buffered": false,
+      "ms": 6.056956,
+      "pair": 6
+    },
+    {
+      "buffered": true,
+      "ms": 2.6477530000000002,
+      "pair": 6
+    },
+    {
+      "buffered": true,
+      "ms": 2.641327,
+      "pair": 7
+    },
+    {
+      "buffered": false,
+      "ms": 5.822647,
+      "pair": 7
+    },
+    {
+      "buffered": false,
+      "ms": 5.763975,
+      "pair": 8
+    },
+    {
+      "buffered": true,
+      "ms": 2.8318890000000003,
+      "pair": 8
+    },
+    {
+      "buffered": true,
+      "ms": 4.02989,
+      "pair": 9
+    },
+    {
+      "buffered": false,
+      "ms": 8.396214,
+      "pair": 9
+    }
+  ],
+  "raw_observations": [
+    {
+      "ms": 2.711399,
+      "pair": 0,
+      "raw": false
+    },
+    {
+      "ms": 0.089466,
+      "pair": 0,
+      "raw": true
+    },
+    {
+      "ms": 0.077404,
+      "pair": 1,
+      "raw": true
+    },
+    {
+      "ms": 2.7674819999999998,
+      "pair": 1,
+      "raw": false
+    },
+    {
+      "ms": 2.644376,
+      "pair": 2,
+      "raw": false
+    },
+    {
+      "ms": 0.090071,
+      "pair": 2,
+      "raw": true
+    },
+    {
+      "ms": 0.07304699999999999,
+      "pair": 3,
+      "raw": true
+    },
+    {
+      "ms": 2.657375,
+      "pair": 3,
+      "raw": false
+    },
+    {
+      "ms": 3.822075,
+      "pair": 4,
+      "raw": false
+    },
+    {
+      "ms": 0.120354,
+      "pair": 4,
+      "raw": true
+    },
+    {
+      "ms": 0.099259,
+      "pair": 5,
+      "raw": true
+    },
+    {
+      "ms": 2.822667,
+      "pair": 5,
+      "raw": false
+    },
+    {
+      "ms": 2.930475,
+      "pair": 6,
+      "raw": false
+    },
+    {
+      "ms": 0.092087,
+      "pair": 6,
+      "raw": true
+    },
+    {
+      "ms": 0.07661,
+      "pair": 7,
+      "raw": true
+    },
+    {
+      "ms": 2.827298,
+      "pair": 7,
+      "raw": false
+    },
+    {
+      "ms": 2.931845,
+      "pair": 8,
+      "raw": false
+    },
+    {
+      "ms": 0.096789,
+      "pair": 8,
+      "raw": true
+    },
+    {
+      "ms": 0.079935,
+      "pair": 9,
+      "raw": true
+    },
+    {
+      "ms": 2.6729950000000002,
+      "pair": 9,
+      "raw": false
+    }
+  ],
+  "raw_scope": "preencoded canonical body; parsing and validation excluded",
+  "source_base": "549b4841cbd325a1daaf9cf53e51be1e4f929227",
+  "input_sha256": "90b8505276af3eae1239918bff344eb91baadb3d4b17b19f5acb0a805f1532eb",
+  "probe_source_sha256": "db0d21c41f035d07f907a72b32ab755a952a75d0a1f1dd723b2ea65067d19bb3",
+  "executable_sha256": "c6e94a6e1490cb1f9de2015e746e66233fca3c3efca93121ef82d9169502dc1b",
+  "scope": "Paired serialization only on actual required26page final v1 wrapper; no native/end-to-end claim"
+}

@@ -1,0 +1,91 @@
+{
+ "fixture": "28-tabularstar-cv.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Languages",
+    "x": 72.0,
+    "y_top": 95.063
+   },
+   {
+    "text": "Rust,",
+    "x": 431.8587,
+    "y_top": 95.063
+   },
+   {
+    "text": "Swift,",
+    "x": 462.9733,
+    "y_top": 95.063
+   },
+   {
+    "text": "Python",
+    "x": 496.4622,
+    "y_top": 95.063
+   },
+   {
+    "text": "Tools",
+    "x": 72.0,
+    "y_top": 109.509
+   },
+   {
+    "text": "Git,",
+    "x": 431.8587,
+    "y_top": 109.509
+   },
+   {
+    "text": "Cargo",
+    "x": 455.9962,
+    "y_top": 109.509
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 123.075
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 123.075
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 123.075
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 123.075
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

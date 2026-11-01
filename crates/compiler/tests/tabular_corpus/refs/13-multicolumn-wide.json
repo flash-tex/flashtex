@@ -1,0 +1,111 @@
+{
+ "fixture": "13-multicolumn-wide.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "A",
+    "x": 77.978,
+    "y_top": 95.063
+   },
+   {
+    "text": "heading",
+    "x": 90.6505,
+    "y_top": 95.063
+   },
+   {
+    "text": "much",
+    "x": 134.232,
+    "y_top": 95.063
+   },
+   {
+    "text": "wider",
+    "x": 165.4494,
+    "y_top": 95.063
+   },
+   {
+    "text": "than",
+    "x": 197.3124,
+    "y_top": 95.063
+   },
+   {
+    "text": "both",
+    "x": 224.6229,
+    "y_top": 95.063
+   },
+   {
+    "text": "columns",
+    "x": 252.2681,
+    "y_top": 95.063
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 109.509
+   },
+   {
+    "text": "b",
+    "x": 100.3414,
+    "y_top": 109.509
+   },
+   {
+    "text": "cc",
+    "x": 77.978,
+    "y_top": 123.955
+   },
+   {
+    "text": "dd",
+    "x": 100.339,
+    "y_top": 123.955
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 137.521
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 137.521
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 137.521
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 137.521
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

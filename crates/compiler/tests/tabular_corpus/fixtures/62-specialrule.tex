@@ -1,0 +1,14 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{ll}\toprule A & B\\\specialrule{1pt}{3pt}{4pt} c & d\\\specialrule{.5pt}{1pt}{1pt}\midrule e & f\\\bottomrule\end{tabular}
+
+Text after the table.
+\end{document}

@@ -1,0 +1,628 @@
+--- a/crates/compiler/src/parser.rs
++++ b/crates/compiler/src/parser.rs
+@@ -373,9 +373,16 @@
+             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
+             "section" | "subsection" => {
+                 let level = if name == "section" { 1 } else { 2 };
++                self.skip_spaces();
++                let starred = matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(word)) if word == "*");
++                if starred {
++                    self.i += 1;
++                }
+                 let (tokens, _) = self.required_group(name, span);
+                 self.flush_paragraph(blocks, para);
+-                let number = if level == 1 {
++                let number = if starred {
++                    String::new()
++                } else if level == 1 {
+                     self.section_counter += 1;
+                     self.subsection_counter = 0;
+                     self.section_counter.to_string()
+@@ -383,7 +390,9 @@
+                     self.subsection_counter += 1;
+                     format!("{}.{}", self.section_counter, self.subsection_counter)
+                 };
+-                self.current_counter = Some(number.clone());
++                if !starred {
++                    self.current_counter = Some(number.clone());
++                }
+                 let content = self.inlines_from_tokens(tokens);
+                 if content.is_empty() {
+                     // A missing/empty heading is already diagnosed where
+@@ -1253,6 +1262,11 @@
+                 TokenKind::LineBreak => content.push(Inline::LineBreak {
+                     span: input.token.span,
+                 }),
++                TokenKind::Command(name) => self.diags.push(Diagnostic::error(
++                    format!("\\{name} is not supported in this inline argument"),
++                    Some(input.token.span),
++                    Some("skipped the command; retained supported argument text".into()),
++                )),
+                 _ => {}
+             }
+         }
+--- a/crates/compiler/src/layout.rs
++++ b/crates/compiler/src/layout.rs
+@@ -367,7 +367,7 @@
+         let base_y = self.y;
+         let page = self.pages.last_mut().expect("at least one page");
+         for item in b.items {
+-            let font = math_font(&item.text);
++            let font = item.font.unwrap_or_else(|| math_font(&item.text));
+             let rule = item.rule.map(|rule| RuleGeometry {
+                 y_pt: round2(base_y + rule.y),
+                 width_pt: round2(rule.width),
+@@ -461,7 +461,7 @@
+                 number_span,
+                 content,
+             } => {
+-                if self.emit_heading_numbers {
++                if self.emit_heading_numbers && !number.is_empty() {
+                     self.place(
+                         number.clone(),
+                         heading_size(*level, body_size),
+--- a/crates/compiler/src/math.rs
++++ b/crates/compiler/src/math.rs
+@@ -32,6 +32,8 @@
+ #[derive(Debug, Clone, PartialEq)]
+ pub enum Nucleus {
+     Symbol(String),
++    /// Literal text with explicit Roman intent, distinct from math symbols.
++    Text(String),
+     Fraction {
+         numerator: MathList,
+         denominator: MathList,
+@@ -41,6 +43,8 @@
+ 
+ #[derive(Debug, Clone, PartialEq)]
+ pub struct MathItem {
++    /// Explicit font for text nuclei; None retains legacy symbol selection.
++    pub font: Option<crate::layout::Font>,
+     pub text: String,
+     pub x: f64,
+     /// Offset from the surrounding text baseline; positive is downward.
+@@ -250,6 +254,7 @@
+ 
+     fn command_atom(&mut self, name: String, span: Span) -> MathAtom {
+         match name.as_str() {
++            "text" => self.text_atom(span),
+             "frac" => {
+                 let numerator = self.required_group("frac", span);
+                 let denominator = self.required_group("frac", span);
+@@ -283,6 +288,109 @@
+         }
+     }
+ 
++    fn text_atom(&mut self, command_span: Span) -> MathAtom {
++        while matches!(
++            self.tokens.get(self.i).map(|t| &t.kind),
++            Some(TokenKind::Space)
++        ) {
++            self.i += 1;
++        }
++        let mut span = command_span;
++        let mut text = String::new();
++        if !matches!(
++            self.tokens.get(self.i).map(|t| &t.kind),
++            Some(TokenKind::LBrace)
++        ) {
++            self.diagnostics.push(Diagnostic::error(
++                "\\text requires a braced text argument",
++                Some(span),
++                Some("used an empty text argument without consuming the next atom".into()),
++            ));
++        } else {
++            self.i += 1;
++            let mut depth = 1usize;
++            let mut after_comment = false;
++            let mut depth_reported = false;
++            while let Some(token) = self.tokens.get(self.i) {
++                self.i += 1;
++                span = span.merge(token.span);
++                match &token.kind {
++                    TokenKind::LBrace => {
++                        depth += 1;
++                        if depth > MAX_MATH_DEPTH && !depth_reported {
++                            depth_reported = true;
++                            self.diagnostics.push(Diagnostic::error(
++                                "text group nesting exceeds the supported math depth",
++                                Some(token.span),
++                                Some("continued bounded iterative recovery".into()),
++                            ));
++                        }
++                    }
++                    TokenKind::RBrace => {
++                        depth -= 1;
++                        if depth == 0 {
++                            break;
++                        }
++                    }
++                    TokenKind::Word(word) => {
++                        if !word.is_ascii() {
++                            self.diagnostics.push(Diagnostic::error(
++                                "non-ASCII text shaping in \\text is not implemented",
++                                Some(token.span),
++                                Some("retained text for recovered output".into()),
++                            ));
++                        }
++                        text.push_str(word);
++                    }
++                    TokenKind::Space => {
++                        if !after_comment {
++                            text.push(' ');
++                        }
++                    }
++                    TokenKind::Comment => {
++                        after_comment = true;
++                        continue;
++                    }
++                    other => {
++                        self.diagnostics.push(Diagnostic::error(
++                            "unsupported construct inside \\text",
++                            Some(token.span),
++                            Some("retained a literal representation and continued".into()),
++                        ));
++                        match other {
++                            TokenKind::Command(name) => {
++                                text.push('\\');
++                                text.push_str(name);
++                            }
++                            TokenKind::ParBreak => text.push(' '),
++                            TokenKind::Superscript => text.push('^'),
++                            TokenKind::Subscript => text.push('_'),
++                            TokenKind::MathShift => text.push('$'),
++                            TokenKind::DisplayMathOpen => text.push_str("\\["),
++                            TokenKind::DisplayMathClose => text.push_str("\\]"),
++                            TokenKind::LineBreak => text.push_str("\\\\"),
++                            _ => unreachable!(),
++                        }
++                    }
++                }
++                after_comment = false;
++            }
++            if depth != 0 {
++                self.diagnostics.push(Diagnostic::error(
++                    "unclosed \\text argument",
++                    Some(command_span),
++                    Some("retained partial text".into()),
++                ));
++            }
++        }
++        MathAtom {
++            nucleus: Nucleus::Text(text),
++            span,
++            superscript: None,
++            subscript: None,
++        }
++    }
++
+     fn required_group(&mut self, command: &str, span: Span) -> MathList {
+         while matches!(
+             self.tokens.get(self.i).map(|t| &t.kind),
+@@ -341,6 +449,11 @@
+     ("neq", "≠"),
+     ("approx", "≈"),
+     ("cdot", "·"),
++    ("in", "∈"),
++    ("forall", "∀"),
++    ("exists", "∃"),
++    ("vee", "∨"),
++    ("Rightarrow", "⇒"),
+     ("infty", "∞"),
+     ("sum", "∑"),
+     ("int", "∫"),
+@@ -420,8 +533,10 @@
+     diagnostics: &mut Vec<Diagnostic>,
+ ) -> MathBox {
+     match &atom.nucleus {
+-        Nucleus::Symbol(text) => MathBox {
++        Nucleus::Symbol(text) | Nucleus::Text(text) => MathBox {
+             items: vec![MathItem {
++                font: matches!(atom.nucleus, Nucleus::Text(_))
++                    .then_some(crate::layout::Font::TimesRoman),
+                 text: text.clone(),
+                 x: 0.0,
+                 baseline: 0.0,
+@@ -432,7 +547,11 @@
+             width: crate::layout::shaped_width(
+                 text,
+                 size,
+-                crate::layout::math_font(text),
++                if matches!(atom.nucleus, Nucleus::Text(_)) {
++                    crate::layout::Font::TimesRoman
++                } else {
++                    crate::layout::math_font(text)
++                },
+                 atom.span,
+                 diagnostics,
+             )
+@@ -454,6 +573,7 @@
+             b.items.insert(
+                 0,
+                 MathItem {
++                    font: None,
+                     text: "√".into(),
+                     x: 0.0,
+                     baseline: 0.0,
+@@ -492,6 +612,7 @@
+             offset_items(&mut den.items, den_x, den_dy);
+             let mut items = num.items;
+             items.push(MathItem {
++                font: None,
+                 text: rule_text,
+                 x: 0.0,
+                 baseline: axis + rule / 2.0,
+@@ -567,6 +688,7 @@
+     MathAtom {
+         nucleus: match &atom.nucleus {
+             Nucleus::Symbol(s) => Nucleus::Symbol(s.clone()),
++            Nucleus::Text(s) => Nucleus::Text(s.clone()),
+             Nucleus::Fraction {
+                 numerator,
+                 denominator,
+@@ -609,7 +731,7 @@
+                 .iter()
+                 .map(|a| {
+                     let nested = match &a.nucleus {
+-                        Nucleus::Symbol(_) => usize::MAX,
++                        Nucleus::Symbol(_) | Nucleus::Text(_) => usize::MAX,
+                         Nucleus::Fraction {
+                             numerator,
+                             denominator,
+--- a/crates/compiler/src/export.rs
++++ b/crates/compiler/src/export.rs
+@@ -56,6 +56,11 @@
+     ('\u{2260}', 0xB9), // notequal
+     ('\u{2248}', 0xBB), // approxequal
+     ('\u{B7}', 0xD7),   // dotmath
++    ('\u{2208}', 0xCE), // element: Adobe Symbol mapping, not CM metric slot
++    ('\u{2200}', 0x22), // universal: Adobe Symbol encoding
++    ('\u{2203}', 0x24), // existential: Adobe Symbol encoding
++    ('\u{2228}', 0xDA), // logicalor: Adobe Symbol encoding
++    ('\u{21D2}', 0xDE), // arrowdblright: Adobe Symbol encoding
+     ('\u{221E}', 0xA5), // infinity
+     ('\u{2211}', 0xE5), // summation
+     ('\u{222B}', 0xF2), // integral
+--- /dev/null
++++ b/crates/compiler/tests/starred_sections.rs
+@@ -0,0 +1,80 @@
++use flashtex_compiler::incremental::{compile_full, LayoutConstraints, Session};
++
++#[test]
++fn starred_sections_preserve_counters_and_previous_label_value() {
++    let source = r"\section{One}\subsection{A}\section*{Interlude}\label{same}\subsection*{Aside}\subsection{B}\ref{same}\section{Two}";
++    let result = compile_full(source, LayoutConstraints::default());
++    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
++    let texts: Vec<_> = result
++        .pages
++        .iter()
++        .flat_map(|p| &p.items)
++        .map(|i| i.text.as_str())
++        .collect();
++    assert_eq!(
++        texts,
++        [
++            "1",
++            "One",
++            "1.1",
++            "A",
++            "Interlude",
++            "Aside",
++            "1.2",
++            "B",
++            "1.1",
++            "2",
++            "Two"
++        ]
++    );
++}
++
++#[test]
++fn starred_problem_macro_preserves_utf8_argument_spans() {
++    let source = "\\newcommand{\\problem}[2]{\\subsection*{#1 #2}}\\problem{épreuve}{café}";
++    let result = compile_full(source, LayoutConstraints::default());
++    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
++    let items: Vec<_> = result.pages.iter().flat_map(|p| &p.items).collect();
++    assert_eq!(items.len(), 2);
++    for (item, word) in items.iter().zip(["épreuve", "café"]) {
++        assert_eq!(item.text, word);
++        assert_eq!(&source[item.span.start..item.span.end], word);
++    }
++}
++
++#[test]
++fn toggling_stars_matches_clean_compilation() {
++    let constraints = LayoutConstraints::default();
++    let mut session = Session::new();
++    for source in [
++        r"\section{One}\subsection{A}\label{x}\ref{x}",
++        r"\section{One}\subsection*{A}\label{x}\ref{x}",
++        r"\section*{One}\subsection*{A}\label{x}\ref{x}",
++        r"\section{One}\subsection{A}\label{x}\ref{x}",
++    ] {
++        let incremental = session.compile(source, constraints);
++        let clean = compile_full(source, constraints);
++        assert_eq!(incremental.output.pages, clean.pages);
++        assert_eq!(incremental.output.diagnostics, clean.diagnostics);
++    }
++}
++
++#[test]
++fn unsupported_heading_commands_remain_explicit() {
++    let source = r"\newcommand{\problem}[2]{\subsection*{Problem #1 \hfill \normalfont[#2 points]}}\problem{1}{10}";
++    let result = compile_full(source, LayoutConstraints::default());
++    assert_eq!(result.diagnostics.len(), 2, "{:?}", result.diagnostics);
++    for command in ["hfill", "normalfont"] {
++        let diagnostic = result
++            .diagnostics
++            .iter()
++            .find(|d| d.message.contains(command))
++            .unwrap();
++        let span = diagnostic.span.unwrap();
++        assert_eq!(&source[span.start..span.end], r"\problem");
++    }
++    assert!(!result
++        .diagnostics
++        .iter()
++        .any(|d| d.message.contains("requires a braced argument")));
++}
+--- /dev/null
++++ b/crates/compiler/tests/membership.rs
+@@ -0,0 +1,23 @@
++use flashtex_compiler::{export::{map_char, Glyph, ExportFont}, incremental::{compile_full, Session, LayoutConstraints}};
++#[test]
++fn membership_symbol_and_export_are_explicit() {
++    assert_eq!(map_char('∈'), Glyph::Encodable { font: ExportFont::Symbol, code: 0xce });
++    for source in [r"$a\in B$", r"\[a_i\in B^2\]", r"\newcommand{\member}{\in}$a\member B$"] {
++        let output=compile_full(source, LayoutConstraints::default());
++        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
++        assert!(output.pages.iter().flat_map(|p| &p.items).any(|i| i.text=="∈"));
++    }
++}
++#[test]
++fn membership_edits_match_clean_outputs() {
++    let mut session=Session::new();
++    for source in [r"$a\in B$", r"$a\in C_i$", r"$b\in C_i$", r"$b\unknownrelation C$"] {
++        let incremental=session.compile(source, LayoutConstraints::default());
++        let clean=compile_full(source, LayoutConstraints::default());
++        if source.contains("unknownrelation") {
++            assert!(clean.diagnostics.iter().any(|d| d.message.contains("unknownrelation") && d.message.contains("not supported")));
++        }
++        assert_eq!(incremental.output.pages,clean.pages);
++        assert_eq!(incremental.output.diagnostics,clean.diagnostics);
++    }
++}
+--- /dev/null
++++ b/crates/compiler/tests/quantifiers.rs
+@@ -0,0 +1,25 @@
++use flashtex_compiler::{export::{map_char, Glyph, ExportFont}, incremental::{compile_full, Session, LayoutConstraints}};
++#[test]
++fn quantifiers_export_and_preserve_command_spans() {
++    for (command, glyph, code) in [("forall", '∀', 0x22), ("exists", '∃', 0x24)] {
++        assert_eq!(map_char(glyph), Glyph::Encodable{font:ExportFont::Symbol,code});
++        let source=format!("é $\\{command}_i x$");
++        let output=compile_full(&source,LayoutConstraints::default());
++        assert!(output.diagnostics.is_empty(),"{:?}",output.diagnostics);
++        let item=output.pages.iter().flat_map(|p| &p.items).find(|i| i.text==glyph.to_string()).unwrap();
++        assert_eq!(&source[item.span.start..item.span.end],format!("\\{command}"));
++    }
++}
++#[test]
++fn quantifier_macro_bang_and_incremental_edits() {
++    let mut session=Session::new();
++    for source in [r"$\forall x\exists y$",r"\[\forall x\exists! y_i\]",r"\newcommand{\some}{\exists}$\some x$",r"$\unknownquantifier x$"] {
++        let clean=compile_full(source,LayoutConstraints::default());
++        let incremental=session.compile(source,LayoutConstraints::default());
++        assert_eq!(clean.pages,incremental.output.pages);
++        assert_eq!(clean.diagnostics,incremental.output.diagnostics);
++        if source.contains("unknownquantifier") {assert!(clean.diagnostics.iter().any(|d|d.message.contains("unknownquantifier")));}
++        else {assert!(clean.diagnostics.is_empty(),"{:?}",clean.diagnostics);}
++        if source.contains("exists!"){assert!(clean.pages.iter().flat_map(|p|&p.items).any(|i|i.text=="!"));}
++    }
++}
+--- /dev/null
++++ b/crates/compiler/tests/logical_symbols.rs
+@@ -0,0 +1,21 @@
++use flashtex_compiler::{export::{map_char, Glyph, ExportFont}, incremental::{compile_full, Session, LayoutConstraints}};
++#[test]
++fn logical_symbols_encode_and_keep_spans() {
++    for (command,glyph,code) in [("vee",'∨',0xda),("Rightarrow",'⇒',0xde)] {
++        assert_eq!(map_char(glyph),Glyph::Encodable{font:ExportFont::Symbol,code});
++        let source=format!("é $x\\{command} y_i$");
++        let result=compile_full(&source,LayoutConstraints::default());assert!(result.diagnostics.is_empty());
++        let item=result.pages.iter().flat_map(|p|&p.items).find(|i|i.text==glyph.to_string()).unwrap();
++        assert_eq!(&source[item.span.start..item.span.end],format!("\\{command}"));
++    }
++}
++#[test]
++fn logical_edits_and_unresolved_neighbors_remain_explicit() {
++    let mut session=Session::new();
++    for source in [r"$a\vee b$",r"\[a\Rightarrow b^2\]",r"\newcommand{\implieshere}{\Rightarrow}$a\implieshere b$",r"$a\mid b\setminus c\Longrightarrow d$"] {
++        let result=session.compile(source,LayoutConstraints::default());let clean=compile_full(source,LayoutConstraints::default());
++        assert_eq!(result.output.pages,clean.pages);assert_eq!(result.output.diagnostics,clean.diagnostics);
++        if source.contains("mid") {for name in ["mid","setminus","Longrightarrow"] {assert!(clean.diagnostics.iter().any(|d|d.message.contains(name)&&d.message.contains("not supported")));}}
++        else {assert!(clean.diagnostics.is_empty(),"{:?}",clean.diagnostics);}
++    }
++}
+--- a/crates/compiler/src/incremental.rs
++++ b/crates/compiler/src/incremental.rs
+@@ -453,6 +453,7 @@
+                 Some(MathAtom {
+                     nucleus: match &atom.nucleus {
+                         Nucleus::Symbol(text) => Nucleus::Symbol(text.clone()),
++                        Nucleus::Text(text) => Nucleus::Text(text.clone()),
+                         Nucleus::Fraction {
+                             numerator,
+                             denominator,
+--- /dev/null
++++ b/crates/compiler/tests/math_text.rs
+@@ -0,0 +1,169 @@
++use flashtex_compiler::{
++    incremental::{compile_full, LayoutConstraints, Session},
++    layout::Font,
++    lexer,
++    math::{self, Nucleus},
++};
++
++#[test]
++fn literal_groups_are_distinct_roman_text_with_group_spans() {
++    for text in ["(a)", "(b)", "(c)", "(d)", "and", "a b", "", "{x}"] {
++        let body = if text == "{x}" { r"\{x\}" } else { text };
++        let source = format!(r"\text{{{body}}}");
++        let mut diagnostics = Vec::new();
++        let list = math::parse_tokens(&lexer::tokenize(&source), &mut diagnostics);
++        assert!(diagnostics.is_empty(), "{diagnostics:?}");
++        assert_eq!(list.atoms[0].nucleus, Nucleus::Text(text.into()));
++        assert_eq!(
++            &source[list.atoms[0].span.start..list.atoms[0].span.end],
++            source
++        );
++        let boxes = math::layout(&list, 12.0, &mut diagnostics);
++        assert_eq!(boxes.items[0].font, Some(Font::TimesRoman));
++        assert_ne!(list.atoms[0].nucleus, Nucleus::Symbol(text.into()));
++    }
++}
++#[test]
++fn whitespace_comments_and_nested_literal_braces() {
++    for (source, expected) in [
++        (r"\text{a  b}", "a b"),
++        ("\\text{a%comment\nb}", "ab"),
++        (r"\text{a{b}c}", "abc"),
++    ] {
++        let mut diagnostics = Vec::new();
++        let list = math::parse_tokens(&lexer::tokenize(source), &mut diagnostics);
++        assert!(diagnostics.is_empty(), "{diagnostics:?}");
++        assert_eq!(list.atoms[0].nucleus, Nucleus::Text(expected.into()));
++    }
++}
++#[test]
++fn malformed_and_unsupported_text_stays_diagnosed() {
++    for source in [
++        r"\text x",
++        r"\text{a",
++        r"\text{\alpha}",
++        r"\text{é}",
++        "\\text{a\n\nb}",
++    ] {
++        let mut diagnostics = Vec::new();
++        let list = math::parse_tokens(&lexer::tokenize(source), &mut diagnostics);
++        assert!(!diagnostics.is_empty(), "{source}");
++        for d in diagnostics {
++            if let Some(s) = d.span {
++                assert!(source.get(s.start..s.end).is_some());
++            }
++        }
++        if source == r"\text x" {
++            assert_eq!(list.atoms[1].nucleus, Nucleus::Symbol("x".into()));
++        }
++        if source == r"\text{\alpha}" {
++            assert_eq!(list.atoms[0].nucleus, Nucleus::Text(r"\alpha".into()));
++        }
++    }
++    let source = format!("\\text{{{}x{}}}", "{".repeat(2000), "}".repeat(2000));
++    let mut diagnostics = Vec::new();
++    let list = math::parse_tokens(&lexer::tokenize(&source), &mut diagnostics);
++    assert!(diagnostics.iter().any(|d| d.message.contains("depth")));
++    assert_eq!(list.atoms[0].nucleus, Nucleus::Text("x".into()));
++}
++#[test]
++fn scripts_macros_and_incremental_source_shifts_match_clean() {
++    let mut session = Session::new();
++    for source in [
++        r"$x_{\text{and}}$",
++        r"$x_{\text{a b}}$",
++        r"$x_{and}$",
++        r"é $x_{\text{and}}$",
++        r"\newcommand{\labeltext}{\text{and}}$x_{\labeltext}$",
++        r"$x_{\text{\alpha}}$",
++    ] {
++        let clean = compile_full(source, LayoutConstraints::default());
++        let inc = session.compile(source, LayoutConstraints::default());
++        assert_eq!(inc.output.pages, clean.pages);
++        assert_eq!(inc.output.diagnostics, clean.diagnostics);
++        if source.contains("alpha") {
++            assert!(!clean.diagnostics.is_empty());
++        } else {
++            assert!(clean.diagnostics.is_empty(), "{:?}", clean.diagnostics);
++        }
++        for item in clean.pages.iter().flat_map(|p| &p.items) {
++            assert!(source.get(item.span.start..item.span.end).is_some());
++        }
++        if let Some(item) = clean
++            .pages
++            .iter()
++            .flat_map(|p| &p.items)
++            .find(|i| i.text == "and")
++        {
++            assert_eq!(item.font, Font::TimesRoman);
++            assert!(item.font_size_pt < 12.0);
++        }
++    }
++}
++
++#[test]
++fn macro_text_points_to_invocation_not_definition() {
++    let source = r"\newcommand{\labeltext}{\text{and}}é $x_{\labeltext}$";
++    let output = compile_full(source, LayoutConstraints::default());
++    assert!(output.diagnostics.is_empty());
++    let item = output
++        .pages
++        .iter()
++        .flat_map(|p| &p.items)
++        .find(|i| i.text == "and")
++        .unwrap();
++    let start = source.rfind(r"\labeltext").unwrap();
++    assert_eq!(
++        item.span,
++        flashtex_compiler::Span::new(start, start + r"\labeltext".len())
++    );
++}
++
++#[test]
++fn multi_document_text_navigation_tracks_edits_and_document_order() {
++    use flashtex_compiler::{incremental::compile_full_project, parser::SourceDocument};
++    let mut session = Session::new();
++    for (entry, chapter, reverse) in [
++        (r"\input{chapter}", r"$x_{\text{and}}$", false),
++        (r"é \input{chapter}", r"$x_{\text{and}}$", false),
++        (r"é \input{chapter}", r"é $x_{\text{and}}$", false),
++        (r"é \input{chapter}", r"é $x_{\text{and}}$", true),
++        (r"é \input{chapter}", r"é $x_{\text{a b}}$", true),
++    ] {
++        let mut documents = vec![
++            SourceDocument {
++                path: "main.tex",
++                text: entry,
++            },
++            SourceDocument {
++                path: "chapter.tex",
++                text: chapter,
++            },
++        ];
++        if reverse {
++            documents.reverse();
++        }
++        let clean = compile_full_project(&documents, "main.tex", LayoutConstraints::default());
++        let incremental =
++            session.compile_project(&documents, "main.tex", LayoutConstraints::default());
++        assert_eq!(clean.pages, incremental.output.pages);
++        assert_eq!(clean.diagnostics, incremental.output.diagnostics);
++        assert!(clean.diagnostics.is_empty(), "{:?}", clean.diagnostics);
++        let item = clean
++            .pages
++            .iter()
++            .flat_map(|p| &p.items)
++            .find(|i| i.text == "and" || i.text == "a b")
++            .unwrap();
++        assert_eq!(documents[item.span.document.0].path, "chapter.tex");
++        let raw = &chapter[item.span.start..item.span.end];
++        assert_eq!(
++            raw,
++            if item.text == "and" {
++                r"\text{and}"
++            } else {
++                r"\text{a b}"
++            }
++        );
++    }
++}

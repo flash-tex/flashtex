@@ -1,0 +1,1521 @@
+{
+  "schema_version": 1,
+  "compiler_sha": "9f1033ba75176236bc5fc66b5e64b8ebbfc15a37",
+  "compiler_build_command": "/home/natkarri/.cargo/bin/cargo build --offline --manifest-path /tmp/flashtex-corpus-compiler-9f1033b/crates/compiler/Cargo.toml",
+  "renderer_sha": "a0855dd46ecebd70f2e02ea1a56a9f48499b1034",
+  "renderer_build_command": "/home/natkarri/.cargo/bin/cargo build --offline --manifest-path /tmp/flashtex-corpus-pdf-a0855dd/crates/pdf/Cargo.toml",
+  "compiler_evidence_sha256": "301042571d40b7fce3f4d3f6c8232f2fcffd1c796fa0d56e380f591af5818718",
+  "limitations": "Structural text-writer profile only; placement checks baseline anchors, not glyph extents. A pass does not establish semantic/font/visual correctness.",
+  "results": [
+    {
+      "case_id": "comments-escapes",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-comments-escapes",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-comments-escapes",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nA% discarded comment\nB\n\nPrice \\$5; 50\\%; A\\&B; C\\_D; \\#1.\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "fail",
+      "pdf_file": "comments-escapes.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 42,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 126.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 63,
+                "path": "main.tex",
+                "start_byte": 62
+              }
+            },
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 70,
+                "path": "main.tex",
+                "start_byte": 65
+              }
+            },
+            {
+              "x_pt": 105.36,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 73,
+                "path": "main.tex",
+                "start_byte": 71
+              }
+            },
+            {
+              "x_pt": 114.72,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 75,
+                "path": "main.tex",
+                "start_byte": 73
+              }
+            },
+            {
+              "x_pt": 130.08,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 78,
+                "path": "main.tex",
+                "start_byte": 76
+              }
+            },
+            {
+              "x_pt": 145.44,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 78
+              }
+            },
+            {
+              "x_pt": 154.8,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 81,
+                "path": "main.tex",
+                "start_byte": 80
+              }
+            },
+            {
+              "x_pt": 164.16,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 83,
+                "path": "main.tex",
+                "start_byte": 82
+              }
+            },
+            {
+              "x_pt": 173.52,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 85,
+                "path": "main.tex",
+                "start_byte": 83
+              }
+            },
+            {
+              "x_pt": 182.88,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 87,
+                "path": "main.tex",
+                "start_byte": 85
+              }
+            },
+            {
+              "x_pt": 198.24,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 89,
+                "path": "main.tex",
+                "start_byte": 88
+              }
+            },
+            {
+              "x_pt": 207.6,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 91,
+                "path": "main.tex",
+                "start_byte": 89
+              }
+            },
+            {
+              "x_pt": 216.96,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 93,
+                "path": "main.tex",
+                "start_byte": 91
+              }
+            },
+            {
+              "x_pt": 232.32,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 96,
+                "path": "main.tex",
+                "start_byte": 94
+              }
+            },
+            {
+              "x_pt": 241.68,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 98,
+                "path": "main.tex",
+                "start_byte": 96
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "7a7ec1c1ec1e03480980dc9636e7ef2540d9aa86079f0fa970880f0aef1b47c8",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "extra-closing-group",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-extra-closing-group",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-extra-closing-group",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nBefore. } After.\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "extra-closing-group.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 57,
+                "path": "main.tex",
+                "start_byte": 51
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "bc7f8bac85e083c8c7e90e5e3db47c6f525d586893775987cc30ac64955915cb",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "include-scope",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-include-scope",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-include-scope",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\newcommand{\\word}{outer}\n\\begin{document}\n{\\input{local}\n\\word{}} \\word{}\n\\end{document}\n"
+            },
+            {
+              "path": "local.tex",
+              "text": "\\renewcommand{\\word}{inner}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "fail",
+      "pdf_file": "include-scope.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 43
+              }
+            },
+            {
+              "x_pt": 150.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 75
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "9fae3578b4ba6d99c17dd5bde163152775759a5ef05cfd8d9866b839f9529b97",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "included-file",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-included-file",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-included-file",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{parts/section}\nAfter.\n\\end{document}\n"
+            },
+            {
+              "path": "parts/section.tex",
+              "text": "Included café.\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "fail",
+      "pdf_file": "included-file.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 69,
+                "path": "main.tex",
+                "start_byte": 56
+              }
+            },
+            {
+              "x_pt": 244.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 77,
+                "path": "main.tex",
+                "start_byte": 71
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "476565722fe6f318a6f23e6b87fda0cc3eca88dd3d24beef1aacbdfac5511da7",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "literal-source-map",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-literal-source-map",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-literal-source-map",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\néé\nUniqueAnchor\n尾\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "literal-source-map.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "warning: page 1: item 3 \"尾\": '尾' (U+5C3E) not representable in WinAnsiEncoding; written as '?'\n",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 45,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 132.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 58,
+                "path": "main.tex",
+                "start_byte": 46
+              }
+            },
+            {
+              "x_pt": 208.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 62,
+                "path": "main.tex",
+                "start_byte": 59
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "619368eb1ae0fb962b69bcc0a3c88c502749c19dad27041ca739f6abee8042ce",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "macro-arguments",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-macro-arguments",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-macro-arguments",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\newcommand{\\pair}[2]{#1 then #2}\n\\begin{document}\n\\pair{left}{right}\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "fail",
+      "pdf_file": "macro-arguments.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 45,
+                "path": "main.tex",
+                "start_byte": 42
+              }
+            },
+            {
+              "x_pt": 138.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 46
+              }
+            },
+            {
+              "x_pt": 154.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 53,
+                "path": "main.tex",
+                "start_byte": 49
+              }
+            },
+            {
+              "x_pt": 181.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 56,
+                "path": "main.tex",
+                "start_byte": 54
+              }
+            },
+            {
+              "x_pt": 196.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 85,
+                "path": "main.tex",
+                "start_byte": 81
+              }
+            },
+            {
+              "x_pt": 224.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 92,
+                "path": "main.tex",
+                "start_byte": 87
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "73a8dcff37cd3dca8b9b31fdd22821f53e3512c513588c6bbaf4b0978ddfd321",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "macro-scope",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-macro-scope",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-macro-scope",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\newcommand{\\word}{outer}\n\\begin{document}\n\\word{} {\\renewcommand{\\word}{inner}\\word{}} \\word{}\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "fail",
+      "pdf_file": "macro-scope.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 43
+              }
+            },
+            {
+              "x_pt": 150.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 102,
+                "path": "main.tex",
+                "start_byte": 97
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "83a764f11c6661c5d71c0aed2316f8711553b63b2421c0eeee14bb8415e5832d",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "math-inline-display",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-math-inline-display",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-math-inline-display",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nInline $x_1^2 + y$ ends.\n\\[\\frac{a+b}{c}=d\\]\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "math-inline-display.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 47,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 156.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 54,
+                "path": "main.tex",
+                "start_byte": 49
+              }
+            },
+            {
+              "x_pt": 190.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 56,
+                "path": "main.tex",
+                "start_byte": 55
+              }
+            },
+            {
+              "x_pt": 199.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 58,
+                "path": "main.tex",
+                "start_byte": 57
+              }
+            },
+            {
+              "x_pt": 208.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 65,
+                "path": "main.tex",
+                "start_byte": 60
+              }
+            },
+            {
+              "x_pt": 242.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 68,
+                "path": "main.tex",
+                "start_byte": 66
+              }
+            },
+            {
+              "x_pt": 251.52,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 77,
+                "path": "main.tex",
+                "start_byte": 74
+              }
+            },
+            {
+              "x_pt": 272.88,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 79
+              }
+            },
+            {
+              "x_pt": 282.24,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 83,
+                "path": "main.tex",
+                "start_byte": 81
+              }
+            },
+            {
+              "x_pt": 297.6,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 85,
+                "path": "main.tex",
+                "start_byte": 83
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "d71b1951b5fb615fd7a3ea163531baa4623e7e94e67a2e0b3fc6e2a54ba526d6",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "missing-include",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-missing-include",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-missing-include",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{missing-file}\nAfter.\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "missing-include.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 68,
+                "path": "main.tex",
+                "start_byte": 56
+              }
+            },
+            {
+              "x_pt": 238.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 76,
+                "path": "main.tex",
+                "start_byte": 70
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "9aa095ddf6427e9579473f943d62b1cec6650a17a4de258b74b4814a57f52733",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "plain-paragraphs",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-plain-paragraphs",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-plain-paragraphs",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nFirst paragraph.\n\nSecond paragraph.\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "plain-paragraphs.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 46,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 150.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 57,
+                "path": "main.tex",
+                "start_byte": 47
+              }
+            },
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 65,
+                "path": "main.tex",
+                "start_byte": 59
+              }
+            },
+            {
+              "x_pt": 111.36,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 76,
+                "path": "main.tex",
+                "start_byte": 66
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "ca65e836026239ece90053a638c48055bffd69497b491f10028414fbd62fd9b6",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "tikz-required",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-tikz-required",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-tikz-required",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}\n\\draw (0,0) -- (1,0) -- (1,1);\n\\end{tikzpicture}\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "tikz-required.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 40,
+                "path": "main.tex",
+                "start_byte": 36
+              }
+            },
+            {
+              "x_pt": 144.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 90,
+                "path": "main.tex",
+                "start_byte": 85
+              }
+            },
+            {
+              "x_pt": 178.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 93,
+                "path": "main.tex",
+                "start_byte": 91
+              }
+            },
+            {
+              "x_pt": 193.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 99,
+                "path": "main.tex",
+                "start_byte": 94
+              }
+            },
+            {
+              "x_pt": 226.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 102,
+                "path": "main.tex",
+                "start_byte": 100
+              }
+            },
+            {
+              "x_pt": 242.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 109,
+                "path": "main.tex",
+                "start_byte": 103
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "a60fcc3427286695c215744680be6f535eec9e197e9382144d52d8f8f05e6354",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "unclosed-group",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-unclosed-group",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-unclosed-group",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nBefore. {inside\nStill inside.\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "unclosed-group.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 56,
+                "path": "main.tex",
+                "start_byte": 50
+              }
+            },
+            {
+              "x_pt": 202.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 62,
+                "path": "main.tex",
+                "start_byte": 57
+              }
+            },
+            {
+              "x_pt": 235.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 70,
+                "path": "main.tex",
+                "start_byte": 63
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "30f621b07e32004860f6eac1284c7c210d98f0ba7e050cf44ce2a9fa22a8e7e7",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "unicode-literals",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-unicode-literals",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-unicode-literals",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nCafé naïve — 東京.\nAfter Unicode.\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "unicode-literals.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "warning: page 1: item 4 \"東京.\": '東' (U+6771), '京' (U+4EAC) not representable in WinAnsiEncoding; written as '?'\n",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 46,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 144.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 53,
+                "path": "main.tex",
+                "start_byte": 47
+              }
+            },
+            {
+              "x_pt": 178.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 57,
+                "path": "main.tex",
+                "start_byte": 54
+              }
+            },
+            {
+              "x_pt": 187.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 65,
+                "path": "main.tex",
+                "start_byte": 58
+              }
+            },
+            {
+              "x_pt": 208.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 71,
+                "path": "main.tex",
+                "start_byte": 66
+              }
+            },
+            {
+              "x_pt": 242.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 72
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "2fd67eb97f9af8175ed4eae664ecb13eab6ff989225078ce79f4d850c90ce1aa",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    },
+    {
+      "case_id": "unknown-command",
+      "request": {
+        "protocol_version": 1,
+        "id": "corpus-unknown-command",
+        "type": "compile",
+        "payload": {
+          "project_id": "corpus-unknown-command",
+          "revision": 1,
+          "entry_path": "main.tex",
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\documentclass{article}\n\\begin{document}\nBefore. \\flashtexUnknownCommand After.\n\\end{document}\n"
+            }
+          ]
+        }
+      },
+      "compiler_case_status": "unsupported",
+      "pdf_file": "unknown-command.pdf",
+      "renderer_returncode": 0,
+      "renderer_stdout": "",
+      "renderer_stderr": "",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 79,
+                "path": "main.tex",
+                "start_byte": 73
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "bc7f8bac85e083c8c7e90e5e3db47c6f525d586893775987cc30ac64955915cb",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ]
+    }
+  ]
+}

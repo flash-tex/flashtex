@@ -1,0 +1,100 @@
+{
+ "fixture": "112-at-dash-at-empty.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 82.959
+   },
+   {
+    "text": "before",
+    "x": 97.4553,
+    "y_top": 82.959
+   },
+   {
+    "text": "the",
+    "x": 130.212,
+    "y_top": 82.959
+   },
+   {
+    "text": "table.",
+    "x": 148.9964,
+    "y_top": 82.959
+   },
+   {
+    "text": "1990--1995",
+    "x": 72.0,
+    "y_top": 93.44
+   },
+   {
+    "text": "Tight",
+    "x": 146.138,
+    "y_top": 93.44
+   },
+   {
+    "text": "and",
+    "x": 124.727,
+    "y_top": 100.232
+   },
+   {
+    "text": "2001--2010",
+    "x": 72.0,
+    "y_top": 106.989
+   },
+   {
+    "text": "x",
+    "x": 156.441,
+    "y_top": 106.989
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 119.565
+   },
+   {
+    "text": "after",
+    "x": 97.4553,
+    "y_top": 119.565
+   },
+   {
+    "text": "the",
+    "x": 123.24,
+    "y_top": 119.565
+   },
+   {
+    "text": "table.",
+    "x": 142.0353,
+    "y_top": 119.565
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    145.74,
+    83.955,
+    0.398,
+    27.099,
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    172.303,
+    83.955,
+    0.398,
+    27.099,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ]
+ ]
+}

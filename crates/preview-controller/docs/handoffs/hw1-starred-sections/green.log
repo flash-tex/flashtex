@@ -1,0 +1,105 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.61s
+     Running unittests src/lib.rs (crates/compiler/target/debug/deps/flashtex_compiler-c61e27a195a03b58)
+
+running 41 tests
+test export::tests::ordinary_text_and_latin1_encode_as_text ... ok
+test export::tests::every_math_symbol_has_a_decided_export_outcome ... ok
+test export::tests::unrepresentable_lists_each_offender_once ... ok
+test export::winansi_tests::typographic_punctuation_is_exportable ... ok
+test export::tests::the_fraction_rule_is_reported_not_substituted ... ok
+test export::winansi_tests::characters_with_genuinely_no_base14_glyph_still_report ... ok
+test incremental::tests::adding_usepackage_forces_full_recompile ... ok
+test incremental::tests::layout_constraint_change_forces_full_recompile ... ok
+test incremental::tests::malformed_edit_has_partial_output_and_source_diagnostics ... ok
+test incremental::tests::edit_inside_one_paragraph_matches_clean_build ... ok
+test incremental::tests::edit_spanning_paragraph_boundary_matches_clean_build ... ok
+test incremental::tests::edits_at_start_and_end_match_clean_build ... ok
+test layout::tests::core14_shaping_applies_kerning_and_keeps_document_byte_identity ... ok
+test layout::tests::body_and_heading_faces_do_not_depend_on_numeric_font_size ... ok
+test layout::tests::every_math_item_span_is_a_valid_source_slice ... ok
+test incremental::tests::heading_and_math_use_the_same_cursor_as_clean_layout ... ok
+test layout::tests::fraction_stacks_smaller_children_and_advances_as_one_unit ... ok
+test layout::tests::inline_and_display_math_both_produce_positioned_items ... ok
+test layout::tests::shaping_missing_glyph_diagnostic_uses_document_not_relative_offset ... ok
+test layout::tests::scripts_attach_to_atoms_and_nested_scripts_decrease_in_size ... ok
+test incremental::tests::redefining_macro_invalidates_untouched_reader ... ok
+test layout::tests::tall_math_increases_the_distance_to_the_next_line ... ok
+test lexer::tests::command_and_linebreak_are_distinguished ... ok
+test layout::tests::unsupported_shaping_is_an_explicit_source_mapped_error ... ok
+test layout::tests::unknown_command_and_unclosed_shift_recover_without_losing_content ... ok
+test lexer::tests::paragraph_break_needs_a_blank_line ... ok
+test lexer::tests::spans_are_utf8_bytes_not_char_counts ... ok
+test math::shift_tests::shifting_reaches_nested_spans ... ok
+test incremental::tests::multibyte_insertion_shifts_later_spans_by_byte_delta ... ok
+test parser::tests::group_local_macro_is_restored_when_the_group_closes ... ok
+test parser::tests::invalid_newcommand_and_renewcommand_relationships_are_diagnostic ... ok
+test incremental::tests::scoped_macro_change_does_not_invalidate_global_reader ... ok
+test parser::tests::macro_expansion_in_math_does_not_fabricate_per_glyph_spans ... ok
+test parser::tests::macro_argument_keeps_argument_source_span ... ok
+test parser::tests::macros_expand_inside_supported_command_arguments ... ok
+test parser::tests::nested_macros_expand_and_renewcommand_replaces_an_existing_macro ... ok
+test parser::tests::preamble_is_recorded_and_only_document_body_is_typeset ... ok
+test protocol::font_literal_tests::every_font_literal_matches_its_serialised_value ... ok
+test parser::tests::zero_argument_macro_maps_literal_output_to_invocation ... ok
+test parser::tests::self_referential_macro_hits_explicit_recursion_limit ... ok
+test incremental::tests::changed_line_count_repositions_later_blocks ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/main.rs (crates/compiler/target/debug/deps/flashtex_compiler-426f174f1ebc3426)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/incremental_bench.rs (crates/compiler/target/debug/deps/incremental_bench-4089f23b706d88b0)
+
+running 1 test
+test tests::all_scaling_fixtures_match_clean_build_after_each_edit has been running for over 60 seconds
+test tests::all_scaling_fixtures_match_clean_build_after_each_edit ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 101.57s
+
+     Running unittests src/bin/scaling_bench.rs (crates/compiler/target/debug/deps/scaling_bench-04548548e6b6546e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/ttfb_bench.rs (crates/compiler/target/debug/deps/ttfb_bench-a7be02bcec73a40c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/acceptance.rs (crates/compiler/target/debug/deps/acceptance-60c120bff6237fbd)
+
+running 11 tests
+test repository_fixture_roundtrips ... FAILED
+test unknown_protocol_version_and_type_produce_error_envelopes ... ok
+test unsafe_paths_are_rejected ... ok
+test malformed_input_recovers_with_diagnostics_and_still_produces_output ... ok
+test math_and_unsupported_commands_are_reported_never_silent ... ok
+test realistic_preamble_is_informational_and_only_body_is_positioned ... ok
+test stray_closing_brace_is_reported_not_swallowed ... ok
+test unicode_spans_are_utf8_bytes_that_slice_back_exactly ... ok
+test a_minimal_document_and_a_second_edited_revision_both_lay_out ... ok
+test warm_session_cache_is_bounded_and_stays_correct_after_eviction ... ok
+test bounded_reader_rejects_an_oversized_line_and_recovers_for_the_next_request ... ok
+
+failures:
+
+---- repository_fixture_roundtrips stdout ----
+
+thread 'repository_fixture_roundtrips' (1805013) panicked at tests/acceptance.rs:196:49:
+fixture must exist: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    repository_fixture_roundtrips
+
+test result: FAILED. 10 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+error: test failed, to rerun pass `--test acceptance`

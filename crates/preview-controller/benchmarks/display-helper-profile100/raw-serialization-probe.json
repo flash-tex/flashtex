@@ -1,0 +1,218 @@
+{
+  "buffer_capacity": 8192,
+  "bytes": 1150821,
+  "exact_limit_and_overflow_checked": true,
+  "exact_output": true,
+  "native_latency": "not measured",
+  "observations": [
+    {
+      "buffered": false,
+      "ms": 4.094755999999999,
+      "pair": 0
+    },
+    {
+      "buffered": true,
+      "ms": 1.890108,
+      "pair": 0
+    },
+    {
+      "buffered": true,
+      "ms": 1.7884559999999998,
+      "pair": 1
+    },
+    {
+      "buffered": false,
+      "ms": 4.376408,
+      "pair": 1
+    },
+    {
+      "buffered": false,
+      "ms": 4.068359,
+      "pair": 2
+    },
+    {
+      "buffered": true,
+      "ms": 2.137331,
+      "pair": 2
+    },
+    {
+      "buffered": true,
+      "ms": 3.0578990000000004,
+      "pair": 3
+    },
+    {
+      "buffered": false,
+      "ms": 4.01624,
+      "pair": 3
+    },
+    {
+      "buffered": false,
+      "ms": 4.517051,
+      "pair": 4
+    },
+    {
+      "buffered": true,
+      "ms": 2.126934,
+      "pair": 4
+    },
+    {
+      "buffered": true,
+      "ms": 2.019525,
+      "pair": 5
+    },
+    {
+      "buffered": false,
+      "ms": 4.0119880000000006,
+      "pair": 5
+    },
+    {
+      "buffered": false,
+      "ms": 4.026384,
+      "pair": 6
+    },
+    {
+      "buffered": true,
+      "ms": 2.1702589999999997,
+      "pair": 6
+    },
+    {
+      "buffered": true,
+      "ms": 1.94689,
+      "pair": 7
+    },
+    {
+      "buffered": false,
+      "ms": 4.151362,
+      "pair": 7
+    },
+    {
+      "buffered": false,
+      "ms": 6.6959159999999995,
+      "pair": 8
+    },
+    {
+      "buffered": true,
+      "ms": 2.013226,
+      "pair": 8
+    },
+    {
+      "buffered": true,
+      "ms": 2.448799,
+      "pair": 9
+    },
+    {
+      "buffered": false,
+      "ms": 4.649926000000001,
+      "pair": 9
+    }
+  ],
+  "raw_observations": [
+    {
+      "ms": 2.303124,
+      "pair": 0,
+      "raw": false
+    },
+    {
+      "ms": 0.076832,
+      "pair": 0,
+      "raw": true
+    },
+    {
+      "ms": 0.053185,
+      "pair": 1,
+      "raw": true
+    },
+    {
+      "ms": 2.025588,
+      "pair": 1,
+      "raw": false
+    },
+    {
+      "ms": 1.896134,
+      "pair": 2,
+      "raw": false
+    },
+    {
+      "ms": 0.062302,
+      "pair": 2,
+      "raw": true
+    },
+    {
+      "ms": 0.050021,
+      "pair": 3,
+      "raw": true
+    },
+    {
+      "ms": 1.851282,
+      "pair": 3,
+      "raw": false
+    },
+    {
+      "ms": 2.865616,
+      "pair": 4,
+      "raw": false
+    },
+    {
+      "ms": 0.084888,
+      "pair": 4,
+      "raw": true
+    },
+    {
+      "ms": 0.06221,
+      "pair": 5,
+      "raw": true
+    },
+    {
+      "ms": 2.131232,
+      "pair": 5,
+      "raw": false
+    },
+    {
+      "ms": 1.878373,
+      "pair": 6,
+      "raw": false
+    },
+    {
+      "ms": 0.06842,
+      "pair": 6,
+      "raw": true
+    },
+    {
+      "ms": 0.051475,
+      "pair": 7,
+      "raw": true
+    },
+    {
+      "ms": 2.194673,
+      "pair": 7,
+      "raw": false
+    },
+    {
+      "ms": 2.2224969999999997,
+      "pair": 8,
+      "raw": false
+    },
+    {
+      "ms": 0.069565,
+      "pair": 8,
+      "raw": true
+    },
+    {
+      "ms": 0.052452,
+      "pair": 9,
+      "raw": true
+    },
+    {
+      "ms": 2.015211,
+      "pair": 9,
+      "raw": false
+    }
+  ],
+  "raw_scope": "preencoded canonical body; parsing and validation excluded",
+  "base_sha": "7d69a543",
+  "sha256": {
+    "/tmp/flashtex-helper-profile100-candidate.json": "57a63b23b2d255586ce2196fc38fe7715dc1d612c957f737ca0aaa3736ae2b0e",
+    "crates/preview-controller/examples/output_serialization_probe.rs": "db0d21c41f035d07f907a72b32ab755a952a75d0a1f1dd723b2ea65067d19bb3",
+    "crates/preview-controller/target/release/examples/output_serialization_probe": "c6e94a6e1490cb1f9de2015e746e66233fca3c3efca93121ef82d9169502dc1b"
+  }
+}

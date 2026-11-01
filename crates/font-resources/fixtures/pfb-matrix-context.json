@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "font_sha256": "84eb01245abb17c0530ca3909427256d73df8bed2d7243b9f2717ca08c010ac8",
+  "header_range": [
+    6,
+    5724
+  ],
+  "header_sha256": "4cd2014dc9675171409f32e34376290ae23f2030426f91aabb181621a036f12d",
+  "observed_literal_lines": [
+    "/PaintType 0 def",
+    "/FontType 1 def",
+    "/FontMatrix[0.001 0 0 0.001 0 0]readonly def"
+  ],
+  "active_context_status": "refused: unsupported conditional FontDirectory/findfont prologue before dictionary",
+  "scope": "Lines are observations only; not a parsed active font context. No transformation/render claim for this real asset.",
+  "conditional_prologue": {
+    "file_range": [
+      741,
+      933
+    ],
+    "sha256": "8e8873147f81a13df3bad319521eeef6145dcd7a79d98fd04ed759e188c0ede3",
+    "depends_on": "existing FontDirectory named font, UniqueID0 and FontType1"
+  },
+  "conditional_trailer": {
+    "file_range": [
+      118689,
+      119233
+    ],
+    "sha256": "b0a71d6f685d27c8d353a0bed8f58f84bdc2c5fb7e96072ef671102e3e2b2fbb",
+    "effect": "conditional restore; observed active definition can depend on external VM state"
+  },
+  "ttc_followup": {
+    "reviewed_float_tip": "4422cff89998c7fa275ffdbc74e1be2810357691",
+    "corrected_api_found_in_17_daniel_refs": false,
+    "pending_owner_patch": "82a478f"
+  }
+}

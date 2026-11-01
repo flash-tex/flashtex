@@ -1,0 +1,62 @@
+[
+  {
+    "baseline_y_pt": 720.96,
+    "font_size_pt": 12,
+    "kind": "text",
+    "source": {
+      "end_byte": 1994,
+      "path": "HW1.tex",
+      "start_byte": 1984
+    },
+    "text": "(a)",
+    "x_pt": 133.14
+  },
+  {
+    "baseline_y_pt": 720.96,
+    "font_size_pt": 12,
+    "kind": "text",
+    "source": {
+      "end_byte": 2045,
+      "path": "HW1.tex",
+      "start_byte": 2035
+    },
+    "text": "(b)",
+    "x_pt": 260.6
+  },
+  {
+    "baseline_y_pt": 720.96,
+    "font_size_pt": 12,
+    "kind": "text",
+    "source": {
+      "end_byte": 2096,
+      "path": "HW1.tex",
+      "start_byte": 2086
+    },
+    "text": "(c)",
+    "x_pt": 388.74
+  },
+  {
+    "baseline_y_pt": 720.96,
+    "font_size_pt": 12,
+    "kind": "text",
+    "source": {
+      "end_byte": 2147,
+      "path": "HW1.tex",
+      "start_byte": 2137
+    },
+    "text": "(d)",
+    "x_pt": 516.2
+  },
+  {
+    "baseline_y_pt": 214.8,
+    "font_size_pt": 12,
+    "kind": "text",
+    "source": {
+      "end_byte": 2475,
+      "path": "HW1.tex",
+      "start_byte": 2465
+    },
+    "text": "and",
+    "x_pt": 310.25
+  }
+]

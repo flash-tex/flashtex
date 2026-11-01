@@ -1,0 +1,46 @@
+--- a/crates/compiler/src/math.rs
++++ b/crates/compiler/src/math.rs
+@@ -341,6 +341,7 @@
+     ("neq", "≠"),
+     ("approx", "≈"),
+     ("cdot", "·"),
++    ("in", "∈"),
+     ("infty", "∞"),
+     ("sum", "∑"),
+     ("int", "∫"),
+--- a/crates/compiler/src/export.rs
++++ b/crates/compiler/src/export.rs
+@@ -56,6 +56,7 @@
+     ('\u{2260}', 0xB9), // notequal
+     ('\u{2248}', 0xBB), // approxequal
+     ('\u{B7}', 0xD7),   // dotmath
++    ('\u{2208}', 0xCE), // element: Adobe Symbol mapping, not CM metric slot
+     ('\u{221E}', 0xA5), // infinity
+     ('\u{2211}', 0xE5), // summation
+     ('\u{222B}', 0xF2), // integral
+--- /dev/null
++++ b/crates/compiler/tests/membership.rs
+@@ -0,0 +1,23 @@
++use flashtex_compiler::{export::{map_char, Glyph, ExportFont}, incremental::{compile_full, Session, LayoutConstraints}};
++#[test]
++fn membership_symbol_and_export_are_explicit() {
++    assert_eq!(map_char('∈'), Glyph::Encodable { font: ExportFont::Symbol, code: 0xce });
++    for source in [r"$a\in B$", r"\[a_i\in B^2\]", r"\newcommand{\member}{\in}$a\member B$"] {
++        let output=compile_full(source, LayoutConstraints::default());
++        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
++        assert!(output.pages.iter().flat_map(|p| &p.items).any(|i| i.text=="∈"));
++    }
++}
++#[test]
++fn membership_edits_match_clean_outputs() {
++    let mut session=Session::new();
++    for source in [r"$a\in B$", r"$a\in C_i$", r"$b\in C_i$", r"$b\unknownrelation C$"] {
++        let incremental=session.compile(source, LayoutConstraints::default());
++        let clean=compile_full(source, LayoutConstraints::default());
++        if source.contains("unknownrelation") {
++            assert!(clean.diagnostics.iter().any(|d| d.message.contains("unknownrelation") && d.message.contains("not supported")));
++        }
++        assert_eq!(incremental.output.pages,clean.pages);
++        assert_eq!(incremental.output.diagnostics,clean.diagnostics);
++    }
++}

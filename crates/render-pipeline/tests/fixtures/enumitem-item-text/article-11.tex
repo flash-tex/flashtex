@@ -1,0 +1,50 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\pagestyle{empty}
+\setlist{topsep=4pt,parsep=2pt}
+\newlength{\mylen}
+\settowidth{\mylen}{(viii)}
+\newlength{\fixlen}
+\setlength{\fixlen}{3em}
+\begin{document}
+\begin{enumerate}[label=\arabic*.]
+\item K11a
+\begin{enumerate}[label=(\alph*)]
+\item K11b
+\begin{enumerate}[label=\roman*.,itemsep=0pt]
+\item K11c
+\end{enumerate}
+\end{enumerate}
+\end{enumerate}
+\begin{enumerate}[labelsep=1em]
+\item K11d
+\end{enumerate}
+\begin{enumerate}[itemindent=1em]
+\item K11e
+\end{enumerate}
+\begin{enumerate}[label=\roman*.,leftmargin=*,widest=iii]
+\item K11f
+\end{enumerate}
+\begin{enumerate}[leftmargin=\mylen]
+\item K11g
+\end{enumerate}
+\begin{enumerate}[leftmargin=*,labelsep=1em]
+\item K11h
+\end{enumerate}
+\begin{enumerate}[leftmargin=*,itemindent=6pt]
+\item K11i
+\end{enumerate}
+\begin{itemize}[leftmargin=*,widest=WW]
+\item K11j
+\end{itemize}
+\begin{enumerate}[leftmargin=*,labelsep=2em]
+\item K11k
+\begin{enumerate}[leftmargin=*]
+\item K11l
+\end{enumerate}
+\end{enumerate}
+\begin{enumerate}[leftmargin=\fixlen]
+\item K11m
+\end{enumerate}
+\end{document}

@@ -1,0 +1,279 @@
+{
+ "fixture": "25-font-and-colour.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; glyphs [text, x, y_top, fill]; rules [x, top, width, height, fill]",
+ "pages": [
+  {
+   "glyphs": [
+    [
+     "S",
+     89.559,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     96.0626,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "y",
+     100.2924,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     106.4708,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     109.7226,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "s",
+     114.9255,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "b",
+     123.44,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "o",
+     131.2826,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "l",
+     138.0074,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "d",
+     141.7434,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "r",
+     153.6986,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "e",
+     159.1921,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "d",
+     165.3287,
+     83.955,
+     "1 0 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "i",
+     176.71,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "t",
+     180.2966,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "a",
+     184.182,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "l",
+     190.1596,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "i",
+     193.1484,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "c",
+     196.735,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "b",
+     206.2991,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "l",
+     211.679,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "u",
+     214.6678,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "e",
+     220.9443,
+     83.955,
+     "0 0 1 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "d",
+     230.2215,
+     83.955,
+     "0 0.5 0 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "a",
+     236.1991,
+     83.955,
+     "0 0.5 0 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "r",
+     242.1767,
+     83.955,
+     "0 0.5 0 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "k",
+     247.1082,
+     83.955,
+     "0 0.5 0 rg",
+     "LMRoman12-Italic"
+    ],
+    [
+     "h",
+     257.2582,
+     83.955,
+     "1 0.5 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "e",
+     264.7302,
+     83.955,
+     "1 0.5 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "a",
+     270.8668,
+     83.955,
+     "1 0.5 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "v",
+     277.0345,
+     83.955,
+     "1 0.5 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "y",
+     284.1323,
+     83.955,
+     "1 0.5 0 rg",
+     "LMRoman12-Bold"
+    ],
+    [
+     "p",
+     295.1275,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     301.6311,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     304.8829,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     310.7362,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     313.988,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     ".",
+     320.4916,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ]
+   ],
+   "rules": []
+  }
+ ]
+}

@@ -1,0 +1,107 @@
+{
+ "fixture": "18-hline-double.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Head",
+    "x": 77.978,
+    "y_top": 97.454
+   },
+   {
+    "text": "Col",
+    "x": 116.2681,
+    "y_top": 97.454
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 112.299
+   },
+   {
+    "text": "b",
+    "x": 121.789,
+    "y_top": 112.299
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 128.255
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 128.255
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 128.255
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 128.255
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    84.952,
+    67.804,
+    0.398
+   ],
+   [
+    72.0,
+    86.944,
+    67.804,
+    0.398
+   ],
+   [
+    72.0,
+    101.789,
+    67.804,
+    0.398
+   ],
+   [
+    72.0,
+    116.633,
+    67.804,
+    0.398
+   ],
+   [
+    72.0,
+    118.625,
+    67.804,
+    0.398
+   ]
+  ]
+ ]
+}

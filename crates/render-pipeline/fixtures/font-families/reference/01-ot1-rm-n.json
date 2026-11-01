@@ -1,0 +1,288 @@
+{
+ "fixture": "01-ot1-rm-n.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Lead",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 174.625,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 204.631,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "roman,",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 217.666,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 253.237,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Several",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 277.341,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 313.104,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "set",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 343.11,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 360.084,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "this",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 373.129,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "shape",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 393.967,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "measure",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 423.397,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "the",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 463.644,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "widths",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "of",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 166.211,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "a",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 177.834,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "whole",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 186.421,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "line",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 214.934,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 234.029,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 253.687,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "continue",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 276.666,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "with",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 316.798,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "more",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 339.767,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 364.986,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "that",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 393.857,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "wrap",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 415.729,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "onto",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 440.939,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "the",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 463.639,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "following",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "line",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 175.828,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "of",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 194.653,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "text",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 205.997,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 226.749,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "roman",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 246.128,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "again.",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 277.148,
+   "baseline": 158.675
+  }
+ ],
+ "warnings": []
+}

@@ -1,0 +1,11 @@
+{
+  "scope": "Actual lexer module via standalone rustc probe; small public type shim, not full parser or TeX oracle",
+  "lexer_sha256": "f61dcb1df847da4a5ca7cc1b2bd94a790ff526e769fb075cd3eaa6d9a6834f74",
+  "binary_sha256": "082ff0517ce3220750d2135c928825a3811283a51482d1437173284978a2fd9a",
+  "exit_code": 0,
+  "cases": 10,
+  "files": {
+    "probe.rs": "1544003bb9eba85880af90f1dadd3f28489b3671474718a74ea1aa2e444e2e2c",
+    "output.txt": "3320761dd395c692275a8e998d9f06bc1897efc3181a84147fd0cee76b316091"
+  }
+}

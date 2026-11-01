@@ -1,0 +1,14 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\tikzset{block/.style={draw, fill=blue!10, minimum width=2cm, minimum height=0.8cm}}
+\begin{document}
+\begin{tikzpicture}[>=latex]
+\node[block] (s) at (0,0) {Start};
+\node[block] (p) at (0,-1.5) {Process};
+\node[block] (e) at (0,-3) {End};
+\draw[->] (s) -- (p);
+\draw[->] (p) -- (e);
+\draw[->] (p.east) -- ++(1,0) |- (s.east);
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "peer_commit": "9bb7b2736f16c96f4ce356fbb89caf9de395402c",
+  "peer_file": "crates/render-pipeline/src/tfm.rs",
+  "peer_source_sha256": "a41a38585e201ae1a4e6f381be5d1cf8e2994358b97dc12404f41c3d9c181e71",
+  "fixture_sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+  "license_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+  "output_sha256": "eb1f51280c298b8d5264496a233257a404b398e01c3311789c93ca17d049301c",
+  "scope": "All present ec-lmr10 metrics; parameters1..32; ten encoded runs. Actual peer reader compiled and executed in temp directory. rm-lmr fixture absent, unverified. No independent TeX or visual claim."
+}

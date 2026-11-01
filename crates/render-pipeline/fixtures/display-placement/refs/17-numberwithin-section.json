@@ -1,0 +1,93 @@
+{
+ "fixture": "17-numberwithin-section.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "1",
+    "x": 133.768,
+    "y_top": 134.765
+   },
+   {
+    "text": "First",
+    "x": 157.9772,
+    "y_top": 134.765
+   },
+   {
+    "text": "Text.",
+    "x": 133.768,
+    "y_top": 156.585
+   },
+   {
+    "text": "a",
+    "x": 294.211,
+    "y_top": 168.541
+   },
+   {
+    "text": "=",
+    "x": 302.2468,
+    "y_top": 168.541
+   },
+   {
+    "text": "b",
+    "x": 312.7653,
+    "y_top": 168.541
+   },
+   {
+    "text": "(1.1)",
+    "x": 456.9959,
+    "y_top": 168.541
+   },
+   {
+    "text": "2",
+    "x": 133.768,
+    "y_top": 201.486
+   },
+   {
+    "text": "Second",
+    "x": 157.9772,
+    "y_top": 201.486
+   },
+   {
+    "text": "Text.",
+    "x": 133.768,
+    "y_top": 223.307
+   },
+   {
+    "text": "c",
+    "x": 294.234,
+    "y_top": 235.262
+   },
+   {
+    "text": "=",
+    "x": 301.3154,
+    "y_top": 235.262
+   },
+   {
+    "text": "d",
+    "x": 311.824,
+    "y_top": 235.262
+   },
+   {
+    "text": "(2.1)",
+    "x": 457.004,
+    "y_top": 235.262
+   },
+   {
+    "text": "Ref",
+    "x": 133.768,
+    "y_top": 253.195
+   },
+   {
+    "text": "(2.1).",
+    "x": 152.679,
+    "y_top": 253.195
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

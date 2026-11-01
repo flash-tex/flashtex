@@ -48,6 +48,8 @@ on:
       - 'fixtures/**'
       - 'tools/displaylist/**'
       - 'tools/parity/**'
+      - 'tools/visual-oracle/**'
+      - 'tools/real-world-corpus/**'
       - 'scripts/engine-parity.sh'
       - 'apps/mac/Package.swift'
       - 'apps/mac/Package.resolved'

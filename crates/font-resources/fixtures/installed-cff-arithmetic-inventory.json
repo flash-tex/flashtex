@@ -1,0 +1,669 @@
+{
+  "schema_version": 1,
+  "scope": "installed OTF inventory, explicit Unhinted geometry acceptance only; no copied font bytes",
+  "font_accessor_sha": "2d6954b923340c788cd31f663fa8e7a845326dec",
+  "build_command": "cargo run --offline --release --manifest-path /tmp/flashtex-cff-smoke/harness/Cargo.toml -- FONT_PATH",
+  "harness_source": "fn main(){let path=std::env::args().nth(1).unwrap();let bytes=std::fs::read(path).unwrap();println!(\"fontSHA={}\",flashtex_font_resources::sha256(&bytes));let storage=bytes.as_ptr() as usize;let face=flashtex_font_engine::TrueTypeFace::parse(bytes).unwrap();let bytes=face.cff_table().expect(\"CFF table\");println!(\"table_offset={} table_length={}\",bytes.as_ptr() as usize-storage,bytes.len());let cff=flashtex_font_resources::cff::Cff::parse(bytes).unwrap();println!(\"CFFSHA={} glyphs={} globalSubrs={} localSubrs={}\",cff.sha256,cff.glyph_count(),cff.global_subr_count(),cff.local_subr_count());let mut accepted=0;let mut failures=std::collections::BTreeMap::new();for gid in 0..cff.glyph_count(){match cff.matrix_outline(gid as u16,flashtex_font_resources::cff::HintPolicy::Unhinted){Ok(_)=>accepted+=1,Err(e)=>*failures.entry(e.to_string()).or_insert(0)+=1}}println!(\"accepted={accepted} explicit_results={failures:?}\");}\n",
+  "harness_source_sha256": "788d5c021d2c81454364621caae9eb63d260ccdb0bacdf97d2c345277d097d3e",
+  "binary_sha256": "5e51ab523d95efb4a88f0df267768b0bc444745e6f7160a3b0f816dd4f2d59af",
+  "decoder_source_sha256": {
+    "crates/font-resources/src/lib.rs": "d514fafab666192d13219872c380acfa985b6f12e3fe35fc2ddeb4596ec96f55",
+    "crates/font-resources/src/mapping.rs": "518b72adc71141e99e6d1c3945941d4503bcfff1cb1abbf815b539422e4a1724",
+    "crates/font-resources/src/composite.rs": "524bdff68d42e248a623a539762cdd56dff4f4cc2dce004af01349daf5f045f0",
+    "crates/font-resources/src/outline.rs": "c8bc06d3f280b596c8d0acb3358053115b8aef3c29cd9e4648ab182807e6d979",
+    "crates/font-resources/src/expansion.rs": "e5749076bf8b14bd8bf28639ba11770afb6735296ae74c1e50252bc7e7c8515b",
+    "crates/font-resources/src/path.rs": "789d4b0af62d5be6855b44731e98b5739206d425386574c5582c6dbcff6e641c",
+    "crates/font-resources/src/tfm.rs": "897575ded43ed3069c177c677e97ec7bc237da14c34ad6303da3f1af2b7ae588",
+    "crates/font-resources/src/encoding.rs": "08ed2a18d8cd71a98e4c6246f5d15a883fa1c125531b89f7e48fcab5bc3fa62c",
+    "crates/font-resources/src/vf.rs": "a3d7688bb6d77876a8f88871c746d660534f36d456d1496f074eedea60bc1e9a",
+    "crates/font-resources/src/vf_graph.rs": "3549ac6fa56144beeada57411b55874c4e18000f7534dadf3ef9a72af49dcc8d",
+    "crates/font-resources/src/cff/mod.rs": "8b2e0afb5dd85e81447f1107acb7d5f05df30b3ed125b351793e390938763707",
+    "crates/font-resources/src/cff/matrix.rs": "bf7816033d7f3c1752465a1fb2decddc24766b1eb4d66cf18584c1f9c63b18e4",
+    "crates/font-resources/src/cff/type2.rs": "a94193695c5646eb92087b7b4a90c50e946c1f14a30d72ee8dec2deecad7c57d",
+    "crates/font-resources/src/cff/cache.rs": "be3aa41890afd5da9df5ecf4ecf192f95a13f0f771e312c7a6ad5079463ab093",
+    "crates/font-resources/src/cff/standard_strings.rs": "ab675b3ab58aeeb8ade96b6d4738d811b945030f07ccde8c76f129c054a893f7",
+    "crates/font-resources/src/cff/names.rs": "e7903aedfea495baac96e753e22fcaffd196e49e21363ad21205d01b8088a007",
+    "crates/font-resources/src/cff/type2/arithmetic.rs": "01e0bd05f02c7ebca021b7b13f8e6e5e84009f82bb12f891c1ed25a8a6775125"
+  },
+  "fonts": [
+    {
+      "path": "/usr/share/fonts/aajohan-comfortaa-fonts/Comfortaa-Bold.otf",
+      "byte_length": 89848,
+      "sha256": "fcbf28724771990af83923eb09ef541af4219af43aa94761b1ac0a92e0ee14d7",
+      "exit_code": 0,
+      "stdout": "fontSHA=fcbf28724771990af83923eb09ef541af4219af43aa94761b1ac0a92e0ee14d7\ntable_offset=3832 table_length=46885\nCFFSHA=a71b4a53bb65fe22d729cbe5a3a8cb04cacf2745631498aaabddfcdc1db6db1e glyphs=874 globalSubrs=262 localSubrs=221\naccepted=874 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/aajohan-comfortaa-fonts/Comfortaa-Light.otf",
+      "byte_length": 88108,
+      "sha256": "bd58bef991322d28c76ab35b3e47906a0c6ac3c7025a2700b377fb51c5972230",
+      "exit_code": 0,
+      "stdout": "fontSHA=bd58bef991322d28c76ab35b3e47906a0c6ac3c7025a2700b377fb51c5972230\ntable_offset=3880 table_length=45077\nCFFSHA=b017fe514a29e88ff4c21ec61e2993468b4ff3144bf24a86212785415becf20e glyphs=874 globalSubrs=267 localSubrs=223\naccepted=874 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/aajohan-comfortaa-fonts/Comfortaa-Medium.otf",
+      "byte_length": 98604,
+      "sha256": "a106e1c4ebabbd302d69aa70df594e00151a4e8501edffd1ef0fc632149fd953",
+      "exit_code": 0,
+      "stdout": "fontSHA=a106e1c4ebabbd302d69aa70df594e00151a4e8501edffd1ef0fc632149fd953\ntable_offset=3888 table_length=55566\nCFFSHA=e31d23d2af4dd1c0b89527610451820f3561a85fc2f18e1684c9cd2e58f87000 glyphs=874 globalSubrs=375 localSubrs=291\naccepted=874 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/aajohan-comfortaa-fonts/Comfortaa-Regular.otf",
+      "byte_length": 91584,
+      "sha256": "8f09f5d188e7962859f2345358258cede68c95d3e55e30580fc791997b452a4e",
+      "exit_code": 0,
+      "stdout": "fontSHA=8f09f5d188e7962859f2345358258cede68c95d3e55e30580fc791997b452a4e\ntable_offset=3856 table_length=48602\nCFFSHA=7a59e12d33943ddd98d94c951031908f0eb2e0243283e69cb43e45d511ec6631 glyphs=874 globalSubrs=253 localSubrs=199\naccepted=874 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/aajohan-comfortaa-fonts/Comfortaa-SemiBold.otf",
+      "byte_length": 98524,
+      "sha256": "89df308f7781dfb27a0ee6d80ece5c06a718a1a5946cee71784e223afac649da",
+      "exit_code": 0,
+      "stdout": "fontSHA=89df308f7781dfb27a0ee6d80ece5c06a718a1a5946cee71784e223afac649da\ntable_offset=3904 table_length=55370\nCFFSHA=026b0e0f0a4ba10bb239ac5dcc79b92fb517f43148df6822a1b37d7abbdcc803 glyphs=874 globalSubrs=374 localSubrs=280\naccepted=874 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-Bold.otf",
+      "byte_length": 103628,
+      "sha256": "79717a71223a303da90db571cfd5e4f02e7ed2e570dbe24053b4b1822388ef9f",
+      "exit_code": 0,
+      "stdout": "fontSHA=79717a71223a303da90db571cfd5e4f02e7ed2e570dbe24053b4b1822388ef9f\ntable_offset=4852 table_length=74188\nCFFSHA=eec4da1c86e995e781a53566af0a0addc699729d15b628da828ae8b0f9e470a9 glyphs=1322 globalSubrs=386 localSubrs=347\naccepted=1322 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-ExtraBold.otf",
+      "byte_length": 105548,
+      "sha256": "908c0fcf954e0557b887a95e9b5bbae7bb92ad72bec54c72c71a4f242e8f72c3",
+      "exit_code": 0,
+      "stdout": "fontSHA=908c0fcf954e0557b887a95e9b5bbae7bb92ad72bec54c72c71a4f242e8f72c3\ntable_offset=4936 table_length=76155\nCFFSHA=c0f7758f4a97e8506794eff2656fd1c316951c42f66cad6eba4d12c4e3aed258 glyphs=1322 globalSubrs=395 localSubrs=355\naccepted=1322 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-Light.otf",
+      "byte_length": 103432,
+      "sha256": "93051be37e9959aa20edb0dbdb7afabf118ef5908ce4d38e19e5f8fbcc8a0ea5",
+      "exit_code": 0,
+      "stdout": "fontSHA=93051be37e9959aa20edb0dbdb7afabf118ef5908ce4d38e19e5f8fbcc8a0ea5\ntable_offset=4900 table_length=73899\nCFFSHA=ca1d03c66aa372e8ac21260a5dab4766fe84d870d2a7d1e829f9d1ebc363962b glyphs=1322 globalSubrs=366 localSubrs=331\naccepted=1322 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-Regular.otf",
+      "byte_length": 100216,
+      "sha256": "a92f23cdd2b428b228aae94f2f25cf64a5d2c1287a4a3d638a3866fe52a2613c",
+      "exit_code": 0,
+      "stdout": "fontSHA=a92f23cdd2b428b228aae94f2f25cf64a5d2c1287a4a3d638a3866fe52a2613c\ntable_offset=4876 table_length=70875\nCFFSHA=f12e30654961b4486e92bdc1d5f90326a1667ad1884abe05e4e48a66f11b6a6b glyphs=1322 globalSubrs=368 localSubrs=327\naccepted=1322 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-Thin.otf",
+      "byte_length": 99048,
+      "sha256": "9ee5a4476edbd9c3958f4e772fdfb0500fcf69a5e542383b05fd260f8dac93ed",
+      "exit_code": 0,
+      "stdout": "fontSHA=9ee5a4476edbd9c3958f4e772fdfb0500fcf69a5e542383b05fd260f8dac93ed\ntable_offset=4892 table_length=69558\nCFFSHA=edf79856c338a514b9c35f27ac9f63c139fbb9a7bbcf40c988aea6dff8ab21b5 glyphs=1322 globalSubrs=344 localSubrs=301\naccepted=1322 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/abattis-cantarell-vf-fonts/Cantarell-VF.otf",
+      "byte_length": 170576,
+      "sha256": "c7bb69188222bb55e9edbddc7b4ff8087215102e957cc9e82a64c94334882e9a",
+      "exit_code": 101,
+      "stdout": "fontSHA=c7bb69188222bb55e9edbddc7b4ff8087215102e957cc9e82a64c94334882e9a\n",
+      "stderr": "\nthread 'main' (682391) panicked at src/main.rs:1:249:\ncalled `Result::unwrap()` on an `Err` value: MissingTable(\"CFF \")\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+      "category": "accessor_or_container_rejected",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/fontawesome-6-brands-fonts/Font Awesome 6 Brands-Regular-400.otf",
+      "byte_length": 563196,
+      "sha256": "858c3adca64714683b268895f25dd53c11e453984bbe438895883af473276434",
+      "exit_code": 0,
+      "stdout": "fontSHA=858c3adca64714683b268895f25dd53c11e453984bbe438895883af473276434\ntable_offset=31200 table_length=517186\nCFFSHA=1b6b752caad9188081ea71755b03f521d1f22ae33769409759c1feb6a2759b61 glyphs=547 globalSubrs=0 localSubrs=0\naccepted=547 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/fontawesome-6-free-fonts/Font Awesome 6 Free-Regular-400.otf",
+      "byte_length": 191468,
+      "sha256": "7cfc5844bdcb2e3678fe68412bde5507567873f9d9d469cc37c582e6234ae86c",
+      "exit_code": 0,
+      "stdout": "fontSHA=7cfc5844bdcb2e3678fe68412bde5507567873f9d9d469cc37c582e6234ae86c\ntable_offset=32172 table_length=151033\nCFFSHA=197664e02620705dbc3e011d487448a9117c2c58f0bf54c57cdf8a0634f55ebe glyphs=215 globalSubrs=0 localSubrs=0\naccepted=215 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/fontawesome-6-free-fonts/Font Awesome 6 Free-Solid-900.otf",
+      "byte_length": 1049188,
+      "sha256": "79404128c17cae94c63075dec7b869f779992638e0d9652a3beb89ad88588912",
+      "exit_code": 0,
+      "stdout": "fontSHA=79404128c17cae94c63075dec7b869f779992638e0d9652a3beb89ad88588912\ntable_offset=44592 table_length=946840\nCFFSHA=b548c2e2bca146435a4a81e429b9211afbd6969ec3637ca9e0ecb6167afdd999 glyphs=1406 globalSubrs=0 localSubrs=0\naccepted=1406 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/rit-meera-new-fonts/RIT-MeeraNew.otf",
+      "byte_length": 191508,
+      "sha256": "994c8a9a2fdec9a66b4d9c16e2fd994b1af301aaf3a0789669a470937783c250",
+      "exit_code": 0,
+      "stdout": "fontSHA=994c8a9a2fdec9a66b4d9c16e2fd994b1af301aaf3a0789669a470937783c250\ntable_offset=2408 table_length=164394\nCFFSHA=7ddb03ecf5dfd98b4b978e052ef3e0d51cad724b7ae0da9e0be909468795d188 glyphs=675 globalSubrs=366 localSubrs=300\naccepted=675 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/rit-rachana-fonts/RIT-Rachana-Bold.otf",
+      "byte_length": 530644,
+      "sha256": "e36256f964faa17d4298224d135412a94ca773d0a2c93856c3cc44207ef7e2f5",
+      "exit_code": 0,
+      "stdout": "fontSHA=e36256f964faa17d4298224d135412a94ca773d0a2c93856c3cc44207ef7e2f5\ntable_offset=3284 table_length=467655\nCFFSHA=69d51312634424532a06d871ad6c42198aba5d187d826a9706a56ca4b1c44dd1 glyphs=1165 globalSubrs=2037 localSubrs=1559\naccepted=1165 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/rit-rachana-fonts/RIT-Rachana-BoldItalic.otf",
+      "byte_length": 379908,
+      "sha256": "610e12487544b6b1ec1a4046a3fd0ff1dcaeb81e773031146320fb1932959118",
+      "exit_code": 0,
+      "stdout": "fontSHA=610e12487544b6b1ec1a4046a3fd0ff1dcaeb81e773031146320fb1932959118\ntable_offset=3368 table_length=316835\nCFFSHA=ca8c1d9b716b94f53a69c1b17bed91d36ca9bea44b4e906b36906c1e9af01a4c glyphs=1165 globalSubrs=1231 localSubrs=970\naccepted=1165 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/rit-rachana-fonts/RIT-Rachana-Italic.otf",
+      "byte_length": 352268,
+      "sha256": "48da57b3f4a8d70e2e1f60793d5535a9166a0a7ae192489db3a8be75d3abe6b1",
+      "exit_code": 0,
+      "stdout": "fontSHA=48da57b3f4a8d70e2e1f60793d5535a9166a0a7ae192489db3a8be75d3abe6b1\ntable_offset=3308 table_length=289822\nCFFSHA=ba0d9949502bd8a9f00eb1ec6ef2f5a0229c04a913d64ba5c82118e62fa25f05 glyphs=1165 globalSubrs=1287 localSubrs=978\naccepted=1165 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/rit-rachana-fonts/RIT-Rachana-Regular.otf",
+      "byte_length": 318064,
+      "sha256": "298f1cd63dce5d81c01bf3e24344599af8f21ec63068d8126928381b955f6925",
+      "exit_code": 0,
+      "stdout": "fontSHA=298f1cd63dce5d81c01bf3e24344599af8f21ec63068d8126928381b955f6925\ntable_offset=3260 table_length=255677\nCFFSHA=8c7506e3b9c1c6dfd24ff3523310f615c29f0d540ddd42d87f9a3547a66dc2b5 glyphs=1165 globalSubrs=1106 localSubrs=826\naccepted=1165 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoMath-Regular.otf",
+      "byte_length": 838652,
+      "sha256": "3a5f3f26f40d5698b3c62dd085d48d6663696a3f80825aab8b553d5097518e8c",
+      "exit_code": 0,
+      "stdout": "fontSHA=3a5f3f26f40d5698b3c62dd085d48d6663696a3f80825aab8b553d5097518e8c\ntable_offset=24384 table_length=728060\nCFFSHA=6f1de29fd1b98bc62e3f76c724c503cb62fa9e2578f36a5cae130f65e88caedd glyphs=6760 globalSubrs=1801 localSubrs=1577\naccepted=6760 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-Bold.otf",
+      "byte_length": 295708,
+      "sha256": "7ef76c666a6704f76ed3fa27bcdda55b36e558b5c2c93b49b03d854db96bdeb5",
+      "exit_code": 0,
+      "stdout": "fontSHA=7ef76c666a6704f76ed3fa27bcdda55b36e558b5c2c93b49b03d854db96bdeb5\ntable_offset=5620 table_length=175177\nCFFSHA=f185b2ea9ff30dfe557c2d4afebcf329d2441b7f4fe4bbe5f5f7e6b52cbb0347 glyphs=2221 globalSubrs=862 localSubrs=733\naccepted=2221 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-BoldItalic.otf",
+      "byte_length": 316136,
+      "sha256": "90e88f2ac79d6c00a5ce2d8446bfdf9457aed6afc1159cde33262979d82c8586",
+      "exit_code": 0,
+      "stdout": "fontSHA=90e88f2ac79d6c00a5ce2d8446bfdf9457aed6afc1159cde33262979d82c8586\ntable_offset=5712 table_length=180534\nCFFSHA=8877258b7e78b5ecc13b496aa2d7746a3f931d8f1931313cef7e4db5a13b6da8 glyphs=2238 globalSubrs=807 localSubrs=693\naccepted=2238 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-Italic.otf",
+      "byte_length": 308096,
+      "sha256": "cd64481fd10b69469074a3a8172fb5a22cb4116941d8aceafb8c77756b563df8",
+      "exit_code": 0,
+      "stdout": "fontSHA=cd64481fd10b69469074a3a8172fb5a22cb4116941d8aceafb8c77756b563df8\ntable_offset=5676 table_length=172422\nCFFSHA=51f776defd74d5b543bfa8d82341f92237887c1c7069549ebd43a5bce83ab1d4 glyphs=2238 globalSubrs=807 localSubrs=667\naccepted=2238 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-Medium.otf",
+      "byte_length": 304420,
+      "sha256": "9cc9f870852a46d708907b96ed024b8d0067a05276d939bfe0b7e89752afc8d9",
+      "exit_code": 0,
+      "stdout": "fontSHA=9cc9f870852a46d708907b96ed024b8d0067a05276d939bfe0b7e89752afc8d9\ntable_offset=5676 table_length=183752\nCFFSHA=6313d0fcff3c23be89e6b108b4aa42843a297ed6f2d91b80ff5b42f9e37bc8a9 glyphs=2221 globalSubrs=921 localSubrs=764\naccepted=2221 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-MediumItalic.otf",
+      "byte_length": 326008,
+      "sha256": "cc6e00147828e7b1f1aeaae928cabdbf14f5bffefb4e19b0ba2c46ce56292f4e",
+      "exit_code": 0,
+      "stdout": "fontSHA=cc6e00147828e7b1f1aeaae928cabdbf14f5bffefb4e19b0ba2c46ce56292f4e\ntable_offset=5804 table_length=189674\nCFFSHA=e0666701e59833fab299390c65a28449aeb1aa213f75fc323c29ff7ee9b8e311 glyphs=2238 globalSubrs=878 localSubrs=729\naccepted=2238 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-Regular.otf",
+      "byte_length": 292140,
+      "sha256": "c4864ca6ec071c2d31d0d8309001faa1ee3517fffb53a31a405a697b71f52ca1",
+      "exit_code": 0,
+      "stdout": "fontSHA=c4864ca6ec071c2d31d0d8309001faa1ee3517fffb53a31a405a697b71f52ca1\ntable_offset=5644 table_length=171682\nCFFSHA=c5d11bab6a95e75a568e1b72fd30fdd5e4c95abe68a72f02c0c4329ee948b532 glyphs=2221 globalSubrs=824 localSubrs=704\naccepted=2221 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-SemiBold.otf",
+      "byte_length": 304860,
+      "sha256": "896d80fbfd67e86ead7e2d593d631eab9bb142ee96dcd8e7aa8dff95ddda0f2a",
+      "exit_code": 0,
+      "stdout": "fontSHA=896d80fbfd67e86ead7e2d593d631eab9bb142ee96dcd8e7aa8dff95ddda0f2a\ntable_offset=5692 table_length=183946\nCFFSHA=84fd121452bf83bf9bf6c377686af75fba2dec0315b9344b04284d38773f6625 glyphs=2221 globalSubrs=931 localSubrs=781\naccepted=2221 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoText-SemiBoldItalic.otf",
+      "byte_length": 325200,
+      "sha256": "93d337715289b8e3ba8757cff89d29ff95630a1d08581dd46123d4c1ad1a7e2c",
+      "exit_code": 0,
+      "stdout": "fontSHA=93d337715289b8e3ba8757cff89d29ff95630a1d08581dd46123d4c1ad1a7e2c\ntable_offset=5824 table_length=189027\nCFFSHA=6e1f6813026419a15ee1845731f14e664b8359489371a41cb5bf9dd903912daa glyphs=2238 globalSubrs=885 localSubrs=736\naccepted=2238 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/C059-BdIta.otf",
+      "byte_length": 103444,
+      "sha256": "60d0ab6a22e4018b1232806d98f4015e04f9a0a569db7a169c40d55e2a9f6252",
+      "exit_code": 0,
+      "stdout": "fontSHA=60d0ab6a22e4018b1232806d98f4015e04f9a0a569db7a169c40d55e2a9f6252\ntable_offset=204 table_length=76264\nCFFSHA=1089aeaedc5c31322c528af6010722d36b4fb927847be61a89006b40f17b7f2f glyphs=855 globalSubrs=370 localSubrs=369\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/C059-Bold.otf",
+      "byte_length": 100692,
+      "sha256": "75dea10068264324522e7b96612083582eee0158eb728fa9c219279890f33e26",
+      "exit_code": 0,
+      "stdout": "fontSHA=75dea10068264324522e7b96612083582eee0158eb728fa9c219279890f33e26\ntable_offset=204 table_length=73562\nCFFSHA=0b5e5271cc4987d6a6a8a8d92349b98af6ca0d61e1eb0b2eb5d362c81ae5c55b glyphs=855 globalSubrs=342 localSubrs=341\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/C059-Italic.otf",
+      "byte_length": 101324,
+      "sha256": "77852deabd3a84f7d0213932239de522410309374c2255ccbd510f01dc7c6e80",
+      "exit_code": 0,
+      "stdout": "fontSHA=77852deabd3a84f7d0213932239de522410309374c2255ccbd510f01dc7c6e80\ntable_offset=204 table_length=74217\nCFFSHA=c98208b7e0737c20f011440df52f0853dcf6a646dc1bf302738bda26e3ac30ad glyphs=855 globalSubrs=330 localSubrs=329\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/C059-Roman.otf",
+      "byte_length": 97476,
+      "sha256": "e00cc7b88f0cf25ae43f0e48de39d0043fe042b55719a3ac32669ab3369542ec",
+      "exit_code": 0,
+      "stdout": "fontSHA=e00cc7b88f0cf25ae43f0e48de39d0043fe042b55719a3ac32669ab3369542ec\ntable_offset=204 table_length=70299\nCFFSHA=3cc5ac045e8c72f0e6d57bff70b6ad92acca2444e373fc7f51c1e4231a374d62 glyphs=855 globalSubrs=366 localSubrs=366\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/D050000L.otf",
+      "byte_length": 29832,
+      "sha256": "a7bd946b69ae526328f26b5339fb31057dd40950d7b60598f36b2bd06542f105",
+      "exit_code": 0,
+      "stdout": "fontSHA=a7bd946b69ae526328f26b5339fb31057dd40950d7b60598f36b2bd06542f105\ntable_offset=204 table_length=27740\nCFFSHA=5afea9bb89f8cc37053146f7d5037cb3590738a35ec25c4f3d0e0d70f8c4956b glyphs=203 globalSubrs=0 localSubrs=0\naccepted=203 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusMonoPS-Bold.otf",
+      "byte_length": 87520,
+      "sha256": "f036d05d2168c7f71cb11d31e81d11133f3d09711e24ebde19d08a24842384d5",
+      "exit_code": 0,
+      "stdout": "fontSHA=f036d05d2168c7f71cb11d31e81d11133f3d09711e24ebde19d08a24842384d5\ntable_offset=188 table_length=78988\nCFFSHA=a0febd1d9b4e48ca2131400db0cb959a82c71fd97749b394bd0b21cb1cf8a6be glyphs=855 globalSubrs=416 localSubrs=415\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusMonoPS-BoldItalic.otf",
+      "byte_length": 89580,
+      "sha256": "a67ed9e364c933c79fc3ce88e17a0265334697c184b065407e754d43cbbf6d0a",
+      "exit_code": 0,
+      "stdout": "fontSHA=a67ed9e364c933c79fc3ce88e17a0265334697c184b065407e754d43cbbf6d0a\ntable_offset=188 table_length=80969\nCFFSHA=026625d4a88faa89ee718c6d80cd23d044cefb155210066e5f0c38d66c233821 glyphs=855 globalSubrs=400 localSubrs=399\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusMonoPS-Italic.otf",
+      "byte_length": 82648,
+      "sha256": "7f1f85498027e07befadd3c7592518909b9e8c7f96ee5615e0b21be0c399c4b4",
+      "exit_code": 0,
+      "stdout": "fontSHA=7f1f85498027e07befadd3c7592518909b9e8c7f96ee5615e0b21be0c399c4b4\ntable_offset=188 table_length=74090\nCFFSHA=8e3b6fed60ee6ce2225fba39d3789bf4dfef7a9b765329c3ffb71dd460b88a47 glyphs=855 globalSubrs=400 localSubrs=399\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusMonoPS-Regular.otf",
+      "byte_length": 77936,
+      "sha256": "4f225ca8e13acb16f733ce741693105e527d5f7a5443901b9ecc190fca4e149b",
+      "exit_code": 0,
+      "stdout": "fontSHA=4f225ca8e13acb16f733ce741693105e527d5f7a5443901b9ecc190fca4e149b\ntable_offset=188 table_length=69375\nCFFSHA=a288135cbd2b19d32b33ff870183388b41f9fcd23932b94de64ef314a692f7af glyphs=855 globalSubrs=371 localSubrs=370\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusRoman-Bold.otf",
+      "byte_length": 100984,
+      "sha256": "e0ad81923bc6d85d5426f796217c87963ca1ae3c65e22c87a25b6c6353de299e",
+      "exit_code": 0,
+      "stdout": "fontSHA=e0ad81923bc6d85d5426f796217c87963ca1ae3c65e22c87a25b6c6353de299e\ntable_offset=204 table_length=73537\nCFFSHA=0668f8ab07445f11ba86a58b5fc61a0830503e7576de4703a40a6f05898d53b0 glyphs=855 globalSubrs=269 localSubrs=269\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusRoman-BoldItalic.otf",
+      "byte_length": 104772,
+      "sha256": "c84bcb17ab4ee54f16dadad6a3b0b2df37a24f9fc812897c4a59eeca785a5dec",
+      "exit_code": 0,
+      "stdout": "fontSHA=c84bcb17ab4ee54f16dadad6a3b0b2df37a24f9fc812897c4a59eeca785a5dec\ntable_offset=204 table_length=77325\nCFFSHA=a8878f15a1561c229ca12fb574ea7024373b3933494e82ad6c5115a14703d6e2 glyphs=855 globalSubrs=250 localSubrs=249\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusRoman-Italic.otf",
+      "byte_length": 105684,
+      "sha256": "b7c424e6cb79baddfcdcd9a9d87f9fc4fdd06f0e5160066e2b2e47bcd647c7b9",
+      "exit_code": 0,
+      "stdout": "fontSHA=b7c424e6cb79baddfcdcd9a9d87f9fc4fdd06f0e5160066e2b2e47bcd647c7b9\ntable_offset=204 table_length=78374\nCFFSHA=e7cbb23b0a943e765275d65ab4633c8d95f1ad01e9b64e72f9007b82e001f544 glyphs=855 globalSubrs=258 localSubrs=258\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusRoman-Regular.otf",
+      "byte_length": 98200,
+      "sha256": "fd41669443616a7ae890c42e53a58f47fa24a940fd1e367acaff665cf5b6e9d8",
+      "exit_code": 0,
+      "stdout": "fontSHA=fd41669443616a7ae890c42e53a58f47fa24a940fd1e367acaff665cf5b6e9d8\ntable_offset=204 table_length=70824\nCFFSHA=4ceab89db224e517d11ee1a020222ed1be60a1a1c7699db281b2b7804c9b2767 glyphs=855 globalSubrs=271 localSubrs=270\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSans-Bold.otf",
+      "byte_length": 83264,
+      "sha256": "7f33328e6b4d4cd21b45fa625791928c9407dc702db6780e56b09ca9a3ecaa67",
+      "exit_code": 0,
+      "stdout": "fontSHA=7f33328e6b4d4cd21b45fa625791928c9407dc702db6780e56b09ca9a3ecaa67\ntable_offset=204 table_length=56156\nCFFSHA=04ab963689292676a0dff12562d3e4bc502be3584dc4ef21ff3008142dfeecfe glyphs=855 globalSubrs=209 localSubrs=209\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSans-BoldItalic.otf",
+      "byte_length": 95396,
+      "sha256": "3f47fb34fcb7de09f8cbc9f305191340ddebf7a068419f4bb5f49287dea59b87",
+      "exit_code": 0,
+      "stdout": "fontSHA=3f47fb34fcb7de09f8cbc9f305191340ddebf7a068419f4bb5f49287dea59b87\ntable_offset=204 table_length=68152\nCFFSHA=c80832644eb0cd88d96becb2b54a0d90f38d348501a6c96accba41776c00103f glyphs=855 globalSubrs=273 localSubrs=272\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSans-Italic.otf",
+      "byte_length": 95244,
+      "sha256": "7b0bef5686aa58c0fd0f0d01beeae56664208490e30ca6a25431281c9a0c6402",
+      "exit_code": 0,
+      "stdout": "fontSHA=7b0bef5686aa58c0fd0f0d01beeae56664208490e30ca6a25431281c9a0c6402\ntable_offset=204 table_length=67842\nCFFSHA=515207e7ab49c6364d4412d116dae7a66ed125d951b64276883698a61b1a6441 glyphs=855 globalSubrs=270 localSubrs=270\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSans-Regular.otf",
+      "byte_length": 82264,
+      "sha256": "7c25be4d78155523080ab85b10277150657ff7dabbcad7037bdd536c9b6d0d08",
+      "exit_code": 0,
+      "stdout": "fontSHA=7c25be4d78155523080ab85b10277150657ff7dabbcad7037bdd536c9b6d0d08\ntable_offset=204 table_length=54928\nCFFSHA=3455435f3448f5fb4055687c466d7921363eb77b41582cb55c2f262ef5d1bc97 glyphs=855 globalSubrs=215 localSubrs=214\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSansNarrow-Bold.otf",
+      "byte_length": 81340,
+      "sha256": "6d7cec07f5a9035e208532dab35a51312aef4a7f26eb524dd614c9fcd97c3264",
+      "exit_code": 0,
+      "stdout": "fontSHA=6d7cec07f5a9035e208532dab35a51312aef4a7f26eb524dd614c9fcd97c3264\ntable_offset=204 table_length=54145\nCFFSHA=664c1cf0a257c0712fabd6b1a93642b32ee661bc77af660a0e393485765cf475 glyphs=855 globalSubrs=213 localSubrs=212\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSansNarrow-BoldOblique.otf",
+      "byte_length": 87956,
+      "sha256": "3cefbe4a602a08a0400798fc4aba2d48f7b7e05fa6ed54c2009d68adc6eccef9",
+      "exit_code": 0,
+      "stdout": "fontSHA=3cefbe4a602a08a0400798fc4aba2d48f7b7e05fa6ed54c2009d68adc6eccef9\ntable_offset=204 table_length=60681\nCFFSHA=cb1b548ab4d34e48cc00032315926dafd46b7f484a5819b96117d03684c4aee2 glyphs=855 globalSubrs=262 localSubrs=262\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSansNarrow-Oblique.otf",
+      "byte_length": 87068,
+      "sha256": "6fd8dd67ab951f36f66563ef8443bafdf10836e73ebe856f85f4a9c282293585",
+      "exit_code": 0,
+      "stdout": "fontSHA=6fd8dd67ab951f36f66563ef8443bafdf10836e73ebe856f85f4a9c282293585\ntable_offset=204 table_length=59769\nCFFSHA=b235cfe5e5a85574c4a6a50ecdaf224602f1122c57e657750a60edee825942e9 glyphs=855 globalSubrs=258 localSubrs=257\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/NimbusSansNarrow-Regular.otf",
+      "byte_length": 80864,
+      "sha256": "0111cf7c05377c4f1685d37bfa8b3edd2033278122f69e0a9803a8514e352b99",
+      "exit_code": 0,
+      "stdout": "fontSHA=0111cf7c05377c4f1685d37bfa8b3edd2033278122f69e0a9803a8514e352b99\ntable_offset=204 table_length=53723\nCFFSHA=466f4193bcc3f0af282ca98911d5ed6fefd7c8647cc80b1b6e848273913fdc25 glyphs=855 globalSubrs=211 localSubrs=210\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/P052-Bold.otf",
+      "byte_length": 110980,
+      "sha256": "ba6503baaf0f9e4e40a69cc4c0e57049fbde313fe183aba8fe823208337a94af",
+      "exit_code": 0,
+      "stdout": "fontSHA=ba6503baaf0f9e4e40a69cc4c0e57049fbde313fe183aba8fe823208337a94af\ntable_offset=204 table_length=83903\nCFFSHA=7eca35c1a6a634cd65930cec7d62f67335042aad70f09400cb9009d03693f896 glyphs=855 globalSubrs=316 localSubrs=316\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/P052-BoldItalic.otf",
+      "byte_length": 110928,
+      "sha256": "63e15828175e55559ae09c9bdcd09fc0354537657d43109edb6e2a5509f8299f",
+      "exit_code": 0,
+      "stdout": "fontSHA=63e15828175e55559ae09c9bdcd09fc0354537657d43109edb6e2a5509f8299f\ntable_offset=204 table_length=83687\nCFFSHA=16ec00f8c077dc0ddc0db6a8717d4949c02f6e21e1dfd04464a85d2135d0762c glyphs=855 globalSubrs=307 localSubrs=306\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/P052-Italic.otf",
+      "byte_length": 109824,
+      "sha256": "1feac6055211cf5c6c812c026e398195070f174064cc4d390f0db01647443b0e",
+      "exit_code": 0,
+      "stdout": "fontSHA=1feac6055211cf5c6c812c026e398195070f174064cc4d390f0db01647443b0e\ntable_offset=204 table_length=82502\nCFFSHA=7a4e2c29f5774502207fbcdfaee4781980ab517f3049ace9cd735feed0bc109f glyphs=855 globalSubrs=291 localSubrs=290\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/P052-Roman.otf",
+      "byte_length": 110236,
+      "sha256": "f054a7389d8d0e9f4c5f7b4c21feb7e2b14bec8004a1e92778a78d149524eea9",
+      "exit_code": 0,
+      "stdout": "fontSHA=f054a7389d8d0e9f4c5f7b4c21feb7e2b14bec8004a1e92778a78d149524eea9\ntable_offset=204 table_length=82892\nCFFSHA=36e8b03cef4d57449a479b085fcfa78243a4402bf6a75ed4f1c5d7a7ebcc6338 glyphs=855 globalSubrs=305 localSubrs=305\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/StandardSymbolsPS.otf",
+      "byte_length": 21176,
+      "sha256": "df570efda2df425dbfc004e4e5f77c55ca1b47f8ff28ad60dfad0fccf422b0bd",
+      "exit_code": 0,
+      "stdout": "fontSHA=df570efda2df425dbfc004e4e5f77c55ca1b47f8ff28ad60dfad0fccf422b0bd\ntable_offset=188 table_length=19436\nCFFSHA=719d0c01582d23dc202235ba03af610790f202dd8721e1810435e25e9bf476f4 glyphs=191 globalSubrs=0 localSubrs=0\naccepted=191 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWBookman-Demi.otf",
+      "byte_length": 97208,
+      "sha256": "ab8b2fe57cbea9783c6179188dc013c76cfc5717c22cf59bbf3016ef2d7d93ee",
+      "exit_code": 0,
+      "stdout": "fontSHA=ab8b2fe57cbea9783c6179188dc013c76cfc5717c22cf59bbf3016ef2d7d93ee\ntable_offset=204 table_length=69943\nCFFSHA=952d26abfe83114ac5d37ed0a61524d9856130104c97b921af19ed83f8837f36 glyphs=855 globalSubrs=296 localSubrs=295\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWBookman-DemiItalic.otf",
+      "byte_length": 101584,
+      "sha256": "4d9dbaae8178ffa2f5d557245d09dc968eeac9eed7e453cc2db4cc6a9aacb44d",
+      "exit_code": 0,
+      "stdout": "fontSHA=4d9dbaae8178ffa2f5d557245d09dc968eeac9eed7e453cc2db4cc6a9aacb44d\ntable_offset=204 table_length=74229\nCFFSHA=4c93f938fe784b6f65a471996f97b818d05090efa8495f70e1fbda1cccdf5d60 glyphs=855 globalSubrs=278 localSubrs=278\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWBookman-Light.otf",
+      "byte_length": 98396,
+      "sha256": "7b1bc8e6a16cef53785ce03d4848f8971f3ba38cd9e266e4786a50e08bd9235b",
+      "exit_code": 0,
+      "stdout": "fontSHA=7b1bc8e6a16cef53785ce03d4848f8971f3ba38cd9e266e4786a50e08bd9235b\ntable_offset=204 table_length=71026\nCFFSHA=32f06c9f3660a8d2309a8aebbf650da229efbbd31bf011b2fc9addf235c61c72 glyphs=855 globalSubrs=314 localSubrs=313\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWBookman-LightItalic.otf",
+      "byte_length": 102764,
+      "sha256": "ed722e6c2996b08e8516d27a7c017972cfabf5d1736b496b6526da78fd17691a",
+      "exit_code": 0,
+      "stdout": "fontSHA=ed722e6c2996b08e8516d27a7c017972cfabf5d1736b496b6526da78fd17691a\ntable_offset=204 table_length=75213\nCFFSHA=7e6a8a05ddf00058633443abdf8bc47fa5ff4acd7423ab499cac301c2444947b glyphs=855 globalSubrs=284 localSubrs=284\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWGothic-Book.otf",
+      "byte_length": 82968,
+      "sha256": "04318316cee29950805110c9c8949eea189ef5575132881f4d4d7e03e5299903",
+      "exit_code": 0,
+      "stdout": "fontSHA=04318316cee29950805110c9c8949eea189ef5575132881f4d4d7e03e5299903\ntable_offset=204 table_length=55665\nCFFSHA=c8fe1129f50645c9e2ad8d584d615d2a324b23e174077161156a80269e05951e glyphs=855 globalSubrs=192 localSubrs=192\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWGothic-BookOblique.otf",
+      "byte_length": 85336,
+      "sha256": "ec4e947734950fd344918e560bc8ad0c5d8b17d0ab4853988824f13b9f77e53f",
+      "exit_code": 0,
+      "stdout": "fontSHA=ec4e947734950fd344918e560bc8ad0c5d8b17d0ab4853988824f13b9f77e53f\ntable_offset=204 table_length=58149\nCFFSHA=cf8662ba321a3c103f0dae99049a0de6ff4fbf9d0014a3935352b25b6434e4f5 glyphs=855 globalSubrs=228 localSubrs=228\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWGothic-Demi.otf",
+      "byte_length": 83580,
+      "sha256": "5b009410cf5231dcb1e45b155c1afedcfc63d82042fd8c414d0dd7705c9fbbae",
+      "exit_code": 0,
+      "stdout": "fontSHA=5b009410cf5231dcb1e45b155c1afedcfc63d82042fd8c414d0dd7705c9fbbae\ntable_offset=204 table_length=56388\nCFFSHA=eee0b535a3a98ae50e756ee40729783bde63c8c0452c9359f475c5a5436283f1 glyphs=855 globalSubrs=212 localSubrs=212\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/URWGothic-DemiOblique.otf",
+      "byte_length": 86232,
+      "sha256": "d57abaa6d40718cfbf735ad50080d0b095e7194e451992e02786a7c0113db35c",
+      "exit_code": 0,
+      "stdout": "fontSHA=d57abaa6d40718cfbf735ad50080d0b095e7194e451992e02786a7c0113db35c\ntable_offset=204 table_length=58803\nCFFSHA=96b86c550f359cb9294a1ecc5198bd9aced76407776f383d40a599e249f061df glyphs=855 globalSubrs=228 localSubrs=227\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    },
+    {
+      "path": "/usr/share/fonts/urw-base35/Z003-MediumItalic.otf",
+      "byte_length": 114052,
+      "sha256": "a04947e59fc9339ea3c4b34c31fd46764f22af7512afc2c074ce190e79ed7a09",
+      "exit_code": 0,
+      "stdout": "fontSHA=a04947e59fc9339ea3c4b34c31fd46764f22af7512afc2c074ce190e79ed7a09\ntable_offset=204 table_length=86942\nCFFSHA=daa437be79e1b8e47de7e80a5da9ace557457f6ed087c3438097cf0140032e2c glyphs=855 globalSubrs=312 localSubrs=311\naccepted=855 explicit_results={}\n",
+      "stderr": "",
+      "category": "decoded_acceptance_counts",
+      "visual_or_reference_mismatch": "unverified_no_reference_comparison"
+    }
+  ],
+  "summary": {
+    "fonts_inventoried": 63,
+    "fonts_decoded": 62,
+    "accepted_glyphs": 71688,
+    "rejected_accessor_fonts": 1,
+    "prior_version_acceptance_delta": "unverified",
+    "visual_mismatches": "unverified",
+    "pdf_byte_mismatches": "unverified"
+  }
+}

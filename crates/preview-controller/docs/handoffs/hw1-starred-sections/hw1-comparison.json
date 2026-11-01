@@ -1,0 +1,8 @@
+{
+  "source_sha256": "f725e23897df3c9645bde1ceaab0876d78ea6ef4a44fd0e80d60a5161fac9d9e",
+  "base_diagnostics": 119,
+  "initial_candidate_diagnostics": 98,
+  "corrected_diagnostics": 112,
+  "corrected_binary_sha256": "7d98131707c2cbfc66a960043c52bd5ee826ae65d98f2d27d3d228ccabe44e14",
+  "scope": "actual compiler protocol output; not producer/native/PDF parity"
+}

@@ -1,0 +1,14 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\draw[dashed] (0,0) -- (4,0);
+\draw[dotted] (0,0.4) -- (4,0.4);
+\draw[densely dotted] (0,0.8) -- (4,0.8);
+\draw[loosely dashed] (0,1.2) -- (4,1.2);
+\draw[densely dashed, thick] (0,1.6) -- (4,1.6);
+\draw[dash pattern=on 6pt off 2pt on 1pt off 2pt] (0,2) -- (4,2);
+\draw[dashed] (5,1) circle (0.8);
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,140 @@
+[
+  {
+    "duration_ms": 0.159126,
+    "events": 1,
+    "phase": "compiler_poll"
+  },
+  {
+    "handling_ms": 0.129786,
+    "phase": "request",
+    "response_serialization_ms": 0.051019
+  },
+  {
+    "handling_ms": 0.190588,
+    "phase": "request",
+    "response_serialization_ms": 0.029996
+  },
+  {
+    "duration_ms": 0.12224800000000001,
+    "events": 1,
+    "phase": "compiler_poll"
+  },
+  {
+    "phase": "display_transport",
+    "profile": {
+      "decode_queue_wait_ms": 1.5628790000000001,
+      "display_epoch": 1,
+      "parse_ms": 0.727943,
+      "project_id": "p",
+      "reader_delivery_wait_ms": 1.569426,
+      "request_id": "preview-2",
+      "response_bytes": 15135,
+      "revision": 2,
+      "source_binding_ms": 0.053378999999999996
+    }
+  },
+  {
+    "kind": "display_candidate",
+    "outcome": "admitted",
+    "phase": "optional_output",
+    "serialization_ms": 0.034304999999999995,
+    "transport": "raw-prototype"
+  },
+  {
+    "handling_ms": 1.261974,
+    "phase": "request",
+    "response_serialization_ms": 0.02641
+  },
+  {
+    "duration_ms": 0.101907,
+    "events": 1,
+    "phase": "compiler_poll"
+  },
+  {
+    "handling_ms": 0.09568600000000001,
+    "phase": "request",
+    "response_serialization_ms": 0.019698999999999998
+  },
+  {
+    "duration_ms": 0.12713000000000002,
+    "events": 1,
+    "phase": "compiler_poll"
+  },
+  {
+    "phase": "display_transport",
+    "profile": {
+      "decode_queue_wait_ms": 0.585159,
+      "display_epoch": 1,
+      "parse_ms": 0.709204,
+      "project_id": "p",
+      "reader_delivery_wait_ms": 1.612356,
+      "request_id": "preview-4",
+      "response_bytes": 15135,
+      "revision": 4,
+      "source_binding_ms": 0.039280999999999996
+    }
+  },
+  {
+    "kind": "display_candidate",
+    "outcome": "admitted",
+    "phase": "optional_output",
+    "serialization_ms": 0.037141999999999994,
+    "transport": "raw-prototype"
+  },
+  {
+    "handling_ms": 0.309042,
+    "phase": "request",
+    "response_serialization_ms": 0.020635
+  },
+  {
+    "handling_ms": 0.209174,
+    "phase": "request",
+    "response_serialization_ms": 0.020125
+  },
+  {
+    "duration_ms": 0.062462,
+    "events": 1,
+    "phase": "compiler_poll"
+  },
+  {
+    "duration_ms": 0.051855,
+    "events": 1,
+    "phase": "compiler_poll"
+  },
+  {
+    "phase": "display_transport",
+    "profile": {
+      "decode_queue_wait_ms": 0.4686,
+      "display_epoch": 1,
+      "parse_ms": 0.681018,
+      "project_id": "p",
+      "reader_delivery_wait_ms": 1.484383,
+      "request_id": "preview-6",
+      "response_bytes": 23815,
+      "revision": 6,
+      "source_binding_ms": 0.031802
+    }
+  },
+  {
+    "kind": "display_candidate",
+    "outcome": "admitted",
+    "phase": "optional_output",
+    "serialization_ms": 0.03096,
+    "transport": "raw-prototype"
+  },
+  {
+    "handling_ms": 0.010477,
+    "phase": "request",
+    "response_serialization_ms": 0.017115000000000002
+  },
+  {
+    "handling_ms": 0.005535,
+    "phase": "request",
+    "response_serialization_ms": 0.012429
+  },
+  {
+    "handling_ms": 0.005264,
+    "phase": "request",
+    "response_serialization_ms": 0.012140999999999999
+  }
+]

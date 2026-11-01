@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{listings}
+\begin{document}
+Some ordinary body text that runs for a little while so that the paragraph fills a line of the page.
+\begin{lstlisting}[language=C,basicstyle=\ttfamily]
+puts("two  spaces");
+puts("x y");
+\end{lstlisting}
+\begin{lstlisting}[language=C,basicstyle=\ttfamily,showstringspaces=false]
+puts("x y");
+\end{lstlisting}
+Text right after the environment continues the paragraph without an indent.
+\end{document}

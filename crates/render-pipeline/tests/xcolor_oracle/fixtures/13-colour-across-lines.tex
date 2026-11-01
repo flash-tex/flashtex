@@ -1,0 +1,14 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{xcolor}
+\pagestyle{empty}
+\begin{document}
+Before the change the words are black, and then {\color{blue} the colour
+switches to blue for a long stretch of text that keeps going across the end of
+the first line and onto the following lines of the same paragraph, so the
+colour must persist across line breaks, until \textcolor{red}{this red word}
+appears in the middle and the blue resumes for the rest of the sentence} and
+the paragraph ends in black again.
+\end{document}

@@ -1,0 +1,63 @@
+{
+ "fixture": "57-nest-inline-scripts.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "1",
+    "x": 130.134,
+    "y_top": 77.136
+   },
+   {
+    "text": "2",
+    "x": 130.134,
+    "y_top": 83.938
+   },
+   {
+    "text": "We",
+    "x": 72.0,
+    "y_top": 85.225
+   },
+   {
+    "text": "write",
+    "x": 92.1589,
+    "y_top": 85.225
+   },
+   {
+    "text": "x",
+    "x": 122.0708,
+    "y_top": 85.225
+   },
+   {
+    "text": "and",
+    "x": 140.18,
+    "y_top": 85.225
+   },
+   {
+    "text": "y",
+    "x": 162.9379,
+    "y_top": 85.225
+   },
+   {
+    "text": "here.",
+    "x": 185.891,
+    "y_top": 85.225
+   },
+   {
+    "text": "i",
+    "x": 170.061,
+    "y_top": 86.885
+   },
+   {
+    "text": "j",
+    "x": 176.1956,
+    "y_top": 86.885
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

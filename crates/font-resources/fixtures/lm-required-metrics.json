@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "metrics": [
+    {
+      "path": "ec-lmr12.tfm",
+      "sha256": "299021120f0a29ef61278a2363903bd8defbb8faaade458eb79067342aecb56f",
+      "license_path": "LICENSE",
+      "license_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+    },
+    {
+      "path": "rm-lmr12.tfm",
+      "sha256": "9d4e3d8e39a41b93d91f79c1c47d2297efb7b1af220b94860693c08361f227aa",
+      "license_path": "LICENSE",
+      "license_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+    },
+    {
+      "path": "rm-lmr8.tfm",
+      "sha256": "80bcbfd844d2310ac1d3bead45aee25e91b1a4a0a60ff1771959b9a1e90ec1a2",
+      "license_path": "LICENSE",
+      "license_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+    },
+    {
+      "path": "rm-lmr6.tfm",
+      "sha256": "eb0bfdf8db3ae1409639fac9c88f84923872500d882d9ff8dc37aff445c723fe",
+      "license_path": "LICENSE",
+      "license_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "url": "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.004bas.zip",
+  "archive_sha256": "97a725ea012d41367bf44fec1a2f4ccf4fe134c016715522133594e347115a7c",
+  "archive_bytes": 18852065,
+  "directory": "/tmp/flashtex-lm-tfm-0or97xdj/v2.004",
+  "files": {
+    "ec-lmr10.tfm": {
+      "archive_path": "fonts/tfm/public/lm/ec-lmr10.tfm",
+      "sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+      "bytes": 12056
+    },
+    "ec-lmr12.tfm": {
+      "archive_path": "fonts/tfm/public/lm/ec-lmr12.tfm",
+      "sha256": "299021120f0a29ef61278a2363903bd8defbb8faaade458eb79067342aecb56f",
+      "bytes": 12092
+    },
+    "rm-lmr12.tfm": {
+      "archive_path": "fonts/tfm/public/lm/rm-lmr12.tfm",
+      "sha256": "9d4e3d8e39a41b93d91f79c1c47d2297efb7b1af220b94860693c08361f227aa",
+      "bytes": 11888
+    },
+    "rm-lmr6.tfm": {
+      "archive_path": "fonts/tfm/public/lm/rm-lmr6.tfm",
+      "sha256": "eb0bfdf8db3ae1409639fac9c88f84923872500d882d9ff8dc37aff445c723fe",
+      "bytes": 11836
+    },
+    "rm-lmr8.tfm": {
+      "archive_path": "fonts/tfm/public/lm/rm-lmr8.tfm",
+      "sha256": "80bcbfd844d2310ac1d3bead45aee25e91b1a4a0a60ff1771959b9a1e90ec1a2",
+      "bytes": 11864
+    }
+  },
+  "license": {
+    "archive_path": "doc/fonts/lm/GUST-FONT-LICENSE.TXT",
+    "sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+    "bytes": 1377
+  },
+  "peer_commit": "9bb7b27",
+  "peer_source_sha256": "a41a38585e201ae1a4e6f381be5d1cf8e2994358b97dc12404f41c3d9c181e71",
+  "outputs": {
+    "ec-lmr12-replay.txt": "505ccf3b97e946381ada900fadc331412cc45e8b9150799be06ffc82a4fac3a3",
+    "rm-lmr12-replay.txt": "7482993177ede7556a606852da4cae6462df66c8be16dfd3228d40c2cc7b767f",
+    "rm-lmr8-replay.txt": "c05e5a6375b4f16ae22a3e2914b9baaca3f087d4475cc123886ea3fa4c28e6a4",
+    "rm-lmr6-replay.txt": "3cd98782b69742bce898625d4a54d3fe933525c7ec661ae7aaca216f36270701"
+  },
+  "scope": "Actual pinned reader vs shared adapter: all present metrics, fontdimens1..32 and ten runs. Original encoded slots only; no guessed GIDs or visual claim.",
+  "newer_release_not_used": {
+    "url": "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/Latin_Modern-TDS_distr-2_007-31_03_2026.zip",
+    "archive_sha256": "66d78199854045cad23309542abf09a519c2a3c04160a53ce23abe9c8bd9885a",
+    "reason": "ec-lmr10 SHA9afc0282 differs from pinned2.004 cd13479; keep versions distinct."
+  }
+}

@@ -1,0 +1,101 @@
+{
+ "fixture": "23-arrows-harpoons.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Harpoons",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 125.0667,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇈",
+    "x": 134.5233,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 147.8091,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇊",
+    "x": 156.1096,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 169.3954,
+    "y_top": 83.955
+   },
+   {
+    "text": "↿",
+    "x": 177.7569,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 186.0502,
+    "y_top": 83.955
+   },
+   {
+    "text": "↾",
+    "x": 195.4566,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 203.7618,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇃",
+    "x": 212.5107,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 220.804,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇂",
+    "x": 231.1763,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 239.4816,
+    "y_top": 83.955
+   },
+   {
+    "text": "↾",
+    "x": 248.8294,
+    "y_top": 83.955
+   },
+   {
+    "text": "h",
+    "x": 257.1346,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 267.7712,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

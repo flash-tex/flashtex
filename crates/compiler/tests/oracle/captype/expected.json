@@ -1,0 +1,30 @@
+{
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "probes": {
+  "algorithm.tex": {
+   "caption_labels": [
+    "Algorithm 1",
+    "Algorithm 2"
+   ],
+   "pages": 2,
+   "sha256": "d47ca30b98c8980f46782eaab0e33048312ba46664fc651a6a182bb080ff1e9d"
+  },
+  "newfloat.tex": {
+   "caption_labels": [
+    "Program 1:",
+    "Recipe 1.1",
+    "Program 2:"
+   ],
+   "pages": 1,
+   "sha256": "35a72af7c8883a4243319b27e29cb900ee7a9dd905305d694513dd3b28370186"
+  },
+  "wrapfig.tex": {
+   "caption_labels": [
+    "Figure 1:",
+    "Table 1:"
+   ],
+   "pages": 1,
+   "sha256": "00320b749fe4ff2091fdd789655cdb79a42bef08540c13d747e767f64d29488a"
+  }
+ }
+}

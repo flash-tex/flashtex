@@ -1,0 +1,26 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\setlength{\parskip}{4pt}
+
+\begin{document}
+\section{Lists with enumitem keys}
+A paragraph before a list whose optional argument removes every skip.
+\begin{itemize}[nosep]
+  \item First item of the nosep list.
+  \item Second item of the nosep list.
+\end{itemize}
+A paragraph between the lists, so the closing skip of the first and the
+opening skip of the second are both measured.
+\begin{enumerate}[noitemsep]
+  \item First item of the noitemsep list.
+  \item Second item of the noitemsep list.
+\end{enumerate}
+A paragraph before explicit keys.
+\begin{itemize}[topsep=2pt,itemsep=1pt,parsep=0pt]
+  \item First item with explicit keys.
+  \item Second item with explicit keys.
+\end{itemize}
+A closing paragraph after the last list.
+\end{document}

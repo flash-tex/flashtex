@@ -1,0 +1,131 @@
+{
+ "fixture": "45-lm-substitutions.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Words",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold",
+   "font": "LMSans10-BoldOblique",
+   "size": 9.9626,
+   "x": 178.685,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "sans",
+   "font": "LMSans10-BoldOblique",
+   "size": 9.9626,
+   "x": 200.63,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "italic",
+   "font": "LMSans10-BoldOblique",
+   "size": 9.9626,
+   "x": 222.284,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 247.057,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Bold",
+   "font": "LMRoman10-Bold",
+   "size": 9.9626,
+   "x": 265.32,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "LMRoman10-Bold",
+   "size": 9.9626,
+   "x": 291.298,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 318.238,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Sans",
+   "font": "LMRomanCaps10-Regular",
+   "size": 9.9626,
+   "x": 339.892,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "LMRomanCaps10-Regular",
+   "size": 9.9626,
+   "x": 365.362,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 391.643,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold",
+   "font": "LMMonoLt10-Bold",
+   "size": 9.9626,
+   "x": 409.906,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "typewriter",
+   "font": "LMMonoLt10-Bold",
+   "size": 9.9626,
+   "x": 436.058,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "to",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "finish.",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 145.941,
+   "baseline": 146.72
+  }
+ ],
+ "warnings": [
+  "Font shape `T1/lmr/bx/sc' undefined, using `T1/lmr/bx/n' instead",
+  "Font shape `T1/lmss/m/sc' in size <10> not available, Font shape `T1/lmr/m/sc' tried instead"
+ ]
+}

@@ -1,0 +1,95 @@
+{
+  "current": {
+    "diagnostic_scope": "whole captured helper session, includes setup and post-measurement receipt checks",
+    "phases": {
+      "request.handling_ms": {
+        "count": 25,
+        "total_ms": 27.916656,
+        "max_ms": 2.605727,
+        "min_ms": 0.012561999999999999
+      },
+      "request.response_serialization_ms": {
+        "count": 25,
+        "total_ms": 0.354358,
+        "max_ms": 0.078499,
+        "min_ms": 0.004791
+      },
+      "compiler_poll.duration_ms": {
+        "count": 20,
+        "total_ms": 63.226637,
+        "max_ms": 8.615619,
+        "min_ms": 0.002059
+      },
+      "optional_output.serialization_ms": {
+        "count": 0,
+        "total_ms": 0,
+        "max_ms": null,
+        "min_ms": null
+      }
+    },
+    "historical_frame_bytes": [],
+    "historical_total_bytes": 0,
+    "final_runtime_total_ms": 72.811921,
+    "final_controller_total_ms": 74.510368,
+    "final_post_last_send_ms": 80.34064799721818,
+    "optional_outcomes": []
+  },
+  "historical": {
+    "diagnostic_scope": "whole captured helper session, includes setup and post-measurement receipt checks",
+    "phases": {
+      "request.handling_ms": {
+        "count": 27,
+        "total_ms": 33.943004,
+        "max_ms": 2.578281,
+        "min_ms": 0.008912999999999999
+      },
+      "request.response_serialization_ms": {
+        "count": 27,
+        "total_ms": 0.961932,
+        "max_ms": 0.6452950000000001,
+        "min_ms": 0.003764
+      },
+      "compiler_poll.duration_ms": {
+        "count": 20,
+        "total_ms": 25.658042,
+        "max_ms": 4.717637,
+        "min_ms": 0.003453
+      },
+      "optional_output.serialization_ms": {
+        "count": 6,
+        "total_ms": 29.186217,
+        "max_ms": 6.890228,
+        "min_ms": 3.510459
+      }
+    },
+    "historical_frame_bytes": [
+      1648729,
+      1648729,
+      1648730,
+      1648737,
+      1648737,
+      1648735
+    ],
+    "historical_total_bytes": 9892397,
+    "final_runtime_total_ms": 135.396869,
+    "final_controller_total_ms": 137.03580300000002,
+    "final_post_last_send_ms": 141.4035240013618,
+    "optional_outcomes": [
+      "admitted",
+      "admitted",
+      "admitted",
+      "admitted",
+      "admitted",
+      "admitted"
+    ]
+  },
+  "limits": [
+    "Request diagnostics have no request identity or absolute timestamp; cannot bind these samples to delayed ACKs.",
+    "Optional serialization timing includes admission checks and queue offer; not pure JSON encoding.",
+    "Compiler poll timing covers controller.poll only; excludes later optional envelope construction/serialization.",
+    "No writer dequeue/start/flush durations or frame identities were captured.",
+    "Receiver timestamps precede JSON decoding of that frame but follow handling of earlier frames; decode durations were not captured.",
+    "Runtime/controller totals are nested scopes, not independent additive costs.",
+    "No causal allocation of ACK or final-preview differences to serialization, writer backpressure, or receiver parsing is possible from this capture."
+  ]
+}

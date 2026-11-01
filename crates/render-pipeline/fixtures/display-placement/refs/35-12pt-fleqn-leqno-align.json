@@ -1,0 +1,63 @@
+{
+ "fixture": "35-12pt-fleqn-leqno-align.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Before.",
+    "x": 128.413,
+    "y_top": 137.753
+   },
+   {
+    "text": "(1)",
+    "x": 110.8515,
+    "y_top": 164.154
+   },
+   {
+    "text": "a",
+    "x": 140.119,
+    "y_top": 164.154
+   },
+   {
+    "text": "=",
+    "x": 149.5875,
+    "y_top": 164.154
+   },
+   {
+    "text": "b",
+    "x": 162.0161,
+    "y_top": 164.154
+   },
+   {
+    "text": "(2)",
+    "x": 110.8574,
+    "y_top": 181.589
+   },
+   {
+    "text": "c",
+    "x": 141.226,
+    "y_top": 181.589
+   },
+   {
+    "text": "=",
+    "x": 149.5875,
+    "y_top": 181.589
+   },
+   {
+    "text": "d",
+    "x": 162.0161,
+    "y_top": 181.589
+   },
+   {
+    "text": "After.",
+    "x": 110.854,
+    "y_top": 207.99
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

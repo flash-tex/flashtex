@@ -1,0 +1,132 @@
+{
+ "fixture": "43-ot1-substitutions.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Words",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold",
+   "font": "CMSSBX10",
+   "size": 9.9626,
+   "x": 178.684,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "sans",
+   "font": "CMSSBX10",
+   "size": 9.9626,
+   "x": 200.63,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "italic",
+   "font": "CMSSBX10",
+   "size": 9.9626,
+   "x": 222.284,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 246.263,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Bold",
+   "font": "CMBX10",
+   "size": 9.9626,
+   "x": 264.526,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "CMBX10",
+   "size": 9.9626,
+   "x": 290.503,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 317.443,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Sans",
+   "font": "CMCSC10",
+   "size": 9.9626,
+   "x": 339.027,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "CMCSC10",
+   "size": 9.9626,
+   "x": 364.506,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 390.777,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold",
+   "font": "CMTT10",
+   "size": 9.9626,
+   "x": 409.041,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "typewriter",
+   "font": "CMTT10",
+   "size": 9.9626,
+   "x": 435.193,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "to",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "finish.",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 145.941,
+   "baseline": 146.72
+  }
+ ],
+ "warnings": [
+  "Font shape `OT1/cmss/bx/it' undefined, using `OT1/cmss/bx/n' instead",
+  "Font shape `OT1/cmr/bx/sc' undefined, using `OT1/cmr/bx/n' instead",
+  "Font shape `OT1/cmss/m/sc' in size <10> not available, Font shape `OT1/cmr/m/sc' tried instead"
+ ]
+}

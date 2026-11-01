@@ -1,0 +1,81 @@
+{
+ "fixture": "02-bin-times.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Times",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 107.1794,
+    "y_top": 83.955
+   },
+   {
+    "text": "∔",
+    "x": 115.9904,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 127.9432,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋉",
+    "x": 135.5742,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 147.527,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋊",
+    "x": 155.219,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 167.1837,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋋",
+    "x": 175.9206,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 187.8734,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋌",
+    "x": 195.9527,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 207.9055,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 218.8637,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

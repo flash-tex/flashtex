@@ -1,0 +1,26 @@
+{
+  "status": "failed_post_measurement_reopen",
+  "process": 68918,
+  "exit_code": 1,
+  "helper_source": "e8b5a6fa",
+  "helper_sha256": "29810763137daf83156e800ffa06491baa95d5d04fda524afc530fd448ea7763",
+  "producer_sha256": "1587245d9d68f426678176e45c0e0a4a971cd252c64d3a288147861ec16d62dd",
+  "producer_source": "65dbe7da7a182e99322070e2c9763cc3b69a342b",
+  "missing_acceptance": [
+    "successful reopened preview/document snapshot",
+    "clean final direct compile comparison",
+    "normal successful-run provenance"
+  ],
+  "producer_processes_absent": true,
+  "reopen_output_captured_bytes": 94208,
+  "partial_json": true,
+  "rerun": false,
+  "qualification": "Original failed run retained including incomplete producer output. Analyzer describes measured prefix only, not full acceptance or native behavior. No failure cause inferred.",
+  "scripts": {
+    "typing_burst.py": "b6d799b8de32b6a2b5a20f2d0e88bb4e334d4bd60eb794f30a96d256a8ca772e",
+    "helper_replay.py": "9bccaaffa8883bb2a044af346f60afd2a12e0112cebb7f899fe256f77668443c",
+    "scheduled_sender.py": "5c2b4385b9b719cc7e20aa84c0ad2a832b24483abf511624cf45f6a28538dbb7",
+    "producer_capture_proxy.py": "5b97d3695b99b16bc4b4efbcf90d5ca684817952d89131c685cf9f306ffd2262",
+    "transport_trace_review.py": "96a4eae52e004de9fbf5f3cfb114e567ef059604b2fd5fb907c3e9aba74f4361"
+  }
+}

@@ -1029,13 +1029,12 @@ Rules:
     - the per-document engine choice with visible fallbacks (#1421, #1427);
     - packages under v3 (#1444).
   - #1337 is closed.
-  - *Status 2026-11-01:* the checklist is closed.
-    - The S5 rows closed with #1849 and the S6 rows with #1881: `app_parity_rows.py gate S6`
-      reads met, and its `check` finds all 124 named tests.
-    - **A9 project fonts** (`[fonts]`) are done (#1880): the Unicode mode typesets them, and
-      the old engine is no longer their fallback.
-    - The app latency rows (§1.2) are T7's ten gating runs (§12 P4).
-    - The S6 app rulings (E2, E3, E5/RQ7, RQ20) are in §13 (2026-10-21).
+  - **Still open:**
+    - a re-audit of the gap list against main (lane APP-PARITY-CLOSE);
+    - **A9 project fonts** (`[fonts]`): these fall back to the old engine. Deleting it removes
+      them unless the Unicode mode carries them or the owner retires them (owner question,
+      reviews/2026-10-05.md §6);
+    - the app latency rows (§1.2).
 - **Multi-window and multi-project (owner, 2026-09-30, decision 7):** after switch-over, in P6.
 - **New:** `tools/web2rust`, `crates/flashtex-engine`, the incremental system,
   `display-list-v3`, the socket protocol, `scripts/gate.sh`, and the CI tiers and
@@ -1100,35 +1099,47 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
     - P3-VERIFY: the sweep re-run on current main;
     - P3-PARITY-CI: the sweep running in CI, not skipping (§13 R12).
   - The PDF backend's font scope is complete on main.
-- **P4: met (2026-10-21), under the owner's ruling recorded at S4 (retirement plan row 7).**
-  - The gating run is #1876: `scripts/t7-reference.sh` on main `58d6d773f`, Apple M5 Pro.
-    120 of 120 gated rows pass, on battery
-    ([`t7-reference-2026-10-21e-…`](../../evidence/t7-reference-2026-10-21e-Kabirs-MacBook-Pro/README.md)).
-  - T7 has gated for ten runs, the ones under `docs/evidence/t7-reference-2026-10-20*` and
-    `-10-21*`. Runs f–i are on `389821f53` (#1882). Two of the ten pass 120 of 120 (e and i,
-    both on battery). The other eight miss 1 to 12 rows: 10-20 misses 12, b 5, g 4, 10-21 2,
-    and c, d, f and h 1 each. The best run on mains power is 119 of 120 (c, d and f).
-  - Since then the cold-open and keystroke work (#1891, #1897, #1898 and others) has landed.
-    No reference run has been recorded after it.
-- **P5: not met (status 2026-11-01).** The flip is done, and P5 is met when S7 and S8 land.
-  Decision 3's gate, item by item:
-  - **Board all green on a complete nightly: met.** S4 asks for 3 consecutive complete green
-    boards. They are 39350717288, 39365978113 and 39388695484, on main, ruled on #1319.
-  - **P-T2 ≥ 99 %, P-T1 ≥ 98 % on arXiv and T4; zero T4 panics; T2 with 0 unexpected
-    failures: met** on those boards.
-  - **No-TeX-Live gate: met.** It is green on main `0995a0676` (run 39537366166).
-  - **App checklist: met.** The S5 rows are closed by #1849, and the S6 rows by #1881
-    (`app_parity_rows.py gate S6` reads met). A9 is done (#1880), and the S6 app rulings
-    are in §13 (2026-10-21).
-  - **Unicode M3: met** (verdict 2026-10-21, `docs/evidence/unicode-m3-2026-10-11/README.md`,
-    #1878).
-  - **Retirement:** S0–S6 are done: S1b, S2 (#1610), S3 (#1421, #1427) with S3r (#1611), S4,
-    S5 (#1849; app v0.2.0, 2026-10-20, carries the #1421/#1427 records), S6a (#1877) and
-    S6 (#1881).
-    - S7 is #1888. It deletes the old engine at once. RQ5 and RQ6 are ruled, T7 has
-      gated for ten runs, and 0 open PRs touch old-engine paths.
-    - S8 (oracles to `tests/`) follows S7.
-    - `tools/parity/retirement-stages.json` holds the stage statuses.
+- **P4: not met (status 2026-10-11, P5-STATUS; GitHub evidence, not re-measured).**
+  - T7's reference workflow exists (`t7-reference.yml`, #1677, nightly on the heavy M1 Max,
+    self-hosted). **No reference run has completed**: 37770223614 (10-08) and 38045772414
+    (10-10) failed (the script cancelled, then the artifact upload refused), 37923471179
+    (10-09) failed in `scripts/t7-reference.sh`; 38133613355 (10-11) waits for the offline
+    runner.
+  - The latest latency rows are still the non-reference 30/56 of 10-05 (`9f29302fe`). Work
+    since on the 10-05 list: COLD-START and COLD-FIXED (#1655, #1678, #1679, #1748–#1753),
+    convergence (#1711, #1717, #1729), mid-line preamble restarts (#1714), memory
+    (#1493, #1505, #1755–#1758). None is gated until a reference run lands.
+- **P5: not met (status 2026-10-11, P5-STATUS).** Decision 3's gate, item by item:
+  - **Board all green on a complete nightly: met once.** 37789250180 (10-08, `0258d79d0`,
+    T4 from nightly 37645090383, 50/50 shards): "All green ... every run complete", new ≥ old
+    on every row. Since then 37939418396 was cancelled and 38054287106 / 38143582724 are
+    queued: the board runs only on self-hosted runners, which are offline. S4 asks for 3
+    consecutive complete boards.
+  - **P-T2 ≥ 99 % and P-T1 ≥ 98 % on arXiv and T4: met on that board.** arXiv 127/127 both;
+    T4 P-T2 3,789/3,789, P-T1 193/193 measured.
+  - **Zero T4 panics: met** (crashes row 3,790/3,790 clean).
+  - **T2 with 0 unexpected: met** on that board (1,590/1,590).
+  - **No-TeX-Live gate: exists, not yet on main since #1700/#1741/#1762.** Its runs are
+    branch dispatches (37269834503, 37656254618, green); the weekly schedule (Mondays) has
+    not yet produced a run. Hosted (`macos-15`).
+  - **App checklist:** S5 met from the rows file (no S5 row lacks a test or a ruling);
+    S6 not met: A9 and A17 still use the visible fallback, E2, E3 and E5 are open.
+  - **Retirement:** S0, S1, S2 (#1610) and S3r (#1611) landed; S3 partly (#1421, #1427);
+    S4 partly ((a) no hosted board leg, (e) no T7 reference run); S1b not started; S5 waits
+    for S4, a shipped release carrying #1421/#1427 (the latest app release is v0.1.9,
+    09-26), T1 with 0 new differences and T7; S6 waits for RQ19 and the Unicode mode's M3
+    gate; S7 for RQ5 and T7 gating ≥ 10 runs. `retirement-stages.json` still says S2 next
+    and S3r not started.
+  - **Unicode M3 (modes PROPOSAL L438): not met.** Re-measured on main `f5ef18a85`
+    (2026-10-20, `docs/evidence/unicode-m3-2026-10-11/README.md`, #1856):
+    - met: P-T1 49/49, export 48/48, the Unicode soundness sweeps (76 documents, 684 compiles,
+      0 bad), `[fonts]`, and Classic unchanged;
+    - met for the locked bundle, but `texbundle-tl2026-5` is unpublished: no TeX Live;
+    - missed: the §1.2 edit row for a keystroke at b4's last line, 545 M instructions to its
+      page. The design for that row is [READ-TRACK.md](READ-TRACK.md);
+    - pending the reference Mac: the wall-time rows.
+  - Main CI was red on the last merge (38028759045, #1762: mac host tests and the
+    self-hosted parity fixtures).
 - **P6: in progress ahead of its phase, by measured wins. Under the owner's 2026-10-05 rule, P6
   extras are parked** while any P3–P5 lane is unstaffed.
   - Landed: #1309 and #1499 (−16 % instructions on *Infinite Descent*), #1302, the

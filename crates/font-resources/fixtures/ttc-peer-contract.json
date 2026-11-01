@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "peer_commit": "f2fdb08a153de5940cc535e06bc0c496f5bf4eb5",
+  "peer_source_sha256": "4cc7590eeba66e3c7b055f00f430f7926a0dccb0ffdb21ca61db25cd9dcd2083",
+  "temporary_build": "/tmp/flashtex-ttc-peer-zyn1im67",
+  "probe_sha256": "5968b9ee331e530e2ecec59849091d75627280af7ba74855a2bcc0463e7a758a",
+  "observed": {
+    "valid_directory": "accepted",
+    "unsupported_ttc_version": "accepted",
+    "table_overlaps_header": "accepted",
+    "table_overlaps_directory": "accepted",
+    "invalid_sfnt_version": "accepted"
+  },
+  "status": "resolver remains explicit; peer descriptor present but full validated header and preparse work limits absent",
+  "scope": "Synthetic directory-only probes against exact unchanged peer; no real collection rendering claim"
+}

@@ -3,14 +3,6 @@
 Owner: Commander (FT-001). Status: initial interface contract, not implemented
 compiler behavior. JSON examples live in `protocol/fixtures/`.
 
-**After the old engine's retirement (S7):** no worker produces this protocol any
-more; the old engine's two producers were deleted with it. The pages come from
-the engine host over [display-list-v3](../protocol/display-list-v3.md). The
-contract stays because the apps' shared `RuntimeV1` types (requests, dates,
-diagnostics; `apps/mac/Sources/FlashTeXProtocol/RuntimeV1.swift` and its iPad
-copy) and the Nearby/capture messages still follow it. The producer notes below
-are history.
-
 Mac UI and Rust worker communicate via UTF-8 JSON Lines over standard input/output.
 One complete JSON object per line; diagnostic logs go to stderr. Every envelope
 has `protocol_version: 1`, a unique string `id`, `type`, and object `payload`.
@@ -135,16 +127,16 @@ a secure network implementation.
 way to do that without breaking the determinism rule above is for the caller to
 read the clock and send the answer as an ordinary request input. `apps/mac`
 already sends it on every compile request (`RuntimeV1.localDate()` in
-`ShellModel.swift`); the old engine's worker threaded it to its compiler (both
-retired in S7). An absent field means the
+`ShellModel.swift`); `crates/render-pipeline` threads it to the compiler by
+default (`request-date` is a default Cargo feature). An absent field means the
 Unix epoch, so every request written against this document stays valid and
 byte-identical.
 
 ## Optional negotiated layout extension
 
-Per-request `rules-v1` and `font-hints-v1` were negotiated extensions of the
-old engine's worker; their contract retired with it (S7). They never changed
-output for unnegotiated clients.
+See [runtime-v1-layout-capabilities.md](runtime-v1-layout-capabilities.md) for per-request
+`rules-v1` and `font-hints-v1`. They do not change output for unnegotiated clients.
+Unknown primitives must be explicitly rejected, never silently omitted.
 
 ## Optional `metadata` object
 
@@ -156,9 +148,12 @@ tolerate its absence and ignore unknown sections. Every span in it is
 `{path, start, end}`: the project-relative document path and zero-based,
 end-exclusive UTF-8 byte offsets into the request's revision.
 
-Both of the old engine's workers emitted it (retired in S7), serialising the
-same records, so the section read identically whichever worker a client ran.
-In sorted key order it sits between `layout_capabilities` and `pages`.
+Both producers emit it: the compiler's own `compile_result`
+(`crates/compiler/src/protocol.rs`) and `flashtex-render`
+(`crates/render-pipeline`, `v1::metadata_json`), which serialises the same
+records with the vendored compiler's `package_definitions::to_json`, so the
+section reads identically whichever worker a client runs. In sorted key
+order it sits between `layout_capabilities` and `pages`.
 
 ### `metadata.packages`
 

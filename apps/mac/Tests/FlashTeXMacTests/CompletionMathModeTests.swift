@@ -94,9 +94,7 @@ final class CompletionMathModeTests: XCTestCase {
         XCTAssertEqual(labels(Completion.suggestions(in: "x \\sbs", caretUTF16: 6, metadata: nil, supported: ["subsection"], mathMode: true)), ["\\subsection"])
         // What stays: the label/reference family and `\\` are text-mode in
         // the inventory but belong inside equation/align.
-        // (`\\` has no vocabulary row: the probe measures letter-named
-        // commands only, so control symbols are never listed.)
-        for name in Completion.mathAllowedTextCommands where name != "\\" {
+        for name in Completion.mathAllowedTextCommands {
             guard let entry = Completion.Vocabulary.byName[name] else { XCTFail("\\\(name) is not in the inventory"); continue }
             XCTAssertEqual(entry.mode, .text, name)
             XCTAssertTrue(Completion.allows(entry, mathMode: true), name)

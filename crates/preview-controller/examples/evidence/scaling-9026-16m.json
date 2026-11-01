@@ -1,0 +1,76 @@
+{
+  "max_frame_bytes": 16777216,
+  "compiler_source_sha": "9026d8a1b9ffdcfa4d01f3cdb4d83c5e6096849f",
+  "compiler_sha256": "99ceadc7d03a8d9a7528dfa8b7c4332c3a373719220fb29c6fd14f3772251686",
+  "replay_sha256": "89adac8d25ed2c091d5498db26955a8a70155ca2f5d211e65f42621fa4f2b380",
+  "generator_sha256": "a6c83d844998bdccede490e6bd18b0c2abc1873c12e07b0cc14d788a5ec20ef0",
+  "cases": [
+    {
+      "failure_detail": "",
+      "source_bytes": 5000,
+      "edits": 20,
+      "input_sha256": "559c2ee8964ab9c4b557ae8558650571ed3bff19a788a1e713957eb237d4a721",
+      "returncode": 0,
+      "completed_samples": 20,
+      "summary": {
+        "edits": 20,
+        "max_frame_bytes": 16777216,
+        "max_ms": 3.10206,
+        "measurement": "warm submission through received positioned result; compiler, pipe transport and polling combined",
+        "native_paint_measured": false,
+        "p50_ms": 1.8462610000000002,
+        "p95_ms": 2.492472,
+        "p99_ms": 3.10206,
+        "reference_pdf_measured": false,
+        "type": "summary"
+      },
+      "all_compiled_ok": true,
+      "classification": "complete",
+      "mismatch_classes": [
+        "none"
+      ]
+    },
+    {
+      "failure_detail": "",
+      "source_bytes": 50000,
+      "edits": 20,
+      "input_sha256": "bcc923ddcb7532f712e146c6209b179d872f20df505448832452331b70adde94",
+      "returncode": 0,
+      "completed_samples": 20,
+      "summary": {
+        "edits": 20,
+        "max_frame_bytes": 16777216,
+        "max_ms": 25.619606,
+        "measurement": "warm submission through received positioned result; compiler, pipe transport and polling combined",
+        "native_paint_measured": false,
+        "p50_ms": 23.447449,
+        "p95_ms": 25.190777,
+        "p99_ms": 25.619606,
+        "reference_pdf_measured": false,
+        "type": "summary"
+      },
+      "all_compiled_ok": true,
+      "classification": "complete",
+      "mismatch_classes": [
+        "none"
+      ]
+    },
+    {
+      "failure_detail": "compiler response timeout\n",
+      "source_bytes": 500000,
+      "edits": 20,
+      "input_sha256": "0a0fcf114762499998a920c8e97fc10feab552d09bb4e2d007e9a923ae8b7102",
+      "returncode": 1,
+      "completed_samples": 17,
+      "summary": null,
+      "all_compiled_ok": true,
+      "classification": "process_failure",
+      "mismatch_classes": [
+        "none"
+      ]
+    }
+  ],
+  "native_paint_measured": false,
+  "reference_pdf_measured": false,
+  "measurement": "Rust runtime submission to received positioned result; excludes editor save and native paint"
+}

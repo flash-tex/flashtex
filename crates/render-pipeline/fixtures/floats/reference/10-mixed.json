@@ -1,0 +1,74 @@
+{
+ "fixture": "10-mixed.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 3,
+ "images": [
+  {
+   "page": 1,
+   "x": 212.401,
+   "top": 72.0,
+   "width": 187.197,
+   "height": 124.81
+  },
+  {
+   "page": 2,
+   "x": 235.799,
+   "top": 72.0,
+   "width": 140.401,
+   "height": 70.205
+  },
+  {
+   "page": 3,
+   "x": 234.0,
+   "top": 346.634,
+   "width": 144.0,
+   "height": 72.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 72.0,
+   "baseline": 221.219
+  },
+  {
+   "page": 2,
+   "label": "Table 1",
+   "x": 213.506,
+   "baseline": 166.614
+  },
+  {
+   "page": 3,
+   "label": "Figure 2",
+   "x": 226.253,
+   "baseline": 443.042
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 284.316,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 486.557,
+   "source_byte": 1759
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 703.245,
+   "source_byte": 3164
+  },
+  {
+   "page": 2,
+   "x": 72.0,
+   "baseline": 475.29,
+   "source_byte": 5154
+  }
+ ]
+}

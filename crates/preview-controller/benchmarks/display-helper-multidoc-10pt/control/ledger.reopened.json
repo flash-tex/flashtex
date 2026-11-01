@@ -1,0 +1,23 @@
+{
+  "main.tex": {
+    "path": "main.tex",
+    "project_id": "p",
+    "revision": 7,
+    "source_sha256": "1ff05efb19880af47655606c1daae348cb9019135987f1ace426812a79160baf",
+    "text": "\\documentclass{article}\n\\begin{document}\nOffice AV fi.\\input{chapter}\n\\end{document}\n"
+  },
+  "chapter.tex": {
+    "path": "chapter.tex",
+    "project_id": "p",
+    "revision": 21,
+    "source_sha256": "a7c9b88ac05bc9c761fb766d68ee3cf0f33c56f0a479dfa1d70de6d7c470150c",
+    "text": "Chapter text with \\(a+b\\).\nLatest superseding edit.\n"
+  },
+  "refs.bib": {
+    "path": "refs.bib",
+    "project_id": "p",
+    "revision": 23,
+    "source_sha256": "908205f78ab7526aa152426ad617f56172b0d36f39753581182a0c69b8471d8d",
+    "text": "@article{sample, title={Example}, author={A. Author}, year={2026}}\n"
+  }
+}

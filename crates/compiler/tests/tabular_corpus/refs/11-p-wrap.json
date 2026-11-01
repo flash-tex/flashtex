@@ -1,0 +1,136 @@
+{
+ "fixture": "11-p-wrap.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "This",
+    "x": 77.978,
+    "y_top": 95.063
+   },
+   {
+    "text": "entry",
+    "x": 112.3301,
+    "y_top": 95.063
+   },
+   {
+    "text": "is",
+    "x": 150.5102,
+    "y_top": 95.063
+   },
+   {
+    "text": "long",
+    "x": 169.9039,
+    "y_top": 95.063
+   },
+   {
+    "text": "Side",
+    "x": 203.319,
+    "y_top": 95.063
+   },
+   {
+    "text": "enough",
+    "x": 77.978,
+    "y_top": 109.509
+   },
+   {
+    "text": "to",
+    "x": 120.6509,
+    "y_top": 109.509
+   },
+   {
+    "text": "wrap",
+    "x": 137.3093,
+    "y_top": 109.509
+   },
+   {
+    "text": "onto",
+    "x": 168.926,
+    "y_top": 109.509
+   },
+   {
+    "text": "several",
+    "x": 77.978,
+    "y_top": 123.955
+   },
+   {
+    "text": "lines",
+    "x": 115.3834,
+    "y_top": 123.955
+   },
+   {
+    "text": "in",
+    "x": 141.0799,
+    "y_top": 123.955
+   },
+   {
+    "text": "the",
+    "x": 153.7046,
+    "y_top": 123.955
+   },
+   {
+    "text": "box",
+    "x": 172.8329,
+    "y_top": 123.955
+   },
+   {
+    "text": "Next",
+    "x": 77.978,
+    "y_top": 138.401
+   },
+   {
+    "text": "Row",
+    "x": 203.3139,
+    "y_top": 138.401
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 151.967
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 151.967
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 151.967
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 151.967
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

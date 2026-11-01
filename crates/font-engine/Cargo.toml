@@ -1,0 +1,23 @@
+[package]
+name = "flashtex-font-engine"
+version = "0.1.0"
+edition = "2024"
+description = "Original FlashTeX font engine: TrueType/OpenType parsing, Adobe Core 14 metrics, TeX-oriented shaping with source-byte clusters, deterministic subsetting, and PDF embedding data."
+publish = false
+
+[lib]
+name = "flashtex_font_engine"
+path = "src/lib.rs"
+
+[features]
+default = ["paragraph", "math", "pdf"]
+# Adapters to sibling crates on main; each is a path dependency with no
+# external crates behind it. Disable to build the engine alone.
+paragraph = ["dep:flashtex-paragraph-layout"]
+math = ["dep:flashtex-math-layout"]
+pdf = ["dep:flashtex-pdf"]
+
+[dependencies]
+flashtex-paragraph-layout = { path = "../paragraph-layout", optional = true }
+flashtex-math-layout = { path = "../math-layout", optional = true }
+flashtex-pdf = { path = "../pdf", optional = true }

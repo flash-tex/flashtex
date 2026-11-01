@@ -1,0 +1,1574 @@
+{
+ "passed": 1,
+ "total": 54,
+ "tolerance_bp": 0.5,
+ "rule_tolerance_bp": 0.1,
+ "fixtures": [
+  {
+   "fixture": "01-col-l",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 5.978,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "02-col-c",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 34.065,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "03-col-r",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 62.152,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "04-col-lcr",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 18,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 104.181,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "05-vrule-single",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 42.178,
+   "rules": [
+    4,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "06-vrule-double",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 23.218,
+   "rules": [
+    6,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "07-at-empty",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 43.99,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "08-at-text",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 17.684,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "09-at-rule",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 9.224,
+   "rules": [
+    3,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "10-p-short",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 77.608,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "11-p-wrap",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 23,
+   "within_tol": 4,
+   "unaligned": 2,
+   "extension_columns_match": true,
+   "worst_bp": 202.811,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "12-p-rules",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 24,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 257.875,
+   "rules": [
+    9,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "13-multicolumn-wide",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 19,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 18.586,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "14-multicolumn-narrow",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 64.816,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "15-multicolumn-rules",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 22.084,
+   "rules": [
+    9,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "16-multicolumn-realign",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 38.479,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "17-hline",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 40.692,
+   "rules": [
+    3,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "18-hline-double",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 40.034,
+   "rules": [
+    5,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "19-cline",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 23.388,
+   "rules": [
+    2,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "20-cline-multi",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 23.385,
+   "rules": [
+    8,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "21-arraystretch-15",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 25.086,
+   "rules": [
+    9,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "22-arraystretch-08",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 25.09,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "23-tabcolsep-12",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 64.653,
+   "rules": [
+    4,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "24-tabcolsep-0",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 4,
+   "unaligned": 3,
+   "extension_columns_match": true,
+   "worst_bp": 5.203,
+   "rules": [
+    3,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "25-rowskip-pos",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 14.346,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "26-rowskip-neg",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 7.206,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "27-tabularstar-fill",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 436.655,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "28-tabularstar-cv",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 15,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 328.577,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "29-pos-top",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 5,
+   "unaligned": 2,
+   "extension_columns_match": true,
+   "worst_bp": 42.557,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "30-pos-bottom",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 2,
+   "extension_columns_match": true,
+   "worst_bp": 48.529,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "31-pos-center",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 4,
+   "unaligned": 4,
+   "extension_columns_match": true,
+   "worst_bp": 64.728,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "32-nested",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 2,
+   "extension_columns_match": true,
+   "worst_bp": 53.826,
+   "rules": [
+    9,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "33-array-inline",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 5,
+   "unaligned": 2,
+   "extension_columns_match": false,
+   "worst_bp": 6.67,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "34-array-display",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 12,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 0.006,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "35-booktabs-basic",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 42.245,
+   "rules": [
+    3,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "36-booktabs-cmidrule",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 30.37,
+   "rules": [
+    3,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "37-booktabs-cmidrule-lr",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 18,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 33.713,
+   "rules": [
+    5,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 4 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "38-booktabs-width",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 14.677,
+   "rules": [
+    3,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "39-booktabs-article",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 19,
+   "within_tol": 4,
+   "unaligned": 6,
+   "extension_columns_match": true,
+   "worst_bp": 90.314,
+   "rules": [
+    3,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (3 row(s), 4 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "40-array-gtlt",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 28.462,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "41-array-m",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 4,
+   "unaligned": 5,
+   "extension_columns_match": true,
+   "worst_bp": 78.062,
+   "rules": [
+    5,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "42-array-b",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 4,
+   "unaligned": 3,
+   "extension_columns_match": true,
+   "worst_bp": 144.499,
+   "rules": [
+    5,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "43-array-extrarowheight",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 15.478,
+   "rules": [
+    9,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "44-array-bang",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 26.083,
+   "rules": [
+    1,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "45-empty-cells",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 45.497,
+   "rules": [
+    11,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 3 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "46-math-cells",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 15,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": false,
+   "worst_bp": 20.681,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "47-styled-cells",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 23.234,
+   "rules": [
+    0,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "48-arrayrulewidth",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 8,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 14.031,
+   "rules": [
+    5,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "49-doublerulesep",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 9,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 9.963,
+   "rules": [
+    8,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "50-small-font",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 8,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 14.296,
+   "rules": [
+    5,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "51-center-env",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 4,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 4.189,
+   "rules": [
+    9,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "52-p-long-hline",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 25,
+   "within_tol": 4,
+   "unaligned": 6,
+   "extension_columns_match": true,
+   "worst_bp": 323.783,
+   "rules": [
+    4,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "53-star-no-fill",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 8,
+   "unaligned": 0,
+   "extension_columns_match": true,
+   "worst_bp": 14.031,
+   "rules": [
+    5,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 2 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  },
+  {
+   "fixture": "54-two-tables-inline",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 4,
+   "unaligned": 2,
+   "extension_columns_match": true,
+   "worst_bp": 53.372,
+   "rules": [
+    11,
+    0
+   ],
+   "rules_within_tol": 0,
+   "rule_worst_bp": 0.0,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "unsupported_block",
+     "tabular (1 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ],
+    [
+     "unsupported_block",
+     "tabular (2 row(s), 1 column(s)) set as its cells' text in reading order: the pipeline has no table layout (columns, rule"
+    ]
+   ]
+  }
+ ]
+}

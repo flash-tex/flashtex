@@ -1,0 +1,2037 @@
+{
+  "tfm_sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+  "font_sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+  "face_index": 0,
+  "encoding": [
+    {
+      "code": 0,
+      "glyph_name": "grave"
+    },
+    {
+      "code": 1,
+      "glyph_name": "acute"
+    },
+    {
+      "code": 2,
+      "glyph_name": "circumflex"
+    },
+    {
+      "code": 3,
+      "glyph_name": "tilde"
+    },
+    {
+      "code": 4,
+      "glyph_name": "dieresis"
+    },
+    {
+      "code": 5,
+      "glyph_name": "hungarumlaut"
+    },
+    {
+      "code": 6,
+      "glyph_name": "ring"
+    },
+    {
+      "code": 7,
+      "glyph_name": "caron"
+    },
+    {
+      "code": 8,
+      "glyph_name": "breve"
+    },
+    {
+      "code": 9,
+      "glyph_name": "macron"
+    },
+    {
+      "code": 10,
+      "glyph_name": "dotaccent"
+    },
+    {
+      "code": 11,
+      "glyph_name": "cedilla"
+    },
+    {
+      "code": 12,
+      "glyph_name": "ogonek"
+    },
+    {
+      "code": 13,
+      "glyph_name": "quotesinglbase"
+    },
+    {
+      "code": 14,
+      "glyph_name": "guilsinglleft"
+    },
+    {
+      "code": 15,
+      "glyph_name": "guilsinglright"
+    },
+    {
+      "code": 16,
+      "glyph_name": "quotedblleft"
+    },
+    {
+      "code": 17,
+      "glyph_name": "quotedblright"
+    },
+    {
+      "code": 18,
+      "glyph_name": "quotedblbase"
+    },
+    {
+      "code": 19,
+      "glyph_name": "guillemotleft"
+    },
+    {
+      "code": 20,
+      "glyph_name": "guillemotright"
+    },
+    {
+      "code": 21,
+      "glyph_name": "endash"
+    },
+    {
+      "code": 22,
+      "glyph_name": "emdash"
+    },
+    {
+      "code": 23,
+      "glyph_name": "cwm"
+    },
+    {
+      "code": 24,
+      "glyph_name": "perthousandzero"
+    },
+    {
+      "code": 25,
+      "glyph_name": "dotlessi"
+    },
+    {
+      "code": 26,
+      "glyph_name": "dotlessj"
+    },
+    {
+      "code": 27,
+      "glyph_name": "ff"
+    },
+    {
+      "code": 28,
+      "glyph_name": "fi"
+    },
+    {
+      "code": 29,
+      "glyph_name": "fl"
+    },
+    {
+      "code": 30,
+      "glyph_name": "ffi"
+    },
+    {
+      "code": 31,
+      "glyph_name": "ffl"
+    },
+    {
+      "code": 32,
+      "glyph_name": "uni2423"
+    },
+    {
+      "code": 33,
+      "glyph_name": "exclam"
+    },
+    {
+      "code": 34,
+      "glyph_name": "quotedbl"
+    },
+    {
+      "code": 35,
+      "glyph_name": "numbersign"
+    },
+    {
+      "code": 36,
+      "glyph_name": "dollar"
+    },
+    {
+      "code": 37,
+      "glyph_name": "percent"
+    },
+    {
+      "code": 38,
+      "glyph_name": "ampersand"
+    },
+    {
+      "code": 39,
+      "glyph_name": "quoteright"
+    },
+    {
+      "code": 40,
+      "glyph_name": "parenleft"
+    },
+    {
+      "code": 41,
+      "glyph_name": "parenright"
+    },
+    {
+      "code": 42,
+      "glyph_name": "asterisk"
+    },
+    {
+      "code": 43,
+      "glyph_name": "plus"
+    },
+    {
+      "code": 44,
+      "glyph_name": "comma"
+    },
+    {
+      "code": 45,
+      "glyph_name": "hyphen"
+    },
+    {
+      "code": 46,
+      "glyph_name": "period"
+    },
+    {
+      "code": 47,
+      "glyph_name": "slash"
+    },
+    {
+      "code": 48,
+      "glyph_name": "zero"
+    },
+    {
+      "code": 49,
+      "glyph_name": "one"
+    },
+    {
+      "code": 50,
+      "glyph_name": "two"
+    },
+    {
+      "code": 51,
+      "glyph_name": "three"
+    },
+    {
+      "code": 52,
+      "glyph_name": "four"
+    },
+    {
+      "code": 53,
+      "glyph_name": "five"
+    },
+    {
+      "code": 54,
+      "glyph_name": "six"
+    },
+    {
+      "code": 55,
+      "glyph_name": "seven"
+    },
+    {
+      "code": 56,
+      "glyph_name": "eight"
+    },
+    {
+      "code": 57,
+      "glyph_name": "nine"
+    },
+    {
+      "code": 58,
+      "glyph_name": "colon"
+    },
+    {
+      "code": 59,
+      "glyph_name": "semicolon"
+    },
+    {
+      "code": 60,
+      "glyph_name": "less"
+    },
+    {
+      "code": 61,
+      "glyph_name": "equal"
+    },
+    {
+      "code": 62,
+      "glyph_name": "greater"
+    },
+    {
+      "code": 63,
+      "glyph_name": "question"
+    },
+    {
+      "code": 64,
+      "glyph_name": "at"
+    },
+    {
+      "code": 65,
+      "glyph_name": "A"
+    },
+    {
+      "code": 66,
+      "glyph_name": "B"
+    },
+    {
+      "code": 67,
+      "glyph_name": "C"
+    },
+    {
+      "code": 68,
+      "glyph_name": "D"
+    },
+    {
+      "code": 69,
+      "glyph_name": "E"
+    },
+    {
+      "code": 70,
+      "glyph_name": "F"
+    },
+    {
+      "code": 71,
+      "glyph_name": "G"
+    },
+    {
+      "code": 72,
+      "glyph_name": "H"
+    },
+    {
+      "code": 73,
+      "glyph_name": "I"
+    },
+    {
+      "code": 74,
+      "glyph_name": "J"
+    },
+    {
+      "code": 75,
+      "glyph_name": "K"
+    },
+    {
+      "code": 76,
+      "glyph_name": "L"
+    },
+    {
+      "code": 77,
+      "glyph_name": "M"
+    },
+    {
+      "code": 78,
+      "glyph_name": "N"
+    },
+    {
+      "code": 79,
+      "glyph_name": "O"
+    },
+    {
+      "code": 80,
+      "glyph_name": "P"
+    },
+    {
+      "code": 81,
+      "glyph_name": "Q"
+    },
+    {
+      "code": 82,
+      "glyph_name": "R"
+    },
+    {
+      "code": 83,
+      "glyph_name": "S"
+    },
+    {
+      "code": 84,
+      "glyph_name": "T"
+    },
+    {
+      "code": 85,
+      "glyph_name": "U"
+    },
+    {
+      "code": 86,
+      "glyph_name": "V"
+    },
+    {
+      "code": 87,
+      "glyph_name": "W"
+    },
+    {
+      "code": 88,
+      "glyph_name": "X"
+    },
+    {
+      "code": 89,
+      "glyph_name": "Y"
+    },
+    {
+      "code": 90,
+      "glyph_name": "Z"
+    },
+    {
+      "code": 91,
+      "glyph_name": "bracketleft"
+    },
+    {
+      "code": 92,
+      "glyph_name": "backslash"
+    },
+    {
+      "code": 93,
+      "glyph_name": "bracketright"
+    },
+    {
+      "code": 94,
+      "glyph_name": "asciicircum"
+    },
+    {
+      "code": 95,
+      "glyph_name": "underscore"
+    },
+    {
+      "code": 96,
+      "glyph_name": "quoteleft"
+    },
+    {
+      "code": 97,
+      "glyph_name": "a"
+    },
+    {
+      "code": 98,
+      "glyph_name": "b"
+    },
+    {
+      "code": 99,
+      "glyph_name": "c"
+    },
+    {
+      "code": 100,
+      "glyph_name": "d"
+    },
+    {
+      "code": 101,
+      "glyph_name": "e"
+    },
+    {
+      "code": 102,
+      "glyph_name": "f"
+    },
+    {
+      "code": 103,
+      "glyph_name": "g"
+    },
+    {
+      "code": 104,
+      "glyph_name": "h"
+    },
+    {
+      "code": 105,
+      "glyph_name": "i"
+    },
+    {
+      "code": 106,
+      "glyph_name": "j"
+    },
+    {
+      "code": 107,
+      "glyph_name": "k"
+    },
+    {
+      "code": 108,
+      "glyph_name": "l"
+    },
+    {
+      "code": 109,
+      "glyph_name": "m"
+    },
+    {
+      "code": 110,
+      "glyph_name": "n"
+    },
+    {
+      "code": 111,
+      "glyph_name": "o"
+    },
+    {
+      "code": 112,
+      "glyph_name": "p"
+    },
+    {
+      "code": 113,
+      "glyph_name": "q"
+    },
+    {
+      "code": 114,
+      "glyph_name": "r"
+    },
+    {
+      "code": 115,
+      "glyph_name": "s"
+    },
+    {
+      "code": 116,
+      "glyph_name": "t"
+    },
+    {
+      "code": 117,
+      "glyph_name": "u"
+    },
+    {
+      "code": 118,
+      "glyph_name": "v"
+    },
+    {
+      "code": 119,
+      "glyph_name": "w"
+    },
+    {
+      "code": 120,
+      "glyph_name": "x"
+    },
+    {
+      "code": 121,
+      "glyph_name": "y"
+    },
+    {
+      "code": 122,
+      "glyph_name": "z"
+    },
+    {
+      "code": 123,
+      "glyph_name": "braceleft"
+    },
+    {
+      "code": 124,
+      "glyph_name": "bar"
+    },
+    {
+      "code": 125,
+      "glyph_name": "braceright"
+    },
+    {
+      "code": 126,
+      "glyph_name": "asciitilde"
+    },
+    {
+      "code": 127,
+      "glyph_name": "hyphen.alt"
+    },
+    {
+      "code": 128,
+      "glyph_name": "Abreve"
+    },
+    {
+      "code": 129,
+      "glyph_name": "Aogonek"
+    },
+    {
+      "code": 130,
+      "glyph_name": "Cacute"
+    },
+    {
+      "code": 131,
+      "glyph_name": "Ccaron"
+    },
+    {
+      "code": 132,
+      "glyph_name": "Dcaron"
+    },
+    {
+      "code": 133,
+      "glyph_name": "Ecaron"
+    },
+    {
+      "code": 134,
+      "glyph_name": "Eogonek"
+    },
+    {
+      "code": 135,
+      "glyph_name": "Gbreve"
+    },
+    {
+      "code": 136,
+      "glyph_name": "Lacute"
+    },
+    {
+      "code": 137,
+      "glyph_name": "Lcaron"
+    },
+    {
+      "code": 138,
+      "glyph_name": "Lslash"
+    },
+    {
+      "code": 139,
+      "glyph_name": "Nacute"
+    },
+    {
+      "code": 140,
+      "glyph_name": "Ncaron"
+    },
+    {
+      "code": 141,
+      "glyph_name": "Eng"
+    },
+    {
+      "code": 142,
+      "glyph_name": "Ohungarumlaut"
+    },
+    {
+      "code": 143,
+      "glyph_name": "Racute"
+    },
+    {
+      "code": 144,
+      "glyph_name": "Rcaron"
+    },
+    {
+      "code": 145,
+      "glyph_name": "Sacute"
+    },
+    {
+      "code": 146,
+      "glyph_name": "Scaron"
+    },
+    {
+      "code": 147,
+      "glyph_name": "Scedilla"
+    },
+    {
+      "code": 148,
+      "glyph_name": "Tcaron"
+    },
+    {
+      "code": 149,
+      "glyph_name": "Tcedilla"
+    },
+    {
+      "code": 150,
+      "glyph_name": "Uhungarumlaut"
+    },
+    {
+      "code": 151,
+      "glyph_name": "Uring"
+    },
+    {
+      "code": 152,
+      "glyph_name": "Ydieresis"
+    },
+    {
+      "code": 153,
+      "glyph_name": "Zacute"
+    },
+    {
+      "code": 154,
+      "glyph_name": "Zcaron"
+    },
+    {
+      "code": 155,
+      "glyph_name": "Zdotaccent"
+    },
+    {
+      "code": 157,
+      "glyph_name": "Idotaccent"
+    },
+    {
+      "code": 158,
+      "glyph_name": "dcroat"
+    },
+    {
+      "code": 159,
+      "glyph_name": "section"
+    },
+    {
+      "code": 160,
+      "glyph_name": "abreve"
+    },
+    {
+      "code": 161,
+      "glyph_name": "aogonek"
+    },
+    {
+      "code": 162,
+      "glyph_name": "cacute"
+    },
+    {
+      "code": 163,
+      "glyph_name": "ccaron"
+    },
+    {
+      "code": 164,
+      "glyph_name": "dcaron"
+    },
+    {
+      "code": 165,
+      "glyph_name": "ecaron"
+    },
+    {
+      "code": 166,
+      "glyph_name": "eogonek"
+    },
+    {
+      "code": 167,
+      "glyph_name": "gbreve"
+    },
+    {
+      "code": 168,
+      "glyph_name": "lacute"
+    },
+    {
+      "code": 169,
+      "glyph_name": "lcaron"
+    },
+    {
+      "code": 170,
+      "glyph_name": "lslash"
+    },
+    {
+      "code": 171,
+      "glyph_name": "nacute"
+    },
+    {
+      "code": 172,
+      "glyph_name": "ncaron"
+    },
+    {
+      "code": 173,
+      "glyph_name": "eng"
+    },
+    {
+      "code": 174,
+      "glyph_name": "ohungarumlaut"
+    },
+    {
+      "code": 175,
+      "glyph_name": "racute"
+    },
+    {
+      "code": 176,
+      "glyph_name": "rcaron"
+    },
+    {
+      "code": 177,
+      "glyph_name": "sacute"
+    },
+    {
+      "code": 178,
+      "glyph_name": "scaron"
+    },
+    {
+      "code": 179,
+      "glyph_name": "scedilla"
+    },
+    {
+      "code": 180,
+      "glyph_name": "tcaron"
+    },
+    {
+      "code": 181,
+      "glyph_name": "tcedilla"
+    },
+    {
+      "code": 182,
+      "glyph_name": "uhungarumlaut"
+    },
+    {
+      "code": 183,
+      "glyph_name": "uring"
+    },
+    {
+      "code": 184,
+      "glyph_name": "ydieresis"
+    },
+    {
+      "code": 185,
+      "glyph_name": "zacute"
+    },
+    {
+      "code": 186,
+      "glyph_name": "zcaron"
+    },
+    {
+      "code": 187,
+      "glyph_name": "zdotaccent"
+    },
+    {
+      "code": 189,
+      "glyph_name": "exclamdown"
+    },
+    {
+      "code": 190,
+      "glyph_name": "questiondown"
+    },
+    {
+      "code": 191,
+      "glyph_name": "sterling"
+    },
+    {
+      "code": 192,
+      "glyph_name": "Agrave"
+    },
+    {
+      "code": 193,
+      "glyph_name": "Aacute"
+    },
+    {
+      "code": 194,
+      "glyph_name": "Acircumflex"
+    },
+    {
+      "code": 195,
+      "glyph_name": "Atilde"
+    },
+    {
+      "code": 196,
+      "glyph_name": "Adieresis"
+    },
+    {
+      "code": 197,
+      "glyph_name": "Aring"
+    },
+    {
+      "code": 198,
+      "glyph_name": "AE"
+    },
+    {
+      "code": 199,
+      "glyph_name": "Ccedilla"
+    },
+    {
+      "code": 200,
+      "glyph_name": "Egrave"
+    },
+    {
+      "code": 201,
+      "glyph_name": "Eacute"
+    },
+    {
+      "code": 202,
+      "glyph_name": "Ecircumflex"
+    },
+    {
+      "code": 203,
+      "glyph_name": "Edieresis"
+    },
+    {
+      "code": 204,
+      "glyph_name": "Igrave"
+    },
+    {
+      "code": 205,
+      "glyph_name": "Iacute"
+    },
+    {
+      "code": 206,
+      "glyph_name": "Icircumflex"
+    },
+    {
+      "code": 207,
+      "glyph_name": "Idieresis"
+    },
+    {
+      "code": 208,
+      "glyph_name": "Eth"
+    },
+    {
+      "code": 209,
+      "glyph_name": "Ntilde"
+    },
+    {
+      "code": 210,
+      "glyph_name": "Ograve"
+    },
+    {
+      "code": 211,
+      "glyph_name": "Oacute"
+    },
+    {
+      "code": 212,
+      "glyph_name": "Ocircumflex"
+    },
+    {
+      "code": 213,
+      "glyph_name": "Otilde"
+    },
+    {
+      "code": 214,
+      "glyph_name": "Odieresis"
+    },
+    {
+      "code": 215,
+      "glyph_name": "OE"
+    },
+    {
+      "code": 216,
+      "glyph_name": "Oslash"
+    },
+    {
+      "code": 217,
+      "glyph_name": "Ugrave"
+    },
+    {
+      "code": 218,
+      "glyph_name": "Uacute"
+    },
+    {
+      "code": 219,
+      "glyph_name": "Ucircumflex"
+    },
+    {
+      "code": 220,
+      "glyph_name": "Udieresis"
+    },
+    {
+      "code": 221,
+      "glyph_name": "Yacute"
+    },
+    {
+      "code": 222,
+      "glyph_name": "Thorn"
+    },
+    {
+      "code": 224,
+      "glyph_name": "agrave"
+    },
+    {
+      "code": 225,
+      "glyph_name": "aacute"
+    },
+    {
+      "code": 226,
+      "glyph_name": "acircumflex"
+    },
+    {
+      "code": 227,
+      "glyph_name": "atilde"
+    },
+    {
+      "code": 228,
+      "glyph_name": "adieresis"
+    },
+    {
+      "code": 229,
+      "glyph_name": "aring"
+    },
+    {
+      "code": 230,
+      "glyph_name": "ae"
+    },
+    {
+      "code": 231,
+      "glyph_name": "ccedilla"
+    },
+    {
+      "code": 232,
+      "glyph_name": "egrave"
+    },
+    {
+      "code": 233,
+      "glyph_name": "eacute"
+    },
+    {
+      "code": 234,
+      "glyph_name": "ecircumflex"
+    },
+    {
+      "code": 235,
+      "glyph_name": "edieresis"
+    },
+    {
+      "code": 236,
+      "glyph_name": "igrave"
+    },
+    {
+      "code": 237,
+      "glyph_name": "iacute"
+    },
+    {
+      "code": 238,
+      "glyph_name": "icircumflex"
+    },
+    {
+      "code": 239,
+      "glyph_name": "idieresis"
+    },
+    {
+      "code": 240,
+      "glyph_name": "eth"
+    },
+    {
+      "code": 241,
+      "glyph_name": "ntilde"
+    },
+    {
+      "code": 242,
+      "glyph_name": "ograve"
+    },
+    {
+      "code": 243,
+      "glyph_name": "oacute"
+    },
+    {
+      "code": 244,
+      "glyph_name": "ocircumflex"
+    },
+    {
+      "code": 245,
+      "glyph_name": "otilde"
+    },
+    {
+      "code": 246,
+      "glyph_name": "odieresis"
+    },
+    {
+      "code": 247,
+      "glyph_name": "oe"
+    },
+    {
+      "code": 248,
+      "glyph_name": "oslash"
+    },
+    {
+      "code": 249,
+      "glyph_name": "ugrave"
+    },
+    {
+      "code": 250,
+      "glyph_name": "uacute"
+    },
+    {
+      "code": 251,
+      "glyph_name": "ucircumflex"
+    },
+    {
+      "code": 252,
+      "glyph_name": "udieresis"
+    },
+    {
+      "code": 253,
+      "glyph_name": "yacute"
+    },
+    {
+      "code": 254,
+      "glyph_name": "thorn"
+    },
+    {
+      "code": 255,
+      "glyph_name": "germandbls"
+    }
+  ],
+  "declared_glyphs": [
+    {
+      "glyph_name": ".notdef",
+      "glyph_id": 0
+    },
+    {
+      "glyph_name": "A",
+      "glyph_id": 27
+    },
+    {
+      "glyph_name": "AE",
+      "glyph_id": 163
+    },
+    {
+      "glyph_name": "Aacute",
+      "glyph_id": 127
+    },
+    {
+      "glyph_name": "Abreve",
+      "glyph_id": 129
+    },
+    {
+      "glyph_name": "Acircumflex",
+      "glyph_id": 143
+    },
+    {
+      "glyph_name": "Adieresis",
+      "glyph_id": 159
+    },
+    {
+      "glyph_name": "Agrave",
+      "glyph_id": 167
+    },
+    {
+      "glyph_name": "Aogonek",
+      "glyph_id": 177
+    },
+    {
+      "glyph_name": "Aring",
+      "glyph_id": 179
+    },
+    {
+      "glyph_name": "Atilde",
+      "glyph_id": 188
+    },
+    {
+      "glyph_name": "B",
+      "glyph_id": 34
+    },
+    {
+      "glyph_name": "C",
+      "glyph_id": 42
+    },
+    {
+      "glyph_name": "Cacute",
+      "glyph_id": 200
+    },
+    {
+      "glyph_name": "Ccaron",
+      "glyph_id": 204
+    },
+    {
+      "glyph_name": "Ccedilla",
+      "glyph_id": 206
+    },
+    {
+      "glyph_name": "D",
+      "glyph_id": 46
+    },
+    {
+      "glyph_name": "Dcaron",
+      "glyph_id": 228
+    },
+    {
+      "glyph_name": "E",
+      "glyph_id": 49
+    },
+    {
+      "glyph_name": "Eacute",
+      "glyph_id": 250
+    },
+    {
+      "glyph_name": "Ecaron",
+      "glyph_id": 254
+    },
+    {
+      "glyph_name": "Ecircumflex",
+      "glyph_id": 256
+    },
+    {
+      "glyph_name": "Edieresis",
+      "glyph_id": 270
+    },
+    {
+      "glyph_name": "Egrave",
+      "glyph_id": 276
+    },
+    {
+      "glyph_name": "Eng",
+      "glyph_id": 285
+    },
+    {
+      "glyph_name": "Eogonek",
+      "glyph_id": 287
+    },
+    {
+      "glyph_name": "Eth",
+      "glyph_id": 294
+    },
+    {
+      "glyph_name": "F",
+      "glyph_id": 54
+    },
+    {
+      "glyph_name": "G",
+      "glyph_id": 58
+    },
+    {
+      "glyph_name": "Gbreve",
+      "glyph_id": 307
+    },
+    {
+      "glyph_name": "H",
+      "glyph_id": 62
+    },
+    {
+      "glyph_name": "I",
+      "glyph_id": 65
+    },
+    {
+      "glyph_name": "Iacute",
+      "glyph_id": 336
+    },
+    {
+      "glyph_name": "Icircumflex",
+      "glyph_id": 342
+    },
+    {
+      "glyph_name": "Idieresis",
+      "glyph_id": 346
+    },
+    {
+      "glyph_name": "Idotaccent",
+      "glyph_id": 350
+    },
+    {
+      "glyph_name": "Igrave",
+      "glyph_id": 353
+    },
+    {
+      "glyph_name": "J",
+      "glyph_id": 67
+    },
+    {
+      "glyph_name": "K",
+      "glyph_id": 69
+    },
+    {
+      "glyph_name": "L",
+      "glyph_id": 71
+    },
+    {
+      "glyph_name": "Lacute",
+      "glyph_id": 374
+    },
+    {
+      "glyph_name": "Lcaron",
+      "glyph_id": 377
+    },
+    {
+      "glyph_name": "Lslash",
+      "glyph_id": 391
+    },
+    {
+      "glyph_name": "M",
+      "glyph_id": 74
+    },
+    {
+      "glyph_name": "N",
+      "glyph_id": 76
+    },
+    {
+      "glyph_name": "Nacute",
+      "glyph_id": 405
+    },
+    {
+      "glyph_name": "Ncaron",
+      "glyph_id": 409
+    },
+    {
+      "glyph_name": "Ntilde",
+      "glyph_id": 417
+    },
+    {
+      "glyph_name": "O",
+      "glyph_id": 80
+    },
+    {
+      "glyph_name": "OE",
+      "glyph_id": 445
+    },
+    {
+      "glyph_name": "Oacute",
+      "glyph_id": 421
+    },
+    {
+      "glyph_name": "Ocircumflex",
+      "glyph_id": 427
+    },
+    {
+      "glyph_name": "Odieresis",
+      "glyph_id": 441
+    },
+    {
+      "glyph_name": "Ograve",
+      "glyph_id": 448
+    },
+    {
+      "glyph_name": "Ohungarumlaut",
+      "glyph_id": 465
+    },
+    {
+      "glyph_name": "Oslash",
+      "glyph_id": 479
+    },
+    {
+      "glyph_name": "Otilde",
+      "glyph_id": 483
+    },
+    {
+      "glyph_name": "P",
+      "glyph_id": 83
+    },
+    {
+      "glyph_name": "Q",
+      "glyph_id": 90
+    },
+    {
+      "glyph_name": "R",
+      "glyph_id": 95
+    },
+    {
+      "glyph_name": "Racute",
+      "glyph_id": 504
+    },
+    {
+      "glyph_name": "Rcaron",
+      "glyph_id": 507
+    },
+    {
+      "glyph_name": "S",
+      "glyph_id": 97
+    },
+    {
+      "glyph_name": "Sacute",
+      "glyph_id": 527
+    },
+    {
+      "glyph_name": "Scaron",
+      "glyph_id": 529
+    },
+    {
+      "glyph_name": "Scedilla",
+      "glyph_id": 531
+    },
+    {
+      "glyph_name": "T",
+      "glyph_id": 104
+    },
+    {
+      "glyph_name": "Tcaron",
+      "glyph_id": 546
+    },
+    {
+      "glyph_name": "Tcedilla",
+      "glyph_id": 548
+    },
+    {
+      "glyph_name": "Thorn",
+      "glyph_id": 556
+    },
+    {
+      "glyph_name": "U",
+      "glyph_id": 108
+    },
+    {
+      "glyph_name": "Uacute",
+      "glyph_id": 568
+    },
+    {
+      "glyph_name": "Ucircumflex",
+      "glyph_id": 574
+    },
+    {
+      "glyph_name": "Udieresis",
+      "glyph_id": 578
+    },
+    {
+      "glyph_name": "Ugrave",
+      "glyph_id": 588
+    },
+    {
+      "glyph_name": "Uhungarumlaut",
+      "glyph_id": 604
+    },
+    {
+      "glyph_name": "Uring",
+      "glyph_id": 616
+    },
+    {
+      "glyph_name": "V",
+      "glyph_id": 111
+    },
+    {
+      "glyph_name": "W",
+      "glyph_id": 113
+    },
+    {
+      "glyph_name": "X",
+      "glyph_id": 115
+    },
+    {
+      "glyph_name": "Y",
+      "glyph_id": 117
+    },
+    {
+      "glyph_name": "Yacute",
+      "glyph_id": 630
+    },
+    {
+      "glyph_name": "Ydieresis",
+      "glyph_id": 634
+    },
+    {
+      "glyph_name": "Z",
+      "glyph_id": 119
+    },
+    {
+      "glyph_name": "Zacute",
+      "glyph_id": 645
+    },
+    {
+      "glyph_name": "Zcaron",
+      "glyph_id": 647
+    },
+    {
+      "glyph_name": "Zdotaccent",
+      "glyph_id": 649
+    },
+    {
+      "glyph_name": "a",
+      "glyph_id": 28
+    },
+    {
+      "glyph_name": "aacute",
+      "glyph_id": 128
+    },
+    {
+      "glyph_name": "abreve",
+      "glyph_id": 130
+    },
+    {
+      "glyph_name": "acircumflex",
+      "glyph_id": 144
+    },
+    {
+      "glyph_name": "acute",
+      "glyph_id": 155
+    },
+    {
+      "glyph_name": "adieresis",
+      "glyph_id": 160
+    },
+    {
+      "glyph_name": "ae",
+      "glyph_id": 164
+    },
+    {
+      "glyph_name": "agrave",
+      "glyph_id": 168
+    },
+    {
+      "glyph_name": "ampersand",
+      "glyph_id": 29
+    },
+    {
+      "glyph_name": "aogonek",
+      "glyph_id": 178
+    },
+    {
+      "glyph_name": "aring",
+      "glyph_id": 180
+    },
+    {
+      "glyph_name": "asciicircum",
+      "glyph_id": 30
+    },
+    {
+      "glyph_name": "asciitilde",
+      "glyph_id": 31
+    },
+    {
+      "glyph_name": "asterisk",
+      "glyph_id": 32
+    },
+    {
+      "glyph_name": "at",
+      "glyph_id": 33
+    },
+    {
+      "glyph_name": "atilde",
+      "glyph_id": 189
+    },
+    {
+      "glyph_name": "b",
+      "glyph_id": 35
+    },
+    {
+      "glyph_name": "backslash",
+      "glyph_id": 36
+    },
+    {
+      "glyph_name": "bar",
+      "glyph_id": 37
+    },
+    {
+      "glyph_name": "braceleft",
+      "glyph_id": 38
+    },
+    {
+      "glyph_name": "braceright",
+      "glyph_id": 39
+    },
+    {
+      "glyph_name": "bracketleft",
+      "glyph_id": 40
+    },
+    {
+      "glyph_name": "bracketright",
+      "glyph_id": 41
+    },
+    {
+      "glyph_name": "breve",
+      "glyph_id": 193
+    },
+    {
+      "glyph_name": "c",
+      "glyph_id": 43
+    },
+    {
+      "glyph_name": "cacute",
+      "glyph_id": 201
+    },
+    {
+      "glyph_name": "caron",
+      "glyph_id": 202
+    },
+    {
+      "glyph_name": "ccaron",
+      "glyph_id": 205
+    },
+    {
+      "glyph_name": "ccedilla",
+      "glyph_id": 207
+    },
+    {
+      "glyph_name": "cedilla",
+      "glyph_id": 212
+    },
+    {
+      "glyph_name": "circumflex",
+      "glyph_id": 216
+    },
+    {
+      "glyph_name": "colon",
+      "glyph_id": 44
+    },
+    {
+      "glyph_name": "comma",
+      "glyph_id": 45
+    },
+    {
+      "glyph_name": "cwm",
+      "glyph_id": 726
+    },
+    {
+      "glyph_name": "d",
+      "glyph_id": 47
+    },
+    {
+      "glyph_name": "dcaron",
+      "glyph_id": 229
+    },
+    {
+      "glyph_name": "dcroat",
+      "glyph_id": 231
+    },
+    {
+      "glyph_name": "dieresis",
+      "glyph_id": 237
+    },
+    {
+      "glyph_name": "dollar",
+      "glyph_id": 48
+    },
+    {
+      "glyph_name": "dotaccent",
+      "glyph_id": 245
+    },
+    {
+      "glyph_name": "dotlessi",
+      "glyph_id": 248
+    },
+    {
+      "glyph_name": "dotlessj",
+      "glyph_id": 788
+    },
+    {
+      "glyph_name": "e",
+      "glyph_id": 50
+    },
+    {
+      "glyph_name": "eacute",
+      "glyph_id": 251
+    },
+    {
+      "glyph_name": "ecaron",
+      "glyph_id": 255
+    },
+    {
+      "glyph_name": "ecircumflex",
+      "glyph_id": 257
+    },
+    {
+      "glyph_name": "edieresis",
+      "glyph_id": 271
+    },
+    {
+      "glyph_name": "egrave",
+      "glyph_id": 277
+    },
+    {
+      "glyph_name": "eight",
+      "glyph_id": 51
+    },
+    {
+      "glyph_name": "emdash",
+      "glyph_id": 283
+    },
+    {
+      "glyph_name": "endash",
+      "glyph_id": 284
+    },
+    {
+      "glyph_name": "eng",
+      "glyph_id": 286
+    },
+    {
+      "glyph_name": "eogonek",
+      "glyph_id": 288
+    },
+    {
+      "glyph_name": "equal",
+      "glyph_id": 52
+    },
+    {
+      "glyph_name": "eth",
+      "glyph_id": 295
+    },
+    {
+      "glyph_name": "exclam",
+      "glyph_id": 53
+    },
+    {
+      "glyph_name": "exclamdown",
+      "glyph_id": 300
+    },
+    {
+      "glyph_name": "f",
+      "glyph_id": 55
+    },
+    {
+      "glyph_name": "ff",
+      "glyph_id": 122
+    },
+    {
+      "glyph_name": "ffi",
+      "glyph_id": 123
+    },
+    {
+      "glyph_name": "ffl",
+      "glyph_id": 124
+    },
+    {
+      "glyph_name": "fi",
+      "glyph_id": 125
+    },
+    {
+      "glyph_name": "five",
+      "glyph_id": 56
+    },
+    {
+      "glyph_name": "fl",
+      "glyph_id": 126
+    },
+    {
+      "glyph_name": "four",
+      "glyph_id": 57
+    },
+    {
+      "glyph_name": "g",
+      "glyph_id": 59
+    },
+    {
+      "glyph_name": "gbreve",
+      "glyph_id": 308
+    },
+    {
+      "glyph_name": "germandbls",
+      "glyph_id": 317
+    },
+    {
+      "glyph_name": "grave",
+      "glyph_id": 60
+    },
+    {
+      "glyph_name": "greater",
+      "glyph_id": 61
+    },
+    {
+      "glyph_name": "guillemotleft",
+      "glyph_id": 319
+    },
+    {
+      "glyph_name": "guillemotright",
+      "glyph_id": 320
+    },
+    {
+      "glyph_name": "guilsinglleft",
+      "glyph_id": 321
+    },
+    {
+      "glyph_name": "guilsinglright",
+      "glyph_id": 322
+    },
+    {
+      "glyph_name": "h",
+      "glyph_id": 63
+    },
+    {
+      "glyph_name": "hungarumlaut",
+      "glyph_id": 334
+    },
+    {
+      "glyph_name": "hyphen",
+      "glyph_id": 64
+    },
+    {
+      "glyph_name": "hyphen.alt",
+      "glyph_id": 740
+    },
+    {
+      "glyph_name": "i",
+      "glyph_id": 66
+    },
+    {
+      "glyph_name": "iacute",
+      "glyph_id": 337
+    },
+    {
+      "glyph_name": "icircumflex",
+      "glyph_id": 343
+    },
+    {
+      "glyph_name": "idieresis",
+      "glyph_id": 347
+    },
+    {
+      "glyph_name": "igrave",
+      "glyph_id": 354
+    },
+    {
+      "glyph_name": "j",
+      "glyph_id": 68
+    },
+    {
+      "glyph_name": "k",
+      "glyph_id": 70
+    },
+    {
+      "glyph_name": "l",
+      "glyph_id": 72
+    },
+    {
+      "glyph_name": "lacute",
+      "glyph_id": 375
+    },
+    {
+      "glyph_name": "lcaron",
+      "glyph_id": 378
+    },
+    {
+      "glyph_name": "less",
+      "glyph_id": 73
+    },
+    {
+      "glyph_name": "lslash",
+      "glyph_id": 392
+    },
+    {
+      "glyph_name": "m",
+      "glyph_id": 75
+    },
+    {
+      "glyph_name": "macron",
+      "glyph_id": 393
+    },
+    {
+      "glyph_name": "n",
+      "glyph_id": 77
+    },
+    {
+      "glyph_name": "nacute",
+      "glyph_id": 406
+    },
+    {
+      "glyph_name": "ncaron",
+      "glyph_id": 410
+    },
+    {
+      "glyph_name": "nine",
+      "glyph_id": 78
+    },
+    {
+      "glyph_name": "ntilde",
+      "glyph_id": 418
+    },
+    {
+      "glyph_name": "numbersign",
+      "glyph_id": 79
+    },
+    {
+      "glyph_name": "o",
+      "glyph_id": 81
+    },
+    {
+      "glyph_name": "oacute",
+      "glyph_id": 422
+    },
+    {
+      "glyph_name": "ocircumflex",
+      "glyph_id": 428
+    },
+    {
+      "glyph_name": "odieresis",
+      "glyph_id": 442
+    },
+    {
+      "glyph_name": "oe",
+      "glyph_id": 446
+    },
+    {
+      "glyph_name": "ogonek",
+      "glyph_id": 447
+    },
+    {
+      "glyph_name": "ograve",
+      "glyph_id": 449
+    },
+    {
+      "glyph_name": "ohungarumlaut",
+      "glyph_id": 466
+    },
+    {
+      "glyph_name": "one",
+      "glyph_id": 82
+    },
+    {
+      "glyph_name": "oslash",
+      "glyph_id": 480
+    },
+    {
+      "glyph_name": "otilde",
+      "glyph_id": 484
+    },
+    {
+      "glyph_name": "p",
+      "glyph_id": 84
+    },
+    {
+      "glyph_name": "parenleft",
+      "glyph_id": 85
+    },
+    {
+      "glyph_name": "parenright",
+      "glyph_id": 86
+    },
+    {
+      "glyph_name": "percent",
+      "glyph_id": 87
+    },
+    {
+      "glyph_name": "period",
+      "glyph_id": 88
+    },
+    {
+      "glyph_name": "perthousandzero",
+      "glyph_id": 754
+    },
+    {
+      "glyph_name": "plus",
+      "glyph_id": 89
+    },
+    {
+      "glyph_name": "q",
+      "glyph_id": 91
+    },
+    {
+      "glyph_name": "question",
+      "glyph_id": 92
+    },
+    {
+      "glyph_name": "questiondown",
+      "glyph_id": 495
+    },
+    {
+      "glyph_name": "quotedbl",
+      "glyph_id": 93
+    },
+    {
+      "glyph_name": "quotedblbase",
+      "glyph_id": 498
+    },
+    {
+      "glyph_name": "quotedblleft",
+      "glyph_id": 499
+    },
+    {
+      "glyph_name": "quotedblright",
+      "glyph_id": 500
+    },
+    {
+      "glyph_name": "quoteleft",
+      "glyph_id": 501
+    },
+    {
+      "glyph_name": "quoteright",
+      "glyph_id": 502
+    },
+    {
+      "glyph_name": "quotesinglbase",
+      "glyph_id": 503
+    },
+    {
+      "glyph_name": "r",
+      "glyph_id": 96
+    },
+    {
+      "glyph_name": "racute",
+      "glyph_id": 505
+    },
+    {
+      "glyph_name": "rcaron",
+      "glyph_id": 508
+    },
+    {
+      "glyph_name": "ring",
+      "glyph_id": 523
+    },
+    {
+      "glyph_name": "s",
+      "glyph_id": 98
+    },
+    {
+      "glyph_name": "sacute",
+      "glyph_id": 528
+    },
+    {
+      "glyph_name": "scaron",
+      "glyph_id": 530
+    },
+    {
+      "glyph_name": "scedilla",
+      "glyph_id": 532
+    },
+    {
+      "glyph_name": "section",
+      "glyph_id": 540
+    },
+    {
+      "glyph_name": "semicolon",
+      "glyph_id": 99
+    },
+    {
+      "glyph_name": "seven",
+      "glyph_id": 100
+    },
+    {
+      "glyph_name": "six",
+      "glyph_id": 101
+    },
+    {
+      "glyph_name": "slash",
+      "glyph_id": 102
+    },
+    {
+      "glyph_name": "sterling",
+      "glyph_id": 544
+    },
+    {
+      "glyph_name": "t",
+      "glyph_id": 105
+    },
+    {
+      "glyph_name": "tcaron",
+      "glyph_id": 547
+    },
+    {
+      "glyph_name": "tcedilla",
+      "glyph_id": 549
+    },
+    {
+      "glyph_name": "thorn",
+      "glyph_id": 557
+    },
+    {
+      "glyph_name": "three",
+      "glyph_id": 106
+    },
+    {
+      "glyph_name": "tilde",
+      "glyph_id": 561
+    },
+    {
+      "glyph_name": "two",
+      "glyph_id": 107
+    },
+    {
+      "glyph_name": "u",
+      "glyph_id": 109
+    },
+    {
+      "glyph_name": "uacute",
+      "glyph_id": 569
+    },
+    {
+      "glyph_name": "ucircumflex",
+      "glyph_id": 575
+    },
+    {
+      "glyph_name": "udieresis",
+      "glyph_id": 579
+    },
+    {
+      "glyph_name": "ugrave",
+      "glyph_id": 589
+    },
+    {
+      "glyph_name": "uhungarumlaut",
+      "glyph_id": 605
+    },
+    {
+      "glyph_name": "underscore",
+      "glyph_id": 110
+    },
+    {
+      "glyph_name": "uni2423",
+      "glyph_id": 612
+    },
+    {
+      "glyph_name": "uring",
+      "glyph_id": 617
+    },
+    {
+      "glyph_name": "v",
+      "glyph_id": 112
+    },
+    {
+      "glyph_name": "w",
+      "glyph_id": 114
+    },
+    {
+      "glyph_name": "x",
+      "glyph_id": 116
+    },
+    {
+      "glyph_name": "y",
+      "glyph_id": 118
+    },
+    {
+      "glyph_name": "yacute",
+      "glyph_id": 631
+    },
+    {
+      "glyph_name": "ydieresis",
+      "glyph_id": 635
+    },
+    {
+      "glyph_name": "z",
+      "glyph_id": 120
+    },
+    {
+      "glyph_name": "zacute",
+      "glyph_id": 646
+    },
+    {
+      "glyph_name": "zcaron",
+      "glyph_id": 648
+    },
+    {
+      "glyph_name": "zdotaccent",
+      "glyph_id": 650
+    },
+    {
+      "glyph_name": "zero",
+      "glyph_id": 121
+    }
+  ]
+}

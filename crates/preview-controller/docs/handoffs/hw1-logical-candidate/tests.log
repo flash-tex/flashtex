@@ -1,0 +1,61 @@
+   Compiling flashtex-pdf v0.1.0 (/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/crates/pdf)
+   Compiling flashtex-math-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/crates/math-layout)
+   Compiling flashtex-paragraph-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/crates/paragraph-layout)
+   Compiling flashtex-font-engine v0.1.0 (/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/crates/font-engine)
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.18s
+     Running unittests src/lib.rs (/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/crates/compiler/target/debug/deps/flashtex_compiler-312bd1b8bb8a4fd0)
+
+running 41 tests
+test export::tests::ordinary_text_and_latin1_encode_as_text ... ok
+test export::tests::every_math_symbol_has_a_decided_export_outcome ... ok
+test export::winansi_tests::characters_with_genuinely_no_base14_glyph_still_report ... ok
+test export::tests::the_fraction_rule_is_reported_not_substituted ... ok
+test export::tests::unrepresentable_lists_each_offender_once ... ok
+test export::winansi_tests::typographic_punctuation_is_exportable ... ok
+test incremental::tests::adding_usepackage_forces_full_recompile ... ok
+test incremental::tests::layout_constraint_change_forces_full_recompile ... ok
+test incremental::tests::malformed_edit_has_partial_output_and_source_diagnostics ... ok
+test incremental::tests::edit_inside_one_paragraph_matches_clean_build ... ok
+test incremental::tests::edit_spanning_paragraph_boundary_matches_clean_build ... ok
+test incremental::tests::edits_at_start_and_end_match_clean_build ... ok
+test incremental::tests::redefining_macro_invalidates_untouched_reader ... ok
+test layout::tests::core14_shaping_applies_kerning_and_keeps_document_byte_identity ... ok
+test layout::tests::body_and_heading_faces_do_not_depend_on_numeric_font_size ... ok
+test layout::tests::fraction_stacks_smaller_children_and_advances_as_one_unit ... ok
+test layout::tests::shaping_missing_glyph_diagnostic_uses_document_not_relative_offset ... ok
+test layout::tests::scripts_attach_to_atoms_and_nested_scripts_decrease_in_size ... ok
+test layout::tests::inline_and_display_math_both_produce_positioned_items ... ok
+test incremental::tests::multibyte_insertion_shifts_later_spans_by_byte_delta ... ok
+test layout::tests::every_math_item_span_is_a_valid_source_slice ... ok
+test incremental::tests::heading_and_math_use_the_same_cursor_as_clean_layout ... ok
+test lexer::tests::command_and_linebreak_are_distinguished ... ok
+test layout::tests::tall_math_increases_the_distance_to_the_next_line ... ok
+test layout::tests::unknown_command_and_unclosed_shift_recover_without_losing_content ... ok
+test lexer::tests::paragraph_break_needs_a_blank_line ... ok
+test layout::tests::unsupported_shaping_is_an_explicit_source_mapped_error ... ok
+test lexer::tests::spans_are_utf8_bytes_not_char_counts ... ok
+test math::shift_tests::shifting_reaches_nested_spans ... ok
+test parser::tests::group_local_macro_is_restored_when_the_group_closes ... ok
+test parser::tests::invalid_newcommand_and_renewcommand_relationships_are_diagnostic ... ok
+test parser::tests::macro_argument_keeps_argument_source_span ... ok
+test parser::tests::macro_expansion_in_math_does_not_fabricate_per_glyph_spans ... ok
+test parser::tests::macros_expand_inside_supported_command_arguments ... ok
+test parser::tests::nested_macros_expand_and_renewcommand_replaces_an_existing_macro ... ok
+test parser::tests::preamble_is_recorded_and_only_document_body_is_typeset ... ok
+test protocol::font_literal_tests::every_font_literal_matches_its_serialised_value ... ok
+test parser::tests::zero_argument_macro_maps_literal_output_to_invocation ... ok
+test parser::tests::self_referential_macro_hits_explicit_recursion_limit ... ok
+test incremental::tests::scoped_macro_change_does_not_invalidate_global_reader ... ok
+test incremental::tests::changed_line_count_repositions_later_blocks ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/logical_symbols.rs (/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/crates/compiler/target/debug/deps/logical_symbols-0c42b1922833020c)
+
+running 2 tests
+test logical_symbols_encode_and_keep_spans ... ok
+test logical_edits_and_unresolved_neighbors_remain_explicit ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

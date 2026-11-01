@@ -1,0 +1,127 @@
+{
+ "fixture": "41-array-m.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "A",
+    "x": 78.376,
+    "y_top": 95.462
+   },
+   {
+    "text": "middle",
+    "x": 98.9389,
+    "y_top": 95.462
+   },
+   {
+    "text": "col-",
+    "x": 145.208,
+    "y_top": 95.462
+   },
+   {
+    "text": "umn",
+    "x": 78.376,
+    "y_top": 109.908
+   },
+   {
+    "text": "entry",
+    "x": 108.2162,
+    "y_top": 109.908
+   },
+   {
+    "text": "that",
+    "x": 141.949,
+    "y_top": 109.908
+   },
+   {
+    "text": "X",
+    "x": 175.769,
+    "y_top": 109.908
+   },
+   {
+    "text": "wraps",
+    "x": 78.376,
+    "y_top": 124.354
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 138.318
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 138.318
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 138.318
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 138.318
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    84.952,
+    118.92,
+    0.398
+   ],
+   [
+    72.0,
+    85.35,
+    0.398,
+    43.337
+   ],
+   [
+    169.393,
+    85.35,
+    0.398,
+    43.337
+   ],
+   [
+    190.522,
+    85.35,
+    0.398,
+    43.337
+   ],
+   [
+    72.0,
+    128.688,
+    118.92,
+    0.398
+   ]
+  ]
+ ]
+}

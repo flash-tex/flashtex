@@ -1,0 +1,76 @@
+{
+ "fixture": "20-neg-triangles.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Not",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "triangles",
+    "x": 95.0783,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 142.6265,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋪",
+    "x": 152.0831,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 164.7054,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋫",
+    "x": 173.0059,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 185.6282,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋬",
+    "x": 193.9777,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 206.6,
+    "y_top": 83.955
+   },
+   {
+    "text": "⋭",
+    "x": 216.0064,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 228.6287,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 237.9513,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

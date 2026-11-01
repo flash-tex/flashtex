@@ -1,0 +1,86 @@
+{
+ "fixture": "46-nest-sup-pmatrix.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Some",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "text",
+    "x": 103.2126,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 127.6084,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 162.7208,
+    "y_top": 83.955
+   },
+   {
+    "text": "display.",
+    "x": 182.8773,
+    "y_top": 83.955
+   },
+   {
+    "text": "0",
+    "x": 297.629,
+    "y_top": 97.886
+   },
+   {
+    "text": "t",
+    "x": 318.0915,
+    "y_top": 97.886
+   },
+   {
+    "text": "-t",
+    "x": 293.793,
+    "y_top": 112.332
+   },
+   {
+    "text": "0",
+    "x": 317.2778,
+    "y_top": 112.332
+   },
+   {
+    "text": "e",
+    "x": 280.48,
+    "y_top": 118.451
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 139.373
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 139.373
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 139.373
+   },
+   {
+    "text": "display.",
+    "x": 147.1097,
+    "y_top": 139.373
+   }
+  ]
+ ],
+ "extension_columns": [
+  [
+   285.906,
+   323.134
+  ]
+ ]
+}

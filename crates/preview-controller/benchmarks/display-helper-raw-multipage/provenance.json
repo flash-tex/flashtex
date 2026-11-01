@@ -1,0 +1,3784 @@
+{
+  "cases": [
+    {
+      "step": 0,
+      "source_bytes": 72889,
+      "source_revision": 1,
+      "compile_revision": 2,
+      "exact_direct_v1": true,
+      "exact_direct_display": null,
+      "source_sha256": "52f73c7452e71ebba1fd94deb47b5d9d8c75e983758f4e6806a63ac5cea59691",
+      "exact_raw_body": null,
+      "v2_accepted": false,
+      "status": "recovered",
+      "diagnostics": [
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37138,
+            "path": "main.tex",
+            "start_byte": 37137
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37510,
+            "path": "main.tex",
+            "start_byte": 37509
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37882,
+            "path": "main.tex",
+            "start_byte": 37881
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 38254,
+            "path": "main.tex",
+            "start_byte": 38253
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 38626,
+            "path": "main.tex",
+            "start_byte": 38625
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 38998,
+            "path": "main.tex",
+            "start_byte": 38997
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39370,
+            "path": "main.tex",
+            "start_byte": 39369
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39742,
+            "path": "main.tex",
+            "start_byte": 39741
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40114,
+            "path": "main.tex",
+            "start_byte": 40113
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40486,
+            "path": "main.tex",
+            "start_byte": 40485
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40858,
+            "path": "main.tex",
+            "start_byte": 40857
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41230,
+            "path": "main.tex",
+            "start_byte": 41229
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41602,
+            "path": "main.tex",
+            "start_byte": 41601
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41974,
+            "path": "main.tex",
+            "start_byte": 41973
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 42346,
+            "path": "main.tex",
+            "start_byte": 42345
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 42718,
+            "path": "main.tex",
+            "start_byte": 42717
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43090,
+            "path": "main.tex",
+            "start_byte": 43089
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43462,
+            "path": "main.tex",
+            "start_byte": 43461
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43834,
+            "path": "main.tex",
+            "start_byte": 43833
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44206,
+            "path": "main.tex",
+            "start_byte": 44205
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44578,
+            "path": "main.tex",
+            "start_byte": 44577
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44950,
+            "path": "main.tex",
+            "start_byte": 44949
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 45322,
+            "path": "main.tex",
+            "start_byte": 45321
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 45694,
+            "path": "main.tex",
+            "start_byte": 45693
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46066,
+            "path": "main.tex",
+            "start_byte": 46065
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46438,
+            "path": "main.tex",
+            "start_byte": 46437
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46810,
+            "path": "main.tex",
+            "start_byte": 46809
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47182,
+            "path": "main.tex",
+            "start_byte": 47181
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47554,
+            "path": "main.tex",
+            "start_byte": 47553
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47926,
+            "path": "main.tex",
+            "start_byte": 47925
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 48298,
+            "path": "main.tex",
+            "start_byte": 48297
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 48670,
+            "path": "main.tex",
+            "start_byte": 48669
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49042,
+            "path": "main.tex",
+            "start_byte": 49041
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49414,
+            "path": "main.tex",
+            "start_byte": 49413
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49786,
+            "path": "main.tex",
+            "start_byte": 49785
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50158,
+            "path": "main.tex",
+            "start_byte": 50157
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50530,
+            "path": "main.tex",
+            "start_byte": 50529
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50902,
+            "path": "main.tex",
+            "start_byte": 50901
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 51274,
+            "path": "main.tex",
+            "start_byte": 51273
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 51646,
+            "path": "main.tex",
+            "start_byte": 51645
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52018,
+            "path": "main.tex",
+            "start_byte": 52017
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52390,
+            "path": "main.tex",
+            "start_byte": 52389
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52762,
+            "path": "main.tex",
+            "start_byte": 52761
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53134,
+            "path": "main.tex",
+            "start_byte": 53133
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53506,
+            "path": "main.tex",
+            "start_byte": 53505
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53878,
+            "path": "main.tex",
+            "start_byte": 53877
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 54250,
+            "path": "main.tex",
+            "start_byte": 54249
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 54622,
+            "path": "main.tex",
+            "start_byte": 54621
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 54994,
+            "path": "main.tex",
+            "start_byte": 54993
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55366,
+            "path": "main.tex",
+            "start_byte": 55365
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55738,
+            "path": "main.tex",
+            "start_byte": 55737
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56110,
+            "path": "main.tex",
+            "start_byte": 56109
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56482,
+            "path": "main.tex",
+            "start_byte": 56481
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56854,
+            "path": "main.tex",
+            "start_byte": 56853
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57226,
+            "path": "main.tex",
+            "start_byte": 57225
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57598,
+            "path": "main.tex",
+            "start_byte": 57597
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57970,
+            "path": "main.tex",
+            "start_byte": 57969
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 58342,
+            "path": "main.tex",
+            "start_byte": 58341
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 58714,
+            "path": "main.tex",
+            "start_byte": 58713
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59086,
+            "path": "main.tex",
+            "start_byte": 59085
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59458,
+            "path": "main.tex",
+            "start_byte": 59457
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59830,
+            "path": "main.tex",
+            "start_byte": 59829
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60202,
+            "path": "main.tex",
+            "start_byte": 60201
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60574,
+            "path": "main.tex",
+            "start_byte": 60573
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60946,
+            "path": "main.tex",
+            "start_byte": 60945
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 61318,
+            "path": "main.tex",
+            "start_byte": 61317
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 61690,
+            "path": "main.tex",
+            "start_byte": 61689
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62062,
+            "path": "main.tex",
+            "start_byte": 62061
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62434,
+            "path": "main.tex",
+            "start_byte": 62433
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62806,
+            "path": "main.tex",
+            "start_byte": 62805
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63178,
+            "path": "main.tex",
+            "start_byte": 63177
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63550,
+            "path": "main.tex",
+            "start_byte": 63549
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63922,
+            "path": "main.tex",
+            "start_byte": 63921
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 64294,
+            "path": "main.tex",
+            "start_byte": 64293
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 64666,
+            "path": "main.tex",
+            "start_byte": 64665
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65038,
+            "path": "main.tex",
+            "start_byte": 65037
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65410,
+            "path": "main.tex",
+            "start_byte": 65409
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65782,
+            "path": "main.tex",
+            "start_byte": 65781
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66154,
+            "path": "main.tex",
+            "start_byte": 66153
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66526,
+            "path": "main.tex",
+            "start_byte": 66525
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66898,
+            "path": "main.tex",
+            "start_byte": 66897
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 67270,
+            "path": "main.tex",
+            "start_byte": 67269
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 67642,
+            "path": "main.tex",
+            "start_byte": 67641
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68014,
+            "path": "main.tex",
+            "start_byte": 68013
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68386,
+            "path": "main.tex",
+            "start_byte": 68385
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68758,
+            "path": "main.tex",
+            "start_byte": 68757
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69130,
+            "path": "main.tex",
+            "start_byte": 69129
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69502,
+            "path": "main.tex",
+            "start_byte": 69501
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69874,
+            "path": "main.tex",
+            "start_byte": 69873
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70246,
+            "path": "main.tex",
+            "start_byte": 70245
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70618,
+            "path": "main.tex",
+            "start_byte": 70617
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70990,
+            "path": "main.tex",
+            "start_byte": 70989
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 71362,
+            "path": "main.tex",
+            "start_byte": 71361
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 71734,
+            "path": "main.tex",
+            "start_byte": 71733
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 72106,
+            "path": "main.tex",
+            "start_byte": 72105
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 72478,
+            "path": "main.tex",
+            "start_byte": 72477
+          }
+        },
+        {
+          "code": "display_list_declined",
+          "message": "display-list-v2 declined: the display_list line would be about 27152372 bytes for 26 pages, over the 16777216-byte line limit",
+          "recovery": null,
+          "severity": "warning",
+          "source": null
+        }
+      ],
+      "page_count": 26,
+      "page_item_counts": [
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        339
+      ],
+      "ack_receipt_ms": 0.4762269963975996,
+      "v1_receipt_ms": 145.95060399733484,
+      "candidate_receipt_ms": null
+    },
+    {
+      "step": 1,
+      "source_bytes": 72911,
+      "source_revision": 2,
+      "compile_revision": 3,
+      "exact_direct_v1": true,
+      "exact_direct_display": null,
+      "source_sha256": "5e893c04b954396f279e34e652191503b2bcece12a741125a4fc85739f45a0ab",
+      "exact_raw_body": null,
+      "v2_accepted": false,
+      "status": "recovered",
+      "diagnostics": [
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37160,
+            "path": "main.tex",
+            "start_byte": 37159
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37532,
+            "path": "main.tex",
+            "start_byte": 37531
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37904,
+            "path": "main.tex",
+            "start_byte": 37903
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 38276,
+            "path": "main.tex",
+            "start_byte": 38275
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 38648,
+            "path": "main.tex",
+            "start_byte": 38647
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39020,
+            "path": "main.tex",
+            "start_byte": 39019
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39392,
+            "path": "main.tex",
+            "start_byte": 39391
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39764,
+            "path": "main.tex",
+            "start_byte": 39763
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40136,
+            "path": "main.tex",
+            "start_byte": 40135
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40508,
+            "path": "main.tex",
+            "start_byte": 40507
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40880,
+            "path": "main.tex",
+            "start_byte": 40879
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41252,
+            "path": "main.tex",
+            "start_byte": 41251
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41624,
+            "path": "main.tex",
+            "start_byte": 41623
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41996,
+            "path": "main.tex",
+            "start_byte": 41995
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 42368,
+            "path": "main.tex",
+            "start_byte": 42367
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 42740,
+            "path": "main.tex",
+            "start_byte": 42739
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43112,
+            "path": "main.tex",
+            "start_byte": 43111
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43484,
+            "path": "main.tex",
+            "start_byte": 43483
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43856,
+            "path": "main.tex",
+            "start_byte": 43855
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44228,
+            "path": "main.tex",
+            "start_byte": 44227
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44600,
+            "path": "main.tex",
+            "start_byte": 44599
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44972,
+            "path": "main.tex",
+            "start_byte": 44971
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 45344,
+            "path": "main.tex",
+            "start_byte": 45343
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 45716,
+            "path": "main.tex",
+            "start_byte": 45715
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46088,
+            "path": "main.tex",
+            "start_byte": 46087
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46460,
+            "path": "main.tex",
+            "start_byte": 46459
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46832,
+            "path": "main.tex",
+            "start_byte": 46831
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47204,
+            "path": "main.tex",
+            "start_byte": 47203
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47576,
+            "path": "main.tex",
+            "start_byte": 47575
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47948,
+            "path": "main.tex",
+            "start_byte": 47947
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 48320,
+            "path": "main.tex",
+            "start_byte": 48319
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 48692,
+            "path": "main.tex",
+            "start_byte": 48691
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49064,
+            "path": "main.tex",
+            "start_byte": 49063
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49436,
+            "path": "main.tex",
+            "start_byte": 49435
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49808,
+            "path": "main.tex",
+            "start_byte": 49807
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50180,
+            "path": "main.tex",
+            "start_byte": 50179
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50552,
+            "path": "main.tex",
+            "start_byte": 50551
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50924,
+            "path": "main.tex",
+            "start_byte": 50923
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 51296,
+            "path": "main.tex",
+            "start_byte": 51295
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 51668,
+            "path": "main.tex",
+            "start_byte": 51667
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52040,
+            "path": "main.tex",
+            "start_byte": 52039
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52412,
+            "path": "main.tex",
+            "start_byte": 52411
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52784,
+            "path": "main.tex",
+            "start_byte": 52783
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53156,
+            "path": "main.tex",
+            "start_byte": 53155
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53528,
+            "path": "main.tex",
+            "start_byte": 53527
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53900,
+            "path": "main.tex",
+            "start_byte": 53899
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 54272,
+            "path": "main.tex",
+            "start_byte": 54271
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 54644,
+            "path": "main.tex",
+            "start_byte": 54643
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55016,
+            "path": "main.tex",
+            "start_byte": 55015
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55388,
+            "path": "main.tex",
+            "start_byte": 55387
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55760,
+            "path": "main.tex",
+            "start_byte": 55759
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56132,
+            "path": "main.tex",
+            "start_byte": 56131
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56504,
+            "path": "main.tex",
+            "start_byte": 56503
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56876,
+            "path": "main.tex",
+            "start_byte": 56875
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57248,
+            "path": "main.tex",
+            "start_byte": 57247
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57620,
+            "path": "main.tex",
+            "start_byte": 57619
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57992,
+            "path": "main.tex",
+            "start_byte": 57991
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 58364,
+            "path": "main.tex",
+            "start_byte": 58363
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 58736,
+            "path": "main.tex",
+            "start_byte": 58735
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59108,
+            "path": "main.tex",
+            "start_byte": 59107
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59480,
+            "path": "main.tex",
+            "start_byte": 59479
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59852,
+            "path": "main.tex",
+            "start_byte": 59851
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60224,
+            "path": "main.tex",
+            "start_byte": 60223
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60596,
+            "path": "main.tex",
+            "start_byte": 60595
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60968,
+            "path": "main.tex",
+            "start_byte": 60967
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 61340,
+            "path": "main.tex",
+            "start_byte": 61339
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 61712,
+            "path": "main.tex",
+            "start_byte": 61711
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62084,
+            "path": "main.tex",
+            "start_byte": 62083
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62456,
+            "path": "main.tex",
+            "start_byte": 62455
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62828,
+            "path": "main.tex",
+            "start_byte": 62827
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63200,
+            "path": "main.tex",
+            "start_byte": 63199
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63572,
+            "path": "main.tex",
+            "start_byte": 63571
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63944,
+            "path": "main.tex",
+            "start_byte": 63943
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 64316,
+            "path": "main.tex",
+            "start_byte": 64315
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 64688,
+            "path": "main.tex",
+            "start_byte": 64687
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65060,
+            "path": "main.tex",
+            "start_byte": 65059
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65432,
+            "path": "main.tex",
+            "start_byte": 65431
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65804,
+            "path": "main.tex",
+            "start_byte": 65803
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66176,
+            "path": "main.tex",
+            "start_byte": 66175
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66548,
+            "path": "main.tex",
+            "start_byte": 66547
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66920,
+            "path": "main.tex",
+            "start_byte": 66919
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 67292,
+            "path": "main.tex",
+            "start_byte": 67291
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 67664,
+            "path": "main.tex",
+            "start_byte": 67663
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68036,
+            "path": "main.tex",
+            "start_byte": 68035
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68408,
+            "path": "main.tex",
+            "start_byte": 68407
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68780,
+            "path": "main.tex",
+            "start_byte": 68779
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69152,
+            "path": "main.tex",
+            "start_byte": 69151
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69524,
+            "path": "main.tex",
+            "start_byte": 69523
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69896,
+            "path": "main.tex",
+            "start_byte": 69895
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70268,
+            "path": "main.tex",
+            "start_byte": 70267
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70640,
+            "path": "main.tex",
+            "start_byte": 70639
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 71012,
+            "path": "main.tex",
+            "start_byte": 71011
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 71384,
+            "path": "main.tex",
+            "start_byte": 71383
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 71756,
+            "path": "main.tex",
+            "start_byte": 71755
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 72128,
+            "path": "main.tex",
+            "start_byte": 72127
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 72500,
+            "path": "main.tex",
+            "start_byte": 72499
+          }
+        },
+        {
+          "code": "display_list_declined",
+          "message": "display-list-v2 declined: the display_list line would be about 27152372 bytes for 26 pages, over the 16777216-byte line limit",
+          "recovery": null,
+          "severity": "warning",
+          "source": null
+        }
+      ],
+      "page_count": 26,
+      "page_item_counts": [
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        339
+      ],
+      "ack_receipt_ms": 1.280195006984286,
+      "v1_receipt_ms": 151.21135099616367,
+      "candidate_receipt_ms": null
+    },
+    {
+      "step": 2,
+      "source_bytes": 72896,
+      "source_revision": 3,
+      "compile_revision": 4,
+      "exact_direct_v1": true,
+      "exact_direct_display": null,
+      "source_sha256": "4aef2162c54e5200fc09872a58d3c458859ab7c5b7a57824266bbf4a892fa9e7",
+      "exact_raw_body": null,
+      "v2_accepted": false,
+      "status": "recovered",
+      "diagnostics": [
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37145,
+            "path": "main.tex",
+            "start_byte": 37144
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37517,
+            "path": "main.tex",
+            "start_byte": 37516
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 37889,
+            "path": "main.tex",
+            "start_byte": 37888
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 38261,
+            "path": "main.tex",
+            "start_byte": 38260
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 38633,
+            "path": "main.tex",
+            "start_byte": 38632
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39005,
+            "path": "main.tex",
+            "start_byte": 39004
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39377,
+            "path": "main.tex",
+            "start_byte": 39376
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 39749,
+            "path": "main.tex",
+            "start_byte": 39748
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40121,
+            "path": "main.tex",
+            "start_byte": 40120
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40493,
+            "path": "main.tex",
+            "start_byte": 40492
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 40865,
+            "path": "main.tex",
+            "start_byte": 40864
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41237,
+            "path": "main.tex",
+            "start_byte": 41236
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41609,
+            "path": "main.tex",
+            "start_byte": 41608
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 41981,
+            "path": "main.tex",
+            "start_byte": 41980
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 42353,
+            "path": "main.tex",
+            "start_byte": 42352
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 42725,
+            "path": "main.tex",
+            "start_byte": 42724
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43097,
+            "path": "main.tex",
+            "start_byte": 43096
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43469,
+            "path": "main.tex",
+            "start_byte": 43468
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 43841,
+            "path": "main.tex",
+            "start_byte": 43840
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44213,
+            "path": "main.tex",
+            "start_byte": 44212
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44585,
+            "path": "main.tex",
+            "start_byte": 44584
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 44957,
+            "path": "main.tex",
+            "start_byte": 44956
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 45329,
+            "path": "main.tex",
+            "start_byte": 45328
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 45701,
+            "path": "main.tex",
+            "start_byte": 45700
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46073,
+            "path": "main.tex",
+            "start_byte": 46072
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46445,
+            "path": "main.tex",
+            "start_byte": 46444
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 46817,
+            "path": "main.tex",
+            "start_byte": 46816
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47189,
+            "path": "main.tex",
+            "start_byte": 47188
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47561,
+            "path": "main.tex",
+            "start_byte": 47560
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 47933,
+            "path": "main.tex",
+            "start_byte": 47932
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 48305,
+            "path": "main.tex",
+            "start_byte": 48304
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 48677,
+            "path": "main.tex",
+            "start_byte": 48676
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49049,
+            "path": "main.tex",
+            "start_byte": 49048
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49421,
+            "path": "main.tex",
+            "start_byte": 49420
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 49793,
+            "path": "main.tex",
+            "start_byte": 49792
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50165,
+            "path": "main.tex",
+            "start_byte": 50164
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50537,
+            "path": "main.tex",
+            "start_byte": 50536
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 50909,
+            "path": "main.tex",
+            "start_byte": 50908
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 51281,
+            "path": "main.tex",
+            "start_byte": 51280
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 51653,
+            "path": "main.tex",
+            "start_byte": 51652
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52025,
+            "path": "main.tex",
+            "start_byte": 52024
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52397,
+            "path": "main.tex",
+            "start_byte": 52396
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 52769,
+            "path": "main.tex",
+            "start_byte": 52768
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53141,
+            "path": "main.tex",
+            "start_byte": 53140
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53513,
+            "path": "main.tex",
+            "start_byte": 53512
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 53885,
+            "path": "main.tex",
+            "start_byte": 53884
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 54257,
+            "path": "main.tex",
+            "start_byte": 54256
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 54629,
+            "path": "main.tex",
+            "start_byte": 54628
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55001,
+            "path": "main.tex",
+            "start_byte": 55000
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55373,
+            "path": "main.tex",
+            "start_byte": 55372
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 55745,
+            "path": "main.tex",
+            "start_byte": 55744
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56117,
+            "path": "main.tex",
+            "start_byte": 56116
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56489,
+            "path": "main.tex",
+            "start_byte": 56488
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 56861,
+            "path": "main.tex",
+            "start_byte": 56860
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57233,
+            "path": "main.tex",
+            "start_byte": 57232
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57605,
+            "path": "main.tex",
+            "start_byte": 57604
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 57977,
+            "path": "main.tex",
+            "start_byte": 57976
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 58349,
+            "path": "main.tex",
+            "start_byte": 58348
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 58721,
+            "path": "main.tex",
+            "start_byte": 58720
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59093,
+            "path": "main.tex",
+            "start_byte": 59092
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59465,
+            "path": "main.tex",
+            "start_byte": 59464
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 59837,
+            "path": "main.tex",
+            "start_byte": 59836
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60209,
+            "path": "main.tex",
+            "start_byte": 60208
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60581,
+            "path": "main.tex",
+            "start_byte": 60580
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 60953,
+            "path": "main.tex",
+            "start_byte": 60952
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 61325,
+            "path": "main.tex",
+            "start_byte": 61324
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 61697,
+            "path": "main.tex",
+            "start_byte": 61696
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62069,
+            "path": "main.tex",
+            "start_byte": 62068
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62441,
+            "path": "main.tex",
+            "start_byte": 62440
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 62813,
+            "path": "main.tex",
+            "start_byte": 62812
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63185,
+            "path": "main.tex",
+            "start_byte": 63184
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63557,
+            "path": "main.tex",
+            "start_byte": 63556
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 63929,
+            "path": "main.tex",
+            "start_byte": 63928
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 64301,
+            "path": "main.tex",
+            "start_byte": 64300
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 64673,
+            "path": "main.tex",
+            "start_byte": 64672
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65045,
+            "path": "main.tex",
+            "start_byte": 65044
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65417,
+            "path": "main.tex",
+            "start_byte": 65416
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 65789,
+            "path": "main.tex",
+            "start_byte": 65788
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66161,
+            "path": "main.tex",
+            "start_byte": 66160
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66533,
+            "path": "main.tex",
+            "start_byte": 66532
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 66905,
+            "path": "main.tex",
+            "start_byte": 66904
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 67277,
+            "path": "main.tex",
+            "start_byte": 67276
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 67649,
+            "path": "main.tex",
+            "start_byte": 67648
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68021,
+            "path": "main.tex",
+            "start_byte": 68020
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68393,
+            "path": "main.tex",
+            "start_byte": 68392
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 68765,
+            "path": "main.tex",
+            "start_byte": 68764
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69137,
+            "path": "main.tex",
+            "start_byte": 69136
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69509,
+            "path": "main.tex",
+            "start_byte": 69508
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 69881,
+            "path": "main.tex",
+            "start_byte": 69880
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70253,
+            "path": "main.tex",
+            "start_byte": 70252
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70625,
+            "path": "main.tex",
+            "start_byte": 70624
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 70997,
+            "path": "main.tex",
+            "start_byte": 70996
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 71369,
+            "path": "main.tex",
+            "start_byte": 71368
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 71741,
+            "path": "main.tex",
+            "start_byte": 71740
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 72113,
+            "path": "main.tex",
+            "start_byte": 72112
+          }
+        },
+        {
+          "code": "overfull_hbox",
+          "message": "overfull line: 2.24pt too wide (no hyphenation available)",
+          "recovery": null,
+          "severity": "warning",
+          "source": {
+            "end_byte": 72485,
+            "path": "main.tex",
+            "start_byte": 72484
+          }
+        },
+        {
+          "code": "display_list_declined",
+          "message": "display-list-v2 declined: the display_list line would be about 27155004 bytes for 26 pages, over the 16777216-byte line limit",
+          "recovery": null,
+          "severity": "warning",
+          "source": null
+        }
+      ],
+      "page_count": 26,
+      "page_item_counts": [
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        416,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        424,
+        425,
+        428,
+        424,
+        427,
+        348
+      ],
+      "ack_receipt_ms": 1.3440049951896071,
+      "v1_receipt_ms": 148.18531399942003,
+      "candidate_receipt_ms": null
+    }
+  ],
+  "exact_reopen": true,
+  "helper_sha256": "5fce6dd1883a01d774ec488fc865a935229305e3091181834c0823c72409196a",
+  "producer_sha256": "860d4ff90bd1945cd4676b945b0ceb73e48e2c98138138740920bb6dcb9935c9",
+  "producer_source_sha": "6e696616cca27a6bff19d88f7e0fd51e64458e81",
+  "producer_evidence_sha256": "f849a94561eb1c27b97be5c1764398e67d81a0f2f78147251eb0467026d5b73b",
+  "fixture_sha256": "4c5406ce02edf13583276294bfa8caccb7ef297ecc46ef73a419782d67a01c12",
+  "assets": [
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono10-italic.otf",
+      "sha256": "14e6328a5383d2b927c47051093ce0aff60deea07e6df71b8b99ee8d9c2ff8f2",
+      "bytes": 63584
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono10-regular.otf",
+      "sha256": "22deb6d3be3ffcb40b33f0e010afb256c677d97c2a2bdee1f5740cdc97751558",
+      "bytes": 64684
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono12-regular.otf",
+      "sha256": "b826e490fa671f254840abe88afea0975b606f57fb4a8b93f53787c26d8ac319",
+      "bytes": 63012
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono8-regular.otf",
+      "sha256": "17319490d20f24e192bd7e7999484b95111a4654ac2620e7aa215591142ae997",
+      "bytes": 66268
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono9-regular.otf",
+      "sha256": "cdd53c7dc01a1d25f21eaf7cae44bfb8a9665e4cbd60e5f8da14287aca819bb9",
+      "bytes": 63076
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonocaps10-oblique.otf",
+      "sha256": "6bb7315ab000361195457b6c5efc75ed4bc24d278c6026d0aa8e0e4847394384",
+      "bytes": 71232
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonocaps10-regular.otf",
+      "sha256": "9fb93a8f39f8e55682d09edb93c4c07d976c13bb92253b875b5b6a19e9af9e0a",
+      "bytes": 63228
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-bold.otf",
+      "sha256": "2f4ae1bd30d4203a1c74c61d61dddbd5e2c2d5a7001d456b1b98e08b7c47ffb9",
+      "bytes": 66332
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-boldoblique.otf",
+      "sha256": "a739b6deaafe0b9e8ae1eec9db1f425c52e1f6f483ca8e07e359bdd118310bba",
+      "bytes": 75300
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-oblique.otf",
+      "sha256": "f19451a27c178d48b99921e72ff6acf568f670bf58c71c6dd506b1f96a2d9c9e",
+      "bytes": 73144
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-regular.otf",
+      "sha256": "176f2e3745e3d97eb7b96b25be919ed0e198f491dc363ad28971be1d5707ace7",
+      "bytes": 63628
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoltcond10-oblique.otf",
+      "sha256": "2af9fab2c4d4c7a98aaebb9d66ffe1b55b3319e48c5d84add7ef27c2890747d2",
+      "bytes": 75908
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoltcond10-regular.otf",
+      "sha256": "fd2e0afd73a6029887d222f1e379f9e977ed57f9471d48ba44fb42c52a650274",
+      "bytes": 64160
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoprop10-oblique.otf",
+      "sha256": "7306b49832153fb387be1c741962a72d36127a2176f855d11c9903e6a15bfaca",
+      "bytes": 116764
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoprop10-regular.otf",
+      "sha256": "59036dd0b599f3e90c41dc4b063849bb36ba29058f94d386718fb9ce523d8657",
+      "bytes": 109500
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-bold.otf",
+      "sha256": "c30d83cb4cdd879ea251243590e135e012e5d43e889a0d0990d196b1083715d2",
+      "bytes": 110276
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-boldoblique.otf",
+      "sha256": "4d1193e06d6042695f8caf9cde48785867bee8de8460a7a9c99504074d280f57",
+      "bytes": 120732
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-oblique.otf",
+      "sha256": "2d57934e1ae5f71cbcbed7b7ea6fa597f9212ebfd8d0cc91e9fabbb9622cab7f",
+      "bytes": 118244
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-regular.otf",
+      "sha256": "dedec8ee86f7448949cb695ace72f2e0de3ccc380ff92dfbc6c45c20209e3349",
+      "bytes": 110784
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoslant10-regular.otf",
+      "sha256": "4b4a3e600db7f6ec434f8b48b31f22e12faced90e1681c93eeba5e23a6e55fde",
+      "bytes": 72212
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-bold.otf",
+      "sha256": "102fe06c430a8b681b2bf6876b7cd967ae4d47b4b6b41d915eb7913b726d9fb1",
+      "bytes": 111240
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-bolditalic.otf",
+      "sha256": "c37a28eed7a6e03f792b98b5e5f637b2fcda378bb4855f99284f1a88fe35f124",
+      "bytes": 118204
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-italic.otf",
+      "sha256": "c1fce25075567bb8dbf2151658c3b442690041db17a2d49fc9e55905ea5b7169",
+      "bytes": 118828
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-regular.otf",
+      "sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "bytes": 111536
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman12-bold.otf",
+      "sha256": "28c8782ac2b6486958b5dc7610ada7800c53546ff7f36bc65909a876e1cd338e",
+      "bytes": 110496
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman12-italic.otf",
+      "sha256": "ada6b3f451238784e5a5ea75d43efa1eb4329cd75ce65bf047ed2f31b7b5e2f3",
+      "bytes": 117732
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman12-regular.otf",
+      "sha256": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+      "bytes": 110400
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman17-regular.otf",
+      "sha256": "ed048c80fb4b67663b80899b89fe5fba17d7442e1286d61fd08fe5689c6b7c3c",
+      "bytes": 110248
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman5-bold.otf",
+      "sha256": "6326fb955d07bedcc8f73684e6b6bfa76706d38f3a85bd89c0659504ace366a1",
+      "bytes": 109564
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman5-regular.otf",
+      "sha256": "954bd9c376597c7043e7b616430163e0158155edf7434fd70082cf8460c08533",
+      "bytes": 111872
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman6-bold.otf",
+      "sha256": "f1ebd52916182bfc2e3f9d4b5ba847ad6acc6c7761354c0dc052fb01ec14f73c",
+      "bytes": 112452
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman6-regular.otf",
+      "sha256": "501396c437f76c260b8724265b8495f318a640ee5a4674852ecbb20daf256696",
+      "bytes": 112212
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman7-bold.otf",
+      "sha256": "063ea9e378b4fca4fd59771cf522faa21eb7c8516c89464745c79725b384fb9a",
+      "bytes": 110212
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman7-italic.otf",
+      "sha256": "19d20f2bb00fbffe5d3d66e9b6a54f0108289068029e9d88649d981d53613ddf",
+      "bytes": 117960
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman7-regular.otf",
+      "sha256": "48c4b46ab255eec96588fb992fba1ed6102e53d051da480738a61cc6cdb328c3",
+      "bytes": 110792
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman8-bold.otf",
+      "sha256": "04d4f633c3da31a169f4c54a7fe8c7e63925b39d030381f8d3eab955f16be7b2",
+      "bytes": 112404
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman8-italic.otf",
+      "sha256": "fb0536b5c3eee5b5622cd827ceb410e6514e36512ebdc51d2cf98a96c06d44e8",
+      "bytes": 117248
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman8-regular.otf",
+      "sha256": "f73015c3827596586faa380c398501caf9b5bcbb6f40b46af6a51277ca97c9fc",
+      "bytes": 111948
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman9-bold.otf",
+      "sha256": "f72feac9ea12eb858d8093d6c0ee710a6c25f59b61278c88ec41c0a680838415",
+      "bytes": 113040
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman9-italic.otf",
+      "sha256": "2106cffcdc9f9cb411d7c3441e34d77a168b998a58b40e727ab5b815437d1975",
+      "bytes": 118380
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman9-regular.otf",
+      "sha256": "8ab7b017fc67ea0e30cbf9e7ebd940010442ea67b40cf65f87d73f3ca11b0e6f",
+      "bytes": 112680
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromancaps10-oblique.otf",
+      "sha256": "603e6bb88c206f3252d2ca1a061d0faf252dd6c87501f2efa32ce2f70793b1ad",
+      "bytes": 116564
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromancaps10-regular.otf",
+      "sha256": "1ab40332a969892c7ed6cb010193b5276ccef1da6798bcbd1a465fee23d29334",
+      "bytes": 108740
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandemi10-oblique.otf",
+      "sha256": "430d9237cfeb1b7ef25a36002adac0524a11a07f4a31b16ce5a0eb3330163217",
+      "bytes": 119632
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandemi10-regular.otf",
+      "sha256": "63b6f9528e6117c5b0c0b1992517696ae09d05e7ca3711df0e0409d9db6df32c",
+      "bytes": 111892
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandunh10-oblique.otf",
+      "sha256": "5f7b9361353271246ac66a2681399052cc261a943c8a03c754ee212fdfb4a64c",
+      "bytes": 122840
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandunh10-regular.otf",
+      "sha256": "6c298b3680cc111c6e20eb2489bab9637ac316a686740fc1f8396230215e1161",
+      "bytes": 113276
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant10-bold.otf",
+      "sha256": "5f6689646a5e88b402d2e60085c813fca3a4d60707b0383c65cb023107a8bddc",
+      "bytes": 117984
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant10-regular.otf",
+      "sha256": "056ad4d08d2eb58d6b7fd0ac5de3f1fb799f2bb0c16b66c7e6b5bc5b6aef6481",
+      "bytes": 118508
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant12-regular.otf",
+      "sha256": "25f2ecfb860f2e45e6ebe69d11bc6305f5bfbef8f13476638ba291f47d1f130c",
+      "bytes": 117116
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant17-regular.otf",
+      "sha256": "4f30eda1d4674a1f4eea513b3baf85e3ba3fb17b2e4cf09bf627aee91dc0a4cc",
+      "bytes": 118092
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant8-regular.otf",
+      "sha256": "a88ecd1a6b4d5aa1c9d537b98d0de8e19d63b292918fabf0cc36158ed770ca63",
+      "bytes": 118720
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant9-regular.otf",
+      "sha256": "7441aee0c9dfbca16118fc7fe339c2e6c79ecc966a51ac1f76860351b6a8f02e",
+      "bytes": 119932
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanunsl10-regular.otf",
+      "sha256": "21bbbe167e824b93a956327bcc1efda99c1bb472e761834da40cef33cab46194",
+      "bytes": 124048
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-bold.otf",
+      "sha256": "a597b710326c1a8a2c7238d808e5d38711638a72a32383478db4829d63afd687",
+      "bytes": 107448
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-boldoblique.otf",
+      "sha256": "e45673d84754a94f2f053bd4c15950b4b320144fbb622c630a26fd7b68cfabc5",
+      "bytes": 114984
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-oblique.otf",
+      "sha256": "1b38b36efc21f9d3f34edf6a13f9d71f59c41f824e790f5d3ee5ba5b4936f377",
+      "bytes": 101412
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-regular.otf",
+      "sha256": "d431b786b9b603662718e79cfe9b441f47a8b0b3e854dde89d5acb3ed7cfd682",
+      "bytes": 95128
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans12-oblique.otf",
+      "sha256": "1f138e6203f7092f9a01f6193ed97d971b5045b99969f3a62c7e43a7faabc1c0",
+      "bytes": 102056
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans12-regular.otf",
+      "sha256": "f87ebdea035a96e8787e2c663cfcc78ce73205d37800eafe7948278e2cc7666a",
+      "bytes": 95160
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans17-oblique.otf",
+      "sha256": "0f6a4450c5fc9afd3650f24ad9003684fff3252691bbf2a33be94b383db8a77c",
+      "bytes": 100500
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans17-regular.otf",
+      "sha256": "f6c395a436e4fa7e88bbf1445e64b9c78ce4effba3668b13cc433077fc71a984",
+      "bytes": 94828
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans8-oblique.otf",
+      "sha256": "7f4227513bfd47b7077bedd125caa4c0a223a2cdad17a1470145cdea83353c88",
+      "bytes": 100084
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans8-regular.otf",
+      "sha256": "04f0d25ca474494cb707e752170f6c22cdcb8ae2b5fb80872143e18d5cc463f8",
+      "bytes": 94256
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans9-oblique.otf",
+      "sha256": "ac0535d7d4a8eb1b531c5faeb9060a4b9bac397d72cf54191ef53eea6f66b617",
+      "bytes": 101068
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans9-regular.otf",
+      "sha256": "80ef596460b7b402621780f7cd73a348efedc4cd2c6deca37da58f07ee61b85d",
+      "bytes": 94552
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansdemicond10-oblique.otf",
+      "sha256": "f98ed7d9cc5e10fd5c8e01f6ea708fddff5bbbf6f4503998c92b3c1f26d68d33",
+      "bytes": 114848
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansdemicond10-regular.otf",
+      "sha256": "3a8cc8f72acaf6d4cc9200a838e5e118bf6f265233aa078e105559f6db6c2948",
+      "bytes": 106836
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-bold.otf",
+      "sha256": "44cd928f556c68c3a6ce5938f6968c3da7b3d9d14d3c8add54005f0cc5e39a53",
+      "bytes": 106232
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-boldoblique.otf",
+      "sha256": "0cac0a6909c1cb33df8d3aeda2817ef2671d7f466cc352d826551bf92ca5f877",
+      "bytes": 112456
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-oblique.otf",
+      "sha256": "d858d237a69d432ca0ff67b930dabf5a60bfde69ca39bc555fab78ecbb5f4e4d",
+      "bytes": 112648
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-regular.otf",
+      "sha256": "5da041def6d17825bb9b2d1d4fef66099a1e871005c08fc8f0d29976a923f4c9",
+      "bytes": 105172
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/ec-lmr12.tfm",
+      "sha256": "299021120f0a29ef61278a2363903bd8defbb8faaade458eb79067342aecb56f",
+      "bytes": 12092
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/rm-lmr12.tfm",
+      "sha256": "9d4e3d8e39a41b93d91f79c1c47d2297efb7b1af220b94860693c08361f227aa",
+      "bytes": 11888
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/rm-lmr6.tfm",
+      "sha256": "eb0bfdf8db3ae1409639fac9c88f84923872500d882d9ff8dc37aff445c723fe",
+      "bytes": 11836
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/rm-lmr8.tfm",
+      "sha256": "80bcbfd844d2310ac1d3bead45aee25e91b1a4a0a60ff1771959b9a1e90ec1a2",
+      "bytes": 11864
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/doc/fonts/lm/GUST-FONT-LICENSE.TXT",
+      "sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+      "bytes": 1377
+    }
+  ],
+  "diagnostics": [
+    {
+      "handling_ms": 0.006986,
+      "phase": "request",
+      "response_serialization_ms": 0.051542000000000004
+    },
+    {
+      "duration_ms": 1.763099,
+      "events": 1,
+      "phase": "compiler_poll"
+    },
+    {
+      "handling_ms": 0.082506,
+      "phase": "request",
+      "response_serialization_ms": 0.006436
+    },
+    {
+      "duration_ms": 2.163159,
+      "events": 1,
+      "phase": "compiler_poll"
+    },
+    {
+      "handling_ms": 0.792191,
+      "phase": "request",
+      "response_serialization_ms": 0.054791
+    },
+    {
+      "duration_ms": 1.7160739999999999,
+      "events": 1,
+      "phase": "compiler_poll"
+    },
+    {
+      "handling_ms": 0.936824,
+      "phase": "request",
+      "response_serialization_ms": 0.036671999999999996
+    },
+    {
+      "duration_ms": 1.640365,
+      "events": 1,
+      "phase": "compiler_poll"
+    }
+  ],
+  "repeat": 1,
+  "reply_limit": null,
+  "display_transport": "raw-prototype",
+  "negotiated_capability": "display-candidates-raw-v1",
+  "native_rendering": "not performed",
+  "native_latency": "not measured",
+  "helper_source_sha": "e39f50e594703c0d4b4bd6848e72fd2fe5169678",
+  "replay_script_sha256": "7b7667420bd7553b4725f79e6328186bc19d3716aa9244db0f1b49fe0f3f34f4",
+  "replay_client_sha256": "a6f4b6e209d7b06cce057400b6017cf1226c54647aaaca4c6363395780c0e812",
+  "artifact_encoding": "gzip",
+  "step_artifact_sha256": {
+    "step-0.json.gz": "9663e0d490f5b818741a91a68dccc11e0237e4fc6bfcad5e1e8012013c6e24f3",
+    "step-0.producer.jsonl.gz": "86fc354829f7e1e36505e7b892450c84cac7acf68e52e8478f7c3bd93d9736ce",
+    "step-1.json.gz": "8a2361d7d2b77de02221c97e822f9f05dcffac05d8372f9bd72dc696967d2ee0",
+    "step-1.producer.jsonl.gz": "decbcc9f08f1255e7a61a852cb4de0faf33e3da399508361f29cf528f24b565d",
+    "step-2.json.gz": "44e9b16c6532d832481bc73963bf3e4b109602c0399eec69fdff013c42ea5313",
+    "step-2.producer.jsonl.gz": "99f8a739049f21afd1c537180437a0a1a69e067f911dac9a33a132b6b87f6d89"
+  }
+}

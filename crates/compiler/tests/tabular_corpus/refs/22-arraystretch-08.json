@@ -1,0 +1,86 @@
+{
+ "fixture": "22-arraystretch-08.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 93.187
+   },
+   {
+    "text": "b",
+    "x": 106.845,
+    "y_top": 93.187
+   },
+   {
+    "text": "cc",
+    "x": 77.978,
+    "y_top": 104.89
+   },
+   {
+    "text": "dd",
+    "x": 100.339,
+    "y_top": 104.89
+   },
+   {
+    "text": "ee",
+    "x": 77.978,
+    "y_top": 116.592
+   },
+   {
+    "text": "ff",
+    "x": 106.5198,
+    "y_top": 116.592
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 129.291
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 129.291
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 129.291
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 129.291
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

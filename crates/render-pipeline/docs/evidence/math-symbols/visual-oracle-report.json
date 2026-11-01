@@ -1,0 +1,3170 @@
+{
+ "meta": {
+  "stamp": "2026-09-12T183550Z",
+  "host": "MacBook-Pro-206.local",
+  "platform": "Darwin 25.3.0 arm64",
+  "uptime_start": "14:35  up 1 day, 13:28, 3 users, load averages: 304.54 134.47 64.03",
+  "render": "/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a775d6722811ee1dc/crates/render-pipeline/target/release/flashtex-render",
+  "render_sha256": "539e0b4c27a1ccd0eae79fd4b4aff3eabab65f181827a55181460a53e8b1f435",
+  "render_note": "agent/mac-render-pipeline/math-symbols working tree (compiler pin 49e6eb43)",
+  "pdf_exact": "/Users/jay3332/Projects/flashtex/crates/pdf/target/release/flashtex-pdf-exact",
+  "pdf_exact_sha256": "5755a3c7222f832d3780bb1512422c00eba307dc55290a7db049d883ef89b7d3",
+  "font_dirs": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/vo/apps/mac/Fonts",
+  "tfm_dirs": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/vo/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
+  "dpi": 144,
+  "rasterizer": "`gs` at `/opt/homebrew/bin/gs`",
+  "reference_mode": "harness fixtures from `/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a775d6722811ee1dc/crates/render-pipeline/fixtures/math-symbols` (crates/render-pipeline/fixtures/math-symbols (this branch)): bodies under the pdflatex-lm preamble, rendered now by `/usr/local/texlive/2026/bin/universal-darwin/pdflatex` (pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)) with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1, two passes",
+  "uptime_end": "14:36  up 1 day, 13:28, 3 users, load averages: 322.74 152.65 72.63"
+ },
+ "ranked": [
+  {
+   "rank": 1,
+   "fixture": "09-angle",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 6.587,
+   "differing": 1085,
+   "owner": "crates/render-pipeline (mac-claude-a) — math boxes: crates/math-layout (FT-020) — diagnostic `no math glyph for '∠'; empty box used`",
+   "thumbnail": null
+  },
+  {
+   "rank": 2,
+   "fixture": "08-delimiters",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 4.557,
+   "differing": 1601,
+   "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+   "thumbnail": null
+  },
+  {
+   "rank": 3,
+   "fixture": "07-big-operators",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 0.005,
+   "differing": 2073,
+   "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+   "thumbnail": null
+  },
+  {
+   "rank": 4,
+   "fixture": "03-binary",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 0.005,
+   "differing": 1694,
+   "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+   "thumbnail": null
+  },
+  {
+   "rank": 5,
+   "fixture": "05-arrows-logic",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 0.005,
+   "differing": 1595,
+   "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+   "thumbnail": null
+  },
+  {
+   "rank": 6,
+   "fixture": "01-greek-lower",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 0.005,
+   "differing": 1471,
+   "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+   "thumbnail": null
+  },
+  {
+   "rank": 7,
+   "fixture": "04-relations",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 0.004,
+   "differing": 3535,
+   "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+   "thumbnail": null
+  },
+  {
+   "rank": 8,
+   "fixture": "02-greek-upper",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 0.004,
+   "differing": 152,
+   "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+   "thumbnail": null
+  },
+  {
+   "rank": 9,
+   "fixture": "06-ordinary",
+   "page": 1,
+   "result": "compared",
+   "max_delta": 0.002,
+   "differing": 170,
+   "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+   "thumbnail": null
+  }
+ ],
+ "documents": [
+  {
+   "id": "01-greek-lower",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/01-greek-lower/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 1471,
+     "differing_fraction": 0.00076,
+     "max_delta": 255,
+     "ink_pixels_reference": 1835,
+     "ink_pixels_candidate": 1902,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 6,
+      "candidate_words": 6,
+      "aligned": 4,
+      "reference_unaligned": 2,
+      "candidate_unaligned": 2,
+      "median_shift": [
+       0.0,
+       0.0
+      ],
+      "dx_mean": 0.001,
+      "dx_max": 0.005,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 0.005,
+      "within_0_01": 4,
+      "within_0_5": 4,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.005,
+        "dy": 0.0,
+        "reference": [
+         190.872,
+         83.955
+        ],
+        "candidate": [
+         190.876,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 283,
+         "end_byte": 288
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "\\sigma \\phi \\omega$ text.⏎⏎Display \\[ \\alpha "
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         133.768
+        ],
+        "candidate": [
+         72.0,
+         133.768
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 377,
+         "end_byte": 383
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "igma \\phi \\omega \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $\\alpha \\beta \\gamm"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         98.401
+        ],
+        "candidate": [
+         72.0,
+         98.401
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 290,
+         "end_byte": 297
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "\\phi \\omega$ text.⏎⏎Display \\[ \\alpha \\beta \\ga"
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "bd2655983fc987641058b20538acffa871919b1772312532dd0a8f34b1c61dcc",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.111,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/01-greek-lower/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/01-greek-lower/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design\nnote: 1 page(s), 6 glyph run(s), 48 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 12341 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/01-greek-lower/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 12341
+  },
+  {
+   "id": "02-greek-upper",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/02-greek-upper/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 152,
+     "differing_fraction": 8e-05,
+     "max_delta": 222,
+     "ink_pixels_reference": 2370,
+     "ink_pixels_candidate": 2370,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 6,
+      "candidate_words": 6,
+      "aligned": 4,
+      "reference_unaligned": 2,
+      "candidate_unaligned": 2,
+      "median_shift": [
+       0.0,
+       0.0
+      ],
+      "dx_mean": 0.001,
+      "dx_max": 0.004,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 0.004,
+      "within_0_01": 4,
+      "within_0_5": 4,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.004,
+        "dy": 0.0,
+        "reference": [
+         203.195,
+         83.955
+        ],
+        "candidate": [
+         203.191,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 280,
+         "end_byte": 285
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "n \\Phi \\Psi \\Omega$ text.⏎⏎Display \\[ \\Gamma "
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         133.768
+        ],
+        "candidate": [
+         72.0,
+         133.768
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 371,
+         "end_byte": 377
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "\\Phi \\Psi \\Omega \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $\\Gamma \\Delta \\The"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         98.401
+        ],
+        "candidate": [
+         72.0,
+         98.401
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 287,
+         "end_byte": 294
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "\\Psi \\Omega$ text.⏎⏎Display \\[ \\Gamma \\Delta \\T"
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "82c841ccb386ee40b6a044913dacbd386e72f0c10c20deaf9378fc742287e4e4",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.035,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/02-greek-upper/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/02-greek-upper/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "mble\ndiagnostic (from the display list): error: compiler: \\pagestyle is not supported in the document preamble\nnote: 1 page(s), 6 glyph run(s), 46 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 9821 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/02-greek-upper/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 9821
+  },
+  {
+   "id": "03-binary",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/03-binary/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 1694,
+     "differing_fraction": 0.00087,
+     "max_delta": 255,
+     "ink_pixels_reference": 3020,
+     "ink_pixels_candidate": 3150,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 44,
+      "candidate_words": 12,
+      "aligned": 8,
+      "reference_unaligned": 36,
+      "candidate_unaligned": 4,
+      "median_shift": [
+       -0.0,
+       0.0
+      ],
+      "dx_mean": 0.001,
+      "dx_max": 0.005,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 0.005,
+      "within_0_01": 8,
+      "within_0_5": 8,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.005,
+        "dy": 0.0,
+        "reference": [
+         188.873,
+         83.955
+        ],
+        "candidate": [
+         188.878,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 242,
+         "end_byte": 247
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "iv c \\pm d \\cdot e$ text.⏎⏎Display \\[ a \\time"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.005,
+        "dy": 0.0,
+        "reference": [
+         189.538,
+         148.214
+        ],
+        "candidate": [
+         189.542,
+         148.214
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 344,
+         "end_byte": 349
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " c \\wedge d \\vee e$ text.⏎⏎Display \\[ a \\cup "
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         198.027
+        ],
+        "candidate": [
+         72.0,
+         198.027
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 397,
+         "end_byte": 403
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " \\wedge d \\vee e \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         133.768
+        ],
+        "candidate": [
+         72.0,
+         133.768
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 295,
+         "end_byte": 301
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " c \\pm d \\cdot e \\] after.⏎⏎Inline $a \\cup b \\"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         148.214
+        ],
+        "candidate": [
+         72.0,
+         148.214
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 303,
+         "end_byte": 309
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " \\cdot e \\] after.⏎⏎Inline $a \\cup b \\cap c \\w"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $a \\times b \\div c "
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         162.66
+        ],
+        "candidate": [
+         72.0,
+         162.66
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 351,
+         "end_byte": 358
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "ge d \\vee e$ text.⏎⏎Display \\[ a \\cup b \\cap c "
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         98.401
+        ],
+        "candidate": [
+         72.0,
+         98.401
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 249,
+         "end_byte": 256
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "m d \\cdot e$ text.⏎⏎Display \\[ a \\times b \\div "
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "3984ad67ad683cf0141f98686c8fb6a2a09d0d6162111f63819166811e52d956",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.028,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmsy10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/03-binary/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/03-binary/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "ical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design\nnote: 1 page(s), 12 glyph run(s), 84 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 14321 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/03-binary/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 14321
+  },
+  {
+   "id": "04-relations",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/04-relations/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 3535,
+     "differing_fraction": 0.00182,
+     "max_delta": 255,
+     "ink_pixels_reference": 6158,
+     "ink_pixels_candidate": 6310,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 82,
+      "candidate_words": 28,
+      "aligned": 16,
+      "reference_unaligned": 66,
+      "candidate_unaligned": 12,
+      "median_shift": [
+       0.0,
+       0.0
+      ],
+      "dx_mean": 0.001,
+      "dx_max": 0.004,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 0.004,
+      "within_0_01": 16,
+      "within_0_5": 16,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.004,
+        "dy": 0.0,
+        "reference": [
+         178.799,
+         212.473
+        ],
+        "candidate": [
+         178.804,
+         212.473
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 464,
+         "end_byte": 469
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "supseteq c \\perp d$ text.⏎⏎Display \\[ a \\sups"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.003,
+        "dy": 0.0,
+        "reference": [
+         174.822,
+         276.732
+        ],
+        "candidate": [
+         174.819,
+         276.732
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 557,
+         "end_byte": 562
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "n b \\ni c \\notin d$ text.⏎⏎Display \\[ a \\in b"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.001,
+        "dy": 0.0,
+        "reference": [
+         200.171,
+         148.214
+        ],
+        "candidate": [
+         200.169,
+         148.214
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 354,
+         "end_byte": 359
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "bset d \\subseteq e$ text.⏎⏎Display \\[ a \\equi"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.001,
+        "dy": 0.0,
+        "reference": [
+         199.977,
+         83.955
+        ],
+        "candidate": [
+         199.976,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 243,
+         "end_byte": 248
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "c \\neq d \\approx e$ text.⏎⏎Display \\[ a \\leq "
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         326.545
+        ],
+        "candidate": [
+         72.0,
+         326.545
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 601,
+         "end_byte": 607
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "b \\ni c \\notin d \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         262.286
+        ],
+        "candidate": [
+         72.0,
+         262.286
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 517,
+         "end_byte": 523
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "pseteq c \\perp d \\] after.⏎⏎Inline $a \\in b \\n"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         198.027
+        ],
+        "candidate": [
+         72.0,
+         198.027
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 415,
+         "end_byte": 421
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "et d \\subseteq e \\] after.⏎⏎Inline $a \\supset "
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         133.768
+        ],
+        "candidate": [
+         72.0,
+         133.768
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 297,
+         "end_byte": 303
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "\\neq d \\approx e \\] after.⏎⏎Inline $a \\equiv b"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         276.732
+        ],
+        "candidate": [
+         72.0,
+         276.732
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 525,
+         "end_byte": 531
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " \\perp d \\] after.⏎⏎Inline $a \\in b \\ni c \\not"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         212.473
+        ],
+        "candidate": [
+         72.0,
+         212.473
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 423,
+         "end_byte": 429
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "bseteq e \\] after.⏎⏎Inline $a \\supset b \\supse"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         148.214
+        ],
+        "candidate": [
+         72.0,
+         148.214
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 305,
+         "end_byte": 311
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "approx e \\] after.⏎⏎Inline $a \\equiv b \\sim c "
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $a \\leq b \\geq c \\n"
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "e003b1fe5a8b6e631219453885da69eb8c652cbe4af05362e31ee7c2af7de37a",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.029,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmsy10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/04-relations/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/04-relations/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design\nnote: 1 page(s), 28 glyph run(s), 164 glyph(s) (2 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 21060 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/04-relations/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 21060
+  },
+  {
+   "id": "05-arrows-logic",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/05-arrows-logic/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 1595,
+     "differing_fraction": 0.00082,
+     "max_delta": 255,
+     "ink_pixels_reference": 2936,
+     "ink_pixels_candidate": 3022,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 28,
+      "candidate_words": 12,
+      "aligned": 10,
+      "reference_unaligned": 18,
+      "candidate_unaligned": 2,
+      "median_shift": [
+       0.0,
+       0.0
+      ],
+      "dx_mean": 0.001,
+      "dx_max": 0.005,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 0.005,
+      "within_0_01": 10,
+      "within_0_5": 10,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "∀x∃y¬z",
+        "ref_text": "?x?y?z",
+        "dx": 0.005,
+        "dy": 0.0,
+        "reference": [
+         104.834,
+         148.214
+        ],
+        "candidate": [
+         104.838,
+         148.214
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathSymbols10-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 342,
+         "end_byte": 370
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "e \\] after.⏎⏎Inline $\\forall x \\exists y \\neg z$ text.⏎⏎Display \\[ \\"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.001,
+        "dy": 0.0,
+        "reference": [
+         148.752,
+         148.214
+        ],
+        "candidate": [
+         148.753,
+         148.214
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 371,
+         "end_byte": 376
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "x \\exists y \\neg z$ text.⏎⏎Display \\[ \\forall"
+       },
+       {
+        "text": "∀x∃y¬z",
+        "ref_text": "?x?y?z",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         285.993,
+         177.106
+        ],
+        "candidate": [
+         285.993,
+         177.106
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathSymbols10-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 386,
+         "end_byte": 418
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "g z$ text.⏎⏎Display \\[ \\forall x \\exists y \\neg z \\] after.⏎⏎\\end{docume"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         198.027
+        ],
+        "candidate": [
+         72.0,
+         198.027
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 419,
+         "end_byte": 425
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "\\exists y \\neg z \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         133.768
+        ],
+        "candidate": [
+         72.0,
+         133.768
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 327,
+         "end_byte": 333
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "Leftrightarrow e \\] after.⏎⏎Inline $\\forall x "
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         210.796,
+         83.955
+        ],
+        "candidate": [
+         210.796,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 258,
+         "end_byte": 263
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " \\Leftrightarrow e$ text.⏎⏎Display \\[ a \\to b"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         148.214
+        ],
+        "candidate": [
+         72.0,
+         148.214
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 335,
+         "end_byte": 341
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "tarrow e \\] after.⏎⏎Inline $\\forall x \\exists "
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $a \\to b \\gets c \\R"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         162.66
+        ],
+        "candidate": [
+         72.0,
+         162.66
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 378,
+         "end_byte": 385
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "ts y \\neg z$ text.⏎⏎Display \\[ \\forall x \\exist"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         98.401
+        ],
+        "candidate": [
+         72.0,
+         98.401
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 265,
+         "end_byte": 272
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "ightarrow e$ text.⏎⏎Display \\[ a \\to b \\gets c "
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "6b0330c5cf6029d4efcd385a84b02822fc2f36b21349b615344ac8ec2cfe8088",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.092,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmsy10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/05-arrows-logic/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/05-arrows-logic/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "ize OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design\nnote: 1 page(s), 12 glyph run(s), 78 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 14874 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/05-arrows-logic/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 14874
+  },
+  {
+   "id": "06-ordinary",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/06-ordinary/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 170,
+     "differing_fraction": 9e-05,
+     "max_delta": 102,
+     "ink_pixels_reference": 1406,
+     "ink_pixels_candidate": 1416,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 6,
+      "candidate_words": 6,
+      "aligned": 4,
+      "reference_unaligned": 2,
+      "candidate_unaligned": 2,
+      "median_shift": [
+       0.0,
+       0.0
+      ],
+      "dx_mean": 0.001,
+      "dx_max": 0.002,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 0.002,
+      "within_0_01": 4,
+      "within_0_5": 4,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.002,
+        "dy": 0.0,
+        "reference": [
+         143.463,
+         83.955
+        ],
+        "candidate": [
+         143.466,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 243,
+         "end_byte": 248
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "et \\partial \\nabla$ text.⏎⏎Display \\[ \\infty "
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         133.768
+        ],
+        "candidate": [
+         72.0,
+         133.768
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 297,
+         "end_byte": 303
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " \\partial \\nabla \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $\\infty \\emptyset \\"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         98.401
+        ],
+        "candidate": [
+         72.0,
+         98.401
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 250,
+         "end_byte": 257
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "tial \\nabla$ text.⏎⏎Display \\[ \\infty \\emptyset"
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "a6735b9b217191f63b06a9501739ee4c49c2c0a87f2d74fcd27e174a066eeec5",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.029,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmsy10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/06-ordinary/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/06-ordinary/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "ical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmsy10 design\nnote: 1 page(s), 6 glyph run(s), 32 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 9587 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/06-ordinary/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 9587
+  },
+  {
+   "id": "07-big-operators",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/07-big-operators/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 2073,
+     "differing_fraction": 0.00107,
+     "max_delta": 255,
+     "ink_pixels_reference": 3888,
+     "ink_pixels_candidate": 3630,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 36,
+      "candidate_words": 36,
+      "aligned": 20,
+      "reference_unaligned": 16,
+      "candidate_unaligned": 16,
+      "median_shift": [
+       -0.0,
+       -0.0
+      ],
+      "dx_mean": 0.001,
+      "dx_max": 0.005,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 0.005,
+      "within_0_01": 20,
+      "within_0_5": 20,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.005,
+        "dy": 0.0,
+        "reference": [
+         139.439,
+         83.955
+        ],
+        "candidate": [
+         139.444,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 227,
+         "end_byte": 232
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " $\\sum_{i=1}^{n} i$ text.⏎⏎Display \\[ \\sum_{i"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.005,
+        "dy": -0.0,
+        "reference": [
+         128.754,
+         162.162
+        ],
+        "candidate": [
+         128.759,
+         162.162
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 293,
+         "end_byte": 298
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "Inline $\\int_0^1 x$ text.⏎⏎Display \\[ \\int_0^"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.001,
+        "dy": -0.0,
+        "reference": [
+         142.573,
+         234.701
+        ],
+        "candidate": [
+         142.572,
+         234.701
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 360,
+         "end_byte": 365
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "$\\prod_{k=1}^{m} k$ text.⏎⏎Display \\[ \\prod_{"
+       },
+       {
+        "text": "k",
+        "ref_text": "k",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         311.473,
+         269.847
+        ],
+        "candidate": [
+         311.473,
+         269.847
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathItalic12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 375,
+         "end_byte": 398
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "} k$ text.⏎⏎Display \\[ \\prod_{k=1}^{m} k \\] after.⏎⏎\\end{docume"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         249.147
+        ],
+        "candidate": [
+         72.0,
+         249.147
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 367,
+         "end_byte": 374
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "{k=1}^{m} k$ text.⏎⏎Display \\[ \\prod_{k=1}^{m} "
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         176.607
+        ],
+        "candidate": [
+         72.0,
+         176.607
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 300,
+         "end_byte": 307
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "$\\int_0^1 x$ text.⏎⏎Display \\[ \\int_0^1 x \\] af"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         162.162
+        ],
+        "candidate": [
+         72.0,
+         162.162
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 273,
+         "end_byte": 279
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "1}^{n} i \\] after.⏎⏎Inline $\\int_0^1 x$ text.⏎"
+       },
+       {
+        "text": "x",
+        "ref_text": "x",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         118.205,
+         162.162
+        ],
+        "candidate": [
+         118.205,
+         162.162
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathItalic12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 280,
+         "end_byte": 292
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "i \\] after.⏎⏎Inline $\\int_0^1 x$ text.⏎⏎Display \\[ \\"
+       },
+       {
+        "text": "x",
+        "ref_text": "x",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         311.018,
+         195.968
+        ],
+        "candidate": [
+         311.018,
+         195.968
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathItalic12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 308,
+         "end_byte": 324
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "1 x$ text.⏎⏎Display \\[ \\int_0^1 x \\] after.⏎⏎Inline $\\pr"
+       },
+       {
+        "text": "k",
+        "ref_text": "k",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         132.18,
+         234.701
+        ],
+        "candidate": [
+         132.18,
+         234.701
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathItalic12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 340,
+         "end_byte": 359
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "x \\] after.⏎⏎Inline $\\prod_{k=1}^{m} k$ text.⏎⏎Display \\[ \\"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         234.701
+        ],
+        "candidate": [
+         72.0,
+         234.701
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 333,
+         "end_byte": 339
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "nt_0^1 x \\] after.⏎⏎Inline $\\prod_{k=1}^{m} k$"
+       },
+       {
+        "text": "n",
+        "ref_text": "n",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         300.438,
+         106.15
+        ],
+        "candidate": [
+         300.438,
+         106.15
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathItalic8-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 242,
+         "end_byte": 264
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "} i$ text.⏎⏎Display \\[ \\sum_{i=1}^{n} i \\] after.⏎⏎Inline $\\in"
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "66cc02e041247e4bca3425aa282fd7225ff904a8a6793513443ef4d1995539ae",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.028,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmex10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmex10 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi8: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi8 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/07-big-operators/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/07-big-operators/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "ze OpenType outline resource exists for this family, so the outlines are not the reference's lmmi8 design\nnote: 1 page(s), 36 glyph run(s), 104 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 18534 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/07-big-operators/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 18534
+  },
+  {
+   "id": "08-delimiters",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/08-delimiters/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 1601,
+     "differing_fraction": 0.00083,
+     "max_delta": 255,
+     "ink_pixels_reference": 3620,
+     "ink_pixels_candidate": 3317,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 30,
+      "candidate_words": 30,
+      "aligned": 14,
+      "reference_unaligned": 16,
+      "candidate_unaligned": 16,
+      "median_shift": [
+       -0.0,
+       -0.0
+      ],
+      "dx_mean": 0.651,
+      "dx_max": 4.557,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 4.557,
+      "within_0_01": 12,
+      "within_0_5": 12,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "x",
+        "ref_text": "(x)",
+        "dx": 4.557,
+        "dy": -0.0,
+        "reference": [
+         104.834,
+         227.617
+        ],
+        "candidate": [
+         109.391,
+         227.617
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 392,
+         "end_byte": 410
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "] \\] after.⏎⏎Inline $\\left( x \\right)$ text.⏎⏎Display \\[ \\"
+       },
+       {
+        "text": "x",
+        "ref_text": "(x)",
+        "dx": 4.552,
+        "dy": 0.0,
+        "reference": [
+         298.122,
+         256.508
+        ],
+        "candidate": [
+         302.674,
+         256.508
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 426,
+         "end_byte": 448
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "ht)$ text.⏎⏎Display \\[ \\left( x \\right) \\] after.⏎⏎\\end{docume"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.003,
+        "dy": -0.0,
+        "reference": [
+         124.5,
+         227.617
+        ],
+        "candidate": [
+         124.497,
+         227.617
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 411,
+         "end_byte": 416
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " $\\left( x \\right)$ text.⏎⏎Display \\[ \\left( "
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         242.062
+        ],
+        "candidate": [
+         72.0,
+         242.062
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 418,
+         "end_byte": 425
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "( x \\right)$ text.⏎⏎Display \\[ \\left( x \\right)"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         227.617
+        ],
+        "candidate": [
+         72.0,
+         227.617
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 385,
+         "end_byte": 391
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": " \\right] \\] after.⏎⏎Inline $\\left( x \\right)$ "
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         125.039,
+         155.786
+        ],
+        "candidate": [
+         125.039,
+         155.786
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 329,
+         "end_byte": 334
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "frac{a}{b} \\right]$ text.⏎⏎Display \\[ \\left[ "
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         127.529,
+         83.955
+        ],
+        "candidate": [
+         127.529,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 237,
+         "end_byte": 242
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "frac{a}{b} \\right)$ text.⏎⏎Display \\[ \\left( "
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $\\left( \\frac{a}{b}"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         170.232
+        ],
+        "candidate": [
+         72.0,
+         170.232
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 336,
+         "end_byte": 343
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "{b} \\right]$ text.⏎⏎Display \\[ \\left[ \\frac{a}{"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         213.171
+        ],
+        "candidate": [
+         72.0,
+         213.171
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 377,
+         "end_byte": 383
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "ac{a}{b} \\right] \\] after.⏎⏎Inline $\\left( x \\"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": -0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         277.43
+        ],
+        "candidate": [
+         72.0,
+         277.43
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 449,
+         "end_byte": 455
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "\\left( x \\right) \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         141.34
+        ],
+        "candidate": [
+         72.0,
+         141.34
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 285,
+         "end_byte": 291
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "ac{a}{b} \\right) \\] after.⏎⏎Inline $\\left[ \\fr"
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "fb28b2370adeca2c1cace5a2fd82a09f4fbf7247c94da1e60818e255792dabfc",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.028,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmex10: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmex10 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi8: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi8 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/08-delimiters/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/08-delimiters/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "l-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi8 design\nnote: 1 page(s), 30 glyph run(s), 94 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 4 rule(s), 16088 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/08-delimiters/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 16088
+  },
+  {
+   "id": "09-angle",
+   "reference": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/harness/09-angle/main.pdf",
+   "reference_note": "rendered by /usr/local/texlive/2026/bin/universal-darwin/pdflatex (exit 0) with SOURCE_DATE_EPOCH=0, two passes, preamble pdflatex-lm",
+   "pages": [
+    {
+     "page": 1,
+     "reference_size": [
+      1224,
+      1584
+     ],
+     "candidate_size": [
+      1224,
+      1584
+     ],
+     "result": "compared",
+     "pixels": 1938816,
+     "differing": 1085,
+     "differing_fraction": 0.00056,
+     "max_delta": 255,
+     "ink_pixels_reference": 1131,
+     "ink_pixels_candidate": 1108,
+     "reference_notes": [],
+     "geometry": {
+      "reference_words": 8,
+      "candidate_words": 6,
+      "aligned": 6,
+      "reference_unaligned": 2,
+      "candidate_unaligned": 0,
+      "median_shift": [
+       -1.647,
+       0.0
+      ],
+      "dx_mean": 2.744,
+      "dx_max": 6.587,
+      "dy_mean": 0.0,
+      "dy_max": 0.0,
+      "max_delta": 6.587,
+      "within_0_01": 3,
+      "within_0_5": 3,
+      "reflowed": 0,
+      "top": [
+       {
+        "text": "abc",
+        "ref_text": "abc",
+        "dx": -6.587,
+        "dy": 0.0,
+        "reference": [
+         111.425,
+         83.955
+        ],
+        "candidate": [
+         104.838,
+         83.955
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathItalic12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 208,
+         "end_byte": 220
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — math boxes: crates/math-layout (FT-020) — diagnostic `no math glyph for '∠'; empty box used`",
+        "excerpt": "in{document}⏎Inline $\\angle abc$ text.⏎⏎Display \\[ \\"
+       },
+       {
+        "text": "text.",
+        "ref_text": "text.",
+        "dx": -6.582,
+        "dy": 0.0,
+        "reference": [
+         131.482,
+         83.955
+        ],
+        "candidate": [
+         124.9,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 221,
+         "end_byte": 226
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "Inline $\\angle abc$ text.⏎⏎Display \\[ \\angle "
+       },
+       {
+        "text": "abc",
+        "ref_text": "abc",
+        "dx": -3.293,
+        "dy": -0.0,
+        "reference": [
+         301.213,
+         112.847
+        ],
+        "candidate": [
+         297.92,
+         112.847
+        ],
+        "font": "LatinModernMath-Regular",
+        "ref_font": "LMMathItalic12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 236,
+         "end_byte": 252
+        },
+        "owner": "crates/math-layout (FT-020) via crates/render-pipeline (mac-claude-a) — math word",
+        "excerpt": "abc$ text.⏎⏎Display \\[ \\angle abc \\] after.⏎⏎\\end{docume"
+       },
+       {
+        "text": "after.",
+        "ref_text": "after.",
+        "dx": -0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         133.768
+        ],
+        "candidate": [
+         72.0,
+         133.768
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 253,
+         "end_byte": 259
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "ay \\[ \\angle abc \\] after.⏎⏎\\end{document}⏎"
+       },
+       {
+        "text": "Inline",
+        "ref_text": "Inline",
+        "dx": 0.0,
+        "dy": 0.0,
+        "reference": [
+         72.0,
+         83.955
+        ],
+        "candidate": [
+         72.0,
+         83.955
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 201,
+         "end_byte": 207
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "y}⏎\\begin{document}⏎Inline $\\angle abc$ text.⏎"
+       },
+       {
+        "text": "Display",
+        "ref_text": "Display",
+        "dx": 0.0,
+        "dy": -0.0,
+        "reference": [
+         72.0,
+         98.401
+        ],
+        "candidate": [
+         72.0,
+         98.401
+        ],
+        "font": "LMRoman12-Regular",
+        "ref_font": "LMRoman12-Regular",
+        "source": {
+         "path": "main.tex",
+         "start_byte": 228,
+         "end_byte": 235
+        },
+        "owner": "crates/render-pipeline (mac-claude-a) — paragraph/line layout: isolated delta",
+        "excerpt": "$\\angle abc$ text.⏎⏎Display \\[ \\angle abc \\] af"
+       }
+      ]
+     }
+    }
+   ],
+   "reference_sha256": "83cf5fab982ac835632b560a51b1858345bb41668930be40aaaf6a0d6123888b",
+   "reference_pages": null,
+   "producer": {
+    "exit": 0,
+    "timed_out": false,
+    "seconds": 0.025,
+    "status": "recovered",
+    "diagnostics": [
+     {
+      "code": "compiler",
+      "message": "packages fontenc are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 54,
+       "path": "main.tex",
+       "start_byte": 30
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages lmodern are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 75,
+       "path": "main.tex",
+       "start_byte": 55
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "packages geometry are recognised but not implemented",
+      "recovery": "continued without package-specific commands or formatting",
+      "severity": "warning",
+      "source": {
+       "end_byte": 109,
+       "path": "main.tex",
+       "start_byte": 76
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setlength is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 120,
+       "path": "main.tex",
+       "start_byte": 110
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\parindent is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 131,
+       "path": "main.tex",
+       "start_byte": 121
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\setcounter is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 149,
+       "path": "main.tex",
+       "start_byte": 138
+      }
+     },
+     {
+      "code": "compiler",
+      "message": "\\pagestyle is not supported in the document preamble",
+      "recovery": "skipped the command and did not typeset preamble content",
+      "severity": "error",
+      "source": {
+       "end_byte": 176,
+       "path": "main.tex",
+       "start_byte": 166
+      }
+     },
+     {
+      "code": "math_limitation",
+      "message": "no math glyph for '∠'; empty box used",
+      "recovery": null,
+      "severity": "warning",
+      "source": {
+       "end_byte": 220,
+       "path": "main.tex",
+       "start_byte": 208
+      }
+     },
+     {
+      "code": "math_resource_profile",
+      "message": "lmmi12: glyphs drawn from latinmodern-math (one 10pt design); no optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design",
+      "recovery": null,
+      "severity": "warning",
+      "source": null
+     }
+    ],
+    "stderr_tail": "",
+    "pdf": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/09-angle/render.exact.pdf",
+    "pdf_exit": 0,
+    "v2": "/private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/09-angle/render.v2.json",
+    "v1_pages": 1,
+    "pdf_stderr_tail": "optical-size OpenType outline resource exists for this family, so the outlines are not the reference's lmmi12 design\nnote: 1 page(s), 6 glyph run(s), 30 glyph(s) (0 continued at the natural advance, 0 with an exact TJ kern), 0 rule(s), 9274 bytes -> /private/tmp/claude-501/-Users-jay3332-Projects-flashtex/e30fd4a4-f46a-4c3f-a28c-cbb8617b4425/scratchpad/symbols-after/work/09-angle/render.exact.pdf\n"
+   },
+   "candidate_pages": 1,
+   "pdf_bytes": 9274
+  }
+ ]
+}

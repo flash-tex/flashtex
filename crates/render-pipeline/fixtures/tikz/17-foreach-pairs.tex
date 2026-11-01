@@ -1,0 +1,11 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\foreach \x/\c in {0/red,1/green,2/blue,3/orange}
+  { \fill[\c] (\x,0) rectangle +(0.8,0.8); }
+\foreach \a [count=\i] in {0,45,...,315}
+  \draw (6,0.4) -- +(\a:0.3*\i);
+\end{tikzpicture}
+\end{document}

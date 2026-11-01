@@ -1,0 +1,10 @@
+{"id":"edit-0","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":1,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text{and}$"}]}}
+{"id":"edit-1","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":2,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text{\\alpha}$"}]}}
+{"id":"edit-2","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":3,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text{\\alpha}$"}]}}
+{"id":"edit-3","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":4,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text{a$"}]}}
+{"id":"edit-4","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":5,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text a$"}]}}
+{"id":"edit-5","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":6,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text{a b}$"}]}}
+{"id":"edit-6","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":7,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text{\\{x\\}}$"}]}}
+{"id":"edit-7","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":8,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text%note\n{and}$"}]}}
+{"id":"edit-8","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":9,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$and$"}]}}
+{"id":"edit-9","type":"compile","protocol_version":1,"payload":{"project_id":"text-edit-session","revision":10,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\text{and}$"}]}}

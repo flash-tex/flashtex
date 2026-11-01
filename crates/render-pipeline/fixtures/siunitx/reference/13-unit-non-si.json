@@ -1,0 +1,80 @@
+{
+ "fixture": "13-unit-non-si.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "L",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 154.939
+  },
+  {
+   "page": 1,
+   "text": "eV",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 158.256,
+   "baseline": 134.765,
+   "end": 170.156
+  },
+  {
+   "page": 1,
+   "text": "Da",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 173.622,
+   "baseline": 134.765,
+   "end": 186.214
+  },
+  {
+   "page": 1,
+   "text": "B",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 189.532,
+   "baseline": 134.765,
+   "end": 196.588
+  },
+  {
+   "page": 1,
+   "text": "dB",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 199.906,
+   "baseline": 134.765,
+   "end": 212.498
+  },
+  {
+   "page": 1,
+   "text": "Np",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 215.825,
+   "baseline": 134.765,
+   "end": 228.832
+  },
+  {
+   "page": 1,
+   "text": "◦",
+   "font": "CMSY7",
+   "size": 6.9738,
+   "x": 232.15,
+   "baseline": 131.149,
+   "end": 236.232
+  },
+  {
+   "page": 1,
+   "text": "%",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 240.05,
+   "baseline": 134.765,
+   "end": 248.352
+  }
+ ],
+ "warnings": []
+}

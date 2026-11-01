@@ -1,0 +1,29 @@
+{
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/comment-fixed-compiler-preserved",
+  "binary_sha256": "0810b9fb6b68cbef3dbb210413489f2f9a5cf1b6ca5226827026d3327598c7a3",
+  "requests": 10,
+  "each_session_reply_equals_fresh_process_reply": true,
+  "repeated_invalid_input_preserves_diagnostics": true,
+  "valid_edits_clear_diagnostics": true,
+  "statuses": [
+    "ok",
+    "recovered",
+    "recovered",
+    "recovered",
+    "recovered",
+    "ok",
+    "ok",
+    "ok",
+    "ok",
+    "ok"
+  ],
+  "files": {
+    "stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "invalid-version-request.jsonl": "484937164ca639b6c5f802b483eac35867fca2892434b4e59f9fa966f1ee74d7",
+    "invalid-version-response.jsonl": "e4714ec1694e204b827052e90df1a76d51393ad73b2be9f526dbdc3d2735683d",
+    "invalid-version-fresh-response.jsonl": "e4714ec1694e204b827052e90df1a76d51393ad73b2be9f526dbdc3d2735683d",
+    "request.jsonl": "c3e54b295ed4c06c934eba1ce8cbc7298165387f2e2f0fe045f60ad2c8402674",
+    "response.jsonl": "7f50c76905adb41972d182ab0e2e2c90fb0bb3c47bb8d8e2375d1f3eacdd84f8",
+    "fresh-response.jsonl": "7f50c76905adb41972d182ab0e2e2c90fb0bb3c47bb8d8e2375d1f3eacdd84f8"
+  }
+}

@@ -1,0 +1,283 @@
+--- a/crates/font-engine/src/truetype.rs
++++ b/crates/font-engine/src/truetype.rs
+@@ -49,6 +49,7 @@
+ pub struct FaceLayout {
+     pub face_index: u32,
+     pub sfnt_offset: usize,
++    pub directory: std::ops::Range<usize>,
+     pub tables: Vec<TableRange>,
+ }
+ 
+@@ -72,44 +73,151 @@
+ ///   data sharing a `ttcf` uses to avoid duplicating tables per face; any
+ ///   other intersection (partial overlap, or overlap with mismatched
+ ///   extents) is rejected as corruption.
++/// Hard caps apply even when a caller supplies larger requested limits.
++#[derive(Debug, Clone, Copy)]
++pub struct CollectionLimits {
++    pub faces: usize,
++    pub tables_per_face: usize,
++    pub total_tables: usize,
++    pub comparisons: usize,
++}
++impl Default for CollectionLimits {
++    fn default() -> Self {
++        Self {
++            faces: 128,
++            tables_per_face: 256,
++            total_tables: 4096,
++            comparisons: 8_388_608,
++        }
++    }
++}
+ pub fn collection_layout(data: &[u8]) -> Result<CollectionLayout, Error> {
++    collection_layout_with_limits(data, CollectionLimits::default())
++}
++pub fn collection_layout_with_limits(
++    data: &[u8],
++    limits: CollectionLimits,
++) -> Result<CollectionLayout, Error> {
++    let hard = CollectionLimits::default();
++    if limits.faces == 0
++        || limits.tables_per_face == 0
++        || limits.total_tables == 0
++        || limits.faces > hard.faces
++        || limits.tables_per_face > hard.tables_per_face
++        || limits.total_tables > hard.total_tables
++        || limits.comparisons > hard.comparisons
++    {
++        return Err(Error::Malformed("collection limits exceed hard cap".into()));
++    }
+     let tag = u32_at(data, 0)?;
+-    let mut faces = Vec::new();
+-    if tag == 0x7474_6366 {
+-        // 'ttcf'
+-        let n = u32_at(data, 8)? as usize;
+-        let dir_bytes = n
++    let (count, header) = if tag == 0x7474_6366 {
++        if u32_at(data, 4)? != 0x0001_0000 {
++            return Err(Error::Unsupported("only TTC version1 directory layout is supported; TTC2 DSIG requires explicit validation".into()));
++        }
++        let count = u32_at(data, 8)? as usize;
++        let end = count
+             .checked_mul(4)
+-            .ok_or_else(|| Error::Malformed("ttc face count overflows directory size".into()))?;
+-        let needed = 12usize
+-            .checked_add(dir_bytes)
+-            .ok_or_else(|| Error::Malformed("ttc face count overflows directory size".into()))?;
+-        if needed > data.len() {
+-            return Err(Error::Malformed(format!(
+-                "ttc claims {n} faces but its {needed}-byte offset table overruns the \
+-                 {}-byte file",
+-                data.len()
+-            )));
+-        }
+-        faces.reserve(n);
+-        for i in 0..n {
+-            let sfnt_offset = u32_at(data, 12 + 4 * i)? as usize;
+-            faces.push(face_layout(data, i as u32, sfnt_offset)?);
+-        }
+-        validate_cross_face_sharing(&faces)?;
++            .and_then(|n| n.checked_add(12))
++            .ok_or_else(|| Error::Malformed("TTC header size overflow".into()))?;
++        if count == 0 || count > limits.faces || end > data.len() {
++            return Err(Error::Malformed("TTC face/header budget or bounds".into()));
++        }
++        (count, 0..end)
+     } else {
+-        faces.push(face_layout(data, 0, 0)?);
+-    }
+-    Ok(CollectionLayout { faces })
++        (1, 0..0)
++    };
++    // Read bounded counts before allocating face/table vectors or doing pair scans.
++    let mut total = 0usize;
++    for i in 0..count {
++        let offset = if tag == 0x7474_6366 {
++            u32_at(data, 12 + 4 * i)? as usize
++        } else {
++            0
++        };
++        let at = offset
++            .checked_add(4)
++            .ok_or_else(|| Error::Malformed("sfnt offset overflow".into()))?;
++        let tables = usize::from(u16_at(data, at)?);
++        total = total
++            .checked_add(tables)
++            .ok_or_else(|| Error::Malformed("table count overflow".into()))?;
++        if tables == 0 || tables > limits.tables_per_face || total > limits.total_tables {
++            return Err(Error::Malformed("collection table budget".into()));
++        }
++    }
++    // Conservative work charge covers duplicate tags, table-pair scans and
++    // header/directory intersections before any directory vectors are allocated.
++    let work = total
++        .saturating_mul(total)
++        .saturating_mul(2)
++        .saturating_add(total.saturating_mul(count))
++        .saturating_add(count.saturating_mul(count));
++    if work > limits.comparisons {
++        return Err(Error::Malformed("collection comparison budget".into()));
++    }
++    let mut faces = Vec::with_capacity(count);
++    for i in 0..count {
++        let offset = if tag == 0x7474_6366 {
++            u32_at(data, 12 + 4 * i)? as usize
++        } else {
++            0
++        };
++        faces.push(face_layout(data, i as u32, offset)?);
++    }
++    validate_structural_ranges(&header, &faces)?;
++    validate_cross_face_sharing(&faces)?;
++    Ok(CollectionLayout { header, faces })
++}
++fn validate_structural_ranges(
++    header: &std::ops::Range<usize>,
++    faces: &[FaceLayout],
++) -> Result<(), Error> {
++    let intersects =
++        |a: &std::ops::Range<usize>, b: &std::ops::Range<usize>| a.start < b.end && b.start < a.end;
++    for (i, face) in faces.iter().enumerate() {
++        if intersects(header, &face.directory)
++            || faces[..i]
++                .iter()
++                .any(|other| intersects(&other.directory, &face.directory))
++        {
++            return Err(Error::Malformed(
++                "collection header/directory overlap".into(),
++            ));
++        }
++        for table in &face.tables {
++            let range = table.offset..table.end();
++            if table.length != 0
++                && (intersects(header, &range)
++                    || faces
++                        .iter()
++                        .any(|other| intersects(&other.directory, &range)))
++            {
++                return Err(Error::Malformed(
++                    "collection table overlaps header/directory".into(),
++                ));
++            }
++        }
++    }
++    Ok(())
+ }
+ 
+ /// Layout of every face of a font program; see [`collection_layout`].
+ #[derive(Debug, Clone)]
+ pub struct CollectionLayout {
++    pub header: std::ops::Range<usize>,
+     pub faces: Vec<FaceLayout>,
+ }
+ 
+ fn face_layout(data: &[u8], face_index: u32, sfnt_offset: usize) -> Result<FaceLayout, Error> {
++    if !matches!(
++        u32_at(data, sfnt_offset)?,
++        0x0001_0000 | 0x7472_7565 | 0x4f54_544f
++    ) {
++        return Err(Error::Malformed("unsupported sfnt version".into()));
++    }
++    if !sfnt_offset.is_multiple_of(4) {
++        return Err(Error::Malformed("unaligned sfnt directory".into()));
++    }
+     let n_tables = usize::from(u16_at(data, sfnt_offset + 4)?);
+     let dir_bytes = n_tables.checked_mul(16).ok_or_else(|| {
+         Error::Malformed(format!(
+@@ -176,6 +284,7 @@
+     Ok(FaceLayout {
+         face_index,
+         sfnt_offset,
++        directory: sfnt_offset..needed,
+         tables,
+     })
+ }
+@@ -196,7 +305,7 @@
+             if fa == fb {
+                 continue; // already checked within face_layout
+             }
+-            let identical = ta.offset == tb.offset && ta.length == tb.length;
++            let identical = ta.offset == tb.offset && ta.length == tb.length && ta.tag == tb.tag;
+             if identical {
+                 continue; // legitimate shared table across faces
+             }
+--- a/crates/font-engine/src/lib.rs
++++ b/crates/font-engine/src/lib.rs
+@@ -42,7 +42,7 @@
+ pub use core14::Core14Face;
+ pub use shape::{Cluster, Glyph, MissingGlyph, ShapeOptions, Shaped};
+ pub use truetype::{
+-    CollectionLayout, FaceLayout, Outlines, TableRange, TrueTypeFace, collection_layout,
++    CollectionLayout, CollectionLimits, FaceLayout, Outlines, TableRange, TrueTypeFace, collection_layout, collection_layout_with_limits,
+ };
+ 
+ /// Errors from loading, parsing, shaping or subsetting.
+--- a/crates/font-engine/tests/ttc_layout.rs
++++ b/crates/font-engine/tests/ttc_layout.rs
+@@ -172,3 +172,65 @@
+     ttc_header_only[0..4].copy_from_slice(b"ttcf");
+     assert!(collection_layout(&ttc_header_only).is_err());
+ }
++
++#[test]
++fn explicit_limits_reject_before_pair_scans_and_header_ranges_are_retained() {
++    use flashtex_font_engine::{CollectionLimits, collection_layout_with_limits};
++    let f = build_ttc(100, 200);
++    let layout = collection_layout(&f).unwrap();
++    assert_eq!(layout.header, 0..20);
++    assert_eq!(layout.faces[0].directory, 100..144);
++    for limits in [
++        CollectionLimits {
++            faces: 1,
++            ..Default::default()
++        },
++        CollectionLimits {
++            tables_per_face: 1,
++            ..Default::default()
++        },
++        CollectionLimits {
++            total_tables: 3,
++            ..Default::default()
++        },
++        CollectionLimits {
++            comparisons: 43,
++            ..Default::default()
++        },
++    ] {
++        assert!(collection_layout_with_limits(&f, limits).is_err());
++    }
++    assert!(
++        collection_layout_with_limits(
++            &f,
++            CollectionLimits {
++                comparisons: 44,
++                ..Default::default()
++            }
++        )
++        .is_ok()
++    );
++}
++#[test]
++fn header_version_directory_and_shared_tag_contract() {
++    let f = build_ttc(100, 200);
++    for version in [0u32, 0x20000, 0x90000] {
++        let mut b = f.clone();
++        b[4..8].copy_from_slice(&version.to_be_bytes());
++        assert!(collection_layout(&b).is_err());
++    }
++    let mut b = f.clone();
++    b[100..104].copy_from_slice(&0xdeadbeefu32.to_be_bytes());
++    assert!(collection_layout(&b).is_err());
++    for offset in [0u32, 100, 200] {
++        let mut b = f.clone();
++        b[120..124].copy_from_slice(&offset.to_be_bytes());
++        assert!(collection_layout(&b).is_err());
++    }
++    let mut b = f.clone();
++    b[16..20].copy_from_slice(&100u32.to_be_bytes());
++    assert!(collection_layout(&b).is_err());
++    let mut b = f;
++    b[212..216].copy_from_slice(b"TEST");
++    assert!(collection_layout(&b).is_err());
++}

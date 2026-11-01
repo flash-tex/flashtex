@@ -1,0 +1,13 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running tests/robustness.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/robustness-424facdfb662c640)
+
+running 5 tests
+test deeply_nested_input_does_not_blow_the_stack ... ok
+test no_malformed_request_line_panics_the_transport ... ok
+test no_generated_source_panics_incremental_reuse ... ok
+test no_generated_source_panics_the_parser_or_layout ... ok
+test a_request_is_answered_even_when_the_document_is_pathological ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+

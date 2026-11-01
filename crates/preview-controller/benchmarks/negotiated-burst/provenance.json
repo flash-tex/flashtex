@@ -1,0 +1,15 @@
+{
+  "helper_source": "ab945e6",
+  "compiler_source": "e75741e957b27482127f01abddc703666a0b445a",
+  "driver_sha256": "11996a583ff6da709dd4caa9d26093519ae3fbbfd61490d55e14baa07e259a71",
+  "order": [
+    "50000-on",
+    "50000-off",
+    "5000-on",
+    "5000-off",
+    "500000-on failed",
+    "500000-off failed"
+  ],
+  "native_paint_measured": false,
+  "live_grok_used": false
+}

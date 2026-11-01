@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "kind": "measured_glyph_name_table_regression_not_visual_oracle",
+  "font_sha256": "c4864ca6ec071c2d31d0d8309001faa1ee3517fffb53a31a405a697b71f52ca1",
+  "cff_sha256": "c5d11bab6a95e75a568e1b72fd30fdd5e4c95abe68a72f02c0c4329ee948b532",
+  "glyph_count": 2221,
+  "glyph_names_sha256": "06fceda0ddf8dcde1069a730f7690ccf049671cfd82d676f5b3f2e8fe1d321a0",
+  "canonical_format": "cff-glyph-names-v1 NUL then GID u16be, name length u16be, ASCII name bytes in GID order",
+  "A_gid": 3,
+  "fi_status": "absent",
+  "retained_name_bytes": 607450
+}

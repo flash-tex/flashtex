@@ -1,0 +1,11 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\draw (0,0) -- (4,0) node[midway, above] {mid};
+\draw (0,-1) -- (4,-1) node[near end, below] {end};
+\draw (0,-2) -- (4,-3) node[midway, sloped, above] {sloped};
+\draw (5,0) -- node[right] {a} (5,-2);
+\end{tikzpicture}
+\end{document}

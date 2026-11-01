@@ -1,0 +1,55 @@
+{
+ "fixture": "09-crop-keepaspect.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 245.998,
+   "top": 172.457,
+   "width": 120.004,
+   "height": 72.002
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "top": 621.252,
+   "width": 36.0,
+   "height": 72.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 201.265,
+   "baseline": 268.867
+  },
+  {
+   "page": 1,
+   "label": "Figure 2",
+   "x": 225.523,
+   "baseline": 717.66
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 297.261,
+   "source_byte": 868
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 383.936,
+   "source_byte": 1499
+  }
+ ]
+}

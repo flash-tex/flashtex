@@ -1,0 +1,16 @@
+{
+  "requested_source_size": 500000,
+  "actual_source_bytes": 521792,
+  "policies_failed": [
+    "off",
+    "on"
+  ],
+  "phase": "initial preview before burst",
+  "compiler_frame_bytes": 13117053,
+  "compiler_max_frame_bytes": 12582912,
+  "independent_compiler_status": "ok",
+  "independent_compiler_pages": 129,
+  "reason": "compiler output malformed, truncated or oversized",
+  "clean_final_verified": false,
+  "durable_burst_verified": false
+}

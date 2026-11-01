@@ -1,0 +1,2472 @@
+{
+  "schema_version": 1,
+  "compiler_sha": "9f1033ba75176236bc5fc66b5e64b8ebbfc15a37",
+  "renderer_sha": "a0855dd46ecebd70f2e02ea1a56a9f48499b1034",
+  "compiler_evidence_sha256": "301042571d40b7fce3f4d3f6c8232f2fcffd1c796fa0d56e380f591af5818718",
+  "pdf_evidence_sha256": "f2049467192627039faf874117f4696f1c4939cb9a4d3c82d8b23a8e163ba8de",
+  "results": [
+    {
+      "case_id": "comments-escapes",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 42,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 126.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 63,
+                "path": "main.tex",
+                "start_byte": 62
+              }
+            },
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 70,
+                "path": "main.tex",
+                "start_byte": 65
+              }
+            },
+            {
+              "x_pt": 105.36,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 73,
+                "path": "main.tex",
+                "start_byte": 71
+              }
+            },
+            {
+              "x_pt": 114.72,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 75,
+                "path": "main.tex",
+                "start_byte": 73
+              }
+            },
+            {
+              "x_pt": 130.08,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 78,
+                "path": "main.tex",
+                "start_byte": 76
+              }
+            },
+            {
+              "x_pt": 145.44,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 78
+              }
+            },
+            {
+              "x_pt": 154.8,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 81,
+                "path": "main.tex",
+                "start_byte": 80
+              }
+            },
+            {
+              "x_pt": 164.16,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 83,
+                "path": "main.tex",
+                "start_byte": 82
+              }
+            },
+            {
+              "x_pt": 173.52,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 85,
+                "path": "main.tex",
+                "start_byte": 83
+              }
+            },
+            {
+              "x_pt": 182.88,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 87,
+                "path": "main.tex",
+                "start_byte": 85
+              }
+            },
+            {
+              "x_pt": 198.24,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 89,
+                "path": "main.tex",
+                "start_byte": 88
+              }
+            },
+            {
+              "x_pt": 207.6,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 91,
+                "path": "main.tex",
+                "start_byte": 89
+              }
+            },
+            {
+              "x_pt": 216.96,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 93,
+                "path": "main.tex",
+                "start_byte": 91
+              }
+            },
+            {
+              "x_pt": 232.32,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 96,
+                "path": "main.tex",
+                "start_byte": 94
+              }
+            },
+            {
+              "x_pt": 241.68,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 98,
+                "path": "main.tex",
+                "start_byte": 96
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "7a7ec1c1ec1e03480980dc9636e7ef2540d9aa86079f0fa970880f0aef1b47c8",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "fail",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 42,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "A",
+          "encoded_hex": "41",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 63,
+            "path": "main.tex",
+            "start_byte": 62
+          },
+          "runtime_text": "B",
+          "encoded_hex": "42",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 70,
+            "path": "main.tex",
+            "start_byte": 65
+          },
+          "runtime_text": "Price",
+          "encoded_hex": "5072696365",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 4,
+          "source": {
+            "end_byte": 73,
+            "path": "main.tex",
+            "start_byte": 71
+          },
+          "runtime_text": "$",
+          "encoded_hex": "24",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 5,
+          "source": {
+            "end_byte": 75,
+            "path": "main.tex",
+            "start_byte": 73
+          },
+          "runtime_text": "5;",
+          "encoded_hex": "353b",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 6,
+          "source": {
+            "end_byte": 78,
+            "path": "main.tex",
+            "start_byte": 76
+          },
+          "runtime_text": "50",
+          "encoded_hex": "3530",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 7,
+          "source": {
+            "end_byte": 80,
+            "path": "main.tex",
+            "start_byte": 78
+          },
+          "runtime_text": "%",
+          "encoded_hex": "25",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 8,
+          "source": {
+            "end_byte": 81,
+            "path": "main.tex",
+            "start_byte": 80
+          },
+          "runtime_text": ";",
+          "encoded_hex": "3b",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 9,
+          "source": {
+            "end_byte": 83,
+            "path": "main.tex",
+            "start_byte": 82
+          },
+          "runtime_text": "A",
+          "encoded_hex": "41",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 10,
+          "source": {
+            "end_byte": 85,
+            "path": "main.tex",
+            "start_byte": 83
+          },
+          "runtime_text": "&",
+          "encoded_hex": "26",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 11,
+          "source": {
+            "end_byte": 87,
+            "path": "main.tex",
+            "start_byte": 85
+          },
+          "runtime_text": "B;",
+          "encoded_hex": "423b",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 12,
+          "source": {
+            "end_byte": 89,
+            "path": "main.tex",
+            "start_byte": 88
+          },
+          "runtime_text": "C",
+          "encoded_hex": "43",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 13,
+          "source": {
+            "end_byte": 91,
+            "path": "main.tex",
+            "start_byte": 89
+          },
+          "runtime_text": "_",
+          "encoded_hex": "5f",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 14,
+          "source": {
+            "end_byte": 93,
+            "path": "main.tex",
+            "start_byte": 91
+          },
+          "runtime_text": "D;",
+          "encoded_hex": "443b",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 15,
+          "source": {
+            "end_byte": 96,
+            "path": "main.tex",
+            "start_byte": 94
+          },
+          "runtime_text": "#",
+          "encoded_hex": "23",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 16,
+          "source": {
+            "end_byte": 98,
+            "path": "main.tex",
+            "start_byte": 96
+          },
+          "runtime_text": "1.",
+          "encoded_hex": "312e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "fail",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "extra-closing-group",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 57,
+                "path": "main.tex",
+                "start_byte": 51
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "bc7f8bac85e083c8c7e90e5e3db47c6f525d586893775987cc30ac64955915cb",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "Before.",
+          "encoded_hex": "4265666f72652e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 57,
+            "path": "main.tex",
+            "start_byte": 51
+          },
+          "runtime_text": "After.",
+          "encoded_hex": "41667465722e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "include-scope",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 43
+              }
+            },
+            {
+              "x_pt": 150.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 75
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "9fae3578b4ba6d99c17dd5bde163152775759a5ef05cfd8d9866b839f9529b97",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "fail",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 43
+          },
+          "runtime_text": "outer",
+          "encoded_hex": "6f75746572",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 80,
+            "path": "main.tex",
+            "start_byte": 75
+          },
+          "runtime_text": "local",
+          "encoded_hex": "6c6f63616c",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "fail",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "included-file",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 69,
+                "path": "main.tex",
+                "start_byte": 56
+              }
+            },
+            {
+              "x_pt": 244.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 77,
+                "path": "main.tex",
+                "start_byte": 71
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "476565722fe6f318a6f23e6b87fda0cc3eca88dd3d24beef1aacbdfac5511da7",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "fail",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "Before.",
+          "encoded_hex": "4265666f72652e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 69,
+            "path": "main.tex",
+            "start_byte": 56
+          },
+          "runtime_text": "parts/section",
+          "encoded_hex": "70617274732f73656374696f6e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 77,
+            "path": "main.tex",
+            "start_byte": 71
+          },
+          "runtime_text": "After.",
+          "encoded_hex": "41667465722e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "fail",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "literal-source-map",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 45,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 132.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 58,
+                "path": "main.tex",
+                "start_byte": 46
+              }
+            },
+            {
+              "x_pt": 208.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 62,
+                "path": "main.tex",
+                "start_byte": 59
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "619368eb1ae0fb962b69bcc0a3c88c502749c19dad27041ca739f6abee8042ce",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": false,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 45,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "éé",
+          "encoded_hex": "e9e9",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 58,
+            "path": "main.tex",
+            "start_byte": 46
+          },
+          "runtime_text": "UniqueAnchor",
+          "encoded_hex": "556e69717565416e63686f72",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 62,
+            "path": "main.tex",
+            "start_byte": 59
+          },
+          "runtime_text": "尾",
+          "encoded_hex": "3f",
+          "substituted_codepoints": [
+            "U+5C3E"
+          ],
+          "warning_evidence": [
+            "warning: page 1: item 3 \"尾\": '尾' (U+5C3E) not representable in WinAnsiEncoding; written as '?'"
+          ],
+          "text_preserved": false
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "macro-arguments",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 45,
+                "path": "main.tex",
+                "start_byte": 42
+              }
+            },
+            {
+              "x_pt": 138.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 46
+              }
+            },
+            {
+              "x_pt": 154.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 53,
+                "path": "main.tex",
+                "start_byte": 49
+              }
+            },
+            {
+              "x_pt": 181.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 56,
+                "path": "main.tex",
+                "start_byte": 54
+              }
+            },
+            {
+              "x_pt": 196.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 85,
+                "path": "main.tex",
+                "start_byte": 81
+              }
+            },
+            {
+              "x_pt": 224.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 92,
+                "path": "main.tex",
+                "start_byte": 87
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "73a8dcff37cd3dca8b9b31fdd22821f53e3512c513588c6bbaf4b0978ddfd321",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "fail",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 45,
+            "path": "main.tex",
+            "start_byte": 42
+          },
+          "runtime_text": "[2]",
+          "encoded_hex": "5b325d",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 46
+          },
+          "runtime_text": "#1",
+          "encoded_hex": "2331",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 53,
+            "path": "main.tex",
+            "start_byte": 49
+          },
+          "runtime_text": "then",
+          "encoded_hex": "7468656e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 4,
+          "source": {
+            "end_byte": 56,
+            "path": "main.tex",
+            "start_byte": 54
+          },
+          "runtime_text": "#2",
+          "encoded_hex": "2332",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 5,
+          "source": {
+            "end_byte": 85,
+            "path": "main.tex",
+            "start_byte": 81
+          },
+          "runtime_text": "left",
+          "encoded_hex": "6c656674",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 6,
+          "source": {
+            "end_byte": 92,
+            "path": "main.tex",
+            "start_byte": 87
+          },
+          "runtime_text": "right",
+          "encoded_hex": "7269676874",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "fail",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "macro-scope",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 43
+              }
+            },
+            {
+              "x_pt": 150.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 102,
+                "path": "main.tex",
+                "start_byte": 97
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "83a764f11c6661c5d71c0aed2316f8711553b63b2421c0eeee14bb8415e5832d",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "fail",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 43
+          },
+          "runtime_text": "outer",
+          "encoded_hex": "6f75746572",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 102,
+            "path": "main.tex",
+            "start_byte": 97
+          },
+          "runtime_text": "inner",
+          "encoded_hex": "696e6e6572",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "fail",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "math-inline-display",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 47,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 156.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 54,
+                "path": "main.tex",
+                "start_byte": 49
+              }
+            },
+            {
+              "x_pt": 190.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 56,
+                "path": "main.tex",
+                "start_byte": 55
+              }
+            },
+            {
+              "x_pt": 199.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 58,
+                "path": "main.tex",
+                "start_byte": 57
+              }
+            },
+            {
+              "x_pt": 208.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 65,
+                "path": "main.tex",
+                "start_byte": 60
+              }
+            },
+            {
+              "x_pt": 242.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 68,
+                "path": "main.tex",
+                "start_byte": 66
+              }
+            },
+            {
+              "x_pt": 251.52,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 77,
+                "path": "main.tex",
+                "start_byte": 74
+              }
+            },
+            {
+              "x_pt": 272.88,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 79
+              }
+            },
+            {
+              "x_pt": 282.24,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 83,
+                "path": "main.tex",
+                "start_byte": 81
+              }
+            },
+            {
+              "x_pt": 297.6,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 85,
+                "path": "main.tex",
+                "start_byte": 83
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "d71b1951b5fb615fd7a3ea163531baa4623e7e94e67a2e0b3fc6e2a54ba526d6",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 47,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "Inline",
+          "encoded_hex": "496e6c696e65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 54,
+            "path": "main.tex",
+            "start_byte": 49
+          },
+          "runtime_text": "x_1^2",
+          "encoded_hex": "785f315e32",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 56,
+            "path": "main.tex",
+            "start_byte": 55
+          },
+          "runtime_text": "+",
+          "encoded_hex": "2b",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 4,
+          "source": {
+            "end_byte": 58,
+            "path": "main.tex",
+            "start_byte": 57
+          },
+          "runtime_text": "y",
+          "encoded_hex": "79",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 5,
+          "source": {
+            "end_byte": 65,
+            "path": "main.tex",
+            "start_byte": 60
+          },
+          "runtime_text": "ends.",
+          "encoded_hex": "656e64732e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 6,
+          "source": {
+            "end_byte": 68,
+            "path": "main.tex",
+            "start_byte": 66
+          },
+          "runtime_text": "[",
+          "encoded_hex": "5b",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 7,
+          "source": {
+            "end_byte": 77,
+            "path": "main.tex",
+            "start_byte": 74
+          },
+          "runtime_text": "a+b",
+          "encoded_hex": "612b62",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 8,
+          "source": {
+            "end_byte": 80,
+            "path": "main.tex",
+            "start_byte": 79
+          },
+          "runtime_text": "c",
+          "encoded_hex": "63",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 9,
+          "source": {
+            "end_byte": 83,
+            "path": "main.tex",
+            "start_byte": 81
+          },
+          "runtime_text": "=d",
+          "encoded_hex": "3d64",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 10,
+          "source": {
+            "end_byte": 85,
+            "path": "main.tex",
+            "start_byte": 83
+          },
+          "runtime_text": "]",
+          "encoded_hex": "5d",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "missing-include",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 68,
+                "path": "main.tex",
+                "start_byte": 56
+              }
+            },
+            {
+              "x_pt": 238.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 76,
+                "path": "main.tex",
+                "start_byte": 70
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "9aa095ddf6427e9579473f943d62b1cec6650a17a4de258b74b4814a57f52733",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "Before.",
+          "encoded_hex": "4265666f72652e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 68,
+            "path": "main.tex",
+            "start_byte": 56
+          },
+          "runtime_text": "missing-file",
+          "encoded_hex": "6d697373696e672d66696c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 76,
+            "path": "main.tex",
+            "start_byte": 70
+          },
+          "runtime_text": "After.",
+          "encoded_hex": "41667465722e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "plain-paragraphs",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 46,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 150.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 57,
+                "path": "main.tex",
+                "start_byte": 47
+              }
+            },
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 65,
+                "path": "main.tex",
+                "start_byte": 59
+              }
+            },
+            {
+              "x_pt": 111.36,
+              "pdf_baseline_y_pt": 687.6,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 76,
+                "path": "main.tex",
+                "start_byte": 66
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "ca65e836026239ece90053a638c48055bffd69497b491f10028414fbd62fd9b6",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 46,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "First",
+          "encoded_hex": "4669727374",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 57,
+            "path": "main.tex",
+            "start_byte": 47
+          },
+          "runtime_text": "paragraph.",
+          "encoded_hex": "7061726167726170682e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 65,
+            "path": "main.tex",
+            "start_byte": 59
+          },
+          "runtime_text": "Second",
+          "encoded_hex": "5365636f6e64",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 4,
+          "source": {
+            "end_byte": 76,
+            "path": "main.tex",
+            "start_byte": 66
+          },
+          "runtime_text": "paragraph.",
+          "encoded_hex": "7061726167726170682e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "tikz-required",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 40,
+                "path": "main.tex",
+                "start_byte": 36
+              }
+            },
+            {
+              "x_pt": 144.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 90,
+                "path": "main.tex",
+                "start_byte": 85
+              }
+            },
+            {
+              "x_pt": 178.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 93,
+                "path": "main.tex",
+                "start_byte": 91
+              }
+            },
+            {
+              "x_pt": 193.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 99,
+                "path": "main.tex",
+                "start_byte": 94
+              }
+            },
+            {
+              "x_pt": 226.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 102,
+                "path": "main.tex",
+                "start_byte": 100
+              }
+            },
+            {
+              "x_pt": 242.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 109,
+                "path": "main.tex",
+                "start_byte": 103
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "a60fcc3427286695c215744680be6f535eec9e197e9382144d52d8f8f05e6354",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 40,
+            "path": "main.tex",
+            "start_byte": 36
+          },
+          "runtime_text": "tikz",
+          "encoded_hex": "74696b7a",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 90,
+            "path": "main.tex",
+            "start_byte": 85
+          },
+          "runtime_text": "(0,0)",
+          "encoded_hex": "28302c3029",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 93,
+            "path": "main.tex",
+            "start_byte": 91
+          },
+          "runtime_text": "--",
+          "encoded_hex": "2d2d",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 4,
+          "source": {
+            "end_byte": 99,
+            "path": "main.tex",
+            "start_byte": 94
+          },
+          "runtime_text": "(1,0)",
+          "encoded_hex": "28312c3029",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 5,
+          "source": {
+            "end_byte": 102,
+            "path": "main.tex",
+            "start_byte": 100
+          },
+          "runtime_text": "--",
+          "encoded_hex": "2d2d",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 6,
+          "source": {
+            "end_byte": 109,
+            "path": "main.tex",
+            "start_byte": 103
+          },
+          "runtime_text": "(1,1);",
+          "encoded_hex": "28312c31293b",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "unclosed-group",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 56,
+                "path": "main.tex",
+                "start_byte": 50
+              }
+            },
+            {
+              "x_pt": 202.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 62,
+                "path": "main.tex",
+                "start_byte": 57
+              }
+            },
+            {
+              "x_pt": 235.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 70,
+                "path": "main.tex",
+                "start_byte": 63
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "30f621b07e32004860f6eac1284c7c210d98f0ba7e050cf44ce2a9fa22a8e7e7",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "Before.",
+          "encoded_hex": "4265666f72652e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 56,
+            "path": "main.tex",
+            "start_byte": 50
+          },
+          "runtime_text": "inside",
+          "encoded_hex": "696e73696465",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 62,
+            "path": "main.tex",
+            "start_byte": 57
+          },
+          "runtime_text": "Still",
+          "encoded_hex": "5374696c6c",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 4,
+          "source": {
+            "end_byte": 70,
+            "path": "main.tex",
+            "start_byte": 63
+          },
+          "runtime_text": "inside.",
+          "encoded_hex": "696e736964652e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "unicode-literals",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 46,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 144.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 53,
+                "path": "main.tex",
+                "start_byte": 47
+              }
+            },
+            {
+              "x_pt": 178.08,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 57,
+                "path": "main.tex",
+                "start_byte": 54
+              }
+            },
+            {
+              "x_pt": 187.44,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 65,
+                "path": "main.tex",
+                "start_byte": 58
+              }
+            },
+            {
+              "x_pt": 208.8,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 71,
+                "path": "main.tex",
+                "start_byte": 66
+              }
+            },
+            {
+              "x_pt": 242.16,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 80,
+                "path": "main.tex",
+                "start_byte": 72
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "2fd67eb97f9af8175ed4eae664ecb13eab6ff989225078ce79f4d850c90ce1aa",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": false,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 46,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "Café",
+          "encoded_hex": "436166e9",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 53,
+            "path": "main.tex",
+            "start_byte": 47
+          },
+          "runtime_text": "naïve",
+          "encoded_hex": "6e61ef7665",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 3,
+          "source": {
+            "end_byte": 57,
+            "path": "main.tex",
+            "start_byte": 54
+          },
+          "runtime_text": "—",
+          "encoded_hex": "97",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 4,
+          "source": {
+            "end_byte": 65,
+            "path": "main.tex",
+            "start_byte": 58
+          },
+          "runtime_text": "東京.",
+          "encoded_hex": "3f3f2e",
+          "substituted_codepoints": [
+            "U+6771",
+            "U+4EAC"
+          ],
+          "warning_evidence": [
+            "warning: page 1: item 4 \"東京.\": '東' (U+6771), '京' (U+4EAC) not representable in WinAnsiEncoding; written as '?'"
+          ],
+          "text_preserved": false
+        },
+        {
+          "page_number": 1,
+          "item_index": 5,
+          "source": {
+            "end_byte": 71,
+            "path": "main.tex",
+            "start_byte": 66
+          },
+          "runtime_text": "After",
+          "encoded_hex": "4166746572",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 6,
+          "source": {
+            "end_byte": 80,
+            "path": "main.tex",
+            "start_byte": 72
+          },
+          "runtime_text": "Unicode.",
+          "encoded_hex": "556e69636f64652e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    },
+    {
+      "case_id": "unknown-command",
+      "status": "pass",
+      "page_count": 1,
+      "xref_entries": 7,
+      "pages": [
+        {
+          "number": 1,
+          "media_box": [
+            0.0,
+            0.0,
+            612.0,
+            792.0
+          ],
+          "text_placements": [
+            {
+              "x_pt": 72.0,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 22,
+                "path": "main.tex",
+                "start_byte": 15
+              }
+            },
+            {
+              "x_pt": 117.36,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 48,
+                "path": "main.tex",
+                "start_byte": 41
+              }
+            },
+            {
+              "x_pt": 162.72,
+              "pdf_baseline_y_pt": 708.0,
+              "font_size_pt": 12.0,
+              "source": {
+                "end_byte": 79,
+                "path": "main.tex",
+                "start_byte": 73
+              }
+            }
+          ]
+        }
+      ],
+      "pdf_sha256": "bc7f8bac85e083c8c7e90e5e3db47c6f525d586893775987cc30ac64955915cb",
+      "unverified": [
+        "visual rendering",
+        "font embedding and glyph fidelity",
+        "math/diagram correctness",
+        "glyph ink/advance bounds",
+        "native display/export flow"
+      ],
+      "compiler_semantic_status": "unsupported",
+      "text_preserved": true,
+      "text_items": [
+        {
+          "page_number": 1,
+          "item_index": 0,
+          "source": {
+            "end_byte": 22,
+            "path": "main.tex",
+            "start_byte": 15
+          },
+          "runtime_text": "article",
+          "encoded_hex": "61727469636c65",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 1,
+          "source": {
+            "end_byte": 48,
+            "path": "main.tex",
+            "start_byte": 41
+          },
+          "runtime_text": "Before.",
+          "encoded_hex": "4265666f72652e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        },
+        {
+          "page_number": 1,
+          "item_index": 2,
+          "source": {
+            "end_byte": 79,
+            "path": "main.tex",
+            "start_byte": 73
+          },
+          "runtime_text": "After.",
+          "encoded_hex": "41667465722e",
+          "substituted_codepoints": [],
+          "warning_evidence": [],
+          "text_preserved": true
+        }
+      ],
+      "semantic_gate": "unsupported",
+      "limitations": "Consistency permits explicitly warned substitution. It never turns a failed/unsupported compiler case into semantic success; glyph appearance and native rendering remain unverified."
+    }
+  ]
+}

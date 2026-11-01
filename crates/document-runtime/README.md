@@ -33,17 +33,19 @@ are replaced here.
 
 ```sh
 cargo test --manifest-path crates/document-runtime/Cargo.toml
+FLASHTEX_TEST_COMPILER=/absolute/original/flashtex-compiler \
+  cargo test --manifest-path crates/document-runtime/Cargo.toml -- --include-ignored
 ```
 
-The optional real-compiler test, which compared persistent-process results
-against fresh-process results from the retired old engine's compiler binary,
-was deleted with that engine (engine-v2 retirement plan §1.6, S7).
+The optional real-compiler test compares three persistent-process results against
+fresh-process results including Unicode. It is a scoped equivalence check, not proof
+of full LaTeX compatibility, incremental cache reuse or universal pixel perfection.
 
 Replay a JSONL sequence of runtime-v1 complete project snapshots:
 
 ```sh
 cargo run --manifest-path crates/document-runtime/Cargo.toml --example replay -- \
-  /absolute/path/to/runtime-v1-compiler \
+  /absolute/original/flashtex-compiler \
   < crates/document-runtime/examples/edits.jsonl
 ```
 

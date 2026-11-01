@@ -1,0 +1,34 @@
+   Compiling flashtex-math-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/math-layout)
+   Compiling flashtex-pdf v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/pdf)
+   Compiling flashtex-paragraph-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/paragraph-layout)
+   Compiling flashtex-font-engine v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/font-engine)
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.47s
+     Running tests/starred_sections.rs (crates/compiler/target/debug/deps/starred_sections-33e835b4330b3a18)
+
+running 3 tests
+test starred_problem_macro_preserves_utf8_argument_spans ... FAILED
+test starred_sections_preserve_counters_and_previous_label_value ... FAILED
+test toggling_stars_matches_clean_compilation ... ok
+
+failures:
+
+---- starred_problem_macro_preserves_utf8_argument_spans stdout ----
+
+thread 'starred_problem_macro_preserves_utf8_argument_spans' (1801172) panicked at tests/starred_sections.rs:16:5:
+[Diagnostic { severity: Error, message: "\\subsection requires a braced argument", span: Some(Span { document: DocumentId(0), start: 45, end: 53 }), recovery: Some("used an empty argument and continued") }, Diagnostic { severity: Warning, message: "Times-Roman has no glyph for '日' (U+65E5)", span: Some(Span { document: DocumentId(0), start: 64, end: 67 }), recovery: Some("emitted the face's explicit .notdef glyph and continued") }, Diagnostic { severity: Warning, message: "Times-Roman has no glyph for '本' (U+672C)", span: Some(Span { document: DocumentId(0), start: 67, end: 70 }), recovery: Some("emitted the face's explicit .notdef glyph and continued") }, Diagnostic { severity: Warning, message: "Times-Roman has no glyph for '語' (U+8A9E)", span: Some(Span { document: DocumentId(0), start: 70, end: 73 }), recovery: Some("emitted the face's explicit .notdef glyph and continued") }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- starred_sections_preserve_counters_and_previous_label_value stdout ----
+
+thread 'starred_sections_preserve_counters_and_previous_label_value' (1801173) panicked at tests/starred_sections.rs:7:5:
+[Diagnostic { severity: Error, message: "\\section requires a braced argument", span: Some(Span { document: DocumentId(0), start: 27, end: 35 }), recovery: Some("used an empty argument and continued") }, Diagnostic { severity: Error, message: "\\subsection requires a braced argument", span: Some(Span { document: DocumentId(0), start: 59, end: 70 }), recovery: Some("used an empty argument and continued") }]
+
+
+failures:
+    starred_problem_macro_preserves_utf8_argument_spans
+    starred_sections_preserve_counters_and_previous_label_value
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test starred_sections`
