@@ -706,7 +706,8 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "includeonly", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "includeonly", "diag-v1",
+                  "viewport-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
@@ -813,6 +814,31 @@ keystroke's edit reaches the screen however fast the next one comes (lane
 LIVE-30MS). That `PAGE` comes after the newer `COMPILE` was sent and before
 the superseded compile's `DONE`; a client takes it like any other page. An `export` compile
 is killed as in 3.0.
+
+### 6.3.1 `VIEWPORT` (`viewport-v1`)
+
+Kind `0x09`, client to host, capability-gated: a client sends it only to a
+host whose `HELLO.capabilities` lists `viewport-v1`, and a host that does
+not know the kind ignores it, as it ignores any kind it does not know. It says which
+page the client shows now, between compiles:
+
+```json
+{"page": 412}
+```
+
+`page` is 0-based, as `COMPILE.viewport`. There is no reply, and it never
+starts a compile: the host records the page, and while no `COMPILE` waits it
+makes the engine's restart points around that page dense again (far from
+the last edit the host keeps fewer, lane MEMORY), so that the first keystroke
+there restarts close by. A `COMPILE` that arrives meanwhile stops that work
+at its next checkpoint and keeps what it did; the pages it typesets again
+are the ones the client holds, and are not sent. A client sends `VIEWPORT`
+when scrolling settles (about 150 ms after the last scroll), and at once
+after a jump (a search result, an outline click, a SyncTeX reveal), so that
+the host hears of the jump before the next key. It is cheap: sending it
+often costs the host a page's typesetting at most.
+
+(Kind `0x08` is the macOS app's `TRIM`, `trim-v1`, which no host here lists.)
 
 ### 6.4 Replies
 

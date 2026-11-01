@@ -401,6 +401,14 @@ impl Client {
         self.w.flush()
     }
 
+    /// Say which page the client shows (`VIEWPORT`, capability
+    /// `viewport-v1`, spec §6.3.1): no reply.
+    pub fn set_viewport(&mut self, page: u32) -> io::Result<()> {
+        let b = obj([("page", Json::Int(page as i64))]).to_string();
+        write_frame(&mut self.w, kind::C_VIEWPORT, b.as_bytes())?;
+        self.w.flush()
+    }
+
     pub fn bye(&mut self) -> io::Result<()> {
         write_frame(&mut self.w, kind::BYE, b"{}")?;
         self.w.flush()

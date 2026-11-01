@@ -216,6 +216,13 @@ pub(crate) enum Req {
         profile: crate::profile::Profile,
         reply: bool,
     },
+    /// `VIEWPORT` (capability `viewport-v1`, spec §6.3.1): the client shows
+    /// page `page` (0-based) now. Recorded, and the checkpoints around it
+    /// made dense while nothing waits (`Engine::viewport`); never a compile.
+    Viewport {
+        conn: Arc<Conn>,
+        page: usize,
+    },
     /// The external tools' worker is done (`super::external`).
     ToolsDone {
         gen: u64,
@@ -778,6 +785,7 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "buffers",
     "edits",
     "viewport",
+    "viewport-v1",
     "pages-status",
     "export",
     "external-tools",
@@ -971,6 +979,26 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                         None,
                         "request",
                         "PROFILE: profile is low-memory, balanced or high-performance",
+                    ),
+                }
+            }
+            kind::C_VIEWPORT => {
+                match j
+                    .as_ref()
+                    .and_then(|j| j.int_field("page"))
+                    .filter(|p| *p >= 0)
+                {
+                    Some(p) => {
+                        let _ = tx.send(Req::Viewport {
+                            conn: conn.clone(),
+                            page: p as usize,
+                        });
+                    }
+                    None => error(
+                        &out,
+                        None,
+                        "request",
+                        "VIEWPORT: page is a page index (0-based)",
                     ),
                 }
             }
