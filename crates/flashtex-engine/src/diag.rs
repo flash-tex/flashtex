@@ -1536,7 +1536,7 @@ mod tests {
             "c = self.eqtb[crate::ix::U((({ESCAPE_CHAR_LOC}i32) - 1) as usize)].int();"
         )));
         assert!(body("give_err_help")
-            .contains("self.eqtb[crate::ix::U(((err_help_loc) - 1) as usize)].hh().rh()"));
+            .contains("self.eqtb[crate::ix::U(((err_help_loc) - 1) as usize)].hh_rh()"));
         let sc = body("show_context");
         assert!(sc.contains(&format!(
             "self.eqtb[crate::ix::U((({END_LINE_CHAR_LOC}i32) - 1) as usize)].int()"
@@ -1546,7 +1546,7 @@ mod tests {
             "self.eqtb[crate::ix::U((({NEW_LINE_CHAR_LOC}i32) - 1) as usize)].int()"
         )));
         assert!(body("show_token_list")
-            .contains("if (self.mem[crate::ix::U((p) as usize)].hh().lh() >= cs_token_flag)"));
+            .contains("if (self.mem[crate::ix::U((p) as usize)].hh_lh() >= cs_token_flag)"));
     }
 
     #[test]
