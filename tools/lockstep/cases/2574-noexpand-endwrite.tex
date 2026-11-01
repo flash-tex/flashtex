@@ -1,0 +1,7 @@
+% 2574-noexpand-endwrite: \noexpand whose token is the \endwrite that ends a \write's text (\ifcat swallows the closing brace) reads it in mode 0, which TeX Live's unbalanced-braces.ch makes the fatal error "Unbalanced write command" before tex.ch [25.369] (TeX bug B155) could stop \noexpand marking it (pdftex.web §§357, 369, 1370)
+% lockstep: no-halt
+\input prelude
+\let\bgroup={ \let\egroup=}
+\immediate\write16{A\expandafter\noexpand\ifcat\egroup}\fi
+\message{not-reached}
+\end

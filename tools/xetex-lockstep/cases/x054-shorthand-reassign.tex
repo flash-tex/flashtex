@@ -1,0 +1,11 @@
+% x054-shorthand-reassign: xetex.ch [49.1222]: a shorthand definition of a \csname-made \relax reassigns (\tracingassigns)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\expandafter\let\csname a\endcsname\relax \chardef\a=1
+\csname b\endcsname \mathchardef\b="141 \csname c\endcsname \Umathchardef\c="1 "0 "41
+\csname d\endcsname \countdef\d=5 \csname e\endcsname \XeTeXmathchardef\e="1 "0 "42
+\message{[\meaning\a][\meaning\b][\meaning\c][\meaning\d][\meaning\e]}
+\setbox0=\hbox{}
+\lsshipbox0
+\end

@@ -1,0 +1,16 @@
+% p004-texlive-pictures: pictures found through kpathsea in TeX Live (mwe's example images: PNG, JPEG, PDF)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+\input prelude
+\def\space{ }
+\setbox0=\vbox{
+\hbox{\XeTeXpicfile example-image.png }
+\hbox{\XeTeXpicfile example-image-a.png width 1in }
+\hbox{\XeTeXpicfile example-image.jpg }
+\hbox{\XeTeXpicfile example-grid-100x100bp.jpg }
+\hbox{\XeTeXpdffile example-image.pdf }
+\hbox{\XeTeXpdffile example-image-golden.pdf scaled 500 }
+\hbox{\XeTeXpicfile example-grid-100x100pt.png rotated 30 }
+}
+\message{[\the\XeTeXpdfpagecount example-image.pdf ]}
+\lsshipbox0
+\end

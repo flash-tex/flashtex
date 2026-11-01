@@ -1,0 +1,55 @@
+# web2rust configuration for the BibTeX port (src/generated/).
+#
+# The program is TeX Live 2026's bibtex.web (third_party/bibtex/bibtex.web,
+# never edited) with TeX Live's own change file bibtex.ch (likewise
+# unmodified) and then changes/flashtex.ch, which says in web2rust's Pascal
+# what web2c's C does with bibtex.ch's C constructs. Regenerate with
+# scripts/bibtex-regenerate.sh; `cargo test -p flashtex-bibtex --test drift`
+# fails if src/generated/ does not match this file.
+
+--change third_party/bibtex/bibtex.ch
+--change crates/bibtex/changes/flashtex.ch
+
+# stat/tats empty: TeX Live builds BibTeX's statistics in.
+--stat
+
+# Arrays web2c allocates at run time and BibTeX grows (BIB_XRETALLOC): this
+# crate's word space (src/arena.rs) is a growable vector per array, so the
+# capacity web2rust asks for is only a starting reservation.
+--arena-cap name_of_file=0
+--arena-cap buffer=0
+--arena-cap sv_buffer=0
+--arena-cap ex_buf=0
+--arena-cap out_buf=0
+--arena-cap name_tok=0
+--arena-cap name_sep_char=0
+--arena-cap str_pool=0
+--arena-cap str_start=0
+--arena-cap hash_next=0
+--arena-cap hash_text=0
+--arena-cap hash_ilk=0
+--arena-cap ilk_info=0
+--arena-cap fn_type=0
+--arena-cap bib_list=0
+--arena-cap cite_list=0
+--arena-cap type_list=0
+--arena-cap entry_exists=0
+--arena-cap cite_info=0
+--arena-cap wiz_functions=0
+--arena-cap entry_ints=0
+--arena-cap entry_strs=0
+--arena-cap glb_str_ptr=0
+--arena-cap global_strs=0
+--arena-cap glb_str_end=0
+--arena-cap field_info=0
+--arena-cap lit_stack=0
+--arena-cap lit_stk_type=0
+--arena-cap s_preamble=0
+
+# BibTeX's input_ln is its own Pascal (bibtex.web section 47 with
+# bibtex.ch), not the TeX engines' hand-written one.
+--translate input_ln
+
+# The state outside the globals: the host (kpathsea, the directory), the
+# arguments and the captured terminal (src/system.rs).
+--host-state crate::system::State

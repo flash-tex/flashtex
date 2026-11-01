@@ -297,7 +297,8 @@ registered source directory's missing-face list remains visible to consumers.
 
 Acceptance evidence and app-only export reproduction commands are in
 [the temporary continuation report](../../../docs/evidence/opus-fonts-takeover-20260912T1800Z/README.md).
-`apps/mac/scripts/faces-acceptance.py` drives the actual app producer and exact
-exporter with host TeX and repository font reads denied. Use `--require-optical`
-with an optical-capable producer to require Roman8/Roman6 and refusal after
-Roman8 removal. A producer lacking these emitted faces is not optical coverage.
+`apps/mac/scripts/faces-acceptance.py`, which drove the app's bundled producer
+and exact exporter with host TeX and repository font reads denied, was deleted
+in retirement stage S6 with those helpers: the app no longer bundles
+`flashtex-render` or `flashtex-pdf-exact`, and its engine reads the fonts of
+TeX Live or the TeX bundle.

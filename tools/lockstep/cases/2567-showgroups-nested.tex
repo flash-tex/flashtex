@@ -1,0 +1,8 @@
+% 2567-showgroups-nested: \showgroups inside three nested group kinds prints one `###` line per level down to `### bottom level`, then `! OK.` (pdftex.web §§1675, 1677)
+% new versus 902-setbox-boxgroup-local-global: 902 observes box-group save and restore through later widths; here \showgroups lists the live group stack itself
+% lockstep: no-halt
+\input prelude
+{\setbox2=\hbox{\begingroup\showgroups\endgroup}}
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

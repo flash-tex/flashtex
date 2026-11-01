@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Launches a packaged FlashTeX.app, confirms it actually opened a window,
-# confirms the bundled flashtex-compiler AND flashtex-bridge each attached
-# (via FLASHTEX_LOG status lines and as child processes), kills each child in
-# turn to exercise crash recovery, and asserts the app itself survives and
-# logs each recovery.
+# confirms the bundled engine host (Contents/Helpers/flashtex-host) AND
+# flashtex-bridge each started (via FLASHTEX_LOG lines and as child
+# processes), kills each child in turn to exercise crash recovery, and asserts
+# the app itself survives and logs each recovery. On a Mac with no TeX Live
+# the engine waits for the TeX files' download consent instead of starting
+# its host; that is noted, and the host checks are skipped.
 #
 # Usage: apps/mac/scripts/launch-check.sh [--app <path to .app> | --dmg <path to .dmg>]
 #                                          [--evidence <file>]
@@ -187,16 +189,8 @@ else
 fi
 
 # --- 2. Launch --------------------------------------------------------------
-COMPILER_IN_BUNDLE="$APP_DIR/Contents/MacOS/flashtex-compiler"
-RENDER_IN_BUNDLE="$APP_DIR/Contents/MacOS/flashtex-render"
+HOST_IN_BUNDLE="$APP_DIR/Contents/Helpers/flashtex-host"
 BRIDGE_IN_BUNDLE="$APP_DIR/Contents/MacOS/flashtex-bridge"
-if [[ -x "$RENDER_IN_BUNDLE" ]]; then
-  PRODUCER_NAME="flashtex-render"
-  PRODUCER_IN_BUNDLE="$RENDER_IN_BUNDLE"
-else
-  PRODUCER_NAME="flashtex-compiler"
-  PRODUCER_IN_BUNDLE="$COMPILER_IN_BUNDLE"
-fi
 LOG_FILE="$WORK_DIR/flashtex.log"
 : > "$LOG_FILE"
 step "Launching $APP_DIR"
@@ -205,13 +199,14 @@ if [[ "$PIDS_BEFORE" != "  " ]]; then
   note "other FlashTeX instance(s) already running (pids:$PIDS_BEFORE) — left untouched; a new instance is launched with open -n"
 fi
 OPEN_ENV=(--env "FLASHTEX_NO_ACTIVATE=$NO_ACTIVATE" --env "FLASHTEX_LOG=$LOG_FILE")
-if [[ -x "$PRODUCER_IN_BUNDLE" || -x "$BRIDGE_IN_BUNDLE" ]]; then
+if [[ -x "$BRIDGE_IN_BUNDLE" ]]; then
   open -n "${OPEN_ENV[@]}" --env FLASHTEX_AUTOATTACH=1 "$APP_DIR"
-  note "bundled producer/bridge present; launched with open -n --env FLASHTEX_NO_ACTIVATE=$NO_ACTIVATE --env FLASHTEX_AUTOATTACH=1 --env FLASHTEX_LOG=$LOG_FILE"
+  note "bundled bridge present; launched with open -n --env FLASHTEX_NO_ACTIVATE=$NO_ACTIVATE --env FLASHTEX_AUTOATTACH=1 --env FLASHTEX_LOG=$LOG_FILE"
 else
   open -n "${OPEN_ENV[@]}" "$APP_DIR"
-  note "launched with open -n --env FLASHTEX_NO_ACTIVATE=$NO_ACTIVATE --env FLASHTEX_LOG=$LOG_FILE; no bundled producer/flashtex-bridge in $APP_DIR/Contents/MacOS; rebuild with 'make-app.sh --render <path> --compiler <path> --bridge <path>' to exercise the attach/kill/log checks below"
+  note "launched with open -n --env FLASHTEX_NO_ACTIVATE=$NO_ACTIVATE --env FLASHTEX_LOG=$LOG_FILE; no bundled flashtex-bridge in $APP_DIR/Contents/MacOS"
 fi
+[[ -x "$HOST_IN_BUNDLE" ]] || fail "no engine host at $HOST_IN_BUNDLE (make-app.sh --require-engine-host)"
 
 # The launched instance is the new FlashTeX pid whose executable lives inside
 # the bundle under test.
@@ -253,55 +248,68 @@ else
   note "window not confirmed via CGWindowList (probe unavailable, headless session, or timed out)"
 fi
 
-# --- 4. Confirm the preferred bundled producer attached (log + child process)
-PRODUCER_PID=""
-if [[ -x "$PRODUCER_IN_BUNDLE" ]]; then
-  step "Checking for a $PRODUCER_NAME child of pid $APP_PID"
-  for _ in $(seq 1 10); do
-    PRODUCER_PID="$(pgrep -P "$APP_PID" -x "$PRODUCER_NAME" || true)"
-    [[ -n "$PRODUCER_PID" ]] && break
+# --- 4. Confirm the engine host started (log + child process) ----------------
+# The preview starts its session when the window appears (EngineV3Preview.swift):
+# `engine-v3: starting <host>`, or, with no TeX Live and the TeX files not yet
+# downloaded, `engine-v3: waiting for the TeX files' download consent`.
+HOST_PID=""
+HOST_STARTED=0
+if [[ -x "$HOST_IN_BUNDLE" ]]; then
+  step "Checking FLASHTEX_LOG for the engine session"
+  waited=0
+  while (( waited < 20 )); do
+    if grep -qF "engine-v3: starting " "$LOG_FILE" 2>/dev/null; then HOST_STARTED=1; break; fi
+    if grep -qF "engine-v3: waiting for the TeX files' download consent" "$LOG_FILE" 2>/dev/null; then HOST_STARTED=2; break; fi
+    sleep 1; waited=$((waited + 1))
+  done
+  if [[ "$HOST_STARTED" -eq 1 ]]; then
+    note "log shows the engine host starting within ${waited}s"
+  elif [[ "$HOST_STARTED" -eq 2 ]]; then
+    note "no TeX Live: the engine waits for the TeX files' download consent (host checks skipped)"
+  else
+    fail "no 'engine-v3: starting' (or download-consent) line in $LOG_FILE within 20s"
+  fi
+fi
+if [[ "$HOST_STARTED" -eq 1 ]]; then
+  step "Checking for a flashtex-host child of pid $APP_PID"
+  for _ in $(seq 1 20); do
+    HOST_PID="$(pgrep -P "$APP_PID" -x flashtex-host || true)"
+    [[ -n "$HOST_PID" ]] && break
     sleep 0.5
   done
-  if [[ -n "$PRODUCER_PID" ]]; then
-    note "$PRODUCER_NAME attached, pid=$PRODUCER_PID (child of $APP_PID)"
+  if [[ -n "$HOST_PID" ]]; then
+    note "flashtex-host started, pid=$HOST_PID (child of $APP_PID)"
   else
-    fail "no $PRODUCER_NAME child process found under pid $APP_PID within 5s"
-  fi
-
-  step "Checking FLASHTEX_LOG for an 'attached:' status line"
-  if wait_for_log "status: attached:" 10; then
-    note "log shows an 'attached:' status line within 10s"
-  else
-    fail "no 'status: attached:' line in $LOG_FILE within 10s"
-  fi
-
-  step "Checking FLASHTEX_LOG for 'revision 1: ok' (auto-compile completed)"
-  if wait_for_log "revision 1: ok" 10; then
-    note "log shows 'revision 1: ok' within 10s"
-  else
-    fail "no 'revision 1: ok' line in $LOG_FILE within 10s"
+    fail "no flashtex-host child process found under pid $APP_PID within 10s"
   fi
 fi
 
-# --- 5. Kill the producer child and assert the app survives and logs it -----
-if [[ -n "$PRODUCER_PID" ]]; then
-  step "Killing $PRODUCER_NAME (pid $PRODUCER_PID) and checking app survival"
-  kill "$PRODUCER_PID"
+# --- 5. Kill the host child and assert the app survives and restarts it ------
+if [[ -n "$HOST_PID" ]]; then
+  step "Killing flashtex-host (pid $HOST_PID) and checking app survival"
+  kill "$HOST_PID"
   sleep 2
   if kill -0 "$APP_PID" 2>/dev/null; then
-    note "FlashTeX (pid $APP_PID) is still running after its producer child was killed"
+    note "FlashTeX (pid $APP_PID) is still running after its engine host was killed"
   else
-    fail "FlashTeX (pid $APP_PID) exited after its producer child was killed"
+    fail "FlashTeX (pid $APP_PID) exited after its engine host was killed"
   fi
-  if ! kill -0 "$PRODUCER_PID" 2>/dev/null; then
-    note "$PRODUCER_NAME (pid $PRODUCER_PID) confirmed gone"
+  if ! kill -0 "$HOST_PID" 2>/dev/null; then
+    note "flashtex-host (pid $HOST_PID) confirmed gone"
   fi
 
-  step "Checking FLASHTEX_LOG for a 'worker exited (' status line"
-  if wait_for_log "worker exited (" 5; then
-    note "log shows a 'worker exited (' status line within 5s"
+  step "Checking FLASHTEX_LOG for the host's exit and restart"
+  if wait_for_log "engine-v3: host $HOST_PID exited with status" 5; then
+    note "log shows the host's exit within 5s"
   else
-    fail "no 'worker exited (' line in $LOG_FILE within 5s"
+    fail "no 'engine-v3: host $HOST_PID exited with status' line in $LOG_FILE within 5s"
+  fi
+  if wait_for_log "engine-v3: restarting the host" 5; then
+    note "log shows the host restarting within 5s"
+  elif grep -qF "format could not be prepared" "$LOG_FILE" 2>/dev/null; then
+    note "the host had failed to prepare its format (no TeX here), so it is not restarted, by design"
+  else
+    fail "no 'engine-v3: restarting the host' line in $LOG_FILE within 5s"
   fi
 fi
 
@@ -414,9 +422,7 @@ if [[ -n "$EVIDENCE_FILE" ]]; then
     echo "App: $APP_DIR"
     [[ -n "$DMG_PATH" ]] && echo "DMG: $DMG_PATH"
     echo "FLASHTEX_NO_ACTIVATE: $NO_ACTIVATE"
-    echo "Compiler bundled: $([[ -x "$COMPILER_IN_BUNDLE" ]] && echo yes || echo no)"
-    echo "Render pipeline bundled: $([[ -x "$RENDER_IN_BUNDLE" ]] && echo yes || echo no)"
-    echo "Preferred producer: $PRODUCER_NAME"
+    echo "Engine host bundled: $([[ -x "$HOST_IN_BUNDLE" ]] && echo yes || echo no)"
     echo "Bridge bundled: $([[ -x "$BRIDGE_IN_BUNDLE" ]] && echo yes || echo no)"
     echo
     printf '%s\n' "${REPORT_LINES[@]}"

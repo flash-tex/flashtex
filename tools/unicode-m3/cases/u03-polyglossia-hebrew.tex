@@ -1,0 +1,20 @@
+% Unicode corpus (M3): polyglossia with Hebrew (right to left, bidi),
+% Culmus David CLM by file name.
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{LibertinusSerif}[Extension=.otf, UprightFont=*-Regular,
+  BoldFont=*-Bold, ItalicFont=*-Italic, BoldItalicFont=*-BoldItalic]
+\newfontfamily\hebrewfont{DavidCLM}[Script=Hebrew, Extension=.otf,
+  UprightFont=*-Medium, BoldFont=*-Bold, ItalicFont=*-MediumItalic,
+  BoldItalicFont=*-BoldItalic]
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{hebrew}
+\begin{document}
+English first, then Hebrew inline: \texthebrew{שלום עולם}, and back.
+
+\begin{hebrew}
+זהו טקסט בעברית עם מספרים 123 ו\textbf{הדגשה}. משפט שני, ארוך יותר, כדי
+שהפסקה תתפרס על פני יותר משורה אחת ותיבדק שבירת השורות מימין לשמאל.
+\end{hebrew}
+\end{document}

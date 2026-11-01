@@ -90,6 +90,35 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(rows['plain-10 split@middle'].get('warning'), 'no baseline row')
 
 
+class TypingTests(unittest.TestCase):
+    """typing@ rows: dl3-keys --interval-ms lines (key, edited_page_ms, by) and DONE lines."""
+
+    def phase(self, by, unpainted=0):
+        def done(i, status='ok'):
+            return dict(id=i, status=status, first_page_ms=9.0,
+                        stages=dict(queue=1.0 + i % 3, first_page_cpu=7.0))
+        dones = [done(i, 'ok' if i in by else 'cancelled') for i in range(10, 10 + len(by) + unpainted)]
+        keys = [dict(key=k, edited_page_ms=10.0 + k, by=b) for k, b in enumerate(by)]
+        return dict(keys=keys, dones=dones, summary=dict(unpainted=unpainted, interval_ms=100),
+                    load=[1.0, 1.0])
+
+    def test_every_keystroke_its_own_page(self):
+        r = t7.typing_row(dict(doc='d', pages=5), 'typing@100ms', self.phase([10, 11, 12, 13]))
+        self.assertEqual((r['n'], r['missing'], r['not_own']), (3, 0, 0))  # keystroke 0 is the warm-up
+        self.assertEqual(r['ms']['max'], 13.0)
+        self.assertEqual((r['off_cpu']['p50'], r['off_cpu']['max']), (0.0, 1.0))  # 9 - queue (3, 1, 2) - 7, never < 0
+        self.assertEqual(t7.verdict([r], None), ['d typing@100ms: max 13.0 ms > 11 ms'])
+
+    def test_keystrokes_painted_by_a_later_compile(self):
+        # keystrokes 1 and 2 were painted by compile 13 (keystroke 3's), keystroke 4 never
+        r = t7.typing_row(dict(doc='d', pages=5), 'typing@100ms', self.phase([10, 13, 13, 13], unpainted=1))
+        self.assertEqual((r['n'], r['missing'], r['not_own']), (4, 1, 2))
+        r['ms'] = t7.stats([1.0] * 3)
+        why = '; '.join(t7.verdict([r], None))
+        self.assertIn('1 of 4 without the watched page', why)
+        self.assertIn('2 of 4 keystrokes not painted by their own compile', why)
+
+
 class ReferenceTests(unittest.TestCase):
     def state(self, **kw):
         s = dict(source='AC', battery_pct=100, low_power_mode=False, thermal='', thermal_limited=False,
@@ -110,6 +139,14 @@ class ReferenceTests(unittest.TestCase):
         self.assertIn('thermal limit at end: CPU_Speed_Limit = 80', issues)
         self.assertIn('load1 up to 7.5 (> 5.0)', issues)
 
+    def test_cpu_quota_throttling(self):
+        before = self.state(cpu_throttle={'user.slice/x.slice': [100, 10, 5_000_000], 'a/b': [5, 0, 0]})
+        after = self.state(cpu_throttle={'user.slice/x.slice': [700, 410, 25_000_000], 'a/b': [9, 0, 0]})
+        issues = t7.reference_issues(dict(power=dict(before=before, after=after)), [dict(load=[1.0, 1.0])])
+        self.assertEqual(issues, ['CPU quota of x.slice throttled 400 of 600 periods (20.0 s stopped)'])
+        quiet = self.state(cpu_throttle={'user.slice/x.slice': [100, 10, 5_000_000]})
+        self.assertEqual(t7.reference_issues(dict(power=dict(before=quiet, after=quiet)), [dict(load=[1.0, 1.0])]), [])
+
     def test_exit_codes(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.exit_codes()
@@ -123,6 +160,89 @@ class ReferenceTests(unittest.TestCase):
         plain['raw'] = plain['raw'][:1]
         self.assertEqual(t7.report(plain, None, None, False)[0], 0)  # plain-10 passes
         self.assertEqual(t7.report(plain, None, None, True)[0], 3)  # but its power was not recorded
+
+
+class EditLocationTests(unittest.TestCase):
+    """Beamer decks give their edit lines (genbeamer.py's t7.json): dl3-keys gets --line/--page."""
+
+    def test_located_replaces_at(self):
+        lines = {0.02: (20, 2), 0.5: (21, 2), 0.98: (27, 3)}
+        self.assertEqual(t7.located(['--kind', 'letter', '--at', '0.5', '--interval-ms', '50'], lines),
+                         ['--kind', 'letter', '--line', '21', '--page', '2', '--interval-ms', '50'])
+        self.assertEqual(t7.located(['--kind', 'sentence', '--at', '0.98'], lines)[2:], ['--line', '27', '--page', '3'])
+        self.assertEqual(t7.located(['--kind', 'letter', '--at', '0.5'], None), ['--kind', 'letter', '--at', '0.5'])
+
+    def test_generated_decks(self):
+        import tempfile
+        import genbeamer
+        with tempfile.TemporaryDirectory() as d:
+            sys_argv, sys.argv = sys.argv, ['genbeamer.py', d]
+            try:
+                genbeamer.main()
+            finally:
+                sys.argv = sys_argv
+            for doc in ('beamer-5', 'beamer-30'):
+                lines = t7.edit_lines(f'{d}/docs/{doc}')
+                text = open(f'{d}/docs/{doc}/main.tex').read()
+                src = text.split('\n')
+                self.assertEqual(sorted(lines), [0.02, 0.5, 0.98])
+                for line, _ in lines.values():
+                    words = src[line - 1].split()
+                    self.assertTrue(sum(1 for w in words if len(w) >= 4 and w.isalpha() and w.islower()) >= 2, src[line - 1])
+                at = t7.body_line(text, 0.5, lines[0.5][0])
+                self.assertTrue(text[at - 1].isalpha() and text[at].isalpha())  # inside the line's second word
+            self.assertEqual(text.count('\\begin{frame}'), 30)
+
+
+class HarnessErrorTests(unittest.TestCase):
+    """A dl3-keys failure ends its document only (the M5 Pro run of 2026-10-14 lost infdesc's eleven
+    measured phases to its preamble phase's failure): the phases that ran are kept and summarised."""
+
+    class FakeHost:
+        startup, ready_ms, killed_at_limit = None, 1.0, False
+
+        def __init__(self, *args):
+            pass
+
+        def settle_saves(self, **kw):
+            pass
+
+        def stop(self):
+            return 100 << 20
+
+    def test_failure_keeps_earlier_phases(self):
+        import tempfile
+        import types
+        key = dict(edited_page_ms=5.0, first_page_ms=5.0, done_ms=9.0, complete=True,
+                   host=dict(converged_at=3, typeset_pages=2, mode='incremental'))
+        calls = []
+
+        def keys(eng, sock, work, args, out, timeout):
+            calls.append(args)
+            if len(calls) > 1:
+                raise RuntimeError('dl3-keys --kind letter: exit 1: dl3-keys: no prose line on one page')
+            return [dict(key=k, **key) for k in range(4)], 'dl3-keys: 10 pages'
+
+        saved = (t7.Host, t7.keys, t7.IB)
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f'{d}/docs/doc-a')
+            open(f'{d}/docs/doc-a/main.tex', 'w').write('x\n')
+            os.makedirs(f'{d}/out/raw')
+            t7.Host, t7.keys, t7.IB = self.FakeHost, keys, d
+            try:
+                a = types.SimpleNamespace(order='fixed', seed=7, phases=t7.PHASE_NAMES, preamble=2,
+                                          typing_keys=4, keys=4, gap_ms=0, timeout=10, host_args='', reopen=3)
+                res = t7.run_doc(a, f'{d}/eng', 'doc-a', f'{d}/out', 0)
+            finally:
+                t7.Host, t7.keys, t7.IB = saved
+        self.assertIn('no prose line', res['error'])
+        self.assertEqual(list(res['phases']), ['letter@start'])
+        self.assertEqual(res['reopen'], [])
+        self.assertEqual(res['rss_peak'], 100 << 20)
+        rows = t7.summarise([res])
+        self.assertEqual([(r['doc'], r['edit'], r['n']) for r in rows], [('doc-a', 'letter@start', 3)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(t7.report(dict(raw=[res], error=res['error']), None, None, False)[0], 2)
 
 
 if __name__ == '__main__':

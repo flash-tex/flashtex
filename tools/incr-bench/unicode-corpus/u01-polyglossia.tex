@@ -1,0 +1,35 @@
+% u01-polyglossia: polyglossia with three languages and scripts (Latin,
+% Greek, Cyrillic) in TeX Live's fonts, hyphenation per language
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguages{french,greek,russian}
+\setmainfont{Libertinus Serif}
+\begin{document}
+\section{Languages}
+This paragraph is in English, with its own hyphenation patterns and the
+usual spacing after a full stop. It goes on long enough for the line breaker
+to hyphenate a word or two in a narrow measure of text.
+
+\begin{french}
+Ce paragraphe est en français : la ponctuation haute prend une espace
+fine insécable, et les guillemets « comme ceci » aussi. La césure suit les
+règles du français dans une mesure assez étroite.
+\end{french}
+
+\begin{greek}
+Αυτή η παράγραφος είναι στα ελληνικά, με τους δικούς της κανόνες
+συλλαβισμού και τη σωστή στίξη· το κείμενο συνεχίζεται αρκετά ώστε να
+χωριστεί σε γραμμές.
+\end{greek}
+
+\begin{russian}
+Этот абзац написан по-русски, с русскими правилами переноса и
+типографики. Текст продолжается достаточно долго, чтобы разбиться на
+несколько строк.
+\end{russian}
+
+Back in English: \textfrench{une citation}, \textgreek{μια φράση} and
+\textrussian{фраза} inline.
+\end{document}

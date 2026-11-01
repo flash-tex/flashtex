@@ -7,8 +7,8 @@ import XCTest
 /// diagnostic reported by a new compile result is answered from memory
 /// without a helper request; any change in text, message, range, recovery or
 /// severity misses and is fetched as before. The fetch-or-reuse decision is
-/// driven here exactly as the `ShellModel.fetchExplanations` hook does it
-/// (parent diff in coordination/mac-ai-review-2.md).
+/// driven here the way the former `ShellModel.fetchExplanations` hook drove
+/// it (parent diff in coordination/mac-ai-review-2.md).
 @MainActor
 final class ExplanationMemoTests: XCTestCase {
     typealias Explanation = EditorDiagnostics.Explanation
@@ -84,11 +84,11 @@ final class ExplanationMemoTests: XCTestCase {
         XCTAssertEqual(small.recall(for: result([diag("m4", 4)]), documents: docs)?.first?.title, "e4")
     }
 
-    /// The cache's fetch-or-reuse decision as the model hook makes it: the
-    /// first result is fetched (decoded once from the crate-shaped reply), a
-    /// later result with the same diagnostics for the same text is filled
-    /// from the memo with no helper request, and the per-result eviction
-    /// never forgets what was explained.
+    /// The cache's fetch-or-reuse decision: the first result is fetched
+    /// (decoded once from the crate-shaped reply), a later result with the
+    /// same diagnostics for the same text is filled from the memo with no
+    /// helper request, and the per-result eviction never forgets what was
+    /// explained.
     func testReuseFillsANewResultWithoutAFetchAndSurvivesPerResultEviction() throws {
         let text = try String(contentsOf: EditorDiagnosticsExplanationsTests.samples.appendingPathComponent("recovery-demo.tex"), encoding: .utf8)
         let docs = [RuntimeV1.Document(path: "main.tex", text: text)]
@@ -97,7 +97,7 @@ final class ExplanationMemoTests: XCTestCase {
         var cache = EditorDiagnostics.ExplanationCache(maxResults: 2)
         var helperRequests = 0
         func compileArrived(_ id: String, _ res: RuntimeV1.CompileResult, _ documents: [RuntimeV1.Document]) {
-            // ShellModel.fetchExplanations with the hook applied:
+            // The fetch-or-reuse decision with the memo applied:
             guard cache[id] == nil else { return }
             if cache.reuse(for: id, result: res, documents: documents) { return }
             helperRequests += 1 // the client would run here; its reply is stored with the result

@@ -590,6 +590,14 @@ final class LineNumberGutter: NSRulerView {
         needsDisplay = true
     }
 
+    /// Redraws after an edit that moved lines (SourceEditorView's
+    /// textDidChange, CompletingTextView's edit tail); counted for tests.
+    private(set) var editRedraws = 0
+    func redrawAfterEdit() {
+        editRedraws += 1
+        needsDisplay = true
+    }
+
     init(scrollView: NSScrollView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         clientView = scrollView.documentView
@@ -762,10 +770,10 @@ final class LineNumberGutter: NSRulerView {
 final class HoverController: NSResponder {
     static let delay: TimeInterval = 0.45
     var info: (Int) -> EditorIntelligence.QuickInfo? = { _ in nil }
-    /// Inline math preview (MathHoverPreview.swift): the formula's cropped
+    /// Inline math preview (EngineV3MathHover.swift): the formula's cropped
     /// bitmap and its range, when `index` is inside one. Tried before `info`,
     /// so a formula's crop wins over a command's quick info inside it (e.g.
-    /// `\alpha`); the owner's closure already applies `previewIsStale` and
+    /// `\alpha`); the owner's closure already applies the staleness and
     /// the "reads only the current bitmap" rule, so nil here just means "no
     /// preview" — hover falls back to `info`.
     var mathPreview: (Int) -> (image: CGImage, range: NSRange)? = { _ in nil }
@@ -857,7 +865,7 @@ final class HoverController: NSResponder {
 
     /// Records a presented math preview for `presentedMathPreviews` (evidence
     /// for tests); `presentedMathPreviews`'s setter is file-private, so
-    /// `presentMathPreview(_:range:in:)` (MathHoverPreview.swift) goes through this.
+    /// `presentMathPreview(_:range:in:)` (EngineV3MathHover.swift) goes through this.
     func recordMathPreview(_ range: NSRange) {
         presentedMathPreviews.append(range)
         if presentedMathPreviews.count > 32 { presentedMathPreviews.removeFirst(presentedMathPreviews.count - 32) }

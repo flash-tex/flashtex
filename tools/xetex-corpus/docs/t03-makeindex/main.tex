@@ -1,0 +1,12 @@
+% imakeidx: an index (makeindex), with Unicode index entries
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyrepagella}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage{imakeidx}
+\makeindex
+\begin{document}
+\section{Text}
+Typography\index{typography} is an art\index{art}. The café\index{café} serves naïve\index{naïve}
+customers. Kerning\index{typography!kerning} and leading\index{typography!leading} matter.
+\printindex
+\end{document}

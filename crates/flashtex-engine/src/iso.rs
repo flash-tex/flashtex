@@ -44,10 +44,370 @@ const LO_MEM_STAT_MAX: i32 = 19; // fil_neg_glue + glue_spec_size - 1
 
 // node sizes with SyncTeX's two words (changes/synctex.ch)
 const SYNCTEX_FIELD_SIZE: i32 = 2;
+// changes/lineshift.ch's `ls_cond_size`: conditionals whose line's file is
+// known
+const LS_COND_SIZE: i32 = 1000;
 const BOX_NODE_SIZE: i32 = crate::generated::consts::box_node_size;
 const RULE_NODE_SIZE: i32 = crate::generated::consts::rule_node_size;
 const MEDIUM_NODE_SIZE: i32 = crate::generated::consts::medium_node_size;
 const EMPTY_FLAG: i32 = 268_435_455;
+
+thread_local! {
+    /// `align_by_words`: the alignment preamble is compared by its words.
+    static ALIGN_BY_WORDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// `with_dormant`: the dormant input level (-1: none).
+    static DORMANT: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+    /// The differing mem words the last `Iso::check` found only in dead
+    /// cells (`garbage`).
+    static DEAD_CELLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The differing mem words the last successful `Iso::check` accepted only
+/// because they lie in dead cells (0: none; `garbage`).
+pub fn last_dead_cells() -> usize {
+    DEAD_CELLS.with(|c| c.get())
+}
+
+/// The dead-cell rule (`garbage`) is on unless `FLASHTEX_NO_DEAD_CELLS` is
+/// set (an A/B switch for the convergence tests).
+pub fn dead_cells_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_NO_DEAD_CELLS").is_none())
+}
+
+/// The dead cells of one state (INFDESC-883): the allocated cells (neither
+/// free nor reached by the walk, `cov`) that nothing can read again.
+///
+/// TeX leaks memory: pdfTeX discards some node lists without freeing them
+/// (on *Infinite Descent* about 7,000 cells over a run with its `.aux`,
+/// end-of-line `\rightskip` glue among them), and such a cell is never
+/// read again: TeX reaches `mem` only through pointers from its roots, and
+/// a leaked cell is on no free list. After an edit the restarted run
+/// allocates at other addresses than the old run, so a cell it leaks later
+/// differs from the old run's word there, which the walk cannot explain:
+/// without this rule every later convergence test failed and the run
+/// typeset the document to its end.
+///
+/// The walk's root model is complete (`Iso::roots`); this guards against a
+/// root it lacks anyway. A cell is dead only if no word outside what the
+/// walk interprets points into it, directly or through other unreached
+/// cells: every unreached cell such a word points at is live, as are the
+/// unreached cells after it up to the largest node's size (`NODE_SPAN`: a
+/// node's later words hold pointers too), and so is everything a live
+/// unreached cell's words point at, to a fixed point. The words scanned are
+/// every array the walk does not interpret (`walked_region`)
+/// that may hold a pointer by pdftex.web's types and uses (`plain_data`
+/// lists those that cannot: strings, font, hyphenation and line-breaking
+/// tables, buffers, `eqtb`'s integers and dimensions, object numbers, the
+/// intrinsics' bookkeeping, stacks used within one command); a
+/// stray integer equal to such an address makes the cells live, so the
+/// rule errs only on the side of failing a test. The remaining trust is
+/// the walk's own node model: a reached node's pointer fields are followed.
+/// `FLASHTEX_DEAD_CELLS_VERIFY` checks the rule against live runs.
+fn garbage<S: Space>(
+    regions: &[crate::arena::RegionInfo],
+    s: &St<'_, S>,
+    cov: &[u64],
+    free: &[u64],
+    slots: &[ScalarSlot],
+    why_p: Option<i32>,
+) -> Vec<u64> {
+    let words = (MEM_TOP as usize + 64) / 64 + 1;
+    let mut unr = vec![0u64; words];
+    let (lo_max, hi_min, end) = (s.sc("lo_mem_max"), s.sc("hi_mem_min"), s.sc("mem_end"));
+    let in_range = |p: i32| (MEM_BOT..=lo_max).contains(&p) || (hi_min..=end).contains(&p);
+    let mut any = false;
+    for p in (MEM_BOT..=lo_max.min(MEM_TOP)).chain(hi_min.max(0)..=end.min(MEM_TOP)) {
+        if !bit(cov, p) && !bit(free, p) {
+            set(&mut unr, p);
+            any = true;
+        }
+    }
+    if !any {
+        return unr;
+    }
+    let is_unr = |p: i32| in_range(p) && (MEM_BOT..=MEM_TOP).contains(&p) && bit(&unr, p);
+    // the unreached cells words outside the walk point at
+    let mut live = vec![0u64; words];
+    // (cell, how many cells after it are still the node's)
+    let mut todo: Vec<(i32, i32)> = vec![];
+    // (`why_p`: say why that cell is live)
+    let mut parent: HashMap<i32, (i32, String)> = HashMap::new();
+    let mark = |p: i32,
+                span: i32,
+                from: i32,
+                what: &dyn Fn() -> String,
+                live: &mut Vec<u64>,
+                todo: &mut Vec<(i32, i32)>,
+                parent: &mut HashMap<i32, (i32, String)>| {
+        if !bit(live, p) {
+            set(live, p);
+            todo.push((p, span));
+            if why_p.is_some() {
+                parent.insert(p, (from, what()));
+            }
+        }
+    };
+    for r in regions {
+        // (the scalars: the walk's roots are pdftex.web's pointer globals,
+        // `ROOT_SCALARS`, and those it holds dead, `DEAD_SCALARS`; the
+        // others hold integers, and a counter equal to a cell's address,
+        // `max_param_stack` = 79, made every cell after it live)
+        if r.name == "mem" || r.name == "(scalars)" || walked_region(r.name) || plain_data(r.name) {
+            continue;
+        }
+        let mut k = 0;
+        while k + 4 <= r.bytes {
+            let off = r.off + k;
+            let rel = k;
+            k += 4;
+            let w = s.sp.word(off & !7);
+            let v = (w >> ((off & 7) * 8)) as u32 as i32;
+            if is_unr(v) {
+                let what = || {
+                    if r.name == "(scalars)" {
+                        slots
+                            .iter()
+                            .rev()
+                            .find(|x| x.off <= rel)
+                            .map_or(String::new(), |x| x.name.to_string())
+                    } else {
+                        format!(
+                            "{}[{}]+{}",
+                            r.name,
+                            rel / r.elem.max(1),
+                            rel % r.elem.max(1)
+                        )
+                    }
+                };
+                mark(v, NODE_SPAN, -1, &what, &mut live, &mut todo, &mut parent);
+            }
+        }
+    }
+    // to a fixed point: the rest of a live cell's node, and what its words
+    // point at (both halves; a one-word node's info half is a token or a
+    // character, not a pointer)
+    while let Some((p, span)) = todo.pop() {
+        if span > 1 && p < hi_min && p < MEM_TOP && is_unr(p + 1) {
+            mark(
+                p + 1,
+                span - 1,
+                p,
+                &|| "next".into(),
+                &mut live,
+                &mut todo,
+                &mut parent,
+            );
+        }
+        let w = s.mem(p);
+        let (rh, lh) = (w as u32 as i32, (w >> 32) as u32 as i32);
+        if is_unr(rh) {
+            mark(
+                rh,
+                NODE_SPAN,
+                p,
+                &|| "rh".into(),
+                &mut live,
+                &mut todo,
+                &mut parent,
+            );
+        }
+        if p < hi_min && is_unr(lh) {
+            mark(
+                lh,
+                NODE_SPAN,
+                p,
+                &|| "lh".into(),
+                &mut live,
+                &mut todo,
+                &mut parent,
+            );
+        }
+    }
+    if let Some(q) = why_p {
+        if bit(&unr, q) {
+            let mut chain = vec![];
+            let mut c = q;
+            let mut steps = 0;
+            while let Some((from, what)) = parent.get(&c) {
+                chain.push(format!("{c}<-{what}"));
+                steps += 1;
+                if *from < 0 || steps > 100_000 {
+                    break;
+                }
+                c = *from;
+            }
+            let n = chain.len();
+            let short: Vec<&String> = chain
+                .iter()
+                .take(4)
+                .chain(chain.iter().skip(n.saturating_sub(6)))
+                .collect();
+            eprintln!(
+                "cell {q}: {} ({n} steps): {short:?}",
+                if bit(&live, q) { "live" } else { "dead" }
+            );
+        } else {
+            eprintln!("cell {q}: not unreached in this state");
+        }
+    }
+    for (u, l) in unr.iter_mut().zip(&live) {
+        *u &= !l;
+    }
+    unr
+}
+
+/// The most words a node takes (pdfTeX's largest, a `\pdfstartlink` or
+/// `\pdfannot` whatsit, with SyncTeX's two): a pointer into an unreached
+/// node makes that many cells from it live.
+const NODE_SPAN: i32 = 16;
+
+/// The regions `Iso` interprets (`incr::iso_covers`): a pointer there is
+/// followed by the walk.
+fn walked_region(name: &str) -> bool {
+    matches!(
+        name,
+        "save_stack"
+            | "nest"
+            | "input_stack"
+            | "param_stack"
+            | "cur_mark"
+            | "font_glue"
+            | "hyph_list"
+            | "disc_ptr"
+            | "sa_root"
+            | "if_stack"
+            | "pdf_link_stack"
+            | "intr_data"
+            | "dl_side"
+    )
+}
+
+/// Regions that hold no pointer into `mem` (pdftex.web's types and uses):
+/// characters and strings, font, hyphenation and line-breaking tables,
+/// buffers, file and line bookkeeping, object numbers and offsets (the one
+/// `obj_tab` word that holds a pointer, `obj_aux`, is walked), and `eqtb`
+/// (regions 1 to 4 and the `hash_extra` control sequences are walked by
+/// eq_type; regions 5 and 6 hold integers and dimensions).
+fn plain_data(name: &str) -> bool {
+    name.starts_with("pdf_font_")
+        || name.starts_with("trie")
+        || name.starts_with("font_")
+        || name.starts_with("vf_")
+        || name.starts_with("ls_")
+        || matches!(
+            name,
+            "eqtb"
+            | "xeq_level"
+            | "obj_tab"
+            | "head_tab"
+            | "dest_names"
+            | "pdf_char_used"
+            | "pdf_os_objnum"
+            | "pdf_os_objoff"
+            | "char_base"
+            | "width_base"
+            | "height_base"
+            | "depth_base"
+            | "italic_base"
+            | "lig_kern_base"
+            | "kern_base"
+            | "exten_base"
+            | "param_base"
+            | "bchar_label"
+            | "hyphen_char"
+            | "skew_char"
+            | "hyph_word"
+            | "hc"
+            | "hu"
+            | "hyf"
+            | "dig"
+            | "ten_pow"
+            | "two_to_the"
+            | "randoms"
+            | "spec_log"
+            | "read_open"
+            | "write_open"
+            | "eof_seen"
+            | "line_stack"
+            | "grp_stack"
+            | "help_line"
+            | "full_source_filename_stack"
+            | "op_start"
+            | "active_width"
+            | "cur_active_width"
+            | "background"
+            | "break_width"
+            | "prev_active_width"
+            | "minimal_demerits"
+            | "best_place"
+            | "best_pl_line"
+            | "best_pl_glue"
+            | "best_pl_short"
+            | "disc_width"
+            | "fill_width"
+            | "page_so_far"
+            | "total_stretch"
+            | "total_shrink"
+            | "pstack"
+            | "rs_seen"
+            | "bm_cand"
+            // the intrinsics' bookkeeping (`Iso::intrinsics`: no pointers
+            // there but the recording's `tail`, scratch that `cur_list`
+            // holds too)
+            | "intr_state"
+            | "intr_watch"
+            | "intr_cand"
+            | "intr_seen"
+            // pointers only within one command: `find_protchar_left` and
+            // `_right` fill `hlist_stack` from level 0, a virtual font's
+            // character `vf_stack`
+            | "hlist_stack"
+            | "vf_stack"
+            | "xord"
+            | "xchr"
+            | "xprn"
+            | "str_pool"
+            | "str_start"
+            | "font_info"
+            | "trie_trl"
+            | "trie_tro"
+            | "trie_trc"
+            | "trie"
+            | "hyf_next"
+            | "hyf_num"
+            | "hyf_distance"
+            | "buffer"
+            | "pdf_op_buf"
+            | "pdf_os_buf"
+            | "trick_buf"
+            | "dvi_buf"
+            | "hash"
+            | "prim"
+        )
+}
+
+/// Run `f` with input level `j`'s `limit`, and the stale `limit`s of the
+/// token lists above it other than macros', left out of the comparison
+/// (READ-TRACK, `crate::dormant`: the test of a dormant line).
+pub(crate) fn with_dormant<R>(j: i32, f: impl FnOnce() -> R) -> R {
+    DORMANT.with(|c| c.set(j));
+    let r = f();
+    DORMANT.with(|c| c.set(-1));
+    r
+}
+
+/// Run `f` with the alignment preamble compared by its words rather than
+/// walked (BOX-MEMO's full-state verifier, `incr::same_state`; see `roots`).
+pub(crate) fn align_by_words<R>(f: impl FnOnce() -> R) -> R {
+    ALIGN_BY_WORDS.with(|c| c.set(true));
+    let r = f();
+    ALIGN_BY_WORDS.with(|c| c.set(false));
+    r
+}
+
+/// A page insertion record's type for an overflowed class (tex.web §981).
+const SPLIT_UP: i32 = crate::generated::consts::split_up;
 
 // the static heads (tex.web §162, pdftex.web)
 const PAGE_INS_HEAD: i32 = MEM_TOP;
@@ -211,12 +571,12 @@ fn int(w: u64) -> i32 {
 // ---------------------------------------------------------------------------
 
 /// A state's word space, read by byte offset.
-trait Space {
+pub trait Space {
     fn word(&self, off: usize) -> u64;
 }
 
 /// The live space.
-struct Live<'a> {
+pub struct Live<'a> {
     bytes: &'a [u8],
 }
 
@@ -228,7 +588,7 @@ impl Space for Live<'_> {
 }
 
 /// The old run's space at a checkpoint, through a chunk table.
-struct Old<'a> {
+pub struct Old<'a> {
     table: Vec<*const u64>,
     d: &'a ChunkDiff,
     g: &'a Globals,
@@ -268,10 +628,27 @@ struct Layout {
     pdf_link_stack: usize,
     intr_state: usize,
     intr_data: usize,
+    // the files the open levels', groups' and conditionals' lines are of
+    // (changes/lineshift.ch)
+    ls_nest_tag: usize,
+    ls_grp_tag: usize,
+    ls_cond_tag: usize,
+    /// The display list's side table (`crate::displaylist`): its offset
+    /// and element count, `usize::MAX`/0 without one.
+    dl_side: (usize, usize),
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
 impl Layout {
+    /// The space's chunk holding node `p`'s side-table entry.
+    fn side_chunk(&self, p: i32) -> Option<u32> {
+        let (off, n) = self.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return None;
+        }
+        Some(((off + p as usize * 8) >> CHUNK_SHIFT) as u32)
+    }
+
     fn new(g: &Globals, slots: &[ScalarSlot]) -> Layout {
         let off = |n: &str| {
             g.arena
@@ -300,19 +677,30 @@ impl Layout {
             pdf_link_stack: off("pdf_link_stack"),
             intr_state: off("intr_state"),
             intr_data: off("intr_data"),
+            ls_nest_tag: off("ls_nest_tag"),
+            ls_grp_tag: off("ls_grp_tag"),
+            ls_cond_tag: off("ls_cond_tag"),
+            dl_side: g
+                .arena
+                .regions
+                .iter()
+                .find(|r| r.name == "dl_side")
+                .map_or((usize::MAX, 0), |r| (r.off, r.bytes / r.elem.max(1))),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
 }
 
-/// One of the two states.
-struct St<'a> {
-    sp: &'a dyn Space,
+/// One of the two states. Generic over the space, so that every word read
+/// is a direct load the walk's loops inline (a `dyn Space` cost an indirect
+/// call per word; P6-HYPEROPT).
+struct St<'a, S: Space> {
+    sp: &'a S,
     l: &'a Layout,
     hi_mem_min: i32,
 }
 
-impl St<'_> {
+impl<S: Space> St<'_, S> {
     #[inline]
     fn mem(&self, p: i32) -> u64 {
         self.sp.word(self.l.mem + p as usize * 8)
@@ -345,6 +733,14 @@ impl St<'_> {
     }
     fn eqtb(&self, p: i32) -> u64 {
         self.sp.word(self.l.eqtb + (p as usize - 1) * 8)
+    }
+    /// The display list's side-table entry of node `p` (0 without one).
+    fn side(&self, p: i32) -> u64 {
+        let (off, n) = self.l.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return 0;
+        }
+        self.sp.word(off + p as usize * 8)
     }
     fn save(&self, k: i32) -> u64 {
         self.sp.word(self.l.save_stack + k as usize * 8)
@@ -420,14 +816,14 @@ enum K {
     Head,
 }
 
-pub struct Iso<'a> {
-    o: St<'a>,
-    n: St<'a>,
+pub struct Iso<'a, O: Space, N: Space> {
+    o: St<'a, O>,
+    n: St<'a, N>,
     /// Paired node heads: visited bits per state, and the partner of each
     /// relocated O node.
     head_o: Vec<u64>,
     head_n: Vec<u64>,
-    fwd: HashMap<i32, i32>,
+    fwd: HashMap<i32, i32, FastHash>,
     /// Cells of the nodes compared, per state.
     cov_o: Vec<u64>,
     cov_n: Vec<u64>,
@@ -445,11 +841,61 @@ pub struct Iso<'a> {
     /// Nothing from here on reads the dimensions of a destination other
     /// than `fitr` (see `whatsit`).
     dest_dims_dead: bool,
+    /// The scratch heads' links are dead (the convergence test): see
+    /// `roots`.
+    scratch_heads_dead: bool,
     /// Asked every [`STOP_EVERY`] tasks: newer work stops the walk
     /// ([`STOPPED`]).
     stop: Option<&'a mut dyn FnMut() -> bool>,
+    /// The convergence test's side-table comparison (`check`): the chunks of
+    /// the table either run wrote since the restore target, and the paired
+    /// live nodes whose old entries lie there, with their live entries.
+    side_written: Option<&'a [u64]>,
+    side_later: Vec<(i32, u64)>,
     steps: usize,
     cur_task: Option<(K, i32, i32)>,
+    /// The convergence test walks token lists last (`check`): while this
+    /// is `Some`, `run` sets their tasks aside here.
+    toks_later: Option<Vec<(K, i32, i32)>>,
+    /// The convergence test (`check`): a token whose word is the same at
+    /// the same address in both states is paired without a cover
+    /// (`chain_from`), since only differing words are looked up in it.
+    equal_tokens: bool,
+}
+
+/// The hasher of the relocation map (`Iso::fwd`, keyed by `mem` address,
+/// looked up for every node the walk pairs again): a multiplicative hash
+/// instead of SipHash. The keys are the engine's own addresses, not input
+/// chosen to collide, and a collision costs time only.
+#[derive(Clone, Copy, Default)]
+pub struct FastHash;
+
+impl std::hash::BuildHasher for FastHash {
+    type Hasher = FastHasher;
+    fn build_hasher(&self) -> FastHasher {
+        FastHasher(0)
+    }
+}
+
+#[derive(Default)]
+pub struct FastHasher(u64);
+
+impl std::hash::Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u64(&mut self, x: u64) {
+        let h = (self.0.rotate_left(5) ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ (h >> 32);
+    }
+    fn write_i32(&mut self, x: i32) {
+        self.write_u64(x as u32 as u64);
+    }
 }
 
 fn bit(v: &[u64], p: i32) -> bool {
@@ -468,15 +914,15 @@ macro_rules! fail {
     }};
 }
 
-impl<'a> Iso<'a> {
-    fn new(o: St<'a>, n: St<'a>) -> Iso<'a> {
+impl<'a, O: Space, N: Space> Iso<'a, O, N> {
+    fn new(o: St<'a, O>, n: St<'a, N>) -> Iso<'a, O, N> {
         let words = (MEM_TOP as usize + 64) / 64 + 1;
         Iso {
             o,
             n,
             head_o: vec![0; words],
             head_n: vec![0; words],
-            fwd: HashMap::new(),
+            fwd: HashMap::default(),
             cov_o: vec![0; words],
             cov_n: vec![0; words],
             todo: Vec::new(),
@@ -491,8 +937,13 @@ impl<'a> Iso<'a> {
                 .unwrap_or(-1),
             cur_task: None,
             dest_dims_dead: false,
+            scratch_heads_dead: false,
             stop: None,
+            side_written: None,
+            side_later: Vec::new(),
             steps: 0,
+            toks_later: None,
+            equal_tokens: false,
         }
     }
 
@@ -530,24 +981,50 @@ impl<'a> Iso<'a> {
     }
 
     fn partner(&self, a: i32) -> Option<i32> {
-        bit(&self.head_o, a).then(|| self.fwd.get(&a).copied().unwrap_or(a))
+        // (a pointer outside `mem` pairs with nothing: the check fails)
+        (Self::in_mem(a) && bit(&self.head_o, a)).then(|| self.fwd.get(&a).copied().unwrap_or(a))
     }
 
     /// The SyncTeX words of a synchronized node of `size` words
     /// (changes/synctex.ch): the `int` halves of its last two words, the
-    /// file tag and the line that `get_node` or a copy wrote there.
+    /// file tag and the line that `get_node` or a copy wrote there. The
+    /// tag is compared. The line is not: only `get_node` writes it and only
+    /// `copy_node_list` reads it, into another node's line, since the
+    /// `.synctex` file is not written. So it is dead like a free cell's
+    /// words, which it becomes when the node is freed. An edit that adds a
+    /// line break moves the lines of every node made after it (DESIGN.md
+    /// §5.3 rule (c), `crate::lineshift`).
     fn sync_fields(&mut self, a: i32, b: i32, size: i32) {
-        let (t, l) = (size - SYNCTEX_FIELD_SIZE, size - SYNCTEX_FIELD_SIZE + 1);
+        let t = size - SYNCTEX_FIELD_SIZE;
         self.eq(
             "synctex tag",
             int(self.o.mem(a + t)),
             int(self.n.mem(b + t)),
         );
-        self.eq(
-            "synctex line",
-            int(self.o.mem(a + l)),
-            int(self.n.mem(b + l)),
-        );
+    }
+
+    /// A line number the state holds, of the file whose reading level had
+    /// SyncTeX tag `tag` (the new state's; the tags are compared as words):
+    /// equal, or moved by an edit of that file (DESIGN.md §5.3 rule (c),
+    /// `crate::lineshift::held_ok`).
+    fn eq_line(&mut self, what: &'static str, tag: i32, x: i32, y: i32) {
+        if x != y && !crate::lineshift::held_ok(tag, x, y) {
+            self.eq(what, x, y);
+        } else if x == y && !crate::lineshift::held_ok(tag, x, y) {
+            fail!(
+                self,
+                "{what}: {x} is a line an edit moved, the same in both states"
+            );
+        }
+    }
+
+    /// The tag of `ls_*_tag[k]` in the new state (-1 outside it).
+    fn line_tag(&self, base: usize, k: i32, max: i32) -> i32 {
+        if base == usize::MAX || k < 0 || k > max {
+            -1
+        } else {
+            self.n.i32_at(base, k as usize)
+        }
     }
 
     fn cover(&mut self, a: i32, b: i32, size: i32) {
@@ -599,6 +1076,10 @@ impl<'a> Iso<'a> {
                         return;
                     }
                 }
+            }
+            if let (K::Tok | K::Chain, Some(later)) = (k, self.toks_later.as_mut()) {
+                later.push((k, a, b));
+                continue;
             }
             self.cur_task = Some((k, a, b));
             match k {
@@ -659,6 +1140,32 @@ impl<'a> Iso<'a> {
         let (ca, cb) = (self.o.is_char(a), self.n.is_char(b));
         if ca != cb {
             fail!(self, "a char node in one state only");
+        }
+        // The node's source position (file, line, column) in the display
+        // list's side table. Nothing TeX computes reads it, but the node is
+        // live: a later page ships it, and its glyphs name that position,
+        // which the convergence takes over from the old run. Spans are the
+        // host's and move with their lines; an edited line's material has a
+        // new span in each run, so entries are compared as places (file,
+        // line, column: `displaylist::same_place`), not as span ids.
+        if let Some(written) = self.side_written {
+            // (the live state's entry; the old run's is the live one where
+            // neither run wrote the table since the restore target, and is
+            // rewound once the walk is done otherwise: `check`)
+            let sn = self.n.side(b);
+            match self.n.l.side_chunk(a) {
+                Some(c) if bit(written, c as i32) => self.side_later.push((a, sn)),
+                Some(_) => {
+                    let so = self.n.side(a);
+                    if !crate::displaylist::same_place(so, sn) {
+                        fail!(
+                            self,
+                            "a node's source position differs ({so:#x} vs {sn:#x})"
+                        );
+                    }
+                }
+                None => {}
+            }
         }
         let w0o = self.o.mem(a);
         let w0n = self.n.mem(b);
@@ -1053,6 +1560,31 @@ impl<'a> Iso<'a> {
             if a == NULL || b == NULL {
                 fail!(self, "a token list is longer in one state");
             }
+            // (READ-TRACK-2, the convergence test: a token at the same
+            // address in both states whose word is the same in both is
+            // paired with itself as `pair` pairs it, and the walk goes on to
+            // the same successor, without covering the cell -- only a
+            // differing word needs a cover, `bad_mem`, and this one is not)
+            if self.equal_tokens && a == b && self.watch != a && Self::in_mem(a) {
+                let x = self.o.mem(a);
+                if x == self.n.mem(a) {
+                    if bit(&self.head_o, a) {
+                        if self.fwd.contains_key(&a) {
+                            fail!(self, "token {a}/{b} paired inconsistently");
+                        }
+                        return;
+                    }
+                    if bit(&self.head_n, a) {
+                        fail!(self, "token {a}/{b} paired inconsistently");
+                    }
+                    set(&mut self.head_o, a);
+                    set(&mut self.head_n, a);
+                    self.nodes += 1;
+                    a = rh(x);
+                    b = a;
+                    continue;
+                }
+            }
             match self.pair(a, b) {
                 None => fail!(self, "token {a}/{b} paired inconsistently"),
                 Some(false) => return,
@@ -1112,30 +1644,45 @@ impl<'a> Iso<'a> {
         let w = |s: &Self, k: i32| (s.o.mem(a + k), s.n.mem(b + k));
         let (x, y) = w(self, 0);
         let (ty, named) = (b0(x), b1(x));
-        self.eq("action type/named", lh(x), lh(y));
-        if ty != PDF_ACTION_USER && ty != PDF_ACTION_PAGE && named & 1 == 1 {
+        self.eq("action type", ty, b0(y));
+        // A `user` action is complete once `scan_action` has set its type,
+        // file (null), reference count and tokens: it returns there, before
+        // `pdf_action_named_id`, `pdf_action_id`, `pdf_action_new_window`
+        // and `pdf_action_struct_id` are set, and every reader of those
+        // (`delete_action_ref`, the whatsit display, `write_action`) tests
+        // for `pdf_action_user` first. They keep what the node's memory
+        // held before, which differs between runs that allocated
+        // differently (beamer's navigation symbols are such actions).
+        let user = ty == PDF_ACTION_USER;
+        if !user {
+            self.eq("action named", named, b1(y));
+        }
+        if !user && ty != PDF_ACTION_PAGE && named & 1 == 1 {
             self.ptr(K::Tok, rh(x), rh(y));
-        } else {
+        } else if !user {
             self.eq("action id", rh(x), rh(y));
         }
         let (x, y) = w(self, 1);
-        self.eq("action new window", rh(x), rh(y));
-        if ty == PDF_ACTION_USER {
+        if !user {
+            self.eq("action new window", rh(x), rh(y));
+        }
+        if user {
             self.eq("action file", lh(x), lh(y));
         } else {
             self.ptr(K::Tok, lh(x), lh(y));
         }
         let (x, y) = w(self, 2);
         self.eq("action reference count", rh(x), rh(y));
-        if ty == PDF_ACTION_USER || ty == PDF_ACTION_PAGE {
+        if user || ty == PDF_ACTION_PAGE {
             self.ptr(K::Tok, lh(x), lh(y));
-        } else {
-            self.eq("action tokens", lh(x), lh(y));
         }
+        // (a `goto` or `thread` action's `info(p+2)`, the page tokens of a
+        // `page` action, is never set or read: `scan_action` sets it only
+        // for `page` and `user`, and the readers test the type first)
         let (x, y) = w(self, 3);
-        if ty != PDF_ACTION_USER && named & 2 == 2 {
+        if !user && named & 2 == 2 {
             self.ptr(K::Tok, rh(x), rh(y));
-        } else {
+        } else if !user {
             self.eq("action struct id", rh(x), rh(y));
         }
         // (`info(p+3)` is not a field: pdftex.web never sets or reads it)
@@ -1270,6 +1817,21 @@ impl<'a> Iso<'a> {
     /// The conditional stack (§489): `link` the enclosing one, type
     /// `if_limit`, subtype `cur_if`, then `if_line`.
     fn cond(&mut self, mut a: i32, mut b: i32) {
+        // node j from the top holds conditional depth-1-j's line; a walk
+        // that starts below the top (from `if_stack`) finds its place
+        let depth = self.n.sc("ls_cond_depth");
+        let mut k = {
+            let (mut p, mut j) = (self.n.sc("cond_ptr"), 0);
+            while p != NULL && p != b && j <= depth {
+                p = rh(self.n.mem(p));
+                j += 1;
+            }
+            if p == b {
+                depth - 1 - j
+            } else {
+                -1
+            }
+        };
         loop {
             if a == NULL && b == NULL {
                 return;
@@ -1286,7 +1848,10 @@ impl<'a> Iso<'a> {
             let (x, y) = (self.o.mem(a), self.n.mem(b));
             self.eq("conditional", lh(x), lh(y));
             let (x1, y1) = (self.o.mem(a + 1), self.n.mem(b + 1));
-            self.eq("if_line", int(x1), int(y1));
+            let tag = self.line_tag(self.n.l.ls_cond_tag, k.max(0), LS_COND_SIZE);
+            let tag = if k >= 1 { tag } else { -1 };
+            self.eq_line("if_line", tag, int(x1), int(y1));
+            k -= 1;
             a = rh(x);
             b = rh(y);
         }
@@ -1571,7 +2136,7 @@ const DEAD_SCALARS: &[&str] = &[
     "tmp_w",
 ];
 
-impl<'a> Iso<'a> {
+impl<O: Space, N: Space> Iso<'_, O, N> {
     /// Every root of both states, queued or compared.
     fn roots(&mut self) {
         let (o, n) = (&self.o, &self.n);
@@ -1588,15 +2153,86 @@ impl<'a> Iso<'a> {
         ];
         let mut q = vec![];
         for (h, k) in heads {
+            // Two scratch heads' links are dead between two commands, where
+            // every checkpoint is taken (`big_switch`, changes/checkpoint.ch;
+            // no procedure that uses them is on the stack there), so the
+            // convergence test does not follow them. pdftex.web reads each
+            // only after writing it in the same command:
+            // * `link(temp_head)`: `macro_call` sets it before scanning each
+            //   argument (and `runaway` prints it only while that scan is
+            //   matching); `str_toks` and `the_toks` set it, and their
+            //   callers (`ins_the_toks`, `conv_toks`, the pdfTeX string
+            //   primitives, `show_whatever`, the `\edef` expansion loop)
+            //   read it at once; `mlist_to_hlist` sets it, and its callers
+            //   read the hlist at once; `line_break` moves the paragraph
+            //   there and `post_line_break` (with e-TeX's LR nodes)
+            //   consumes it; `prune_page_top`, `insert_dollar_sign` and
+            //   e-TeX's `scan_general_text` set it before they read it.
+            // * `link(backup_head)`: `scan_keyword` sets it to null before
+            //   it stores the tokens it matched there, and backs them up or
+            //   flushes them before it returns; `expand` saves and restores
+            //   it around a nested expansion (§366).
+            // Each is left pointing at the list it last held, freed or
+            // reused since (a paragraph's line, the matched keyword's
+            // tokens): after an edit the runs had different nodes there,
+            // and every later test failed until the allocations met again
+            // (plain-100: 33 pages re-typeset per keystroke instead of 2;
+            // P6-HYPEROPT).
+            if (h == TEMP_HEAD || h == BACKUP_HEAD) && self.scratch_heads_dead {
+                continue;
+            }
+            // Inside an alignment the preamble (`link(align_head)`) alternates
+            // tabskip glue and alignrecords, whose `info` is `end_span` or a
+            // span list, not a node type (tex.web §770, §801): this walk does
+            // not know them. BOX-MEMO's verifier (`align_by_words`), which
+            // compares a call's two paths from one state, takes the preamble
+            // by its words instead: neither path made it, so its nodes are at
+            // the same places in both, and a word either path changed there
+            // is left unexplained by any pairing and reported. (The
+            // convergence test still walks it, and fails, as before.)
+            if h == ALIGN_HEAD
+                && ALIGN_BY_WORDS.with(|c| c.get())
+                && o.sc("align_ptr") != NULL
+                && n.sc("align_ptr") != NULL
+            {
+                continue;
+            }
             q.push((k, rh(o.mem(h)), rh(n.mem(h))));
         }
         let _ = (ACTIVE, END_SPAN, NULL_LIST, LIG_TRICK, HI_MEM_STAT_MIN);
         for (k, a, b) in q {
             self.ptr(k, a, b);
         }
+        // Walk these lists first. The page builder's lists hold the page
+        // being built, which is where a run that has not converged yet
+        // usually differs (the rest of a reflowed paragraph); queued with
+        // the other roots they were walked last, after every macro body in
+        // `eqtb`, so a failing test cost a whole walk. Whether the walk
+        // succeeds does not depend on its order: a pair is made where both
+        // states reach a node from the same place, and reaching it again
+        // from elsewhere only checks the pairing (`pair`).
+        self.run();
+        if self.err.is_some() {
+            return;
+        }
         // the static words themselves compare equal apart from those links
         for p in HI_MEM_STAT_MIN..=MEM_TOP {
             let (x, y) = (self.o.mem(p), self.n.mem(p));
+            // `info(end_span)` is scratch, dead between two commands like
+            // the scratch heads' links (the convergence test): only
+            // `fin_align` reads it, after setting it to the preamble's next
+            // record ("Update width entry for spanned columns": `s:=end_span;
+            // info(s):=p`), and leaves it pointing there once the preamble is
+            // freed. After an edit the runs had their preambles at different
+            // places, and every test failed until a spanned alignment put
+            // them at the same one (lane COLD-OPEN: a persisted S₁ and its
+            // fill from S₀). Its link, `max_quarterword+1` since
+            // initialization, still compares.
+            let (x, y) = if p == END_SPAN && self.scratch_heads_dead {
+                (rh(x) as u64, rh(y) as u64)
+            } else {
+                (x, y)
+            };
             if (p == OMIT_TEMPLATE || p == END_SPAN || p == NULL_LIST) && x != y {
                 fail!(self, "static word {p} differs");
             }
@@ -1710,9 +2346,15 @@ impl<'a> Iso<'a> {
             self.cover(a, b, 4);
             let (x, y) = (self.o.mem(a), self.n.mem(b));
             self.eq("page insertion type/box", lh(x), lh(y));
+            // (an overflowed class's only: `broken_ptr` and `broken_ins` are
+            // read only when `type(r)=split_up`, tex.web §986 and §1021,
+            // and an `inserting` record holds there what `get_node` left,
+            // §1008-§1009: memory the allocation order decides)
             let (x1, y1) = (self.o.mem(a + 1), self.n.mem(b + 1));
-            self.later("broken_ptr", rh(x1), rh(y1));
-            self.later("broken_ins", lh(x1), lh(y1));
+            if b0(x) == SPLIT_UP {
+                self.later("broken_ptr", rh(x1), rh(y1));
+                self.later("broken_ins", lh(x1), lh(y1));
+            }
             let (x2, y2) = (self.o.mem(a + 2), self.n.mem(b + 2));
             self.later("last_ins_ptr", rh(x2), rh(y2));
             self.later("best_ins_ptr", lh(x2), lh(y2));
@@ -1773,32 +2415,35 @@ impl<'a> Iso<'a> {
             fail!(self, "a recording is in progress ({ro}, {rn})");
         }
         // (the same words in both: their bookkeeping is plain values)
-        let mut live = [vec![], vec![]];
-        for (s, v) in [&self.o, &self.n].into_iter().zip(live.iter_mut()) {
-            let r = crate::intrinsics::live_words(
-                &|i| s.i32_at(l.intr_state, i),
-                &|i| s.i32_at(l.intr_data, i),
-                &mut |w| v.push(w),
-            );
-            if let Err(e) = r {
-                fail!(self, "{e}");
-            }
+        let (mut live, mut live_n) = (vec![], vec![]);
+        let ro = crate::intrinsics::live_words(
+            &|i| self.o.i32_at(l.intr_state, i),
+            &|i| self.o.i32_at(l.intr_data, i),
+            &mut |w| live.push(w),
+        );
+        let rn = crate::intrinsics::live_words(
+            &|i| self.n.i32_at(l.intr_state, i),
+            &|i| self.n.i32_at(l.intr_data, i),
+            &mut |w| live_n.push(w),
+        );
+        if let Err(e) = ro.and(rn) {
+            fail!(self, "{e}");
         }
-        let [live, live_n] = live;
         if live != live_n {
             fail!(self, "the intrinsics' recordings differ in shape");
         }
         use crate::intrinsics::LiveWord;
         for w in live {
-            let at = |s: &St, i: usize| s.i32_at(l.intr_data, i);
+            let ao = |s: &Self, i: usize| s.o.i32_at(l.intr_data, i);
+            let an = |s: &Self, i: usize| s.n.i32_at(l.intr_data, i);
             match w {
-                LiveWord::Value(i) => self.eq("intrinsics word", at(&self.o, i), at(&self.n, i)),
+                LiveWord::Value(i) => self.eq("intrinsics word", ao(self, i), an(self, i)),
                 LiveWord::Equiv { ty, at: i } => {
-                    let t = at(&self.o, ty);
-                    self.eq("intrinsics eq_type", t, at(&self.n, ty));
-                    self.equiv(t, at(&self.o, i), at(&self.n, i));
+                    let t = ao(self, ty);
+                    self.eq("intrinsics eq_type", t, an(self, ty));
+                    self.equiv(t, ao(self, i), an(self, i));
                 }
-                LiveWord::Tok(i) => self.ptr(K::Tok, at(&self.o, i), at(&self.n, i)),
+                LiveWord::Tok(i) => self.ptr(K::Tok, ao(self, i), an(self, i)),
             }
             if self.err.is_some() {
                 return;
@@ -1844,6 +2489,7 @@ impl<'a> Iso<'a> {
             return;
         }
         let etex = self.o.sc("eTeX_mode") == 1;
+        let mut lvl = self.n.sc("cur_level");
         let mut top = so; // the entries of the current group are below this
         let mut bnd = bo;
         let mut grp = go;
@@ -1929,8 +2575,10 @@ impl<'a> Iso<'a> {
             let base = bnd - if etex { 1 } else { 0 };
             if etex {
                 let (x, y) = (self.o.save(bnd - 1), self.n.save(bnd - 1));
-                self.eq("saved line", int(x), int(y));
+                let tag = self.line_tag(self.n.l.ls_grp_tag, lvl, 255);
+                self.eq_line("saved line", tag, int(x), int(y));
             }
+            lvl -= 1;
             for k in 1..=extras {
                 let (x, y) = (self.o.save(base - k), self.n.save(base - k));
                 if grp == MATH_GROUP {
@@ -1989,10 +2637,11 @@ impl<'a> Iso<'a> {
         }
     }
 
-    fn nest_record(&mut self, x: &list_state_record, y: &list_state_record) {
+    fn nest_record(&mut self, k: i32, x: &list_state_record, y: &list_state_record) {
         self.eq("mode", x.mode_field, y.mode_field);
         self.eq("prev_graf", x.pg_field, y.pg_field);
-        self.eq("mode_line", x.ml_field, y.ml_field);
+        let tag = self.line_tag(self.n.l.ls_nest_tag, k, i32::MAX);
+        self.eq_line("mode_line", tag, x.ml_field, y.ml_field);
         self.ptr(K::List, x.head_field, y.head_field);
         self.later("tail", x.tail_field, y.tail_field);
         let m = x.mode_field.abs();
@@ -2030,14 +2679,18 @@ impl<'a> Iso<'a> {
         }
         for k in 0..po {
             let (x, y) = (self.o.nest(k), self.n.nest(k));
-            self.nest_record(&x, &y);
+            self.nest_record(k, &x, &y);
         }
         let x: list_state_record = rec_from(&self.o.sc_bytes("cur_list"));
         let y: list_state_record = rec_from(&self.n.sc_bytes("cur_list"));
-        self.nest_record(&x, &y);
+        self.nest_record(po, &x, &y);
     }
 
-    fn input_record(&mut self, x: &in_state_record, y: &in_state_record) {
+    /// Input level `k` (`input_ptr` for `cur_input`) of both states.
+    fn input_record(&mut self, k: i32, x: &in_state_record, y: &in_state_record) {
+        let dormant = DORMANT.with(|c| c.get());
+        // (`with_dormant`: a dormant level's `limit`, or a stale copy above it)
+        let skip_limit = dormant >= 0 && k >= dormant;
         self.eq("input state", x.state_field, y.state_field);
         self.eq("input index", x.index_field, y.index_field);
         self.eq("input name", x.name_field, y.name_field);
@@ -2059,14 +2712,16 @@ impl<'a> Iso<'a> {
             self.later("loc", x.loc_field, y.loc_field);
             if t == MACRO {
                 self.eq("param_start", x.limit_field, y.limit_field);
-            } else {
+            } else if !skip_limit {
                 self.eq("limit", x.limit_field, y.limit_field);
             }
             let _ = PARAMETER;
         } else {
             self.eq("start", x.start_field, y.start_field);
             self.eq("loc", x.loc_field, y.loc_field);
-            self.eq("limit", x.limit_field, y.limit_field);
+            if !(skip_limit && k == dormant) {
+                self.eq("limit", x.limit_field, y.limit_field);
+            }
         }
     }
 
@@ -2078,11 +2733,11 @@ impl<'a> Iso<'a> {
         }
         for k in 0..po {
             let (x, y) = (self.o.input(k), self.n.input(k));
-            self.input_record(&x, &y);
+            self.input_record(k, &x, &y);
         }
         let x: in_state_record = rec_from(&self.o.sc_bytes("cur_input"));
         let y: in_state_record = rec_from(&self.n.sc_bytes("cur_input"));
-        self.input_record(&x, &y);
+        self.input_record(po, &x, &y);
         let (qo, qn) = (self.o.sc("param_ptr"), self.n.sc("param_ptr"));
         self.eq("param_ptr", qo, qn);
         for k in 0..qo.max(0) as usize {
@@ -2150,8 +2805,6 @@ impl<'a> Iso<'a> {
         self.eq("pdf_link_stack_ptr", lp, self.n.sc("pdf_link_stack_ptr"));
         let size = std::mem::size_of::<crate::generated::types::pdf_link_stack_record>();
         for k in 1..=lp.max(0) as usize {
-            let at = |s: &St, f: usize| s.i32_at(l.pdf_link_stack + k * size, f);
-            let _ = at;
             let rx: crate::generated::types::pdf_link_stack_record =
                 rec_from(&self.o.bytes_at(l.pdf_link_stack + k * size, size));
             let ry: crate::generated::types::pdf_link_stack_record =
@@ -2200,7 +2853,7 @@ impl<'a> Iso<'a> {
         }
     }
 
-    fn pdf_mem(&self, s: &St, k: i32) -> i32 {
+    fn pdf_mem<S: Space>(&self, s: &St<S>, k: i32) -> i32 {
         s.i32_at(s.l.pdf_mem, k as usize)
     }
 
@@ -2296,7 +2949,7 @@ impl<'a> Iso<'a> {
 // Entry points
 // ---------------------------------------------------------------------------
 
-impl<'a> Iso<'a> {
+impl<O: Space, N: Space> Iso<'_, O, N> {
     fn finish(&mut self) {
         self.run();
         if self.err.is_some() {
@@ -2312,8 +2965,16 @@ impl<'a> Iso<'a> {
                 Some(_) => fail!(self, "{what}: {a} is paired with another node than {b}"),
                 None => {
                     // not reached by the walk: only the same address in both
-                    // states is safe, and only for a static head
-                    if !(a == b && (a >= HI_MEM_STAT_MIN || a <= LO_MEM_STAT_MAX)) {
+                    // states is safe, and only for a static head -- or, for
+                    // BOX-MEMO's verifier (`align_by_words`), anywhere: its
+                    // two states come from one, so an address not reached
+                    // holds what it held there unless a path wrote it, and
+                    // a word a path wrote that no pairing explains is
+                    // reported by the word comparison (the templates and
+                    // the alignment's pointers into the preamble, which it
+                    // compares by its words)
+                    let by_words = ALIGN_BY_WORDS.with(|c| c.get());
+                    if !(a == b && (by_words || a >= HI_MEM_STAT_MIN || a <= LO_MEM_STAT_MAX)) {
                         fail!(self, "{what}: {a}/{b} points at nothing the walk reached");
                     }
                 }
@@ -2327,7 +2988,21 @@ impl<'a> Iso<'a> {
             }
         }
     }
+}
 
+/// The display list's side table for [`Iso::check`]: the chunks of it either
+/// run wrote since the restore target (a bitmap by chunk), and how to get
+/// the old run's value of some of them (`Globals::pending_old_chunks`).
+pub struct SideOld<'a> {
+    pub written: &'a [u64],
+    pub fetch: &'a mut OldChunks<'a>,
+}
+
+/// The old run's chunks `cs` by chunk (`None`: stopped for newer work).
+pub type OldChunks<'a> = dyn FnMut(&[u32]) -> Result<Option<HashMap<u32, Vec<u64>>>, String> + 'a;
+
+/// The entry points (the walk's types are chosen here).
+impl<'a> Iso<'a, Old<'a>, Live<'a>> {
     /// Compare O (the old run's checkpoint, through `d`) with the live state.
     /// `Ok(nodes compared)` or `Err(why not the same)`. `bad_mem` are the
     /// differing mem words left by the byte comparison: each must lie in a
@@ -2340,10 +3015,12 @@ impl<'a> Iso<'a> {
         free_o: Option<&[u64]>,
         free_n: Option<&[u64]>,
         bad_mem: &[usize],
+        side: Option<SideOld<'a>>,
         hyph_len: usize,
         dest_dims_dead: bool,
         stop: &'a mut dyn FnMut() -> bool,
     ) -> Result<usize, String> {
+        DEAD_CELLS.with(|c| c.set(0));
         let l = Layout::new(g, slots);
         let live = Live {
             bytes: g.arena.bytes(),
@@ -2375,23 +3052,114 @@ impl<'a> Iso<'a> {
         let mut w = Iso::new(o, n);
         w.hyph_len = hyph_len;
         w.dest_dims_dead = dest_dims_dead;
+        w.scratch_heads_dead = true;
+        w.equal_tokens = true;
         w.stop = Some(stop);
+        let mut fetch = None;
+        if let Some(sd) = side {
+            w.side_written = Some(sd.written);
+            fetch = Some(sd.fetch);
+        }
+        // Token lists (macro bodies, token registers: most of what the walk
+        // reads, and seldom where a run that has not converged differs)
+        // last: first every other structure, then the side table's entries
+        // of the nodes, which a token list never adds to. A failing test
+        // then usually stops before the macro bodies (full-100: a reflowed
+        // page's glue, a node of the edited line). As for the page builder's
+        // lists first (`roots`), the outcome does not depend on the order:
+        // the pairs are those both states reach from the same places, and a
+        // token list's walk reads and pairs only its own tokens.
+        w.toks_later = Some(Vec::new());
         w.roots();
+        if w.err.is_none() {
+            w.run();
+        }
+        if let Some(e) = w.err {
+            return Err(e);
+        }
+        // The old run's side-table entries of the live nodes in chunks
+        // either run wrote: those chunks alone rewound.
+        if let Some(fetch) = fetch.filter(|_| !w.side_later.is_empty()) {
+            let l = w.n.l;
+            let mut cs: Vec<u32> = w
+                .side_later
+                .iter()
+                .filter_map(|&(a, _)| l.side_chunk(a))
+                .collect();
+            cs.sort_unstable();
+            cs.dedup();
+            let Some(old) = fetch(&cs)? else {
+                return Err(STOPPED.into());
+            };
+            for &(a, sn) in &w.side_later {
+                let (off, _) = l.dl_side;
+                let at = off + a as usize * 8;
+                let c = (at >> CHUNK_SHIFT) as u32;
+                let so = old[&c][(at & (CHUNK_BYTES - 1)) >> 3];
+                if !crate::displaylist::same_place(so, sn) {
+                    return Err(format!(
+                        "a node's source position differs ({so:#x} vs {sn:#x}, node {a})"
+                    ));
+                }
+            }
+        }
+        let toks = w.toks_later.take().unwrap_or_default();
+        w.todo.extend(toks);
         w.finish();
         if let Some(e) = w.err {
             return Err(e);
         }
+        // Dead cells (INFDESC-883): allocated cells no root reaches and
+        // nothing outside the walk points at (`garbage`), computed once per
+        // side when a differing word needs it.
+        let dead_rule = dead_cells_enabled() && !ALIGN_BY_WORDS.with(|c| c.get());
+        // (outer: computed yet; inner: the free lists could be read)
+        type Dead = Option<Option<Vec<u64>>>;
+        let (mut dead_o, mut dead_n): (Dead, Dead) = (None, None);
+        let mut n_dead = 0usize;
         for &p in bad_mem {
             let p = p as i32;
-            let ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
-            let ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
+            // (a word past the walk's range: nothing explains it)
+            if !Self::in_mem(p) {
+                return Err(format!("mem[{p}] differs outside the walked range"));
+            }
+            let mut ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
+            let mut ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
+            if !(ok_o && ok_n) && dead_rule {
+                if !ok_o {
+                    let d = dead_o.get_or_insert_with(|| {
+                        free_o.map(|f| garbage(&g.arena.regions, &w.o, &w.cov_o, f, slots, None))
+                    });
+                    ok_o = d.as_ref().is_some_and(|d| bit(d, p));
+                }
+                if !ok_n {
+                    let d = dead_n.get_or_insert_with(|| {
+                        free_n.map(|f| garbage(&g.arena.regions, &w.n, &w.cov_n, f, slots, None))
+                    });
+                    ok_n = d.as_ref().is_some_and(|d| bit(d, p));
+                }
+                if ok_o && ok_n {
+                    n_dead += 1;
+                }
+            }
             if !(ok_o && ok_n) {
+                if dead_rule && std::env::var_os("FLASHTEX_DEAD_CELLS_WHY").is_some() {
+                    if let (false, Some(f)) = (ok_o, free_o) {
+                        eprint!("[dead-cells] old: ");
+                        garbage(&g.arena.regions, &w.o, &w.cov_o, f, slots, Some(p));
+                    }
+                    if let (false, Some(f)) = (ok_n, free_n) {
+                        eprint!("[dead-cells] new: ");
+                        garbage(&g.arena.regions, &w.n, &w.cov_n, f, slots, Some(p));
+                    }
+                }
                 return Err(format!(
                     "mem[{p}] differs outside what the walk compared ({})",
                     if ok_o { "new" } else { "old" }
                 ));
             }
         }
+        DEAD_CELLS.with(|c| c.set(n_dead));
         Ok(w.nodes)
     }
 
@@ -2446,6 +3214,8 @@ impl<'a> Iso<'a> {
         }
         let bytes = g.arena.bytes();
         let mut pointed_from_outside = vec![0u64; target.len()];
+        let refs_dbg = std::env::var_os("FLASHTEX_CHECKMEM_REFS").is_some();
+        let mut first_ref: HashMap<i32, String> = HashMap::new();
         let data_region = |name: &str| {
             matches!(
                 name,
@@ -2506,6 +3276,44 @@ impl<'a> Iso<'a> {
                     continue;
                 }
                 set(&mut pointed_from_outside, v);
+                if refs_dbg && first_ref.len() < 1 << 16 {
+                    let what = if r.name == "(scalars)" {
+                        slots
+                            .iter()
+                            .rev()
+                            .find(|s| s.off <= rel)
+                            .map_or(String::new(), |s| s.name.to_string())
+                    } else {
+                        format!(
+                            "{}[{}]+{}",
+                            r.name,
+                            rel / r.elem.max(1),
+                            rel % r.elem.max(1)
+                        )
+                    };
+                    first_ref.entry(v).or_insert(what);
+                }
+            }
+        }
+        if refs_dbg {
+            let mut shown = 0;
+            let mut prev = MEM_BOT - 2;
+            for &p in &cells {
+                let start = !(p > MEM_BOT && p - 1 == prev);
+                prev = p;
+                if let Some(w) = first_ref.get(&p) {
+                    if shown < 40 {
+                        shown += 1;
+                        let ws: Vec<String> = (p..p + 4)
+                            .map(|q| format!("{:#018x}", g.mem[q as usize].to_bits()))
+                            .collect();
+                        eprintln!(
+                            "[checkmem]   missed {p}{} <- {w}: {}",
+                            if start { " (run start)" } else { "" },
+                            ws.join(" ")
+                        );
+                    }
+                }
             }
         }
         // A node is referenced at its first cell; an unreached cell counts as
@@ -2654,4 +3462,229 @@ pub fn who_points(g: &Globals, slots: &[ScalarSlot], targets: &[i32], max: usize
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const INSERTING: i32 = crate::generated::consts::inserting;
+
+    /// A word space holding only the words a test puts in `mem` (every
+    /// other word 0).
+    #[derive(Default)]
+    struct Words(HashMap<usize, u64>);
+
+    impl Space for Words {
+        fn word(&self, off: usize) -> u64 {
+            self.0.get(&off).copied().unwrap_or(0)
+        }
+    }
+
+    impl Words {
+        fn put(&mut self, p: i32, w: u64) {
+            self.0.insert(p as usize * 8, w);
+        }
+    }
+
+    fn hh(b0: i32, b1: i32, rh: i32) -> u64 {
+        ((b0 as u64) << 48) | ((b1 as u64 & 0xFFFF) << 32) | rh as u32 as u64
+    }
+
+    fn halves(lh: i32, rh: i32) -> u64 {
+        ((lh as u32 as u64) << 32) | rh as u32 as u64
+    }
+
+    /// `mem` at offset 0, nothing else.
+    fn layout() -> Layout {
+        let none = usize::MAX;
+        Layout {
+            mem: 0,
+            eqtb: none,
+            save_stack: none,
+            nest: none,
+            input_stack: none,
+            param_stack: none,
+            cur_mark: none,
+            font_glue: none,
+            hyph_list: none,
+            hyph_word: none,
+            disc_ptr: none,
+            sa_root: none,
+            if_stack: none,
+            pdf_mem: none,
+            obj_tab: none,
+            head_tab: none,
+            pdf_link_stack: none,
+            intr_state: none,
+            intr_data: none,
+            ls_nest_tag: none,
+            ls_grp_tag: none,
+            ls_cond_tag: none,
+            dl_side: (none, 0),
+            scalars: HashMap::new(),
+        }
+    }
+
+    /// A page insertion list of one record at `r` (class 100, height 10pt)
+    /// of `kind`, its `broken_ptr` and `broken_ins` as given.
+    fn page_ins_list(r: i32, kind: i32, broken_ptr: i32, broken_ins: i32) -> Words {
+        let mut w = Words::default();
+        w.put(PAGE_INS_HEAD, hh(0, 0, r));
+        w.put(r, hh(kind, 100, PAGE_INS_HEAD));
+        w.put(r + 1, halves(broken_ins, broken_ptr));
+        w.put(r + 2, halves(NULL, NULL));
+        w.put(r + 3, 10 << 16);
+        w
+    }
+
+    fn compare(o: &Words, n: &Words) -> Result<(), String> {
+        let l = layout();
+        let so = St {
+            sp: o,
+            l: &l,
+            hi_mem_min: HI_MEM_STAT_MIN,
+        };
+        let sn = St {
+            sp: n,
+            l: &l,
+            hi_mem_min: HI_MEM_STAT_MIN,
+        };
+        let mut w = Iso::new(so, sn);
+        w.page_ins();
+        w.finish();
+        w.err.map_or(Ok(()), Err)
+    }
+
+    /// The fields of an `inserting` record hold what `get_node` left
+    /// (tex.web §1008-§1009) and are never read: two runs whose records
+    /// differ there only are the same state (it failed before `506b33c4a`:
+    /// "broken_ptr: ... points at nothing the walk reached").
+    #[test]
+    fn an_inserting_records_stale_broken_fields_are_not_compared() {
+        let o = page_ins_list(1000, INSERTING, 4_677_821, 2_345_678);
+        let n = page_ins_list(1000, INSERTING, 3_122_334, 1_234_567);
+        assert_eq!(compare(&o, &n), Ok(()));
+    }
+
+    /// A `split_up` record's are read where its class is broken (tex.web
+    /// §1021): different ones are different states.
+    #[test]
+    fn a_split_up_records_broken_fields_are_compared() {
+        let o = page_ins_list(1000, SPLIT_UP, 4_677_821, 2_345_678);
+        let n = page_ins_list(1000, SPLIT_UP, 3_122_334, 1_234_567);
+        let e = compare(&o, &n).expect_err("split_up records with different broken fields");
+        assert!(e.contains("broken_"), "{e}");
+        // ... and equal ones (pointing at nothing the walk reaches here) are
+        // still followed: the same address in both is not enough
+        let o = page_ins_list(1000, SPLIT_UP, 4_000, 4_001);
+        let n = page_ins_list(1000, SPLIT_UP, 4_000, 4_001);
+        assert!(compare(&o, &n).is_err());
+        // (and an `inserting` record with null fields, as always)
+        let o = page_ins_list(1000, INSERTING, NULL, NULL);
+        assert_eq!(compare(&o, &o), Ok(()));
+    }
+
+    // INFDESC-883's dead cells (`garbage`). The space: `mem` cells 0..=LO_MAX
+    // and HI_MIN..=MEM_END, the scalars that bound them after mem, and a
+    // `pdf_mem` region (words the walk does not interpret here) after
+    // those.
+    const LO_MAX: i32 = 5000;
+    const HI_MIN: i32 = 9000;
+    const MEM_END: i32 = 9999;
+    const SCALARS: usize = (MEM_TOP as usize + 1) * 8;
+    const STACK: usize = SCALARS + 64;
+
+    fn dead_space() -> (Words, Layout, Vec<crate::arena::RegionInfo>) {
+        let mut l = layout();
+        let mut w = Words::default();
+        for (k, (name, v)) in [
+            ("lo_mem_max", LO_MAX),
+            ("hi_mem_min", HI_MIN),
+            ("mem_end", MEM_END),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            l.scalars.insert(name, (SCALARS + k * 8, 4));
+            w.0.insert(SCALARS + k * 8, v as u32 as u64);
+        }
+        let regions = vec![
+            crate::arena::RegionInfo {
+                name: "mem",
+                off: 0,
+                bytes: SCALARS,
+                elem: 8,
+            },
+            crate::arena::RegionInfo {
+                name: "pdf_mem",
+                off: STACK,
+                bytes: 64,
+                elem: 4,
+            },
+        ];
+        (w, l, regions)
+    }
+
+    /// What `garbage` finds dead in `w`, where the walk reached `reached`
+    /// and every other cell but `alloc` is free.
+    fn dead_of(
+        w: &Words,
+        l: &Layout,
+        regions: &[crate::arena::RegionInfo],
+        alloc: &[i32],
+    ) -> Vec<u64> {
+        let words = (MEM_TOP as usize + 64) / 64 + 1;
+        let (cov, mut free) = (vec![0u64; words], vec![0u64; words]);
+        for p in (MEM_BOT..=LO_MAX).chain(HI_MIN..=MEM_END) {
+            if !alloc.contains(&p) {
+                set(&mut free, p);
+            }
+        }
+        let s = St {
+            sp: w,
+            l,
+            hi_mem_min: HI_MIN,
+        };
+        garbage(regions, &s, &cov, &free, &[], None)
+    }
+
+    /// A line's end TeX leaked (pdfTeX does, for a link broken across lines:
+    /// pdflatex's `\tracingstats=2` shows the words never given back): a
+    /// `\rightskip` glue node and the character before it, which nothing
+    /// points at. Its cells are dead, so a convergence test may ignore
+    /// their words (before INFDESC-883 every later test failed on them).
+    #[test]
+    fn a_leaked_line_end_is_dead() {
+        let (mut w, l, regions) = dead_space();
+        // a character node (hi mem) linked to the glue node at 3000
+        w.put(9500, halves(0x0001_0041, 3000));
+        // glue node, subtype right_skip_code + 1, link null; glue_ptr zero_glue
+        w.put(3000, hh(10, 9, NULL));
+        w.put(3001, halves(NULL, 0));
+        let dead = dead_of(&w, &l, &regions, &[9500, 3000, 3001]);
+        for p in [9500, 3000, 3001] {
+            assert!(bit(&dead, p), "cell {p} is dead");
+        }
+    }
+
+    /// A cell that a word the walk does not interpret points at (a root the
+    /// walk would lack) is live, as is what it points at in turn: its
+    /// difference must still fail the convergence test.
+    #[test]
+    fn a_cell_a_word_outside_the_walk_points_at_is_live() {
+        let (mut w, l, regions) = dead_space();
+        w.put(9500, halves(0x0001_0041, 3000));
+        w.put(3000, hh(10, 9, NULL));
+        w.put(3001, halves(NULL, 0));
+        // an unrelated leaked node
+        w.put(4000, hh(10, 9, NULL));
+        // the hidden root: pdf_mem[1] = 9500
+        w.0.insert(STACK, (9500u64) << 32);
+        let dead = dead_of(&w, &l, &regions, &[9500, 3000, 3001, 4000]);
+        for p in [9500, 3000, 3001] {
+            assert!(!bit(&dead, p), "cell {p} is live (pdf_mem -> 9500 -> 3000)");
+        }
+        assert!(bit(&dead, 4000), "the unrelated node is still dead");
+    }
 }

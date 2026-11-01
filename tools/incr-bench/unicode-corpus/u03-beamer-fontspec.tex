@@ -1,0 +1,42 @@
+% u03-beamer-fontspec: a beamer deck with fontspec's fonts (TeX Gyre Heros)
+% and unicode-math, overlays, blocks and columns
+\documentclass{beamer}
+\usetheme{Madrid}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setsansfont{texgyreheros-regular.otf}[
+  BoldFont=texgyreheros-bold.otf,
+  ItalicFont=texgyreheros-italic.otf]
+\setmathfont{latinmodern-math.otf}
+\title{A Unicode deck}
+\author{FlashTeX}
+\date{11 October 2026}
+\begin{document}
+\begin{frame}
+  \titlepage
+\end{frame}
+\begin{frame}{Overlays}
+  \begin{itemize}
+    \item<1-> First point, with “quotes” and an em dash — here.
+    \item<2-> Second point: $∑_{k=1}^{n} k = \frac{n(n+1)}{2}$.
+    \item<3-> Third point, \alert{alerted}.
+  \end{itemize}
+\end{frame}
+\begin{frame}{Blocks and columns}
+  \begin{columns}
+    \column{0.5\textwidth}
+    \begin{block}{Definition}
+      A set $A ⊆ ℝ$ is open when every point has a neighbourhood in $A$.
+    \end{block}
+    \column{0.5\textwidth}
+    \begin{exampleblock}{Example}
+      The interval $(0, 1)$ is open; $[0, 1]$ is not.
+    \end{exampleblock}
+  \end{columns}
+\end{frame}
+\begin{frame}{Math}
+  \[ ∫_{-∞}^{∞} e^{-x^2}\,dx = \sqrt{π} \]
+  Some text after the display, long enough to wrap onto a second line of
+  the frame in the theme's sans serif font.
+\end{frame}
+\end{document}

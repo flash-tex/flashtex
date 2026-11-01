@@ -31,10 +31,6 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         ]
     }
 
-    static func result(_ diagnostics: [RuntimeV1.Diagnostic], revision: Int) -> RuntimeV1.CompileResult {
-        RuntimeV1.CompileResult(projectId: "p", revision: revision, status: .recovered, pages: [], diagnostics: diagnostics, pdfPath: nil)
-    }
-
     // MARK: count summary
 
     func testSpokenSummaryLeavesOutEmptyBuckets() {
@@ -133,32 +129,46 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
 
     // MARK: the shell
 
-    /// Applies `result` the way every route does: `result =`, then the
-    /// layout binding that finalises `displayedDiagnostics` and announces.
-    private func apply(_ result: RuntimeV1.CompileResult, to m: ShellModel, requested: [String] = []) {
-        m.result = result
-        m.resultID = "r\(result.revision)"
-        m.bindLayout(of: result, requested: requested)
+    static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-voiceover-\(getpid())")
+    private var env = EnvironmentOverride()
+    override func setUp() { OwnerStateGuard.install(); env.set("FLASHTEX_V3_CACHE", Self.cache.path) }
+    override func tearDown() { env.restore(); try? FileManager.default.removeItem(at: Self.cache) }
+
+    /// A shell whose engine session runs with no host (`FLASHTEX_HOST=none`):
+    /// the announcement is made only while the session runs.
+    private func shellModel() -> ShellModel {
+        env.set("FLASHTEX_HOST", "none")
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.text)
+        m.engineV3Enabled = true
+        return m
+    }
+
+    /// Applies a finished compile the way the engine's DONE does
+    /// (EngineV3Session): its rows are published, then the count is noted.
+    private func apply(_ diagnostics: [RuntimeV1.Diagnostic], to m: ShellModel) {
+        m.engineV3Diagnostics = diagnostics
+        m.noteCompileCompletedForVoiceOver()
     }
 
     func testShellAnnouncesChangedCountsOnlyWhenACompileCompletes() {
-        let m = ShellModel()
-        m.replaceProject(entryText: Self.text)
+        let m = shellModel()
+        defer { m.engineV3.stop() }
         XCTAssertEqual(m.diagnosticAnnouncements, [])
         // Typing (an in-flight revision) announces nothing: only an applied result does.
         m.updateActiveText(Self.text + "typed\n")
         XCTAssertEqual(m.diagnosticAnnouncements, [])
         // A clean first compile is silent.
-        apply(Self.result([], revision: 1), to: m)
+        apply([], to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, [])
         // Problems appear: spoken.
-        apply(Self.result(Self.diagnostics(), revision: 2), to: m)
+        apply(Self.diagnostics(), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented"])
         // The same counts again (another keystroke's compile): silent.
-        apply(Self.result(Self.diagnostics(), revision: 3), to: m)
+        apply(Self.diagnostics(), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented"])
         // A change inside the interval waits for the throttle.
-        apply(Self.result(Array(Self.diagnostics().prefix(1)), revision: 4), to: m)
+        apply(Array(Self.diagnostics().prefix(1)), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented"])
         XCTAssertEqual(m.diagnosticsAnnouncer.pending, "1 error")
         XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "a flush is scheduled for the end of the interval")
@@ -173,40 +183,9 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         // Opening another project forgets the counts: its first clean compile is silent again.
         m.replaceProject(entryText: "plain\n")
         XCTAssertNil(m.diagnosticsAnnouncementFlush)
-        apply(Self.result([], revision: 1), to: m)
+        apply([], to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors, 1 warning, 1 not implemented", "1 error"])
         XCTAssertEqual(m.diagnosticsAnnouncer.lastSpoken, "No problems")
-    }
-
-    /// Layout diagnostics (an unsupported primitive on the negotiated route)
-    /// join `displayedDiagnostics` in `bindLayout`, after `result =`. The
-    /// announcement waits for that binding, so the spoken summary is the
-    /// list's, and a change that is only in the layout diagnostics is spoken.
-    func testAnnouncementCountsLayoutDiagnosticsAndFollowsTheirChanges() {
-        let m = ShellModel()
-        m.replaceProject(entryText: Self.text)
-        m.diagnosticsAnnouncer.intervalNs = 0 // content, not the throttle
-        let caps = [RuntimeV1.LayoutCapabilities.rulesV1]
-        let blob = RuntimeV1.Page(number: 1, widthPt: 100, heightPt: 100,
-                                  items: [.unknown(kind: "blob", source: .init(path: "main.tex", startByte: 0, endByte: 4))])
-        let error = Array(Self.diagnostics().prefix(1))
-        let withBlob = RuntimeV1.CompileResult(projectId: "p", revision: 1, status: .recovered, pages: [blob],
-                                               diagnostics: error, pdfPath: nil, layoutCapabilities: caps)
-        // `result =` alone says nothing: the layout diagnostics of this reply are not bound yet.
-        m.result = withBlob
-        XCTAssertEqual(m.diagnosticAnnouncements, [])
-        m.bindLayout(of: withBlob, requested: caps)
-        XCTAssertEqual(m.layoutDiagnostics.count, 1)
-        XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors"], "the source error and the layout error together")
-        // Same source diagnostics, no blob: a change only in the layout diagnostics is spoken.
-        let clean = RuntimeV1.Page(number: 1, widthPt: 100, heightPt: 100, items: [])
-        let withoutBlob = RuntimeV1.CompileResult(projectId: "p", revision: 2, status: .recovered, pages: [clean],
-                                                  diagnostics: error, pdfPath: nil, layoutCapabilities: caps)
-        m.result = withoutBlob
-        XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors"])
-        m.bindLayout(of: withoutBlob, requested: caps)
-        XCTAssertEqual(m.layoutDiagnostics, [])
-        XCTAssertEqual(m.diagnosticAnnouncements, ["2 errors", "1 error"])
     }
 
     /// A flush timer armed for one announcement that fires after a later,
@@ -215,22 +194,22 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
     /// last announcement and the newest summary is what gets spoken.
     func testStaleFlushTimerNeverSpeaksEarlyAndTheNewestSummaryWins() async throws {
         let interval: UInt64 = 300_000_000
-        let m = ShellModel()
-        m.replaceProject(entryText: Self.text)
+        let m = shellModel()
+        defer { m.engineV3.stop() }
         m.diagnosticsAnnouncer.intervalNs = interval
         let one = Array(Self.diagnostics().prefix(1))
         let gapAndError = Array(Self.diagnostics().prefix(2))
-        apply(Self.result(one, revision: 1), to: m)
+        apply(one, to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"])
-        apply(Self.result([], revision: 2), to: m)
+        apply([], to: m)
         XCTAssertEqual(m.diagnosticsAnnouncer.pending, "No problems")
         XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "T1 armed for the end of the interval")
         // Block the main thread past the interval: T1 is due but cannot run yet.
         Thread.sleep(forTimeInterval: Double(interval) / 1e9 + 0.05)
         let spokenAt = MonotonicClock.nowNs()
-        apply(Self.result(Self.diagnostics(), revision: 3), to: m)
+        apply(Self.diagnostics(), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["1 error", "2 errors, 1 warning, 1 not implemented"], "due: spoken at once")
-        apply(Self.result(gapAndError, revision: 4), to: m)
+        apply(gapAndError, to: m)
         XCTAssertEqual(m.diagnosticsAnnouncer.pending, "1 error, 1 not implemented")
         XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "T1 is still queued; no second timer")
         // Let T1 run: it is early for the newest announcement, so it re-arms rather than speaking.
@@ -242,7 +221,7 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(heardAt &- spokenAt, interval, "the throttle held from the last announcement")
         XCTAssertNil(m.diagnosticsAnnouncer.pending)
         // Cancelling (a new project) while a timer is armed: the timer does nothing when it fires.
-        apply(Self.result(one, revision: 5), to: m)
+        apply(one, to: m)
         XCTAssertEqual(m.diagnosticsAnnouncer.pending, "1 error")
         m.replaceProject(entryText: "plain\n")
         XCTAssertNil(m.diagnosticsAnnouncementFlush)
@@ -263,18 +242,18 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         return url
     }
 
-    /// Loading a fixture replaces the project by assigning `result` directly
-    /// (never through `result = nil`), so it must reset the announcer the way
+    /// Loading a fixture replaces the project's documents without
+    /// `replaceProject`, so it must reset the announcer the way
     /// `replaceProject` does: a timer armed for the old project stays silent,
-    /// the fixture's first clean result is silent, and its first problem is
-    /// spoken at once rather than throttled behind the old project's interval.
+    /// nothing is spoken for the load, and the next compile's first problem
+    /// is spoken at once rather than throttled behind the old project's interval.
     func testLoadingAFixtureResetsTheAnnouncerAndSilencesThePendingTimer() async throws {
         let interval: UInt64 = 300_000_000
-        let m = ShellModel()
-        m.replaceProject(entryText: Self.text)
+        let m = shellModel()
+        defer { m.engineV3.stop() }
         m.diagnosticsAnnouncer.intervalNs = interval
-        apply(Self.result(Array(Self.diagnostics().prefix(1)), revision: 1), to: m)
-        apply(Self.result(Self.diagnostics(), revision: 2), to: m)
+        apply(Array(Self.diagnostics().prefix(1)), to: m)
+        apply(Self.diagnostics(), to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"])
         XCTAssertEqual(m.diagnosticsAnnouncer.pending, "2 errors, 1 warning, 1 not implemented")
         XCTAssertNotNil(m.diagnosticsAnnouncementFlush, "a timer is armed for the old project")
@@ -284,23 +263,20 @@ final class DiagnosticsPanelVoiceOverTests: XCTestCase {
         let clean = try fixture(named: "clean-result.json", diagnostics: "")
         m.loadFixtures(request: nil, result: clean)
         XCTAssertNil(m.loadError)
-        XCTAssertEqual(m.previewSource, .fixture)
+        XCTAssertEqual(m.fixtureURL, clean)
         XCTAssertNil(m.diagnosticsAnnouncementFlush)
         XCTAssertGreaterThan(m.diagnosticsFlushToken, tokenBefore, "the old timer's token is retired")
         XCTAssertNil(m.diagnosticsAnnouncer.pending)
         XCTAssertNil(m.diagnosticsAnnouncer.lastSpokenNs)
         XCTAssertEqual(m.diagnosticsAnnouncer.lastSpoken, "No problems")
         XCTAssertEqual(m.diagnosticsAnnouncer.intervalNs, interval, "the interval survives the reset")
-        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"], "the fixture's first clean result is silent")
+        XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"], "loading the fixture speaks nothing")
         // Past the old timer's deadline: it fired (or was cancelled) without speaking.
         try await Task.sleep(nanoseconds: interval + 100_000_000)
         XCTAssertEqual(m.diagnosticAnnouncements, ["1 error"], "the stale timer never speaks across projects")
 
-        // A fixture with a problem, loaded next: spoken at once, not held behind the old project's interval.
-        let warned = try fixture(named: "warned-result.json",
-                                 diagnostics: #"{"severity":"warning","message":"Overfull line","source":null,"recovery":null}"#)
-        m.loadFixtures(request: nil, result: warned)
-        XCTAssertNil(m.loadError)
+        // The fixture's first compile with a problem: spoken at once, not held behind the old project's interval.
+        apply([.init(severity: .warning, message: "Overfull line", source: nil, recovery: nil)], to: m)
         XCTAssertEqual(m.diagnosticAnnouncements, ["1 error", "1 warning"])
         XCTAssertNil(m.diagnosticsAnnouncementFlush)
         // And File > Open after a fixture resets the same way.

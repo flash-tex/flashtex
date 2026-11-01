@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Builds the `flashtex` CLI and every Rust helper that
-# apps/mac/scripts/make-app.sh bundles, in
+# Builds every Rust helper that apps/mac/scripts/make-app.sh bundles, in
 # release mode, one crate at a time (all of them are members of the root Cargo
 # workspace and share ./target -- see Cargo.toml).
 # Idempotent: cargo rebuilds only what changed. Prints one
@@ -20,9 +19,10 @@
 #   --check  do not build; only print the env lines for binaries that exist
 #            (exit 1 if a required one is missing)
 #
-# Crates that make-app.sh treats as optional (diagnostic-explanations) are
-# skipped with a note when their directory does not exist; every other crate
-# in the table must build or this script fails.
+# Every crate in the table must build or this script fails. The old engine's
+# helpers (flashtex-cli, compiler, pdf, render-pipeline) and the preview
+# controller left in retirement stage S6 (#1236): the app no longer runs
+# them. The engine host is built separately (release.yml, ci.yml mac-v3-host).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,15 +49,9 @@ done
 # Mirrors HELPER_TABLE in apps/mac/scripts/make-app.sh and the FLASHTEX_*
 # variables the Mac app reads (apps/mac/Sources/FlashTeXMac/*).
 HELPERS=(
-  "flashtex-cli||0|FLASHTEX_CLI=flashtex"
-  "compiler||0|FLASHTEX_COMPILER=flashtex-compiler"
-  "pdf||0|FLASHTEX_PDF=flashtex-pdf,FLASHTEX_PDF_EXACT=flashtex-pdf-exact"
   "bridge||0|FLASHTEX_BRIDGE=flashtex-bridge"
   "edit-ledger||0|FLASHTEX_EDIT_LEDGER=flashtex-edit-ledger"
-  "render-pipeline||0|FLASHTEX_RENDER=flashtex-render"
-  "preview-controller||0|FLASHTEX_PREVIEW_CONTROLLER=flashtex-preview-controller"
   "project-files||0|FLASHTEX_PROJECT_FILES=flashtex-project-files"
-  "diagnostic-explanations||1|FLASHTEX_EXPLAIN=flashtex-explain"
 )
 
 in_list() {  # $1=needle $2=comma list

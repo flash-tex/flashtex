@@ -32,6 +32,7 @@ struct WorkspaceSidebar: View {
     static let identifier = "workspace.sidebar"
 
     var body: some View {
+        let _ = ViewBodyProbe.note("WorkspaceSidebar") // KeystrokeInvalidationTests
         VStack(spacing: 0) {
             if projectVisible {
                 ProjectSection()
@@ -47,22 +48,27 @@ struct WorkspaceSidebar: View {
         .background(DS.Colors.surfacePrimary) // the flat opaque tool window (Islands), never a sidebar material
         .accessibilityIdentifier(Self.identifier)
         .modifier(ProjectScaffoldSheets()) // New Project / New File / Rename / Delete (ProjectScaffoldViews.swift)
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)/\(outlineVisible)") {
+        // The revision and the caret change on every keystroke: they are read in
+        // zero-size children (IsolatedTask.swift), so a keystroke does not
+        // re-evaluate the sidebar, the Project tree or the Outline.
+        .background(IsolatedTask(id: { "\(model.activePath)@\(model.chrome.editorRevision)/\(outlineVisible)" }) { _ in
             guard outlineVisible else { return } // no scans for a hidden panel
             // Rescan after a short quiet period; the previous scan is cancelled.
             let revision = model.chrome.editorRevision, path = model.activePath
             if outlineFor.revision >= 0 { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
-            outline = model.outline
+            let scanned = await DocumentOutline.scanOffMain(model.activeText)
+            guard !Task.isCancelled else { return }
+            outline = scanned
             outlineFor = (path, revision)
-        }
-        .task(id: "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)") {
+        })
+        .background(IsolatedTask(id: { [outline] in "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)" }) { _ in
             guard outlineVisible else { return }
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled else { return }
             let id = DocumentOutline.current(at: model.caretUTF16, in: outline)?.id
             if id != currentOutlineID { currentOutlineID = id }
-        }
+        })
     }
 }
 
@@ -110,6 +116,7 @@ struct ProjectSection: View {
     @AppStorage(ProjectTreeMode.defaultsKey) private var treeMode = ProjectTreeMode.defaultValue
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ProjectSection") // KeystrokeInvalidationTests
         // Throttled, change-only copies (ShellChrome.swift): `project.listing`
         // and `discoverClosure()` read `documents`, so this tree re-evaluated
         // on every keystroke otherwise.
@@ -224,7 +231,7 @@ struct ProjectSection: View {
                 icon: style.systemImage,
                 iconColor: style.nsColor,
                 title: doc.path,
-                trailing: doc.durableRevision.map { "r\($0)" },
+                trailing: nil,
                 modified: doc.isDirty,
                 tooltip: tooltip(for: doc, kind: kinds.kind(of: doc.path)),
                 accessibilityLabel: spoken(for: doc, kind: kinds.kind(of: doc.path), active: doc.path == activePath)))
@@ -323,6 +330,7 @@ struct ProjectSection: View {
             if id.hasPrefix("closed:"), let path = ProjectTreeMove.path(forRowID: id) {
                 items.append(.divider)
                 items.append(.init(title: "Move to…", action: { model.scaffold.presentMove(path) }))
+                items += focusItems(path) // EngineV3FocusChapter.swift
             }
             // Tree mode's folder rows: the folder itself, when it is on disk.
             if id.hasPrefix(ProjectFileTree.folderPrefix) {
@@ -350,7 +358,18 @@ struct ProjectSection: View {
             items.append(.init(title: "Move to…", action: { model.scaffold.presentMove(path) })) // ProjectMove.swift; rows also drag
             items.append(.init(title: "Delete…", action: { model.scaffold.presentDelete(path) }))
         }
+        items += focusItems(path) // EngineV3FocusChapter.swift
         return items
+    }
+
+    /// "Focus Preview on This Chapter" for an `\include`d file; "Show Whole
+    /// Document" while the preview is focused on it.
+    private func focusItems(_ path: String) -> [SidebarTree.MenuItem] {
+        if model.engineV3.focus.chapters.contains(where: { $0.path == path }) {
+            return [.divider, .init(title: "Show Whole Document in Preview", action: { model.showWholeDocument() })]
+        }
+        guard model.focusChapter(for: path) != nil else { return [] }
+        return [.divider, .init(title: "Focus Preview on This Chapter", action: { model.focusPreview(on: path) })]
     }
 
     /// Right-click on the tree's empty space: the project as a whole. The tree
@@ -379,11 +398,9 @@ struct ProjectSection: View {
         if kind == .bibliography { parts.append("bibliography source (declared)") }
         switch doc.origin {
         case .buffer: parts.append("buffer")
-        case .helper: parts.append("via the helper's durable ledger")
         case .disk: parts.append("read from disk")
         case .virtual(let source): parts.append("read-only, from \(source)")
         }
-        if let r = doc.durableRevision { parts.append("durable revision \(r)") }
         if doc.isDirty { parts.append("edited since last save") }
         return parts.joined(separator: " · ")
     }

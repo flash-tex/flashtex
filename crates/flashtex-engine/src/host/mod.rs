@@ -34,18 +34,24 @@ pub mod crash;
 pub mod diag;
 pub mod external;
 mod resident;
+pub mod s0write;
 pub mod server;
 pub mod tools;
 
 use crate::arena::{CheckpointId, CHUNK_BYTES};
 use crate::checkpoint::ExtRecord;
 use crate::generated::Globals;
-use crate::persist::{hash128, Codec, Reader};
+use crate::persist::{Codec, Reader};
 use crate::resolver::Format;
 use crate::system::{self, Lookup, RunOptions, StatSig, Stream};
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// What S₀ depends on.
+/// A whole read at `\document`'s start (`Key::arm`): path, length, time,
+/// content hash.
+pub type ArmRead = (String, Option<u64>, Option<i64>, [u64; 2]);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Key {
     /// The engine build: a hash of the running executable.
@@ -77,25 +83,13 @@ pub struct Key {
     /// again: the distribution's trees are taken as unchanged for the
     /// session, as kpathsea's own `ls-R` cache takes them.
     pub dirs: Vec<(String, StatSig)>,
-}
-
-impl Codec for StatSig {
-    fn enc(&self, w: &mut Vec<u8>) {
-        self.len.enc(w);
-        (self.mtime_ns as i64).enc(w);
-        ((self.mtime_ns >> 64) as i64).enc(w);
-        self.ino.enc(w);
-    }
-    fn dec(r: &mut Reader) -> Result<Self, String> {
-        let len = u64::dec(r)?;
-        let lo = i64::dec(r)? as u64 as i128;
-        let hi = i64::dec(r)? as i128;
-        Ok(StatSig {
-            len,
-            mtime_ns: (hi << 64) | lo,
-            ino: u64::dec(r)?,
-        })
-    }
+    /// The whole reads between `\document`'s start and the anchor
+    /// (`whole_after_arm`), which `files` leaves out: path, the length a
+    /// `\pdffilesize` read, the time a `\pdffilemoddate` read, the content's
+    /// hash. In a session `incr::Session::arm_window` checks them; a host
+    /// opened from a persisted S₀ has no checkpoint before it, so
+    /// `check_arm` refuses the S₀ when one changed (review of #1739).
+    pub arm: Vec<ArmRead>,
 }
 
 crate::codec_struct!(Key {
@@ -110,7 +104,8 @@ crate::codec_struct!(Key {
     lookups,
     barriers,
     written,
-    dirs
+    dirs,
+    arm
 });
 
 fn format_index(f: Format) -> u8 {
@@ -135,23 +130,94 @@ pub fn engine_build() -> [u64; 2] {
     *BUILD.get_or_init(|| {
         std::env::current_exe()
             .ok()
-            .and_then(|p| std::fs::read(p).ok())
-            .map(|d| hash128(&d))
-            .unwrap_or([0, 0])
+            .and_then(|p| crate::persist::hash128_file(p.to_str()?, None).ok())
+            .map_or([0, 0], |(h, _)| h)
     })
 }
 
 fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
-    let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    let p = d
-        .get(..len as usize)
-        .ok_or_else(|| format!("{path} is shorter than the {len} bytes read"))?;
-    Ok(hash128(p))
+    let (h, n) =
+        crate::persist::hash128_file(path, Some(len)).map_err(|e| format!("{path}: {e}"))?;
+    if n < len {
+        return Err(format!("{path} is shorter than the {len} bytes read"));
+    }
+    Ok(h)
 }
 
 impl Key {
     /// Whether S₀ is still what a full run would reach: `Err` says why not.
     pub fn check(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
+        self.check_fresh(session_clock, first_line).map(|_| ())
+    }
+
+    /// [`check`](Self::check), then keep the signatures it verified another
+    /// way (by content, or by running the lookups again): taken before that
+    /// test, they stand for the state it found unchanged. A signature taken
+    /// within the modification-time tick of its file (`StatSig::racy`)
+    /// proves nothing, so a key taken just after the run wrote its output
+    /// directory would otherwise test by content, and run every lookup
+    /// again, at every compile; with the fresh signatures, once the tick has
+    /// passed, it does not.
+    pub fn check_refresh(
+        &mut self,
+        session_clock: (i64, i32),
+        first_line: &[u8],
+    ) -> Result<(), String> {
+        let fresh = self.check_fresh(session_clock, first_line)?;
+        for (i, s) in fresh.files {
+            self.files[i].2 = s;
+        }
+        for (i, s) in fresh.prefixes {
+            self.prefixes[i].3 = s;
+        }
+        if let Some(d) = fresh.dirs {
+            for (i, s) in d.into_iter().enumerate() {
+                self.dirs[i].1 = s;
+            }
+        }
+        Ok(())
+    }
+
+    /// The test, and the signatures it verified by other means: (index,
+    /// signature now) of files and prefixes compared by content, and every
+    /// directory's signature when the lookups ran again and all held.
+    // (merging #1551 into #1552's test: #1551's `check_run`, which a
+    // preamble restart uses alone, and `check_files`; #1552's `Fresh`
+    // signatures come out of `check_files`)
+    fn check_fresh(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<Fresh, String> {
+        self.check_run(session_clock, first_line)?;
+        if let Some(b) = self.barriers.first() {
+            return Err(format!("the preamble ran an external command ({b})"));
+        }
+        self.check_files()
+    }
+
+    /// The reads between `\document`'s start and the anchor (`arm`), for an
+    /// S₀ with no checkpoint before it (one opened from disk, or the
+    /// whole-run host's): each the same length, time or content.
+    pub fn check_arm(&self) -> Result<(), String> {
+        for (path, size, stamp, hash) in &self.arm {
+            let same = match (size, stamp) {
+                (Some(n), _) => std::fs::metadata(path).ok().map(|m| m.len()) == Some(*n),
+                (_, Some(t)) => system::mtime_secs(path) == Some(*t),
+                // (through a buffer: a hook may hash a large file)
+                _ => {
+                    crate::persist::hash128_file(path, None)
+                        .ok()
+                        .map(|(h, _)| h)
+                        == Some(*hash)
+                }
+            };
+            if !same {
+                return Err(format!("{path}, read at the document's start, changed"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The part of `check` that is not about what the run read: the engine
+    /// build, the clock, the date variables, the first line.
+    pub fn check_run(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
         if self.build != engine_build() {
             return Err("the engine build changed".into());
         }
@@ -166,33 +232,78 @@ impl Key {
         if self.first_line != first_line {
             return Err("the first line changed".into());
         }
-        if let Some(b) = self.barriers.first() {
-            return Err(format!("the preamble ran an external command ({b})"));
-        }
+        Ok(())
+    }
+
+    /// The part of `check` about the files and lookups the run read.
+    fn check_files<'a>(&'a self) -> Result<Fresh, String> {
+        let mut fresh = Fresh::default();
+        // (TeX Live's files as the watches vouch for them: `fswatch`)
+        let _check = crate::fswatch::check();
+        // One signature and one content hash per path: a preamble opens
+        // many files more than once (beamer's: 432 reads of 189 files), and
+        // the key lists every read. Each read is still compared with what
+        // it recorded, against the file as this check found it.
+        let mut sigs: HashMap<&str, Option<StatSig>> = HashMap::new();
+        let mut sig_of = |path: &'a str| {
+            *sigs
+                .entry(path)
+                .or_insert_with(|| crate::fswatch::sig(path))
+        };
+        let mut hashes: HashMap<&str, Option<[u64; 2]>> = HashMap::new();
         // A file both written before S₀ and read before it is keyed by
         // what was read; `rewrite_outputs` puts back what was written.
-        for (path, hash, stat) in &self.files {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for (i, (path, hash, stat)) in self.files.iter().enumerate() {
+            let sig = sig_of(path);
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
-            let now = std::fs::read(path).map(|d| hash128(&d)).ok();
+            let now = *hashes
+                .entry(path)
+                .or_insert_with(|| crate::hashcache::hash_file(path).ok());
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
             }
+            if let Some(s) = sig {
+                fresh.files.push((i, s));
+            }
         }
-        for (path, len, hash, stat) in &self.prefixes {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for (i, (path, len, hash, stat)) in self.prefixes.iter().enumerate() {
+            let sig = sig_of(path);
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
             if hash_prefix(path, *len).ok() != Some(*hash) {
                 return Err(format!("{path} changed in the {len} bytes read before S0"));
             }
+            if let Some(s) = sig {
+                fresh.prefixes.push((i, s));
+            }
         }
+        // (taken before the lookups: a directory changed while they run
+        // shows as changed next time)
+        let now: Vec<Option<StatSig>> = self.dirs.iter().map(|(d, _)| system::dep_sig(d)).collect();
         let dirs_same = !self.dirs.is_empty()
             && self
                 .dirs
                 .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+                .zip(&now)
+                .all(|((_, s), n)| n.as_ref() == Some(s));
+        if !dirs_same && std::env::var_os("FLASHTEX_FSWATCH_DEBUG").is_some() {
+            for ((d, s), n) in self.dirs.iter().zip(&now) {
+                if n.as_ref() != Some(s) {
+                    eprintln!("[fswatch] key dir {d:?} differs: {s:?} now {n:?}");
+                }
+            }
+        }
+        // Whether the answers depend on nothing the key does not watch (a
+        // lookup that finds the same may depend on more than when S₀ was
+        // taken, #1562): if they do, the signatures stay as they were, and
+        // every check makes the lookups again.
+        let mut covered = true;
+        // (LOOKUP-SKIP: each lookup checked against what it depends on,
+        // and made again only where that does not show its answer)
+        let mut verify = crate::lookupproof::Verifier::new();
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
@@ -200,12 +311,27 @@ impl Key {
                 must_exist: *must,
                 found: found.clone(),
             };
-            if system::lookup_again(&l) != *found {
+            let (again, deps) = verify.lookup_again_deps(&l);
+            if again != *found {
                 return Err(format!("looking up {name} finds another file now"));
             }
+            covered &= deps
+                .iter()
+                .all(|(d, _)| self.dirs.iter().any(|(x, _)| x == d));
         }
-        Ok(())
+        if !dirs_same && covered && now.iter().all(Option::is_some) {
+            fresh.dirs = Some(now.into_iter().flatten().collect());
+        }
+        Ok(fresh)
     }
+}
+
+/// What [`Key::check_fresh`] verified other than by signature.
+#[derive(Default)]
+struct Fresh {
+    files: Vec<(usize, StatSig)>,
+    prefixes: Vec<(usize, StatSig)>,
+    dirs: Option<Vec<StatSig>>,
 }
 
 impl Key {
@@ -352,7 +478,9 @@ impl Session {
             let v = if std::mem::take(&mut self.fresh) {
                 Ok(())
             } else {
-                s0.key.check(self.clock, &self.first_line)
+                s0.key
+                    .check(self.clock, &self.first_line)
+                    .and_then(|()| s0.key.check_arm())
             };
             let validate_s = t0.elapsed().as_secs_f64();
             match v {
@@ -426,7 +554,7 @@ impl Session {
         if let (Some(id), Some(reads)) = (s0_id, reads) {
             s0_at_s = g.layer().s0_elapsed;
             let rec = g.record_of(id)?;
-            match self.make_key(&mut g, &rec, reads) {
+            match self.make_key(&mut g, id, &rec, reads) {
                 Ok(key) => self.s0 = Some(S0 { id, key }),
                 Err(e) => eprintln!("flashtex-host: no S0: {e}"),
             }
@@ -451,18 +579,58 @@ impl Session {
     fn make_key(
         &self,
         g: &mut Globals,
+        id: CheckpointId,
         rec: &ExtRecord,
         reads: system::ReadLog,
     ) -> Result<Key, String> {
-        make_key(g, rec, &reads, self.clock, &self.first_line)
+        make_key(g, id, rec, &reads, self.clock, &self.first_line)
     }
+}
+
+/// Files with their content (S₀'s key's `written`).
+pub type Written = Vec<(String, Vec<u8>)>;
+
+/// The files a run had written and closed at checkpoint `rec` (`reads`:
+/// what it had read and written so far, or more), with their content on
+/// disk now: S₀'s key's `written`, read when the checkpoint is taken
+/// (`Layer::written_at`).
+pub fn written_before(rec: &ExtRecord, reads: &system::ReadLog) -> Result<Written, String> {
+    let no = if rec.reads == (0, 0, 0) {
+        reads.outputs.len()
+    } else {
+        rec.reads.2
+    };
+    let mut written = vec![];
+    for p in &reads.outputs[..no.min(reads.outputs.len())] {
+        let open = rec
+            .files
+            .iter()
+            .any(|f| matches!(&f.stream, Stream::Out { path, .. } if path == p));
+        if !open {
+            let d = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
+            written.push((p.clone(), d));
+        }
+    }
+    Ok(written)
 }
 
 /// S₀'s key: what the run read before S₀ (`reads`, whose files and lookups
 /// may run past S₀: only the first `rec.reads` count), with S₀'s host
 /// record `rec`.
+/// A whole read (`system::note_whole_read`) the run made after
+/// `\document`'s body was pushed (`Layer::arm_reads`), before S₀'s anchor:
+/// `\document`'s `\IfFileExists{\jobname.aux}` (l3's lookup takes the
+/// file's `\pdffilesize`). The anchor is the `.aux` point, and the `.aux`
+/// is the journal's (L5, `crate::readset`), not S₀'s key's: such a read is
+/// left out of the key, and the session checks it with the journal
+/// (`incr::Session::take_s0`'s list of files not keyed whole).
+pub fn whole_after_arm(arm: Option<usize>, i: usize, f: &system::FileRead) -> bool {
+    f.closed_at == Some(u64::MAX) && arm.is_some_and(|a| i >= a)
+}
+
 pub fn make_key(
     g: &mut Globals,
+    id: CheckpointId,
     rec: &ExtRecord,
     reads: &system::ReadLog,
     clock: (i64, i32),
@@ -482,30 +650,63 @@ pub fn make_key(
                 open_paths.push(path.clone());
             }
         }
-        let (nf, nl, no) = if rec.reads == (0, 0, 0) {
+        let (nf, nl, _) = if rec.reads == (0, 0, 0) {
             (reads.files.len(), reads.lookups.len(), reads.outputs.len())
         } else {
             rec.reads
         };
-        let mut written = vec![];
-        for p in &reads.outputs[..no.min(reads.outputs.len())] {
-            let open = rec
-                .files
-                .iter()
-                .any(|f| matches!(&f.stream, Stream::Out { path, .. } if path == p));
-            if !open {
-                let d = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
-                written.push((p.clone(), d));
-            }
-        }
+        // As they were at the checkpoint (`written_at`, taken there), not
+        // as the end of the run left them.
+        let wa = &mut g.layer().written_at;
+        let written = match wa.iter().position(|(i, _)| *i == id) {
+            Some(k) => wa.swap_remove(k).1,
+            None => written_before(rec, reads)?,
+        };
+        // A file open at S₀ is keyed by the prefix consumed, unless the run
+        // also read all of it at once (`\pdffilesize{\jobname.tex}`:
+        // `system::note_whole_read`): then by all of it. A read of its
+        // modification time (`\pdffilemoddate`, `FileRead::stamp`) is keyed
+        // by the time too: mixed into the hash, so that a file whose time
+        // changed fails the test by content (and the session finds the
+        // read in `changes`).
+        // (a whole read after `\document`'s body was pushed, before the
+        // anchor -- its `\IfFileExists{\jobname.aux}` -- is the journal's:
+        // `whole_after_arm`)
+        let arm = g.layer().arm_reads;
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
-            .filter(|f| !open_paths.contains(&f.path))
-            .map(|f| (f.path.clone(), f.hash, f.stat))
+            .enumerate()
+            .filter(|(i, f)| !whole_after_arm(arm, *i, f))
+            .map(|(_, f)| f)
+            .filter(|f| !open_paths.contains(&f.path) || f.closed_at == Some(u64::MAX))
+            .map(|f| {
+                let hash = match (&f.content, f.hash) {
+                    (Some(c), [0, 0]) => crate::persist::hash128(c),
+                    (_, h) => h,
+                };
+                let hash = match f.stamp {
+                    Some(t) => [
+                        hash[0] ^ (t as u64).rotate_left(17) ^ 0x5354_414d_5000_0000,
+                        hash[1],
+                    ],
+                    None => hash,
+                };
+                (f.path.clone(), hash, f.stat)
+            })
             .collect();
+        // (the journal lists a repeated lookup each time; the key once)
+        let mut lookup_seen = std::collections::HashSet::new();
         let lookups: Vec<(String, u8, Option<bool>, Option<String>)> = reads.lookups
             [..nl.min(reads.lookups.len())]
             .iter()
+            .filter(|l| {
+                lookup_seen.insert((
+                    l.name.clone(),
+                    format_index(l.format),
+                    l.must_exist,
+                    l.found.clone(),
+                ))
+            })
             .map(|l| {
                 (
                     l.name.clone(),
@@ -521,7 +722,20 @@ pub fn make_key(
             String::new()
         };
         let dirs = reads.dirs.clone();
+        let arm = reads.files[..nf.min(reads.files.len())]
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| whole_after_arm(g.layer().arm_reads, *i, f))
+            .map(|(_, f)| {
+                let hash = match (&f.content, f.hash) {
+                    (Some(c), [0, 0]) => crate::persist::hash128(c),
+                    (_, h) => h,
+                };
+                (f.path.clone(), f.size, f.stamp, hash)
+            })
+            .collect();
         Ok(Key {
+            arm,
             build: engine_build(),
             clock,
             source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),
@@ -571,6 +785,7 @@ impl Session {
         let (g, s0, rep) = read_s0(path, &mut |key| {
             let t = Session::new(o.clone(), Some(key.clock));
             key.check(t.clock, &t.first_line)?;
+            key.check_arm()?;
             s = Some(t);
             Ok(())
         })?;
@@ -590,92 +805,302 @@ pub fn write_s0(
     key: &Key,
     path: &str,
 ) -> Result<(u64, u64), String> {
-    {
-        let rec = g.record_of(id)?;
-        // The output files' contents up to their length at S₀, and the
-        // terminal's.
-        let mut outputs: Vec<(String, Vec<u8>)> = vec![];
-        for f in &rec.files {
-            if let Stream::Out { path, len, .. } = &f.stream {
-                let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-                let p = d
-                    .get(..*len as usize)
-                    .ok_or_else(|| format!("{path} is shorter than at S0"))?;
-                outputs.push((path.clone(), p.to_vec()));
-            }
-        }
-        let terminal = system::terminal_bytes();
-        let terminal = terminal
-            .get(..rec.terminal_len)
-            .ok_or("the terminal is shorter than at S0")?
-            .to_vec();
-        let view = g.arena.view_at(id)?;
-        // The display list's side table (changes/displaylist.ch) is left out,
-        // as it always was: its entries name source spans of this process
-        // (`crate::displaylist`), which a new process numbers afresh. Nodes
-        // made before S₀ are restored without a source span.
-        let side = g
-            .arena
-            .regions
-            .iter()
-            .find(|r| r.name == "dl_side")
-            .map_or(0..0, |r| r.off..r.off + r.bytes);
-        let chunk = |c: usize| -> std::borrow::Cow<'_, [u8]> {
-            let (lo, hi) = (c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
-            let d = view.chunk(c);
-            if hi <= side.start || lo >= side.end {
-                return std::borrow::Cow::Borrowed(d);
-            }
-            let mut v = d.to_vec();
-            v[side.start.max(lo) - lo..side.end.min(hi) - lo].fill(0);
-            std::borrow::Cow::Owned(v)
+    prepare_s0(g, id, key)?.write(path, &|| false)
+}
+
+/// Appends to an S₀ header, on whichever thread writes the file.
+type Encode = Box<dyn FnOnce(&mut Vec<u8>) + Send>;
+
+/// S₀ taken out of the engine for writing ([`prepare_s0`]): everything the
+/// file holds, so that [`S0Image::write`] needs nothing of the engine and may
+/// run on another thread ([`s0write`]) while the engine goes on.
+pub struct S0Image {
+    /// The header up to the definition sites.
+    head: Vec<u8>,
+    /// Encodes the rest of the header up to the list of nonzero chunks
+    /// (which the write works out): the definition sites, made from the
+    /// table taken at S₀ (5.6 MB and 96 M instructions on a beamer deck's
+    /// preamble), the output opens and the space's sizes.
+    tail: Encode,
+    /// Every chunk ever written, ascending, and its bytes at S₀ (the
+    /// display list's side table blanked), `CHUNK_BYTES` each in `data`.
+    chunks: Vec<u32>,
+    data: Scratch,
+}
+
+/// A buffer of its own pages (`os::alloc_zeroed`), given back to the system
+/// when dropped (`os::free`). S₀'s copy of the chunks (17–28 MB) lives in
+/// one: in the C allocator, the freed copy stayed in the footprint (macOS
+/// keeps freed blocks: a blank document's host went from 55–60 to 84–90 MB
+/// after #1749; lane MEM-BASELINE, docs/evidence/mem-baseline-2026-10-09/).
+pub(crate) struct Scratch {
+    ptr: *mut u8,
+    len: usize,
+}
+
+// SAFETY: the pages are owned by the value alone.
+unsafe impl Send for Scratch {}
+
+impl Scratch {
+    /// `len` zero bytes.
+    pub(crate) fn zeroed(len: usize) -> Scratch {
+        let ptr = if len == 0 {
+            std::ptr::NonNull::dangling().as_ptr()
+        } else {
+            crate::os::alloc_zeroed(len)
         };
-        let mut present: Vec<u32> = vec![];
-        for c in 0..g.arena.chunks() {
-            if g.arena.touched(c) && chunk(c).iter().any(|&b| b != 0) {
-                present.push(c as u32);
+        Scratch { ptr, len }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_slice(d: &[u8]) -> Scratch {
+        let mut s = Scratch::zeroed(d.len());
+        s.copy_from_slice(d);
+        s
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `len` bytes from `alloc_zeroed` (or none), owned.
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl std::ops::DerefMut for Scratch {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as above, and `&mut self` is the only access.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if self.len > 0 {
+            // SAFETY: from `alloc_zeroed` with this length, unused from now on.
+            unsafe { crate::os::free(self.ptr, self.len) }
+        }
+    }
+}
+
+/// Take S₀ (checkpoint `id` of `g`, with its key) out of the engine for
+/// writing: the header (but its definition sites, of which a table is
+/// taken) and a copy of the chunks, on the engine's thread; the sites, the
+/// scan for zero chunks, the file and its rename are the write's.
+pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Image, String> {
+    let mut rec = g.record_of(id)?;
+    // The output files' contents up to their length at S₀, and the
+    // terminal's.
+    let mut outputs: Vec<(String, Vec<u8>)> = vec![];
+    for f in &rec.files {
+        if let Stream::Out { path, len, .. } = &f.stream {
+            let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+            let p = d
+                .get(..*len as usize)
+                .ok_or_else(|| format!("{path} is shorter than at S0"))?;
+            outputs.push((path.clone(), p.to_vec()));
+        }
+    }
+    let terminal = system::terminal_bytes();
+    let terminal = terminal
+        .get(..rec.terminal_len)
+        .ok_or("the terminal is shorter than at S0")?
+        .to_vec();
+    let view = g.arena.view_at(id)?;
+    // The display list's side table (changes/displaylist.ch) is left out,
+    // as it always was: its entries name source spans of this process
+    // (`crate::displaylist`), which a new process numbers afresh. Nodes
+    // made before S₀ are restored without a source span.
+    let side = g
+        .arena
+        .regions
+        .iter()
+        .find(|r| r.name == "dl_side")
+        .map_or(0..0, |r| r.off..r.off + r.bytes);
+    // Nor is the read-set (PREAMBLE-PATCH: a run restarted in the preamble
+    // reads from its restart on, `incr::PrePatch`): a process that opens S₀
+    // has no read-set, and its run begins to read at the `.aux` close, as
+    // every run from S₀ did before, with nothing marked read.
+    let seen = g
+        .arena
+        .regions
+        .iter()
+        .find(|r| r.name == "rs_seen")
+        .map_or(0..0, |r| r.off..r.off + r.bytes);
+    let rs_on = crate::readset::layout()
+        .iter()
+        .find(|s| s.name == "rs_on")
+        .map_or(0..0, |s| s.off..s.off + s.size);
+    rec.rs = 0;
+    let chunks: Vec<u32> = (0..g.arena.chunks())
+        .filter(|&c| g.arena.touched(c))
+        .map(|c| c as u32)
+        .collect();
+    let mut data = Scratch::zeroed(chunks.len() * CHUNK_BYTES);
+    for (to, &c) in data
+        .as_chunks_mut::<CHUNK_BYTES>()
+        .0
+        .iter_mut()
+        .zip(&chunks)
+    {
+        let c = c as usize;
+        to.copy_from_slice(view.chunk(c));
+        let (lo, hi) = (c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
+        for z in [&side, &seen, &rs_on] {
+            if hi > z.start && lo < z.end {
+                to[z.start.max(lo) - lo..z.end.min(hi) - lo].fill(0);
             }
         }
-        let mut head = vec![];
-        MAGIC.to_vec().enc(&mut head);
-        key.enc(&mut head);
-        rec.enc(&mut head);
-        outputs.enc(&mut head);
-        terminal.enc(&mut head);
-        // The diagnostics side channel's notes up to S₀ and the definition
-        // sites (`crate::diag`), so that a reopened document reports what
-        // a full run reports.
-        let notes = crate::diag::notes();
-        notes
-            .get(..rec.notes)
-            .unwrap_or(&notes[..])
+    }
+    let mut head = vec![];
+    MAGIC.to_vec().enc(&mut head);
+    key.enc(&mut head);
+    rec.enc(&mut head);
+    outputs.enc(&mut head);
+    terminal.enc(&mut head);
+    // The diagnostics side channel's notes up to S₀ and the definition
+    // sites (`crate::diag`), so that a reopened document reports what
+    // a full run reports.
+    let notes = crate::diag::notes();
+    notes
+        .get(..rec.notes)
+        .unwrap_or(&notes[..])
+        .iter()
+        .map(|n| (**n).clone())
+        .collect::<Vec<crate::diag::Note>>()
+        .enc(&mut head);
+    let sites = crate::diag::sites_at(id);
+    // The files opened for output before S₀, by name: a process that
+    // opens S₀ must know them (`system::rewritten_at`: a file the
+    // preamble wrote and the body writes again, #1348).
+    let opens = system::opens_since(0)
+        .get(..rec.opens)
+        .ok_or("the output opens are fewer than at S0")?
+        .to_vec();
+    let sizes = (g.arena.len_bytes() as u64, g.arena.scalar_bytes() as u64);
+    let tail: Encode = Box::new(move |head: &mut Vec<u8>| {
+        sites.sites().enc(head);
+        opens.enc(head);
+        sizes.0.enc(head);
+        sizes.1.enc(head);
+    });
+    Ok(S0Image {
+        head,
+        tail,
+        chunks,
+        data,
+    })
+}
+
+impl S0Image {
+    /// The bytes it holds in memory (the copy of the chunks).
+    pub fn bytes(&self) -> usize {
+        self.data.len() + self.head.len()
+    }
+
+    /// Write the file to `path`, through a temporary file of this writer's
+    /// own and a rename, so that `path` is always a whole S₀ or what it was:
+    /// the header, the lists of the nonzero chunks and of the pages
+    /// (`S0_PAGE` bytes of the space) holding them, then those pages whole,
+    /// `S0_PAGE`-aligned, in index order (v5: a reopen maps them).
+    /// `cancelled` is asked as the pages go out: once it says
+    /// yes, the write stops and the temporary file goes. Returns (bytes of
+    /// the file, bytes allocated on disk).
+    pub fn write(self, path: &str, cancelled: &dyn Fn() -> bool) -> Result<(u64, u64), String> {
+        let S0Image {
+            mut head,
+            tail,
+            chunks,
+            data,
+        } = self;
+        tail(&mut head);
+        let nonzero = |d: &[u8]| {
+            d.as_chunks::<8>()
+                .0
+                .iter()
+                .any(|w| u64::from_ne_bytes(*w) != 0)
+        };
+        let (present, at): (Vec<u32>, Vec<usize>) = chunks
             .iter()
-            .map(|n| (**n).clone())
-            .collect::<Vec<crate::diag::Note>>()
-            .enc(&mut head);
-        crate::diag::sites().enc(&mut head);
-        (g.arena.len_bytes() as u64).enc(&mut head);
-        (g.arena.scalar_bytes() as u64).enc(&mut head);
+            .enumerate()
+            .filter(|&(i, _)| nonzero(&data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES]))
+            .map(|(i, &c)| (c, i))
+            .unzip();
         present.enc(&mut head);
-        let data_off = (8 + head.len()).next_multiple_of(CHUNK_BYTES) as u64;
+        // The pages of the space that hold present chunks, each whole
+        // (`S0_PAGE` bytes, its absent chunks zero) at an `S0_PAGE`-aligned
+        // offset, so that a process opening S₀ maps them into its space
+        // instead of copying them (`Arena::map_pages`; lane MEM-BASELINE).
+        let per = (S0_PAGE / CHUNK_BYTES) as u32;
+        let mut pages: Vec<u32> = present.iter().map(|&c| c / per).collect();
+        pages.dedup();
+        pages.enc(&mut head);
+        let data_off = (8 + head.len()).next_multiple_of(S0_PAGE) as u64;
         use std::io::Write;
-        let tmp = format!("{path}.tmp");
-        let f = std::fs::File::create(&tmp).map_err(|e| format!("{tmp}: {e}"))?;
+        // (a name of this writer's own, the process's and the time's: a
+        // file being written is never one another writer writes or another
+        // process maps, `os::map_file_over`)
+        // Created new, never opened as it is: no other writer can truncate
+        // or write into it (a name already there gets another suffix).
+        let (tmp, f) = {
+            let mut k = 0u32;
+            loop {
+                let tmp = format!(
+                    "{path}.{}.{}.{k}.tmp",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_nanos())
+                );
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp)
+                {
+                    Ok(f) => break (tmp, f),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && k < 100 => k += 1,
+                    Err(e) => return Err(format!("{tmp}: {e}")),
+                }
+            }
+        };
+        let gone = |e: String| {
+            let _ = std::fs::remove_file(&tmp);
+            e
+        };
         let mut f = std::io::BufWriter::with_capacity(1 << 20, f);
         let pad = vec![0u8; data_off as usize - 8 - head.len()];
         f.write_all(&(head.len() as u64).to_le_bytes())
             .and_then(|_| f.write_all(&head))
             .and_then(|_| f.write_all(&pad))
-            .map_err(|e| format!("{tmp}: {e}"))?;
-        // The present chunks, densely, in index order.
-        for &c in &present {
-            f.write_all(&chunk(c as usize))
-                .map_err(|e| format!("{tmp}: {e}"))?;
+            .map_err(|e| gone(format!("{tmp}: {e}")))?;
+        // The pages, in index order: present chunks, zeros for the rest.
+        let zero = [0u8; CHUNK_BYTES];
+        let mut next = present.iter().zip(&at).peekable();
+        for (k, &pg) in pages.iter().enumerate() {
+            if k % 64 == 0 && cancelled() {
+                drop(f);
+                return Err(gone("superseded".into()));
+            }
+            for c in pg * per..(pg + 1) * per {
+                let d = match next.peek() {
+                    Some(&(&pc, &i)) if pc == c => {
+                        next.next();
+                        &data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES]
+                    }
+                    _ => &zero[..],
+                };
+                f.write_all(d).map_err(|e| gone(format!("{tmp}: {e}")))?;
+            }
         }
-        let f = f.into_inner().map_err(|e| format!("{tmp}: {e}"))?;
+        drop(data);
+        let f = f.into_inner().map_err(|e| gone(format!("{tmp}: {e}")))?;
         f.sync_all().ok();
         drop(f);
-        std::fs::rename(&tmp, path).map_err(|e| format!("{path}: {e}"))?;
+        if cancelled() {
+            return Err(gone("superseded".into()));
+        }
+        std::fs::rename(&tmp, path).map_err(|e| gone(format!("{path}: {e}")))?;
         let m = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
         #[cfg(unix)]
         let on_disk = std::os::unix::fs::MetadataExt::blocks(&m) * 512;
@@ -695,7 +1120,8 @@ pub fn read_s0(
 ) -> Result<(Box<Globals>, S0, OpenReport), String> {
     {
         let t0 = Instant::now();
-        let map = MappedFile::open(path)?;
+        let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+        let map = MappedFile::of(&file, path)?;
         let bytes = map.bytes();
         let hlen = u64::from_le_bytes(bytes.get(..8).ok_or("not an S0 file")?.try_into().unwrap())
             as usize;
@@ -712,10 +1138,34 @@ pub fn read_s0(
         let terminal = Vec::<u8>::dec(&mut r)?;
         let notes = Vec::<crate::diag::Note>::dec(&mut r)?;
         let sites = Vec::<(i32, crate::diag::Site)>::dec(&mut r)?;
+        let opens = Vec::<String>::dec(&mut r)?;
+        if opens.len() != rec.opens {
+            return Err("S0 file: its output opens do not match its record".into());
+        }
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
         let present = Vec::<u32>::dec(&mut r)?;
-        let data_off = (8 + hlen).next_multiple_of(CHUNK_BYTES);
+        let pages = Vec::<u32>::dec(&mut r)?;
+        let data_off = (8 + hlen).next_multiple_of(S0_PAGE);
+        let per = S0_PAGE / CHUNK_BYTES;
+        if bytes.len() < data_off + pages.len() * S0_PAGE {
+            return Err("S0 file truncated".into());
+        }
+        // Where each present chunk is in the file.
+        let mut at = Vec::with_capacity(present.len());
+        {
+            let mut k = 0;
+            for &c in &present {
+                let pg = c / per as u32;
+                while k < pages.len() && pages[k] < pg {
+                    k += 1;
+                }
+                if pages.get(k) != Some(&pg) {
+                    return Err("S0 file: a chunk outside its pages".into());
+                }
+                at.push(data_off + k * S0_PAGE + (c as usize % per) * CHUNK_BYTES);
+            }
+        }
         let t_header = t0.elapsed().as_secs_f64();
 
         let tc = Instant::now();
@@ -729,12 +1179,22 @@ pub fn read_s0(
         if g.arena.len_bytes() != arena_len || g.arena.scalar_bytes() != scalar_bytes {
             return Err("S0 was saved with another word-space layout".into());
         }
-        for (i, &c) in present.iter().enumerate() {
-            let off = data_off + i * CHUNK_BYTES;
-            let d = bytes
-                .get(off..off + CHUNK_BYTES)
-                .ok_or("S0 file truncated")?;
-            g.arena.load_chunk(c as usize, d);
+        if present.iter().any(|&c| c as usize >= g.arena.chunks()) {
+            return Err("S0 file: a chunk outside the space".into());
+        }
+        // Mapped (copy on write: the pages stay the file's, out of the
+        // footprint, until the engine writes them), or else copied.
+        let mut mapped_pages = 0;
+        if g.arena.map_pages(&file, data_off as u64, &pages, S0_PAGE) {
+            mapped_pages = pages.len();
+            for &c in &present {
+                g.arena.mark_loaded(c as usize);
+            }
+        } else {
+            for (&c, &off) in present.iter().zip(&at) {
+                g.arena
+                    .load_chunk(c as usize, &bytes[off..off + CHUNK_BYTES]);
+            }
         }
         g.fill_scalars();
         let load_s = t2.elapsed().as_secs_f64();
@@ -753,7 +1213,15 @@ pub fn read_s0(
         crate::diag::set_sites(sites);
         system::truncate_external_effects(0);
         g.restore_ext(&rec)?;
+        // The images S₀ holds: read again and compared with what it stored
+        // (`images::State`'s codec), or S₀ is not used.
+        g.verify_persisted_images()?;
+        // (`restore_ext` left placeholders for the opens)
+        system::truncate_opens(0);
+        system::append_opens(&opens);
         let id = g.checkpoint()?;
+        // (the sites just put back are S₀'s, for a later save of it)
+        crate::diag::keep_sites_at(id);
         let ext_s = t3.elapsed().as_secs_f64();
         let rep = OpenReport {
             config_s,
@@ -763,12 +1231,21 @@ pub fn read_s0(
             ext_s,
             total_s: t0.elapsed().as_secs_f64(),
             chunks: present.len(),
+            mapped_pages,
         };
         Ok((g, S0 { id, key }, rep))
     }
 }
 
-const MAGIC: &[u8] = b"flashtex S0 v2";
+// (v4: the key's reads at the document's start, `Key::arm`; v5: the pages,
+// page-aligned, `S0_PAGE`; v6: the key's stat signatures hold the change
+// time, `StatSig::ctime_ns`; v7: the records hold READ-TRACK's counts,
+// `crate::dormant::Dorm`)
+const MAGIC: &[u8] = b"flashtex S0 v7";
+
+/// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
+/// every supported system's page size divides (4 KB elsewhere).
+const S0_PAGE: usize = 16384;
 
 /// How opening a persisted S₀ went.
 #[derive(Clone, Debug, Default)]
@@ -781,15 +1258,110 @@ pub struct OpenReport {
     pub ext_s: f64,
     pub total_s: f64,
     pub chunks: usize,
+    /// S₀'s pages mapped from the file (0: its chunks were copied).
+    pub mapped_pages: usize,
 }
 
 impl OpenReport {
     pub fn json(&self) -> String {
         format!(
-            "{{\"config_s\":{:.6},\"header_s\":{:.6},\"validate_s\":{:.6},\"load_s\":{:.6},\"ext_s\":{:.6},\"total_s\":{:.6},\"chunks\":{}}}",
-            self.config_s, self.header_s, self.validate_s, self.load_s, self.ext_s, self.total_s, self.chunks
+            "{{\"config_s\":{:.6},\"header_s\":{:.6},\"validate_s\":{:.6},\"load_s\":{:.6},\"ext_s\":{:.6},\"total_s\":{:.6},\"chunks\":{},\"mapped_pages\":{}}}",
+            self.config_s,
+            self.header_s,
+            self.validate_s,
+            self.load_s,
+            self.ext_s,
+            self.total_s,
+            self.chunks,
+            self.mapped_pages
         )
     }
 }
 
 use crate::os::MappedFile;
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    /// A directory opened so that its times can be set: a plain open does
+    /// on Unix; Windows wants write access and FILE_FLAG_BACKUP_SEMANTICS
+    /// (`CreateFileW` opens a directory only with it).
+    fn open_dir_for_times(d: &std::path::Path) -> std::fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(d)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::File::open(d).unwrap()
+        }
+    }
+
+    /// After a check that verified racy signatures by content and by the
+    /// lookups, the key keeps fresh ones: once the tick has passed, the
+    /// steady state is not racy (else every compile compared the preamble's
+    /// files and ran its lookups again; review of #1552).
+    #[test]
+    fn a_checked_key_keeps_fresh_signatures() {
+        let d = std::env::temp_dir().join(format!("flashtex-key-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("pre.sty");
+        std::fs::write(&f, "\\def\\x{1}").unwrap();
+        let (fp, dp) = (
+            f.to_str().unwrap().to_string(),
+            d.to_str().unwrap().to_string(),
+        );
+        let (fs, ds) = (StatSig::of(&fp).unwrap(), StatSig::of(&dp).unwrap());
+        assert!(fs.racy && ds.racy, "just written");
+        let mut key = Key {
+            build: engine_build(),
+            clock: (0, 0),
+            source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),
+            force_source_date: std::env::var("FORCE_SOURCE_DATE").ok(),
+            first_line: b"main".to_vec(),
+            job_name: "main".into(),
+            files: vec![(
+                fp.clone(),
+                crate::persist::hash128(&std::fs::read(&f).unwrap()),
+                fs,
+            )],
+            prefixes: vec![],
+            lookups: vec![],
+            barriers: vec![],
+            written: vec![],
+            dirs: vec![(dp.clone(), ds)],
+            arm: vec![],
+        };
+        // the tick passes (the files' times put back a minute)
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        open_dir_for_times(&d).set_modified(old).unwrap();
+        // (putting the times back moved the change times: their tick too)
+        std::thread::sleep(std::time::Duration::from_millis(
+            (crate::system::RACY_NS / 1_000_000) as u64 + 100,
+        ));
+        key.check_refresh((0, 0), b"main").unwrap();
+        assert!(!key.files[0].2.racy, "the file's signature is still racy");
+        assert!(
+            !key.dirs[0].1.racy,
+            "the directory's signature is still racy"
+        );
+        // and the next check is by signature alone: a changed file still fails
+        key.check_refresh((0, 0), b"main").unwrap();
+        std::fs::write(&f, "\\def\\x{2}").unwrap();
+        assert!(key.check((0, 0), b"main").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

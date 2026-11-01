@@ -95,13 +95,23 @@ impl FontIndex {
     /// files. A directory that does not exist is skipped, not an error.
     /// The result is deterministic: entries are visited in sorted order.
     pub fn scan(dirs: &[PathBuf]) -> FontIndex {
+        FontIndex::scan_traced(dirs, &mut |_| {})
+    }
+
+    /// [`FontIndex::scan`], calling `on_dir` with every directory the scan
+    /// lists, just before it lists it (a root that does not exist too). A
+    /// caller that keeps a scan's result can tell from these directories
+    /// whether a new scan would visit the same files: it would while none
+    /// of them changed (an entry added, removed or renamed changes its
+    /// directory's modification time).
+    pub fn scan_traced(dirs: &[PathBuf], on_dir: &mut dyn FnMut(&Path)) -> FontIndex {
         let mut index = FontIndex::default();
         let mut seen = BTreeSet::new();
         let mut budget = MAX_FILES;
         for dir in dirs {
             let mtime = dir_mtime(dir);
             index.dirs.push((dir.clone(), mtime));
-            walk(dir, 0, &mut budget, &mut |path| {
+            walk(dir, 0, &mut budget, on_dir, &mut |path| {
                 if !seen.insert(path.to_path_buf()) {
                     return;
                 }
@@ -362,10 +372,11 @@ fn dir_mtime(dir: &Path) -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn walk(dir: &Path, depth: usize, budget: &mut usize, visit: &mut dyn FnMut(&Path)) {
+fn walk(dir: &Path, depth: usize, budget: &mut usize, on_dir: &mut dyn FnMut(&Path), visit: &mut dyn FnMut(&Path)) {
     if depth > MAX_DEPTH || *budget == 0 {
         return;
     }
+    on_dir(dir);
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
@@ -381,7 +392,7 @@ fn walk(dir: &Path, depth: usize, budget: &mut usize, visit: &mut dyn FnMut(&Pat
         // casks, a project's `fonts -> ../shared`) is walked.
         let Ok(meta) = std::fs::metadata(&path) else { continue };
         if meta.is_dir() {
-            walk(&path, depth + 1, budget, visit);
+            walk(&path, depth + 1, budget, on_dir, visit);
         } else if meta.is_file() && is_font_file(&path) {
             *budget -= 1;
             visit(&path);

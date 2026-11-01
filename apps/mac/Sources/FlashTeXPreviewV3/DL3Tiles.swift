@@ -823,7 +823,7 @@ public final class DL3PageRaster: @unchecked Sendable {
         self.init(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
             if smoothFonts { DL3Renderer.setFontSmoothing(true, in: ctx) }
             ctx.translateBy(x: -box.minX, y: -box.minY)
-            ctx.drawPDFPage(pdfPage)
+            DL3Renderer.drawPDFPage(pdfPage, in: ctx)
         }
     }
 

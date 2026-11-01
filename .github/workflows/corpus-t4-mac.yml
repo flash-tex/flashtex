@@ -1,0 +1,264 @@
+# T4 (DESIGN §8, the ~5,000-document corpus) on the heavy self-hosted Mac,
+# against the Mac's own oracle (MacTeX 2026: LaTeX 2025-11-01, texlive.tlpdb
+# ca39e6791582 on 2026-10-03), for the P5 board's Mac route (lane P5-T4-MAC).
+#
+# WHY A WORKFLOW OF ITS OWN. A board names one oracle (DESIGN §8). The NixOS
+# PC's T4 (nightly.yml, corpus-t4) is measured against another TeX Live
+# snapshot (LaTeX 2026-06-01), so a Mac board cannot use it, and
+# scoreboard.py now marks any T4 run whose texlive.tlpdb or pdftex binary is
+# not the board's own INVALID. This job measures the same corpus, the same way
+# (tools/parity/nightly.py, 50 shards), on the board's Mac.
+#
+# ONE CYCLE, SEVERAL RUNS, ONE COMMIT. The whole corpus does not fit in one
+# night on a Mac shared with the agents and the merge queue's runner
+# (P5-T4-MAC, measured locally on 2026-10-03: see the PR). A cycle is
+# therefore pinned to one commit (input `sha`) and resumed: nightly.py keeps
+# every finished shard in $FLASHTEX_NIGHTLY_HOME under a run key that hashes
+# the engine binary, the harness, the formats, the oracle and the settings, so
+# a run of the same commit on the same Mac starts at its first unfinished
+# shard. A run of another commit starts a new cycle. Every run uploads the
+# merged summary of every finished shard:
+#   corpus-t4-mac          once all 50 shards are done: the one the board picks
+#                          (p5-scoreboard.yml, route mac: the newest from the
+#                          last 7 days, and the board is measured at its commit);
+#   corpus-t4-mac-partial  before that, to show the progress.
+# Only nightly-5k is run: the board reads only T4 from a nightly summary, and
+# measures arxiv, templates and packages itself. L4 is not rasterised: the
+# board leaves L4 out (scoreboard.load_nightly), and the board's own parity
+# runs use --raster none too. No ratchet: a baseline is per host, recorded by
+# hand (an owner decision), and none exists for this Mac.
+#
+# RESOURCES. One heavy job at a time: the cross-workflow group
+# `flashtex-mac-heavy` (p5-scoreboard's Mac board, nightly's Mac legs) and the
+# heavy runner (mac-m1max-a-2; mac-m1max-a-1 keeps the merge queue). A manual
+# run entering that group while another is pending cancels the pending one, so
+# dispatch it when the heavy runner is idle. The job clamps `deadline_minutes`
+# so it ends before the next scheduled heavy job (the board at 06:47 UTC,
+# nightly at 08:17 UTC): no shard starts later than 60 min before either
+# (a shard and the upload), and with under 30 min left it starts none. A
+# dispatch with `respect_schedule=false` only warns. Disk: nightly.py starts
+# no shard while the state, work or parity cache disk has under 40 GB free
+# (--min-free-gb); the e-prints and the oracle's references stay cached for
+# the next cycle, and only the newest 2 run keys and engine/format
+# directories are kept.
+#
+#   gh workflow run corpus-t4-mac.yml --ref main -f sha=<commit> -f deadline_minutes=600
+name: corpus-t4-mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: >-
+          commit of main to measure (empty: the head of main now). Every run of
+          one cycle must name the same commit: that is what resumes it.
+        required: false
+        default: ''
+      shard_range:
+        description: shards to run now, e.g. 0-24 (empty = every unfinished shard)
+        required: false
+        default: ''
+      deadline_minutes:
+        description: start no shard after this many minutes of scoring (at most 1260)
+        required: false
+        default: '600'
+      respect_schedule:
+        description: clamp deadline_minutes to end before the 06:47 board and the 08:17 nightly (false only warns)
+        type: boolean
+        required: false
+        default: true
+      jobs:
+        description: parity workers (-j)
+        required: false
+        default: '3'
+
+concurrency:
+  group: corpus-t4-mac
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # the same build settings as p5-scoreboard.yml's board, which must build the
+  # same engine binary (its sha256 is compared)
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  corpus-t4-mac:
+    name: T4 nightly-5k (heavy Mac, MacTeX 2026 oracle)
+    # DESIGN §9.3: no pull_request trigger; and main only, like the Mac board
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
+    concurrency:
+      group: flashtex-mac-heavy
+      cancel-in-progress: false
+    timeout-minutes: 1440
+    permissions:
+      contents: read
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      CARGO_BUILD_JOBS: "3"
+      SHARDS: "50"
+      SHARD_RANGE: ${{ inputs.shard_range }}
+      RESPECT: ${{ inputs.respect_schedule != false }}
+      DEADLINE: ${{ inputs.deadline_minutes || '600' }}
+      JOBS: ${{ inputs.jobs || '3' }}
+    steps:
+      - name: the commit of this cycle (a commit of main)
+        id: sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$WANT" --jq .sha)
+          # main must contain it: `main...sha` is behind or identical
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$sha" --jq .status)
+          case "$status" in
+            behind|identical) ;;
+            *) echo "::error::$sha is not a commit of main (compare: $status)"; exit 1 ;;
+          esac
+          case "$DEADLINE" in ''|*[!0-9]*) echo "::error::deadline_minutes $DEADLINE is not a number"; exit 1 ;; esac
+          [ "$DEADLINE" -le 1260 ] || { echo "::error::deadline_minutes $DEADLINE: at most 1260 (the job's 24 h)"; exit 1; }
+          echo "cycle commit $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+          persist-credentials: false
+      # Pinned, not @stable: the board compares its engine binary's sha256 with the
+      # T4 run's, so p5-scoreboard.yml and both T4 jobs (nightly.yml corpus-t4,
+      # corpus-t4-mac.yml) build with one rustc. Change all three together.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
+      - name: this Mac's build directory (shared by the heavy jobs, size-capped)
+        run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
+      - name: the oracle (this Mac's TeX Live 2026) and the persistent state
+        run: |
+          set -euo pipefail
+          for t in pdflatex pdftex kpsewhich qpdf; do
+            command -v "$t" >/dev/null || { echo "::error::no $t on this runner's PATH (MacTeX 2026)"; exit 1; }
+          done
+          pdftex --version | head -1 | grep -q '1\.40\.29' || { echo "::error::the oracle is not pdfTeX 1.40.29: $(pdftex --version | head -1)"; exit 1; }
+          python3 tools/parity/oracle_provenance.py --markdown "$RUNNER_TEMP/ORACLE.md"
+          state="$HOME/.cache/flashtex-nightly"
+          mkdir -p "$state" "$RUNNER_TEMP/t4-tmp"
+          {
+            echo "FLASHTEX_NIGHTLY_HOME=$state"
+            echo "FLASHTEX_PARITY_CACHE=$HOME/.cache/flashtex-parity"
+            echo "TMPDIR=$RUNNER_TEMP/t4-tmp"
+            echo "PARITY_TEXBIN=$(dirname "$(command -v pdflatex)")"
+            echo "PARITY_ORACLE=$(command -v pdftex)"
+            echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
+            echo "PARITY_TLPDB=$(kpsewhich -var-value SELFAUTOPARENT)/tlpkg/texlive.tlpdb"
+          } | tee -a "$GITHUB_ENV"
+          df -h "$HOME" | tail -1
+      - name: build the new engine and its formats
+        run: |
+          set -euo pipefail
+          # the engine alone, as the board builds it (scoreboard-run.sh), so the
+          # two binaries' sha256 match at one commit
+          cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+          bin="$CARGO_TARGET_DIR/release/flashtex-initex"
+          # Formats at a path keyed by what they are built from (the engine, the
+          # pool, this TeX Live), as nightly.yml's corpus-t4 does: the same inputs
+          # reuse them, so the next run of this cycle keeps its run key.
+          sum="$(cat "$bin" crates/flashtex-engine/pdftex.pool "$PARITY_TLPDB" | shasum -a 256 | cut -c1-16)"
+          fmt="$FLASHTEX_NIGHTLY_HOME/engines/$sum"
+          if [ ! -f "$fmt/done" ]; then
+            rm -rf "$fmt" && mkdir -p "$fmt"
+            cp "$bin" "$fmt/flashtex-initex"
+            cp crates/flashtex-engine/pdftex.pool "$fmt/pdftex.pool"
+            python3 tools/parity/nightly.py make-formats \
+              --engine "$fmt/flashtex-initex" --pool "$fmt/pdftex.pool" --out "$fmt"
+            touch "$fmt/done"
+          fi
+          touch "$fmt"  # the newest engine directory: kept by the prune step
+          echo "ENGINE_DIR=$fmt" >> "$GITHUB_ENV"
+          shasum -a 256 "$fmt/flashtex-initex"
+      - name: score every unfinished shard (resumes this cycle)
+        # exit 4: some shards unfinished (the deadline, the disk floor, or a
+        # harness failure); the artifact says how far the cycle got.
+        run: |
+          set -euo pipefail
+          # 30% of this Mac's memory: it is shared with the agents and the other runner
+          budget=$(python3 -c "import subprocess; print(round(int(subprocess.check_output(['sysctl', '-n', 'hw.memsize'])) * 0.3 / 2**30, 1))")
+          # Minutes until the next scheduled heavy job (the board 06:47, nightly 08:17
+          # UTC), less 60 for the last shard and the upload.
+          left=$(python3 -c '
+          import datetime as d
+          now = d.datetime.now(d.timezone.utc)
+          nxt = []
+          for h, m in ((6, 47), (8, 17)):
+              t = now.replace(hour=h, minute=m, second=0, microsecond=0)
+              nxt.append(t if t > now else t + d.timedelta(days=1))
+          print(int((min(nxt) - now).total_seconds() // 60) - 60)')
+          if [ "$DEADLINE" -gt "$left" ]; then
+            if [ "$RESPECT" = true ]; then
+              if [ "$left" -lt 30 ]; then
+                echo "::error::the next scheduled heavy job (06:47 or 08:17 UTC) is too close: no shard started. Dispatch after it, or with respect_schedule=false"
+                exit 1
+              fi
+              echo "::warning::deadline_minutes $DEADLINE would run into the next scheduled heavy job: clamped to $left"
+              DEADLINE=$left
+            else
+              echo "::warning::deadline_minutes $DEADLINE runs into the next scheduled heavy job (06:47 or 08:17 UTC; $left min left): not clamped (respect_schedule=false)"
+            fi
+          fi
+          python3 tools/parity/nightly.py run --shards "$SHARDS" \
+            ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
+            --tier nightly-5k \
+            --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 64 --memory-budget-gib "$budget" \
+            --engine "$ENGINE_DIR/flashtex-initex" \
+            --engine-env "FLASHTEX_FORMATS=$ENGINE_DIR" --engine-env "FLASHTEX_POOL=$ENGINE_DIR/pdftex.pool" \
+            --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" \
+            -j "$JOBS" --deadline-minutes "$DEADLINE" --min-free-gb 40 --out "$RUNNER_TEMP/corpus-t4" \
+            -- --texmf "$PARITY_TEXMF" --raster none
+      - name: is the cycle complete
+        id: done
+        if: always()
+        run: |
+          set -euo pipefail
+          s="$RUNNER_TEMP/corpus-t4/summary.json"
+          [ -f "$s" ] || { echo "complete=none" >> "$GITHUB_OUTPUT"; exit 0; }
+          read -r n_done n_total sha <<<"$(python3 -c 'import json, sys; s = json.load(open(sys.argv[1])); print(s["shards"]["done"], s["shards"]["total"], s["git_sha"])' "$s")"
+          echo "::notice::T4 on the Mac at ${sha:0:12}: $n_done of $n_total shards done"
+          if [ "$n_done" = "$n_total" ]; then echo "complete=yes"; else echo "complete=no"; fi >> "$GITHUB_OUTPUT"
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/ORACLE.md" ] && cat "$RUNNER_TEMP/ORACLE.md" >> "$GITHUB_STEP_SUMMARY"
+          [ -f "$RUNNER_TEMP/corpus-t4/summary.md" ] || exit 0
+          cat "$RUNNER_TEMP/corpus-t4/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.done.outputs.complete == 'yes'
+        with:
+          name: corpus-t4-mac
+          # summary.md/json and documents.json (one small record per document); never logs
+          path: ${{ runner.temp }}/corpus-t4
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.done.outputs.complete == 'no'
+        with:
+          name: corpus-t4-mac-partial
+          path: ${{ runner.temp }}/corpus-t4
+          retention-days: 14
+      - name: free this runner's disk
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/corpus-t4" "$RUNNER_TEMP/t4-tmp" "$RUNNER_TEMP/ORACLE.md"
+          # Old cycles' shard state and old engines' formats: keep the newest 2 of
+          # each (by mtime; this run's are the newest), so a cycle interrupted by
+          # another commit's cycle can still resume once.
+          state="${FLASHTEX_NIGHTLY_HOME:-}"
+          [ -n "$state" ] || exit 0
+          for d in "$state/runs" "$state/engines"; do
+            [ -d "$d" ] || continue
+            # shellcheck disable=SC2012 # names are hex run keys and engine sums
+            ls -1t "$d" | tail -n +3 | while read -r x; do
+              echo "pruning $d/$x"; rm -rf "${d:?}/$x"
+            done
+          done

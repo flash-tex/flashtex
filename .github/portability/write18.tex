@@ -1,0 +1,13 @@
+\catcode`\{=1 \catcode`\}=2
+% The portability workflow's \write18 fixture (INITEX, restricted shell
+% escape), run by the engine and by TeX Live's pdftex.exe, whose logs must
+% agree: a restricted \write18 (re-quoted as "-var-value=TEXMFROOT" for
+% cmd.exe), and a pipe whose command is in single quotes, which texmfmp.c's
+% runpopen turns into double quotes on Windows (elsewhere a quotation error,
+% and the pipe stays closed).
+\immediate\write18{kpsewhich -var-value=TEXMFROOT}
+\openin1=|"kpsewhich 'plain.tex'"
+\ifeof1 \message{[pipe: closed]}\else
+  \read1 to\found \closein1
+  \message{[pipe: \found]}\fi
+\end

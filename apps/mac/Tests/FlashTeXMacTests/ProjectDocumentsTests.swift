@@ -3,8 +3,8 @@ import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// Multi-file projects (lane `mac-multifile`): lexical include discovery,
-/// rooted direct opens, helper-route opens with exact membership snapshots,
-/// `ShellModel.documents` sync, explicit detach, and caret-preserving switches.
+/// rooted direct opens, `ShellModel.documents` sync, explicit detach, and
+/// caret-preserving switches.
 @MainActor
 final class ProjectDocumentsTests: XCTestCase {
     // MARK: lexical discovery
@@ -72,7 +72,7 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(try ProjectIncludes.candidates(for: "notes.md"), ["notes.md.tex", "notes.md"])
     }
 
-    // MARK: direct mode (no helper)
+    // MARK: rooted opens
 
     private struct TempProject {
         let root: URL
@@ -93,9 +93,7 @@ final class ProjectDocumentsTests: XCTestCase {
         let project = try TempProject(extra: ["ch/two.tex": "Two.\n"])
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
-        XCTAssertFalse(model.controllerAttached)
         let p = model.project
         XCTAssertEqual(p.entryPath, "main.tex")
         XCTAssertEqual(p.projectRoot?.path, project.root.appendingPathComponent("project").standardizedFileURL.path)
@@ -115,7 +113,6 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(model.documents[1].text, "Chapter one, with caret memory.\n")
         XCTAssertEqual(p.listing.map(\.role), [.entry, .included(from: "main.tex")])
         XCTAssertEqual(p.listing.map(\.origin), [.disk, .disk])
-        XCTAssertEqual(p.listing.map(\.durableRevision), [nil, nil])
         XCTAssertEqual(p.listing.map(\.isDirty), [false, false])
         found = p.discoverIncludes()
         XCTAssertEqual(found.map(\.state), [.open])
@@ -206,7 +203,6 @@ final class ProjectDocumentsTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: project.root.appendingPathComponent("project/link.tex"),
                                                    withDestinationURL: project.root.appendingPathComponent("outside.tex"))
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let found = model.project.discoverIncludes()
         XCTAssertEqual(found.count, 5)
@@ -232,7 +228,6 @@ final class ProjectDocumentsTests: XCTestCase {
 
     func testDirectModeNeedsAProjectRoot() async {
         let model = ShellModel()
-        model.detachWorker()
         model.replaceProject(entryText: "\\input{chapter}\n")
         XCTAssertNil(model.documentURL)
         let found = model.project.discoverIncludes()
@@ -250,7 +245,6 @@ final class ProjectDocumentsTests: XCTestCase {
     /// drop the refusal — it names the reason in `captureNote`.
     func testSaveDocumentInteractiveNamesTheReasonWhenTheDocumentIsNotOpen() async {
         let model = ShellModel()
-        model.detachWorker()
         model.replaceProject(entryText: "\\input{chapter}\n")
         XCTAssertNil(model.captureNote)
         await model.saveDocumentInteractive("chapter.tex")
@@ -263,7 +257,6 @@ final class ProjectDocumentsTests: XCTestCase {
         let project = try TempProject(main: "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n", chapter: "Chapter.\n")
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let opened = await model.project.openDiscoveredIncludes()
         XCTAssertEqual(opened, [.opened(path: "chapter.tex")])
@@ -281,7 +274,6 @@ final class ProjectDocumentsTests: XCTestCase {
     /// instead of leaving the open silently failed.
     func testOpenAndSwitchReportsARefusalInsteadOfDroppingIt() async {
         let model = ShellModel()
-        model.detachWorker()
         model.replaceProject(entryText: "\\input{chapter}\n")
         var note: String?
         let ok = await model.openAndSwitch("chapter.tex", role: .opened) { note = $0 }
@@ -295,7 +287,6 @@ final class ProjectDocumentsTests: XCTestCase {
         let project = try TempProject(extra: ["ch/two.tex": "Two.\n"])
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         var note: String?
         let ok = await model.openAndSwitch("chapter.tex", role: .included(from: "main.tex")) { note = $0 }
@@ -310,7 +301,6 @@ final class ProjectDocumentsTests: XCTestCase {
         let project = try TempProject(extra: ["ch/two.tex": "Two.\n"])
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         var note: String?
         let ok = await model.openAndSwitch("./chapter.tex", role: .opened) { note = $0 }
@@ -324,7 +314,6 @@ final class ProjectDocumentsTests: XCTestCase {
         // Navigation.swift switches `activePath` directly for a span in another
         // open document; the caret of the document being left is still recorded.
         let model = ShellModel()
-        model.detachWorker()
         model.replaceProject(entryText: "Main text.\n")
         model.documents.append(.init(path: "chapter.tex", text: "\\label{x}\n"))
         let p = model.project
@@ -336,169 +325,25 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(p.switchDocument(to: "main.tex"), .switched(to: "main.tex", restoredCaret: NSRange(location: 5, length: 0)))
     }
 
-    // MARK: helper route (real flashtex-preview-controller + compiler)
-
-    static var helper: URL? {
-        ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_CONTROLLER"].map { URL(fileURLWithPath: $0) }
-    }
-
-    func testHelperRouteOpensWithExactSnapshotAndDetaches() async throws {
-        guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
-              ShellModel.locateCompiler() != nil else {
-            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
-        }
-        let project = try TempProject(main: "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n",
-                                      chapter: "Chapter via helper.\n",
-                                      extra: ["appendix.tex": "Appendix, not referenced.\n"])
-        defer { project.remove() }
-        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", project.root.appendingPathComponent("ledger").path, 1)
-        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
-
-        let model = ShellModel()
-        model.autoCompile = true
-        XCTAssertEqual(model.openTex(at: project.main), .opened)
-        model.attachController(at: helper)
-        XCTAssertTrue(model.controllerAttached)
-        try await waitUntil { model.result?.revision == model.editorRevision && model.controllerState.durable["main.tex"] != nil }
-        let p = model.project
-
-        // The helper discovered chapter.tex at startup: the snapshot lists it,
-        // and opening it reads the durable document (no membership change).
-        let snapshotOrNil = await p.refreshSnapshot()
-        let snapshot = try XCTUnwrap(snapshotOrNil)
-        XCTAssertEqual(Set(snapshot.versions.keys), ["main.tex", "chapter.tex"])
-        let g0 = snapshot.generation
-        XCTAssertEqual(p.discoverIncludes().map(\.state), [.available])
-        let r10 = await p.openDiscoveredIncludes()
-        XCTAssertEqual(r10, [.opened(path: "chapter.tex")])
-        XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex"])
-        guard model.documents.count == 2 else { return XCTFail("expected two documents, got \(model.documents.count)") }
-        XCTAssertEqual(model.documents[1].text, "Chapter via helper.\n")
-        guard p.listing.count > 1 else { return XCTFail("expected more than one listing entry, got \(p.listing.count)") }
-        XCTAssertEqual(p.listing[1].origin, .helper)
-        XCTAssertEqual(p.listing[1].durableRevision, 1)
-        XCTAssertEqual(model.controllerState.durable["chapter.tex"]?.revision, 1)
-        XCTAssertEqual(p.membershipGeneration, g0)
-
-        // An unreferenced rooted file goes through open_document with the exact
-        // snapshot; the membership generation advances.
-        let r11 = await p.openDocument("appendix.tex")
-        XCTAssertEqual(r11, .opened(path: "appendix.tex"))
-        XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex", "appendix.tex"])
-        guard p.listing.count > 2 else { return XCTFail("expected more than two listing entries, got \(p.listing.count)") }
-        XCTAssertEqual(p.listing[2].origin, .helper)
-        XCTAssertEqual(p.listing[2].durableRevision, 1)
-        let g1 = try XCTUnwrap(p.membershipGeneration)
-        XCTAssertGreaterThan(g1, g0)
-        XCTAssertEqual(Set(p.sourceVersions.keys), ["main.tex", "chapter.tex", "appendix.tex"])
-        let statusOrNil = await p.projectStatus()
-        let status = try XCTUnwrap(statusOrNil)
-        XCTAssertEqual(status["total_documents"] as? Int, 3)
-        XCTAssertEqual(status["scope"] as? String, "active_sources_only")
-
-        // A stale snapshot is refused by the helper (nothing opened twice).
-        let stale: [String: Any] = ["path": "appendix.tex", "source_versions": snapshot.versions, "membership_generation": g0]
-        guard case .failure(let refusal) = await p.helperRequest("open_document", stale) else { return XCTFail("stale open must be refused") }
-        XCTAssertTrue(refusal.message.contains("stale"), refusal.message)
-
-        // Editing an opened document goes through the durable route and its
-        // preview binds to the editor revision (not stale).
-        XCTAssertEqual(p.switchDocument(to: "chapter.tex"), .switched(to: "chapter.tex", restoredCaret: NSRange(location: 0, length: 0)))
-        model.updateActiveText("Chapter via helper, edited.\n")
-        let rev = model.editorRevision
-        try await waitUntil { model.result?.revision == rev && model.inFlightRevision == nil }
-        XCTAssertFalse(model.previewIsStale)
-        XCTAssertEqual(model.controllerState.durable["chapter.tex"]?.revision, 2)
-        guard p.listing.count > 1 else { return XCTFail("expected more than one listing entry, got \(p.listing.count)") }
-        XCTAssertEqual(p.listing[1].durableRevision, 2)
-        XCTAssertEqual(model.compiledDocuments["chapter.tex"], "Chapter via helper, edited.\n")
-        XCTAssertTrue(p.isDirty("chapter.tex"), "durable is not saved: the disk baseline still differs")
-
-        // Detach the unreferenced document through the helper: generation advances,
-        // the shell membership and durable state drop it, the entry is refused.
-        p.switchDocument(to: "appendix.tex")
-        let r12 = await p.detachDocument("appendix.tex")
-        XCTAssertEqual(r12, .detached(path: "appendix.tex"))
-        XCTAssertEqual(model.activePath, "main.tex")
-        XCTAssertEqual(model.documents.map(\.path), ["main.tex", "chapter.tex"])
-        XCTAssertNil(model.controllerState.durable["appendix.tex"])
-        let g2 = try XCTUnwrap(p.membershipGeneration)
-        XCTAssertGreaterThan(g2, g1)
-        XCTAssertEqual(Set(p.sourceVersions.keys), ["main.tex", "chapter.tex"])
-        let r13 = await p.detachDocument("main.tex")
-        XCTAssertEqual(r13, .refused("cannot detach the entry document main.tex"))
-        // The preview after the membership change still binds to the current buffers.
-        try await waitUntil { model.inFlightRevision == nil }
-        XCTAssertEqual(model.activeText, "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n")
-        model.detachController()
-    }
-
-    func testHelperSyncAttachesDocumentsOpenedBeforeTheController() async throws {
-        guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
-              ShellModel.locateCompiler() != nil else {
-            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
-        }
-        let project = try TempProject(main: "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n",
-                                      chapter: "Chapter on disk.\n",
-                                      extra: ["notes.tex": "Notes on disk.\n"])
-        defer { project.remove() }
-        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", project.root.appendingPathComponent("ledger").path, 1)
-        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
-        let model = ShellModel()
-        model.autoCompile = true
-        model.detachWorker()
-        XCTAssertEqual(model.openTex(at: project.main), .opened)
-        let p = model.project
-        // Direct mode first: a discovered include and an unreferenced file, one edited.
-        let r1 = await p.openDiscoveredIncludes()
-        XCTAssertEqual(r1, [.opened(path: "chapter.tex")])
-        let r2 = await p.openDocument("notes.tex")
-        XCTAssertEqual(r2, .opened(path: "notes.tex"))
-        XCTAssertEqual(p.listing.map(\.origin), [.disk, .disk, .disk])
-        p.switchDocument(to: "chapter.tex")
-        model.updateActiveText("Chapter edited before the helper.\n")
-        p.switchDocument(to: "main.tex") // attachController names the entry after the active path (parent diff)
-
-        // Attaching the helper: chapter.tex is read from the helper (it discovered
-        // it), notes.tex is imported with open_document, and the edited buffer is
-        // submitted so the helper's durable text is what the editor shows.
-        model.attachController(at: helper)
-        try await waitUntil { model.controllerState.durable["chapter.tex"] != nil && model.controllerState.durable["notes.tex"] != nil }
-        try await waitUntil { model.controllerState.textByDurable["chapter.tex"]?[model.controllerState.durable["chapter.tex"]!.revision]?.sameBytes(as: "Chapter edited before the helper.\n") == true }
-        XCTAssertGreaterThanOrEqual(p.helperSyncs, 1)
-        XCTAssertEqual(model.controllerState.durable["chapter.tex"]?.revision, 2, "disk import r1, buffer submitted as r2")
-        XCTAssertEqual(model.controllerState.durable["notes.tex"]?.revision, 1)
-        XCTAssertEqual(p.listing.map(\.origin), [.disk, .helper, .helper])
-        XCTAssertEqual(p.listing.map(\.durableRevision), [1, 2, 1])
-        XCTAssertEqual(Set(p.sourceVersions.keys), ["main.tex", "chapter.tex", "notes.tex"])
-        XCTAssertTrue(p.isDirty("chapter.tex"), "durable on the helper, still unsaved on disk")
-        try await waitUntil { model.result?.revision == model.editorRevision && model.inFlightRevision == nil }
-        XCTAssertEqual(model.compiledDocuments["chapter.tex"], "Chapter edited before the helper.\n", "the preview was compiled from the edited chapter")
-        // Nothing left to sync: a later status change sends no request.
-        let syncs = p.helperSyncs
-        await p.syncWithHelper()
-        XCTAssertEqual(p.helperSyncs, syncs)
-        model.detachController()
-    }
+    // MARK: saving a non-entry document
 
     func testDirectModeSavesNonEntryDocumentsAndRefusesChangedDisk() async throws {
         let project = try TempProject()
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let p = model.project
         let opened = await p.openDiscoveredIncludes()
         XCTAssertEqual(opened, [.opened(path: "chapter.tex")])
         let chapterURL = project.root.appendingPathComponent("project/chapter.tex")
         // The entry document is not this API's business.
-        let entry = await p.saveDocument("main.tex")
+        let entry = p.saveDocumentNow("main.tex")
         guard case .failed(let why) = entry, why.contains("entry") else { return XCTFail("\(entry)") }
         // Clean save: the file holds exactly the buffer; the baseline follows.
         p.switchDocument(to: "chapter.tex")
         model.updateActiveText("Chapter one, saved.\n")
         XCTAssertTrue(p.isDirty("chapter.tex"))
-        let saved = await p.saveDocument("chapter.tex")
+        let saved = p.saveDocumentNow("chapter.tex")
         XCTAssertEqual(saved, .saved(path: "chapter.tex", sha256: SourceDigest.sha256Hex("Chapter one, saved.\n")))
         XCTAssertEqual(try String(contentsOf: chapterURL, encoding: .utf8), "Chapter one, saved.\n")
         XCTAssertFalse(p.isDirty("chapter.tex"))
@@ -507,7 +352,7 @@ final class ProjectDocumentsTests: XCTestCase {
         // An external change is a conflict: nothing overwritten, buffer kept dirty.
         try "external chapter\n".write(to: chapterURL, atomically: true, encoding: .utf8)
         model.updateActiveText("Chapter one, saved twice.\n")
-        let refused = await p.saveDocument("chapter.tex")
+        let refused = p.saveDocumentNow("chapter.tex")
         guard case .conflict(let c) = refused else { return XCTFail("expected a conflict, got \(refused)") }
         XCTAssertEqual(c.kind, .modifiedExternally)
         XCTAssertEqual(c.url, chapterURL)
@@ -515,59 +360,6 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertTrue(p.isDirty("chapter.tex"))
         XCTAssertEqual(p.saveConflict(for: "chapter.tex"), c)
         XCTAssertEqual(model.activeText, "Chapter one, saved twice.\n")
-    }
-
-    func testHelperRouteSavesThroughExportAndFlushesOnSwitch() async throws {
-        guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
-              ShellModel.locateCompiler() != nil else {
-            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
-        }
-        let project = try TempProject(chapter: "Chapter via helper.\n")
-        defer { project.remove() }
-        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", project.root.appendingPathComponent("ledger").path, 1)
-        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
-        let model = ShellModel()
-        model.autoCompile = true
-        XCTAssertEqual(model.openTex(at: project.main), .opened)
-        model.attachController(at: helper)
-        try await waitUntil { model.result?.revision == model.editorRevision && model.controllerState.durable["main.tex"] != nil }
-        let p = model.project
-        let opened = await p.openDiscoveredIncludes()
-        XCTAssertEqual(opened, [.opened(path: "chapter.tex")])
-        let chapterURL = project.root.appendingPathComponent("project/chapter.tex")
-
-        // Keystrokes in chapter.tex, then an immediate switch back to main: the
-        // controller's one-slot queue now follows main.tex, but the chapter
-        // buffer is flushed to the ledger explicitly.
-        p.switchDocument(to: "chapter.tex")
-        for i in 1...4 { model.updateActiveText("Chapter via helper \(String(repeating: "y", count: i)).\n") }
-        let chapterText = model.activeText
-        p.switchDocument(to: "main.tex")
-        XCTAssertEqual(model.activePath, "main.tex")
-        try await waitUntil { model.controllerState.textByDurable["chapter.tex"]?[model.controllerState.durable["chapter.tex"]?.revision ?? -1]?.sameBytes(as: chapterText) == true }
-        XCTAssertEqual(model.documents[1].text, chapterText, "the buffer never lost a keystroke")
-        try await waitUntil { model.compiledDocuments["chapter.tex"]?.sameBytes(as: chapterText) == true }
-        XCTAssertEqual(model.result?.revision, model.editorRevision, "the preview compiled from the flushed chapter is current")
-        XCTAssertNil(model.inFlightRevision)
-
-        // Save the (non-active) chapter through export: disk gets the durable text.
-        let saved = await p.saveDocument("chapter.tex")
-        XCTAssertEqual(saved, .saved(path: "chapter.tex", sha256: SourceDigest.sha256Hex(chapterText)))
-        XCTAssertEqual(try String(contentsOf: chapterURL, encoding: .utf8), chapterText)
-        XCTAssertFalse(p.isDirty("chapter.tex"))
-        XCTAssertEqual(try String(contentsOf: project.main, encoding: .utf8), "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n")
-        // External change: export is refused with the disk conflict; nothing overwritten.
-        try "external chapter\n".write(to: chapterURL, atomically: true, encoding: .utf8)
-        p.switchDocument(to: "chapter.tex")
-        model.updateActiveText(chapterText + "more\n")
-        let refused = await p.saveDocument("chapter.tex")
-        guard case .conflict(let c) = refused else { return XCTFail("expected a conflict, got \(refused)") }
-        XCTAssertTrue(c.viaHelper)
-        XCTAssertEqual(c.kind, .modifiedExternally)
-        XCTAssertEqual(c.theirs, SourceDigest.sha256Hex("external chapter\n"))
-        XCTAssertEqual(try String(contentsOf: chapterURL, encoding: .utf8), "external chapter\n")
-        XCTAssertTrue(p.isDirty("chapter.tex"))
-        model.detachController()
     }
 
     // MARK: transitive discovery
@@ -578,7 +370,6 @@ final class ProjectDocumentsTests: XCTestCase {
                                       extra: ["ch/section.tex": "\\input{main}\n\\input{appendix}\n", "appendix.tex": "Appendix.\n"])
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let p = model.project
         let closure = p.discoverClosure()
@@ -621,7 +412,6 @@ final class ProjectDocumentsTests: XCTestCase {
         let project = try TempProject(main: "\\input{d1}\n", extra: extra)
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let closure = model.project.discoverClosure()
         XCTAssertEqual(closure.paths, (1...8).map { "d\($0).tex" })
@@ -635,7 +425,6 @@ final class ProjectDocumentsTests: XCTestCase {
         let project = try TempProject(main: "\\input{main}\n\\input{chapter}\n", chapter: "\\input{chapter.tex}\n")
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let closure = model.project.discoverClosure()
         XCTAssertEqual(closure.paths, ["chapter.tex"])
@@ -650,7 +439,6 @@ final class ProjectDocumentsTests: XCTestCase {
         defer { project.remove() }
         let mainBytes = try Data(contentsOf: project.main)
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let opened = await model.project.openDiscoveredIncludes()
         XCTAssertEqual(opened, [.opened(path: "chapter.tex")])
@@ -665,42 +453,6 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertFalse(model.isDirty)
         XCTAssertFalse(model.project.isDirty("chapter.tex"))
         XCTAssertEqual(model.savedText, "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n", "the entry baseline is untouched")
-    }
-
-    func testSaveCommandWritesOnlyTheActiveNonEntryDocumentThroughTheHelper() async throws {
-        guard let helper = Self.helper, FileManager.default.isExecutableFile(atPath: helper.path),
-              ShellModel.locateCompiler() != nil else {
-            throw XCTSkip("set FLASHTEX_PREVIEW_CONTROLLER and FLASHTEX_COMPILER to built binaries")
-        }
-        let project = try TempProject(main: "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n",
-                                      chapter: "\\input{ch/section}\nChapter.\n", extra: ["ch/section.tex": "Section.\n"])
-        defer { project.remove() }
-        setenv("FLASHTEX_CONTROLLER_LEDGER_ROOT", project.root.appendingPathComponent("ledger").path, 1)
-        defer { unsetenv("FLASHTEX_CONTROLLER_LEDGER_ROOT") }
-        let mainBytes = try Data(contentsOf: project.main)
-        let model = ShellModel()
-        model.autoCompile = true
-        XCTAssertEqual(model.openTex(at: project.main), .opened)
-        model.attachController(at: helper)
-        try await waitUntil { model.result?.revision == model.editorRevision && model.controllerState.durable["main.tex"] != nil }
-        let p = model.project
-        // The helper discovered the whole closure at startup; Open All reads each ledger document.
-        let opened = await p.openDiscoveredIncludes()
-        XCTAssertEqual(opened, [.opened(path: "chapter.tex"), .opened(path: "ch/section.tex")])
-        XCTAssertEqual(p.listing.map(\.origin), [.disk, .helper, .helper])
-        XCTAssertEqual(p.lastOpenReport?.unresolvable, [])
-        p.switchDocument(to: "chapter.tex")
-        model.updateActiveText("\\input{ch/section}\nChapter, saved through the helper.\n")
-        model.saveTexInteractive() // ⌘S → project.saveDocument → export
-        let chapterURL = project.root.appendingPathComponent("project/chapter.tex")
-        try await waitUntil { (try? String(contentsOf: chapterURL, encoding: .utf8)) == "\\input{ch/section}\nChapter, saved through the helper.\n" }
-        XCTAssertEqual(try Data(contentsOf: project.main), mainBytes, "main.tex bytes unchanged")
-        try await waitUntil { model.captureNote == "Saved chapter.tex" }
-        XCTAssertFalse(model.project.isDirty("chapter.tex"))
-        XCTAssertEqual(try String(contentsOf: project.root.appendingPathComponent("project/ch/section.tex"), encoding: .utf8), "Section.\n")
-        let disk = await model.controllerFileStatus(path: "chapter.tex")
-        XCTAssertEqual(disk?.state, "matches_source")
-        model.detachController()
     }
 
     private func waitUntil(timeout: TimeInterval = 15, _ cond: () -> Bool) async throws {
@@ -722,7 +474,6 @@ final class ProjectDocumentsTests: XCTestCase {
                                       extra: ["ch/two.tex": "Section two.\n"])
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let implicit = model.project.implicitClosureDocuments()
         XCTAssertEqual(Set(implicit.map(\.path)), ["chapter.tex", "ch/two.tex"], "the whole transitive closure, not just the entry's direct includes")
@@ -743,7 +494,6 @@ final class ProjectDocumentsTests: XCTestCase {
                                       chapter: "Chapter, first version.\n")
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let p = model.project
         XCTAssertEqual(p.implicitClosureDocuments().map(\.text), ["Chapter, first version.\n"])
@@ -773,7 +523,6 @@ final class ProjectDocumentsTests: XCTestCase {
         let project = try TempProject(main: "\\begin{document}\nMain.\n\\input{chapter}\n\\input{missing}\n\\end{document}\n")
         defer { project.remove() }
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let p = model.project
         let found = p.discoverIncludes()
@@ -792,56 +541,10 @@ final class ProjectDocumentsTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: project.root.appendingPathComponent("project/link.tex"),
                                                    withDestinationURL: project.root.appendingPathComponent("outside.tex"))
         let model = ShellModel()
-        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         let p = model.project
         let found = p.discoverIncludes()
         XCTAssertEqual(found[1].state, .unresolvable("link.tex is a symbolic link"))
         XCTAssertEqual(p.implicitClosureDocuments().map(\.path), ["chapter.tex"], "the symlinked include is refused, never read")
-    }
-
-    // MARK: live producer (FLASHTEX_RENDER)
-
-    /// The include closure reaches the engine even when only the entry is
-    /// open: compiling `fixtures/real-world/input-bibliography/main.tex`
-    /// (its `sections/*.tex` are real `\input` files) with only `main.tex`
-    /// open must produce the same page count as compiling it with every file
-    /// opened through `openDiscoveredIncludes()`.
-    func testLiveProducerClosurePageCountMatchesAllFilesOpen() async throws {
-        guard let render = ProcessInfo.processInfo.environment["FLASHTEX_RENDER"], FileManager.default.isExecutableFile(atPath: render) else {
-            throw XCTSkip("FLASHTEX_RENDER not set to a built flashtex-render")
-        }
-        guard let repoRoot = ShellModel.locateRepoRoot() else { throw XCTSkip("repo root not found") }
-        let fixture = repoRoot.appendingPathComponent("fixtures/real-world/input-bibliography/main.tex")
-        guard FileManager.default.fileExists(atPath: fixture.path) else { throw XCTSkip("fixture not found at \(fixture.path)") }
-
-        let onlyEntry = ShellModel()
-        onlyEntry.autoCompile = false
-        XCTAssertEqual(onlyEntry.openTex(at: fixture), .opened)
-        XCTAssertEqual(onlyEntry.documents.map(\.path), ["main.tex"], "only the entry is open")
-        XCTAssertEqual(Set(onlyEntry.project.implicitClosureDocuments().map(\.path)), ["sections/intro.tex", "sections/method.tex"])
-        onlyEntry.attachWorker(at: URL(fileURLWithPath: render))
-        onlyEntry.compile()
-        try await waitUntil(timeout: 30) { onlyEntry.inFlightRevision == nil }
-        onlyEntry.detachWorker()
-        let onlyEntryResult = try XCTUnwrap(onlyEntry.result)
-        XCTAssertNotEqual(onlyEntryResult.status, .failed, "\(onlyEntryResult.diagnostics)")
-
-        let allOpen = ShellModel()
-        allOpen.autoCompile = false
-        XCTAssertEqual(allOpen.openTex(at: fixture), .opened)
-        let opened = await allOpen.project.openDiscoveredIncludes()
-        XCTAssertEqual(opened.count, 2)
-        XCTAssertEqual(Set(allOpen.documents.map(\.path)), ["main.tex", "sections/intro.tex", "sections/method.tex"])
-        allOpen.attachWorker(at: URL(fileURLWithPath: render))
-        allOpen.compile()
-        try await waitUntil(timeout: 30) { allOpen.inFlightRevision == nil }
-        allOpen.detachWorker()
-        let allOpenResult = try XCTUnwrap(allOpen.result)
-        XCTAssertNotEqual(allOpenResult.status, .failed, "\(allOpenResult.diagnostics)")
-
-        XCTAssertEqual(onlyEntryResult.pages.count, allOpenResult.pages.count,
-                       "only-main-open must compile the same page count as every file open (implicit include closure)")
-        XCTAssertGreaterThan(onlyEntryResult.pages.count, 0)
     }
 }
