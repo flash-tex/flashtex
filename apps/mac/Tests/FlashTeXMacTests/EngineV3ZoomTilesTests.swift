@@ -76,7 +76,6 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         try EngineV3TestHost.require()
         let model = ShellModel()
         model.replaceProject(entryText: Self.document, named: "main.tex")
-        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
         model.engineV3Enabled = true
         let s = model.engineV3
         // A hosted window, parked off every display: nothing is activated or focused.
@@ -87,7 +86,6 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         defer {
             model.engineV3.stop()
             window.contentView = nil
-            if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
         }
         try await EngineV3TestHost.awaitReady(s)
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 2 && s.pages[0] != nil }
@@ -198,5 +196,56 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         pages.update(revision: s.layoutRevision, zoom: model.previewZoom)
         XCTAssertFalse(pages.tiled)
         XCTAssertEqual(pages.heldPageViews.values.reduce(0) { $0 + $1.tiles.count }, 0)
+    }
+
+    /// Each tile is where its page pixels are on screen, in several fresh
+    /// panes opened zoomed in. AppKit attaches a page's layer to the tree on
+    /// a later pass, and a detached layer reads unflipped: a tile framed for
+    /// that flip is upside down in the page once the layer is attached (the
+    /// page label's flake, testEachPageIsLabelled, 2026-10-12).
+    func testTilesAreWhereTheirPixelsAreOnScreenInFreshPanes() async throws {
+        try EngineV3TestHost.require()
+        for round in 0 ..< 6 {
+            let model = ShellModel()
+            model.replaceProject(entryText: Self.document, named: "main.tex")
+            model.engineV3Enabled = true
+            model.previewZoom = 4 // tiled from the first layout
+            let s = model.engineV3
+            let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 640, height: 820), styleMask: [.titled, .resizable])
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: Host(model: model))
+            s.start(model: model)
+            defer { s.stop(); window.contentView = nil }
+            try await EngineV3TestHost.awaitReady(s)
+            try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 2 && s.pages[0] != nil }
+            let pages = try XCTUnwrap(s.view)
+            pages.update(revision: s.layoutRevision, zoom: 4) // no change when the first layout already had it
+            try await waitUntil("page 1's visible tiles") {
+                guard let v = pages.heldPageViews[0] else { return false }
+                return pages.tiled && v.tiles.count > 0 && v.tiles.pending == 0 && pages.missingVisibleTiles == 0
+            }
+            let v = try XCTUnwrap(pages.heldPageViews[0])
+            let l = try XCTUnwrap(v.layer)
+            // The tree's flip is known once the page's layer is in it;
+            // `convertFromLayer` does not apply it.
+            try await waitUntil("page 1's layer in the layer tree", timeout: 10) { l.superlayer != nil }
+            let container = v.tiles.container
+            let flipped = container.contentsAreFlipped()
+            XCTAssertEqual(v.tiles.shownFlipped, flipped, "round \(round): tiles are framed for the tree's flip")
+            let source = try XCTUnwrap(v.tiles.source)
+            let (pw, ph) = source.pixelSize
+            let ds = CGFloat(source.pixelsPerViewPoint)
+            var checked = 0
+            for (index, tile) in v.tiles.layers {
+                let r = EngineV3TileGrid.rect(index, pageWidth: pw, pageHeight: ph)
+                let f = tile.frame
+                // The tile's top on screen, from the page's top, in view points.
+                let shownTop = flipped ? f.minY : container.bounds.height - f.maxY
+                XCTAssertEqual(shownTop, CGFloat(r.y) / ds, accuracy: 0.5, "round \(round): tile \(index) at \(f) in \(container.bounds), tree flipped \(flipped)")
+                XCTAssertEqual(f.minX, CGFloat(r.x) / ds, accuracy: 0.5, "round \(round): tile \(index)")
+                checked += 1
+            }
+            XCTAssertGreaterThan(checked, 0)
+        }
     }
 }

@@ -1,0 +1,38 @@
+This is makeindex, version 2.18 [TeX Live 2026] (kpathsea + Thai support).
+Scanning input file doc.idx....
+!! Input index error (file = doc.idx, line = 2):
+   -- Unknown index keyword \idxentry.
+!! Input index error (file = doc.idx, line = 3):
+   -- Missing arguments -- need two (premature LFD).
+!! Input index error (file = doc.idx, line = 4):
+   -- Illegal space within numerals in second argument.
+!! Input index error (file = doc.idx, line = 5):
+   -- No opening delimiter for second argument (illegal character `x').
+
+!! Input index error (file = doc.idx, line = 7):
+   -- Illegal null field.
+!! Input index error (file = doc.idx, line = 8):
+   -- Extra `|' at position 4 of first argument.
+!! Input index error (file = doc.idx, line = 9):
+   -- Illegal Arabic digit: position 2 in 1a.
+!! Input index error (file = doc.idx, line = 10):
+   -- Illegal page number - or page_precedence rnaRA.
+
+!! Input index error (file = doc.idx, line = 12):
+   -- No closing delimiter for second argument (illegal character `j').
+
+!! Input index error (file = doc.idx, line = 16):
+   -- First argument too long (max 10240).
+done (6 entries accepted, 10 rejected).
+Sorting entries....done (19 comparisons).
+Generating output file doc.ind....
+## Warning (input = doc.idx, line = 14; output = doc.ind, line = 11):
+   -- Extra range opening operator (.
+
+## Warning (input = doc.idx, line = 13; output = doc.ind, line = 11):
+   -- Unmatched range opening operator (.
+## Warning (input = doc.idx, line = 15; output = doc.ind, line = 15):
+   -- Unmatched range closing operator ).
+done (21 lines written, 3 warnings).
+Output written in doc.ind.
+Transcript written in doc.ilg.

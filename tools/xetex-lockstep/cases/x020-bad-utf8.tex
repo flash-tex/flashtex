@@ -1,0 +1,11 @@
+% x020-bad-utf8: invalid UTF-8 is read as U+FFFD with a warning
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\setbox0=\hbox{aÿbÃcâ‚d}
+\message{x020 [xÀ¯y]}
+\setbox1=\hbox{í €z}
+\lsshipbox0
+\lsshipbox1
+\end

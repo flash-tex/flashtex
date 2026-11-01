@@ -177,6 +177,56 @@ struct Interp<'a, E: Env> {
     unsupported: HashMap<String, u32>,
     /// The glyph advances of the current font at the current size.
     adv: AdvCache,
+    /// The glyph matrix `show` last asked [`Self::matrix`] for, by what it
+    /// is a function of: the font size, `Tz` and the text rendering
+    /// matrix's linear part. A `TJ` shows each of its strings with the same
+    /// one, and the product costs twelve 128-bit divisions.
+    glyph_mat: Option<([Fx; 6], u32)>,
+    /// The operands' buffers, kept for the next operator's (a page has
+    /// thousands of strings and arrays: one allocation each, otherwise).
+    pool: Pool,
+}
+
+/// Emptied buffers of operands an operator has used.
+#[derive(Default)]
+struct Pool {
+    bytes: Vec<Vec<u8>>,
+    offs: Vec<Vec<u32>>,
+    arrs: Vec<Vec<Obj>>,
+}
+
+impl Pool {
+    fn bytes(&mut self) -> Vec<u8> {
+        self.bytes.pop().unwrap_or_default()
+    }
+    fn offs(&mut self) -> Vec<u32> {
+        self.offs.pop().unwrap_or_default()
+    }
+    fn arr(&mut self) -> Vec<Obj> {
+        self.arrs.pop().unwrap_or_default()
+    }
+    /// Take back `o`'s buffers, emptied.
+    fn put(&mut self, o: Obj) {
+        match o {
+            Obj::Name(mut b) => {
+                b.clear();
+                self.bytes.push(b);
+            }
+            Obj::Str(mut b, mut offs) => {
+                b.clear();
+                offs.clear();
+                self.bytes.push(b);
+                self.offs.push(offs);
+            }
+            Obj::Arr(mut a) => {
+                for x in a.drain(..) {
+                    self.put(x);
+                }
+                self.arrs.push(a);
+            }
+            Obj::Num(_) | Obj::Dict | Obj::Other => {}
+        }
+    }
 }
 
 /// Each code's advance in font `font` at size `fs` (`Env::advance`, then
@@ -255,6 +305,8 @@ pub fn interpret<E: Env>(
         forms: Vec::new(),
         unsupported: HashMap::new(),
         adv: AdvCache::new(),
+        glyph_mat: None,
+        pool: Pool::default(),
     };
     it.run();
     Output {
@@ -321,13 +373,13 @@ fn is_delim(c: u8) -> bool {
     )
 }
 
-enum Tok {
+enum Tok<'a> {
     Obj(Obj),
     ArrOpen,
     ArrClose,
     DictOpen,
     DictClose,
-    Op(Vec<u8>),
+    Op(&'a [u8]),
 }
 
 impl<'a, E: Env> Interp<'a, E> {
@@ -342,7 +394,7 @@ impl<'a, E: Env> Interp<'a, E> {
             let obj = match t {
                 Tok::Obj(o) => o,
                 Tok::ArrOpen => {
-                    arrs.push(Vec::new());
+                    arrs.push(self.pool.arr());
                     continue;
                 }
                 Tok::ArrClose => match arrs.pop() {
@@ -373,8 +425,10 @@ impl<'a, E: Env> Interp<'a, E> {
                         arrs.last_mut().unwrap().push(Obj::Other);
                         continue;
                     }
-                    self.op(&op, &ops, start as u32);
-                    ops.clear();
+                    self.op(op, &ops, start as u32);
+                    for o in ops.drain(..) {
+                        self.pool.put(o);
+                    }
                     continue;
                 }
             };
@@ -389,7 +443,7 @@ impl<'a, E: Env> Interp<'a, E> {
         }
     }
 
-    fn token(&mut self) -> Option<Tok> {
+    fn token(&mut self) -> Option<Tok<'a>> {
         let s = self.s;
         loop {
             while self.i < s.len() && is_ws(s[self.i]) {
@@ -426,8 +480,8 @@ impl<'a, E: Env> Interp<'a, E> {
             }
             b'<' => {
                 self.i += 1;
-                let mut bytes = Vec::new();
-                let mut offs = Vec::new();
+                let mut bytes = self.pool.bytes();
+                let mut offs = self.pool.offs();
                 let mut hi: Option<u8> = None;
                 let mut at = self.i as u32;
                 while self.i < s.len() && s[self.i] != b'>' {
@@ -467,7 +521,9 @@ impl<'a, E: Env> Interp<'a, E> {
                 while self.i < s.len() && !is_ws(s[self.i]) && !is_delim(s[self.i]) {
                     self.i += 1;
                 }
-                Some(Tok::Obj(Obj::Name(unescape_name(&s[st..self.i]))))
+                let mut name = self.pool.bytes();
+                unescape_name(&s[st..self.i], &mut name);
+                Some(Tok::Obj(Obj::Name(name)))
             }
             b')' | b'>' | b'{' | b'}' => {
                 self.i += 1;
@@ -483,9 +539,9 @@ impl<'a, E: Env> Interp<'a, E> {
                     Some(Tok::Obj(Obj::Num(v)))
                 } else if w == b"BI" {
                     self.skip_inline_image();
-                    Some(Tok::Op(b"BI".to_vec()))
+                    Some(Tok::Op(b"BI"))
                 } else {
-                    Some(Tok::Op(w.to_vec()))
+                    Some(Tok::Op(w))
                 }
             }
         }
@@ -495,8 +551,8 @@ impl<'a, E: Env> Interp<'a, E> {
         let s = self.s;
         self.i += 1; // (
         let mut depth = 1;
-        let mut bytes = Vec::new();
-        let mut offs = Vec::new();
+        let mut bytes = self.pool.bytes();
+        let mut offs = self.pool.offs();
         while self.i < s.len() {
             let at = self.i as u32;
             let c = s[self.i];
@@ -966,13 +1022,16 @@ impl<'a, E: Env> Interp<'a, E> {
             }
             b"TJ" => {
                 if let Some(Obj::Arr(a)) = ops.last() {
+                    // (`show` changes neither the size nor `Tz`)
+                    let (fs, fs_f, tz_f) =
+                        (self.gs.fs, self.gs.fs.viewer_f64(), self.gs.tz.viewer_f64());
                     for o in a {
                         match o {
                             Obj::Str(b, offs) => self.show(b, offs),
                             Obj::Num(n) => {
-                                let tx = self.gs.fs.times(*n).mul_div(-1, 1000);
-                                let tx_f = -n.to_f64() / 1000.0 * self.gs.fs.viewer_f64();
-                                self.advance(tx, tx_f);
+                                let tx = fs.times(*n).mul_div(-1, 1000);
+                                let tx_f = -n.to_f64() / 1000.0 * fs_f;
+                                self.advance_tz(tx, tx_f, tz_f);
                             }
                             _ => {}
                         }
@@ -1053,13 +1112,8 @@ impl<'a, E: Env> Interp<'a, E> {
     }
 
     /// Move the text matrix by `tx` text-space units (already scaled by
-    /// the font size): `Tm = [1 0 0 1 tx·Th 0] × Tm`.
-    fn advance(&mut self, tx: Fx, tx_f: f64) {
-        self.advance_tz(tx, tx_f, self.gs.tz.viewer_f64());
-    }
-
-    /// [`advance`](Self::advance) with `Tz` as a double already (`show`
-    /// converts it once for all its glyphs).
+    /// the font size): `Tm = [1 0 0 1 tx·Th 0] × Tm`, with `Tz` as a double
+    /// already (`show` and `TJ` convert it once for all their glyphs).
     fn advance_tz(&mut self, tx: Fx, tx_f: f64, tz_f: f64) {
         let tx_f = tx_f * tz_f / 100.0;
         self.tm_f = f6_translate(&self.tm_f, tx_f, 0.0);
@@ -1098,9 +1152,6 @@ impl<'a, E: Env> Interp<'a, E> {
             }
         }
         let fs = self.gs.fs;
-        // The linear part of the text rendering matrix, for these glyphs.
-        let th = self.gs.tz.mul_div(1, 100);
-        let text = Mat([fs.times(th), Fx::ZERO, Fx::ZERO, fs, Fx::ZERO, Fx::ZERO]);
         // Nothing in the loop changes the graphics state, the font or the
         // linear part of the text matrix (`advance` moves only its
         // translation), so the glyphs' common values are computed once:
@@ -1123,17 +1174,31 @@ impl<'a, E: Env> Interp<'a, E> {
             let mi = match glyph_matrix {
                 Some(mi) => mi,
                 None => {
-                    let mut lin = text.then(&Mat([
-                        trm.0[0],
-                        trm.0[1],
-                        trm.0[2],
-                        trm.0[3],
-                        Fx::ZERO,
-                        Fx::ZERO,
-                    ]));
-                    lin.0[4] = Fx::ZERO;
-                    lin.0[5] = Fx::ZERO;
-                    let mi = self.matrix(&lin);
+                    let tz = self.gs.tz;
+                    let key = [fs, tz, trm.0[0], trm.0[1], trm.0[2], trm.0[3]];
+                    let mi = match self.glyph_mat {
+                        Some((k, mi)) if k == key => mi,
+                        _ => {
+                            // The linear part of the text rendering
+                            // matrix, for these glyphs.
+                            let th = tz.mul_div(1, 100);
+                            let text =
+                                Mat([fs.times(th), Fx::ZERO, Fx::ZERO, fs, Fx::ZERO, Fx::ZERO]);
+                            let mut lin = text.then(&Mat([
+                                trm.0[0],
+                                trm.0[1],
+                                trm.0[2],
+                                trm.0[3],
+                                Fx::ZERO,
+                                Fx::ZERO,
+                            ]));
+                            lin.0[4] = Fx::ZERO;
+                            lin.0[5] = Fx::ZERO;
+                            let mi = self.matrix(&lin);
+                            self.glyph_mat = Some((key, mi));
+                            mi
+                        }
+                    };
                     glyph_matrix = Some(mi);
                     mi
                 }
@@ -1340,8 +1405,9 @@ fn clamp32(v: i64) -> i32 {
     v.clamp(i32::MIN as i64, i32::MAX as i64) as i32
 }
 
-fn unescape_name(b: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(b.len());
+/// The name `b` (after its `/`) with its `#xx` escapes decoded, into `out`.
+fn unescape_name(b: &[u8], out: &mut Vec<u8>) {
+    out.reserve(b.len());
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'#' && i + 2 < b.len() {
@@ -1356,7 +1422,6 @@ fn unescape_name(b: &[u8]) -> Vec<u8> {
         out.push(b[i]);
         i += 1;
     }
-    out
 }
 
 #[cfg(test)]

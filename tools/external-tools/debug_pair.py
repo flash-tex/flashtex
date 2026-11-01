@@ -67,7 +67,7 @@ print("files differing:", [k for k in sorted(set(fc) | set(ff)) if fc.get(k) != 
 
 import struct
 for i in diff[:3]:
-    for tag, (b, fonts) in (("cand", cand_bodies[i]), ("fresh", fresh_bodies[i])):
+    for tag, (b, fonts, _images) in (("cand", cand_bodies[i]), ("fresh", fresh_bodies[i])):
         (n,) = struct.unpack_from("<I", b, 120)
         at, secs = 124, {}
         for _ in range(n):

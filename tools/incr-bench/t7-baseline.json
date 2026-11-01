@@ -1,19 +1,75 @@
 {
- "full-10 letter@end": {
+ "beamer-30 letter@end": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-30 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-30 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-30 newline@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
+ },
+ "beamer-30 preamble": {
   "converged_rate": 0.0,
+  "typeset_pages_p50": 58
+ },
+ "beamer-30 sentence@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-30 split@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
+ },
+ "beamer-5 letter@end": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-5 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-5 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-5 newline@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-5 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 5
+ },
+ "beamer-5 sentence@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "beamer-5 split@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "full-10 letter@end": {
+  "converged_rate": 1.0,
   "typeset_pages_p50": 3
  },
  "full-10 letter@middle": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 4
+  "typeset_pages_p50": 3
  },
  "full-10 letter@start": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 11
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "full-10 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 7
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
  },
  "full-10 preamble": {
   "converged_rate": 0.0,
@@ -24,24 +80,24 @@
   "typeset_pages_p50": 7
  },
  "full-10 split@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 7
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
  },
  "full-100 letter@end": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 4
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
  },
  "full-100 letter@middle": {
   "converged_rate": 1.0,
   "typeset_pages_p50": 2
  },
  "full-100 letter@start": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 99
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "full-100 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 51
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "full-100 preamble": {
   "converged_rate": 0.0,
@@ -49,15 +105,15 @@
  },
  "full-100 sentence@middle": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 33
+  "typeset_pages_p50": 2
  },
  "full-100 split@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 51
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "full-1000 letter@end": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 6
+  "typeset_pages_p50": 3
  },
  "full-1000 letter@middle": {
   "converged_rate": 1.0,
@@ -68,8 +124,8 @@
   "typeset_pages_p50": 2
  },
  "full-1000 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 501
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
  },
  "full-1000 preamble": {
   "converged_rate": 0.0,
@@ -80,8 +136,8 @@
   "typeset_pages_p50": 33
  },
  "full-1000 split@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 501
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 33
  },
  "full-300 letter@end": {
   "converged_rate": 1.0,
@@ -93,11 +149,11 @@
  },
  "full-300 letter@start": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 3
+  "typeset_pages_p50": 2
  },
  "full-300 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 150
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "full-300 preamble": {
   "converged_rate": 0.0,
@@ -108,8 +164,8 @@
   "typeset_pages_p50": 33
  },
  "full-300 split@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 150
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 33
  },
  "plain-10 letter@end": {
   "converged_rate": 0.0,
@@ -117,15 +173,15 @@
  },
  "plain-10 letter@middle": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 6
+  "typeset_pages_p50": 3
  },
  "plain-10 letter@start": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 9
+  "typeset_pages_p50": 2
  },
  "plain-10 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 6
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
  },
  "plain-10 preamble": {
   "converged_rate": 0.0,
@@ -140,20 +196,20 @@
   "typeset_pages_p50": 6
  },
  "plain-100 letter@end": {
-  "converged_rate": 0.0,
+  "converged_rate": 1.0,
   "typeset_pages_p50": 3
  },
  "plain-100 letter@middle": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 33
+  "typeset_pages_p50": 2
  },
  "plain-100 letter@start": {
   "converged_rate": 1.0,
   "typeset_pages_p50": 2
  },
  "plain-100 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 50
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "plain-100 preamble": {
   "converged_rate": 0.0,
@@ -164,8 +220,8 @@
   "typeset_pages_p50": 50
  },
  "plain-100 split@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 50
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "plain-1000 letter@end": {
   "converged_rate": 1.0,
@@ -180,8 +236,8 @@
   "typeset_pages_p50": 2
  },
  "plain-1000 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 502
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
  },
  "plain-1000 preamble": {
   "converged_rate": 0.0,
@@ -196,20 +252,20 @@
   "typeset_pages_p50": 1503
  },
  "plain-300 letter@end": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 7
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
  },
  "plain-300 letter@middle": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 9
+  "typeset_pages_p50": 2
  },
  "plain-300 letter@start": {
   "converged_rate": 1.0,
-  "typeset_pages_p50": 5
+  "typeset_pages_p50": 2
  },
  "plain-300 newline@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 151
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 4
  },
  "plain-300 preamble": {
   "converged_rate": 0.0,
@@ -220,7 +276,7 @@
   "typeset_pages_p50": 65
  },
  "plain-300 split@middle": {
-  "converged_rate": 0.0,
-  "typeset_pages_p50": 151
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 9
  }
 }

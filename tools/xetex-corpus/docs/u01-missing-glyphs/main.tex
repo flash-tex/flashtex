@@ -1,0 +1,9 @@
+% Font fallback: characters the font lacks (CJK, Arabic, emoji in Georgia)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Georgia}
+\begin{document}
+Latin text in Georgia is fine. Chinese 中文 is not in Georgia; neither is Arabic
+مرحبا nor an emoji 😀 nor Devanagari हिन्दी. XeTeX writes ``Missing character'' to the log
+for each and typesets nothing for it.
+\end{document}

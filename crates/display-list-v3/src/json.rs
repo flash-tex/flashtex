@@ -131,7 +131,8 @@ pub fn s(v: impl Into<String>) -> Json {
     Json::Str(v.into())
 }
 
-fn write_str(out: &mut String, s: &str) {
+/// `s` as a JSON string, quoted and escaped, as [`Json::Str`] writes it.
+pub fn write_str(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
         match c {

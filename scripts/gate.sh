@@ -15,7 +15,7 @@
 # edits -- because the point of a local gate is to catch a problem before the
 # commit, not after. A change to the root Cargo.toml or Cargo.lock adds one
 # workspace-wide `cargo check` and one workspace-wide clippy run, not a test
-# run per crate: the workspace's tests are the merge queue's job.
+# run per crate: the workspace's tests run after the merge (ci.yml, push to main).
 #
 # Exit status is 1 if any step FAILED. WARN and SKIP do not fail the run; the
 # summary table at the end says which is which and why.
@@ -125,12 +125,12 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------
 # Shared environment: the same variables ci.yml gives the Rust jobs, so a test
-# that needs the vendored Latin Modern / EC / AMS metrics runs here exactly as
-# it runs in CI instead of XCTSkip-style self-skipping.
+# that needs the vendored Latin Modern faces (the pdf crate's) runs here exactly
+# as it runs in CI instead of self-skipping. FLASHTEX_TFM_DIRS went with the old
+# engine's crates in S7.
 # ---------------------------------------------------------------------------
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
 export FLASHTEX_FONT_DIRS="${FLASHTEX_FONT_DIRS:-$ROOT/apps/mac/Fonts}"
-export FLASHTEX_TFM_DIRS="${FLASHTEX_TFM_DIRS:-$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/lm:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols}"
 export FLASHTEX_LM_DIR="${FLASHTEX_LM_DIR:-$ROOT/apps/mac/Fonts}"
 
 # Tests never touch the user's real caches. .cargo/config.toml already points
@@ -197,10 +197,12 @@ fi
 
 # Map changed paths onto cargo packages.
 #   crates/<dir>/...        -> that crate's [package] name
+#   tests/oracles/<dir>/... -> likewise: the oracle crates DESIGN.md §10 keeps,
+#                              moved there by retirement stage S8 (plan §2, RQ4)
 #   Cargo.toml / Cargo.lock -> ROOT_MANIFEST=1 below, NOT a per-crate fan-out
 # A crate is standalone (its own workspace) iff it has its own Cargo.lock. Since
-# lane P0-RETIRE-VENDOR deleted crates/render-pipeline/vendor/ and folded the
-# three standalone lockfiles into the root one, NO crate is standalone any more;
+# lane P0-RETIRE-VENDOR deleted the old pipeline's vendor/ and folded the three
+# standalone lockfiles into the root one, NO member crate is standalone any more;
 # the rule stays because it keeps this correct without a list to maintain.
 # Output: one "<package>\t<workspace dir>\t<edition>" line per crate.
 # Takes the changed-path list as its first argument (a file). NOT on stdin:
@@ -213,8 +215,13 @@ root = sys.argv[1]
 with open(sys.argv[2], encoding="utf-8") as fh:
     changed = [l.strip() for l in fh if l.strip()]
 
+# The roots whose subdirectories are crates of the root workspace (its
+# `members` globs; tools/web2rust is the one member outside them).
+CRATE_ROOTS = ("crates", "tests/oracles")
+
 def crate_info(d):
-    m = os.path.join(root, "crates", d, "Cargo.toml")
+    """d: a crate directory relative to the repository, e.g. crates/pdf."""
+    m = os.path.join(root, d, "Cargo.toml")
     if not os.path.exists(m):
         return None
     txt = open(m, encoding="utf-8", errors="replace").read()
@@ -227,15 +234,28 @@ def crate_info(d):
     ed = re.search(r'^\s*edition\s*=\s*"([^"]+)"', tail, re.M)
     if not name:
         return None
-    standalone = os.path.exists(os.path.join(root, "crates", d, "Cargo.lock"))
-    ws = os.path.join("crates", d) if standalone else "."
+    standalone = os.path.exists(os.path.join(root, d, "Cargo.lock"))
+    ws = d if standalone else "."
     return (name.group(1), ws, ed.group(1) if ed else "2015")
 
 dirs = set()
 for p in changed:
-    parts = p.split("/")
-    if parts[0] == "crates" and len(parts) > 1:
-        dirs.add(parts[1])
+    for r in CRATE_ROOTS:
+        rest = p[len(r) + 1:].split("/") if p.startswith(r + "/") else []
+        if len(rest) > 1:
+            dirs.add(r + "/" + rest[0])
+    # The XeTeX port (crates/flashtex-xetex, its own workspace) links the
+    # pdfTeX engine's runtime and is web2rust's output: a change to either
+    # must build and test it too, or an engine API change breaks it silently.
+    # So must a change to another crate it path-depends on (its host links
+    # the display list, the manifest, the font index, the PDF readers, and
+    # the runtime it shares with the engine, crates/flashtex-runtime), and a
+    # change under third_party/: it builds and embeds the vendored HarfBuzz,
+    # FreeType, TECkit, xetex.web and ICU's line-break tables from there.
+    if p.startswith(("crates/flashtex-engine/", "tools/web2rust/", "crates/display-list-v3/",
+                     "crates/project-manifest/", "crates/font-discovery/", "crates/pdf/",
+                     "crates/flashtex-runtime/", "third_party/")):
+        dirs.add("crates/flashtex-xetex")
 
 out = []
 for d in sorted(dirs):
@@ -262,13 +282,28 @@ CHANGED_CRATES="$(printf '%s\n' "$CRATE_TABLE" | awk 'NF{print $1}' | sort -u | 
 # `quick` job (PR #1183, run 36546401263). Instead the whole workspace is
 # checked, then clippied, in one cargo invocation each (one shared build);
 # tests run only for crates whose own files changed; and the workspace's tests
-# are the merge queue's job (`rust workspace` in ci.yml, on merge_group and on
-# push to main). The standalone crates have their own lockfiles: unaffected.
+# run after the merge (`rust workspace` in ci.yml, on push to main; the merge
+# queue runs only the gate since 2026-10-05). The standalone crates have their own lockfiles: unaffected.
 ROOT_MANIFEST=0
-if printf '%s\n' "$CHANGED_FILES" | grep -qxE 'Cargo\.(toml|lock)'; then
+# A here-string, not `printf | grep -q`: grep -q exits at its first match, and
+# under pipefail the writer's SIGPIPE turned the hit into a miss once the list
+# was long (S8's 840 changed files: Cargo.toml sorts first, so the workspace
+# check silently did not run).
+if grep -qxE 'Cargo\.(toml|lock)' <<< "$CHANGED_FILES"; then
   ROOT_MANIFEST=1
 fi
 CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
+# What web2rust's drift test covers: the translator, the WEB sources and
+# change files, and the committed translations of both engines.
+DRIFT_PATHS='^(tools/web2rust/|third_party/(pdftex|xetex)/|crates/flashtex-(engine|xetex)/(changes/|src/generated/|web2rust-default\.args$|pdftex\.pool$|xetex\.pool$))'
+# What the trip and etrip tests build: each assembles its own scratch crate
+# from crates/flashtex-engine/src (trip from a list of files, etrip from the
+# whole tree) under its own feature set, which the crate's tests and clippy
+# never compile. A module the scratch crate lacks fails there only (#1599:
+# E0583 in CI's gate job and the Windows engine job), so quick builds and
+# runs both whenever the engine's sources (with the runtime they link,
+# crates/flashtex-runtime) or the harness change.
+TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine/(src/|changes/|web2rust-[a-z]+\.args$)|crates/flashtex-runtime/|scripts/flashtex-e?trip\.sh$)'
 
 # ---------------------------------------------------------------------------
 # quick: fmt, clippy on changed crates, tests of changed crates
@@ -286,22 +321,34 @@ CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
 # The check is `rustfmt --edition <crate edition> --emit stdout` over stdin,
 # compared with the file. Verified against `cargo fmt --all --check` on a
 # 60-file sample: identical verdicts for every root-workspace file (the only
-# divergences were render-pipeline files, which `cargo fmt --all` never visits
-# because that crate is outside the root workspace).
+# divergences were files of a crate then outside the root workspace, which
+# `cargo fmt --all` never visits).
 gate_fmt() {
-  local dirty_new=() dirty_old=() f ed crate rc=0
+  local dirty_new=() dirty_old=() f ed crate rc=0 was renames
   local list
   list="$(printf '%s\n' "$CHANGED_RS" | grep -v '^$' || true)"
   if [[ -z "$list" ]]; then
     echo "no .rs files changed against $BASE"
     return 0
   fi
+  # A renamed file's base is its old path: a crate moved as it was (S8 moved
+  # the oracle crates to tests/oracles/) keeps its rustfmt debt as debt, not
+  # as new. "R<score>\t<old>\t<new>" lines, merge base to the working tree.
+  renames="$(git diff -M --name-status --diff-filter=R "$(git merge-base "$BASE" HEAD)" -- '*.rs' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
+    # tools/web2rust's output (the engines' src/generated/) is never edited
+    # and never formatted: its drift test, not rustfmt, says what it must be.
+    # Both the place and the header must say so, so that a hand-written file
+    # cannot opt out with the header line.
+    if [[ "$f" == crates/*/src/generated/*.rs &&
+          "$(head -n 1 "$f")" == "// GENERATED FILE -- DO NOT EDIT." ]]; then
+      continue
+    fi
     ed=2021
-    crate="$(printf '%s\n' "$f" | awk -F/ '$1=="crates" {print $2}')"
-    if [[ -n "$crate" && -f "crates/$crate/Cargo.toml" ]]; then
-      ed="$(sed -n '/^\[package\]/,/^\[/p' "crates/$crate/Cargo.toml" \
+    crate="$(printf '%s\n' "$f" | awk -F/ '$1=="crates" {print $1"/"$2} $1=="tests" && $2=="oracles" {print $1"/"$2"/"$3}')"
+    if [[ -n "$crate" && -f "$crate/Cargo.toml" ]]; then
+      ed="$(sed -n '/^\[package\]/,/^\[/p' "$crate/Cargo.toml" \
             | sed -n 's/^edition *= *"\([0-9]*\)".*/\1/p' | head -1)"
       [[ -n "$ed" ]] || ed=2021
     fi
@@ -311,9 +358,11 @@ gate_fmt() {
       continue
     fi
     # Unformatted now. Was it unformatted at the base too?
-    if git cat-file -e "$BASE:$f" 2>/dev/null &&
-       ! git show "$BASE:$f" | rustfmt --edition "$ed" --emit stdout --quiet 2>/dev/null \
-         | diff -q - <(git show "$BASE:$f") >/dev/null 2>&1; then
+    was="$(awk -F'\t' -v f="$f" '$3 == f { print $2; exit }' <<< "$renames")"
+    was="${was:-$f}"
+    if git cat-file -e "$BASE:$was" 2>/dev/null &&
+       ! git show "$BASE:$was" | rustfmt --edition "$ed" --emit stdout --quiet 2>/dev/null \
+         | diff -q - <(git show "$BASE:$was") >/dev/null 2>&1; then
       dirty_old+=("$f")
     else
       dirty_new+=("$f")
@@ -348,7 +397,7 @@ gate_workspace_check() {
 
 gate_workspace_clippy() {
   local excludes=() d name
-  for d in crates/*/; do
+  for d in crates/*/ tests/oracles/*/; do
     d="${d%/}"
     [[ -f "$d/Cargo.toml" && ! -f "$d/Cargo.lock" ]] || continue  # root members only
     name="$(sed -n '/^\[package\]/,/^\[/p' "$d/Cargo.toml" \
@@ -452,17 +501,22 @@ gate_tests_touched() {
 # committed fixtures against their committed pdflatex references, through the
 # CLI just built. No TeX needed, ~3 s, and no document may drop below the level
 # recorded in tools/parity/baseline-fixtures.json.
+# Since S5 the engine under test is the new one (flashtex-initex and its
+# formats, scripts/engine-parity.sh build; needs TeX Live 2026 first on PATH).
 gate_parity_fixtures() {
-  cargo build --release --locked --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
-  local work out
+  local work out ew
   work="${TMPDIR:-/tmp}/flashtex-gate-parity-work"
   out="${TMPDIR:-/tmp}/flashtex-gate-parity"
+  ew="${TMPDIR:-/tmp}/flashtex-gate-engine"
+  scripts/engine-parity.sh --work "$ew" build
   rm -rf "$work" "$out"
   # ${a[@]+"${a[@]}"}: expanding an EMPTY array under `set -u` is an error on
   # bash 3.2, which is the /bin/bash on macOS runners.
   local jflag=()
   [[ -n "$JOBS" ]] && jflag=(-j "$JOBS")
   python3 tools/parity/parity.py --tier fixtures --raster none ${jflag[@]+"${jflag[@]}"} \
+    --engine "$ew/eng/flashtex-initex" \
+    --engine-env "FLASHTEX_FORMATS=$ew/fmt" --engine-env "FLASHTEX_POOL=$ew/eng/pdftex.pool" \
     --out "$out" --work "$work" \
     --check-baseline tools/parity/baseline-fixtures.json
 }
@@ -471,6 +525,9 @@ gate_parity_selftest() {
   python3 -m unittest discover -s tools/parity -p 'test_*.py'
   # tools/lockstep's own tests (cases that need pdftex skip without it)
   python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
+  # package-smoke's runner and the P5 board's T4 pick (ci.yml's gate job runs the same)
+  python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+  scripts/tests/p5-pick-t4.test.sh
 }
 
 # ---------------------------------------------------------------------------
@@ -486,15 +543,14 @@ workspace_profile() { # workspace_profile <debug|release>
   cargo_test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
 }
 
-# render-pipeline and flashtex-cli, built and tested one package at a time in
-# their own directories. They are ordinary workspace members since vendor/ was
-# retired -- so this uses the root Cargo.lock and target/, and workspace_profile
-# already covers them -- but a per-crate failure reads far more clearly than one
-# inside the 38-crate run, and ci.yml's `rust-standalone` does exactly this.
+# The standalone crates, built and tested in their own directories, as ci.yml's
+# `rust-standalone` does. flashtex-xetex is the one left (its own Cargo.lock and
+# target/, excluded from the root workspace), so this is the only place `full`
+# builds it. (Until S7 this also ran the old pipeline and its CLI.)
 standalone_profile() { # standalone_profile <debug|release>
   local profile="$1" flag=() c rc=0
   [[ "$profile" == release ]] && flag=(--release)
-  for c in render-pipeline flashtex-cli; do
+  for c in flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
     ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
   done
@@ -522,7 +578,7 @@ if (( BASE_OK )); then
   note "crates:     ${CHANGED_CRATES:-(none)}"
   if (( ROOT_MANIFEST )); then
     note "root:       Cargo.toml/Cargo.lock changed -> workspace check + clippy;"
-    note "            the workspace's tests run in the merge queue (rust workspace)"
+    note "            the workspace's tests run after the merge (rust workspace)"
   fi
 fi
 echo
@@ -535,17 +591,19 @@ fi
 
 # A stale build directory for a deleted crate makes every `cargo` command in the
 # repository fail with "failed to load manifest for workspace member", because
-# the root workspace globs crates/*. Say so once, up front, instead of letting
-# each step die with the same opaque error. (crates/assistant-context was
-# removed in 39118b9f0; a local target/ can outlive it.)
+# the root workspace globs crates/* and tests/oracles/*. Say so once, up front,
+# instead of letting each step die with the same opaque error.
+# (crates/assistant-context was removed in 39118b9f0, and S8 moved the oracle
+# crates from crates/ to tests/oracles/; a local target/ can outlive either.)
 STRAY=()
-for d in crates/*/; do
+for d in crates/*/ tests/oracles/*/; do
+  [[ -d "$d" ]] || continue
   [[ -f "$d/Cargo.toml" ]] && continue
   [[ -f "$d/Cargo.lock" ]] && continue
   STRAY+=("${d%/}")
 done
 if (( ${#STRAY[@]} )); then
-  echo "gate.sh: these directories are inside the root workspace glob (crates/*) but" >&2
+  echo "gate.sh: these directories are inside a root workspace glob (crates/*, tests/oracles/*) but" >&2
   echo "         have no Cargo.toml, so every cargo command here will fail:" >&2
   printf '           %s\n' "${STRAY[@]}" >&2
   echo "         They are leftover build output for crates that were deleted. Remove them:" >&2
@@ -555,7 +613,11 @@ fi
 
 case "$TIER" in
   quick|pr|full)
-    if have rustfmt; then step "rustfmt (changed files)" -- gate_fmt
+    # `rustfmt --version`, not `have rustfmt`: rustup's proxy is on PATH even
+    # where the component is not installed, and then every rustfmt call fails,
+    # so an existing file passed unchecked (its base "failed" too) and a new
+    # one failed as unformatted (the NixOS PC's runner toolchain, 2026-10-06).
+    if rustfmt --version >/dev/null 2>&1; then step "rustfmt (changed files)" -- gate_fmt
     else skip "rustfmt (changed files)" "rustfmt is not installed (rustup component add rustfmt)"; fi
     if (( ROOT_MANIFEST )); then
       step "workspace check (root manifest changed)" -- gate_workspace_check
@@ -568,6 +630,23 @@ case "$TIER" in
     if cargo clippy --version >/dev/null 2>&1; then step "clippy (changed crates)" -- gate_clippy
     else skip "clippy (changed crates)" "clippy is not installed (rustup component add clippy)"; fi
     step "tests (changed crates)" -- gate_tests_touched
+    # A here-string, not `printf | grep -q`: under pipefail the writer's
+    # SIGPIPE would turn a hit into a miss.
+    if grep -qE "$DRIFT_PATHS" <<< "$CHANGED_FILES"; then
+      step "web2rust drift (pdfTeX engine and XeTeX port)" -- \
+        cargo_test --release --locked -p web2rust --test drift
+    fi
+    # In CI the gate job runs both already (ci.yml, "trip:"/"etrip:" steps);
+    # the `quick` job does not repeat them.
+    if ! grep -qE "$TRIP_PATHS" <<< "$CHANGED_FILES"; then :
+    elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+      skip "trip and etrip tests" "CI's gate job runs them"
+    else
+      step "trip test (scripts/flashtex-trip.sh)" -- \
+        env TRIP_WORK="$ROOT/target/gate-trip" scripts/flashtex-trip.sh
+      step "etrip test (scripts/flashtex-etrip.sh)" -- \
+        env ETRIP_WORK="$ROOT/target/gate-etrip" scripts/flashtex-etrip.sh
+    fi
     ;;
 esac
 
@@ -580,17 +659,18 @@ case "$TIER" in
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
-    # The rendering-core handoff keeps a copy of the native-assets manifest
-    # that verify_bundle_resources.py pins by sha256; the copy must not drift.
-    step "native-assets manifest handoff copy matches the pinned one" -- \
-      cmp apps/mac/scripts/native-assets-manifest.json crates/rendering-core/docs/handoffs/native-assets/manifest.json
+    step "CLI packaging self-test (flashtex and flashtex-host ship; app-parity D5)" -- scripts/tests/package-cli.test.sh
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
+    step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
+      python3 tools/parity/retirement_refs.py
+    step "every app-parity row names tests that exist (retirement plan §4.4)" -- \
+      python3 tools/parity/app_parity_rows.py check
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else
       skip "parity fixtures hold their baseline" "baseline-fixtures.json was recorded on macOS (tools/parity/README.md); it is not comparable here"
     fi
-    step "bundled inventory matches the compiler" -- apps/mac/scripts/sync-supported-latex.sh --check
+    step "generated vocabulary matches its inputs and the bundled copies (RQ5)" -- python3 apps/mac/scripts/gen-supported-latex.py check --installed
     ;;
 esac
 

@@ -55,9 +55,8 @@ enum EditorFindAction {
 /// view, so it needs no `ShellModel` or `FocusedValue` plumbing.
 ///
 /// "Find Next"/"Find Previous" have no key equivalent here: the obvious ⌘G /
-/// ⇧⌘G are already taken — ⌘G is "Next match" in the Find in Project window
-/// (`ProjectSearchPanel.swift`, scoped to that window; project search wording
-/// and shortcuts are mac-claude-a's, coordinated separately per GH73) and
+/// ⇧⌘G are reserved — ⌘G was "Next match" of the Find in Project window
+/// (retired with the preview controller, #1236 S6) and
 /// ⇧⌘G is "Convert Capture" (`FlashTeXMacApp.swift`, `CommandGroup(after:
 /// .pasteboard)`) — and `CommandTableTests` requires every documented
 /// shortcut to be globally unique, so reusing either would need changing a

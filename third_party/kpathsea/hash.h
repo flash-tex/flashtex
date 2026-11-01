@@ -42,10 +42,14 @@ typedef struct hash_element_struct
 } hash_element_type;
 
 /* The usual arrangement of buckets initialized to null.  */
+/* FlashTeX change (2026-10-06): `tails', each bucket's last element (or
+   null), so that an insertion appends without walking the chain. The
+   chains and their order are unchanged. See hash.c.  */
 typedef struct
 {
   hash_element_type **buckets;
   unsigned size;
+  hash_element_type **tails;
 } hash_table_type;
 
 

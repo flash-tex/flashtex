@@ -8,10 +8,11 @@ import HostedWindows
 
 /// Hyperref links in the engine-v3 preview (DESIGN §10, app parity): a
 /// click on a link opens an allowlisted URI or scrolls to the destination,
-/// with the v2 pane's policy (`DisplayListLinks`), and hovering shows the
+/// with the retired v2 pane's policy (its `DisplayListLinks`), and hovering shows the
 /// pointing hand and the target as a tooltip. The pure rules are checked
-/// against the v2 functions; the pane test compiles a hyperref document in
-/// a hosted window (needs a built `flashtex-host` and TeX Live, else skips).
+/// against fixed expectations (the v2 pane's verdicts, which S6a moved into
+/// EngineV3Links); the pane test compiles a hyperref document in a hosted
+/// window (needs a built `flashtex-host` and TeX Live, else skips).
 @MainActor
 final class EngineV3LinksTests: XCTestCase {
     static let sp = EngineV3Links.spPerBP
@@ -20,43 +21,43 @@ final class EngineV3LinksTests: XCTestCase {
         DL3Link(rect: rect.map { Int32(($0 * Self.sp).rounded()) }, span: 0, kind: kind, file: Array(file.utf8), data: Array(data.utf8))
     }
 
+    /// As the engine sends it (display-list-v3 §4.5): the words pdfTeX
+    /// writes for the kind, the others 0 (a fitr: a 100 × 20 bp rectangle).
     func dest(_ name: String, named: Bool = true, kind: UInt8 = 0, left: Double, top: Double) -> DL3Dest {
-        DL3Dest(named: named, name: Array(name.utf8), kind: kind,
-                rect: [left, top, left, top].map { Int32(($0 * Self.sp).rounded()) }, zoom: 0)
+        let usesLeft: Set<UInt8> = [0, 3, 6, 7], usesTop: Set<UInt8> = [0, 2, 5, 7]
+        let l = usesLeft.contains(kind) ? left : 0, t = usesTop.contains(kind) ? top : 0
+        let rect = kind == 7 ? [l, t, l + 100, t + 20] : [l, t, 0, 0]
+        return DL3Dest(named: named, name: Array(name.utf8), kind: kind,
+                       rect: rect.map { Int32(($0 * Self.sp).rounded()) }, zoom: 0)
     }
 
     // MARK: the v2 pane's rules
 
     /// Every URI gets the v2 pane's verdict: http, https and mailto open
-    /// (case-insensitive scheme), anything else (file, javascript, none) is blocked.
+    /// (case-insensitive scheme), anything else (file, javascript, ftp, none) is blocked.
     func testURIPolicyMatchesTheV2Pane() {
-        let uris = ["https://example.com/a?b=c", "http://example.com", "mailto:someone@example.com", "HTTPS://EXAMPLE.COM",
-                    "file:///etc/passwd", "javascript:alert(1)", "ftp://example.com", "no-scheme", ""]
-        for uri in uris {
-            let v2 = DisplayListLinks.action(for: .init(page: 1, rects: [.init(x0: 0, y0: 0, x1: 1, y1: 1)], target: .uri(uri)), destinations: [:])
-            let v3 = EngineV3Links.action(for: link(4, uri), pages: [:])
-            switch (v2, v3) {
-            case (.openURI(let a), .openURI(let b)): XCTAssertEqual(a, b, uri)
-            case (.rejectedScheme(let a), .rejectedScheme(let b)): XCTAssertEqual(a, b, uri)
-            default: XCTFail("\(uri): v2 \(v2), v3 \(v3)")
-            }
+        XCTAssertEqual(EngineV3Links.allowedURISchemes, ["http", "https", "mailto"])
+        let opens = ["https://example.com/a?b=c", "http://example.com", "mailto:someone@example.com", "HTTPS://EXAMPLE.COM"]
+        for uri in opens {
+            XCTAssertEqual(EngineV3Links.action(for: link(4, uri), pages: [:]), .openURI(URL(string: uri)!), uri)
+        }
+        let blocked: [(String, String)] = [("file:///etc/passwd", "file"), ("javascript:alert(1)", "javascript"),
+                                           ("ftp://example.com", "ftp"), ("no-scheme", ""), ("", "")]
+        for (uri, scheme) in blocked {
+            XCTAssertEqual(EngineV3Links.action(for: link(4, uri), pages: [:]), .rejectedScheme(scheme), uri)
         }
     }
 
-    /// Overlapping links: the last one under the point wins, as `DisplayListLinks.hit` does.
+    /// Overlapping links: the last one under the point wins, as the v2 pane's `DisplayListLinks.hit` did.
     func testLastLinkUnderThePointWinsAsOnV2() {
         var page = DL3Page(kind: .page, index: 0)
         page.links = [link(4, "https://a.example", rect: [0, 0, 100, 100]), link(4, "https://b.example", rect: [50, 50, 150, 150])]
-        // v2 rects are in ticks (2^20 per point).
-        let t = DisplayListLinksTests.t
-        let v2nav = RenderingV2.Navigation(links: [
-            .init(page: 1, rects: [.init(x0: t(0), y0: t(0), x1: t(100), y1: t(100))], target: .uri("https://a.example")),
-            .init(page: 1, rects: [.init(x0: t(50), y0: t(50), x1: t(150), y1: t(150))], target: .uri("https://b.example")),
-        ], destinations: [:])
-        for (x, y) in [(10.0, 10.0), (75.0, 75.0), (140.0, 140.0), (200.0, 10.0)] {
+        let expected: [(Double, Double, String?)] = [
+            (10, 10, "https://a.example"), (75, 75, "https://b.example"), (140, 140, "https://b.example"), (200, 10, nil),
+        ]
+        for (x, y, want) in expected {
             let v3 = EngineV3Links.hit(page, at: CGPoint(x: x, y: y)).map(EngineV3Links.tooltip(for:))
-            let v2 = DisplayListLinks.hit(v2nav, page: 1, viewX: x, viewY: y, scale: 1).map(DisplayListLinks.tooltip(for:))
-            XCTAssertEqual(v3, v2, "(\(x), \(y))")
+            XCTAssertEqual(v3, want, "(\(x), \(y))")
         }
     }
 
@@ -82,25 +83,47 @@ final class EngineV3LinksTests: XCTestCase {
         if case .unsupported = EngineV3Links.action(for: link(5, "<</S/Launch>>"), pages: pages) {} else { XCTFail("raw action") }
     }
 
+    /// Every dest kind reaches the place its words give: the words pdfTeX
+    /// writes for the kind, the others 0 (#1568). A fitr's rectangle may
+    /// come either way round; the others' right and bottom are not a place.
+    func testEveryDestKindTargetsItsOwnWords() {
+        let sp = Self.sp
+        func at(_ kind: UInt8, _ rect: [Double]) -> CGPoint {
+            let d = DL3Dest(named: true, name: Array("d".utf8), kind: kind,
+                            rect: rect.map { Int32(($0 * sp).rounded()) }, zoom: 0)
+            return EngineV3Links.target(of: d, page: 3).rect.origin
+        }
+        let cases: [(UInt8, [Double], CGPoint, String)] = [
+            (0, [72, 100, 0, 0], CGPoint(x: 72, y: 100), "xyz"),
+            (1, [0, 0, 0, 0], .zero, "fit"),
+            (2, [0, 100, 0, 0], CGPoint(x: 0, y: 100), "fith"),
+            (3, [90, 0, 0, 0], CGPoint(x: 90, y: 0), "fitv"),
+            (4, [0, 0, 0, 0], .zero, "fitb"),
+            (5, [0, 100, 0, 0], CGPoint(x: 0, y: 100), "fitbh"),
+            (6, [90, 0, 0, 0], CGPoint(x: 90, y: 0), "fitbv"),
+            (7, [60, 80, 160, 120], CGPoint(x: 60, y: 80), "fitr"),
+            (7, [160, 120, 60, 80], CGPoint(x: 60, y: 80), "fitr, corners swapped"),
+        ]
+        for (kind, rect, want, what) in cases {
+            let p = at(kind, rect)
+            XCTAssertEqual(p.x, want.x, accuracy: 1e-4, what)
+            XCTAssertEqual(p.y, want.y, accuracy: 1e-4, what)
+        }
+    }
+
     /// The model's notes are the v2 pane's for the same outcome.
     func testModelNotesMatchTheV2Pane() throws {
         var opened: [URL] = []
-        let saved = DisplayListLinks.openURL
-        DisplayListLinks.openURL = { opened.append($0); return true }
-        defer { DisplayListLinks.openURL = saved }
+        let saved = EngineV3Links.openURL
+        EngineV3Links.openURL = { opened.append($0); return true }
+        defer { EngineV3Links.openURL = saved }
         let model = ShellModel()
-        let fixture = DisplayListLinksTests.fixtures.appendingPathComponent("display-list-v2-links.json")
-        let v2list = try RenderingV2.decode(try Data(contentsOf: fixture)).payload
         let uri = "https://example.com"
-        model.activatePreviewLink(.init(page: 1, rects: [], target: .uri(uri)), in: v2list)
-        let v2note = model.navigationNote
         model.activateEngineV3Link(link(4, uri), pages: [:])
-        XCTAssertEqual(model.navigationNote, v2note)
-        model.activatePreviewLink(.init(page: 1, rects: [], target: .uri("file:///x")), in: v2list)
-        let v2blocked = model.navigationNote
+        XCTAssertEqual(model.navigationNote, "Opened https://example.com")
         model.activateEngineV3Link(link(4, "file:///x"), pages: [:])
-        XCTAssertEqual(model.navigationNote, v2blocked)
-        XCTAssertEqual(opened, [URL(string: uri)!, URL(string: uri)!])
+        XCTAssertEqual(model.navigationNote, "Blocked link scheme ‘file’ (allowed: http, https, mailto)")
+        XCTAssertEqual(opened, [URL(string: uri)!])
     }
 
     // MARK: the pane
@@ -142,9 +165,9 @@ final class EngineV3LinksTests: XCTestCase {
     func testHyperrefLinksInThePaneOpenURLsAndScrollToTargets() async throws {
         try EngineV3TestHost.require()
         var opened: [URL] = []
-        let saved = DisplayListLinks.openURL
-        DisplayListLinks.openURL = { opened.append($0); return true }
-        defer { DisplayListLinks.openURL = saved }
+        let saved = EngineV3Links.openURL
+        EngineV3Links.openURL = { opened.append($0); return true }
+        defer { EngineV3Links.openURL = saved }
         let model = ShellModel()
         model.replaceProject(entryText: Self.document, named: "main.tex")
         model.engineV3Enabled = true

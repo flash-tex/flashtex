@@ -1,0 +1,13 @@
+% x002-hat4: ^^^^ and ^^^^^^ notation for characters above 255
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\catcode`\^^^^00e9=11
+\def\t^^^^00e9st{ok}
+\message{x002 \meaning\t^^^^00e9st}
+\count1=`^^^^00e9 \message{x002 \the\count1}
+\count2=`^^^^^^01f34c \message{x002 \the\count2}
+\count3=`^^41 \message{x002 \the\count3}
+\setbox0=\hbox{\count1=`^^^^0041 \vrule width\count1 sp}
+\lsshipbox0
+\end

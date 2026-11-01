@@ -1,0 +1,5 @@
+{"load_before":"128.42 116.33 106.07","doc":"d300","mode":"mem-seeded-evict0"}
+{"edit":0,"fp_mb":576.7}
+{"edit":100,"fp_mb":7624.2,"lat_p50":367.51,"lat_p95":566.82,"evict_p50":0.00,"evict_p95":0.00}
+{"after_evict0_fp_mb":1484.3,"evict0_ms":5651.95}
+{"load_after":"122.79 117.14 107.04","doc":"d300"}

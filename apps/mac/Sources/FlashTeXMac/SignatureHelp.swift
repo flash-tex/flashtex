@@ -208,7 +208,10 @@ enum SignatureHelp {
         let arguments = entry?.arguments ?? ""
         let groups = groups(of: arguments)
         let active = activeIndex(groups: groups, written: closed.map(\.kind) + [openerKind])
-        let hints = argumentHints[name]
+        // A hint list labels the groups of one pattern: it is used only when the
+        // vocabulary's pattern has exactly that many groups, so a pattern the
+        // generated vocabulary lacks (or reshapes) never mislabels an argument.
+        let hints = argumentHints[name].flatMap { $0.count == groups.count ? $0 : nil }
         return Info(command: name, kind: .command, arguments: arguments, activeArgument: active,
                     description: doc ?? entry?.description ?? "",
                     argumentHint: hints?.indices.contains(active) == true ? hints?[active] : nil,

@@ -575,8 +575,8 @@ final class PadModel: ObservableObject {
     /// Waits for the pending completion pass (tests).
     func settleCompletions() async { await completionTask?.value }
 
-    /// The compiler's inventory bundled with the app (`Resources/supported-latex.json`,
-    /// byte-identical to the Mac's copy; `apps/mac/scripts/sync-supported-latex.sh`).
+    /// The completion vocabulary bundled with the app (`Resources/supported-latex.json`,
+    /// byte-identical to the Mac's copy; `apps/mac/scripts/gen-supported-latex.py render --install`).
     /// Decoded once, on first use from the background completion task.
     static let bundledVocabulary: LaTeXVocabulary = {
         guard let url = Bundle.main.url(forResource: "supported-latex", withExtension: "json"),

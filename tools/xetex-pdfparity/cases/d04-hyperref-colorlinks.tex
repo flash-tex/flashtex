@@ -1,0 +1,20 @@
+% d04-hyperref-colorlinks: hyperref with colorlinks, open bookmarks, Unicode bookmark titles, pdfstartview, page labels, a citation and a URL link
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage[colorlinks,linkcolor=blue,urlcolor=magenta,citecolor=green,
+  bookmarksopen,bookmarksnumbered,pdfstartview=FitH,pdfpagemode=UseOutlines,
+  pdftitle={Ünïcödé – “title”},pdfauthor={A. Ü. Thor},pdfcreator={FlashTeX test}]{hyperref}
+\begin{document}
+\pagenumbering{roman}
+\section{Ünïcödé — “quotes” and π}\label{s:u}
+Cite \cite{knuth}; see \ref{s:two} and \url{https://example.com/ü?q=1}.
+\subsection{A}
+\subsection{B}
+\newpage
+\pagenumbering{arabic}
+\section{Two}\label{s:two}
+Back to \ref{s:u} on page \pageref{s:u}.
+\begin{thebibliography}{9}
+\bibitem{knuth} D. E. Knuth, \emph{The \TeX book}.
+\end{thebibliography}
+\end{document}

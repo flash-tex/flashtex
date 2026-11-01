@@ -1,0 +1,16 @@
+% u09-color-links: xcolor text and boxes, hyperref links (boxed and colorlinks), rules
+\documentclass{article}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=false, pdfborder={0 0 1}}
+\begin{document}
+\section{Colours}\label{sec}
+Normal, \textcolor{red}{red}, \textcolor{blue!60!green}{mixed}, \textcolor[rgb]{0.2,0.5,0.8}{rgb},
+\textcolor[cmyk]{0,1,0,0}{cmyk magenta}, \textcolor[gray]{0.5}{gray}.
+\colorbox{yellow}{a yellow box}, \fcolorbox{red}{green!20}{framed box}.
+{\color{orange}\rule{3cm}{4pt}} and a page link to Section~\ref{sec}, a URL \url{https://example.com/a_b}
+and \href{https://flashtex.dev}{an href}.
+
+\hypersetup{colorlinks=true, linkcolor=magenta, urlcolor=cyan}
+Coloured link to Section~\ref{sec} and \href{https://flashtex.dev}{coloured href}.
+\end{document}

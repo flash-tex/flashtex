@@ -1,0 +1,41 @@
+== open peak RSS 515
+  rss=476.9 sealed_bytes=241.9 branch_sealed=0.0 checkpoints=1129 space_touched=42.5 space_resident=44.4 slab_mapped=22.0 slab_live=0.4 slab_resident=21.6 prepared=0.0 page_cache=24.7 form_cache=0.0 spare_tails=10.1 records=1129 record_lines=227568 terminal=0.0 texts=2.4 written=0.0 old_cache=0.0
+  word space resident: mem=13.1 dl_side=10.2 str_pool=7.8 eqtb=4.8 trie=3.3 font_info=2.8
+== book/logical-structure/propositional-logic.tex:0.5:letter:8 peak RSS 540
+  rss=498.6 sealed_bytes=232.6 branch_sealed=0.0 checkpoints=765 space_touched=42.5 space_resident=44.4 slab_mapped=22.0 slab_live=0.4 slab_resident=21.6 prepared=0.0 page_cache=24.7 form_cache=0.0 spare_tails=10.1 records=765 record_lines=157105 terminal=0.0 texts=2.4 written=0.0 old_cache=8.0
+  word space resident: mem=13.1 dl_side=10.2 str_pool=7.8 eqtb=4.8 trie=3.3 font_info=2.8
+== book/number-theory/divisibility.tex:0.5:letter:8 peak RSS 546
+  rss=504.3 sealed_bytes=233.2 branch_sealed=0.0 checkpoints=774 space_touched=42.5 space_resident=44.4 slab_mapped=22.0 slab_live=0.4 slab_resident=21.6 prepared=0.0 page_cache=24.7 form_cache=0.0 spare_tails=10.1 records=774 record_lines=156513 terminal=0.0 texts=2.4 written=0.1 old_cache=8.0
+  word space resident: mem=13.1 dl_side=10.2 str_pool=7.8 eqtb=4.8 trie=3.3 font_info=2.8
+== book/real-numbers/series-sums.tex:0.5:letter:8 peak RSS 545
+  rss=504.3 sealed_bytes=233.5 branch_sealed=0.0 checkpoints=771 space_touched=42.5 space_resident=44.4 slab_mapped=22.0 slab_live=0.4 slab_resident=21.6 prepared=0.0 page_cache=24.7 form_cache=0.0 spare_tails=10.1 records=771 record_lines=155006 terminal=0.0 texts=2.4 written=0.1 old_cache=8.0
+  word space resident: mem=13.1 dl_side=10.2 str_pool=7.8 eqtb=4.8 trie=3.3 font_info=2.8
+== book/number-theory/divisibility.tex:0.5:sentence:6 peak RSS 550
+  rss=505.3 sealed_bytes=233.4 branch_sealed=0.0 checkpoints=777 space_touched=42.5 space_resident=44.4 slab_mapped=22.0 slab_live=0.4 slab_resident=21.6 prepared=0.0 page_cache=24.7 form_cache=0.0 spare_tails=10.1 records=777 record_lines=157104 terminal=0.0 texts=2.4 written=0.1 old_cache=8.0
+  word space resident: mem=13.1 dl_side=10.2 str_pool=7.8 eqtb=4.8 trie=3.3 font_info=2.8
+== book/relations/equivalence-relations.tex:0.5:typing:40 peak RSS 513
+  rss=505.4 sealed_bytes=233.4 branch_sealed=0.0 checkpoints=777 space_touched=42.5 space_resident=44.4 slab_mapped=22.0 slab_live=9.1 slab_resident=21.6 prepared=17.9 page_cache=24.7 form_cache=0.0 spare_tails=10.1 records=777 record_lines=157104 terminal=0.0 texts=2.4 written=0.1 old_cache=8.0
+  word space resident: mem=13.1 dl_side=10.2 str_pool=7.8 eqtb=4.8 trie=3.3 font_info=2.8
+== steady peak RSS 469
+  rss=468.3 sealed_bytes=233.4 branch_sealed=0.0 checkpoints=777 space_touched=42.5 space_resident=44.4 slab_mapped=22.0 slab_live=9.2 slab_resident=21.6 prepared=18.1 page_cache=24.7 form_cache=0.0 spare_tails=10.1 records=777 record_lines=157104 terminal=0.0 texts=2.4 written=0.2 old_cache=0.0
+  word space resident: mem=13.1 dl_side=10.2 str_pool=7.8 eqtb=4.8 trie=3.3 font_info=2.8
+smaps at peak: RSS 537 MB
+   [anon <1M]             n= 1249 rss=  252.7 anon=  252.7
+   [anon 1-60M]           n=   25 rss=  209.5 anon=  209.5
+   [anon >=256M]          n=    2 rss=   44.3 anon=   44.3
+   [heap]                 n=    1 rss=   22.5 anon=   22.5
+   file:flashtex-host     n=    4 rss=    5.9 anon=    0.3
+   file:libc.so.6         n=    5 rss=    1.4 anon=    0.0
+   file:ld-linux-x86-64.so.2 n=    5 rss=    0.2 anon=    0.0
+   file:libstdc++.so.6.0.34 n=    5 rss=    0.2 anon=    0.1
+   file:libm.so.6         n=    5 rss=    0.2 anon=    0.0
+smaps at steady: RSS 469 MB
+   [anon <1M]             n= 1096 rss=  220.2 anon=  220.2
+   [anon 1-60M]           n=   24 rss=  173.3 anon=  173.3
+   [anon >=256M]          n=    2 rss=   44.1 anon=   44.1
+   [heap]                 n=    1 rss=   23.4 anon=   23.4
+   file:flashtex-host     n=    4 rss=    5.6 anon=    0.3
+   file:libc.so.6         n=    5 rss=    1.4 anon=    0.0
+   file:libm.so.6         n=    5 rss=    0.2 anon=    0.0
+   file:ld-linux-x86-64.so.2 n=    5 rss=    0.2 anon=    0.0
+   file:libgcc_s.so.1     n=    5 rss=    0.1 anon=    0.0

@@ -1,0 +1,18 @@
+% Unicode bench (M3, docs/design/xetex/INCREMENTAL.md §1's first row): an
+% article with amsmath and graphicx in xelatex's default Latin Modern OpenType.
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\begin{document}
+\section{Introduction}
+The quick brown fox jumps over the lazy dog. EDITPOINT This paragraph is the
+one the latency harness edits; the rest of the page stays as it is.
+\begin{align}
+  a^2 + b^2 &= c^2 \\
+  \int_0^1 x\,dx &= \tfrac12
+\end{align}
+\includegraphics[width=3cm]{example-image}
+\section{More}
+Another paragraph of ordinary text, with a footnote\footnote{A footnote.} and
+an equation $e^{i\pi}+1=0$ inline.
+\end{document}
