@@ -1,11 +1,11 @@
 {
   "actor": "kabir-claude-reviewpdf",
-  "branch": "agent/kabir-claude-reviewpdf/audit",
+  "branch": "agent/kabir-claude-reviewpdf/recorder",
   "gh_ref": null,
   "machine": "mac-m5pro-kabir",
   "note": null,
-  "started_utc": "2026-11-01T17:36:35Z",
-  "state": "released",
+  "started_utc": "2026-11-01T19:22:33Z",
+  "state": "claimed",
   "task_id": "REVIEW-PDF",
-  "updated_utc": "2026-11-01T19:21:45Z"
+  "updated_utc": "2026-11-01T19:22:33Z"
 }
