@@ -1,6 +1,7 @@
-# MEASUREMENT ONLY (lane TYPING-50MS, not for merge): T7's x2-late rows (PR #1889's harness) on a
-# GitHub-hosted Apple-Silicon VM (Apple M1 (Virtual), 3 vCPU), for this branch's host ("change") and
-# for main's incr.rs at the branch's base ("main"), one VM each.
+# MEASUREMENT ONLY (lane TYPING-50MS, not for merge): T7's x2-late rows (PR #1889's harness) on ONE
+# GitHub-hosted Apple-Silicon VM (Apple M1 (Virtual), 3 vCPU), three hosts built on it and run
+# interleaved, so that the VM's speed is the same for all: main (df75c3a20), #1959 (4459a3d3c) and this
+# branch. The typist (dl3-keys) is this branch's for all three.
 #
 #   gh workflow run t7-hosted.yml --ref agent/kabir-claude-typing50/m1-measure -f ref=agent/kabir-claude-typing50/m1-measure
 name: t7-hosted
@@ -34,22 +35,15 @@ env:
 
 jobs:
   t7:
-    name: x2-late rows (hosted M1, ${{ matrix.host }})
-    strategy:
-      fail-fast: false
-      matrix:
-        host: [change, main]
+    name: x2-late rows, three hosts on one hosted M1
     runs-on: macos-15
-    timeout-minutes: 150
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.REF }}
           fetch-depth: 0
           persist-credentials: false
-      - name: main's host (the branch's base)
-        if: matrix.host == 'main'
-        run: git checkout df75c3a20 -- crates/flashtex-engine/src/incr.rs crates/flashtex-engine/src/host/resident.rs crates/flashtex-engine/src/host/tools.rs crates/flashtex-engine/tests/host_incremental.rs
       - name: Install BasicTeX and the packages Infinite Descent loads
         run: |
           set -euo pipefail
@@ -78,41 +72,36 @@ jobs:
         with:
           path: /tmp/fth-realdoc/cache
           key: realdoc-books-${{ hashFiles('tools/parity/corpus/books.json') }}
-      - name: build
+      - name: build the three hosts
         run: |
           set -euo pipefail
-          sysctl -n machdep.cpu.brand_string hw.ncpu hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu || true
+          sysctl -n machdep.cpu.brand_string hw.ncpu || true
+          host_files="crates/flashtex-engine/src/incr.rs crates/flashtex-engine/src/iso.rs crates/flashtex-engine/src/host/resident.rs crates/flashtex-engine/src/host/tools.rs"
           cargo build --release -p flashtex-engine -p flashtex-display-list
-          tools/incr-bench/mkeng.sh m1
+          tools/incr-bench/mkeng.sh branch
+          git checkout 4459a3d3c -- $host_files
+          cargo build --release -p flashtex-engine -p flashtex-display-list
+          tools/incr-bench/mkeng.sh pr1959
+          git checkout df75c3a20 -- $host_files
+          cargo build --release -p flashtex-engine -p flashtex-display-list
+          tools/incr-bench/mkeng.sh main
+          git checkout HEAD -- $host_files
           python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null
-      - name: t7 x2-late rows
+      - name: t7 x2-late rows, interleaved
         run: |
           set +e
-          for i in 1; do
-            python3 tools/incr-bench/t7.py --engine m1 --docs infdesc-x2 --sites x2-late --gate hosted --keys 8 \
-              --typing-keys 16 --phases letter@site,typing@50ms@site,typing@100ms@site,typing@150ms@site \
-              --out /tmp/fth-realdoc/t7-out-$i 2>&1 | tee /tmp/fth-realdoc/t7-$i.log
-            cat /tmp/fth-realdoc/t7-out-$i/table.md >> "$GITHUB_STEP_SUMMARY" || true
+          for i in 1 2; do
+            for e in main pr1959 branch; do
+              python3 tools/incr-bench/t7.py --engine $e --docs infdesc-x2 --sites x2-late --gate hosted --keys 8 \
+                --typing-keys 16 --phases letter@site,typing@50ms@site,typing@100ms@site,typing@150ms@site \
+                --out /tmp/fth-realdoc/t7-$e-$i 2>&1 | tee /tmp/fth-realdoc/t7-$e-$i.log
+              { echo "### $e round $i"; cat /tmp/fth-realdoc/t7-$e-$i/table.md; } >> "$GITHUB_STEP_SUMMARY" || true
+            done
           done
-          exit 0
-      - name: profile the host while it types (sample)
-        run: |
-          set +e
-          python3 tools/incr-bench/t7.py --engine m1 --docs infdesc-x2 --sites x2-late --gate hosted \
-            --typing-keys 40 --phases typing@100ms@site,typing@150ms@site \
-            --out /tmp/fth-realdoc/t7-prof > /tmp/fth-realdoc/t7-prof.log 2>&1 &
-          until pgrep -f "fth-realdoc/m1/dl3-keys" >/dev/null; do sleep 1; done
-          pid=$(pgrep -f "fth-realdoc/m1/flashtex-host" | head -1)
-          /usr/bin/sample "$pid" 600 1 -file /tmp/fth-realdoc/host.sample >/dev/null 2>&1
-          wait
-          ls -la /tmp/fth-realdoc/host.sample
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: t7-x2late-${{ matrix.host }}
+          name: t7-x2late-ab3
           path: |
-            /tmp/fth-realdoc/t7-out-*
-            /tmp/fth-realdoc/t7-*.log
-            /tmp/fth-realdoc/t7-prof
-            /tmp/fth-realdoc/host.sample
+            /tmp/fth-realdoc/t7-*
