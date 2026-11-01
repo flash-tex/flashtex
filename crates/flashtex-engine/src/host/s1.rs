@@ -681,6 +681,9 @@ impl File {
                 written_before: *written_before,
                 stamp: *stamp,
                 size: *size,
+                // (not kept: a read of a file a run wrote is then never
+                // taken for the same bytes, `incr::reread_same`)
+                seen: None,
             };
             if closed_at.is_none() && system::is_user_file(path) && !*written_before {
                 let d = match now_of.get(path.as_str()) {
