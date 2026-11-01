@@ -1,0 +1,59 @@
+# Lane CONTIG-TOKENS: the nightly-only parity gates of PR #2016 (the always-on LAZY-FLUSH,
+# changes/lazyflush.ch) on the NixOS PC's runner: T2 (the LaTeX team's suites, against TeX Live
+# 2026's pdfTeX) and the fixture-wide incremental soundness test, as scripts/engine-parity.sh and
+# nightly.yml run them. The PR's own CI runs trip, etrip, lockstep, the P-T fixtures and the engine
+# tests. A push to agent/kabir-claude-contig/pcgates-* runs it (in-repo code only; DESIGN §9.3).
+# Measurement branch only, never merged; scratch in ~/.cache/flashtex-agents/contig/, removed at
+# the end.
+name: contig-gates
+
+on:
+  push:
+    branches: ["agent/kabir-claude-contig/pcgates-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contig-gates
+  cancel-in-progress: false
+
+jobs:
+  gates:
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 300
+    defaults:
+      run:
+        # (bash -eo pipefail: a step fails when the gate does, not with `tail`)
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: "4"
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: scratch
+        run: |
+          W="$HOME/.cache/flashtex-agents/contig/gates-$GITHUB_RUN_ID"
+          mkdir -p "$W"
+          { echo "W=$W"; echo "CARGO_TARGET_DIR=$W/target"; echo "FLASHTEX_PARITY_CACHE=$W/parity-oracle"; } >> "$GITHUB_ENV"
+          git log --oneline -1
+      - name: T2 (the LaTeX suites)
+        run: nice -n 5 scripts/engine-parity.sh --work "$W/ep" --jobs 4 build t2 2>&1 | tail -40
+      - name: the fixture-wide incremental soundness test
+        run: nice -n 5 scripts/engine-parity.sh --work "$W/ep" --jobs 4 soundness 2>&1 | tail -60
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contig-gates
+          path: |
+            ${{ env.W }}/ep/t2-reference.txt
+            ${{ env.W }}/ep/t2-engine.txt
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: clean up
+        if: always()
+        run: rm -rf "$W"
