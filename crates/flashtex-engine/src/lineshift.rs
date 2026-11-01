@@ -159,9 +159,30 @@ pub fn restore(g: &mut Globals, r: &Rec) {
         s.confine = false;
         s.def_reads.clear();
     });
-    g.ls_taints = r.taints.len() as i32;
+    (g.ls_taints, g.ls_taint_bits) = taint_state(&r.taints);
     g.ls_the_def = false;
     g.ls_def_reads = false;
+}
+
+/// The bit of [`Globals::ls_taint_bits`] for token-list location `p`.
+#[inline(always)]
+fn taint_bit(p: i32) -> i32 {
+    1 << ((p as u32).wrapping_mul(0x9e37_79b1) >> 27)
+}
+
+/// `ls_taints` and `ls_taint_bits` for `taints`: their number, and the
+/// bits of their heads and first tokens. A hook whose list's bit is clear
+/// has no taint to look for and stays out of the thread-local (lane
+/// COLD-FIRST: `ls_use` looked through the taints at every macro call while
+/// LaTeX's `\@currenvline` is tainted, which is always, and `ls_free` at
+/// every list freed). The bits are derived from the taints, which the host
+/// record holds, so the convergence test does not compare them
+/// (`iso::scalar_covered`).
+fn taint_state(taints: &[Taint]) -> (i32, i32) {
+    let bits = taints
+        .iter()
+        .fold(0, |b, t| b | taint_bit(t.head) | taint_bit(t.first));
+    (taints.len() as i32, bits)
 }
 
 /// The largest line number the state holds without a file:
@@ -851,17 +872,16 @@ impl Globals {
         }
         let head = self.def_ref;
         let first = self.mem.get(head as usize).map_or(0, |w| w.hh_rh());
-        let n = with(|s| {
+        (self.ls_taints, self.ls_taint_bits) = with(|s| {
             s.taints.push(Taint { head, first, reads });
-            s.taints.len()
+            taint_state(&s.taints)
         });
-        self.ls_taints = n as i32;
     }
 
     /// Token list `p` (its reference count) is expanded or compared.
     #[inline(always)]
     pub fn ls_use(&mut self, p: i32) {
-        if self.ls_taints != 0 {
+        if self.ls_taints != 0 && self.ls_taint_bits & taint_bit(p) != 0 {
             self.ls_use_slow(p, false);
         }
     }
@@ -878,7 +898,7 @@ impl Globals {
                 s.events.extend(r)
             });
         }
-        if self.ls_taints != 0 {
+        if self.ls_taints != 0 && self.ls_taint_bits & taint_bit(p) != 0 {
             self.ls_use_slow(p, true);
         }
     }
@@ -907,13 +927,17 @@ impl Globals {
     /// Token list `p` (its reference count) is freed.
     #[inline(always)]
     pub fn ls_free(&mut self, p: i32) {
-        if self.ls_taints != 0 {
-            let n = with(|s| {
-                s.taints.retain(|t| t.head != p);
-                s.taints.len()
-            });
-            self.ls_taints = n as i32;
+        if self.ls_taints != 0 && self.ls_taint_bits & taint_bit(p) != 0 {
+            self.ls_free_slow(p);
         }
+    }
+
+    #[inline(never)]
+    fn ls_free_slow(&mut self, p: i32) {
+        (self.ls_taints, self.ls_taint_bits) = with(|s| {
+            s.taints.retain(|t| t.head != p);
+            taint_state(&s.taints)
+        });
     }
 
     /// File level `j`'s line is printed.

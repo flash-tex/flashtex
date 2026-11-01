@@ -243,6 +243,7 @@ still known to be that file's.
 @!ls_cond_tag:array[0..ls_cond_size] of integer; {a conditional's line's file}
 @!ls_cond_depth:integer; {conditionals open}
 @!ls_taints:integer; {definitions holding confined reads (the hooks' fast test)}
+@!ls_taint_bits:integer; {a filter of their lists' locations (the hooks' second test)}
 @!ls_the_def:boolean; {|scan_toks|'s \.{\\the} in a definition is next}
 @!ls_def_reads:boolean; {the definition being scanned holds confined reads}
 @!ls_tag_file:array[0..ls_tag_size] of str_number;
