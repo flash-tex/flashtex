@@ -168,6 +168,7 @@ step_parity() {
   need_engine
   python3 tools/parity/parity.py --tier fixtures --engine "$INITEX" \
     --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" \
+    --engine-env FLASHTEX_BOXMEMO=verify --engine-env FLASHTEX_BOXMEMO_VERIFY_FAIL=1 --engine-env FLASHTEX_BOXMEMO_SPANS=tikzpicture,tikzcd \
     --oracle-pdftex "$PDFTEX" --texbin "$TEXBIN" \
     --pt on --raster none -j "$JOBS" \
     --out "$WORK/parity" --work "$WORK/parity-work" \
@@ -219,6 +220,7 @@ step_t2() {
   # build it and stopped at the `**` prompt, and all 1,385 tests failed.)
   python3 tools/latex-suites/run.py --engine "$INITEX" --suite all \
     --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" \
+    --engine-env FLASHTEX_BOXMEMO=verify --engine-env FLASHTEX_BOXMEMO_VERIFY_FAIL=1 --engine-env FLASHTEX_BOXMEMO_SPANS=tikzpicture,tikzcd \
     >"$WORK/t2-engine.txt" 2>&1 || rc=$?
   if [[ $rc -gt 1 ]]; then tail -n 30 "$WORK/t2-engine.txt"; die "T2: the engine run did not complete (exit $rc)"; fi
   grep -E ': PASS [0-9]+ / FAIL' "$WORK/t2-reference.txt" | sed 's/^/reference: /' || true
