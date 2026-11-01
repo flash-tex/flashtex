@@ -864,3 +864,16 @@ less those whose value is global, "retaining") the status it had then.
 (`\cref@resetby`, `\cref@isinresetlist`, `\@whilesw`), 1-3 M instructions a call. The call makes
 only assignments at its own level (`\@tempstack`, `\@tempa`, its result macro) and reads counters
 and `\cl@...` lists, all in the key; it needed nothing new.
+
+**Measured** (M5 Pro, engine-thread instructions, `letter@x2-late`: `dl3-keys --edit
+x2/book/real-numbers/inequalities.tex --page 887 --kind letter --keys 8 --gap-ms 300`, one
+`flashtex-host --socket`, steady keys 2-7; on main with §15):
+
+| | §15 | + the head and foot | + `cref@constructprefix` |
+|---|---:|---:|---:|
+| `edited_instr_k` | 125 M | 113 M | 94-95 M |
+| typesetting to the edited page (`typeset_instr_k`) | 107 M | 95 M | 77 M |
+| `rerun_pages` | 3 | 3 | 3 |
+
+The host's verify mode on the same keys compared 9,222 calls' operation logs with their normal
+paths', no difference.
