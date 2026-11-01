@@ -80,6 +80,128 @@ fn end_document_truncation_is_rejected_however_it_is_spelled() {
 }
 
 #[test]
+fn denied_control_words_cannot_be_used_as_environment_names() {
+    rejected(r"\begin{input}{secret.tex}\end{input}");
+    rejected(r"\lowercase{\begin{INPUT}{SECRET.TEX}\end{INPUT}}");
+    rejected(r"\uppercase{\begin{input}{secret.tex}\end{input}}");
+    rejected(r"\lowercase{SAFE}");
+    rejected(r"\uppercase{safe}");
+    rejected(r"\begin{ExplSyntaxOn}x\end{ExplSyntaxOn}");
+    rejected(r"\begin{makeatletter}x\end{makeatletter}");
+    rejected(r"\begin{csname}x\end{csname}");
+    rejected(r"\begin{endcsname}x\end{endcsname}");
+    rejected(r"\end{input}");
+    for name in ["itemize", "figure", "tikzpicture", "align*", "equation"] {
+        accepted(&format!(r"\begin{{{name}}}x\end{{{name}}}"));
+    }
+}
+
+#[test]
+fn environment_names_cannot_reenter_begin_or_end() {
+    rejected(r"\begin{begin}{input}{secret.tex}\end{begin}");
+    rejected(r"\begin{end}{document}\end{end}");
+}
+
+#[test]
+fn kernel_name_copy_commands_are_rejected() {
+    rejected(r"\NewCommandCopy\b\begin{x}\b{input}{secret.tex}\iffalse\end{x}\fi");
+    for command in [
+        "RenewCommandCopy",
+        "DeclareCommandCopy",
+        "NewEnvironmentCopy",
+        "RenewEnvironmentCopy",
+        "DeclareEnvironmentCopy",
+        "LetLtxMacro",
+    ] {
+        rejected(&format!(r"\{command}\b\a"));
+    }
+}
+
+#[test]
+fn truncation_commands_and_environment_names_are_rejected() {
+    rejected(r"\enddocument");
+    rejected(r"\endinput");
+    rejected(r"\begin{enddocument}");
+    rejected(r"\begin{endinput}");
+    rejected(r"\begin{enddocument}x\end{enddocument}");
+    rejected(r"\begin{endinput}x\end{endinput}");
+}
+
+#[test]
+fn bare_carriage_return_ends_a_comment() {
+    rejected("%c\r\\input{secret.tex}");
+}
+
+#[test]
+fn indirect_file_access_and_object_commands_are_rejected() {
+    rejected(r"\InputIfFileExists{secret.tex}{}{}");
+    rejected(r"\IfFileExists{secret.tex}{}{}");
+    rejected(r"\begin{filecontents}{secret.tex}x\end{filecontents}");
+    rejected(r"\begin{filecontents*}{secret.tex}x\end{filecontents*}");
+    rejected(r"\pdffiledump offset 0 length 10 {secret.tex}");
+    rejected(r"\pdfobj{secret}");
+}
+
+#[test]
+fn newline_before_denied_environment_name_is_rejected() {
+    rejected("\\begin\n{input}{secret.tex}");
+}
+
+#[test]
+fn comment_before_denied_environment_name_is_rejected() {
+    rejected("\\begin%c\n{input}{secret.tex}");
+}
+
+#[test]
+fn expanded_environment_name_with_interior_command_is_rejected() {
+    rejected(r"\begin{in\empty put}{secret.tex}");
+}
+
+#[test]
+fn expanded_environment_name_with_trailing_command_is_rejected() {
+    rejected(r"\begin{input\empty}{secret.tex}");
+}
+
+#[test]
+fn macro_that_emits_begin_without_a_name_is_rejected() {
+    rejected(r"\newcommand\b{\begin}\b{input}{secret.tex}");
+}
+
+#[test]
+fn make_lowercase_cannot_rewrite_an_environment_name() {
+    rejected(r"\MakeLowercase{\begin{INPUT}{SECRET.TEX}}");
+    rejected(r"\MakeUppercase{safe}");
+}
+
+#[test]
+fn environment_name_allows_whitespace_and_comments_before_braces() {
+    accepted("\\begin \t\r\n% comment\r\n{align*}x\\end% comment\n{align*}");
+}
+
+#[test]
+fn malformed_environment_names_are_rejected() {
+    for latex in [
+        r"\begin",
+        r"\begin{}",
+        r"\begin{a-b}",
+        r"\begin{a_b}",
+        r"\end{a\empty}",
+        r"\end% no name",
+    ] {
+        rejected(latex);
+    }
+}
+
+#[test]
+fn provides_expl_commands_cannot_enable_expl3_syntax() {
+    rejected(
+        r"\ProvidesExplFile{capture.tex}{2026/11/01}{1}{capture}\file_input:n{secret.tex}\ExplSyntaxOff",
+    );
+    rejected(r"\ProvidesExplPackage{capture}{2026/11/01}{1}{capture}");
+    rejected(r"\ProvidesExplClass{capture}{2026/11/01}{1}{capture}");
+}
+
+#[test]
 fn oversized_latex_was_already_rejected_before_this_change() {
     let huge = "x".repeat(70 * 1024);
     rejected(&huge);
@@ -177,6 +299,12 @@ fn ordinary_math_and_lookalike_control_words_are_unaffected() {
     accepted(r"\definecolor{x}{RGB}{1,2,3}"); // starts with "def", is not \def
     accepted(r"\inputencoding{utf8}"); // starts with "input", is not \input
     accepted(r"\foreach \x in {1,...,5} { \draw (\x,0) circle (1pt); }");
+    accepted(r"\begin{tabular}{ll}a & b\end{tabular}");
+    accepted(r"\begin{minipage}[t]{0.5\textwidth}x\end{minipage}");
+    accepted(r"\begin{figure}[htbp]x\end{figure}");
+    accepted(r"\begin{align*}x &= y\end{align*}");
+    accepted(r"\begin{multicols*}{2}x\end{multicols*}");
+    accepted(r"\begingroup x\endgroup");
 }
 
 #[test]
