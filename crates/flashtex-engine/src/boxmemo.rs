@@ -191,6 +191,11 @@ enum Val {
     FreshGlue([i32; 5]),
     /// A token list made for the assignment (`\def`, `\edef`, `\toks`).
     FreshList(Vec<i32>),
+    /// A span's compressed log (§15.5): the token list the log's operation
+    /// `.0` made, which a `\let` may have shared; a replay makes it at the
+    /// first operation with this `.0` and shares it at the others, so the
+    /// lists are shared as on the normal path (their reference counts).
+    Shared(u32, Vec<i32>),
     /// The meaning of a control sequence as it is when the assignment is
     /// made (`\let`, `\futurelet`).
     LetCs(i32),
@@ -242,6 +247,9 @@ thread_local! {
     static TOKENS: RefCell<HashSet<std::rc::Rc<[i32]>>> = RefCell::new(HashSet::new());
     /// The pool's size in bytes, roughly (part of `MAX_BYTES`).
     static TOKEN_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// During a replay, the lists its `Val::Shared` operations made, by
+    /// the recorded operation that made each.
+    static SHARED: RefCell<HashMap<u32, i32>> = RefCell::new(HashMap::new());
 }
 
 /// `v`, shared with the pool's equal body if there is one.
@@ -273,11 +281,11 @@ fn ops_bytes(ops: &[Op]) -> usize {
     ops.iter()
         .map(|o| match o {
             Op::Def {
-                v: Val::FreshList(l),
+                v: Val::FreshList(l) | Val::Shared(_, l),
                 ..
             }
             | Op::Sa {
-                v: Val::FreshList(l),
+                v: Val::FreshList(l) | Val::Shared(_, l),
                 ..
             } => 32 + 4 * l.len(),
             Op::Def {
@@ -497,6 +505,9 @@ struct Entry {
     voids: Vec<i32>,
     /// `line` when the recording read `\inputlineno` (LaTeX's `\begin`).
     line: Option<i32>,
+    /// `cur_level` and `cur_group` at the call when the recording read
+    /// `\currentgrouplevel` or `\currentgrouptype`.
+    group: Option<(i32, i32)>,
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
@@ -735,6 +746,9 @@ struct Rec {
     /// after that, they hold what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
+    group_read: bool,
+    /// `cur_level` and `cur_group` at the call.
+    group0: (i32, i32),
     boxes: HashSet<i32>,
     /// Box registers assigned globally: each must be void when the call
     /// ends, and the replay makes it so (`\global\setbox` to void, at the
@@ -1197,10 +1211,13 @@ fn new_cs_first(ops: &[Op]) -> Vec<Op> {
         .filter(|o| matches!(o, Op::NewCs { .. }))
         .cloned()
         .collect();
-    v.extend(ops.iter().filter(|o| !matches!(o, Op::NewCs { .. })).cloned());
+    v.extend(
+        ops.iter()
+            .filter(|o| !matches!(o, Op::NewCs { .. }))
+            .cloned(),
+    );
     v
 }
-
 
 /// The operations a replay makes: `ops` with every group (`Begin` .. its
 /// `End`) whose net effect can be told from its operations alone replaced
@@ -1294,32 +1311,90 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
             last.retain(|(q, _)| *q != p);
             last.push((p, o.clone()));
         };
+        // (a span's, §15.5: `cur` holds what each control sequence the
+        // group assigned holds now, as a value; a `\let` from one of them
+        // takes that value, as the normal path's `\let` takes the meaning
+        // it has then. Two locations that shared a token list then hold
+        // equal lists: a memory difference only, DESIGN.md §1.1. pgfplots'
+        // `\global\let`s of macros its group defined kept every plot's
+        // outermost group whole)
+        let mut cur: HashMap<i32, Op> = HashMap::new();
+        let resolve = |o: &Op, touched: &HashSet<i32>, cur: &HashMap<i32, Op>| -> Option<Op> {
+            if from_entry(o, touched) {
+                return Some(o.clone());
+            }
+            let Op::Def {
+                p,
+                kind,
+                v: Val::LetCs(q),
+                ..
+            } = o
+            else {
+                return None;
+            };
+            if !sparse {
+                return None;
+            }
+            let Some(Op::Def { t, v, .. }) = cur.get(q) else {
+                return None;
+            };
+            let r = Op::Def {
+                p: *p,
+                t: *t,
+                v: v.clone(),
+                kind: *kind,
+            };
+            from_entry(&r, touched).then_some(r)
+        };
         let mut i = b + 1;
         while i < e {
             match &ops[i] {
                 Op::Begin(_) => {
                     let (v, t) = net(ops, end, i, sparse)?;
                     for o in v {
-                        if !from_entry(&o, &touched) {
-                            return None;
-                        }
+                        let o = resolve(&o, &touched, &cur)?;
                         let p = match &o {
-                            Op::Def { p, .. } => *p,
+                            Op::Def { p, .. } => {
+                                cur.insert(*p, o.clone());
+                                *p
+                            }
                             Op::Sa { t, n, .. } => sa_loc(*t, *n),
                             _ => unreachable!(),
                         };
                         put(p, &o, &mut last);
                     }
+                    // (a location the inner group assigned only locally
+                    // holds again what it held before it)
                     touched.extend(t);
                     i = end[i] + 1;
                     continue;
                 }
-                Op::Def { p, kind, .. } => {
-                    if *kind > 1 {
-                        if !from_entry(&ops[i], &touched) {
-                            return None;
+                Op::Def { p, kind, t, v } => {
+                    // (a list made here: named by where, for its sharers)
+                    let made;
+                    let o = match v {
+                        Val::FreshList(l) if sparse => {
+                            made = Op::Def {
+                                p: *p,
+                                t: *t,
+                                v: Val::Shared(i as u32, l.clone()),
+                                kind: *kind,
+                            };
+                            &made
                         }
-                        put(*p, &ops[i], &mut last);
+                        _ => &ops[i],
+                    };
+                    let r = resolve(o, &touched, &cur);
+                    if *kind > 1 {
+                        put(*p, r.as_ref()?, &mut last);
+                    }
+                    match r {
+                        Some(r) if sparse => {
+                            cur.insert(*p, r);
+                        }
+                        _ => {
+                            cur.remove(p);
+                        }
                     }
                     touched.insert(*p);
                 }
@@ -1389,6 +1464,28 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
     }
     let mut out = Vec::with_capacity(n);
     walk(ops, &end, 0, n, None, &mut out, sparse);
+    if sparse {
+        // (a list only one operation holds is its own)
+        let mut uses: HashMap<u32, u32> = HashMap::new();
+        for o in &out {
+            if let Op::Def {
+                v: Val::Shared(id, _),
+                ..
+            } = o
+            {
+                *uses.entry(*id).or_default() += 1;
+            }
+        }
+        for o in &mut out {
+            if let Op::Def { v, .. } = o {
+                if let Val::Shared(id, l) = v {
+                    if uses[id] == 1 {
+                        *v = Val::FreshList(std::mem::take(l));
+                    }
+                }
+            }
+        }
+    }
     out
 }
 
@@ -2725,6 +2822,9 @@ impl Globals {
                     || e.ctx != ctx
                     || e.k4 != k4_now
                     || !e.line.is_none_or(|l| l == self.line)
+                    || !e
+                        .group
+                        .is_none_or(|g| g == (self.cur_level, self.cur_group))
                 {
                     continue;
                 }
@@ -2754,7 +2854,7 @@ impl Globals {
                     && e.kc.iter().all(|(n, f, pos)| {
                         let b = self.bm_box_value(*n);
                         b != 0
-                            && self.bm_box_contents(b).is_some_and(|(g, ps)| {
+                            && self.bm_box_contents(b).is_ok_and(|(g, ps)| {
                                 crate::boxfrag::frag_diff(f, &g).is_none() && ps == *pos
                             })
                     })
@@ -2907,7 +3007,8 @@ impl Globals {
             let f = self.input_ptr - 1;
             let index = self.input_stack[f as usize].index_field;
             let file = &mut self.input_file[(index - 1) as usize];
-            let (Some(path), Some(at)) = (file.opened_path().map(str::to_string), file.read_offset())
+            let (Some(path), Some(at)) =
+                (file.opened_path().map(str::to_string), file.read_offset())
             else {
                 return self.bm_miss("SpanFile");
             };
@@ -2949,6 +3050,8 @@ impl Globals {
             kr: vec![],
             gwritten: HashSet::new(),
             line_read: false,
+            group_read: false,
+            group0: (self.cur_level, self.cur_group),
             boxes: HashSet::new(),
             gboxes: vec![],
             pending_box: None,
@@ -3066,6 +3169,7 @@ impl Globals {
                     trailer: None,
                     voids: rec.voids,
                     line: (rec.line_read && rec.span.is_none()).then_some(self.line),
+                    group: rec.group_read.then_some(rec.group0),
                     fast: vec![],
                     new_cs: vec![],
                     last_link: None,
@@ -3534,8 +3638,9 @@ impl Globals {
             if known {
                 return;
             }
-            let Some(key) = self.bm_box_contents(p) else {
-                return self.bm_abort("BoxContent");
+            let key = match self.bm_box_contents(p) {
+                Ok(key) => key,
+                Err(w) => return self.bm_abort(w),
             };
             self.bm_with_rec(|r| r.kc.push((n, key.0, key.1)));
             return;
@@ -3565,8 +3670,8 @@ impl Globals {
 
     /// Box `p` (a register's) by value, with its nodes' source positions:
     /// what a `\copy` of it reads (§15.6).
-    fn bm_box_contents(&self, p: i32) -> Option<(crate::boxfrag::Frag, Positions)> {
-        let f = self.frag_take(p, self.bm_link(p), &[], &[]).ok()?;
+    fn bm_box_contents(&self, p: i32) -> Result<(crate::boxfrag::Frag, Positions), &'static str> {
+        let f = self.frag_take(p, self.bm_link(p), &[], &[])?;
         let pos = if crate::displaylist::enabled() {
             let mut at = vec![];
             self.bm_nodes_one(p, &mut at);
@@ -3574,7 +3679,7 @@ impl Globals {
         } else {
             vec![]
         };
-        Some((f, pos))
+        Ok((f, pos))
     }
 
     /// Node `p` and what it holds, in `bm_nodes`'s order.
@@ -3692,6 +3797,13 @@ impl Globals {
                 // file, so it is the same throughout)
                 4 => {
                     self.bm_with_rec(|r| r.line_read = true);
+                    true
+                }
+                // \currentgrouplevel, \currentgrouptype: the call's level
+                // and group join the key (inside its own groups the call
+                // makes both)
+                21 | 22 => {
+                    self.bm_with_rec(|r| r.group_read = true);
                     true
                 }
                 _ => false,
@@ -3944,7 +4056,8 @@ impl Globals {
             Some("OuterList")
         } else if span_f.is_some()
             && start.mode.abs() == k::mmode
-            && (self.cur_list.aux_field.0 != start_aux || self.cur_list.eTeX_aux_field != start_etex)
+            && (self.cur_list.aux_field.0 != start_aux
+                || self.cur_list.eTeX_aux_field != start_etex)
         {
             // (in math the list's `aux` is `incompleat_noad` and its
             // `eTeX_aux` the display's box or `delim_ptr`: pointers, which a
@@ -4036,7 +4149,9 @@ impl Globals {
             let outer_h: i64 = note.as_ref().map_or(0, |n| {
                 n.glues
                     .iter()
-                    .map(|g| (crate::generated::types::memory_word(g.spec_words[1]).int() as i64).max(0))
+                    .map(|g| {
+                        (crate::generated::types::memory_word(g.spec_words[1]).int() as i64).max(0)
+                    })
                     .sum()
             });
             // the paragraph skips: on the outer list still (a box's), or
@@ -4263,6 +4378,7 @@ impl Globals {
                 trailer,
                 voids: rec.voids,
                 line: line_read.then_some(line),
+                group: rec.group_read.then_some(rec.group0),
                 fast,
                 new_cs: rec
                     .ops
@@ -4323,7 +4439,7 @@ impl Globals {
                         Op::Def { p, kind, v, .. } => {
                             locs.insert(*p);
                             if *kind >= 2 { glob += 1 } else { loc += 1 }
-                            if let Val::FreshList(l) = v { toks += l.len() }
+                            if let Val::FreshList(l) | Val::Shared(_, l) = v { toks += l.len() }
                         }
                         Op::Sa { kind, .. } => {
                             if *kind >= 2 { glob += 1 } else { loc += 1 }
@@ -4399,7 +4515,15 @@ impl Globals {
                         diffs.push("the span's lines differ".to_string());
                     }
                     if !a.end.same(&b.end) {
-                        diffs.push(format!("the span's end: recorded {:?} normal path {:?}", a.end, b.end).chars().take(400).collect());
+                        diffs.push(
+                            format!(
+                                "the span's end: recorded {:?} normal path {:?}",
+                                a.end, b.end
+                            )
+                            .chars()
+                            .take(400)
+                            .collect(),
+                        );
                     }
                     match (&a.graf, &b.graf) {
                         (None, None) => {}
@@ -4411,9 +4535,16 @@ impl Globals {
                                     (y.ml, y.pg, y.aux)
                                 ));
                             }
-                            for (what, f, g) in [("skip", &x.outer, &y.outer), ("list", &x.inner, &y.inner)] {
+                            for (what, f, g) in
+                                [("skip", &x.outer, &y.outer), ("list", &x.inner, &y.inner)]
+                            {
                                 if let Some(d) = crate::boxfrag::frag_diff(f, g) {
-                                    diffs.push(format!("the span's paragraph {what} differs: {d}").chars().take(400).collect());
+                                    diffs.push(
+                                        format!("the span's paragraph {what} differs: {d}")
+                                            .chars()
+                                            .take(400)
+                                            .collect(),
+                                    );
                                 }
                             }
                         }
@@ -4633,7 +4764,11 @@ impl Globals {
     /// Of a span's variants whose key holds but for the file (`fits`), the
     /// most recent whose lines the file level's file holds next; else
     /// `Err` with the most recent of them.
-    fn bm_span_pick(&mut self, cs: i32, mut fits: Vec<(u64, usize)>) -> Result<usize, Option<usize>> {
+    fn bm_span_pick(
+        &mut self,
+        cs: i32,
+        mut fits: Vec<(u64, usize)>,
+    ) -> Result<usize, Option<usize>> {
         if fits.is_empty() {
             return Err(None);
         }
@@ -4675,7 +4810,7 @@ impl Globals {
                         .graf
                         .as_ref()
                         .is_none_or(|g| self.nest_ptr != 0 || self.bm_page_quiet(g.outer_h)))
-                    .then_some(*i)
+                .then_some(*i)
             })
         });
         found.ok_or(Some(most))
@@ -4762,7 +4897,7 @@ impl Globals {
                 })
                 .flatten();
             if same != Some(true) {
-                return self.bm_abort("Page");
+                self.bm_abort("Page");
             }
         }
     }
@@ -4897,7 +5032,10 @@ impl Globals {
         let sc = |p: i32| (self.mem[p as usize].int() as i64).max(0);
         let (goal, mut h) = if self.page_contents == k::empty {
             let t = self.bm_eq(GLUE_BASE + k::top_skip_code).hh().rh();
-            (self.bm_eq(k::dimen_base + k::vsize_code).int() as i64, sc(t + 1))
+            (
+                self.bm_eq(k::dimen_base + k::vsize_code).int() as i64,
+                sc(t + 1),
+            )
         } else {
             (self.page_so_far[0] as i64, 0)
         };
@@ -4952,7 +5090,9 @@ impl Globals {
             max_buf: (self.max_buf_stack > s.max_buf).then_some(self.max_buf_stack - st),
             max_buf0: s.max_buf - st,
             line: self.line,
-            journal: self.bm_span_journal(s.f, s.line0, s.journal).unwrap_or_default(),
+            journal: self
+                .bm_span_journal(s.f, s.line0, s.journal)
+                .unwrap_or_default(),
         }
     }
 
@@ -5013,7 +5153,10 @@ impl Globals {
     /// the source positions the normal path gave them.
     fn bm_put_positions(&mut self, at: &[i32], pos: &[crate::displaylist::SidePos]) {
         if at.len() != pos.len() {
-            debug_assert!(false, "boxmemo: a span's nodes and positions differ in number");
+            debug_assert!(
+                false,
+                "boxmemo: a span's nodes and positions differ in number"
+            );
             return;
         }
         for (&p, &v) in at.iter().zip(pos) {
@@ -5092,6 +5235,19 @@ impl Globals {
                 (None, q)
             }
             Val::FreshList(l) => (None, self.bm_make_list(l)),
+            Val::Shared(id, l) => match SHARED.with(|s| s.borrow().get(id).copied()) {
+                Some(e) => {
+                    // (`add_token_ref`, as the normal path's `\let`)
+                    let r = self.bm_info(e) + 1;
+                    self.mem[e as usize].set_hh_lh(r);
+                    (None, e)
+                }
+                None => {
+                    let e = self.bm_make_list(l);
+                    SHARED.with(|s| s.borrow_mut().insert(*id, e));
+                    (None, e)
+                }
+            },
             Val::GlueFrom(a, b) => {
                 let e = if *a > 0 {
                     self.bm_eq(*a).hh().rh()
@@ -5155,6 +5311,7 @@ impl Globals {
             ))
         });
         let (ops, last_badness, rs_locs) = taken?;
+        SHARED.with(|s| s.borrow_mut().clear());
         // the body, used up: as `get_next` pops it
         self.end_token_list();
         // the L5 read-set (DESIGN.md §5.5), as D9's `intr_report_reads`
@@ -5452,6 +5609,79 @@ mod tests {
         assert_eq!(
             compress_groups(&open),
             vec![def(1, 1, 3), Op::End, Op::Begin(2)]
+        );
+    }
+
+    #[test]
+    fn a_spans_let_takes_the_value_its_group_assigned() {
+        // §15.5: `\def\q{..}` (local) then `\global\let\p\q`: in a span's
+        // log the `\let` takes the list; elsewhere the group is kept
+        let list = |p: i32, kind: i32, l: Vec<i32>| Op::Def {
+            p,
+            t: 111,
+            v: Val::FreshList(l),
+            kind,
+        };
+        let let_ = |p: i32, q: i32, kind: i32| Op::Def {
+            p,
+            t: 111,
+            v: Val::LetCs(q),
+            kind,
+        };
+        let ops = vec![
+            Op::Begin(1),
+            list(8, 0, vec![1, 2]),
+            let_(7, 8, 2),
+            Op::Begin(1),
+            list(8, 0, vec![3]),
+            let_(6, 8, 2),
+            Op::End,
+            let_(5, 8, 2),
+            Op::End,
+        ];
+        // (\p and \r share \q's list, as on the normal path; \s's is its own)
+        let shared = |p: i32| Op::Def {
+            p,
+            t: 111,
+            v: Val::Shared(1, vec![1, 2]),
+            kind: 2,
+        };
+        assert_eq!(
+            compress_groups_with(&ops, true),
+            vec![shared(7), list(6, 2, vec![3]), shared(5)]
+        );
+        assert_eq!(compress_groups_with(&ops, false), ops);
+        // a `\let` from one the inner group assigned only locally, which
+        // the span does not follow, or of a `\let` whose source changed
+        // since: kept
+        let ops2 = vec![
+            Op::Begin(1),
+            Op::Begin(1),
+            list(8, 0, vec![3]),
+            Op::End,
+            let_(5, 8, 2),
+            Op::End,
+        ];
+        assert_eq!(
+            compress_groups_with(&ops2, true),
+            vec![Op::Begin(1), let_(5, 8, 2), Op::End]
+        );
+        let ops3 = vec![
+            Op::Begin(1),
+            let_(8, 9, 0),
+            list(9, 0, vec![4]),
+            let_(5, 8, 2),
+            Op::End,
+        ];
+        assert_eq!(
+            compress_groups_with(&ops3, true),
+            vec![
+                Op::Begin(1),
+                let_(8, 9, 0),
+                list(9, 0, vec![4]),
+                let_(5, 8, 2),
+                Op::End
+            ]
         );
     }
 }

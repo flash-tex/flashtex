@@ -779,7 +779,9 @@ What a picture reads, and how each is held:
 - page position: `\pdfsavepos` is a node replayed like any other (its position is the shipout's);
   `\pdflastxpos`/`\pdflastypos` are refused (`LastItem`); remember-picture's positions come from
   macros the `.aux` defined, so they are meanings in K3;
-- the page and output: `Page`, `OuterList` and output are refused as before (§4).
+- the page and output: `Page`, `OuterList` and output are refused as before (§4);
+- the group: `\currentgrouplevel` and `\currentgrouptype` put the call's `cur_level` and `cur_group`
+  into the key (`Entry::group`; inside its own groups the call makes both).
 
 What it writes: the op log (§5, §12.5), the nodes it appends (draw-call fragments, §10.3, now with
 math noads), F's position (below), the line-shift journal and source positions (§15.4).
@@ -827,11 +829,26 @@ log is kept only in verification mode. A span's entry is at most `MAX_BYTES/4` (
 so one plot cannot evict the store. Control sequences a span enters are hoisted to the front of its
 replay (`new_cs_first`).
 
+§12.5's `net` kept a group whole when a `\global\let\p\q` read a `\q` the group had assigned, which
+pgfplots does throughout its outermost group: so every plot replayed its whole log. In a span's log
+`net` now follows what each control sequence the group assigned holds (`cur`): such a `\let` takes
+that value, as the normal path's `\let` takes the meaning `\q` has then. A list one `\let` shares
+with another holder stays shared: the list made by the log's operation N is `Val::Shared(N, ..)`,
+made at the first replayed operation naming N and shared (`add_token_ref`) at the others, so the
+reference counts are the normal path's (the full-state verifier compares them; without the sharing it
+found `token list reference count differs (1 vs 0)` on the test documents). A `\let` from a value
+the log does not hold (an inner group's local one, a `\let` whose source changed since) still keeps
+the group. On 2501.08950v2 the plots' replays went from 9.7 k–105 k operations (1.1–8.9 MB, one too
+large to keep) to 3.6 k–44 k (0.4–5.8 MB, all kept).
+
 ### 15.6 `\copy` of a box it did not make
 
 TikZ copies boxes made outside the picture (node contents kept in `\pgfnodeparttextbox` and the
 like). A `\copy` of a foreign register keys the register's contents (`kc`, its nodes walked as for
-fragments) instead of refusing (`BoxContent`). The full-state verifier now also compares the math
+fragments) instead of refusing (`BoxContent`; contents a fragment cannot hold are refused with the
+fragment's reason). Still refused: changing a foreign box's dimension (amsmath's `\resetMathstrut@`,
+`\ht\Mathstrutbox@\ht\z@`, run at each math size change in a node's text), which stops most
+pictures with math labels on 2501.07413v3 and four on 2501.08950v2. The full-state verifier now also compares the math
 scratch scalars `cur_style`, `cur_size`, `cur_mu`, `mlist_penalties` and `head_info` (a push_nest
 leaves garbage in `head_info` that a later `\vadjust` reads).
 
@@ -856,6 +873,6 @@ high mark, where each must leave the same one), the paragraph, the journal and t
 
 ### 15.9 Open
 
-Token-list F (a picture in a macro argument or a macro body); a plot's outermost group is kept whole
-when a `\global\let` reads a macro assigned in the same group (§12.5's `net` gives up), which is most
-of its 7 MB; on by default only after the span sweeps show no difference.
+Token-list F (a picture in a macro argument or a macro body); a foreign box's dimension changed (an
+operation that alters the node, keyed by the box); the plots' one group still kept whole; on by
+default only after the span sweeps show no difference.
