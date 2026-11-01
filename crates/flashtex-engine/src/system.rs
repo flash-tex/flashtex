@@ -3014,6 +3014,37 @@ impl Globals {
             return false;
         }
         let mut last_nonblank = self.first;
+        // The rest of the line at once, when the loop below would copy all
+        // of it without reaching its overflow test (`last >= buf_size-1`
+        // holds for no `last` in `lo..hi`): the same bytes through `xord`,
+        // `max_buf_stack` raised to `hi` as the loop's steps raise it, the
+        // same last non-blank, and the line consumed as `get_char` leaves it.
+        #[cfg(not(feature = "tex82"))]
+        if f.have_line && f.pos < f.line.len() {
+            let lo = self.last as usize;
+            let hi = lo + (f.line.len() - f.pos);
+            if hi <= (crate::generated::consts::buf_size - 1) as usize && hi <= self.buffer.len() {
+                if hi as i32 > self.max_buf_stack {
+                    self.max_buf_stack = hi as i32;
+                }
+                let xord: &[crate::generated::types::ASCII_code] = &self.xord[..256];
+                let dst = self.buffer.slice_mut(lo, hi);
+                let mut nb = 0;
+                for (k, (d, &c)) in dst.iter_mut().zip(&f.line[f.pos..]).enumerate() {
+                    *d = xord[c as usize];
+                    if *d != b' ' as crate::generated::types::ASCII_code {
+                        nb = k + 1;
+                    }
+                }
+                if nb > 0 {
+                    last_nonblank = (lo + nb) as i32;
+                }
+                f.pos = f.line.len();
+                f.refresh();
+                self.last = last_nonblank;
+                return true;
+            }
+        }
         while !eoln(f) {
             // texmfmp.c's `input_line` reads while `last < bufsize`; a line
             // that reaches `buffer[bufsize-1]` stops it before it sees the
