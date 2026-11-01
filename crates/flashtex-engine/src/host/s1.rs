@@ -319,6 +319,39 @@ pub fn prepare(g: &mut Globals, i: Input) -> Result<S0Image, String> {
         };
         key.files.push((path.clone(), hash, r.stat));
     }
+    // A file the run opened for output before S₁ and again after it holds a
+    // later instance on disk now (beamer's `.vrb`, one per fragile frame; a
+    // file written early and rewritten late), and the key's `written` took
+    // the disk's. The instance at S₁, which the run kept at its next
+    // `\openout` (lane BEAMER, `system::instances_at`), is what the reopen
+    // puts back; one not kept, or a file open for output at S₁ that was
+    // opened again later (its first bytes on disk are a later run's), and
+    // there is no S₁.
+    let open_out: Vec<String> = rec
+        .files
+        .iter()
+        .filter_map(|f| match &f.stream {
+            Stream::Out { path, .. } => Some(system::out_key(path)),
+            _ => None,
+        })
+        .collect();
+    let put_back = system::instances_at(rec.opens, &open_out).map_err(|k| {
+        format!("{k} was opened for output again after it, its instance there not kept")
+    })?;
+    for (k, d) in put_back {
+        match key
+            .written
+            .iter_mut()
+            .find(|(p, _)| system::out_key(p) == k)
+        {
+            Some(w) => w.1 = d.to_vec(),
+            None => {
+                return Err(format!(
+                    "{k} was rewritten after it, and S1 does not put it back"
+                ))
+            }
+        }
+    }
     if !key.barriers.is_empty() {
         return Err("an external command ran before it".into());
     }
@@ -684,6 +717,13 @@ impl File {
                 // (not kept: a read of a file a run wrote is then never
                 // taken for the same bytes, `incr::reread_same`)
                 seen: None,
+                // (not kept either: 0 says the run had opened nothing for
+                // output, so a read of a written file is never one the old
+                // run reopened after a convergence point, `incr::
+                // reopened_after`, and stays a barrier. These reads are
+                // before S₁, and no convergence point is before S₁ until
+                // the fill's own run has replaced them.)
+                opens: 0,
             };
             if closed_at.is_none() && system::is_user_file(path) && !*written_before {
                 let d = match now_of.get(path.as_str()) {

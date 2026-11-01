@@ -3937,6 +3937,92 @@ fn a_reopen_from_s1_records_no_calls_and_its_fill_converges() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Lane COLD-OPEN with lane BEAMER's kept instances: a file written before
+/// S₁, read after it and written again later holds on disk, when S₁ is
+/// stored, the later instance (beamer's `.vrb` is rewritten so at each
+/// fragile frame). The reopen must put back the one S₁ stands for, which
+/// the run kept at its next `\openout` (`system::instances_at`), or not use
+/// S₁. Either way, the pages, the PDF and the log equal a scratch compile's.
+#[test]
+fn a_reopen_from_s1_puts_back_a_file_rewritten_after_it() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1w");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    let main = main
+        .replacen(
+            "\\begin{document}\n",
+            "\\newwrite\\tw\n\
+             \\def\\stamp#1{\\immediate\\openout\\tw=\\jobname.stp \
+             \\immediate\\write\\tw{Stamp #1.}\\immediate\\closeout\\tw}\n\
+             \\begin{document}\n\\stamp{early}\n",
+            1,
+        )
+        .replacen(
+            "\\section{Last}",
+            "\\InputIfFileExists{\\jobname.stp}{}{No stamp.}\\stamp{late}\n\\section{Last}",
+            1,
+        );
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    s1_store(&proj, &out, &cache, "s1wa");
+    assert_eq!(
+        std::fs::read_to_string(out.join("main.stp"))
+            .unwrap()
+            .trim(),
+        "Stamp late.",
+        "the stored state's file is the later instance"
+    );
+    let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    let host = start_host_env("s1wb", &cache_env);
+    let scratch = start_host("s1ws");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let o = s1_compile_until_unchanged(&mut c, &mut view, &proj, &out, &mut id);
+    if o.done.int_field("s1_pages").is_some() {
+        assert!(
+            o.done.int_field("s1_fill_converged").is_some(),
+            "the fill did not converge: {}",
+            o.done
+        );
+    } else {
+        let e = o.done.str_field("s1_error").unwrap_or_default();
+        assert!(
+            e.contains("opened for output again") || e.contains("rewritten after it"),
+            "S1 refused for another reason: {}",
+            o.done
+        );
+    }
+    let (p2, o2) = snapshot(&base, &proj, &out, "w1");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "the reopen",
+    );
+    let (pdf, log) = (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    );
+    let _ = c.bye();
+    drop(host);
+    let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+    assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
+    assert!(log == log0, "the log differs from a scratch compile's");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Lane COLD-OPEN: while a session reopened from S₁ has not filled the
 /// pages before it (`FLASHTEX_S1_FILL=off` here: never), its history before
 /// S₁ is not the process's. An edit after S₁ runs incrementally from a
