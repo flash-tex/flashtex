@@ -344,8 +344,9 @@ enum Meaning {
 /// Whether a control sequence read only as a token ([`Meaning::Token`])
 /// acts on what it is read by, by its command `t`: `get_next` checks an
 /// `\outer` one (`check_outer_validity`) and inserts an alignment template
-/// at a `&` or `\cr` (tex.web §342); `scan_toks` takes a `#` as a parameter
-/// (§476, §479); `pass_text` counts the `\if`s and `\fi`s it skips (§494).
+/// at a `&` or `\cr` (tex.web §336, §342); `scan_toks` takes a `#` as a
+/// parameter (§476, §479); `pass_text` counts the `\if`s and `\fi`s it
+/// skips (§494).
 fn token_matters(t: i32) -> bool {
     (k::tab_mark..=k::mac_param).contains(&t)
         || t == k::if_test
