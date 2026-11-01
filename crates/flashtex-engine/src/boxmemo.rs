@@ -168,6 +168,10 @@ pub struct Stats {
     pub meanings_walked: u64,
     pub meanings_seen: u64,
     pub seen_cleared: u64,
+    /// Entries kept across a restore or the jump, and dropped there
+    /// (`Seen::keep`).
+    pub seen_kept: u64,
+    pub seen_dropped: u64,
     pub abandoned: BTreeMap<String, u64>,
     pub misses: BTreeMap<String, u64>,
     pub verify_details: Vec<String>,
@@ -772,6 +776,8 @@ fn write_stats(force: bool) {
             s.stats.meanings_walked,
             s.stats.meanings_seen,
             s.stats.seen_cleared,
+            s.stats.seen_kept,
+            s.stats.seen_dropped,
         ] = seen_counts();
         Some(format!("{:#?}\n", s.stats))
     });
@@ -1242,8 +1248,12 @@ fn pop_used_up(g: &mut Globals) {
 }
 
 pub fn after_restore(g: &mut Globals) {
-    // (the word space is another state: §12.4's entries say nothing of it)
-    seen_clear();
+    // (the word space is another state: §12.4's entries hold in it only
+    // where what changed is known and spares them, `state_replaced`)
+    match REPLACED.with(|r| r.borrow_mut().take()) {
+        Some(changed) => seen_keep(g, &changed),
+        None => seen_clear(),
+    }
     if g.bm_rec_on {
         g.bm_rec_on = false;
     }
@@ -1267,15 +1277,21 @@ type IntHash = std::hash::BuildHasherDefault<crate::iso::FastHasher>;
 /// is referenced (TeX makes a new one for every definition), and a list
 /// freed (`delete_token_ref` reaching zero, `flashtex_bm_freed`) takes the
 /// entries naming it with it, so while `eqtb[p]` still holds `t` and `e` its
-/// tokens are still that body and the walk is not made again. Emptied at
-/// every restore of the word space (`after_restore`), at a format load, and
-/// when another engine on this thread notes one (`owner`).
+/// tokens are still that body and the walk is not made again. Across a
+/// restore or the convergence jump, kept where the chunks it changed spare
+/// the list's words and `eqtb[p]` there still holds `t` and `e`
+/// (`Seen::keep`, BOX-MEMO.md §15.7); emptied at any other restore of the
+/// word space (`after_restore`), at a format load, and when another engine
+/// on this thread notes one (`owner`).
 /// One location's entry: its type, its list, the kept body.
 #[derive(Default, Clone)]
 struct Slot {
     t: i32,
     e: i32,
     body: Option<std::rc::Rc<[i32]>>,
+    /// The word space's chunks that hold the list's words (its reference
+    /// count and every token), sorted: `Seen::keep`.
+    chunks: Box<[u32]>,
     /// (in `Seen::used`)
     listed: bool,
 }
@@ -1296,6 +1312,10 @@ struct Seen {
     hits: u64,
     walks: u64,
     clears: u64,
+    /// Entries kept, and dropped, across replacements of the word space
+    /// (`keep`).
+    kept: u64,
+    dropped: u64,
 }
 
 impl Seen {
@@ -1335,6 +1355,39 @@ impl Seen {
         }
     }
 
+    /// The word space was replaced by one that differs from it at most in
+    /// the chunks whose bits `changed` has (a restore, the convergence
+    /// jump: `state_replaced`). An entry holds there when no chunk of its
+    /// list's words is one of them -- the list's words are as they were,
+    /// so its tokens are still the kept body -- and `eqtb[p]` there, as
+    /// `now(p)` reads it, holds its type and list -- so the list is
+    /// referenced there, and its later freeing reaches `flashtex_bm_freed`
+    /// as before. Every other entry goes.
+    fn keep(&mut self, changed: &[u64], now: impl Fn(i32) -> (i32, i32)) {
+        let bit = |c: u32| {
+            changed
+                .get(c as usize / 64)
+                .is_some_and(|w| w & (1u64 << (c % 64)) != 0)
+        };
+        let used = std::mem::take(&mut self.used);
+        for &p in &used {
+            let Some(s) = self.at.get(p as usize) else {
+                continue;
+            };
+            if s.body.is_none() {
+                continue;
+            }
+            let (t, e) = (s.t, s.e);
+            if s.chunks.iter().all(|&c| !bit(c)) && now(p) == (t, e) {
+                self.kept += 1;
+            } else {
+                self.dropped += 1;
+                self.forget_at(p, e);
+            }
+        }
+        self.used = used;
+    }
+
     /// Whether `p` holding `t` and `e` was found equal to `toks` since.
     #[inline]
     fn is(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
@@ -1351,9 +1404,17 @@ impl Seen {
         ok
     }
 
-    /// `p` holding `t` and `e` was just found equal to `toks` (`mem_len`:
-    /// the size of `mem`, for the bits).
-    fn note(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>, mem_len: usize) {
+    /// `p` holding `t` and `e` was just found equal to `toks`, the list's
+    /// words in `chunks` (`mem_len`: the size of `mem`, for the bits).
+    fn note(
+        &mut self,
+        p: i32,
+        t: i32,
+        e: i32,
+        toks: &std::rc::Rc<[i32]>,
+        chunks: Box<[u32]>,
+        mem_len: usize,
+    ) {
         let i = p as usize;
         if self.at.len() <= i {
             self.at.resize(i + 1, Slot::default());
@@ -1376,6 +1437,7 @@ impl Seen {
             t,
             e,
             body: Some(toks.clone()),
+            chunks,
             listed: true,
         };
     }
@@ -1403,6 +1465,54 @@ fn with_seen<R>(g: &Globals, f: impl FnOnce(&mut Seen) -> R) -> R {
     })
 }
 
+thread_local! {
+    /// What the next `after_restore` replaces the word space with, when the
+    /// replacement knows it: the chunks it changed (`state_replaced`).
+    static REPLACED: RefCell<Option<Vec<u32>>> = const { RefCell::new(None) };
+}
+
+/// The restore about to be completed (`after_restore`, from
+/// `fill_scalars`) changed the word space in the chunks `changed` only: a
+/// restore's overwritten chunks (`Branch::redo_chunk_ids`), the jump's
+/// adopted and copied ones. The meanings found equal are then kept where
+/// those chunks spare them (`Seen::keep`); any other restore empties them.
+pub fn state_replaced(changed: Vec<u32>) {
+    REPLACED.with(|r| *r.borrow_mut() = Some(changed));
+}
+
+/// The word space was changed in ways not known: every entry goes.
+pub fn state_replaced_wholly() {
+    REPLACED.with(|r| *r.borrow_mut() = None);
+    seen_clear();
+}
+
+/// `after_restore` with the changed chunks known (`Seen::keep`).
+fn seen_keep(g: &Globals, changed: &[u32]) {
+    if !SEEN_ANY.with(|a| a.get()) {
+        return;
+    }
+    SEEN.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.owner != owner_of(g) {
+            s.clear();
+            return;
+        }
+        let n = changed
+            .iter()
+            .map(|&c| c as usize / 64 + 1)
+            .max()
+            .unwrap_or(0);
+        let mut bits = vec![0u64; n];
+        for &c in changed {
+            bits[c as usize / 64] |= 1u64 << (c % 64);
+        }
+        s.keep(&bits, |p| {
+            let w = g.bm_eq(p).hh();
+            (w.b0(), w.rh())
+        });
+    });
+}
+
 /// Every entry goes (a restore, a format load).
 fn seen_clear() {
     if SEEN_ANY.with(|a| a.replace(false)) {
@@ -1410,12 +1520,13 @@ fn seen_clear() {
     }
 }
 
-/// K3's walks, the comparisons the entries answered, and the times they
-/// were emptied (`Stats`).
-fn seen_counts() -> [u64; 3] {
+/// K3's walks, the comparisons the entries answered, the times they were
+/// emptied, and the entries kept and dropped across replacements of the
+/// word space (`Stats`).
+fn seen_counts() -> [u64; 5] {
     SEEN.with(|s| {
         let s = s.borrow();
-        [s.walks, s.hits, s.clears]
+        [s.walks, s.hits, s.clears, s.kept, s.dropped]
     })
 }
 
@@ -1423,7 +1534,18 @@ fn seen_counts() -> [u64; 3] {
 // Reading the state
 // ---------------------------------------------------------------------------
 
+/// The size of a `mem` word.
+const WORD: usize = std::mem::size_of::<crate::generated::types::memory_word>();
+
 impl Globals {
+    /// Where `mem[0]` is in the word space, in bytes (its chunks:
+    /// `Seen::keep`).
+    #[inline]
+    fn bm_mem_chunk0(&self) -> usize {
+        (&self.mem[0] as *const crate::generated::types::memory_word as usize)
+            .wrapping_sub(self.arena.bytes().as_ptr() as usize)
+    }
+
     #[inline]
     fn bm_eq(&self, p: i32) -> crate::generated::types::memory_word {
         self.eqtb[(p - 1) as usize]
@@ -2090,15 +2212,25 @@ impl Globals {
                 return true;
             }
             seen.walks += 1;
+            // (the chunks of the list's words, for `Seen::keep`)
+            let at = self.bm_mem_chunk0();
+            let chunk = |q: i32| ((at + q as usize * WORD) >> crate::arena::CHUNK_SHIFT) as u32;
+            let mut chunks = vec![chunk(e)];
             let mut q = self.bm_link(e);
             for &x in toks.iter() {
                 if q == 0 || self.bm_info(q) != x {
                     return false;
                 }
+                let c = chunk(q);
+                if chunks.last() != Some(&c) {
+                    chunks.push(c);
+                }
                 q = self.bm_link(q);
             }
             if q == 0 {
-                seen.note(p, t, e, toks, self.mem.len());
+                chunks.sort_unstable();
+                chunks.dedup();
+                seen.note(p, t, e, toks, chunks.into(), self.mem.len());
                 SEEN_ANY.with(|a| a.set(true));
             }
             return q == 0;
@@ -4487,8 +4619,8 @@ mod tests {
         let other: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
         let mut s = Seen::default();
         assert!(!s.is(70000, 111, 500, &body));
-        s.note(70000, 111, 500, &body, 1 << 12);
-        s.note(600, 111, 500, &body, 1 << 12);
+        s.note(70000, 111, 500, &body, Box::new([0]), 1 << 12);
+        s.note(600, 111, 500, &body, Box::new([0]), 1 << 12);
         assert!(s.is(70000, 111, 500, &body) && s.is(600, 111, 500, &body));
         // another type, list or body (the same tokens, another kept body)
         assert!(!s.is(70000, 112, 500, &body) && !s.is(70000, 111, 501, &body));
@@ -4500,14 +4632,45 @@ mod tests {
         }
         assert!(!s.has_bit(500) && !s.is(70000, 111, 500, &body) && !s.is(600, 111, 500, &body));
         // a location noted again, then everything cleared
-        s.note(600, 111, 502, &body, 1 << 12);
-        s.note(600, 111, 503, &body, 1 << 12);
+        s.note(600, 111, 502, &body, Box::new([0]), 1 << 12);
+        s.note(600, 111, 503, &body, Box::new([0]), 1 << 12);
         assert!(!s.has_bit(502) && s.has_bit(503) && s.is(600, 111, 503, &body));
         assert_eq!(s.used, vec![70000, 600]);
         s.clear();
         assert!(!s.is(600, 111, 503, &body) && !s.has_bit(503) && s.used.is_empty());
-        s.note(600, 111, 503, &body, 1 << 12);
+        s.note(600, 111, 503, &body, Box::new([0]), 1 << 12);
         assert_eq!(s.used, vec![600]);
+    }
+
+    #[test]
+    fn meanings_found_equal_outlive_a_restore_that_spares_their_lists() {
+        let body: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
+        let mut s = Seen::default();
+        // three lists: in chunks 5 and 7, in chunk 70, in chunk 9
+        s.note(600, 111, 500, &body, Box::new([5, 7]), 1 << 12);
+        s.note(601, 111, 510, &body, Box::new([70]), 1 << 12);
+        s.note(602, 111, 520, &body, Box::new([9]), 1 << 12);
+        // chunks 7 and 3 changed; location 602 holds another list there
+        let mut changed = vec![0u64; 2];
+        for c in [7u32, 3] {
+            changed[c as usize / 64] |= 1 << (c % 64);
+        }
+        let now = |p: i32| {
+            if p == 602 {
+                (111, 521)
+            } else {
+                (111, 500 + 10 * (p - 600))
+            }
+        };
+        s.keep(&changed, now);
+        // 600's list had a word in chunk 7; 602 no longer holds its list
+        assert!(!s.is(600, 111, 500, &body) && !s.has_bit(500));
+        assert!(s.is(601, 111, 510, &body) && s.has_bit(510));
+        assert!(!s.is(602, 111, 520, &body) && !s.has_bit(520));
+        assert_eq!((s.kept, s.dropped), (1, 2));
+        // kept, the entry still goes with its list
+        s.forget_at(601, 510);
+        assert!(!s.is(601, 111, 510, &body));
     }
 
     fn list(p: i32, tok: i32) -> Op {

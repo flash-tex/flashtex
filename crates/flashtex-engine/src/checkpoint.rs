@@ -1307,7 +1307,13 @@ impl Globals {
         let rs_old = self.layer().rs.clone();
         self.spill_scalars();
         let t_pre = t0.elapsed();
+        // (from a whole live space, not a lazy reattach's: what the restore
+        // changes is then the chunks it overwrote)
+        let whole = self.arena.lazy_target().is_none();
         let branch = self.arena.restore_branch(id)?;
+        if whole {
+            crate::boxmemo::state_replaced(branch.redo_chunk_ids());
+        }
         self.fill_scalars();
         let t_branch = t0.elapsed();
         let detached_ids: std::collections::HashSet<CheckpointId> =
@@ -1864,11 +1870,24 @@ impl Globals {
                 }
             },
         };
+        let whole = self.arena.lazy_target().is_none();
         for (off, b) in &adopt {
             self.arena.write_through(*off, b);
         }
         self.arena.checkpoint();
-        self.arena.converge(branch, id)?;
+        let mut changed = self.arena.converge(branch, id).inspect_err(|_| {
+            // (the chunks taken over are in, the state is neither)
+            crate::boxmemo::state_replaced_wholly();
+        })?;
+        // (the chunks the jump changed: those taken over, those copied in)
+        if whole {
+            changed.extend(
+                adopt
+                    .iter()
+                    .map(|(off, _)| (off >> crate::arena::CHUNK_SHIFT) as u32),
+            );
+            crate::boxmemo::state_replaced(changed);
+        }
         self.fill_scalars();
         // Host records: the new run's up to `id` (whose record now is the
         // live one at the convergence point), then the old run's from `id`

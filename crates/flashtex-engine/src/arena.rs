@@ -731,6 +731,12 @@ impl Branch {
     pub fn redo_chunks(&self) -> usize {
         self.redo.len()
     }
+    /// The chunks the restore that detached the branch overwrote: every
+    /// chunk whose content the live space changed in it (BOX-MEMO's kept
+    /// meanings, `boxmemo::state_replaced`).
+    pub fn redo_chunk_ids(&self) -> Vec<u32> {
+        self.redo.iter().map(|&(c, _)| c).collect()
+    }
 }
 
 pub(crate) struct Core {
@@ -1658,7 +1664,7 @@ impl Core {
     /// run's state at `old`, and the newest checkpoint was taken there with
     /// nothing written since. Jump to the old run's latest state and keep its
     /// checkpoints from `old` on.
-    fn converge(&mut self, branch: Branch, old: CheckpointId) -> Result<(), String> {
+    fn converge(&mut self, branch: Branch, old: CheckpointId) -> Result<Vec<u32>, String> {
         self.drop_part();
         self.set_also(None);
         let Some(j) = branch.ids.iter().position(|&x| x == old) else {
@@ -1707,6 +1713,7 @@ impl Core {
         }
         self.mark = mark;
         self.copy_in(&jobs);
+        let copied: Vec<u32> = jobs.iter().map(|&(c, _)| c).collect();
         for (_, p) in jobs {
             self.slab.give(p);
         }
@@ -1725,7 +1732,7 @@ impl Core {
         for c in open {
             saved[c] = 1;
         }
-        Ok(())
+        Ok(copied)
     }
 
     /// Abandon the run since `restore_branch` detached `branch`: rewind
@@ -2782,7 +2789,9 @@ impl Arena {
         self.core_mut().set_also(None);
     }
 
-    pub fn converge(&mut self, b: Branch, old: CheckpointId) -> Result<(), String> {
+    /// The convergence jump; the chunks it copied in (every chunk whose
+    /// content it changed).
+    pub fn converge(&mut self, b: Branch, old: CheckpointId) -> Result<Vec<u32>, String> {
         self.core_mut().converge(b, old)
     }
 
