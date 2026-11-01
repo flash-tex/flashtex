@@ -686,15 +686,16 @@ pub fn mode() -> Mode {
 /// recording costs more than it saves, which [`Budget`] stops.
 pub const RECORD_ANYWHERE: &[&str] = &["pdfstringdefPreHook", "pgf@parsefunc", "XC@col@rlet"];
 
-/// A [`RECORD_ANYWHERE`] name's recordings outside an edit's window, and
-/// the hits they bought (lane L6, E3). Once `min` recordings are made, a
-/// name whose hits fall below `ratio` per recording is recorded no more
-/// outside a window for the session (`State`'s lifetime, as `aborts`): its
-/// entries still replay, and in a window it records as before. A miss
-/// records the call; at a hit rate h a recording buys h / (1 - h) hits,
-/// and measured cold passes break even at about three (evidence:
-/// `docs/evidence/l6-xc-anywhere-2026-11-01/`). Which calls are recorded
-/// never changes what a run computes, only how fast.
+/// A [`BUDGETED`] name's recordings outside an edit's window, and the hits
+/// they bought (lane L6, E3). Once `min` recordings are made, a name whose
+/// hits fall below `ratio` per recording is neither recorded nor offered
+/// outside a window for the rest of the session (`State`'s lifetime, as
+/// `aborts`): an offer that misses costs its key comparisons as well as the
+/// call, and a recording more. In a window it is offered and recorded as
+/// before. A miss records the call, so at a hit rate h a recording buys
+/// h / (1 - h) hits (evidence: `docs/evidence/l6-xc-anywhere-2026-11-01/`).
+/// Which calls are offered or recorded never changes what a run computes,
+/// only how fast.
 #[derive(Default, Debug, Clone, Copy)]
 struct Budget {
     recordings: u32,
@@ -716,6 +717,16 @@ fn budget_config() -> Option<(u32, f64)> {
             Err(_) => BUDGET,
         },
     )
+}
+
+/// The [`RECORD_ANYWHERE`] names under a [`Budget`]. Not
+/// `\pdfstringdefPreHook`: a call costs about 25 M instructions and a
+/// recording a fraction of one, so any hit pays for it.
+pub const BUDGETED: &[&str] = &["XC@col@rlet"];
+
+fn budgeted() -> &'static [Vec<u8>] {
+    static R: std::sync::OnceLock<Vec<Vec<u8>>> = std::sync::OnceLock::new();
+    R.get_or_init(|| BUDGETED.iter().map(|s| s.as_bytes().to_vec()).collect())
 }
 
 /// The default budget (see [`Budget`]).
@@ -2415,6 +2426,12 @@ impl Globals {
         if cs == self.ckpt_arm_cs || self.ckpt_arm_level == self.input_ptr {
             return;
         }
+        // (a budgeted name stopped outside a window: not offered there)
+        if WINDOW.with(|w| w.get()) != Some(true)
+            && ST.with(|s| s.borrow().budget.get(&cs).is_some_and(|b| b.stopped))
+        {
+            return;
+        }
         let m = mode();
         ST.with(|s| s.borrow_mut().stats.offers += 1);
         // preconditions (K6)
@@ -2605,7 +2622,7 @@ impl Globals {
             return;
         }
         if WINDOW.with(|w| w.get()) != Some(true)
-            && self.bm_name_is(cs, record_anywhere())
+            && self.bm_name_is(cs, budgeted())
             && !Self::bm_budget_allows(cs)
         {
             return;
