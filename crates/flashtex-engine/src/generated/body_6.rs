@@ -8893,8 +8893,14 @@ impl Globals {
         if (__av_eqtb[crate::ix::U(((every_par_loc) - 1) as usize)].hh().rh() != null) {
             self.begin_token_list(__av_eqtb[crate::ix::U(((every_par_loc) - 1) as usize)].hh().rh(), every_par_text);
         }
+        if self.bm_rec_on {
+            self.flashtex_bm_new_graf(0i32);
+        }
         if (self.nest_ptr == 1i32) {
             self.build_page();
+        }
+        if self.bm_rec_on {
+            self.flashtex_bm_new_graf(1i32);
         }
     }
 

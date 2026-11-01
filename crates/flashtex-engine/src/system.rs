@@ -663,6 +663,63 @@ impl AlphaFile {
         Ok((line, end))
     }
 
+    /// BOX-MEMO's spans (docs/design/engine-v2/BOX-MEMO.md §15): the next
+    /// `n` lines of an input file as `input_ln` would read them, each raw
+    /// (as `read_tex_line` cuts it) with the stream's offset after it,
+    /// counted from the offset now; fewer at the end of the file. The file
+    /// is left exactly where it was (its stream seeked back; the line it
+    /// holds untouched). `None` for anything but an input file.
+    pub fn peek_lines(&mut self, n: usize) -> Option<Vec<(Vec<u8>, u64)>> {
+        use std::io::Seek;
+        let Some(TextIn::File(r)) = self.input.as_mut() else {
+            return None;
+        };
+        let at = r.stream_position().ok()?;
+        let mut out = Vec::with_capacity(n);
+        let mut ok = true;
+        while out.len() < n {
+            let mut line = vec![];
+            if !read_tex_line(r, &mut line) {
+                break;
+            }
+            match r.stream_position() {
+                Ok(p) => out.push((line, p - at)),
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        r.seek(std::io::SeekFrom::Start(at)).ok()?;
+        ok.then_some(out)
+    }
+
+    /// A span's replay: read the next `n` lines of this input file as
+    /// `input_ln` reads them and leave the file as `input_ln` leaves it
+    /// after the last (that line held, all of it consumed), which is what
+    /// the normal path's reads of them leave. The caller has checked them
+    /// (`peek_lines`); `false` if the file is not an input file or ends
+    /// before.
+    pub fn skip_lines(&mut self, n: usize) -> bool {
+        if n == 0 {
+            return true;
+        }
+        let Some(TextIn::File(r)) = self.input.as_mut() else {
+            return false;
+        };
+        let mut line = vec![];
+        for _ in 0..n {
+            if !read_tex_line(r, &mut line) {
+                return false;
+            }
+        }
+        self.pos = line.len();
+        self.line = line;
+        self.have_line = true;
+        self.refresh();
+        true
+    }
+
     fn refresh(&mut self) {
         self.buf = if !self.have_line {
             b' '
