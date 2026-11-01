@@ -10,13 +10,17 @@
 # Two profiles (Commander, 2026-10-24: wall-clock ms on a shared 3-vCPU hosted VM is noise):
 #   default   the PR CI's, hardware independent: t7.py --gate hosted (realdocs.json pr_gate) on
 #             letter@x2-late (each key re-typesets at most 3 pages, i.e. converges near the edit,
-#             and spends at most pr_gate.edited_instr_m_max M engine instructions to the edited
-#             page) and typing@150ms@x2-late (every key painted by its own compile); the app test
-#             with a 100 ms budget for a main run-loop turn and for a key into the text storage
+#             and spends at most pr_gate.to_edited_instr_m_max M engine-thread instructions from
+#             the compile's start to the edited page, where the machine counts them: a hosted VM
+#             does not, and the budget is then a warning) and typing@150ms@x2-late (whether every
+#             key is painted by its own compile: reported, as load moves it); the app test with a
+#             100 ms budget for a main run-loop turn and for a key into the text storage
+#   --counted the default, and a machine without instruction counts misses (t7.py --gate counted;
+#             ci.yml's real-doc-instr job on a self-hosted Mac)
 #   --strict  DESIGN §1.2's wall targets, for a reference Mac: typing@50ms@x2-late <= 20 ms to the
 #             edited page, every key its own compile; the app test at one frame (16 ms)
 #
-#   scripts/realdoc-gate.sh [--strict] [--t7-only | --app-only] [--no-build] [--keys N]
+#   scripts/realdoc-gate.sh [--strict | --counted] [--t7-only | --app-only] [--no-build] [--keys N]
 #
 # Needs a TeX Live with infdesc's packages on PATH (kpsewhich pdflatex.ini), Rust and, for the app
 # step, Xcode. The book is fetched once at its pinned commit (mkbook.py) into INCR_BENCH_DIR
@@ -26,10 +30,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export INCR_BENCH_DIR="${INCR_BENCH_DIR:-/tmp/fth-realdoc}"
-T7=1; APP=1; BUILD=1; KEYS=16; STRICT=0
+T7=1; APP=1; BUILD=1; KEYS=16; STRICT=0; GATE=hosted
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --strict) STRICT=1; shift ;;
+    --counted) GATE=counted; shift ;;
     --t7-only) APP=0; shift ;;
     --app-only) T7=0; shift ;;
     --no-build) BUILD=0; shift ;;
@@ -45,7 +50,7 @@ if [[ $T7 == 1 ]]; then
   if [[ $STRICT == 1 ]]; then
     args+=(--phases typing@50ms@site)
   else
-    args+=(--gate hosted --phases letter@site,typing@150ms@site --keys 8)
+    args+=(--gate "$GATE" --phases letter@site,typing@150ms@site --keys 8)
   fi
   [[ $BUILD == 1 ]] && args+=(--build)
   rm -rf "$INCR_BENCH_DIR/t7-out"

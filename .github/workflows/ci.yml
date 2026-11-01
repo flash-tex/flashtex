@@ -1252,17 +1252,21 @@ jobs:
   # scripts/realdoc-gate.sh at Infinite Descent x2's page ~887 (site x2-late,
   # the owner's page 883), on signals a shared 3-vCPU VM cannot blur
   # (tools/incr-bench/realdocs.json pr_gate): (1) T7 letter@x2-late, each key
-  # re-typesets at most 3 pages (converges near the edit) and spends at most
-  # pr_gate.edited_instr_m_max M engine instructions to the edited page;
-  # typing@150ms@x2-late, every key painted by its own compile; (2)
+  # re-typesets at most 3 pages (converges near the edit);
+  # typing@150ms@x2-late, whether every key is painted by its own compile
+  # (reported, not gated: load moves it); (2)
   # EngineV3RealDocTypingTests: the whole app on that host types into the
   # page during and after the first compile, no main run-loop turn and no
-  # key's way into the text storage over 100 ms (main: 1.9 s). The 20 ms /
-  # 16 ms wall targets are the nightly's (t7-real-documents) and the
-  # reference run's. ADVISORY (not in `CI required`) until #1894 and the
-  # EDITOR-FREEZE PR land (Commander, 2026-10-24); then add it there. The book
-  # is fetched at its pinned commit (cached). GitHub-hosted macos-26 (windows,
-  # so never a team laptop). BasicTeX plus the packages infdesc loads.
+  # key's way into the text storage over 100 ms (main: 1.9 s before #1890 and
+  # #1900). GATING: in `CI required` (lane GATES, 2026-11-01). The budget on
+  # instructions from the compile's start to the edited page
+  # (pr_gate.to_edited_instr_m_max) is only a warning here: GitHub-hosted VMs
+  # have no PMU counters (macOS: thread_selfcounts fails; Ubuntu: perf has no
+  # instructions:u). real-doc-instr below gates it after the merge. The 20 ms
+  # / 16 ms wall targets are the nightly's (t7-real-documents) and the
+  # reference run's. The book is fetched at its pinned commit (cached).
+  # GitHub-hosted macos-26 (windows, so never a team laptop). BasicTeX plus
+  # the packages infdesc loads.
   real-doc-gate:
     name: "real-doc gate (infdesc-x2 late page: T7 row, app stalls)"
     needs: [plan]
@@ -1335,6 +1339,56 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The real-document gate's instruction budget (realdocs.json pr_gate
+  # to_edited_instr_m_max: the engine thread's instructions from the
+  # compile's start to the edited page, which load and clock speed do not
+  # move), where it can be counted: a self-hosted Mac (MacTeX 2026), so only
+  # after the merge and on manual runs (plan's selfhosted_mac, §9.3), never
+  # in the merge queue (realdoc is never 'true' there). T7 letter@x2-late
+  # with t7.py --gate counted: a missing count misses.
+  # A miss on main files `main-red`. The budget is a ratchet at main's value
+  # (lane GATES, 2026-11-01: main spends up to 472 M against DESIGN §1.2's
+  # ~100 M); lower it as fixes land.
+  real-doc-instr:
+    name: "real-doc instructions (self-hosted Mac: infdesc-x2 late page)"
+    needs: [plan]
+    if: >-
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.realdoc == 'true' &&
+      needs.plan.outputs.selfhosted_mac == 'true'
+    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's directories
+        # A per-runner build directory outside the checkout (a warm cache), and
+        # a per-runner bench directory under /tmp (the host's socket path must
+        # fit 104 bytes; the runners of one Mac must not share it).
+        run: |
+          set -euo pipefail
+          echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-realdoc" >> "$GITHUB_ENV"
+          echo "INCR_BENCH_DIR=/tmp/fth-realdoc-$RUNNER_NAME" >> "$GITHUB_ENV"
+          if [ -x /Library/TeX/texbin/pdflatex ]; then echo /Library/TeX/texbin >> "$GITHUB_PATH"; fi
+      - name: scripts/realdoc-gate.sh --counted --t7-only
+        run: |
+          set -o pipefail
+          kpsewhich pdflatex.ini
+          scripts/realdoc-gate.sh --counted --t7-only 2>&1 | tee realdoc-instr.log
+      - name: The T7 rows as the run summary
+        if: always()
+        run: |
+          { echo "### real-doc instructions"; echo; grep -E '^T7: |^  infdesc|realdoc-gate:' realdoc-instr.log || true; echo
+            cat "$INCR_BENCH_DIR/t7-out/table.md" 2>/dev/null || true; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-doc-instr
+          path: |
+            realdoc-instr.log
+            ${{ env.INCR_BENCH_DIR }}/t7-out
+          if-no-files-found: ignore
+          retention-days: 14
+
   ipad:
     name: iPad companion (simulator build + tests)
     needs: [plan]
@@ -1400,7 +1454,7 @@ jobs:
   # owner fixes forward within 2 hours, or the Commander reverts the merge.
   main-red:
     name: main-red issue
-    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, mac-v3-host, ipad]
+    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, mac-v3-host, real-doc-gate, real-doc-instr, ipad]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.plan.outputs.run == 'true'
@@ -1449,7 +1503,10 @@ jobs:
       - rust-standalone
       - mac-app
       - ipad
-      # real-doc-gate: advisory until #1894 and EDITOR-FREEZE land (see the job)
+      # the real-document gate (PR and after the merge; never in the merge
+      # queue) and, after the merge, its instruction budget on a self-hosted Mac
+      - real-doc-gate
+      - real-doc-instr
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

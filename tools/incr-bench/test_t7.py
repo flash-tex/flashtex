@@ -313,13 +313,14 @@ class RealDocTests(unittest.TestCase):
 class HostedGateTests(unittest.TestCase):
     """--gate hosted (the PR CI): no wall clock; re-typeset pages, instructions, own compiles."""
 
-    def doc(self, ms, rerun, instr_m, by_own=True):
-        g = dict(rerun_pages_max=3, edited_instr_m_max=200)
-        host = dict(converged_at=1, typeset_pages=rerun, rerun_pages=rerun, stages=dict(edited_instr_k=instr_m * 1000))
+    def doc(self, ms, rerun, instr_m, by_own=True, gate='hosted'):
+        g = dict(rerun_pages_max=3, to_edited_instr_m_max=200)
+        stages = dict(edited_instr_k=instr_m * 500, to_edited_instr_k=instr_m * 1000) if instr_m is not None else {}
+        host = dict(converged_at=1, typeset_pages=rerun, rerun_pages=rerun, stages=stages)
         keys = [dict(key=k, edited_page_ms=ms, first_page_ms=ms, done_ms=ms, complete=True,
                      by=10 + k if by_own else 30, host=host) for k in range(14)]
         return dict(doc='infdesc-x2', pages=1152, rss_peak=1,
-                    real=dict(target_ms=20.0, oracle_pages=1152, gate='hosted', pr_gate=g),
+                    real=dict(target_ms=20.0, oracle_pages=1152, gate=gate, pr_gate=g),
                     phases={'letter@x2-late': dict(keys=keys, load=[1, 1]),
                             'typing@150ms@x2-late': dict(keys=keys, dones=[dict(id=10 + k) for k in range(14)],
                                                           summary={}, load=[1, 1])})
@@ -331,23 +332,36 @@ class HostedGateTests(unittest.TestCase):
     def test_no_convergence_and_instructions_miss(self):
         why = '; '.join(t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=254, instr_m=2900)]), None))
         self.assertIn('re-typeset up to 254 pages > 3', why)
-        self.assertIn(f"up to 2900 M instructions to the edited page > {t7.REAL['pr_gate']['edited_instr_m_max']} M", why)
+        self.assertIn("up to 2900 M instructions from the compile's start to the edited page "
+                      f"> {t7.REAL['pr_gate']['to_edited_instr_m_max']} M", why)
 
-    def test_instructions_from_the_start_reported_not_gated(self):
+    def test_instructions_from_the_start_gated_not_the_typesettings_share(self):
+        budget = t7.REAL['pr_gate']['to_edited_instr_m_max']
         d = self.doc(ms=5.0, rerun=2, instr_m=60)
-        for k in d['phases']['letter@x2-late']['keys']:
-            k['host'] = dict(k['host'], stages=dict(edited_instr_k=60e3, to_edited_instr_k=400e3))
+        for k in d['phases']['letter@x2-late']['keys']:  # the typesetting is cheap, the find is not
+            k['host'] = dict(k['host'], stages=dict(edited_instr_k=60e3, to_edited_instr_k=(budget + 1) * 1e3))
         rows = t7.summarise([d])
         letter = next(r for r in rows if 'to_edited_instr_m' in r)
-        self.assertEqual(letter['to_edited_instr_m']['max'], 400.0)
-        self.assertEqual(t7.verdict(rows, None), [])
-        old = t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=60)])  # (a host without the stage)
-        self.assertEqual(next(r for r in old if 'to_edited_instr_m' in r)['to_edited_instr_m']['n'], 0)
+        self.assertEqual(letter['to_edited_instr_m']['max'], budget + 1.0)
+        self.assertEqual(letter['edited_instr_m']['max'], 60.0)
+        self.assertIn("instructions from the compile's start", '; '.join(t7.verdict(rows, None)))
 
-    def test_own_compile_still_gated(self):
-        fails = t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=50, by_own=False)]), None)
-        self.assertEqual(len(fails), 1)
-        self.assertIn('not painted by their own compile', fails[0])
+    def test_no_counters_warns_hosted_and_misses_counted(self):
+        rows = t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=None)])  # (a VM without PMU counters)
+        self.assertEqual(t7.verdict(rows, None), [])
+        self.assertIn('no instruction count', next(r for r in rows if 'to_edited_instr_m' in r)['warning'])
+        rows = t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=None, gate='counted')])
+        self.assertIn('which --gate counted requires', '; '.join(t7.verdict(rows, None)))
+        self.assertEqual(t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=60, gate='counted')]), None), [])
+
+    def test_own_compile_reported_not_gated(self):
+        rows = t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=50, by_own=False)])
+        self.assertEqual(t7.verdict(rows, None), [])  # (wall clock: load moves it)
+        typing = next(r for r in rows if r['edit'].startswith('typing'))
+        self.assertIn('not painted by their own compile', typing['warning'])
+        d = self.doc(ms=5.0, rerun=2, instr_m=50, by_own=False)
+        d['real']['gate'] = 'wall'  # (the wall profile still gates it)
+        self.assertIn('not painted by their own compile', '; '.join(t7.verdict(t7.summarise([d]), None)))
 
 
 if __name__ == '__main__':

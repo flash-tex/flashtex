@@ -668,8 +668,9 @@ def typing_row(d, name, ph):
 def real_fields(d, hosts=()):
     """A real document's row fields: the oracle's page count, the gate profile (`wall`: the target;
     `hosted`: realdocs.json's `pr_gate`), and per keystroke the pages re-typeset and the engine
-    thread's instructions to the edited page (DONE's `rerun_pages`, `stages.edited_instr_k`; and,
-    reported only, `stages.to_edited_instr_k`, counted from the compile's start)."""
+    thread's instructions from the compile's start to the edited page (DONE's `rerun_pages`,
+    `stages.to_edited_instr_k`, gated; and, reported only, `stages.edited_instr_k`, the
+    typesetting's share)."""
     if not d.get('real'):
         return {}
     def instr_m(key):
@@ -681,9 +682,10 @@ def real_fields(d, hosts=()):
     if hosts:  # (a letter@ row: one DONE per keystroke; a typing@ row's compiles are superseded)
         out.update(rerun_pages=stats([x['rerun_pages'] if x.get('rerun_pages') is not None else x.get('typeset_pages') or 0
                                       for x in hosts]),
+                   # (reported, not gated: the typesetting's share)
                    edited_instr_m=stats(instr),
-                   # (reported, not gated: from the compile's start, the find phase and the
-                   # restore included; hosts before `stages.to_edited_instr_k` have none)
+                   # (gated: from the compile's start, the find phase and the restore included;
+                   # hosts before `stages.to_edited_instr_k` have none)
                    to_edited_instr_m=stats(instr_m('to_edited_instr_k')))
     return out
 
@@ -755,27 +757,43 @@ def verdict(rows, baseline):
             why.append('no samples')
         name, val = gated_stat(r['ms'])
         r['stat'] = name
-        hosted = r.get('real') and r.get('gate') == 'hosted'
+        hosted = r.get('real') and r.get('gate') in ('hosted', 'counted')
         if hosted:
             # the PR CI's profile (realdocs.json pr_gate): no wall clock, which a shared 3-vCPU VM makes
             # noise; what the host did instead, the same on any machine
             g = r.get('pr_gate', {})
-            rp, ins = (r.get('rerun_pages') or {}).get('max'), (r.get('edited_instr_m') or {}).get('max')
+            rp, ins = (r.get('rerun_pages') or {}).get('max'), (r.get('to_edited_instr_m') or {}).get('max')
             if 'rerun_pages' in r and rp is not None and rp > g.get('rerun_pages_max', 3):
                 why.append(f"re-typeset up to {rp} pages > {g.get('rerun_pages_max', 3)} (no convergence near the edit)")
-            if 'edited_instr_m' in r and g.get('edited_instr_m_max') and r['n']:
-                if ins is None:
+            # the engine thread's instructions from the compile's start to the edited page
+            # (stages.to_edited_instr_k: the find, a revalidation's window, the restore and the
+            # typesetting), which load and clock speed do not move
+            if 'to_edited_instr_m' in r and g.get('to_edited_instr_m_max') and r['n']:
+                if ins is None and r.get('gate') == 'counted':
+                    # (ci.yml's real-doc-instr: a self-hosted Mac, which has the counters)
+                    why.append('no instruction count on this machine (stages.to_edited_instr_k), '
+                               'which --gate counted requires')
+                elif ins is None:
                     # a machine without thread PMU counters (a hosted VM): reported, not gated
-                    r['warning'] = 'no instruction count on this machine (stages.edited_instr_k): not gated'
-                elif ins > g['edited_instr_m_max']:
-                    why.append(f"up to {ins:.0f} M instructions to the edited page > {g['edited_instr_m_max']} M")
+                    r['warning'] = 'no instruction count on this machine (stages.to_edited_instr_k): not gated'
+                elif ins > g['to_edited_instr_m_max']:
+                    why.append(f"up to {ins:.0f} M instructions from the compile's start to the edited page "
+                               f"> {g['to_edited_instr_m_max']} M")
         elif val is not None and r['target'] is not None and val > r['target']:
             why.append(f"{name} {val:.1f} ms > {r['target']:.0f} ms")
+        # (the hosted profile gates only what load does not move: whether a key 150 ms after the
+        # last is painted by its own compile depends on the machine's speed and load; on an M5 Pro
+        # at load 160, 2 of 15 were not, lane GATES 2026-11-01. Reported there, not gated)
+        typing_why = []
         if r.get('not_own'):
-            why.append(f"{r['not_own']} of {r['n']} keystrokes not painted by their own compile")
+            typing_why.append(f"{r['not_own']} of {r['n']} keystrokes not painted by their own compile")
         if r.get('sent_late'):
-            why.append(f"{r['sent_late']} of {r['n']} keystrokes sent over {LATE_MS} ms late by the client "
-                       "(its clock, not the host: a harness fault)")
+            typing_why.append(f"{r['sent_late']} of {r['n']} keystrokes sent over {LATE_MS} ms late by the client "
+                              "(its clock, not the host: a harness fault)")
+        if hosted and typing_why:
+            r['warning'] = '; '.join(typing_why) + ' (wall clock: reported, not gated)'
+        else:
+            why += typing_why
         if r.get('stale_unmarked'):
             why.append(f"{r['stale_unmarked']} compiles refreshed later pages without marking them stale")
         if r.get('incomplete'):
@@ -886,9 +904,11 @@ def main():
     ap.add_argument('--timeout', type=int, default=3600, help='per dl3-keys connection, s')
     ap.add_argument('--host-args', default='')
     ap.add_argument('--sites', help="a real document's sites to type at (realdocs.json), comma list; default all")
-    ap.add_argument('--gate', choices=['wall', 'hosted'], default='wall',
-                    help="real documents' gate: wall (the ms target) or hosted (realdocs.json pr_gate: "
-                         "re-typeset pages, instructions to the edited page, every key its own compile)")
+    ap.add_argument('--gate', choices=['wall', 'hosted', 'counted'], default='wall',
+                    help="real documents' gate: wall (the ms target), hosted (realdocs.json pr_gate: "
+                         "re-typeset pages, instructions from the compile's start to the edited page where "
+                         "the machine counts them, every key its own compile) or counted (hosted, and a "
+                         "machine without instruction counts misses)")
     ap.add_argument('--limit-gb', type=float, default=0.0,
                     help="kill a host whose resident memory passes this (mem_gate.sh); 0: no limit")
     ap.add_argument('--out')
