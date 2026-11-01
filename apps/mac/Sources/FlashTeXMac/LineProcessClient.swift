@@ -115,7 +115,8 @@ final class LineProcessClient {
             self.consume(self.stdout.fileHandleForReading.readDataToEndOfFile())
             // Drain stderr as well as stdout: clearing the readability handler
             // stops delivery, so the final burst -- the one that says why the
-            // process is exiting -- was being dropped.
+            // process is exiting -- was being dropped (same fix as
+            // PreviewControllerClient).
             let trailing = self.stderr.fileHandleForReading.readDataToEndOfFile()
             if !trailing.isEmpty {
                 let s = String(decoding: trailing, as: UTF8.self)

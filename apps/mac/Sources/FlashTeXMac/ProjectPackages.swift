@@ -19,7 +19,7 @@ import FlashTeXProtocol
 /// ticked). Resolved files reach the compiler as documents at
 /// `packages/<name>/<file>` (ProjectDocuments.implicitClosureDocuments, the
 /// direct route) and show under the sidebar's Packages group; a delivery
-/// bumps `revision` and the engine compiles again (`recompile`).
+/// bumps `revision`, which ShellModel.compile compares to recompile.
 ///
 /// Under the new engine (engine v3, which reads TeX Live and the project
 /// copy, EngineV3Session.swift) the same state serves it: TeX's own
@@ -85,7 +85,7 @@ final class ProjectPackagesState {
     private(set) var declined: Set<String> = []
     private(set) var root: URL?
     private(set) var status = "no packages resolved yet"
-    /// Bumped whenever the delivered set changes.
+    /// Bumped whenever the delivered set changes; ShellModel.compile recompiles when it differs from the applied result's.
     private(set) var revision = 0
     private(set) var resolving = false
     var applying = false
@@ -246,29 +246,35 @@ final class ProjectPackagesState {
         }
         if wanted.allSatisfy(pending.contains) { shown = true; return }
         let todo = wanted.filter { !pending.contains($0) }
-        spawn { await $0.resolveForEngineV3(todo) }
+        if model.engineV3Enabled { spawn { await $0.resolveForEngineV3(todo) }; return }
+        let consent = manifestFetch == "always"
+        spawn { await $0.resolve(todo, consent: consent) }
     }
 
     /// Called from the engine's DONE with its rows (`diagnostics`):
     /// resolves what the latest compile could not find and is not yet
     /// delivered, unavailable, declined or in flight. A new project root
     /// resets everything.
-    func noteCompileResult(diagnostics: [RuntimeV1.Diagnostic]) {
-        noteCompileResult(unresolved: Self.unresolvedNames(in: diagnostics))
+    /// `nil`: `ShellModel.result`'s observer (the previous engine).
+    func noteCompileResult(diagnostics: [RuntimeV1.Diagnostic]? = nil) {
+        noteCompileResult(unresolved: Self.unresolvedNames(in: diagnostics ?? model.result?.diagnostics ?? []),
+                          engineV3: diagnostics != nil)
     }
 
     /// The same with the names already found (`ProblemsModel.unresolvedPackages`,
     /// made with the rows off the main thread).
-    func noteCompileResult(unresolved found: [String]) {
+    func noteCompileResult(unresolved found: [String], engineV3: Bool = true) {
         guard let projectRoot = model.project.projectRoot else { return }
         if root != projectRoot { reset(for: projectRoot) }
-        if holdWhileTyping(found, engineV3: true) { return }
+        if holdWhileTyping(found, engineV3: engineV3) { return }
         let pending = Set(offers.map(\.name))
         let names = found.filter { name in
             delivered[name] == nil && unavailable[name] == nil && !declined.contains(name) && !inFlight.contains(name) && !pending.contains(name)
         }
         guard !names.isEmpty else { return }
-        spawn { await $0.resolveForEngineV3(names) }
+        if engineV3, model.engineV3Enabled { spawn { await $0.resolveForEngineV3(names) }; return }
+        let consent = manifestFetch == "always"
+        spawn { await $0.resolve(names, consent: consent) }
     }
 
     // MARK: the grace period while a name is being typed
@@ -379,7 +385,8 @@ final class ProjectPackagesState {
     /// The held compile again, from the latest rows (never a stale name).
     private func recheckHeld() {
         guard !heldNames.isEmpty else { return }
-        noteCompileResult(unresolved: model.engineV3Problems.unresolvedPackages)
+        if heldEngineV3 { noteCompileResult(unresolved: model.engineV3Problems.unresolvedPackages) }
+        else { noteCompileResult() }
     }
 
     /// The caret moved or the document switched (ShellModel): leaving the
@@ -427,7 +434,9 @@ final class ProjectPackagesState {
         declined = []
         unavailable = [:]
         if !offers.isEmpty { shown = true; return }
-        let names = model.engineV3Problems.unresolvedPackages.filter { delivered[$0] == nil && !inFlight.contains($0) }
+        let last = model.engineV3Enabled ? model.engineV3Problems.unresolvedPackages
+            : Self.unresolvedNames(in: model.result?.diagnostics ?? [])
+        let names = last.filter { delivered[$0] == nil && !inFlight.contains($0) }
         guard !names.isEmpty else {
             model.navigationNote = delivered.isEmpty ? "Every package the last compile asked for was found." : "Every package the last compile asked for is resolved: \(delivered.keys.sorted().joined(separator: ", "))."
             return
@@ -435,7 +444,9 @@ final class ProjectPackagesState {
         if manifestFetch == "never" || manifestSource == "none" {
             model.navigationNote = "\(ProjectManifest.fileName) says [packages] fetch = \"\(manifestFetch)\", source = \"\(manifestSource)\": nothing is fetched for this project (edit the manifest to change that)."
         }
-        spawn { await $0.resolveForEngineV3(names) }
+        if model.engineV3Enabled { spawn { await $0.resolveForEngineV3(names) }; return }
+        let consent = manifestFetch == "always"
+        spawn { await $0.resolve(names, consent: consent) }
     }
 
     /// Starts a resolution unless the window's model is gone by the time it
@@ -591,7 +602,9 @@ final class ProjectPackagesState {
 
     private func recompile() {
         recompiles += 1
-        if model.engineV3Enabled { model.engineV3.packagesChanged(model: model) }
+        if model.engineV3Enabled { model.engineV3.packagesChanged(model: model); return }
+        guard model.workerAttached else { return }
+        model.compile()
     }
 
     // MARK: the new engine: missing packages without asking the source

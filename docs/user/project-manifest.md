@@ -3,8 +3,8 @@
 **Status:** shipped with slice S2 of
 [packages, fonts and the project manifest](../proposals/packages-fonts-manifest.md)
 (2026-09-19). Owner: mac-claude-a. `[fonts]` applies (slice S4, the same
-day): the CLI sends it with every compile, and the Mac app applies it in
-Unicode mode (see [`[fonts]` in the app](#fonts-in-the-app)). `[packages]` applies (slice S3, the same day):
+day): the CLI, the app's direct route and the preview-controller route all
+send it with every compile. `[packages]` applies (slice S3, the same day):
 local libraries, the per-user package cache and consent-gated fetches from
 CTAN — see [Packages](#packages).
 
@@ -147,8 +147,8 @@ entry classified (`inside`, `outside`, `invalid`) and the warnings. See
 a folder: the entry is `[project] entry`, else the folder's only `.tex`
 file. The `.sty`/`.cls`/`.def`/`.clo` files next to the entry and every file
 under `texinputs` show in the sidebar's Project tree as dimmed rows with the
-class/style icon and are part of every compile so the engine can read
-them; click one to open it as a project member. The app's project
+class/style icon and go out with every compile (direct route) so the engine
+can read them; click one to open it as a project member. The app's project
 root is the entry's folder, so a `texinputs` directory beside a manifest
 *above* the entry (`proj/flashtex.toml`, `proj/styles/`, entry
 `proj/paper/main.tex`) is read like an outside directory — compiled, listed,
@@ -160,17 +160,23 @@ searchable picker over the families the engine's own index finds, with a
 sample line in that family and *Class default* first; Apply writes the
 table (creating the file from the template when there is none, and writing
 nothing for *Class default* everywhere without one) and the preview
-recompiles (the table applies in Unicode mode; see below). The manifest is
+recompiles. Every compile request carries the table as `fonts`, on the
+direct route and through the preview controller alike. The manifest is
 read — and its `[fonts]` table rewritten — by the project-files helper
 (one parser and one writer for the CLI, the helper and the app; the rest
 of the file is kept byte for byte); without the helper a folder still opens
 through its only `.tex` file and the status bar says the manifest was not
-read. Packages a compile cannot find are resolved through the same helper
-(below); resolved files show under a dimmed *Packages* group in the sidebar.
-Nothing is ever fetched without the consent sheet or a remembered `always`.
+read. After each compile, the packages the compiler reports it could not
+find are resolved through the same helper: what a local library or the
+cache has joins the next compile at once; what would have to be fetched is
+**one consent sheet per project** listing each package, its version, its
+files and the URL, with *Fetch*, *Not Now* (asked again only through *File ›
+Fetch Missing Packages…*) and *Never for This Project* (writes `fetch =
+"never"`); ticking *Remember* on Fetch writes `fetch = "always"`. Resolved
+files show under a dimmed *Packages* group in the sidebar. Nothing is ever
+fetched without the sheet or a remembered `always`.
 
-**The command-line engine** (`flashtex build`; the Mac app does not use it)
-never opens the manifest or the network: it receives the
+**The engine** never opens the manifest or the network: it receives the
 documents the tools assembled and resolves `\usepackage{x}` /
 `\documentclass{x}` among them by path — the entry's folder first, then the
 `texinputs` files in manifest order, then the resolved packages at
@@ -178,9 +184,9 @@ documents the tools assembled and resolves `\usepackage{x}` /
 optional `fonts` object (`{"text","math","mono","sans"}`); a request
 without it renders exactly as before the field existed.
 
-**The app's engine** (`flashtex-host`, pdfLaTeX-compatible) reads your TeX
-Live (or the TeX bundle) and a copy of the project, never the manifest or the
-network either. It finds, in this order: the project's own files (the entry's folder first), the
+**The new engine** (the pdfLaTeX-compatible one) reads your TeX Live and a
+copy of the project, never the manifest or the network either. In the app it
+finds, in this order: the project's own files (the entry's folder first), the
 `texinputs` files, then the packages below, then TeX Live, as
 `TEXINPUTS=.:` would. The app writes each of those package files, with the
 text the project-files helper delivered, into the session's private copy
@@ -188,7 +194,8 @@ text the project-files helper delivered, into the session's private copy
 links it by name; nothing reaches the engine from the package cache or a
 library directly. Only three kinds are given to it: the `[packages] pin`
 versions, every `[packages] path` library, and packages its TeX reported
-missing. Any other cached copy is not: TeX Live's copy wins.
+missing. A cached copy the previous engine asked for without a pin is not:
+TeX Live's copy wins.
 
 Before the first compile, and whenever the manifest changes, the pins and
 libraries are resolved from the libraries and the cache only (no network),
@@ -205,13 +212,12 @@ The libraries and the cache are asked first (offline); what they lack is
 listed in the consent sheet by name only. *Look Up* asks the source for its
 version and files (fetching nothing); *Fetch* fetches it into the cache and
 recompiles. A mistyped or private package name never leaves your Mac unless
-you click one of them. *Not Now* asks again only through *File › Fetch
-Missing Packages…*; *Never for This Project* writes `fetch = "never"`, and
-ticking *Remember* on Fetch writes `fetch = "always"`, the standing consent:
-such a package is fetched at once.
+you click one of them. `fetch = "always"` is the standing consent: such a
+package is fetched at once. Projects with pins or libraries no longer fall
+back to the previous engine.
 
-<a id="fonts-in-the-app"></a>**`[fonts]` in the app** is applied in Unicode mode (`mode =
-"unicode"`, a `% !TEX program = xelatex` line, or detected, as below), as `xelatex` would apply
+**`[fonts]` on the new engine** is applied in Unicode mode (`mode =
+"unicode"`, or a `% !TEX program = xelatex` line), as `xelatex` would apply
 the equivalent fontspec setup: `text`, `sans` and `mono` become
 `\setmainfont`, `\setsansfont` and `\setmonofont` once the class is loaded,
 and `math` becomes `unicode-math`'s `\setmathfont` at `\begin{document}`
@@ -223,10 +229,6 @@ searched by name (as with `xelatex`), and a font file name TeX Live finds
 (say `texgyrepagella-regular.otf`) loads that file. Changing the table (the Fonts sheet or an
 edit) compiles again, and the sheet lists the families Unicode mode finds
 (`flashtex-host-unicode --list-fonts`). Classic mode is pdfLaTeX-compatible
-and does not apply `[fonts]`. A project with `[fonts]` whose mode nothing
-sets (no `[project] mode`, no `% !TEX program` line, no `FLASHTEX_MODE`) is
-therefore typeset in Unicode mode, decided in memory: `flashtex.toml` is not
-written, and the status bar's mode item says "Detected: …". So is a document
-that uses fontspec, unicode-math, `\setmainfont` and the like. A mode you set
-is kept: a project set to Classic stays Classic and its `[fonts]` table is not
-applied (the mode item warns when the document needs Unicode fonts).
+and does not apply `[fonts]`; until the previous engine is retired, a
+Classic project with `[fonts]` is typeset by the previous engine, and the
+window offers the switch to Unicode mode.

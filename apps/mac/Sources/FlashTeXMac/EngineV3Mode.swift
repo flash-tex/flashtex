@@ -62,12 +62,6 @@ enum EngineV3Mode: String, Equatable, Sendable {
         return nil
     }
 
-    /// `Resolution.source` of a mode nothing set, chosen because the
-    /// document needs Unicode fonts or the project sets `[fonts]`
-    /// (`ShellModel.unicodeRouting`, UnicodeFonts.swift): in memory only,
-    /// never written to flashtex.toml.
-    static let detectedSource = "detected"
-
     /// A document's mode: the mode, its format, what chose it, and a
     /// warning when what was asked for could not be followed.
     struct Resolution: Equatable, Sendable {

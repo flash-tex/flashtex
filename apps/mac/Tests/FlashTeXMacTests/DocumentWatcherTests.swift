@@ -39,6 +39,7 @@ final class DocumentWatcherTests: XCTestCase {
         let url = dir.appendingPathComponent("paper.tex")
         try "v1\n".write(to: url, atomically: true, encoding: .utf8)
         let model = ShellModel()
+        model.detachWorker()
         model.files.policy = .disabled(reason: "test: direct")
         model.documentWatcher.debounce = 0.05
         XCTAssertEqual(model.openTex(at: url), .opened)
@@ -123,6 +124,7 @@ final class DocumentWatcherTests: XCTestCase {
         XCTAssertFalse(watcher.rearm())
         watcher.stop()
         let model = ShellModel()
+        model.detachWorker()
         XCTAssertNil(model.documentURL)
         model.watchOpenDocument()
         XCTAssertFalse(model.documentWatcher.isWatching)

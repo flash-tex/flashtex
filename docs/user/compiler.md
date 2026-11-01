@@ -1,10 +1,8 @@
 # The `flashtex` command line, building from source, and supported LaTeX
 
 FlashTeX is a LaTeX engine first: `flashtex` is the compiler on the command
-line. The Mac app no longer drives it: since retirement stage S6 the app runs
-only the new pdfLaTeX-compatible engine, whose command line is
-[`flashtex-v3`](#the-new-engines-command-line-flashtex-v3). No TeX
-distribution is involved in `flashtex` — parsing, layout, fonts and the PDF
+line, and the Mac IDE is a complementary app that drives the same engine. No
+TeX distribution is involved anywhere — parsing, layout, fonts and the PDF
 writer are all original Rust code, linked into one binary.
 
 ```sh
@@ -115,8 +113,7 @@ against that release's `SHA256SUMS` (refuses on a mismatch), and installs
 `flashtex` into `~/.local/bin` plus its fonts/metrics into
 `~/.local/share/flashtex`. Flags: `--prefix DIR` (e.g. `/usr/local`, may need
 sudo), `--version vX.Y.Z` (default: the latest release), `--uninstall`. For
-the Mac app instead (SwiftUI GUI on the new engine; it does not bundle this
-CLI), see
+the Mac app instead (SwiftUI GUI, bundles this same CLI), see
 [Getting started](README.md#install).
 
 Where it lives:
@@ -124,13 +121,13 @@ Where it lives:
 | Install | Path |
 |---|---|
 | `install-cli.sh`, or the CLI tarball extracted by hand (`flashtex-cli-<version>-<platform>.tar.gz` from [Releases](https://github.com/flash-tex/flashtex/releases)) | `bin/flashtex`, fonts and metrics in `share/flashtex/` — extract anywhere; `bin/flashtex install-cli` links it into `/usr/local/bin` |
+| Mac app | `/Applications/FlashTeX.app/Contents/MacOS/flashtex-cli` (uses the app's `Contents/Resources/{Fonts,texmf}`) |
 | Source build | `crates/flashtex-cli/target/release/flashtex` — add `--font-dir apps/mac/Fonts` and `FLASHTEX_TFM_DIRS=apps/mac/Fonts/texmf/fonts/tfm/public/lm`, or install the tarball layout ([Fonts](#fonts-and-metrics)) |
 
 The older helpers (`flashtex-render`, `flashtex-compiler`, `flashtex-pdf`,
 `flashtex-pdf-exact`) still ship next to it and are described
 [below](#helper-binaries); `flashtex` is the same engine with a proper front
-end, and its `worker` subcommand speaks the same JSON Lines protocol (the
-Mac app no longer uses it).
+end, and its `worker` subcommand is byte-for-byte the protocol the IDE speaks.
 Any editor or CI can drive that same JSON Lines protocol directly — see
 [Extending FlashTeX](../extensibility.md).
 
@@ -172,7 +169,8 @@ same root.
 The PDF is the **exact route** — the display list the engine produces is
 written by the pdf crate's exact writer: Latin Modern (and New Computer
 Modern Math) font programs embedded as glyph-id-preserving CFF subsets, the
-engine's own advances, typed rules, images and hyperlinks. The file is written atomically
+engine's own advances, typed rules, images and hyperlinks. It is the same
+output as *File › Export PDF* in the app. The file is written atomically
 (temporary sibling + rename), so a viewer never sees a torn PDF.
 
 | Flag | Meaning | Default |
@@ -180,7 +178,7 @@ engine's own advances, typed rules, images and hyperlinks. The file is written a
 | `-o`, `--output FILE` | The PDF to write | `<main>.pdf` next to the entry file, or in the manifest's `[project] output` directory when set |
 | `--project-root DIR` | Root that includes and images resolve under; the entry must be inside it | the manifest's directory, else the entry file's |
 | `--font-dir DIR` | Extra font directory, probed first (repeatable) | — |
-| `--v2 FILE` | Also write the rendering-v2 `display_list` envelope (images included) — the input of `flashtex-pdf-exact from-v2` | off |
+| `--v2 FILE` | Also write the rendering-v2 `display_list` envelope (images included) — the input of `flashtex-pdf-exact from-v2` and of *File › Open Display List (v2)…* | off |
 | `--timing` | One line on stderr: `render N ms (P passes), pdf N ms, total N ms` | off |
 | `-v`, `--verbose` | Also print the PDF route's notes: every embedded font, subset size, width adjustments | off |
 | `--strict` | Exit 1 when any **error** diagnostic was reported, even though the document rendered (`recovered`); the PDF is still written | off |
@@ -254,9 +252,9 @@ coverage table alone.
 The runtime-v1 JSON Lines worker: one `compile` request per stdin line, one
 `compile_result` per stdout line, followed by the `display_list` line when
 the client negotiated `display-list-v2`; a block cache across requests makes
-a keystroke retypeset only the paragraph it touched. `flashtex worker` and
-`flashtex-render` share the loop. The Mac app no longer launches either
-(retirement stage S6); any editor can. `--v2`/`--pdf` write the last
+a keystroke retypeset only the paragraph it touched. This is what the IDE
+launches (`FLASHTEX_COMPILER` may point at `flashtex worker` or at
+`flashtex-render`; they share the loop). `--v2`/`--pdf` write the last
 request's display list / exact PDF as side outputs. The wire format is
 [runtime-v1](../contracts/runtime-v1.md) and
 [runtime-v1-display-list-v2](../contracts/runtime-v1-display-list-v2.md).
@@ -273,7 +271,7 @@ set loads; exit 1 when either is missing. `--json` is the
 
 Creates the symlink `DIR/flashtex` (default `/usr/local/bin`) to the running
 binary — a link, not a copy, so the binary keeps finding its
-`share/flashtex` fonts. Refuses to
+`share/flashtex` (tarball) or `Contents/Resources` (app) fonts. Refuses to
 replace an unrelated file and explains when the directory needs `sudo`.
 
 ## Diagnostics and exit status
@@ -409,9 +407,9 @@ directories, so the embedded program is exactly the file the layout used.
 
 | Tool | What it is |
 |---|---|
-| `flashtex-render` | The engine as a bare runtime-v1 worker (`flashtex worker` is the same loop). `--tex FILE` is a one-shot mode: single file, no include resolution. `--v2 out.json` writes the display list of the last render — complete, with no reply-line limit. `--pdf out.pdf` writes that render through the exact route, the same bytes `flashtex build` produces. |
-| `flashtex-compiler` | The original FT-002 worker with Core-14 (Times) metrics and a smaller LaTeX subset; same wire protocol, no flags. `--supported [json|markdown|coverage]` prints the inventory (`flashtex supported` is the same data). |
-| `flashtex-pdf` | `flashtex-pdf [INPUT.json] --out OUTPUT.pdf [--verify] [--embed-font PATH|auto] [--default-face embedded|lm|times]` — a PDF from a runtime-v1 `compile_result` (text items and rules); characters outside WinAnsi/Symbol/the embedded face become `?`. Not used by the Mac app. |
+| `flashtex-render` | The engine as a bare runtime-v1 worker (`flashtex worker` is the same loop). `--tex FILE` is a one-shot mode: single file, no include resolution. `--v2 out.json` writes the display list of the last render — complete, with no reply-line limit. `--pdf out.pdf` writes that render through the exact route, the same bytes `flashtex build` and the Mac app's Export PDF produce. |
+| `flashtex-compiler` | The original FT-002 worker with Core-14 (Times) metrics and a smaller LaTeX subset; same wire protocol, no flags. `--supported [json|markdown|coverage]` prints the inventory (`flashtex supported` is the same data). *File › Attach Built Compiler* (⌘⇧K) attaches it. |
+| `flashtex-pdf` | `flashtex-pdf [INPUT.json] --out OUTPUT.pdf [--verify] [--embed-font PATH|auto] [--default-face embedded|lm|times]` — a PDF from a runtime-v1 `compile_result` (text items and rules); characters outside WinAnsi/Symbol/the embedded face become `?`. No longer reachable from the Mac app: the app's one export route is `flashtex-pdf-exact`. |
 | `flashtex-pdf-exact` | `from-v2 LIST.json --out OUT.pdf [--font-dir DIR]... [--project-root DIR]` is the exact route as a separate step (what `flashtex build` runs in-process); `reemit`, `classify` and `dump` are PDF-comparison utilities used by the fidelity tests. |
 
 ## Building from source
@@ -426,8 +424,7 @@ git clone https://github.com/flash-tex/flashtex.git && cd flashtex
 cargo build --release --manifest-path crates/flashtex-cli/Cargo.toml   # the CLI (links the engine)
 crates/flashtex-cli/target/release/flashtex build fixtures/real-world/hw1/HW1.tex \
   --font-dir apps/mac/Fonts -o /tmp/hw1.pdf --timing
-scripts/ci/build-helpers.sh                          # the helpers the Mac app bundles (bridge, edit-ledger, project-files), release mode
-cargo build --release -p flashtex-engine --bin flashtex-host   # the app's engine host
+scripts/ci/build-helpers.sh                          # every helper the Mac app bundles, release mode
 apps/mac/scripts/make-app.sh --install --open        # packages FlashTeX.app into ~/Applications
 scripts/ci/package-cli.sh 0.0.0-local macos-arm64 dist   # the tarball, from the built binaries
 ```
@@ -437,9 +434,8 @@ depends on its live siblings (`../compiler`, `../pdf`, ...) the same way: every
 crate is a member of the root Cargo workspace, so binaries land in the
 repository's `target/release/`, not `crates/<crate>/target/release/`. Resolve
 the directory with `scripts/crate-target-dir.sh <crate-dir>` rather than
-hard-coding either. `make-app.sh` bundles the helpers in `Contents/MacOS`
-and the engine host in `Contents/Helpers` (it does not bundle `flashtex`;
-see [packaging](../../apps/mac/docs/packaging.md)), verifies the bundled fonts
+hard-coding either. `make-app.sh` bundles `flashtex` as
+`Contents/MacOS/flashtex-cli` alongside the helpers, verifies the bundled fonts
 and metrics against a pinned manifest, and ad-hoc signs the bundle; add
 `--dmg` for a disk image. `cargo test --release` in `crates/flashtex-cli`
 builds HW1/HW2 and the multi-file fixture end to end (including a run with
@@ -1571,7 +1567,7 @@ made by a macro the file calls, by an option's code, or by an
 `\AtEndOfPackage` hook is not. A diagnostic raised inside a package names the
 whole chain of files that loaded it, back to the document.
 
-Through `flashtex-render` (what the `flashtex` CLI runs), packages the
+Through `flashtex-render` (what the `flashtex` CLI and the app run), packages the
 render pipeline sets on the compiler's behalf are silent too, with any options:
 `amsmath`, `amssymb`, `amsfonts`, `lmodern`, `microtype`, `geometry`, `graphicx`
 and `tikz`. The same goes for `\pagestyle` in the preamble of a document with a
@@ -1580,7 +1576,8 @@ and `tikz`. The same goes for `\pagestyle` in the preamble of a document with a
 
 ## Troubleshooting
 
-Diagnostics appear on `flashtex`'s stderr and in `diagnostics[]`. The common codes and what to do about them:
+Diagnostics appear on `flashtex`'s stderr, in the app's Problems panel and
+in `diagnostics[]`. The common codes and what to do about them:
 
 | Code | Severity | Meaning | What you can do |
 |---|---|---|---|
@@ -1597,12 +1594,14 @@ Diagnostics appear on `flashtex`'s stderr and in `diagnostics[]`. The common cod
 | `unsupported_block` | error | Historical: a block-level construct without a layout. Current `flashtex-render` builds do not emit it (unknown environments come through as `compiler` warnings instead) | — |
 | `unsupported_script` | error | Text in a script the shaper does not handle (non-Latin); the segment was not drawn | Not supported yet |
 | `missing_glyph` | warning | A character has no glyph in the selected Latin Modern face; nothing was drawn for it | Use a supported character or `\text{}` with Latin text |
-| `font_unavailable` / `math_font_unavailable` | error | The Latin Modern text face (Times metrics substituted) or Latin Modern Math (no math typeset) could not be found | Check the font search path above; with the tarball this indicates a broken install |
-| `tfm_missing` / `math_metrics_opentype` / `tfm_run_error` | warning | A `.tfm` metric file was not found (or its lig/kern program failed on a word), so OpenType advances were used for that face or word | Point `FLASHTEX_TFM_DIRS` at a Latin Modern `texmf/fonts/tfm/public/lm` directory, or use the tarball, which ships the metrics for 5–17 pt roman, 5–12 pt bold and 7–12 pt italic |
+| `font_unavailable` / `math_font_unavailable` | error | The Latin Modern text face (Times metrics substituted) or Latin Modern Math (no math typeset) could not be found | Check the font search path above; with the bundled app this indicates a broken install |
+| `tfm_missing` / `math_metrics_opentype` / `tfm_run_error` | warning | A `.tfm` metric file was not found (or its lig/kern program failed on a word), so OpenType advances were used for that face or word | Point `FLASHTEX_TFM_DIRS` at a Latin Modern `texmf/fonts/tfm/public/lm` directory, or use the bundled app, which ships the metrics for 5–17 pt roman, 5–12 pt bold and 7–12 pt italic |
 | `required_metrics_unavailable` | error | The pinned required metric set (`ec-lmr12`, `rm-lmr12/8/6`, licence) is missing or altered; layout is not reference geometry | Reinstall; the bundle is verified at packaging time |
 | `labels_unstable` | warning (no source) | `\ref`/`\pageref` values did not converge within the pass limit; the last pass is shown | Check for labels whose value depends on their own page position |
-| `display_list_declined` | warning (no source) | The `display-list-v2` sibling would exceed the 16 MiB reply limit, so the client receives no display list for this revision (the `compile_result` still arrives) | Split the project into `\input` files |
+| `display_list_declined` | warning (no source) | The `display-list-v2` sibling would exceed the 16 MiB reply limit, so the app's v2 preview receives no frame for this revision (the v1 pages still render) | Split the project into `\input` files |
 | `payload_too_large`, `malformed_json`, `invalid_utf8`, `unsupported_protocol_version`, `unsupported_type` | `error` envelope | The request line itself was rejected (over 8 MiB, not JSON, …); no `compile_result` is produced and the worker keeps running | Fix the request; split very large documents |
 
 When a `compile_result` is `recovered`, the pages are real output rendered
-around the problem; when it is `failed` there are no pages.
+around the problem; when it is `failed` there are no pages and the app keeps
+the last good preview on screen, with the old underlines flagged as kept from
+the previous revision.

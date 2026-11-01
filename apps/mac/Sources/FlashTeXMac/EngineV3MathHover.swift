@@ -5,7 +5,7 @@ import FlashTeXProtocol
 import SwiftUI
 
 /// The inline math hover preview under the engine-v3 preview (DESIGN §10
-/// app parity, gap C24): hovering
+/// app parity, gap C24). As on the v2 pane (MathHoverPreview.swift): hovering
 /// `$…$`/`\(…\)` crops the formula out of the page bitmap already on screen,
 /// padded by `MathPreviewView.cropPadding` points; nothing is rendered on the
 /// hover path, and nothing is shown while the preview is older than the
@@ -50,7 +50,7 @@ extension EngineV3Session {
     func mathPreviewImage(span: NSRange) -> CGImage? {
         guard let model, let view, model.engineV3Enabled else { return nil }
         let path = model.activePath, text = model.activeText
-        // Stale: the pages were compiled from other text: no preview.
+        // Stale: the pages were compiled from other text (MathHoverPreview's rule).
         guard let compiled = model.compiledDocuments[path], compiled.sameBytes(as: text),
               let bytes = text.utf8ByteRange(of: span),
               let (page, box) = formulaBox(path: path, start: bytes.start, end: bytes.end, in: text, pages: Array(view.heldPageViews.keys)),
@@ -70,9 +70,10 @@ extension EngineV3Session {
 
 // MARK: - popover
 
-// The popover, its crop padding and the hover controller's entry point
-// (moved here from the v2 pane's MathHoverPreview.swift in retirement stage
-// S6a, retirement-plan.md §1.4).
+// The popover, its crop padding and the hover controller's entry point,
+// moved here from MathHoverPreview.swift in retirement stage S6a
+// (retirement-plan.md §1.4), unchanged; the v2 pane's `MathHoverPreview`
+// uses them until S6 deletes it.
 
 /// Small NSPopover content for the cropped formula bitmap: the image at its
 /// natural pixel size (already at the pane's backing scale), no chrome.

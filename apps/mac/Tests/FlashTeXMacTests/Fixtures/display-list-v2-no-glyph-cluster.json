@@ -1,0 +1,1377 @@
+{
+ "id": "nav3-1",
+ "payload": {
+  "color_space": "srgb",
+  "coordinate_unit": "bp_2pow20",
+  "diagnostics": [
+   {
+    "code": "missing_glyph",
+    "message": "U+1F600 '😀' has no glyph in lmroman10-regular; nothing drawn for it",
+    "severity": "warning",
+    "sources": [
+     {
+      "end_byte": 17,
+      "path": "chapter.tex",
+      "start_byte": 13
+     }
+    ]
+   }
+  ],
+  "documents": [
+   {
+    "byte_length": 90,
+    "path": "main.tex",
+    "revision": 1,
+    "sha256": "30d6833dc41d5c38f6f9140e96e9822fc10d262428b36a85b6cee2481af1c9f9"
+   },
+   {
+    "byte_length": 40,
+    "path": "chapter.tex",
+    "revision": 1,
+    "sha256": "6c32808cb17a0ba2cde067233c8b42e46fcfec6b90e26486b76cff51a63840e4"
+   }
+  ],
+  "fonts": [
+   {
+    "byte_length": 111536,
+    "face_index": 0,
+    "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+    "format": "opentype-cff",
+    "glyph_count": 821,
+    "postscript_name": "LMRoman10-Regular",
+    "sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+    "units_per_em": 1000
+   }
+  ],
+  "pages": [
+   {
+    "height": 830472192,
+    "items": [
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 155936179
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 7544528,
+          "x": 155936179
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 42,
+          "path": "main.tex",
+          "start_byte": 41
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 134114565,
+          "x": 163480707
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5223293,
+          "x": 163480707
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 43,
+          "path": "main.tex",
+          "start_byte": 42
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 134114565,
+          "x": 168704000
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 3191950,
+          "x": 168704000
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 44,
+          "path": "main.tex",
+          "start_byte": 43
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 2
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 134114565,
+          "x": 171895950
+         },
+         {
+          "height": 7196394,
+          "text_byte": 5,
+          "top": 134114565,
+          "x": 176538939
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 171895950
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 46,
+          "path": "main.tex",
+          "start_byte": 44
+         }
+        ],
+        "text_end_byte": 5,
+        "text_start_byte": 3
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 7544528,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 42,
+        "origin_x": 155936179
+       },
+       {
+        "advance_x": 5223293,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 28,
+        "origin_x": 163480707
+       },
+       {
+        "advance_x": 3191950,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 55,
+        "origin_x": 168704000
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 251,
+        "origin_x": 171895950
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "Café"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 180021130
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5223293,
+          "x": 180021130
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 48,
+          "path": "main.tex",
+          "start_byte": 47
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 134114565,
+          "x": 185244423
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 8705136,
+          "x": 185244423
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 51,
+          "path": "main.tex",
+          "start_byte": 48
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 4,
+          "top": 134114565,
+          "x": 193949559
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 193949559
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 52,
+          "path": "main.tex",
+          "start_byte": 51
+         }
+        ],
+        "text_end_byte": 5,
+        "text_start_byte": 4
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 5,
+          "top": 134114565,
+          "x": 198592547
+         },
+         {
+          "height": 7196394,
+          "text_byte": 6,
+          "top": 134114565,
+          "x": 203235536
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 198592547
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 53,
+          "path": "main.tex",
+          "start_byte": 52
+         }
+        ],
+        "text_end_byte": 6,
+        "text_start_byte": 5
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 5223293,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 81,
+        "origin_x": 180021130
+       },
+       {
+        "advance_x": 8705136,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 123,
+        "origin_x": 185244423
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 43,
+        "origin_x": 193949559
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 50,
+        "origin_x": 198592547
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "office"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 206717728
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 7689724,
+          "x": 206717728
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 1,
+          "path": "chapter.tex",
+          "start_byte": 0
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 134114565,
+          "x": 214407452
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 214407452
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 3,
+          "path": "chapter.tex",
+          "start_byte": 1
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 134114565,
+          "x": 219050440
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4120658,
+          "x": 219050440
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 4,
+          "path": "chapter.tex",
+          "start_byte": 3
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 3
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 4,
+          "top": 134114565,
+          "x": 223171098
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 223171098
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 5,
+          "path": "chapter.tex",
+          "start_byte": 4
+         }
+        ],
+        "text_end_byte": 5,
+        "text_start_byte": 4
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 5,
+          "top": 134114565,
+          "x": 228974694
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 8705136,
+          "x": 228974694
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 6,
+          "path": "chapter.tex",
+          "start_byte": 5
+         }
+        ],
+        "text_end_byte": 6,
+        "text_start_byte": 5
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 6,
+          "top": 134114565,
+          "x": 237679830
+         },
+         {
+          "height": 7196394,
+          "text_byte": 8,
+          "top": 134114565,
+          "x": 242322819
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 237679830
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 8,
+          "path": "chapter.tex",
+          "start_byte": 6
+         }
+        ],
+        "text_end_byte": 8,
+        "text_start_byte": 6
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 7689724,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 95,
+        "origin_x": 206717728
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 251,
+        "origin_x": 214407452
+       },
+       {
+        "advance_x": 4120658,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 98,
+        "origin_x": 219050440
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 109,
+        "origin_x": 223171098
+       },
+       {
+        "advance_x": 8705136,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 4,
+        "gid": 75,
+        "origin_x": 228974694
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 5,
+        "gid": 251,
+        "origin_x": 237679830
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "Résumé"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7406629,
+          "text_byte": 0,
+          "top": 134019242,
+          "x": 245805011
+         },
+         {
+          "height": 7406629,
+          "text_byte": 3,
+          "top": 134019242,
+          "x": 250443295
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7406629,
+          "top": 134019242,
+          "width": 4638284,
+          "x": 245805011
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 12,
+          "path": "chapter.tex",
+          "start_byte": 9
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 4638284,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 251,
+        "origin_x": 245805011
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "é"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7479755,
+          "text_byte": 0,
+          "top": 133946116,
+          "x": 253925486
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7479755,
+          "top": 133946116,
+          "width": 2925044,
+          "x": 253925486
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 17,
+          "path": "chapter.tex",
+          "start_byte": 13
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7479755,
+          "text_byte": 4,
+          "top": 133946116,
+          "x": 256850530
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7479755,
+          "top": 133946116,
+          "width": 4115955,
+          "x": 256850530
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 18,
+          "path": "chapter.tex",
+          "start_byte": 17
+         }
+        ],
+        "text_end_byte": 5,
+        "text_start_byte": 4
+       },
+       {
+        "carets": [
+         {
+          "height": 7479755,
+          "text_byte": 5,
+          "top": 133946116,
+          "x": 260966485
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7479755,
+          "top": 133946116,
+          "width": 5515797,
+          "x": 260966485
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 19,
+          "path": "chapter.tex",
+          "start_byte": 18
+         }
+        ],
+        "text_end_byte": 6,
+        "text_start_byte": 5
+       },
+       {
+        "carets": [
+         {
+          "height": 7479755,
+          "text_byte": 6,
+          "top": 133946116,
+          "x": 266482282
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7479755,
+          "top": 133946116,
+          "width": 5808301,
+          "x": 266482282
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 20,
+          "path": "chapter.tex",
+          "start_byte": 19
+         }
+        ],
+        "text_end_byte": 7,
+        "text_start_byte": 6
+       },
+       {
+        "carets": [
+         {
+          "height": 7479755,
+          "text_byte": 7,
+          "top": 133946116,
+          "x": 272290583
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7479755,
+          "top": 133946116,
+          "width": 8702006,
+          "x": 272290583
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 23,
+          "path": "chapter.tex",
+          "start_byte": 20
+         }
+        ],
+        "text_end_byte": 10,
+        "text_start_byte": 7
+       },
+       {
+        "carets": [
+         {
+          "height": 7479755,
+          "text_byte": 10,
+          "top": 133946116,
+          "x": 280992589
+         },
+         {
+          "height": 7479755,
+          "text_byte": 11,
+          "top": 133946116,
+          "x": 285630873
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7479755,
+          "top": 133946116,
+          "width": 4638284,
+          "x": 280992589
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 24,
+          "path": "chapter.tex",
+          "start_byte": 23
+         }
+        ],
+        "text_end_byte": 11,
+        "text_start_byte": 10
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 4115955,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 98,
+        "origin_x": 256850530
+       },
+       {
+        "advance_x": 5515797,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 63,
+        "origin_x": 260966485
+       },
+       {
+        "advance_x": 5808301,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 109,
+        "origin_x": 266482282
+       },
+       {
+        "advance_x": 8702006,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 4,
+        "gid": 124,
+        "origin_x": 272290583
+       },
+       {
+        "advance_x": 4638284,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 5,
+        "gid": 50,
+        "origin_x": 280992589
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "😀shuffle"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 289113065
+         },
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 134114565,
+          "x": 297818200
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 8705136,
+          "x": 289113065
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 28,
+          "path": "chapter.tex",
+          "start_byte": 25
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 8705136,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 124,
+        "origin_x": 289113065
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "ffl"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 301300392
+         },
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 134114565,
+          "x": 307103989
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 301300392
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 31,
+          "path": "chapter.tex",
+          "start_byte": 29
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 0
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 125,
+        "origin_x": 301300392
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "fi"
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 310586180
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 7254336,
+          "x": 310586180
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 33,
+          "path": "chapter.tex",
+          "start_byte": 32
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 134114565,
+          "x": 317840517
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5223293,
+          "x": 317840517
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 34,
+          "path": "chapter.tex",
+          "start_byte": 33
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 134114565,
+          "x": 323063809
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 8705136,
+          "x": 323063809
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 37,
+          "path": "chapter.tex",
+          "start_byte": 34
+         }
+        ],
+        "text_end_byte": 5,
+        "text_start_byte": 2
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 5,
+          "top": 134114565,
+          "x": 331768945
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 331768945
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 38,
+          "path": "chapter.tex",
+          "start_byte": 37
+         }
+        ],
+        "text_end_byte": 6,
+        "text_start_byte": 5
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 6,
+          "top": 134114565,
+          "x": 336411934
+         },
+         {
+          "height": 7196394,
+          "text_byte": 7,
+          "top": 134114565,
+          "x": 339313742
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 2901808,
+          "x": 336411934
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 39,
+          "path": "chapter.tex",
+          "start_byte": 38
+         }
+        ],
+        "text_end_byte": 7,
+        "text_start_byte": 6
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 7254336,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 114,
+        "origin_x": 310586180
+       },
+       {
+        "advance_x": 5223293,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 28,
+        "origin_x": 317840517
+       },
+       {
+        "advance_x": 8705136,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 124,
+        "origin_x": 323063809
+       },
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 50,
+        "origin_x": 331768945
+       },
+       {
+        "advance_x": 2901808,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 4,
+        "gid": 88,
+        "origin_x": 336411934
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "waffle."
+     },
+     {
+      "clusters": [
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 0,
+          "top": 134114565,
+          "x": 343956671
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 4642989,
+          "x": 343956671
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 71,
+          "path": "main.tex",
+          "start_byte": 70
+         }
+        ],
+        "text_end_byte": 1,
+        "text_start_byte": 0
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 1,
+          "top": 134114565,
+          "x": 348599660
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 348599660
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 72,
+          "path": "main.tex",
+          "start_byte": 71
+         }
+        ],
+        "text_end_byte": 2,
+        "text_start_byte": 1
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 2,
+          "top": 134114565,
+          "x": 354403256
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 5803597,
+          "x": 354403256
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 73,
+          "path": "main.tex",
+          "start_byte": 72
+         }
+        ],
+        "text_end_byte": 3,
+        "text_start_byte": 2
+       },
+       {
+        "carets": [
+         {
+          "height": 7196394,
+          "text_byte": 3,
+          "top": 134114565,
+          "x": 360206853
+         },
+         {
+          "height": 7196394,
+          "text_byte": 4,
+          "top": 134114565,
+          "x": 363108661
+         }
+        ],
+        "hit_rects": [
+         {
+          "height": 7196394,
+          "top": 134114565,
+          "width": 2901808,
+          "x": 360206853
+         }
+        ],
+        "sources": [
+         {
+          "end_byte": 74,
+          "path": "main.tex",
+          "start_byte": 73
+         }
+        ],
+        "text_end_byte": 4,
+        "text_start_byte": 3
+       }
+      ],
+      "font_id": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "font_size": 10446585,
+      "glyphs": [
+       {
+        "advance_x": 4642989,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 0,
+        "gid": 50,
+        "origin_x": 343956671
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 1,
+        "gid": 77,
+        "origin_x": 348599660
+       },
+       {
+        "advance_x": 5803597,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 2,
+        "gid": 47,
+        "origin_x": 354403256
+       },
+       {
+        "advance_x": 2901808,
+        "advance_y": 0,
+        "baseline_y": 141310959,
+        "cluster": 3,
+        "gid": 88,
+        "origin_x": 360206853
+       }
+      ],
+      "kind": "glyph_run",
+      "paint": {
+       "a": 1,
+       "b": 0,
+       "g": 0,
+       "r": 0
+      },
+      "text": "end."
+     }
+    ],
+    "number": 1,
+    "width": 641728512
+   }
+  ],
+  "project_id": "p",
+  "render_format": "display-list-v2",
+  "required_features": [
+   "glyph_run",
+   "rgba-srgb",
+   "cluster-actualtext"
+  ],
+  "revision": 1,
+  "text_extraction": "cluster-actualtext"
+ },
+ "protocol_version": 2,
+ "type": "display_list"
+}

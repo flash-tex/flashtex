@@ -17,7 +17,7 @@ import FlashTeXProtocol
 /// `set_fonts` (`crates/project-manifest` `Manifest::with_fonts`, the one
 /// TOML writer: everything else in the file is kept byte for byte) and the
 /// ordinary rooted save, then the manifest is re-read and the preview
-/// follows (ProjectManifest.refresh → ShellModel.manifestDidRefresh → EngineV3Session.manifestChanged).
+/// follows (ProjectManifest.refresh → ShellModel.manifestFontsDidChange).
 /// A project without a manifest and every row at "Class default" writes
 /// nothing. The document's own `\setmainfont` etc. always outrank the table.
 ///
@@ -209,7 +209,7 @@ final class ProjectFontsState {
         applies += 1
         opened = selection
         shown = false
-        // Re-read the table: a change recompiles (ShellModel.manifestDidRefresh).
+        // Re-read the table: a change recompiles (ShellModel.manifestFontsDidChange).
         model.manifest.refresh()
         let outcome = note(.applied(path: reply.path))
         model.navigationNote = selection.isClassDefault

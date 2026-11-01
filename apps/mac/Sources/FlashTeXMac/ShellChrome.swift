@@ -7,8 +7,8 @@ import FlashTeXProtocol
 /// count and the sidebar's outline staleness (ContentView.swift,
 /// DocumentTabBar.swift, WorkspaceSidebar.swift, WordCountStatusView.swift).
 ///
-/// Why: those views used to read `editorRevision`, the producer's status,
-/// the in-flight revision, latencies, `captureNote`, the result, `documents`…
+/// Why: those views used to read `editorRevision`, `workerStatus`,
+/// `inFlightRevision`, `latenciesMs`, `captureNote`, `result`, `documents`…
 /// directly, so every keystroke and every producer reply re-evaluated them —
 /// three to four whole-window SwiftUI transactions per keystroke, each
 /// re-laying out the hosting view (FT-071 sample, 2026-09-13: main thread
@@ -28,8 +28,7 @@ final class ShellChrome {
         var errors = 0, warnings = 0, gaps = 0
         var isEmpty: Bool { errors == 0 && warnings == 0 && gaps == 0 }
     }
-    /// `engineV3` while the engine session runs (`ShellModel.engineV3Enabled`), else `none`.
-    enum Route: Equatable { case none, engineV3 }
+    enum Route: Equatable { case fixture, controller, worker, none, engineV3 }
 
     // Status bar
     private(set) var editorRevision = 1
@@ -38,21 +37,27 @@ final class ShellChrome {
     private(set) var route: Route = .none
     private(set) var routeHelp = ""
     private(set) var problems = ProblemCounts()
-    /// `navigationNote ?? editorMarkReport.staleNote`.
+    /// `navigationNote ?? editorMarkReport.staleNote ?? explanationStatus`.
     private(set) var note: String?
     private(set) var captureNote: String?
+    private(set) var durableRevision: Int?
     /// `editorMarkReport.carried?.line` (the diagnostics list's retention note).
     private(set) var carriedLine: String?
 
     // Preview header
-    /// The engine has pages to show.
+    private(set) var previewSource: ShellModel.PreviewSource = .none
     private(set) var hasResult = false
+    private(set) var resultHelp = ""
+    private(set) var resultStatus: RuntimeV1.Status?
     private(set) var compiling = false
-    /// The engine's state line ("preparing the format…", "2 stale pages", a
-    /// failure), nil when the preview is current.
+    private(set) var historicalLabel: String?
+    /// The stale line ("editor at rN — compiling…", an output-bound banner), nil when the preview is current.
     private(set) var staleText: String?
     private(set) var staleHighlighted = false
     private(set) var loadError: String?
+    private(set) var fixtureName: String?
+    private(set) var capabilityNotes: [String] = []
+    private(set) var acceptedCapabilities: [String] = []
 
     // Document tab bar / sidebar
     private(set) var activeTextBytes = 0
@@ -68,23 +73,37 @@ final class ShellChrome {
         return 0.1
     }()
 
-    /// The preview's state is the engine session's (EngineV3Session.swift):
-    /// preparing the format, compiling, stale pages or a failure.
-    private func refreshEngineV3(_ s: EngineV3Session) {
+    /// `compiling` stays on for at least one interval so a fast reply does
+    /// not flicker the indicator (a refresh that finds the request answered
+    /// keeps it on once and asks for one more refresh).
+    @ObservationIgnored private var compilingSeen = false
+
+    /// With the engine-v3 preview on (EngineV3Session.swift), the preview's
+    /// state is the v3 session's, never the old worker's: no FIXTURE badge,
+    /// no "no producer attached"; preparing the format, compiling, stale
+    /// pages or a failure instead.
+    private func refreshEngineV3(_ s: EngineV3Session) -> Bool {
         func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ShellChrome, T>, _ value: T) {
             if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
         }
         set(\.route, .engineV3)
         set(\.routeHelp, s.environmentNote.isEmpty ? (s.engineName == "XeLaTeX" ? "XeLaTeX-compatible engine (flashtex-host-unicode)" : "pdfLaTeX-compatible engine (flashtex-host)") : s.environmentNote)
+        set(\.previewSource, .none)
+        set(\.historicalLabel, nil)
         set(\.hasResult, s.pageCount > 0)
-        // The engine's own latency (gap C22): a keystroke to its page on
-        // screen (EngineV3Latency), median over the last 200 samples.
+        set(\.resultStatus, nil)
+        set(\.resultHelp, "")
+        // Nothing of the old engine's negotiation under v3 (one engine at a
+        // time). The latency is v3's own (gap C22): a keystroke to its page
+        // on screen (EngineV3Latency), median over the last 200 samples.
         let ms = s.latency.samples.suffix(200).map(\.ms) // the recent typing: a bounded sort per refresh
         set(\.lastLatencyMs, ms.last)
         if let last = ms.last {
             let median = ms.sorted()[ms.count / 2]
             set(\.latencyHelp, String(format: "Last keystroke to its page on screen %.0f ms (median %.0f over %d)", last, median, ms.count))
         } else { set(\.latencyHelp, "") }
+        set(\.capabilityNotes, [])
+        set(\.acceptedCapabilities, [])
         set(\.compiling, s.compiling || { if case .starting = s.phase { true } else { false } }())
         let text: String?
         var highlighted = false
@@ -102,26 +121,12 @@ final class ShellChrome {
         }
         set(\.staleText, text)
         set(\.staleHighlighted, highlighted)
-    }
-
-    /// The preview fields while the engine session is off (under XCTest until
-    /// a test turns it on): nothing compiles, nothing is shown.
-    private func refreshEngineOff() {
-        func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ShellChrome, T>, _ value: T) {
-            if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
-        }
-        set(\.route, .none)
-        set(\.routeHelp, "")
-        set(\.hasResult, false)
-        set(\.lastLatencyMs, nil)
-        set(\.latencyHelp, "")
-        set(\.compiling, false)
-        set(\.staleText, nil)
-        set(\.staleHighlighted, false)
+        return false
     }
 
     /// Copies what the chrome shows; assigns a field only when it changed.
-    /// Returns whether another refresh is wanted (the include closure is
+    /// Returns whether another refresh is wanted (the compiling indicator's
+    /// minimum on-time under the old engine, or the include closure is
     /// waiting for the texts to settle). `offMain`: once the typing has
     /// paused, the include closure is made on `closureQueue` and published
     /// when done (ShellModel's throttled refresh); a direct call makes it here.
@@ -133,10 +138,12 @@ final class ShellChrome {
         set(\.editorRevision, model.editorRevision)
         let (errors, warnings, gaps) = MainThreadProbe.time("chrome.problems") { model.engineV3Problems.counts } // made with the rows (ProblemsModel)
         set(\.problems, ProblemCounts(errors: errors, warnings: warnings, gaps: gaps))
-        set(\.note, MainThreadProbe.time("chrome.marks") { model.navigationNote ?? model.editorMarkReport.staleNote })
+        set(\.note, MainThreadProbe.time("chrome.marks") { model.navigationNote ?? model.editorMarkReport.staleNote ?? model.explanationStatus })
         set(\.captureNote, model.captureNote)
+        set(\.durableRevision, model.controllerState.durable[model.activePath]?.revision)
         set(\.carriedLine, model.editorMarkReport.carried?.line)
         set(\.loadError, model.loadError)
+        set(\.fixtureName, model.fixtureURL?.lastPathComponent)
 
         let text = model.activeText
         set(\.activeTextBytes, text.utf8.count) // O(1); its UTF-16 count (unread) walked a non-ASCII text per refresh
@@ -172,11 +179,14 @@ final class ShellChrome {
         }
         settleNext = false
         set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
-        // The preview's route, pages and stale line: each field assigned once
-        // per refresh, so nothing flips back and forth and re-evaluates the
-        // status bar and the preview header for nothing (P5-KEYSTROKE-MAIN).
-        if model.engineV3Enabled { refreshEngineV3(model.engineV3) } else { refreshEngineOff() }
-        return closureWaits
+        // The preview's route, result and stale line come from one engine or
+        // the other, each field assigned once per refresh: assigning the old
+        // engine's value and then the v3 value flipped `route`, `compiling`…
+        // twice per refresh, and each flip re-evaluated the status bar and
+        // the preview header although nothing they show changed
+        // (P5-KEYSTROKE-MAIN).
+        if model.engineV3Enabled { compilingSeen = false; return refreshEngineV3(model.engineV3) || closureWaits }
+        return refreshOldEngine(from: model) || closureWaits
     }
 
     /// The include closure's text revision (`documentsRevision`), and when
@@ -187,6 +197,46 @@ final class ShellChrome {
     /// The next refresh brings the closure up to date whatever the typing (`ShellModel.flushChrome`).
     @ObservationIgnored var settleNext = false
     static let closureQuietNs: UInt64 = 600_000_000
+
+    /// The preview fields under the old engine (`refresh`).
+    private func refreshOldEngine(from model: ShellModel) -> Bool {
+        func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ShellChrome, T>, _ value: T) {
+            if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+        }
+        set(\.lastLatencyMs, model.lastLatencyMs)
+        if let ms = model.lastLatencyMs, let med = model.medianLatencyMs {
+            set(\.latencyHelp, String(format: "Last compile latency %.0f ms (median %.0f over %d)", ms, med, model.latenciesMs.count))
+        } else { set(\.latencyHelp, "") }
+        let route: Route = model.isFixture ? .fixture : model.controllerAttached ? .controller : model.workerAttached ? .worker : .none
+        set(\.route, route)
+        set(\.routeHelp, model.isFixture ? "Not a real compile." : (model.controllerAttached ? model.controllerStatus : model.workerStatus))
+        set(\.previewSource, model.previewSource)
+        set(\.hasResult, model.result != nil)
+        if let r = model.result {
+            set(\.resultHelp, "result id \(model.resultID ?? "?") · project \(r.projectId) · revision \(r.revision) · pdf: \(r.pdfPath ?? "none")")
+        } else { set(\.resultHelp, "") }
+        set(\.resultStatus, model.result?.status)
+        let inFlight = model.inFlightRevision != nil
+        var again = false
+        if inFlight { set(\.compiling, true); compilingSeen = true }
+        else if compilingSeen { compilingSeen = false; again = true } // one more interval on, then off
+        else { set(\.compiling, false) }
+        set(\.historicalLabel, model.historicalPreview?.label)
+        if model.result != nil, model.historicalPreview == nil, model.previewIsStale {
+            let rev = model.editorRevision
+            set(\.staleText, model.outputBound?.banner
+                ?? (model.workerAttached
+                    ? (model.autoCompile ? "editor at r\(rev) — compiling…" : "editor at r\(rev) — ⌘B to compile")
+                    : "editor at r\(rev) — no producer attached"))
+            set(\.staleHighlighted, model.outputBound != nil || !model.workerAttached)
+        } else {
+            set(\.staleText, nil)
+            set(\.staleHighlighted, false)
+        }
+        set(\.capabilityNotes, model.capabilityNotes)
+        set(\.acceptedCapabilities, model.negotiation.accepted)
+        return again
+    }
 
     /// The include closure made off the main thread (`refresh(offMain:)`):
     /// one serial queue; a job's result is published only if no later job

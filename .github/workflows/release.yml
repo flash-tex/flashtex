@@ -103,14 +103,6 @@ jobs:
           cargo build --release --locked -p flashtex-engine --bin flashtex-host
           cargo build --release --locked -p flashtex-build --bin flashtex-v3
           ls -l target/release/flashtex-host target/release/flashtex-v3
-      - name: Build the old CLI the CLI tarball still ships (release; until S7)
-        # The app no longer bundles the old engine's helpers (retirement
-        # stage S6, #1236), so build-helpers.sh does not build them; the CLI
-        # tarball keeps the old `flashtex` and its helpers until S7 renames
-        # flashtex-v3 to flashtex (RQ6). package-cli.sh finds them in target/.
-        run: |
-          set -euo pipefail
-          cargo build --release --locked -p flashtex-cli -p flashtex-render-pipeline -p flashtex-compiler -p flashtex-pdf
       - name: Build Unicode mode's host (release), when the tree has it
         # crates/flashtex-xetex is its own workspace (own Cargo.lock and
         # target/). Once it has flashtex-host-unicode (#1732) the app ships

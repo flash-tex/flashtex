@@ -7,8 +7,9 @@
 # with `open` and eventually granted such permissions.
 #
 # Usage: apps/mac/scripts/make-app.sh [--debug] [--version <x.y.z>] [--helper-root <repo>]
-#          [--bridge <path>] [--ledger <path>] [--project-files <path>]
-#          [--engine-host <path>] [--require-engine-host]
+#          [--cli <path>] [--compiler <path>] [--pdf <path>] [--bridge <path>] [--ledger <path>]
+#          [--render <path>] [--pdf-exact <path>] [--controller <path>] [--project-files <path>]
+#          [--explain <path>] [--engine-host <path>] [--require-engine-host]
 #          [--engine-host-unicode <path>]
 #          [--source-sha <key>=<sha>]
 #          [--sign <identity>] [--entitlements <file>] [--notarize <keychain-profile>]
@@ -91,13 +92,19 @@ REQUIRE_ENGINE_HOST=0
 # executable name, crate directory (relative to --helper-root), CLI flag.
 # The bridge is additionally built on demand when missing (see below); the
 # others are optional and skipped when not built or passed.
-# The old engine's helpers (cli, compiler, pdf, render, pdf_exact), the
-# preview controller and explain left in retirement stage S6 (#1236): the app
-# no longer runs them. The engine hosts are staged below (Contents/Helpers).
 HELPER_TABLE=(
+  # Staged as flashtex-cli: on a case-insensitive volume "flashtex" would
+  # overwrite the app executable "FlashTeX" in the same directory.
+  "cli|flashtex-cli|flashtex-cli|--cli"
+  "compiler|flashtex-compiler|compiler|--compiler"
+  "pdf|flashtex-pdf|pdf|--pdf"
   "bridge|flashtex-bridge|bridge|--bridge"
   "edit_ledger|flashtex-edit-ledger|edit-ledger|--ledger"
+  "render|flashtex-render|render-pipeline|--render"
+  "pdf_exact|flashtex-pdf-exact|pdf|--pdf-exact"
+  "preview_controller|flashtex-preview-controller|preview-controller|--controller"
   "project_files|flashtex-project-files|project-files|--project-files"
+  "explain|flashtex-explain|diagnostic-explanations|--explain"
 )
 # Explicit --<flag> <path> overrides as "key=path" (bash 3.2: no assoc arrays).
 HELPER_OVERRIDES=()
@@ -146,7 +153,7 @@ while [[ $# -gt 0 ]]; do
       APP_VERSION="${2:?--version needs x.y.z}"
       shift 2
       ;;
-    --bridge|--ledger|--project-files)
+    --cli|--compiler|--pdf|--bridge|--ledger|--render|--pdf-exact|--controller|--project-files|--explain)
       key="$(helper_key_for_flag "$1")"
       HELPER_OVERRIDES+=("$key=${2:-}")
       shift 2
@@ -193,7 +200,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --source-sha)
       [[ "${2:-}" == *=* ]] || die_early "--source-sha needs <key>=<sha>"
-      [[ "${2%%=*}" =~ ^[a-z_]+$ ]] || die_early "--source-sha: component key must be a components.json key such as bridge"
+      [[ "${2%%=*}" =~ ^[a-z_]+$ ]] || die_early "--source-sha: component key must be a components.json key such as render"
       [[ "${2#*=}" =~ ^[0-9a-f]{7,40}$ ]] || die_early "--source-sha: <sha> must be 7-40 hex characters"
       HELPER_SHA_OVERRIDES+=("$2")
       shift 2
@@ -276,9 +283,8 @@ SUPPORTED_LATEX_JSON="$MAC_DIR/Sources/FlashTeXMac/Resources/supported-latex.jso
 "$SUPPORTED_LATEX_SYNC" --check --root "$REPO_ROOT" || die "bundled supported-latex.json is stale; run apps/mac/scripts/sync-supported-latex.sh and commit"
 
 # --- Pre-flight: pinned rooted TFM metrics must verify before the build -------
-# GH36: the bundle's rooted texmf tree of Latin Modern metrics (staged for the
-# old engine's flashtex-render; S7 decides whether it stays, retirement plan
-# §1.4); a flat Fonts directory or the build machine's TeX cannot stand in.
+# GH36: flashtex-render loads its required metrics only from a rooted texmf
+# tree; a flat Fonts directory or the build machine's TeX cannot stand in.
 BUNDLE_TEXMF_ROOT="${FLASHTEX_BUNDLE_TEXMF_ROOT:-$MAC_DIR/Fonts/texmf}"
 BUNDLE_TEXMF_TOOL="$SCRIPT_DIR/bundle-texmf.py"
 [[ -f "$BUNDLE_TEXMF_TOOL" ]] || die "missing $BUNDLE_TEXMF_TOOL"
@@ -501,6 +507,8 @@ for row in "${HELPER_TABLE[@]}"; do
     target_dir="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$HELPER_ROOT/crates/$crate" 2>/dev/null)" \
       || target_dir="$HELPER_ROOT/crates/$crate/target"
     default="$target_dir/release/$name"
+    # The CLI crate builds "flashtex"; it is staged under a distinct name.
+    [[ "$key" == "cli" ]] && default="$target_dir/release/flashtex"
     if [[ "$key" == "bridge" && ! -f "$default" && -f "$HELPER_ROOT/crates/$crate/Cargo.toml" ]]; then
       echo "    $name not built; building it (cargo build --release in crates/$crate)…"
       if (cd "$HELPER_ROOT/crates/$crate" && cargo build --release); then
@@ -515,7 +523,8 @@ for row in "${HELPER_TABLE[@]}"; do
     if [[ -f "$default" && -f "$HELPER_ROOT/crates/$crate/Cargo.toml" ]] \
       && [[ -n "$(find "$HELPER_ROOT/crates/$crate" -path '*/target' -prune -o \( -name '*.rs' -o -name Cargo.toml \) -newer "$default" -print -quit 2>/dev/null)" ]]; then
       echo "    $name is older than crates/$crate; rebuilding it (cargo build --release)…"
-      (cd "$HELPER_ROOT/crates/$crate" && cargo build --release --bin "$name") \
+      if [[ "$key" == "cli" ]]; then build_args=(--bin flashtex); else build_args=(--bin "$name"); fi
+      (cd "$HELPER_ROOT/crates/$crate" && cargo build --release "${build_args[@]}") \
         || echo "    warning: rebuilding $name failed; bundling the stale build" >&2
     fi
     [[ -f "$default" ]] && src="$default"

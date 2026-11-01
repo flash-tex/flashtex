@@ -296,7 +296,7 @@ extension ShellModel {
     }
 
     private func noteOccurrence(_ k: Int, of group: EditorDiagnostics.Group, in diags: [RuntimeV1.Diagnostic], index: Int) {
-        if let source = markSource, let id = EditorDiagnostics.identity(resultID: source.id, index: index, in: source.result) {
+        if let result, let id = EditorDiagnostics.identity(resultID: resultID, index: index, in: result) {
             currentDiagnosticID = id.key
         }
         let label = EditorDiagnostics.occurrenceLabel(k, of: group, in: diags, texts: compiledDocuments)
@@ -389,9 +389,9 @@ extension ShellModel {
     /// interval ends. `nowNs` is injectable so tests drive the clock.
     func noteCompileCompletedForVoiceOver(nowNs: UInt64 = MonotonicClock.nowNs()) {
         // The call comes from the host's DONE (EngineV3Session), after its
-        // rows are published.
-        guard engineV3Enabled else { resetDiagnosticsAnnouncer(); return }
-        let summary = engineV3Problems.spokenSummary
+        // rows are published, or from the old engine's result.
+        guard result != nil || engineV3Enabled else { resetDiagnosticsAnnouncer(); return }
+        let summary = engineV3Enabled ? engineV3Problems.spokenSummary : EditorDiagnostics.spokenSummary(displayedDiagnostics)
         if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) { announceDiagnostics(message) }
         armDiagnosticsFlushIfNeeded(nowNs: nowNs)
     }

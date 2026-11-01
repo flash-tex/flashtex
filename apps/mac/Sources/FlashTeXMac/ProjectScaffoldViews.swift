@@ -197,7 +197,8 @@ struct ProjectScaffoldSheets: ViewModifier {
 extension ProjectTemplate {
     /// VoiceOver label of one Template option in the New Project sheet: the
     /// display name plus the description, reusing the template's own strings
-    /// (a pure rule the view calls, pinned by `ProjectScaffoldVoiceOverTests`
+    /// (mirrors `ProjectSearch.accessibilityLabel(index:count:match:)` — a
+    /// pure rule the view calls, pinned by `ProjectScaffoldVoiceOverTests`
     /// because SwiftUI materialises labels only for an assistive client).
     var accessibilityLabel: String { "\(title), \(summary)" }
 }

@@ -5,10 +5,9 @@ import SwiftUI
 // M5): the status bar's mode item and View > Mode for This Document, the
 // switch, which writes `[project] mode` to flashtex.toml (through the
 // project-files helper, `set_mode`; the app never writes TOML itself) only
-// when the user chooses it, and the warning when the document needs Unicode
-// mode while its mode is set to Classic. The mode itself is resolved by
-// EngineV3Mode.swift; a document nothing sets the mode of is routed to
-// Unicode mode when it needs it (UnicodeFonts.swift).
+// when the user chooses it, and the suggestion when the document needs
+// Unicode mode. The mode itself is resolved by EngineV3Mode.swift; the
+// engine that typesets (new or compatibility) is still EngineChoice.swift's.
 
 extension ShellModel {
     /// The open document's mode, and what chose it.
@@ -39,19 +38,19 @@ extension ShellModel {
         return nil
     }
 
-    /// The warning that the document needs Unicode mode while it is in
-    /// Classic mode (set so in flashtex.toml, by FLASHTEX_MODE or a
-    /// `% !TEX program` line; a mode nothing sets is routed instead): from
-    /// the last preamble scan and the host's report, no scan on a redraw.
+    /// The suggestion to switch to Unicode mode: the document (its preamble,
+    /// or a Classic run's own error) needs it, while it is in Classic mode.
+    /// (From the engine choice's rule, resolved when the document opens or
+    /// changes, and the host's report: no scan on a redraw.)
     var unicodeModeSuggestion: UnicodeFontsNeed? {
         guard documentMode.mode == .classic else { return nil }
-        if let s = unicodeFontsScan, s.entry == project.entryPath, let n = s.need { return n }
+        if case .unicodeFonts(let need)? = engineChoice.blocker { return need }
         return engineHostNeedsUnicode.flatMap { $0.document == documentURL ? $0.need : nil }
     }
 
     /// Switches the project to `mode` by writing `[project] mode` (creating
     /// flashtex.toml next to the entry when there is none); the manifest is
-    /// read again (ShellModel.manifestDidRefresh)
+    /// read again, the engine choice follows (ShellModel.manifestDidRefresh)
     /// and the host restarts in the mode. Nil, or why it was not written.
     @discardableResult
     func setProjectMode(_ mode: EngineV3Mode) -> String? {
@@ -89,6 +88,7 @@ extension ShellModel {
             }
         }
         manifest.refresh()
+        engineFallbackDismissed = false
         let message = mode == .unicode
             ? "Unicode mode: this project is typeset like XeLaTeX (flashtex.toml)."
             : "Classic mode: this project is typeset like pdfLaTeX (flashtex.toml)."
@@ -131,7 +131,6 @@ extension EngineV3Mode.Resolution {
         case "FLASHTEX_MODE": "Set by FLASHTEX_MODE"
         case "flashtex.toml": "Set in flashtex.toml"
         case "% !TEX program": "From the document's % !TEX program line"
-        case EngineV3Mode.detectedSource: "Detected: the document needs Unicode fonts, or flashtex.toml sets [fonts] (not saved in flashtex.toml)"
         default: "Default (no mode set)"
         }
     }
@@ -182,8 +181,6 @@ extension EngineV3Mode.Resolution {
             return "Set by % !TEX program in \(file). Choosing a mode here saves it in \(ProjectManifest.fileName), which takes precedence."
         case "default":
             return "Default (no mode set). Choosing a mode here saves it in \(ProjectManifest.fileName)."
-        case EngineV3Mode.detectedSource:
-            return "\(sourceLine). Choosing a mode here saves it in \(ProjectManifest.fileName), which takes precedence."
         default:
             return sourceLine
         }
@@ -220,5 +217,60 @@ struct ModeMenuItems: View {
         if let n = model.unicodeModeSuggestion {
             Text("This document uses \(n.what), which needs Unicode mode.")
         }
+    }
+}
+
+/// Over the preview: the document needs Unicode mode (its preamble, or a
+/// Classic run stopped on fontspec's error), or the project sets `[fonts]`,
+/// which Classic mode does not apply; one click switches. Dismissed until
+/// the next open or change.
+struct UnicodeModeSuggestionBanner: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        if let s = Self.message(model), !model.engineFallbackDismissed, model.unicodeModeAvailable, model.modeSwitchRefusal == nil {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
+                Image(systemName: "character.book.closed")
+                    .foregroundStyle(DS.Colors.severityWarning)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text(s.headline).font(DS.Fonts.secondary.weight(.semibold))
+                    Text(s.detail).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Button("Switch to Unicode Mode") { model.setProjectMode(.unicode) }
+                    .ideDefault()
+                    .help("Writes mode = \"unicode\" to flashtex.toml: the project is then typeset like XeLaTeX.")
+                    .accessibilityIdentifier("mode.suggestion.switch")
+                Button("Not Now") { model.engineFallbackDismissed = true }
+                    .ideSecondary()
+            }
+            .padding(DS.Space.m)
+            .background(DS.Colors.surfaceSecondary)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(s.headline + " " + s.detail)
+            .accessibilityIdentifier("mode.suggestion")
+        }
+    }
+
+    struct Message: Equatable { var headline: String; var detail: String }
+
+    /// What the banner says, if it shows: a document that needs Unicode
+    /// mode, else `[fonts]` in a Classic project.
+    @MainActor static func message(_ model: ShellModel) -> Message? {
+        // Classic chosen in flashtex.toml (or by FLASHTEX_MODE, or a
+        // `% !TEX program` line) is the user's choice: no suggestion.
+        let mode = model.documentMode
+        guard mode.mode == .classic, mode.source == "default" else { return nil }
+        if let n = model.unicodeModeSuggestion {
+            return Message(headline: "This document uses \(n.what), which needs Unicode mode.",
+                           detail: "Classic mode is pdfLaTeX-compatible and cannot load OpenType fonts. Unicode mode typesets the project like XeLaTeX; until you switch, the compatibility engine typesets it.")
+        }
+        if case .projectFonts(let roles)? = model.manifest.currentSnapshot.flatMap({ EngineChoice.blocker(manifest: $0.manifest) }) {
+            return Message(headline: "[fonts] is not applied in Classic mode.",
+                           detail: "flashtex.toml sets \(roles.joined(separator: ", ")). Classic mode typesets with TeX's fonts, like pdfLaTeX; Unicode mode applies [fonts] (as fontspec would). Until you switch, the compatibility engine applies them.")
+        }
+        return nil
     }
 }

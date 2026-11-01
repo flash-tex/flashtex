@@ -66,6 +66,7 @@ final class SourceEditorViewTests: XCTestCase {
                 selection: model.selection,
                 pendingEdit: model.pendingEdit,
                 marks: model.editorMarks,
+                result: model.result,
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { model.caretLengthUTF16 = $0.length },
                 onEditApplied: { edit, text in
@@ -383,13 +384,13 @@ final class SourceEditorViewTests: XCTestCase {
         defer { window.orderOut(nil) }
         let co = try XCTUnwrap(probe.coordinator)
         let lm = try XCTUnwrap(tv.layoutManager)
-        // Diagnostics through the model: the engine's rows, pointing at the buffer it compiled.
+        // Diagnostics through the model: a result whose diagnostics point at the buffer.
         let last = text.utf8.count - 20
         let diagnostics = (0..<200).map { i in
             RuntimeV1.Diagnostic(severity: .warning, message: "d\(i)", source: .init(path: "main.tex", startByte: i == 199 ? last : i * 200, endByte: (i == 199 ? last : i * 200) + 4), recovery: nil)
         }
-        model.engineV3Diagnostics = diagnostics
-        model.setEngineV3CompiledDocuments(["main.tex": text])
+        model.result = RuntimeV1.CompileResult(projectId: "p", revision: model.editorRevision, status: .ok, pages: [],
+                                               diagnostics: diagnostics, pdfPath: nil)
         try await waitUntil("marks painted") { co.marks.paints >= 1 }
         // Byte ranges that land inside a multi-byte scalar are not marks.
         XCTAssertEqual(co.marks.marks, model.editorMarks)
@@ -671,18 +672,23 @@ final class SourceEditorViewTests: XCTestCase {
 
     func testCompositionReachesTheModelOnlyWhenCommitted() async throws {
         let model = ShellModel()
+        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
+        XCTAssertTrue(model.workerAttached)
         model.replaceProject(entryText: "ab\n")
         let probe = Probe()
         let (window, tv) = try await host(model, probe: probe)
         defer { window.orderOut(nil) }
         let co = try XCTUnwrap(probe.coordinator)
+        model.compile()
+        try await waitUntil("first compile") { model.inFlightRevision == nil && model.result?.revision == model.editorRevision }
+        TypingBench.shared.reset() // from here every compile result is recorded by revision
         tv.setSelectedRange(NSRange(location: 2, length: 0))
         try await turn()
         let rev = model.editorRevision
         let spokenBefore = co.announcements.count
 
         // Three composition steps (Japanese-style): the view shows the marked
-        // text, the model holds the committed text, no revision.
+        // text, the model holds the committed text, no revision, no compile.
         for (i, step) in ["か", "かん", "漢"].enumerated() {
             compose(tv, step)
             XCTAssertTrue(tv.hasMarkedText())
@@ -698,8 +704,10 @@ final class SourceEditorViewTests: XCTestCase {
         }
         try await turn()
         XCTAssertEqual(co.announcements.count, spokenBefore, "composition steps are not announced")
+        XCTAssertNil(model.inFlightRevision)
+        XCTAssertTrue(TypingBench.shared.recorder.compilesMs.isEmpty, "no compile per composition step")
 
-        // Commit: exactly one text change, one revision.
+        // Commit: exactly one text change, one revision, one compile.
         tv.insertText("漢字", replacementRange: Self.noReplacement)
         XCTAssertFalse(tv.hasMarkedText())
         XCTAssertFalse(co.composing)
@@ -708,10 +716,16 @@ final class SourceEditorViewTests: XCTestCase {
         XCTAssertEqual(model.editorRevision, rev + 1)
         XCTAssertEqual(model.caretUTF16, 4)
         XCTAssertEqual(model.caretByte, 2 + "漢字".utf8.count)
+        try await waitUntil("commit compiled") { model.inFlightRevision == nil && model.result?.revision == rev + 1 }
+        XCTAssertEqual(Array(TypingBench.shared.recorder.compilesMs.keys), [rev + 1], "one compile, for the committed revision")
         try await turn()
         XCTAssertEqual(co.announcements.count, spokenBefore, "the commit is a typing step, not a caret move")
 
-        // Navigation during a composition waits for it to end.
+        // Navigation during a composition waits for it to end. (Without the
+        // worker: the model drops `selection` when a compile result lands, so a
+        // navigation still deferred when the commit's result arrives is
+        // invalidated by the model, not applied late by the editor.)
+        model.detachWorker()
         compose(tv, "x")
         model.selection = .init(path: "main.tex", nsRange: NSRange(location: 0, length: 2), token: 1)
         try await turn()

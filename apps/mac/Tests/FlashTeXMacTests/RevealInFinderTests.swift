@@ -28,6 +28,7 @@ final class RevealInFinderTests: XCTestCase {
         let project = try TempProject()
         defer { project.remove() }
         let model = ShellModel()
+        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         _ = await model.project.openDiscoveredIncludes() // opens chapter.tex
         let root = model.project.projectRoot
@@ -44,6 +45,7 @@ final class RevealInFinderTests: XCTestCase {
         // `projectRoot` is nil (ProjectDocuments.swift) — the same state
         // `testDirectModeNeedsAProjectRoot` in ProjectDocumentsTests exercises.
         let model = ShellModel()
+        model.detachWorker()
         model.replaceProject(entryText: "\\input{chapter}\n")
         XCTAssertNil(model.documentURL)
         XCTAssertNil(model.project.projectRoot)
@@ -120,6 +122,7 @@ final class RevealInFinderTests: XCTestCase {
         let project = try TempProject()
         defer { project.remove() }
         let model = ShellModel()
+        model.detachWorker()
         XCTAssertEqual(model.openTex(at: project.main), .opened)
         _ = await model.project.openDiscoveredIncludes() // opens chapter.tex
         var seen: [[URL]] = []
@@ -143,6 +146,7 @@ final class RevealInFinderTests: XCTestCase {
         RevealInFinder.activateFileViewerSelecting = { _ in callCount += 1 }
         defer { RevealInFinder.activateFileViewerSelecting = previous }
         let model = ShellModel()
+        model.detachWorker()
         model.replaceProject(entryText: "\\input{chapter}\n") // never saved: no project root
 
         model.showActiveDocumentInFinder()

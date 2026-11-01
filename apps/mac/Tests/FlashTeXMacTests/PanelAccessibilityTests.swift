@@ -7,9 +7,9 @@ import HostedWindows
 @testable import FlashTeXMac
 
 /// Keyboard-only traversal of the secondary panels: the Settings scene
-/// (`EditorPreferencesView`, ⌘,). (The Durable History and Find in Project
-/// windows were the old engine's helper features and retired with it,
-/// #1236 S6.) Each panel is hosted off-screen through `NSHostingView` in a window
+/// (`EditorPreferencesView`, ⌘,), the Durable History window
+/// (`EditHistoryPanel`) and the Find in Project window (`ProjectSearchPanel`,
+/// ⌘⇧F). Each panel is hosted off-screen through `NSHostingView` in a window
 /// that is never made key (the tests must not steal focus).
 ///
 /// What is measured in this in-process, never-key host:
@@ -20,6 +20,8 @@ import HostedWindows
 ///   (top to bottom, left to right) — the move SwiftUI's Tab makes for such
 ///   controls — with the previous control resigning;
 /// - SwiftUI wired each of them into its focus bridge (`nextKeyView` is set);
+/// - the search panel's `@FocusState` puts the literal field's editor in as
+///   first responder when the window opens;
 /// - opening a panel while the editor text view is first responder in its
 ///   own window, focusing the panel's first control, then closing the panel
 ///   leaves the editor text view as first responder (`window.firstResponder`
@@ -30,7 +32,7 @@ import HostedWindows
 /// `nextValidKeyView`/`previousValidKeyView` return nil for every control of
 /// a non-key hosting window (SwiftUI's `_NSCoreHostingView` bridge answers
 /// only for a key window), SwiftUI-native buttons (`Button("Restore
-/// Defaults")`, …) are not AppKit views at all, and
+/// Defaults")`, Search, Go to Match, …) are not AppKit views at all, and
 /// SwiftUI materialises its accessibility tree (labels, hints, identifiers)
 /// only for an assistive client — the AX API on this process answers
 /// kAXErrorAPIDisabled (-25208) because Accessibility permission is not
@@ -114,7 +116,7 @@ final class PanelAccessibilityTests: XCTestCase {
         var body: some View {
             SourceEditorView(
                 text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
-                selection: model.selection, pendingEdit: model.pendingEdit, marks: model.editorMarks,
+                selection: model.selection, pendingEdit: model.pendingEdit, marks: model.editorMarks, result: model.result,
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { model.caretLengthUTF16 = $0.length },
                 onEditApplied: { edit, text in model.editApplied(edit, newText: text) })
@@ -234,5 +236,47 @@ final class PanelAccessibilityTests: XCTestCase {
         // The table's shortcut is the system Settings item.
         XCTAssertEqual(PanelFocusOrder.panels[0].command.entry.shortcuts, ["⌘,"])
         assertFocusRestoration(panel: window, editor: editor, name: "Settings")
+    }
+
+    // MARK: Durable History
+
+    func testHistoryPanelListTakesKeyboardFocusAndTheEditorKeepsIt() async throws {
+        let model = ShellModel()
+        let editor = try await hostEditor(model)
+        let window = try await host(EditHistoryPanel().environment(model), title: "Durable History", size: NSSize(width: 420, height: 400))
+        // Without a preview controller every button is disabled (the table says
+        // "controller attached"); the stacks list is the keyboard's landing spot.
+        let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Durable History", atLeast: 1)
+        XCTAssertTrue(controls.contains { $0 is NSTableView }, "Durable History: the undo/redo list takes focus")
+        XCTAssertFalse(model.controllerAttached)
+        XCTAssertFalse(controls.contains { $0 is NSButton }, "no enabled button without a controller")
+        XCTAssertEqual(PanelFocusOrder.panels[1].controls.filter { $0.when == "controller attached" }.count, 3)
+        assertFocusRestoration(panel: window, editor: editor, name: "Durable History")
+    }
+
+    // MARK: Find in Project (⌘⇧F)
+
+    func testSearchPanelFocusesTheLiteralFieldControlsTakeKeyboardFocusAndTheEditorKeepsIt() async throws {
+        let model = ShellModel()
+        let editor = try await hostEditor(model)
+        let window = try await host(ProjectSearchPanel().environment(model), title: "Find in Project", size: NSSize(width: 760, height: 600))
+        // `@FocusState` on appear: the literal field's editor is first responder.
+        let deadline = Date().addingTimeInterval(3)
+        while KeyViewWalk.owner(of: window.firstResponder) as? NSTextField == nil, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let initial = KeyViewWalk.owner(of: window.firstResponder) as? NSTextField
+        XCTAssertNotNil(initial, "Find in Project: the literal field takes focus on open (first responder: \(String(describing: window.firstResponder)))")
+        XCTAssertEqual(initial?.placeholderString, "Find in project (case-sensitive literal, no regex)")
+        // Literal field, scope pop-up, match-limit stepper, replacement field (no results list without a search).
+        let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Find in Project", atLeast: 4)
+        let fields = controls.compactMap { $0 as? NSTextField }
+        XCTAssertEqual(fields.map(\.placeholderString), ["Find in project (case-sensitive literal, no regex)", "Replace with (exact bytes)"],
+                       "literal field before the replacement field")
+        XCTAssertTrue(controls.first === initial, "the literal field is the first control in reading order")
+        XCTAssertTrue(controls.contains { String(describing: type(of: $0)).contains("Popup") || String(describing: type(of: $0)).contains("PopUp") })
+        XCTAssertTrue(controls.contains { String(describing: type(of: $0)).contains("Stepper") })
+        XCTAssertEqual(PanelFocusOrder.panels[2].command.entry.shortcuts, ["⌘⇧F"])
+        assertFocusRestoration(panel: window, editor: editor, name: "Find in Project")
     }
 }

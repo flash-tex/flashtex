@@ -112,7 +112,7 @@ By section, 2026-10-21:
 | # | Feature | main `0752115a1` | Evidence / test |
 |---|---|---|---|
 | A1 | ⌘B, the ▶ button, the palette | done | [V] `EngineV3CompileCommandTests.testCompileCommandNeverReachesTheOldWorkerUnderV3`; [F] `.testCanCompileWithoutAWorkerOnlyUnderV3` |
-| A2 | One engine at a time | done | **S6 (2026-10-21):** one engine. The app bundles and runs no old-engine helper; ⌘B, Export and Print go to the engine. [V] `EngineV3OneEngineTests.testOneEngineNoOldEngineHelperIsLaunched` |
+| A2 | One engine at a time | done | [V] `EngineV3OneEngineTests.testTurningV3OnDropsTheOldResultAndStopsOldCompiles`. [B] The direct worker still attaches at launch (`ShellModel.swift:929–932`), but under v3 it compiles nothing |
 | A3 | Auto-compile setting | done | [V] `EngineV3CompileCommandTests.testAutoCompileOffWaitsForCompileCommand` |
 | A4 | Unopened `\input` changed on disk | done | [V] `EngineV3CompileCommandTests.testOutsideChangeToAnUnopenedInputRecompiles` |
 | A5 | New files created outside the app | done | [V] `EngineV3ToolsTests.testAQuarantinedFileAppearingInTheProjectIsCheckedBeforeTheNextCompile` (FSEvents watcher, `EngineV3ProjectWatcher.swift`) |
@@ -127,7 +127,7 @@ By section, 2026-10-21:
 | A14 | Retry after the crash limit | done | ⌘B restarts a failed host with a fresh budget (`EngineV3Session.compileNow`). [V] `EngineV3AppParityTests.testAHostThatKeepsDyingStopsAfterThreeRestartsAndCompileRetries` (#1630: after the limit, ⌘B starts 5 to 8) |
 | A15 | Runaway compile bound | **done** (#1417) | 30 s of host silence while typing, 5 min under ⌘B; tool phases and exports are exempt. Stop Compile (⌘.) appears after 2 s. [V] `EngineV3RunawayTests.testAnEndlessLoopIsStoppedAndTheNextEditCompiles`, `.testTheBoundIs30sForTypingAnd5MinutesForCommandB`, `.testALongSilentToolPhaseIsNotStopped`, `.testStopCompileEndsARunningCompile`. Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
 | A16 | Cancel and supersede | done | [V] `EngineV3RunawayTests.testStopCompileEndsARunningCompile` (cancel), `.testASupersededRunLeavesTheCurrentCyclesRowsAndNote` (superseded tool cycle). [B] A newer COMPILE preempts at a checkpoint. Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
-| A17 | Works without TeX Live | **done** (#1421, #1471, #1523; S6) | `make-app.sh` ships `tools/bundle/tl2026/flashtex-bundle.lock`, which points at a GitHub Release bundle that is downloaded after consent. **S6 (owner ruling RQ20):** declining, or having neither TeX Live nor a bundle, never falls back to another engine: a plain, non-blocking message says that compiling needs the TeX bundle or a TeX Live install, with a Download button that retries the download. [V] `EngineChoiceTests.testTheShippedLockIsFoundInTheAppsResources`, `.testTheShippedLockIsAReleaseAssetBehindConsent`, `.testNoTeXLiveSaysCompilingNeedsTeX`, `.testAConfiguredBundleIsADistributionBehindConsent`, `.testTheHostsNoTeXLiveReportIsSaid`; Rust [F] `crates/flashtex-engine/tests/bundle_notex.rs` `compiles_from_a_bundle_with_no_texlive_visible`. There is no app test of a real download and compile |
+| A17 | Works without TeX Live | **done** (#1421, #1471, #1523) | `make-app.sh` ships `tools/bundle/tl2026/flashtex-bundle.lock`, which points at a GitHub Release bundle that is downloaded after consent. Declining, or having neither TeX Live nor a bundle, falls back visibly. [V] `EngineChoiceTests.testTheShippedLockIsFoundInTheAppsResources`, `.testTheShippedLockIsAReleaseAssetBehindConsent`; [F] `.testNoTeXLiveFallsBackAndTheChoiceSaysWhy`, `.testAConfiguredBundleIsADistributionBehindConsent`; Rust [F] `crates/flashtex-engine/tests/bundle_notex.rs` `compiles_from_a_bundle_with_no_texlive_visible`. There is no app test of a real download and compile |
 | A18 | Output and aux location | different; **accepted** (2026-10-07) | [B] `~/Library/Caches/FlashTeX/engine-v3/projects/…/out` (`EngineV3Session.swift:2135`); the manifest's `output` is ignored. **Ruling:** accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability |
 | A19 | Tabs, several open documents | done | Every open buffer is sent. [V] `EngineV3OpenDocumentsTests.testUnsavedEditsInSeveralOpenDocumentsReachTheCompile` (#1633: unsaved edits in `main.tex` and its `\input` reach the host's copy, not the disk; search finds the new text). Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
 | A20 | Several windows | done | One `EngineV3Session` per window (`ShellModel.swift:137`), so each window has its own host and copy. The 2026-10-03 file's "one host per app" was wrong. [V] `EngineV3InstanceTests.testTwoConcurrentSessionsKeepTheirOwnCopies`. Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
@@ -147,7 +147,7 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 | B3 | Located warnings, overfull and underfull boxes | done | diag-v1 sends boxes as `warning`; tight and loose (`info`) are dropped. [V] `EngineV3BoxWarningTests.testAnOverfullHboxFromTheHostIsAWarningOnItsLine` (#1633, real host) It runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. [V] `EngineV3AppParityTests.testAnOverfullBoxIsAWarningRowOnItsLine` (#1630, fake route); `EngineV3DiagMappingTests.testDiagsMapToExactColumns`. **Known bug:** when the project copy's path has a symlink, the host's row has no source range (`EngineV3Session.problems` compares unresolved paths). #1633 marks that one assertion as an expected failure; the fix is a follow-up PR |
 | B4 | Underlines, gutter, Error Lens | **done** (#1409) | [V] `EngineV3EditorMarksTests.testV3RowsDrawTheSameEditorMarksAsTheOldPath`; [F] `.testHostErrorIsUnderlinedAndAnnounced` |
 | B5 | Next and previous diagnostic (⌘⇧] / ⌘⇧[) | **done** (#1409) | [V] `EngineV3EditorMarksTests.testNextAndPreviousDiagnosticStepThroughV3MarksAsOnTheOldPath` |
-| B6 | Jump from a panel row | done | [V] `EngineV3OneEngineTests.testTheEnginesCompiledTextsAreTheNavigationBaseline` |
+| B6 | Jump from a panel row | done | [V] `EngineV3OneEngineTests.testV3CompiledTextsAreTheNavigationBaselineOnlyUnderV3` |
 | B7 | Line label, Copy as Text | done | [V] The same baseline and test |
 | B8 | Panel status line | **done** (#1437) | A compile that wrote no page shows "compile failed: the previous preview is kept". [V] `EngineV3PolishTests.testACompileWithNoPageSaysSoInProblems`, `.testAnotherProjectDropsTheLastOnesFailedStatus` |
 | B9 | Explanations (`flashtex-explain`) | done (#1592) | The v3 pane explains TeX's own messages (curated codes, #1592). [V] `EngineV3ExplainTests`, `EngineV3DiagPresentTests`. `flashtex-explain` is still on neither path |
@@ -201,10 +201,10 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 | # | Feature | main `0752115a1` | Evidence / test |
 |---|---|---|---|
 | E1 | iPad Nearby pairing and capture inbox | done | [F] Engine-independent (`Nearby*Tests`) |
-| E2 | Capture destination `projectId` | done (S6) | The same on both routes: the old path's request read the same property, so it was always `"demo"`. **Ruled** (DESIGN §13, 2026-10-21): accepted; `ShellModel.projectId` stays the constant `"demo"`, so stored captures and pins keep matching. [V] `EngineV3OneEngineTests.testTheCaptureProjectIdIsTheConstantItAlwaysWas` |
-| E3 | Capture proposal preview | different (retired, S6) | **Retired** (DESIGN §13, 2026-10-21, Commander under delegated app rulings): the old route's shadow-compile preview is gone. The review sheet shows the LaTeX and what Approve inserts; Approve inserts one edit that ⌘Z undoes, and the live compile shows the diagnostics |
+| E2 | Capture destination `projectId` | different | [B] `ShellModel.projectId` is still `result?.projectId ?? "demo"` (`ShellModel.swift:669`), so under v3 it is always `"demo"`. The old path's request reads the same property (`ShellModel.swift:1503`) |
+| E3 | Capture proposal preview | different (intended) | [V] Refused under v3: `EngineV3OneEngineTests.testCaptureReviewDoesNotCompileWithTheOldEngineUnderV3` |
 | E4 | Bridge anchors follow typing | done | `bridgeTextChanged` (`ShellModel+Bridge.swift`) runs on every edit under v3 too. [V] `CaptureFlowAcceptanceTests.testUnderEngineV3TypingAfterTheIPadConnectedKeepsTheAnchorAtTheCaret` (#1630; real bridge and ledger, no engine host) |
-| E5 | Durable History | different (retired, S6) | **Retired** with the preview-controller route (RQ7, DESIGN §13, 2026-10-21): normal launches never attached the helper, so the panel never worked for users. The ledgers stay on disk untouched |
+| E5 | Durable History | different (paused under v3) | [V] `EngineV3OneEngineTests.testTheDurableHelperIsSetAsideUnderV3AndComesBack` |
 
 ### F. Settings and engine choice
 
@@ -218,18 +218,17 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 - **The default is not flipped:** `EngineChoice.defaultForNewDocuments` is still
   `.previous` (`EngineChoice.swift:130`). Flipping it is the S5 gate and an owner
   decision. It is not a parity row.
-- **S6 (2026-10-21): no fallbacks, no engine choice.** The engine menu, the
-  setting and the fallback banner are gone. A fontspec or `[fonts]` document whose
-  mode nothing sets is typeset in Unicode mode, decided in memory (A9); no TeX
-  is a message with a Download button (A17, RQ20); a document recorded as
-  typeset by the previous engine gets a one-time notice (ruling 4).
+- **Remaining fallbacks:**
+  - `[fonts]` in Classic mode (A9 is done in Unicode mode; this fallback goes in S6);
+  - no TeX Live and no bundle;
+  - a declined bundle download (`EngineChoice.swift:68–81`).
 
 ## Remaining P5 app-parity work
 
 **As of the 2026-10-06 revision.** `python3 tools/parity/app_parity_rows.py gate S5` prints this list from the rows file.
 
 **Missing (0 rows).** **A9, project fonts (`[fonts]`)** is done (2026-10-21, lane A9-FONTS): Unicode mode applies `[fonts]` on the new engine.
-- S6: a `[fonts]` (or fontspec) project whose mode nothing sets is routed to Unicode mode in memory, without writing flashtex.toml. [V] `EngineChoiceTests.testAFontspecDocumentIsRoutedToUnicodeModeInMemory`, `.testTheEnginesReportRoutesTheDocument`. An explicit Classic mode is kept (Classic does not apply `[fonts]`, PROPOSAL §4.5).
+- A Classic-mode `[fonts]` project still falls back visibly to the old engine until S6 removes that engine (plan §4.4); Classic does not apply `[fonts]` (PROPOSAL §4.5).
 
 **Different, accepted (5 rows).** Plan §4.4 asked for the owner's retirement in writing before S5. These five were accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability:
 - **A6**, `\include` / `\input` resolution: real TeX over a symlinked copy, capped at 20,000 entries.
@@ -238,7 +237,7 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 - **C5**, fit width: uncapped, where v2 capped it at 100 %.
 - **C23**, stale-page look: dimmed, with an orange border.
 
-**Old route only, closed at S6 (plan §4.4):** E2 is done (the same on both routes); E3 and E5 are retired by the Commander's rulings of 2026-10-21 (DESIGN §13). C25 is done (#1627).
+**Old route only, gated at S6 (plan §4.4):** E2, E3 and E5. C25 is done (#1627).
 
 **Bug found while closing B3.** When the project copy's path contains a symlink, a host-sent box warning loses its source range. The fix is a follow-up PR to #1633.
 

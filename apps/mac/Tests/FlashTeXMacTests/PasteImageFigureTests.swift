@@ -558,12 +558,15 @@ final class PasteImageFigureTests: XCTestCase {
         model.documents.append(.init(path: "chap.tex", text: "\\section{A}\n"))
         model.activePath = "chap.tex"
 
-        let note = try XCTUnwrap(model.ensureGraphicxInEntryBuffer())
+        XCTAssertEqual(model.ensureGraphicxInEntryBuffer(helperAttached: true), "Add \\usepackage{graphicx} to main.tex.")
+        XCTAssertEqual(model.documents[0].text, body, "the helper's revisions are not bypassed")
+
+        let note = try XCTUnwrap(model.ensureGraphicxInEntryBuffer(helperAttached: false))
         XCTAssertTrue(note.contains("does not remove it"), note)
         XCTAssertTrue(model.documents[0].text.contains("\\documentclass{article}\n\\usepackage{graphicx}\n"))
         model.flushPendingAutosave()
         XCTAssertTrue(try String(contentsOf: main, encoding: .utf8).contains("\\usepackage{graphicx}"), "autosave was scheduled")
-        XCTAssertNil(model.ensureGraphicxInEntryBuffer(), "already loaded")
+        XCTAssertNil(model.ensureGraphicxInEntryBuffer(helperAttached: false), "already loaded")
 
         let host = model.imagePasteHost()
         XCTAssertFalse(host.editingRoot)
