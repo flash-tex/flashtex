@@ -216,6 +216,24 @@ impl Key {
         Ok(())
     }
 
+    /// For an S₀ opened from disk: the format a full run with this first
+    /// line loads now is one S₀'s run read (`files`, which `check` compares
+    /// by content). The word space S₀ holds starts from its run's format,
+    /// and the format cache stores a rebuilt format (TeX Live updated) under
+    /// a new name and keeps the old file a generation, so the old one,
+    /// unchanged, passed `check` while a full run loaded the new one. In a
+    /// session S₀ was made from the format this process loaded, which is
+    /// taken as unchanged for the process (`system::format_file_now`).
+    pub fn check_format(&self) -> Result<(), String> {
+        let asked = system::format_asked(&self.first_line);
+        let now = system::format_file_now(&asked)
+            .ok_or_else(|| format!("the format {asked} is not found now"))?;
+        if !self.files.iter().any(|(p, _, _)| *p == now) {
+            return Err(format!("the format is another now ({now})"));
+        }
+        Ok(())
+    }
+
     /// The part of `check` that is not about what the run read: the engine
     /// build, the clock, the date variables, the first line.
     pub fn check_run(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
@@ -806,6 +824,7 @@ impl Session {
         let (g, s0, rep) = read_s0(path, &mut |key| {
             let t = Session::new(o.clone(), Some(key.clock));
             key.check(t.clock, &t.first_line)?;
+            key.check_format()?;
             key.check_arm()?;
             s = Some(t);
             Ok(())

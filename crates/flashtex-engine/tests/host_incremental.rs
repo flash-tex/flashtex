@@ -3428,6 +3428,121 @@ fn a_persisted_s0_checks_the_reads_at_the_document_start() {
     }
 }
 
+/// A second pdflatex.fmt, another format than [`fmt_dir`]'s: made from an
+/// ini file that lets `\flashtexformatmark` be `\relax` and then reads pdflatex.ini
+/// (a format rebuilt after a TeX Live update, as the app's format cache
+/// stores it: under another name, `flashtex_runtime::formats`).
+fn fmt_dir_marked() -> PathBuf {
+    let fmt = common::fresh_dir("flashtex-host-fmt-marked");
+    let _ = std::fs::remove_dir_all(&fmt);
+    std::fs::create_dir_all(&fmt).unwrap();
+    std::fs::write(
+        fmt.join("flashtexmarked.ini"),
+        // (INITEX has no braces yet: `\let`)
+        "\\let\\flashtexformatmark\\relax \\input pdflatex.ini\n",
+    )
+    .unwrap();
+    let st = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args([
+            "-ini",
+            "-jobname=pdflatex",
+            "-progname=pdflatex",
+            "-etex",
+            "-translate-file=cp227.tcx",
+            "flashtexmarked.ini",
+        ])
+        .current_dir(&fmt)
+        .env("FLASHTEX_POOL", pool())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "building the marked pdflatex.fmt failed");
+    fmt
+}
+
+/// The format is not among what a persisted S₀ is checked for: a host
+/// started with another pdflatex.fmt (TeX Live updated, the format cache
+/// rebuilt it under a new name and kept the old file) opened the stored
+/// S₀ of the old format and showed what the old format typesets. A host
+/// with the new format refuses the stored S₀ and equals a scratch compile
+/// with the new format.
+#[test]
+fn a_persisted_s0_is_refused_under_another_format() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s0-format");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(
+        proj.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}\n\
+         Made with format \\ifdefined\\flashtexformatmark B\\else A\\fi.\n\\end{document}\n",
+    )
+    .unwrap();
+    let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    {
+        let host = start_host_env("fa", &cache_env);
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        for id in 1..=4 {
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        // (the writer thread writes S0 after DONE; a host that ends does
+        // not wait for it)
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !stored(&cache, "s0") && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = c.bye();
+    }
+    assert!(stored(&cache, "s0"), "no S0 was stored");
+    let marked = fmt_dir_marked();
+    let fmt_env = [
+        ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ("FLASHTEX_FORMATS", marked.to_str().unwrap()),
+    ];
+    let host = start_host_env("fb", &fmt_env);
+    let scratch = start_host_env("fs", &fmt_env[1..]);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_ne!(
+        o.done.str_field("mode"),
+        Some("open"),
+        "the stored S0 of another format was opened: {}",
+        o.done
+    );
+    for id in 2..=4 {
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let (p2, o2) = snapshot(&base, &proj, &out, "x");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "opened under another format",
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+    let _ = std::fs::remove_dir_all(&marked);
+}
+
 /// T7-CONV (T7's plain-10 letter@start, #1850): a letter typed on the line
 /// of the document's first inline math, after the math. amsmath's
 /// `\every@math@size` sets `\strutbox@` globally there, so the box lives
