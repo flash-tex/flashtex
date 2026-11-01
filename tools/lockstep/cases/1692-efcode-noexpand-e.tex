@@ -1,0 +1,15 @@
+% 1692-efcode-noexpand-e: zeroing the expand code for e removes its stretch from an expanded paragraph (pdftex.web §1432)
+% new versus 1476-efcode-branch: 1476 reads the code back for a branch; here the code gates glyph stretch in an expanded paragraph
+\input prelude
+\font\myrm=cmr10
+\pdffontexpand\myrm 30 20 10 autoexpand
+\hsize=200pt \parindent=0pt
+\pdfadjustspacing=2
+\message{1692 efcode-e=\the\efcode\myrm`e}
+\setbox0=\vbox{\myrm Pack my box with five dozen liquor jugs and watch each stretched line settle again. \par\message{1692 plain=\the\prevgraf}}
+\efcode\myrm`e=0
+\message{1692 efcode-e-set=\the\efcode\myrm`e}
+\setbox2=\vbox{\myrm Pack my box with five dozen liquor jugs and watch each stretched line settle again. \par\message{1692 noe=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox2
+\end

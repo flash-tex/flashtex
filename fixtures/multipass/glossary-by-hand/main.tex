@@ -1,0 +1,69 @@
+\documentclass[11pt,openany]{book}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+
+\title{Field Notes on the Page Builder}
+\author{A. Diallo}
+\date{}
+
+% Hand-made glossary: each \glossentry writes one \glossdef line to
+% main.glsdef on this pass; the glossary chapter typesets whatever the
+% previous pass wrote. The previous file is loaded BEFORE \openout
+% truncates it, so pass 1 shows a placeholder and pass 2 shows entries.
+\makeatletter
+\newcommand{\glossitem}[2]{\par\medskip\noindent\textbf{#1}: #2}
+\newif\ifhavegloss
+\haveglossfalse
+\def\loadedglossary{}
+\newcommand{\glossdef}[2]{%
+  \haveglosstrue
+  \expandafter\gdef\expandafter\loadedglossary\expandafter{%
+    \loadedglossary\glossitem{#1}{#2}}%
+}
+\InputIfFileExists{\jobname.glsdef}{}{}
+\newwrite\glossfile
+\openout\glossfile=\jobname.glsdef
+\newcommand{\glossentry}[2]{%
+  \immediate\write\glossfile{\string\glossdef{#1}{#2}}%
+  \emph{#1}%
+}
+\makeatother
+
+\begin{document}
+\maketitle
+
+\chapter*{Glossary}
+
+Terms collected while writing the next chapter appear below; they were
+recorded on the previous pass.
+\ifhavegloss
+\loadedglossary
+\else
+(No entries yet. Run \LaTeX{} again to pick up the recorded terms.)
+\fi
+
+\chapter{Breaking and shipping}
+\label{ch:main}
+
+\section{Building pages}
+\label{sec:pages}
+
+The page builder accumulates a vertical list of
+\glossentry{boxes}{units of typeset material with a fixed size} joined by
+\glossentry{glue}{flexible space with a natural size plus stretch and
+shrink}. When the list holds more than a page, the builder picks a
+breakpoint and ships the rest back.
+
+\section{Choosing breaks}
+\label{sec:breaks}
+
+Each candidate breakpoint carries a \glossentry{penalty}{a numeric cost
+for breaking at a given point, possibly infinite}. The builder totals the
+\glossentry{badness}{how far a line or page strays from its ideal size} of
+each line with the penalties, then keeps the cheapest path through the
+paragraph introduced in Section~\ref{sec:pages} on
+page~\pageref{sec:pages}.
+
+\end{document}

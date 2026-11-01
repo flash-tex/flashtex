@@ -1,0 +1,8 @@
+\input prelude
+\font\f=cmr10
+\message{220 nullA=\iffontchar\nullfont`A YES\else NO\fi}
+\message{220 cmrA=\iffontchar\f`A YES\else NO\fi}
+\message{220 cmrNull=\iffontchar\f0 YES\else NO\fi}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

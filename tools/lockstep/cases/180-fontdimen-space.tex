@@ -1,0 +1,9 @@
+\input prelude
+\font\myrm=cmr10
+\message{180 space=\the\fontdimen2\myrm;stretch=\the\fontdimen3\myrm;shrink=\the\fontdimen4\myrm;quad=\the\fontdimen6\myrm}
+\fontdimen2\myrm=6pt
+\message{180 newspace=\the\fontdimen2\myrm}
+\setbox0=\hbox{\myrm a b c d}
+\message{180 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,0 +1,31 @@
+   1 layout capability switch while mac-1 is in flight: re-requesting revision 2 under rules-v1, font-hints-v1, display-list-v2, display-list-v2-images, display-list-v2-links
+   1 ignored stale compile_result mac-1 (revision 2, rules-v1, font-hints-v1): superseded by mac-2
+   1 status: revision 2: recovered, 5 diagnostics in 72 ms
+   1 status: revision 3: recovered, 5 diagnostics in 176 ms
+   1 status: revision 8: recovered, 5 diagnostics in 331 ms
+   1 status: revision 19: recovered, 5 diagnostics in 130 ms
+   1 status: revision 24: recovered, 5 diagnostics in 329 ms
+   1 status: revision 35: recovered, 5 diagnostics in 284 ms
+   1 status: revision 44: recovered, 6 diagnostics in 264 ms
+   1 status: revision 53: recovered, 6 diagnostics in 190 ms
+   1 status: revision 58: recovered, 6 diagnostics in 122 ms
+   1 status: revision 63: recovered, 6 diagnostics in 70 ms
+   1 status: revision 65: recovered, 6 diagnostics in 71 ms
+   1 status: revision 67: recovered, 6 diagnostics in 72 ms
+   1 status: revision 69: recovered, 6 diagnostics in 48 ms
+   1 status: revision 71: recovered, 6 diagnostics in 209 ms
+   1 status: revision 78: recovered, 6 diagnostics in 333 ms
+   1 status: revision 89: recovered, 6 diagnostics in 259 ms
+   1 status: revision 98: recovered, 6 diagnostics in 302 ms
+   1 status: revision 108: recovered, 6 diagnostics in 190 ms
+   1 status: revision 114: recovered, 6 diagnostics in 301 ms
+   1 status: revision 124: recovered, 6 diagnostics in 259 ms
+   1 status: revision 133: recovered, 6 diagnostics in 268 ms
+   1 status: revision 142: recovered, 6 diagnostics in 333 ms
+   1 status: revision 153: recovered, 6 diagnostics in 258 ms
+   1 status: revision 162: recovered, 6 diagnostics in 358 ms
+   1 status: revision 174: recovered, 7 diagnostics in 337 ms
+   1 status: revision 185: recovered, 7 diagnostics in 275 ms
+   1 status: revision 194: recovered, 7 diagnostics in 339 ms
+   1 status: revision 202: recovered, 7 diagnostics in 407 ms
+   1 bench: done (all keystrokes painted); keystrokes 200, painted 200, coalesced 174, p50 769.300583 ms

@@ -1,0 +1,12 @@
+% Verifies \uppercase maps an active character through \uccode so the result expands with its new meaning.
+\input prelude
+\catcode`!=13 \catcode`?=13
+\def!{BANG} \def?{QUERY}
+\uccode`!=`?
+\uppercase{\def\ua{!}}
+\message{477 ua-mean=\meaning\ua}
+\message{477 ua-use=\ua}
+\message{477 bang-still=\meaning!}
+\setbox0=\hbox{\vrule width477pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

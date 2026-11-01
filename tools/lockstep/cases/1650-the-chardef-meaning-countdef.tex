@@ -1,0 +1,10 @@
+% 1650-the-chardef-meaning-countdef: verifies \the reads a chardef code as an integer while \meaning of a countdef names its register number (tex.web §§409, 413)
+\input prelude
+\font\myrm=cmr10
+\chardef\capA=`A
+\countdef\cnt=22 \cnt=77
+\message{1650 thechar=\the\capA}
+\message{1650 meancnt=\meaning\cnt}
+\setbox0=\hbox{\myrm\the\capA}
+\lsshipbox0
+\end

@@ -1,0 +1,11 @@
+% 1821-sfcode-zero-keeps-high-factor: a letter with sfcode 0 leaves a high factor in place, so the spaces before and after it both take extra space (tex.web §1034)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000 \sfcode`A=0
+\setbox0=\hbox{\myrm a. A b}
+\message{1821 zero-wd=\the\wd0}
+\sfcode`A=999
+\setbox1=\hbox{\myrm a. A b}
+\message{1821 low-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

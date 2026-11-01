@@ -1,0 +1,8 @@
+% 410-kern-negative: verifies negative \kern backspaces boxes in both horizontal and vertical mode.
+\input prelude
+\setbox0=\hbox{\vrule width20pt height6pt depth0pt\kern-8pt\vrule width20pt height6pt depth0pt}
+\setbox1=\vbox{\hrule width40pt height10pt depth0pt\kern-4pt\hrule width40pt height10pt depth0pt}
+\message{410 hwd=\the\wd0 vht=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

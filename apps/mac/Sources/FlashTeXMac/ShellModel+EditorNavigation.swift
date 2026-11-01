@@ -169,63 +169,29 @@ extension ShellModel {
             editorNavigation.renameStatus = "No occurrence of \(symbol.displayName) in the open documents."; editorNavigation.renamePlan = nil; return
         }
         editorNavigation.renamePlan = plan
-        let route = controllerAttached && controllerState.ready ? "one guarded apply_group per file through the helper" : "one undoable edit per open document"
-        editorNavigation.renameStatus = "Proposal: \(plan.summary) — \(route). Nothing is changed until you click Apply."
+        editorNavigation.renameStatus = "Proposal: \(plan.summary) — one undoable edit per open document. Nothing is changed until you click Apply."
     }
 
-    /// Apply after review: with the durable helper ready, the shared
-    /// reviewed-application core (fresh snapshot, per-file guarded
-    /// `apply_group`, ledger undo); otherwise one grouped undoable edit in
-    /// the active buffer and a direct replacement in the other open buffers.
+    /// Apply after review: one grouped undoable edit in the active buffer
+    /// and a direct replacement in the other open buffers.
     func applyRenameSymbol() async {
         guard let plan = editorNavigation.renamePlan else { return }
         let label = "Rename \(plan.symbol.displayName) to \(plan.newName)"
-        if controllerAttached, controllerState.ready {
-            let engine = ProjectSearchClient(model: self)
-            guard let snapReply = await engine.controllerSnapshot() else { editorNavigation.renameStatus = ProjectSearch.noHelperMessage; return }
-            let snap: ProjectSearchClient.Snapshot
-            switch snapReply {
-            case .failure(let e): editorNavigation.renameStatus = "Snapshot refused: \(e.message)"; return
-            case .success(let s): snap = s
+        var applied = 0
+        for doc in plan.documents {
+            guard let i = documents.firstIndex(where: { $0.path == doc.path }) else { continue }
+            let text = documents[i].text as NSString
+            if doc.path == activePath {
+                guard let g = doc.grouped(in: text), pendingEdit == nil else { continue }
+                pendingEdit = .init(path: activePath, nsRange: g.range, text: g.text, token: nextEditToken(), revision: editorRevision)
+                applied += 1
+            } else if let new = doc.applied(to: text) {
+                documents[i].text = new // an open non-active buffer (the next compile sends it)
+                scheduleAutosave() // `updateActiveText` does this for the active buffer only
+                applied += 1
             }
-            var edits: [ProjectSearch.ReplacementEdit] = []
-            for doc in plan.documents {
-                guard let revision = snap.versions[doc.path], let text = documents.first(where: { $0.path == doc.path })?.text else {
-                    editorNavigation.renameStatus = "\(doc.path) is not part of the helper's project; nothing applied."; return
-                }
-                for r in doc.ranges {
-                    guard let start = CaretSync.byteOffset(ofCaretUTF16: r.location, in: text), let end = CaretSync.byteOffset(ofCaretUTF16: NSMaxRange(r), in: text) else {
-                        editorNavigation.renameStatus = "A span in \(doc.path) is not valid; plan again."; return
-                    }
-                    edits.append(.init(path: doc.path, revision: revision, start: start, end: end,
-                                       expectedText: (text as NSString).substring(with: r), replacement: doc.replacement))
-                }
-            }
-            switch await engine.applyReviewedEdits(edits, sourceVersions: snap.versions, membershipGeneration: snap.generation, label: label, commandPrefix: "symbol-rename") {
-            case .failure(let e): editorNavigation.renameStatus = e.message; return
-            case .success(let outcomes):
-                let applied = outcomes.filter { if case .applied = $0.state { return true } else { return false } }.count
-                editorNavigation.renameStatus = "\(label): \(applied) of \(outcomes.count) file\(outcomes.count == 1 ? "" : "s") applied"
-                    + (applied < outcomes.count ? " — " + outcomes.compactMap { if case .refused(let why) = $0.state { return "\($0.path): \(why)" } else { return nil } }.joined(separator: "; ") : "") + "."
-                if applied > 0 { await engine.settleAfterApply() }
-            }
-        } else {
-            var applied = 0
-            for doc in plan.documents {
-                guard let i = documents.firstIndex(where: { $0.path == doc.path }) else { continue }
-                let text = documents[i].text as NSString
-                if doc.path == activePath {
-                    guard let g = doc.grouped(in: text), pendingEdit == nil else { continue }
-                    pendingEdit = .init(path: activePath, nsRange: g.range, text: g.text, token: nextEditToken(), revision: editorRevision)
-                    applied += 1
-                } else if let new = doc.applied(to: text) {
-                    documents[i].text = new // an open non-active buffer (no helper: nothing durable to reconcile; the next compile sends it)
-                    scheduleAutosave() // `updateActiveText` does this for the active buffer only
-                    applied += 1
-                }
-            }
-            editorNavigation.renameStatus = "\(label): \(applied) of \(plan.documents.count) buffer\(plan.documents.count == 1 ? "" : "s") applied (⌘Z undoes the active document's edit)."
         }
+        editorNavigation.renameStatus = "\(label): \(applied) of \(plan.documents.count) buffer\(plan.documents.count == 1 ? "" : "s") applied (⌘Z undoes the active document's edit)."
         editorNavigation.renamesApplied.append("\(label): \(plan.count)")
         editorNavigation.renamePlan = nil
         editorNavigation.renameShown = false

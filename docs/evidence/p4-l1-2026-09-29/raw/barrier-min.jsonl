@@ -1,0 +1,3 @@
+{"arm": "base", "doc": "min", "reps": 30, "cyc_med": 598665734.5, "cyc_ratio_med": 1.0, "cyc_ratio_q1": 1.0, "cyc_ratio_q3": 1.0, "ins_ratio_med": 1.0, "cpu_ratio_med": 1.0}
+{"arm": "nb", "doc": "min", "reps": 30, "cyc_med": 596218141.0, "cyc_ratio_med": 0.9955, "cyc_ratio_q1": 0.9885, "cyc_ratio_q3": 1.0068, "ins_ratio_med": 0.9895, "cpu_ratio_med": 1.0}
+{"arm": "v8", "doc": "min", "reps": 30, "cyc_med": 599167780.5, "cyc_ratio_med": 1.0059, "cyc_ratio_q1": 0.9925, "cyc_ratio_q3": 1.0091, "ins_ratio_med": 1.019, "cpu_ratio_med": 1.0}

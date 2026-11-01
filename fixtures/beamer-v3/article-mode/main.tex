@@ -1,0 +1,27 @@
+\documentclass{article}
+\usepackage{beamerarticle}
+\title{Article mode}
+\author{A. Article}
+\date{October 2026}
+\begin{document}
+\maketitle
+\section{Frames as sections}
+\begin{frame}{First frame}
+  In article mode a frame's title becomes a paragraph heading.
+  \begin{itemize}
+    \item<1-> One.
+    \item<2-> Two.
+  \end{itemize}
+  \only<article>{This sentence is only in the article.}
+  \only<presentation>{This sentence is only in the presentation.}
+\end{frame}
+\begin{frame}{Second frame}
+  \begin{block}{A block}
+    Blocks become plain paragraphs with a bold title.
+  \end{block}
+  \begin{theorem}
+    Theorems keep their numbering.
+  \end{theorem}
+\end{frame}
+\mode<article>{Article-only text between frames.}
+\end{document}

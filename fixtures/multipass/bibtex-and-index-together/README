@@ -1,0 +1,2 @@
+Cross-pass state: bibliography (BibTeX, plain) and index (makeindex) together; forward \pageref to the index moves as back matter appears.
+report class (notitlepage, section only) with fontenc, geometry, makeidx, hyperref. Pass 1: [?] and ?? (1 page); pass 2: bibliography plus index (3 pages); pass 3: settled. Reproduce with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1.

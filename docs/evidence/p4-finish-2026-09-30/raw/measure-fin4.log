@@ -1,0 +1,87 @@
+== book 03:03:25  3:03  up 6 days,  6:04, 2 users, load averages: 1.95 2.77 2.99
+== 4 start letter 03:03:25 1.95 2.77 2.99
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 15988
+== 4 start --sentence 03:03:35 1.80 2.71 2.97
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 15988
+== 4 middle letter 03:03:46 2.13 2.75 2.98
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== 4 middle --sentence 03:03:56 2.26 2.76 2.98
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== 4 end letter 03:04:06 2.32 2.75 2.97
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16539
+== 4 end --sentence 03:04:16 2.26 2.73 2.96
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16539
+== 129 start letter 03:04:27 2.06 2.67 2.94
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507310
+== 129 start --sentence 03:04:37 2.20 2.68 2.94
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507310
+== 129 middle letter 03:04:50 2.25 2.67 2.93
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== 129 middle --sentence 03:05:00 2.21 2.65 2.92
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== 129 end letter 03:05:13 2.09 2.60 2.90
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507870
+== 129 end --sentence 03:05:24 2.08 2.58 2.89
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507870
+== 539 start letter 03:05:37 2.39 2.62 2.90
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120686
+== 539 start --sentence 03:05:47 2.41 2.61 2.89
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120686
+== 539 middle letter 03:05:57 2.65 2.66 2.90
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120997
+== 539 middle --sentence 03:06:07 2.46 2.62 2.89
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120997
+== 539 end letter 03:06:18 2.48 2.62 2.88
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2121259
+== 539 end --sentence 03:06:28 2.48 2.61 2.88
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2121259
+== 999 start letter 03:06:39 2.48 2.61 2.87
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929691
+== 999 start --sentence 03:06:49 2.71 2.65 2.88
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929691
+== 999 middle letter 03:07:00 2.91 2.70 2.90
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929997
+== 999 middle --sentence 03:07:10 2.77 2.67 2.89
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929997
+== 999 end letter 03:07:21 2.95 2.72 2.90
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3930267
+== 999 end --sentence 03:07:31 2.95 2.73 2.90
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3930267
+== end 03:07:42
+== preamble plain-100 base 03:07:42 2.96 2.74 2.90
+{"engine": "base", "doc": "plain-100", "rep": 0, "wall_ms": 40.5, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.5, "passes": 1, "load": 2.96044921875}
+{"engine": "base", "doc": "plain-100", "rep": 1, "wall_ms": 40.3, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.3, "passes": 1, "load": 2.96044921875}
+{"engine": "base", "doc": "plain-100", "rep": 2, "wall_ms": 40.5, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.5, "passes": 1, "load": 2.96044921875}
+{"engine": "base", "doc": "plain-100", "rep": 3, "wall_ms": 40.7, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.6, "passes": 1, "load": 2.96044921875}
+{"engine": "base", "doc": "plain-100", "rep": 4, "wall_ms": 40.4, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.3, "passes": 1, "load": 2.96044921875}
+== preamble plain-100 fin3 03:07:44 2.96 2.74 2.90
+{"engine": "fin3", "doc": "plain-100", "rep": 0, "wall_ms": 40.7, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.6, "passes": 1, "load": 2.96044921875}
+{"engine": "fin3", "doc": "plain-100", "rep": 1, "wall_ms": 40.8, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.7, "passes": 1, "load": 2.96044921875}
+{"engine": "fin3", "doc": "plain-100", "rep": 2, "wall_ms": 40.9, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.9, "passes": 1, "load": 2.96044921875}
+{"engine": "fin3", "doc": "plain-100", "rep": 3, "wall_ms": 40.7, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.6, "passes": 1, "load": 2.96044921875}
+{"engine": "fin3", "doc": "plain-100", "rep": 4, "wall_ms": 40.5, "mode": "cold", "edited_page_ms": 0, "total_ms": 40.5, "passes": 1, "load": 2.96044921875}
+== preamble full-100 base 03:07:45 2.96 2.74 2.90
+{"engine": "base", "doc": "full-100", "rep": 0, "wall_ms": 176.4, "mode": "cold", "edited_page_ms": 0, "total_ms": 176.3, "passes": 1, "load": 2.88330078125}
+{"engine": "base", "doc": "full-100", "rep": 1, "wall_ms": 178.9, "mode": "cold", "edited_page_ms": 0, "total_ms": 178.8, "passes": 1, "load": 2.88330078125}
+{"engine": "base", "doc": "full-100", "rep": 2, "wall_ms": 176.0, "mode": "cold", "edited_page_ms": 0, "total_ms": 175.9, "passes": 1, "load": 2.88330078125}
+{"engine": "base", "doc": "full-100", "rep": 3, "wall_ms": 190.3, "mode": "cold", "edited_page_ms": 0, "total_ms": 190.2, "passes": 1, "load": 2.88330078125}
+{"engine": "base", "doc": "full-100", "rep": 4, "wall_ms": 176.6, "mode": "cold", "edited_page_ms": 0, "total_ms": 176.5, "passes": 1, "load": 2.88330078125}
+== preamble full-100 fin3 03:07:51 2.81 2.71 2.89
+{"engine": "fin3", "doc": "full-100", "rep": 0, "wall_ms": 175.5, "mode": "cold", "edited_page_ms": 0, "total_ms": 175.4, "passes": 1, "load": 2.8125}
+{"engine": "fin3", "doc": "full-100", "rep": 1, "wall_ms": 176.4, "mode": "cold", "edited_page_ms": 0, "total_ms": 176.3, "passes": 1, "load": 2.8125}
+{"engine": "fin3", "doc": "full-100", "rep": 2, "wall_ms": 181.3, "mode": "cold", "edited_page_ms": 0, "total_ms": 181.2, "passes": 1, "load": 2.8125}
+{"engine": "fin3", "doc": "full-100", "rep": 3, "wall_ms": 177.9, "mode": "cold", "edited_page_ms": 0, "total_ms": 177.9, "passes": 1, "load": 2.8125}
+{"engine": "fin3", "doc": "full-100", "rep": 4, "wall_ms": 176.8, "mode": "cold", "edited_page_ms": 0, "total_ms": 176.7, "passes": 1, "load": 2.8125}
+== preamble full-1000 base 03:07:57 2.75 2.70 2.89
+{"engine": "base", "doc": "full-1000", "rep": 0, "wall_ms": 197.2, "mode": "cold", "edited_page_ms": 0, "total_ms": 197.1, "passes": 1, "load": 2.60693359375}
+{"engine": "base", "doc": "full-1000", "rep": 1, "wall_ms": 193.6, "mode": "cold", "edited_page_ms": 0, "total_ms": 193.6, "passes": 1, "load": 2.82080078125}
+{"engine": "base", "doc": "full-1000", "rep": 2, "wall_ms": 206.0, "mode": "cold", "edited_page_ms": 0, "total_ms": 205.8, "passes": 1, "load": 2.9951171875}
+{"engine": "base", "doc": "full-1000", "rep": 3, "wall_ms": 237.3, "mode": "cold", "edited_page_ms": 0, "total_ms": 237.2, "passes": 1, "load": 3.1552734375}
+{"engine": "base", "doc": "full-1000", "rep": 4, "wall_ms": 227.7, "mode": "cold", "edited_page_ms": 0, "total_ms": 227.7, "passes": 1, "load": 3.5986328125}
+== preamble full-1000 fin3 03:08:40 3.71 2.93 2.96
+{"engine": "fin3", "doc": "full-1000", "rep": 0, "wall_ms": 258.8, "mode": "cold", "edited_page_ms": 0, "total_ms": 258.7, "passes": 1, "load": 4.06884765625}
+{"engine": "fin3", "doc": "full-1000", "rep": 1, "wall_ms": 211.9, "mode": "cold", "edited_page_ms": 0, "total_ms": 211.8, "passes": 1, "load": 3.98291015625}
+{"engine": "fin3", "doc": "full-1000", "rep": 2, "wall_ms": 281.2, "mode": "cold", "edited_page_ms": 0, "total_ms": 281.1, "passes": 1, "load": 3.9111328125}
+{"engine": "fin3", "doc": "full-1000", "rep": 3, "wall_ms": 196.4, "mode": "cold", "edited_page_ms": 0, "total_ms": 196.3, "passes": 1, "load": 4.158203125}
+{"engine": "fin3", "doc": "full-1000", "rep": 4, "wall_ms": 191.4, "mode": "cold", "edited_page_ms": 0, "total_ms": 191.3, "passes": 1, "load": 4.0654296875}
+== end 03:09:27  3:09  up 6 days,  6:10, 2 users, load averages: 4.14 3.17 3.04

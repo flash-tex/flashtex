@@ -1,0 +1,6 @@
+% 1663-delayed-closeout-whatsit: a non-immediate \closeout of a never-opened stream appends a closeout whatsit that shows in the box dump and fires harmlessly at shipout, creating no file (tex.web §§1353, 1356, 1373)
+\input prelude
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\closeout7}
+\message{1663 shipping-with-closeout}
+\lsshipbox0
+\end

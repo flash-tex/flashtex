@@ -1,0 +1,29 @@
+\documentclass{beamer}
+\usetheme{Frankfurt}
+\usepackage{pgffor}
+\title{Frame breaks}
+\author{F. Breaks}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\section{A long list}
+\begin{frame}[allowframebreaks]{A long list}
+  \begin{enumerate}
+    \foreach \i in {1,...,40} {\item Item number \i\ of a list that does not fit on one slide.}
+  \end{enumerate}
+\end{frame}
+\section{Prose}
+\begin{frame}[allowframebreaks]{Long prose}
+  \foreach \i in {1,...,12} {%
+    Paragraph \i. The frame is broken into as many slides as it needs, and
+    each continuation slide repeats the title with a roman numeral. The
+    text is long enough to wrap over several lines on each slide.\par}
+\end{frame}
+\section{References}
+\begin{frame}[allowframebreaks]{References}
+  \begin{thebibliography}{99}
+    \foreach \i in {1,...,25} {%
+      \bibitem{ref\i} Author \i. \newblock A title of work number \i. \newblock Some Journal, 20\i.}
+  \end{thebibliography}
+\end{frame}
+\end{document}

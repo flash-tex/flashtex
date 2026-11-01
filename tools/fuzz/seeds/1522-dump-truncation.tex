@@ -1,0 +1,12 @@
+% 1522-dump-truncation: nested-box dumps under tightened \showboxbreadth/\showboxdepth with a \tracingoutput toggle.
+\input prelude
+\message{1522 trace=\the\tracingoutput,\the\showboxbreadth,\the\showboxdepth}
+\tracingoutput=0
+\tracingoutput=1
+\setbox0=\hbox{\hbox{\vrule width1pt}\hbox{\vrule width2pt}\hbox{\vrule width3pt}\vrule width4pt height6pt}
+\lsshipbox0
+\showboxbreadth=2 \showboxdepth=1
+\setbox1=\hbox{\hbox{\vrule width1pt}\hbox{\vrule width2pt}\hbox{\vrule width3pt}\vrule width4pt height6pt}
+\message{1522 trunc=\the\showboxbreadth,\the\showboxdepth}
+\lsshipbox1
+\end

@@ -1,0 +1,10 @@
+% 1210-everymath-fires: verifies \everymath tokens run at the start of every math formula (tex.web §§230, 1139)
+\input prelude
+\font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont2=\mtsy \textfont3=\mtex
+\scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\everymath{\message{1210 EM-fired}}
+\setbox0=\hbox{${}$}
+\message{1210 done}
+\lsshipbox0
+\end

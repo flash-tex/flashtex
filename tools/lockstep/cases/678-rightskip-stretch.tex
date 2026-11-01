@@ -1,0 +1,8 @@
+% 678-rightskip-stretch: verifies stretchable \rightskip glue pulls the shipped lines left, unlike the zero-\rightskip control.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\leftskip=0pt\rightskip=0pt plus1fil\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{678 right=\the\rightskip;lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\leftskip=0pt\rightskip=0pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{678 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\end

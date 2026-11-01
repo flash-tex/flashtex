@@ -1,0 +1,29 @@
+{
+  "definition" : "open start: ShellModel.replaceProject (FLASHTEX_OPEN at launch, or File > Open in the running app); pixels: the first page bitmap committed (CATransaction commit+flush): a stored page (snapshot) or a compiled one",
+  "runs" : [
+    {
+      "first_current_ms" : 457.70699999999999,
+      "first_pixels_ms" : 457.70699999999999,
+      "from_snapshot" : false,
+      "pages" : 10,
+      "stage" : "launch",
+      "status" : "ok · cold · 10 pages · 153 ms"
+    },
+    {
+      "first_current_ms" : 45.827292,
+      "first_pixels_ms" : 45.827292,
+      "from_snapshot" : false,
+      "pages" : 1,
+      "stage" : "switch",
+      "status" : "ok · cold · 1 page · 74 ms"
+    },
+    {
+      "first_current_ms" : 99.644707999999994,
+      "first_pixels_ms" : 43.100915999999998,
+      "from_snapshot" : false,
+      "pages" : 10,
+      "stage" : "reopen-in-app",
+      "status" : "ok · cold · 10 pages · 186 ms"
+    }
+  ]
+}

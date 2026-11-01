@@ -1,0 +1,6 @@
+% Verifies that \halign to shares stretch between two fil \tabskip glues.
+\input prelude
+\setbox0=\vbox{\halign to 120pt{\tabskip=0pt plus 1fil#\hfil&\tabskip=0pt plus 1fil#\hfil\tabskip=0pt\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{525 wd=\the\wd0}
+\lsshipbox0
+\end

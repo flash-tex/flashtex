@@ -1,0 +1,107 @@
+warning: binary `corpus_augment` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../corpus_augment
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `corpus-augment`, convert the file stem
+  |
+1 - src/bin/corpus_augment.rs
+1 + src/bin/corpus-augment.rs
+  |
+warning: `flashtex-bridge` (manifest) generated 1 warning
+warning: binary `edit_latency_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../edit_latency_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `edit-latency-bench`, convert the file stem
+  |
+1 - src/bin/edit_latency_bench.rs
+1 + src/bin/edit-latency-bench.rs
+  |
+warning: binary `fixture_digest` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../fixture_digest
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `fixture-digest`, convert the file stem
+  |
+1 - src/bin/fixture_digest.rs
+1 + src/bin/fixture-digest.rs
+  |
+warning: binary `incremental_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../incremental_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `incremental-bench`, convert the file stem
+  |
+1 - src/bin/incremental_bench.rs
+1 + src/bin/incremental-bench.rs
+  |
+warning: binary `large_doc_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../large_doc_bench
+  |                                                                                       ^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `large-doc-bench`, convert the file stem
+  |
+1 - src/bin/large_doc_bench.rs
+1 + src/bin/large-doc-bench.rs
+  |
+warning: binary `scaling_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../scaling_bench
+  |                                                                                       ^^^^^^^^^^^^^
+  |
+help: to change the binary name to `scaling-bench`, convert the file stem
+  |
+1 - src/bin/scaling_bench.rs
+1 + src/bin/scaling-bench.rs
+  |
+warning: binary `ttfb_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../ttfb_bench
+  |                                                                                       ^^^^^^^^^^
+  |
+help: to change the binary name to `ttfb-bench`, convert the file stem
+  |
+1 - src/bin/ttfb_bench.rs
+1 + src/bin/ttfb-bench.rs
+  |
+warning: `flashtex-compiler` (manifest) generated 6 warnings
+    Finished `release` profile [optimized] target(s) in 0.05s
+web2rust: 1916 sections, 243630 tokens, 1816 pool strings, checksum 527673992
+web2rust: parsed 45 constants, 38 types, 613 globals, 779 routines, 65 main statements
+web2rust: named 1000 macro constants at 7613 sites
+web2rust: emitted 601 routines into 12 files
+PASS ctripin.log: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS ctripin.fot: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS ctrip.log: identical to pdfTeX's after the normalisations (3 line(s) normalised)
+PASS ctrip.fot: byte-identical to pdfTeX's (82 lines)
+PASS ctripos.tex: byte-identical to pdfTeX's (3 lines)
+PASS ctrip.dvi: byte-identical to pdfTeX's (2920 bytes)
+PASS xtripin.log: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS xtripin.fot: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS xtrip.log: identical to pdfTeX's after the normalisations (3 line(s) normalised)
+PASS xtrip.fot: byte-identical to pdfTeX's (86 lines)
+PASS xtripos.tex: byte-identical to pdfTeX's (3 lines)
+PASS xtrip.dvi: byte-identical to pdfTeX's (2920 bytes)
+PASS etripin.log: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS etripin.fot: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS etrip.log: identical to pdfTeX's after the normalisations (3 line(s) normalised)
+PASS etrip.fot: byte-identical to pdfTeX's (45 lines)
+PASS etrip.out: byte-identical to pdfTeX's (4 lines)
+PASS etrip.dvi: byte-identical to pdfTeX's (220 bytes)
+info ctripin.log vs e-TeX's master tripin.log under TeX Live's filter: 6 line(s) differ
+info ctrip.log vs e-TeX's master trip.log under TeX Live's filter: 8 line(s) differ
+info ctripos.tex vs e-TeX's master tripos.tex under TeX Live's filter: 0 line(s) differ
+info etripin.log vs e-TeX's master etripin.log under TeX Live's filter: 8 line(s) differ
+info etrip.log vs e-TeX's master etrip.log under TeX Live's filter: 16 line(s) differ
+info etrip.out vs e-TeX's master etrip.out under TeX Live's filter: 0 line(s) differ
+info ctrip.fot vs e-TeX's master trip.fot under TeX Live's filter: 0 line(s) differ
+info etrip.fot vs e-TeX's master etrip.fot under TeX Live's filter: 0 line(s) differ
+work dir: /var/folders/_0/d71mvr2d4_177qkm0506xl200000gn/T/tmp.2JmrXmwHrG
+etrip exit 0

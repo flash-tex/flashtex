@@ -37,6 +37,12 @@
 }
 
 :root {
+  /* Brand palette (assets/brand/BRAND.md). Bolt orange is for the mark only,
+     never the wordmark or UI; the logo SVGs in brand/ carry these colours. */
+  --brand-bolt: #FF5A1F;
+  --brand-ink: #121212;
+  --brand-paper: #FAFAF7;
+
   color-scheme: light;
   --paper: #f4f3ee;
   --sheet: #ffffff;
@@ -120,15 +126,19 @@ button { font: inherit; color: inherit; }
 .skip { position: absolute; left: -9999px; }
 .skip:focus { left: var(--gutter); top: 12px; z-index: 50; background: var(--ink); color: var(--on-ink); padding: 8px 12px; }
 
-/* Wordmark: the TeX logo's lowered E, set in Archivo. */
-.wordmark {
-  font: 700 1.3rem/1 var(--display);
-  font-stretch: 88%;
-  letter-spacing: -0.02em;
-  text-decoration: none;
-  white-space: nowrap;
+/* Logo: the brand lockup as outlined SVG (bolt + "Flash" in Latin Modern
+   Roman + the TeX logo), never live text. The dark variant replaces the light
+   one wherever the dark palette is active. */
+.wordmark { display: inline-flex; align-items: center; text-decoration: none; line-height: 0; }
+.wordmark img { height: 26px; width: auto; }
+.footer-brand .wordmark img { height: 30px; }
+.wordmark .logo-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .wordmark .logo-light { display: none; }
+  :root:not([data-theme="light"]) .wordmark .logo-dark { display: block; }
 }
-.wordmark .e { position: relative; top: 0.22em; margin-inline: -0.1em; }
+:root[data-theme="dark"] .wordmark .logo-light { display: none; }
+:root[data-theme="dark"] .wordmark .logo-dark { display: block; }
 
 /* Header */
 .site-header {

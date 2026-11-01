@@ -1,0 +1,9 @@
+% 1422-halving-recursion-delimited: recursion halving a count with a delimited stop test.
+\input prelude
+\count8=100
+\def\halve#1!{\message{1422 got=#1}\count8=#1 \divide\count8 by2 \ifnum\count8>0 \expandafter\halve\the\count8!\fi}
+\halve100!
+\message{1422 rest=\the\count8}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

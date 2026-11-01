@@ -1,0 +1,25 @@
+\input prelude
+\def\aa{\message{240 first}}
+\def\ab{\message{240 second}}
+\def\ac{\message{240 third}}
+% several aftergroup tokens fire in FIFO order
+\begingroup
+\aftergroup\aa
+\aftergroup\ab
+\aftergroup\ac
+\message{240 inside}
+\endgroup
+\message{240 after}
+% aftergroup queued in an inner group fires at the inner end
+\begingroup
+\begingroup
+\aftergroup\aa
+\aftergroup\ab
+\message{240 inner-inside}
+\endgroup
+\message{240 inner-after}
+\endgroup
+\message{240 outer-after}
+\setbox0=\hbox{\vrule width240pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

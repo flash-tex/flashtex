@@ -1,0 +1,6 @@
+% 1195-indent-noindent-parskip-parindent: \noindent drops the indent box but keeps \parskip; body text starts indented (tex.web §§1091, 1093)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=20pt\parskip=6pt\myrm\noindent alpha beta gamma\par beta gamma delta epsilon\par}
+\lsshipbox0
+\end

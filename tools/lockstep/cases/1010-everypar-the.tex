@@ -1,0 +1,8 @@
+% 1010-everypar-the: verifies \the\everypar returns the current everypar token list (tex.web §415)
+\input prelude
+\everypar{TOK1010}
+\message{1010 ep=\the\everypar}
+\everypar{}
+\setbox0=\hbox{\vrule width1010pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

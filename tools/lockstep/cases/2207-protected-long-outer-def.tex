@@ -1,0 +1,8 @@
+% 2207-protected-long-outer-def: stacked prefixes accumulate and all three show in \meaning (tex.web §§1210, 1211, 1218)
+% new versus 1081-meaning-long-outer-params: 1081 prints long and outer meanings but ships vrule-only boxes; here one macro carries all three flags and typesets into the shipped box
+\input prelude
+\protected\long\outer\def\plo{Q}
+\message{2207 mean=[\meaning\plo]}
+\setbox0=\hbox{\font\myrm=cmr10\myrm\plo}
+\lsshipbox0
+\end

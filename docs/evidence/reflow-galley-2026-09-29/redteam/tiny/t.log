@@ -1,0 +1,43 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)  29 SEP 2026 02:09
+entering extended mode
+ restricted \write18 enabled.
+ %&-line parsing enabled.
+***t.tex
+(./t.tex
+{horizontal mode: \ifx: (level 1) entered on line 2}
+{\fi: \ifx (level 1) entered on line 2}
+
+> -10000.
+l.3 \penalty-10000 \showthe\lastpenalty
+                                       
+
+{entering hbox group (level 1) at line 4}
+! Missing { inserted.
+<to be read again> 
+                   {
+l.4 \hbox{
+          }\penalty-10000 \showthe\lastpenalty
+A left brace was mandatory here, so I've put one in.
+You might want to delete and/or insert some corrections
+so that I will find a matching right brace soon.
+(If you're confused by all this, try typing `I}' now.)
+
+> -10000.
+l.4 \hbox{}\penalty-10000 \showthe\lastpenalty
+                                              
+
+! Missing } inserted.
+<inserted text> 
+                }
+...
+l.5 \end
+        
+I've inserted something that you may have forgotten.
+(See the <inserted text> above.)
+With luck, this will get me unwedged. But if you
+really didn't forget anything, try typing `2' now; then
+my insertion and my current dilemma will both disappear.
+
+{leaving hbox group (level 1) entered at line 4}
+[0] )
+Output written on t.dvi (1 page, 128 bytes).

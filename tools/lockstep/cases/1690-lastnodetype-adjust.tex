@@ -1,0 +1,7 @@
+% 1690-lastnodetype-adjust: a vadjust item reports the adjust node kind (pdftex.web §450)
+% new versus 327-lastnodetype and 1071-lastnodetype-nodes: those stop at mark (kind 5); here the adjust node (kind 6)
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f a\vadjust{\vskip1pt}\message{1690 adjust=\the\lastnodetype}\vrule width71pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,7 @@
+{"load_before":"86.14 109.32 102.60","doc":"d300","mode":"mem-seeded-evict10"}
+{"edit":0,"fp_mb":579.1}
+{"edit":100,"fp_mb":995.4,"lat_p50":154.11,"lat_p95":574.30,"evict_p50":8.78,"evict_p95":36.83}
+{"edit":200,"fp_mb":1005.9,"lat_p50":169.79,"lat_p95":495.13,"evict_p50":9.60,"evict_p95":53.05}
+{"edit":300,"fp_mb":1007.0,"lat_p50":410.55,"lat_p95":636.92,"evict_p50":23.61,"evict_p95":131.97}
+{"after_evict0_fp_mb":498.3,"evict0_ms":287.56}
+{"load_after":"125.67 115.59 105.75","doc":"d300"}

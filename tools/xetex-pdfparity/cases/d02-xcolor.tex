@@ -1,0 +1,25 @@
+% d02-xcolor: xcolor colours in text, boxes and rules (RGB, CMYK, gray, named, HTML, mixes), colorbox, fcolorbox, coloured text across a page break
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage[dvipsnames]{xcolor}
+\definecolor{mine}{HTML}{3A7F2B}
+\colorlet{soft}{blue!30!white}
+\begin{document}
+Black \textcolor{red}{red \textcolor{blue}{blue} red} black.
+{\color[cmyk]{0.1,0.8,0.2,0.05} CMYK text} and {\color[gray]{0.5} gray text}
+and {\color[RGB]{200,100,0} RGB 0-255} and \textcolor{mine}{HTML} and \textcolor{soft}{colorlet}.
+\colorbox{yellow}{boxed} \fcolorbox{OliveGreen}{Peach}{framed} \colorbox{soft}{\textcolor{white}{white on soft}}
+{\color{RoyalBlue!60!black}\rule{3cm}{2pt}} \textcolor{green!40!black}{mix}
+\textcolor{red!50}{tint} \textcolor{-red}{complement} {\color{gray}\rule{1cm}{1cm}}
+\rule{4cm}{0.4pt} {\color{red}\rule[-1pt]{0.5pt}{8pt}}
+\begin{center}\color{violet}Centered violet \textbf{bold}\end{center}
+\vspace*{\fill}
+{\color{Bittersweet}This paragraph is set in one colour and runs over the page break so the
+colour has to be restored at the top of the next page. It needs enough words to reach the bottom of
+the page and continue on the next one, so here are some more words to make it long enough to break.
+And a few more, and more again, to be sure the paragraph crosses the boundary between the two pages
+and the colour stack is carried over. \textcolor{blue}{Nested blue text inside, also crossing perhaps,
+with yet more words so that it spans lines.} Back to the outer colour for the rest of this paragraph,
+which ends here after a few more words.\par}
+Normal black text after the coloured paragraph.
+\end{document}

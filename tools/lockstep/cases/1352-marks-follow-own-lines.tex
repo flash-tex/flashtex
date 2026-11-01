@@ -1,0 +1,6 @@
+% 1352-marks-follow-own-lines: two \mark commands in different lines of a broken paragraph each migrate out of their line and sit in the vlist right after it (tex.web §§655, 888)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=110pt\parindent=0pt\parfillskip=0pt plus1fil\linepenalty=10\myrm alpha beta gamma\mark{first}delta epsilon zeta eta\mark{second}theta iota kappa lambda\par\message{1352 lines=\the\prevgraf}}
+\lsshipbox0
+\end

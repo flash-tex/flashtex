@@ -1,0 +1,12 @@
+\input prelude
+\def\fooA{\message{161 A-ran}}
+\def\fooB{\message{161 B-ran}}
+\def\decide{\ifx\peek\fooA\message{161 is-A}\else\message{161 not-A}\fi}
+\def\tryA{\futurelet\peek\decide\fooA}
+\def\tryB{\futurelet\peek\decide\fooB}
+\tryA
+\tryB
+\message{161 done}
+\setbox0=\hbox{\vrule width161pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

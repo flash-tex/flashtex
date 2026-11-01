@@ -1,0 +1,1327 @@
+{
+ "summary": {
+  "checked": 82,
+  "ok": 82,
+  "glyphs": 93509,
+  "rules": 700,
+  "pages": 175
+ },
+ "results": [
+  {
+   "id": "divergence-probes/min-abstract",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 392,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 619779
+  },
+  {
+   "id": "divergence-probes/min-bigdelim-12pt",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 86,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 250073
+  },
+  {
+   "id": "divergence-probes/min-chapter",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 172,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 572452
+  },
+  {
+   "id": "divergence-probes/min-curly-quote",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 245,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 145661
+  },
+  {
+   "id": "divergence-probes/min-description",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 172,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 292653
+  },
+  {
+   "id": "divergence-probes/min-float-table",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 210,
+   "rules": 3,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 145316
+  },
+  {
+   "id": "divergence-probes/min-footnote",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 550,
+   "rules": 1,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 830235
+  },
+  {
+   "id": "divergence-probes/min-footnote-float",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 196,
+   "rules": 1,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 634587
+  },
+  {
+   "id": "divergence-probes/min-hrulefill",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 75,
+   "rules": 2,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 143121
+  },
+  {
+   "id": "divergence-probes/min-huge-fences",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 60,
+   "rules": 6,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 216390
+  },
+  {
+   "id": "divergence-probes/min-langle",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 60,
+   "rules": 1,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 328803
+  },
+  {
+   "id": "divergence-probes/min-maketitle",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 71,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 415971
+  },
+  {
+   "id": "divergence-probes/min-natbib",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 287,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 285335
+  },
+  {
+   "id": "divergence-probes/min-newblock",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 188,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 472907
+  },
+  {
+   "id": "divergence-probes/min-norms",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 67,
+   "rules": 3,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 290706
+  },
+  {
+   "id": "divergence-probes/min-paragraph",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 311,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 433416
+  },
+  {
+   "id": "divergence-probes/min-quote",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 229,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 145448
+  },
+  {
+   "id": "divergence-probes/min-sqrt-tall",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 58,
+   "rules": 6,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 254587
+  },
+  {
+   "id": "divergence-probes/min-startsection",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 343,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 116113
+  },
+  {
+   "id": "divergence-probes/min-tabular",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 92,
+   "rules": 15,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 143760
+  },
+  {
+   "id": "divergence-probes/min-tall-parens",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 66,
+   "rules": 3,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 254658
+  },
+  {
+   "id": "divergence-probes/min-toc",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 170,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 574386
+  },
+  {
+   "id": "divergence-probes/min-twocolumn",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 1872,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 309171
+  },
+  {
+   "id": "divergence-probes/min2-bigsum",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 59,
+   "rules": 1,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 398945
+  },
+  {
+   "id": "divergence-probes/min2-cases",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 65,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 290337
+  },
+  {
+   "id": "divergence-probes/min2-fence-nested",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 50,
+   "rules": 3,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 216173
+  },
+  {
+   "id": "divergence-probes/min2-fence-onefrac",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 46,
+   "rules": 1,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 216074
+  },
+  {
+   "id": "divergence-probes/min2-fence-plain",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 51,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 255924
+  },
+  {
+   "id": "divergence-probes/min2-headings",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 226,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 575064
+  },
+  {
+   "id": "divergence-probes/min2-itemize",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 261,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 287446
+  },
+  {
+   "id": "divergence-probes/min2-nested-dfrac-bare",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 46,
+   "rules": 3,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 181914
+  },
+  {
+   "id": "divergence-probes/min2-nested-lists",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 187,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 144867
+  },
+  {
+   "id": "divergence-probes/min2-pagestyle",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 89,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 315135
+  },
+  {
+   "id": "divergence-probes/min2-pmatrix-3row",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 52,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 215564
+  },
+  {
+   "id": "divergence-probes/min2-preamble-switches",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 103,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 290177
+  },
+  {
+   "id": "divergence-probes/min3-baselinestretch",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 186,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 144759
+  },
+  {
+   "id": "divergence-probes/min3-centering",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 62,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 142943
+  },
+  {
+   "id": "divergence-probes/min3-enumerate-only",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 81,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 143229
+  },
+  {
+   "id": "divergence-probes/min3-itemize-multipar",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 101,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 285010
+  },
+  {
+   "id": "divergence-probes/min3-itemize-only",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 78,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 284651
+  },
+  {
+   "id": "divergence-probes/min3-setlength",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 139,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 144067
+  },
+  {
+   "id": "divergence-probes/min3-subsubsection",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 117,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 745255
+  },
+  {
+   "id": "divergence-probes/min3-verse-flushright",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 61,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 142945
+  },
+  {
+   "id": "divergence-probes/min4-bib-sfcode",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 313,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 488154
+  },
+  {
+   "id": "divergence-probes/min4-itemize-wrap",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 251,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 287290
+  },
+  {
+   "id": "divergence-probes/min4-lig-hyphen",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 447,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 148737
+  },
+  {
+   "id": "divergence-probes/min4-mapsto-rel",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 112,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 410032
+  },
+  {
+   "id": "divergence-probes/min4-small-math",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 486,
+   "rules": 2,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 375666
+  },
+  {
+   "id": "divergence-probes/min5-description-label",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 450,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 692841
+  },
+  {
+   "id": "divergence-probes/min5-emph-punct-hyphen",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 219,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 473328
+  },
+  {
+   "id": "divergence-probes/min5-proof-close-shrink",
+   "ok": true,
+   "pages": [
+    2,
+    2
+   ],
+   "glyphs": 373,
+   "rules": 4,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 802586
+  },
+  {
+   "id": "divergence-probes/min5-url-break",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 375,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 330738
+  },
+  {
+   "id": "divergence-probes/min6-dimens-primitives",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 256,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 81691
+  },
+  {
+   "id": "real-world/article-twocolumn",
+   "ok": true,
+   "pages": [
+    2,
+    2
+   ],
+   "glyphs": 3183,
+   "rules": 4,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1582738
+  },
+  {
+   "id": "real-world/beamer-blocks-columns",
+   "ok": true,
+   "pages": [
+    6,
+    6
+   ],
+   "glyphs": 827,
+   "rules": 10,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 241876
+  },
+  {
+   "id": "real-world/beamer-default",
+   "ok": true,
+   "pages": [
+    7,
+    7
+   ],
+   "glyphs": 1366,
+   "rules": 14,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 216633
+  },
+  {
+   "id": "real-world/beamer-fragile",
+   "ok": true,
+   "pages": [
+    8,
+    8
+   ],
+   "glyphs": 772,
+   "rules": 8,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 188214
+  },
+  {
+   "id": "real-world/beamer-madrid",
+   "ok": true,
+   "pages": [
+    7,
+    7
+   ],
+   "glyphs": 1640,
+   "rules": 42,
+   "forms": [
+    1,
+    7
+   ],
+   "unsupported": [
+    "gs"
+   ],
+   "bytes": 190382
+  },
+  {
+   "id": "real-world/beamer-overlays",
+   "ok": true,
+   "pages": [
+    14,
+    14
+   ],
+   "glyphs": 1877,
+   "rules": 14,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 137606
+  },
+  {
+   "id": "real-world/beamer-polish",
+   "ok": true,
+   "pages": [
+    13,
+    13
+   ],
+   "glyphs": 1676,
+   "rules": 15,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 318485
+  },
+  {
+   "id": "real-world/beamer-visuals",
+   "ok": true,
+   "pages": [
+    7,
+    7
+   ],
+   "glyphs": 770,
+   "rules": 38,
+   "forms": [
+    5,
+    29
+   ],
+   "unsupported": [
+    "gs"
+   ],
+   "bytes": 352322
+  },
+  {
+   "id": "real-world/conf-paper",
+   "ok": true,
+   "pages": [
+    4,
+    4
+   ],
+   "glyphs": 7770,
+   "rules": 7,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1405444
+  },
+  {
+   "id": "real-world/cv",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 1254,
+   "rules": 5,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1165030
+  },
+  {
+   "id": "real-world/enumitem-worksheet",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 1681,
+   "rules": 11,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 351895
+  },
+  {
+   "id": "real-world/hw1",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 2743,
+   "rules": 3,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1373168
+  },
+  {
+   "id": "real-world/hw2",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 2418,
+   "rules": 2,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1368473
+  },
+  {
+   "id": "real-world/hyperref-toc",
+   "ok": true,
+   "pages": [
+    4,
+    4
+   ],
+   "glyphs": 4003,
+   "rules": 43,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 2559229
+  },
+  {
+   "id": "real-world/inline-math",
+   "ok": true,
+   "pages": [
+    2,
+    2
+   ],
+   "glyphs": 2898,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1013405
+  },
+  {
+   "id": "real-world/input-bibliography",
+   "ok": true,
+   "pages": [
+    2,
+    2
+   ],
+   "glyphs": 2407,
+   "rules": 1,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1482268
+  },
+  {
+   "id": "real-world/lab-report",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 2945,
+   "rules": 14,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 809846
+  },
+  {
+   "id": "real-world/lecture-notes",
+   "ok": true,
+   "pages": [
+    2,
+    2
+   ],
+   "glyphs": 1982,
+   "rules": 20,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1353524
+  },
+  {
+   "id": "real-world/letter",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 1220,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 168352
+  },
+  {
+   "id": "real-world/listings-manual",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 4510,
+   "rules": 297,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 2008371
+  },
+  {
+   "id": "real-world/lmodern-report",
+   "ok": true,
+   "pages": [
+    4,
+    4
+   ],
+   "glyphs": 6607,
+   "rules": 4,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1506937
+  },
+  {
+   "id": "real-world/math-sheet",
+   "ok": true,
+   "pages": [
+    2,
+    2
+   ],
+   "glyphs": 1072,
+   "rules": 16,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 798034
+  },
+  {
+   "id": "real-world/natbib-review",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 5116,
+   "rules": 2,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 481709
+  },
+  {
+   "id": "real-world/plain-article",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 3332,
+   "rules": 15,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 596709
+  },
+  {
+   "id": "real-world/ps-calculus",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 3004,
+   "rules": 26,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 1298714
+  },
+  {
+   "id": "real-world/siunitx-tables",
+   "ok": true,
+   "pages": [
+    2,
+    2
+   ],
+   "glyphs": 3262,
+   "rules": 12,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 970311
+  },
+  {
+   "id": "real-world/thesis-chapter",
+   "ok": true,
+   "pages": [
+    5,
+    5
+   ],
+   "glyphs": 7808,
+   "rules": 6,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 2136592
+  },
+  {
+   "id": "real-world/twelvept-plain",
+   "ok": true,
+   "pages": [
+    3,
+    3
+   ],
+   "glyphs": 3040,
+   "rules": 16,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 2268224
+  },
+  {
+   "id": "real-world/unicode-accents",
+   "ok": true,
+   "pages": [
+    1,
+    1
+   ],
+   "glyphs": 1012,
+   "rules": 0,
+   "forms": [
+    0,
+    0
+   ],
+   "unsupported": [],
+   "bytes": 2058363
+  }
+ ]
+}

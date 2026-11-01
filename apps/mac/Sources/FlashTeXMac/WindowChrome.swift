@@ -21,25 +21,28 @@ struct WindowChromeConfigurator: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            for o in reapplyObservers { NotificationCenter.default.removeObserver(o) }
+            reapplyObservers = []
             guard let window else { return }
             Self.apply(to: window)
-            for o in reapplyObservers { NotificationCenter.default.removeObserver(o) }
+            // The blocks hold the window weakly: NotificationCenter keeps a
+            // block until it is removed, and these are removed only when this
+            // view leaves the window or deallocates, which a window held by
+            // its own observers never lets happen (the closed window, its
+            // views and the model they show leaked; DocumentDeallocationTests).
+            let reapply: @Sendable (Notification) -> Void = { [weak window] _ in
+                MainActor.assumeIsolated { if let window { Self.apply(to: window) } }
+            }
             reapplyObservers = [
                 // AppKit re-reveals native title chrome on exiting
                 // fullscreen; setting a title can do the same on 15+.
                 NotificationCenter.default.addObserver(forName: NSWindow.didExitFullScreenNotification,
-                                                       object: window, queue: .main) { _ in
-                    MainActor.assumeIsolated { Self.apply(to: window) }
-                },
+                                                       object: window, queue: .main, using: reapply),
                 NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
-                                                       object: window, queue: .main) { _ in
-                    MainActor.assumeIsolated { Self.apply(to: window) }
-                },
+                                                       object: window, queue: .main, using: reapply),
                 // AppKit re-lays the standard buttons out on resize.
                 NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification,
-                                                       object: window, queue: .main) { _ in
-                    MainActor.assumeIsolated { Self.apply(to: window) }
-                },
+                                                       object: window, queue: .main, using: reapply),
             ]
         }
 

@@ -1,0 +1,11 @@
+% 664-vbox-to-depth-clamp: verifies \boxmaxdepth clamps the depth of a stretched \vbox to, unlike the wide-open setting.
+\input prelude
+\boxmaxdepth=5pt
+\setbox0=\vbox to 60pt{\hrule width40pt height25pt depth0pt\vskip10pt\hbox{\vrule width40pt height8pt depth20pt}}
+\message{664 clamp-ht=\the\ht0 clamp-dp=\the\dp0}
+\boxmaxdepth=16383pt
+\setbox1=\vbox to 60pt{\hrule width40pt height25pt depth0pt\vskip10pt\hbox{\vrule width40pt height8pt depth20pt}}
+\message{664 free-ht=\the\ht1 free-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

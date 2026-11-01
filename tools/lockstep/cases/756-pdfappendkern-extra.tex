@@ -1,0 +1,10 @@
+\input prelude % Verifies \pdfappendkern with \knaccode inserts a kern after a character.
+\font\f=cmr10
+\pdfappendkern=1
+\knaccode\f`?=300
+\setbox0=\hbox{\f a?a}
+\lsshipbox0
+\pdfappendkern=0
+\setbox0=\hbox{\f a?a}
+\lsshipbox0
+\end

@@ -641,6 +641,65 @@ fn nfd_only_reference_resolves_to_the_nfc_file_on_disk() {
     assert_eq!(g.edges().len(), 1, "the NFD reference must resolve");
 }
 
+/// Case-only spelling collision, exercised end to end through discovery: one
+/// physical file (`Chapter.tex`) referenced once as `\input{Chapter}` and
+/// once as `\input{chapter}` must produce exactly one graph entry carrying
+/// the on-disk spelling — matching what pdflatex sees, where both references
+/// open the same physical file on a case-insensitive filesystem. Before the
+/// fix, the literal lookup's success short-circuited with the as-referenced
+/// spelling, so `chapter.tex` and `Chapter.tex` became two graph entries for
+/// one file (what `flashtex check --json` reported as two `documents`).
+///
+/// On a case-sensitive filesystem the second spelling genuinely names no
+/// file, so it must stay missing there (again matching pdflatex, whose open
+/// of `chapter.tex` fails on ext4). The test gates on the host filesystem's
+/// own behaviour, probed with a plain OS lookup that never touches
+/// discovery — the same gating trick the NFD tests above use for
+/// normalization sensitivity.
+#[test]
+fn case_only_reference_collision_resolves_to_the_on_disk_spelling() {
+    let t = TempDir::new("case-graph");
+    t.write("Chapter.tex", "Chapter content.");
+    t.write("main.tex", "\\input{Chapter} \\input{chapter}");
+    // Plain OS probe, no discovery involved: does the host filesystem itself
+    // resolve the wrong-case spelling (APFS yes, ext4 no)?
+    let case_insensitive = fs::metadata(t.root().join("chapter.tex")).is_ok();
+
+    let g = ProjectGraph::discover(t.root(), &pp("main.tex")).unwrap();
+    let others: Vec<&str> = g
+        .files()
+        .iter()
+        .filter(|f| f.path.as_str() != "main.tex")
+        .map(|f| f.path.as_str())
+        .collect();
+    if case_insensitive {
+        assert!(
+            g.diagnostics().is_empty(),
+            "both spellings name the same physical file, got {:?}",
+            g.diagnostics()
+        );
+        assert_eq!(
+            others,
+            ["Chapter.tex"],
+            "one physical file must be one graph entry with the on-disk spelling, got {others:?}"
+        );
+        assert_eq!(g.edges().len(), 2, "both references still resolve");
+    } else {
+        assert_eq!(
+            others,
+            ["Chapter.tex"],
+            "only the on-disk spelling exists here, got {others:?}"
+        );
+        assert_eq!(g.edges().len(), 1, "only the exact-case reference resolves");
+        assert!(
+            g.diagnostics().iter().any(|d| matches!(&d.kind,
+                DiagnosticKind::MissingFile { target, .. } if target == "chapter")),
+            "the wrong-case reference must stay missing on a case-sensitive filesystem, got {:?}",
+            g.diagnostics()
+        );
+    }
+}
+
 #[test]
 fn project_path_display_and_ordering() {
     let mut v = [pp("b/a.tex"), pp("a.tex"), pp("a/z.tex")];

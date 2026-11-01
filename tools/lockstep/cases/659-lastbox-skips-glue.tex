@@ -1,0 +1,9 @@
+% 659-lastbox-skips-glue: verifies \lastbox after glue takes nothing and leaves the glue, unlike a glue-free box.
+\input prelude
+\setbox5=\vbox{\hrule width40pt height6pt depth0pt\vskip7pt\setbox6=\lastbox\ifvoid6\message{659 lastbox-void}\else\message{659 lastbox-kept}\fi\message{659 skip-left=\the\lastskip}}
+\message{659 ht=\the\ht5}
+\setbox1=\vbox{\hrule width40pt height6pt depth0pt}
+\message{659 ctl-ht=\the\ht1}
+\lsshipbox5
+\lsshipbox1
+\end

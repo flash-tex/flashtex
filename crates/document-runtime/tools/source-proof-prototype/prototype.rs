@@ -127,7 +127,7 @@ fn paired_preparation_cost() {
 #[test]
 fn real_session_mutated_input_stale_pair_and_failed_admission() {
     let dir=tempfile::tempdir().unwrap();let started=dir.path().join("started");let release=dir.path().join("release");
-    let mut command=Command::new("/usr/bin/python3");
+    let mut command=Command::new("python3");
     command.arg("-c").arg(r#"import sys,json,pathlib,time,hashlib
 root=pathlib.Path(sys.argv[1])
 for line in sys.stdin:

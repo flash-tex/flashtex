@@ -1,0 +1,13 @@
+% 1707-pagetotal-folds-rule-depth: \pagetotal counts a rule's height when it lands and folds in its depth only once the next box arrives (tex.web §§1001, 1002)
+% new versus 440-pagetotal-growth: there every item is depthless so each read matches the running height; here a deep rule shows the depth joining a step later
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=10pt
+\output={\lsshipbox255}
+\hrule height10pt depth7pt width80pt
+\penalty0
+\message{1707 total=\the\pagetotal}
+\hrule height5pt depth0pt width80pt
+\penalty0
+\message{1707 total2=\the\pagetotal}
+\hrule height5pt depth0pt width80pt
+\end

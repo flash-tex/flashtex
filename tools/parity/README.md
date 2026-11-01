@@ -1,16 +1,229 @@
 # Parity scoreboard: how close is FlashTeX to pdfLaTeX, measured
 
 Owner: lane PARITY-SCOREBOARD (kabir-claude, mac-m5pro-kabir). Created
-2026-09-21. Python 3 standard library only. **pdflatex (MacTeX) is the oracle
-and never runs in the product path.** The producer under test is the shipped
-command line, `flashtex build` (the same exact-route PDF the Mac app exports),
-run on the untouched source tree.
+2026-09-21; DESIGN §1.1 tiers added by lane P0-PARITY-TIERS (flashtex-2a).
+Python 3 standard library, plus `qpdf` (Apache-2.0) run as an external
+program for P-T2. **pdflatex (MacTeX) is the oracle and never runs in the
+product path.**
+
+The engine under test is `--engine <bin>` (`--flashtex` still works): the
+new engine, flashtex-initex (the default), or any pdfTeX-compatible command
+line, pdfTeX itself for the self-test. It runs as `<bin> -fmt=pdflatex` on a
+copy of the tree, to convergence, like the oracle. (Until retirement stage S7
+it could also be the old engine's command line, `--old-engine`; its records
+in older reports carry `engine_kind` `flashtex-cli`.)
 
 The question this answers: "can we measurably know that we have full parity
-with pdflatex?" The answer is one number per corpus tier, **the share of
-documents at L3**, plus the breakdown that says what stops the rest.
+with pdflatex?" The headline per corpus tier is the two **DESIGN §1.1 gating
+tiers, P-T1 and P-T2**. Below them are the older levels L0–L4 (the share of
+documents at L3 among them), plus the breakdown that says what stops the rest.
 
-## Levels (per document, cumulative, strictest last)
+## Gating tiers (headline; DESIGN §1.1)
+
+| tier | passes when | how it is measured |
+|---|---|---|
+| **P-T1** | every `\shipout` box dump and the whole `\tracingall` log are identical to the pinned pdfTeX 1.40.29's, in PDF mode | `capture.py` runs one traced pass after convergence. The pass sets `\tracingall` (which includes `\tracingoutput`), `\tracingonline=1`, `\showboxdepth=\showboxbreadth=2147483647` and `\nonstopmode`, with `max_print_line=10000`, `error_line=254` and `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`. Normalised: the banner (lines before the `**` echo) and the work-directory path. Then, per the DESIGN §1.1 ruling, only end-of-run accounting is removed: `\\tracingstats` `Memory usage before: …` lines (whole-line match), the `Here is how much of TeX's memory you used:` and `PDF statistics:` blocks, and the byte count in `Output written on … (N pages, B bytes)`. The page count stays compared. Each removed line must have one of the exact shapes pdfTeX 1.40.29 prints, in pdfTeX's order, each at most once (`capture.ACCOUNTING_BLOCKS`, taken from the fixture logs). The headers and `Output written` count only once, in the trailer after the last shipout. A `Memory usage` line counts only when a shipout still owes it. Anything else is compared, including ` junk`, ` Overfull …` and a header in the middle of the log. The removed lines form a separate **non-gating accounting check** in the report. Box dumps are split at `Completed box being shipped out` |
+| **P-T2** | identical embedded font subsets and identical page content streams | Both PDFs go through `qpdf --qdf --normalize-content=y --object-streams=disable` and are parsed with `tools/parity/pdftext.py`. Fonts: the multiset of (name without subset tag, subtype, hash of the decoded font program with subset tags normalised). Pages: content-stream bytes, resources and media box. Every indirect object is compared by a hash of its content with references resolved, so object numbers never matter |
+
+**P-T1 is n/a for the flashtex CLI.** It isn't a TeX engine and writes no box
+dumps or `\tracingall` log, and the report says so instead of printing 0.
+Its P-T2 is measured.
+
+**How both TeX engines run** (the oracle, and a TeX `--engine`), identically:
+
+- **One `\write18` setting for both.** It is `capture.SHELL_ESCAPE`. By
+  default there is no flag, so each engine runs in its own default mode:
+  restricted, as in TeX Live's pdflatex (owner decision #1209, DESIGN §4.5).
+  That gives ` restricted \write18 enabled.` and `\pdfshellescape` = 2,
+  which l3kernel's `\sys_if_shell` reads. `--shell-escape-flag` takes
+  `default`, `-shell-restricted`, `-no-shell-escape` or `-shell-escape`. The
+  setting is part of the oracle cache key.
+  Give the value with `=`, as in `--shell-escape-flag=-shell-restricted`,
+  because argparse reads a separate `-shell-restricted` as an option.
+- **Converted figures are the oracle's.** Under restricted `\write18`,
+  epstopdf converts `x.eps` to `x-eps-converted-to.pdf` during the run.
+  Ghostscript stamps each conversion with the time and a fresh id. pdfTeX
+  copies those into the including PDF and prints the file's date in the log,
+  so two engines that each convert differ in P-T1 and P-T2 for no
+  typesetting reason. The oracle's conversions (`tiers.GENERATED`) are kept
+  in its cache entry and copied, with their times, into the candidate's tree
+  before its first pass, so both see the same files and neither converts
+  again. The templates tier copies TeX Live files with their times for the
+  same reason.
+  A conversion's input that the run wrote itself (grfguide's `filecontents`
+  `a.eps`) is kept with it, because epstopdf logs the input's date.
+  So is a conversion the source ships but the run redid: epstopdf converts
+  again when the EPS is a second newer than the shipped PDF, and an unpacked
+  e-print's file times are its unpack times. A cache entry made before this
+  rule (`tiers.GENERATED_V`) is made again, but only for a tree that ships
+  a conversion. `corpus.unpack` gives each file its archive time (a time
+  the OS can't set keeps the unpack time), so a re-unpacked e-print never
+  makes its EPS newer than a cached seed. Trees unpacked before this rule
+  are unpacked again (`corpus.UNPACK_V`), and the oracle entries of those
+  that ship a conversion are made again (`tiers.GENERATED_V` 3).
+  A seeded candidate finds the conversions up to date, so it can pass even
+  if its own conversion would fail (no shell escape, no Ghostscript). Each document's
+  P-T record gives `seeded_conversions`, and the report and summary line
+  count the seeded documents.
+- **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
+  `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
+  random numbers differ from run to run. Every pass of every TeX engine the
+  harness runs (both oracles and a TeX `--engine`) starts its command line
+  with `capture.SEED` (`\pdfsetrandomseed 1\relax`), then `\input{<entry>}`.
+  Both logs echo that line equally. The P-T oracle cache key includes the
+  seed and `tiers.ORACLE_CACHE_V`, which is bumped whenever what an entry
+  holds changes.
+- **argv[0] is exactly `pdftex`.** Each engine runs through a `pdftex`
+  symlink in its own bin directory, and that directory goes first on `PATH`
+  so kpathsea resolves the real binary. pdfTeX prints argv[0] in warnings,
+  e.g. `pdfTeX warning: pdftex (file ./fig.pdf): …`. Setting the name
+  before the run means no program-name token is ever normalised, so nothing
+  can hide behind a normaliser.
+- **Environment.** `--engine-env KEY=VALUE` (repeatable) goes to the TeX
+  `--engine` only, never the oracle; for example
+  `FLASHTEX_FORMATS=<dir with pdflatex.fmt>` and `FLASHTEX_POOL=<pdftex.pool>`.
+  No `FLASHTEX_*` variable is inherited from the calling shell.
+
+Expected data comes only from the oracle pdfTeX (`--oracle-pdftex`, default
+`/Library/TeX/texbin/pdftex`; the run warns if it isn't 1.40.29). It is never
+compared against the committed references, which include TeX Live 2025
+builds. The oracle run is cached under `<cache>/pt-oracle/`, keyed by the
+source-tree hash, the pdfTeX version and the capture settings. The
+normalised log is stored gzipped. `--pt pt2` skips the traced pass;
+`--pt off` skips both tiers.
+
+**Run paths in the logs** (`capture.workdir_subs`). Before P-T1 compares two
+logs, each run's work directory becomes `<WORKDIR>` and its TEXMFVAR becomes
+`<TEXMFVAR>`. TEXMFVAR is where mktexpk writes PK fonts, and pdfTeX names each
+PK font it embeds by that path. If TEXMFVAR is set, the harness uses its
+value; if it is unset, it uses kpathsea's default, from the `kpsewhich` beside
+`--oracle-pdftex`. Either way, the same directory normalises the same way.
+A cached oracle log is also normalised for both the current TEXMFVAR and
+kpathsea's default when it is read (`capture.cached_log_subs`), so an older
+entry cached with TEXMFVAR unset still matches a run that sets it elsewhere,
+such as `scoreboard-run.sh`.
+
+**`--regenerate`** re-runs only the fixtures tier's L oracle (pdflatex with
+the local TeX, instead of the committed PDF). It never re-makes a P-T oracle
+entry. Those entries are invalidated by `tiers.ORACLE_CACHE_V`, which is part
+of the key, and by `tiers.stale_entry`, which also covers a streamed entry's
+`pt1stream.V`. To re-make one entry, delete its `<cache>/pt-oracle/<k[:2]>/<key>`
+directory.
+
+**Traced logs too big to hold: streamed P-T1.** Some e-prints trace to
+tens of gigabytes (arXiv 2501.08663v2: 23.7 GiB from pdfTeX). A traced log
+over `--pt1-max-log-mb N` (default 256; 0: no budget) is never read whole.
+It is read once, as a stream, into its P-T1 *fingerprint* (`pt1stream.py`,
+constant memory: about 20 MiB whatever the log's size), and
+`tiers.compare_pt1_streamed` compares two fingerprints:
+- **The same verdict as the in-memory compare, on every input.** The rules
+  are `capture.py`'s own code (`workdir_subs`, `banner_end`,
+  `Accounting.step`, `BoxSplitter`), not a second normaliser. Only the
+  driver differs: a stream can't look ahead to the last shipout or the `**`
+  line, so it runs those as hypotheses that the stream resolves (see
+  `pt1stream.py`). The strict log and each box dump are compared by SHA-256
+  of exactly the text `split_accounting` and `split_boxes` produce; the
+  accounting lines are kept whole, so the non-gating accounting report is
+  unchanged. A failure gives the first differing shipout exactly and the
+  strict-log lines (a 4 MiB segment) that hold the first log difference,
+  not the line's text.
+- **The fast path.** A run of lines where no rule can fire (no shipout, no
+  owed `Memory usage`, no block header or `Output written`, no blank line in
+  an open box) goes to the hashes as one text. Every line still feeds them.
+- **No log reaches the disk.** The oracle's traced pass always writes its
+  log into a named pipe the harness reads while pdfTeX runs. The oracle
+  cache keeps a small log's normalised text (`log.gz`, as before) or a big
+  log's fingerprint (`fingerprint.json`); an entry cached before streaming,
+  over the budget with neither, is made again. A candidate's traced pass
+  uses a pipe too: streamed from the first byte when the oracle's log is
+  over the budget, else held in memory up to the budget and streamed past
+  it, so a candidate that traces far more than the oracle (a runaway loop
+  until the time limit) writes nothing to the disk. A candidate over the
+  budget that differs fails P-T1.
+- **The budget** is 256 MiB (it was 1024) because the in-memory compare of
+  two *differing* logs holds about 13 times one log (5.4 GiB measured for
+  the 436 MB beamer-visuals fixture log), and processes must stay under
+  6 GB. The budget no longer decides whether a document is evaluated, only
+  whether a failure quotes the first differing line.
+- **Time limit** (`--pt1-timeout S`, default 1800): the oracle's traced
+  pass gets `4 × S` (7200 s), a candidate's
+  `max(S, oracle log bytes / 8 MiB/s, min(3 × the oracle's traced seconds, 4 × S))`.
+  The oracle's is longer because its entry is cached: a slow one costs once
+  per document and TeX tree, not every run (pdfTeX traced arXiv 2501.08663v2
+  and chemfig-en past 1800 s on the board host, so board run 37121600909 left
+  both not evaluated). A candidate's follows the oracle's work: the new
+  engine's traced pass took up to 2.2 times pdfTeX's on that board. A pass
+  either limit stops is a **harness error**, never a pass: a candidate's
+  fails P-T1, an oracle's leaves the document not evaluated, and both are
+  counted (`harness_errors`) and reported. A cached oracle entry that a
+  shorter limit stopped is made again.
+- **`\pdfelapsedtime`** (Commander ruling, lane P5-PT1-SKIPS). pdfTeX's
+  elapsed time is the wall clock, so a document that stores it (tabu times
+  its X-column trial typesetting) logs a different number on every run,
+  pdfTeX against itself included. `capture.ElapsedMask` replaces with
+  `<ELAPSED>` only the values the trace itself shows came from the timer:
+  a macro's expansion line whose body *starts* with
+  `\edef \X {\the \pdfelapsedtime }` (or `\xdef`, an alias such as
+  `\pdf@elapsedtime` or expl3's `\tex_elapsedtime:D`; not `\number`,
+  whose `{\number}` line disarms) or with the bare `\R =\pdfelapsedtime `
+  for a `\count` register (`\pdfelapsedtime sp` for a `\dimen`; a factor
+  or another unit is not armed) arms it, and
+  the exact assignment sequence that must follow (`{\edef}` or the
+  register's command line, `{changing ...}`, `{into ...}`) has its value
+  masked. Anything else in between, an expansion line or another command,
+  disarms it, and a `\let` that rebinds an alias drops it. Afterwards only that name's *current* timer value is masked
+  where it shows again (`changing`, `reassigning`, `retaining`, its
+  expansion line), and a `{restoring ...}` only when it shows the value
+  saved at that group level: the mask keeps TeX's save stack from the
+  `{entering ...}`/`{leaving ...}` lines, so a wrong value restored is
+  still a difference. Everything else stays compared: a number derived from
+  the timer, one typeset, shown or copied to another name, and a timer read
+  directly from the input file still fail P-T1. Both drivers and
+  `tools/lockstep` apply it (one implementation); a P-T1 record says how
+  many lines it masked (`elapsed_masked`). A streamed fingerprint made
+  before the mask is a harness error, not a verdict, when the other side
+  masked something.
+
+`--pt1-skip [tier/]ID` still reports a document's P-T1 as not evaluated
+(its oracle is never traced), but size is no longer a reason to use it.
+The 2026-09-29 arXiv scoreboard skipped 2501.07413v3, 2501.08663v2,
+2501.08950v2 and 2501.10183v1 for size; they need no `--pt1-skip` now.
+The summary counts the documents P-T1 compared as streams (`streamed`).
+
+**Oracle work directories.** `tiers.oracle` runs pdfTeX in
+`<cache>/pt-oracle/<key>/work-<pid>` and removes it on every exit path:
+success, an exception, the time limit, and SIGTERM (a worker's handler
+unwinds the document it is scoring, which kills its engine and runs each
+cleanup; parity.py's own SIGTERM handler passes the signal to its workers).
+A worker killed with SIGKILL runs no cleanup, so `parity.py` sweeps, at
+startup, every `work-<pid>` and `*.<pid>.tmp` whose process is no longer
+alive.
+
+**A worker that dies** (killed for memory, say) breaks the pool, and every
+unfinished document fails with it. Those documents run again on a fresh
+pool. If that breaks too, the rest run one per pool. A document whose own
+worker dies is recorded as failed at every level and tier (`worker_died`),
+never excluded, so no denominator shrinks. The report is written, but
+`parity.py` exits 3 and makes or checks no baseline, so no gate can use the
+run.
+
+**A traced pass without the end of its log** is reported as a timeout when
+the capture's time limit (`--pt1-timeout`) stopped it (a harness limit, class c in
+`engines.py`). Otherwise it is reported as a crash (the engine's, class b).
+
+**Capture adapter.** `capture.py` exposes
+`capture(tex_path, engine_bin, workdir, *, fmt=None) -> Capture(log, boxes, pdf_path)`
+(plus the harness's `stream=` and `timeout=`, and a Capture's `size`, `complete`,
+`fingerprint` and `timed_out` for a streamed log).
+That is the signature `tools/lockstep/run.py` will expose (P0-LOCKSTEP-HARNESS;
+#2 comments 5885107001 and 5885140240). Until lockstep lands, `capture.py` is a
+minimal stand-in marked `TODO(lockstep)`. Then it becomes an import, so the
+repository has one capture, not two.
+
+**Self-test:** `--engine /Library/TeX/texbin/pdftex` must score 100% on P-T1
+and P-T2 across the fixtures tier.
+
+## Levels L0–L4 (per document, cumulative, strictest last)
 
 | level | passes when | how it is measured |
 |---|---|---|
@@ -20,10 +233,13 @@ documents at L3**, plus the breakdown that says what stops the rest.
 | L3 | every glyph in place | a one-to-one matching of same-character glyphs with \|dx\| ≤ 0.5 bp and \|dy\| ≤ 0.5 bp covers every glyph on every page. Math-extension glyphs (`cmex`, `lmex`) are held on x only, because a cmex glyph hangs from its origin and an OpenType MATH variant sits on the axis. Their vertical allowance is 2 em, plus the stack height for extensible delimiters |
 | L4 | pixels match | both PDFs rasterised at 144 dpi grey (`pdftoppm`, else Ghostscript). A pixel differs when \|Δ\| > 64 grey levels, and each page may have at most 0.02 % of its pixels differing |
 
+For a TeX engine, L0 means exit 0 with a PDF. Its glyphs are read from that
+PDF exactly as the reference's are.
+
 A document "at L3" also passed L0–L2. The report also gives each check's
 independent pass rate, the glyph-position error distribution (p50/p95/max of
-max(\|dx\|,\|dy\|) over glyphs that `rank.aligned_pairs`, the word alignment
-of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
+max(\|dx\|,\|dy\|) over glyphs that `wordalign.aligned_pairs`, the word
+alignment of `tools/parity/wordalign.py`, pairs), the first diverging page, and
 **blockers**: what stands between each document and its next level.
 
 ## Tiers
@@ -31,7 +247,8 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
 - **fixtures**: `fixtures/real-world` + `fixtures/divergence-probes` against
   their committed reference PDFs. Deterministic, needs no TeX, and takes about
   3 s. CI runs it on macOS against `baseline-fixtures.json` (no document may
-  drop below its recorded level).
+  drop below its recorded level). The baseline names the `host` it was
+  recorded on (schema /2); `--check-baseline` exits 2 on another OS.
 - **arxiv**: `corpus/arxiv-2025-01.json`, 149 version-pinned e-prints (10 per
   primary category across math, cs, hep-th, quant-ph, cond-mat, astro-ph and
   gr-qc, submitted 13–17 Jan 2025), each with its SHA-256. `corpus.py
@@ -40,18 +257,179 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   shipped in TeX Live 2026 (IEEEtran, acmart, amsart/amsproc/amsbook,
   revtex4-2, elsarticle, llncs, tufte, moderncv, beamer, `sample2e`,
   `testmath`, `amsldoc`), pinned by hash.
+- **packages**: `corpus/packages-texlive-2026.json`, 92 documents under
+  TeX Live 2026's `texmf-dist/doc`, one per package for 92 of the 98
+  packages on the M1 list (amsmath, xcolor, geometry, pgfplots, hyperref,
+  siunitx, microtype, beamer, minted, …), pinned by hash. Each file loads
+  its package directly and compiles with pdflatex alone under TeX Live's
+  restricted `\write18`, which is the harness's `default` mode (at most 3
+  passes, at most 100 pages). Don't run it with `-no-shell-escape`: minted
+  needs `\write18`.
+  `copy_dir` copies the file's whole directory and `files` names the
+  neighbours it needs. The `skipped` list gives the 6 packages with no such
+  file and why (biblatex needs biber, background's only loader is too large,
+  …). An entry's `pt1_skip` says why pdfTeX's own `\tracingall` log differs
+  between runs, even with the pinned seed, so its P-T1 is reported as not
+  evaluated, never as passed; P-T2 and L0–L4 are still measured. No entry
+  has one today: tabu-europasscv's (`\pdfelapsedtime`) gave way to
+  `capture.ElapsedMask` above. The Muse M1 lanes (daniel-muse-lead) drew the tier
+  and #2 reviewed it.
+
+- **nightly-5k** (DESIGN §8 T4): `corpus/nightly-5k.json`, about 5,000
+  version-pinned e-prints, see below.
+
+- **books**: `corpus/books.json`, whole books from their authors' public
+  repositories, each a forge's commit archive pinned by commit and SHA-256.
+  An entry's `root` is the archive's top directory, which becomes the tree,
+  so relative `\input`s resolve as in the checkout. The first is Clive
+  Newstead's *An Infinite Descent into Pure Mathematics* (592 pages; source
+  LPPL 1.3c, book CC BY-SA 4.0; owner priority 2026-10-03,
+  `docs/evidence/infdesc-2026-10-03`). It is `on_demand`, so it runs only
+  when named (`--tier books`). Its traced pass writes a 20 GB log and takes
+  pdfTeX about 2,300 s, inside the oracle's default 7,200 s limit; a
+  candidate then gets about 6,900 s (3 × pdfTeX's).
+
+- **beamer**: `corpus/beamer.json`, 24 slide decks (lane BEAMER-V3,
+  `docs/evidence/beamer-v3-2026-10-03`). Two kinds of entry:
+  - eleven `tl-*` examples shipped in TeX Live 2026 (metropolis's
+    `demo.tex`, the conference talk, the lecture in beamer and article mode,
+    three ornate `solutions` talks, four emulations), copied from
+    `texmf-dist/doc` and pinned by SHA-256 like the templates tier. Beamer's
+    user guide is left out: pdflatex cannot compile it from the installation
+    (its theme pictures are not shipped).
+  - thirteen `v3-*` decks committed under `fixtures/beamer-v3` (themes,
+    overlays, handout, notes, graphics, TikZ, bibliography,
+    `allowframebreaks`, 16:9, `beamerarticle`, a 118-page deck). A `repo`
+    entry names the deck's file in this repository instead of a TeX Live
+    path; `corpus.py` copies its whole directory into the cache and copies
+    it again when the directory's content changes. Git pins it, so it has
+    no `sha256`. These decks are outside `fixtures/real-world`, so they are
+    not in the gated fixtures tier and have no committed reference: the
+    reference is made by the local pdflatex, as for every non-fixture tier.
+
+  It is `on_demand`: it runs only when named (`--tier beamer`), with
+  `--pt1-timeout 3600` (the 118-page deck's traced pass is the longest).
+  The ten `fixtures/real-world/beamer-*` decks stay in the fixtures tier.
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
 the hashes and unpacks them. It sends at most one arXiv request every 3 s.
 
+## Nightly corpus (T4)
+
+DESIGN §8 T4 runs every night on the owner's NixOS PC (`.github/workflows/nightly.yml`,
+job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
+
+- **Corpus.** `corpus/nightly-5k.json` holds 20 primary categories × 10 years
+  (2016–2025) × 25 e-prints. It was drawn by `corpus.py select-arxiv-grid`.
+  Each (category, year) cell draws from a 14-day window that starts on a day
+  of that year chosen by SHA-256 of the seed, category and year. Within the
+  window it takes the oldest e-prints that are TeX source with a top-level
+  file. The rule, the seed and every cell's query and skip counts are in the
+  manifest's `selection`. Each entry is pinned by versioned id and SHA-256.
+  The draw on 2026-09-29/30 filled all 200 cells: 5,000 e-prints, 9.3 GB.
+  It skipped 246 PDF-only e-prints and 47 others (no top-level file, or no
+  source served, a 404).
+  The manifest is `on_demand`, so a bare `corpus.py fetch` skips it and does
+  not start hours of polite downloading. Each shard fetches only its own
+  documents, at most one arXiv request every 3 s.
+- **Tiers.** `nightly-5k` plus the T3 tiers `arxiv`, `templates` and
+  `packages`. A tier with no manifest yet is skipped with a notice.
+- **Shards.** `nightly.py run --shards 50` runs `parity.py --shard K/50` one
+  shard after another. Shard K takes every 50th document from the K-th, so
+  each shard is a cross-section of the corpus. The runner wipes the job's
+  work directory every job, so state lives in `$FLASHTEX_NIGHTLY_HOME`
+  (default `~/.cache/flashtex-nightly`). A finished shard's `scoreboard.json`
+  and `documents.json` are kept under a run key. The key is the SHA-256 of:
+  - the engine binary;
+  - every module the scoring imports (all in `tools/parity` since S7);
+  - the contents of what `--engine-env` names (the formats directory, the pool);
+  - the oracle's identity: the pdfTeX binary, the TeX Live root and its
+    `tlpkg/texlive.tlpdb`;
+  - the manifests and the settings.
+
+  A stopped job therefore resumes at its first unfinished shard. A shard with
+  an unmeasured document (a failed fetch, a harness error) is scored again.
+  `--deadline-minutes` stops starting shards in time to upload the artifact.
+- **Cost.** P-T2 and L0–L4 run on every document. P-T1 needs a traced pass
+  whose log can run to GBs, so it runs on a fixed pseudo-random sample:
+  `--pt1-sample nightly-5k=0.05`, which is about 250 documents. A document is
+  in the sample when SHA-256 of `flashtex-pt1-sample/1/<tier>/<id>`, read as a
+  fraction, is below 0.05 (`parity.in_pt1_sample`). The sample is the same
+  every night, so the traced oracle logs stay cached. The other tiers get
+  P-T1 on every document, as in T3.
+- **Memory bound.** An in-memory P-T1 comparison holds both traced logs. Its
+  peak resident size was measured at 7.5 and 7.6 times the log size, on
+  logs of 210 and 252 MiB (`parity.PT1_MEMORY_FACTOR` = 9). Two limits bound
+  the total:
+  - `--pt1-max-log-mb 64`: logs up to 64 MiB are compared in memory. A
+    larger one (e-prints trace to 25 GB) is compared as a stream, in
+    constant memory (`pt1stream.py`, the same verdict). So the budget bounds
+    memory without leaving any document's P-T1 not evaluated.
+  - `nightly.py run` refuses to start when the bound is over
+    `--memory-budget-gib`: `-j` × (1 GiB, an allowance per worker, not a
+    measurement, + 9 × the budget). The workflow sets the budget to 70% of
+    the PC's `MemAvailable` at the start of the job. Its bound is
+    8 × (1 + 9 × 64/1024) = 12.5 GiB.
+  - A run without a budget is refused: one e-print's log would be read into
+    memory whole.
+- **Oracle on the same host.** The references are made by the runner's own
+  pdfTeX 1.40.29 and pdflatex (TeX Live 2026) and cached by source hash.
+  Nothing expected is committed.
+- **Ratchet.** `nightly.py ratchet` fails the job when any of these happens:
+  - a document drops below its recorded level;
+  - its P-T2 or P-T1 goes from pass to fail, or from pass to not evaluated;
+  - a tier has more documents excluded by the oracle than the baseline
+    recorded.
+- **Fixed denominator.** Every document of the run's tiers (after `--spread`)
+  must come back, measured or excluded by the oracle. A document that is not
+  returned fails the ratchet. So does one that could not be fetched (a
+  failed download, a SHA-256 mismatch) or scored (a harness error), and so
+  does a baseline document that has left the corpus.
+- **Host identity.** The baseline is
+  `$FLASHTEX_NIGHTLY_HOME/baseline/<host label>.json`. The label is not an
+  argument. `host_identity` derives it from the machine (`/etc/machine-id`,
+  or the Mac's IOPlatformUUID) and the oracle's TeX Live root. The oracle's
+  identity is in the fingerprint: the pdfTeX binary's SHA-256 and the
+  `texlive.tlpdb` SHA-256, which changes with every `tlmgr update`. The check
+  refuses results measured on another machine, a baseline of another
+  machine, a Mac-recorded baseline on Linux, and a changed TeX Live.
+- **Recording.** `--record` is accepted in CI only in a `workflow_dispatch`
+  of `main`; nightly.py checks `GITHUB_EVENT_NAME` and `GITHUB_REF` itself,
+  as well as the workflow's `corpus_record_baseline`. Outside CI it needs
+  `--local-proof`, and CI refuses such a baseline. A run with unfinished
+  shards, unreturned or unmeasured documents, or shards measured under
+  different settings is never recorded. Improvements are reported but never
+  recorded automatically.
+- **Artifact** `corpus-t4`: `summary.md` has the per-tier P-T1/P-T2/L0–L4
+  table, the classification (a)–(e) of every document that is not a full
+  pass (as in `reports/arxiv-scoreboard-*`) and the top root causes, with
+  numbers folded so that one difference in many documents ranks once.
+  `summary.json`, and `documents.json` with one small record per document.
+  `ratchet.json`. Never logs.
+
+```sh
+python3 tools/parity/nightly.py make-formats --engine target/release/flashtex-initex \
+    --pool crates/flashtex-engine/pdftex.pool --out "$FMT"
+python3 tools/parity/nightly.py run --texbin "$TEXBIN" --shards 50 --tier nightly-5k --tier arxiv \
+    --tier templates --tier packages --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 64 -j 8 \
+    --memory-budget-gib 24 --engine target/release/flashtex-initex \
+    --engine-env FLASHTEX_FORMATS="$FMT" --engine-env FLASHTEX_POOL="$PWD/crates/flashtex-engine/pdftex.pool" \
+    --out "$OUT" -- --texmf "$TEXMF"
+python3 tools/parity/nightly.py ratchet --results "$OUT"                          # check
+python3 tools/parity/nightly.py ratchet --results "$OUT" --record --local-proof   # outside CI only
+```
+
 ## Running it
 
 ```sh
-cargo build --release --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
-python3 tools/parity/parity.py --tier fixtures                      # ~3 s
+scripts/engine-parity.sh --work W build                # -> W/eng/flashtex-initex, W/fmt/pdflatex.fmt
+export FLASHTEX_ENGINE=W/eng/flashtex-initex FLASHTEX_FORMATS=W/fmt   # the default engine since S5
+python3 tools/parity/parity.py --tier fixtures                      # P-T1 + P-T2 + L0-L4 for the new engine
+python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints
 python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates -j 10
+python3 tools/parity/parity.py --tier packages -j 2                   # traced logs to GBs: keep -j low
 #   -> docs/evidence/parity-<UTC date>/{report.md,scoreboard.json,documents.json}
 python3 tools/parity/parity.py --tier fixtures --raster none --check-baseline tools/parity/baseline-fixtures.json
 python3 -m unittest discover -s tools/parity -p 'test_*.py' -v
@@ -64,6 +442,400 @@ run of all three tiers takes about 3 min at `-j 10`. A cold run adds 789 s of
 serial pdflatex (the longest document takes 79 s), which is about 1.5 min
 more at `-j 10`. A document pdflatex cannot compile is cached as such
 and excluded.
+
+### Engines side by side (`engines.py`)
+
+`engines.py` puts several runs side by side: the new engine, v1 (the
+`flashtex` CLI) and the pdfTeX self-test. For each tier it gives P-T1, P-T2
+and L0–L4, and it gives every document of the `--subject` engine that is
+not a full pass (P-T1, P-T2 and L4) a root-cause class:
+
+| class | meaning |
+|---|---|
+| a | a package or font missing from the user's TeX Live (the DESIGN §4.4 bundle fallback) |
+| b | an engine difference, with the first differing log, box or content line |
+| c | a harness issue in tools/parity |
+| d | pdflatex fails too, so the document is excluded |
+| e | excluded by the convergence rule: pdflatex compiles it, but its log asks for a rerun on every pass (natbib's `Rerun to get citations correct.`) |
+
+The class comes from the run's records. A notes file adds what a person
+found by reading the logs: the pdftex.web section, the owner and the issue.
+A note's class overrides the automatic one, and the report shows both. The
+output is small and deterministic, and it carries the measuring host, so it
+can be committed as evidence (`reports/`):
+
+```sh
+python3 tools/parity/engines.py --run new=<out> --run v1=<out> --run pdflatex=<out> --subject new \
+    --sha new=<git sha> --sha v1=<git sha> --harness-sha <tools/parity git sha> \
+    --notes tools/parity/reports/<name>.notes.json \
+    --out tools/parity/reports/<name>
+```
+
+### The P5 scoreboard (`scoreboard.py`, `scoreboard-run.sh`)
+
+DESIGN §12 P5's gate is "new engine ≥ old on every tier; arXiv L1 ≥ 90%;
+retirement complete". `scoreboard.py` puts every tier in one table, new
+engine against v1, from what the existing harnesses already wrote. It
+measures nothing itself, so there is no second harness. **Since S7** v1 (the old
+engine) is deleted and nothing builds, runs or downloads it: the parity
+tiers' old column is the committed one-off baseline of v1's last board run,
+T4's the decision-1 one-off (both below), and the rows v1 could not run stay
+"old n/a":
+
+| tier | harness | metric per engine |
+|---|---|---|
+| fixtures, arxiv, templates, packages | `parity.py` (`scoreboard.json`, `documents.json`) | P-T1, P-T2, L0–L3 (L4 when rasterised) |
+| nightly-5k (T4) | `nightly.py` (`summary.json`, #1276) | P-T1 (its 5% sample), P-T2, L0–L3 |
+| T2 LaTeX suites | `tools/latex-suites/run.py` (transcript) | tests agreeing with pdfTeX; target 0 unexpected |
+| package-smoke | `tools/package-smoke/run.py` (transcript) | documents equal to pdfTeX |
+| fonts | `tools/font-census/census.py` (`census.json`) | fonts identical to pdfTeX |
+
+Each row gets a verdict. **ahead**, **equal**, **ahead (old n/a)** and, against
+a one-off v1 baseline (T3 and T4), **ahead (v1 one-off)** and **equal (v1
+one-off)** are green. The others are:
+- **behind**;
+- **below target**: arXiv L1 < 90%, or an unexpected T2 failure;
+- **below bar (old n/a)**: see below;
+- **denominators differ**;
+- **host mismatch**: two hosts or two oracles in one row (DESIGN §8);
+- **invalid**: a worker died, a transcript without its summary line, a zero
+  denominator, or a run that is not this board's engine (below);
+- **missing**: a tier nobody ran is still a row.
+
+**Fail closed.** A harness output with a missing or renamed field raises
+`FormatError` (exit 2); nothing defaults to 0. Every row needs a denominator
+above 0. Denominators are the harnesses' own. Exclusions are printed with
+their reasons.
+
+A run is **partial** when:
+- it was limited (`--limit`, `--only`, `--shard`, `--spread`);
+- it saw fewer documents than its tier's manifest lists, or the tier has no
+  manifest to count against (fixtures excepted);
+- a nightly run has missing shards, documents not returned or unmeasured, or
+  mixed fingerprints;
+- T2 ran fewer tests than `run.py --suite all --list` counts
+  (`--latex-suites-list`; without it T2 is always partial);
+- package-smoke ran fewer documents than `tools/package-smoke` holds.
+
+A font census is a **sample** when:
+- it ran below its default `--per-family`;
+- it ran with `--only` or `--kind`;
+- it tested fewer families than it found, or tested no fonts of some kind;
+- it does not record its `selection`.
+
+A board with any partial row, any sample, or `--sample-note` is never
+all-green.
+
+**One engine, one commit, one oracle.** A run that records its commit
+(`nightly.py`) must be at the board's `--sha`. A run that records none, or a
+board without `--sha`, is invalid. Every run of one engine that records the
+binary's sha256 must match that engine's `parity.py` run. Every run that
+records its oracle must name the same one. Any mismatch marks that run's
+cells INVALID: a stale T4 cannot count.
+
+The oracle is compared below its version string, which is the same on the
+NixOS PC and the Macs ("pdfTeX ... 1.40.29 (TeX Live 2026)") although their
+trees are different snapshots (LaTeX 2026-06-01 and 2025-11-01).
+`scoreboard.py --oracle FILE` takes the board's own oracle record
+(`oracle_provenance.py --json`; `scoreboard-run.sh` passes `OUT/oracle.json`).
+A nightly summary records its oracle's identity (`fingerprint.oracle`: the
+pdfTeX binary's and `texlive.tlpdb`'s sha256). A T4 run whose identity is not
+the board's, or that records none, is INVALID ("another oracle: texlive.tlpdb
+..."). So a PC's T4 can never fill a Mac board's rows, or the reverse.
+
+**T4 on the Mac** (`.github/workflows/corpus-t4-mac.yml`, lane P5-T4-MAC).
+The Mac board's T4 is measured on the heavy Mac against its own oracle: the
+same `nightly.py run`, 50 shards, `nightly-5k` only (the board measures the T3
+tiers itself), `--raster none`, no ratchet (no Mac baseline exists). The
+corpus takes longer than a night there, so a cycle is pinned to one commit of
+main (input `sha`) and resumed over several dispatches. Each run uploads the
+merged summary as `corpus-t4-mac-partial`, and as `corpus-t4-mac` once all 50
+shards are done. The board's Mac route picks the newest `corpus-t4-mac` from
+the last 7 days and is measured at its commit; the PC route picks the newest
+`corpus-t4` from the last 36 h. The board builds that run's commit on a
+self-hosted runner, so `scripts/ci/p5-pick-t4.sh` accepts a run only when all
+of these hold (tests: `scripts/tests/p5-pick-t4.test.sh`):
+- it is this repository's own (never a fork's);
+- it ran on main, by schedule or dispatch, from exactly the route's workflow;
+- its summary's commit is a commit of main. This is checked even when it is
+  the run's own head, because a tag named main is not the branch.
+
+The board and both T4 jobs pin one Rust toolchain, so the engine binaries'
+sha256 can match. `nightly.py run --min-free-gb N` starts no
+shard while the state, work or parity cache disk has under N GB free. Measured
+locally on the Mac (25 documents, `-j 3`, load 35 to 60, nothing cached): about
+10 to 15 s of wall time and 7 MB of cache per document. That is roughly 15 to
+21 h and 35 GB for the first cycle.
+
+Only the T4 tiers are read from a nightly summary. #1276's corpus-t4 job
+also runs the T3 tiers, which come from this board's own `parity.py` runs.
+
+**Rows v1 cannot run.** v1 cannot run T2, package-smoke, the font census or
+P-T1, because they need a pdfTeX-compatible binary. Its cell there reads
+**n/a** with that reason. new >= old is then vacuous, so these rows have a
+bar: green only when new passed 100% of what it measured with nothing
+skipped, or at least the row's recorded baseline (`--na-baseline FILE`,
+`{"rows": {"tier:metric": {"passed": P, "of": N}}}`). Below it the verdict
+is **below bar (old n/a)**.
+
+On a TeX Live newer than the suites' pins, pass
+`--latex-suites-reference` with the same suites run through that host's
+pdfTeX. The T2 baseline is then pdfTeX on the same host, as in
+`scripts/engine-parity.sh`.
+
+**T2 failures are (directory, test) pairs.** The same test name can run in two
+directories: l3kernel's testfiles-backend runs under etex-dvips and under
+etex-dvisvgm. So pdfTeX failing `m3backend01` in one directory while the
+engine fails it in the other is a difference. `run.py` prints each
+directory's failures (`LABEL: FAILED t1 t2 ...`), and "unexpected" is the set
+of pairs the engine fails and pdfTeX passes.
+
+A transcript is INVALID when:
+- its per-directory failures do not account for every FAIL count;
+- its `failing tests:` block does not name them;
+- its `UNEXPECTED failures:` line names a test no directory failed.
+
+The same checks apply to the reference transcript.
+
+**Retirement stages.** The stages of #1236 (`retirement-stages.json`) form a
+column and a table. Each row lists the stages it gates: fixtures P-T2 gates
+S3 (the P3 exit), and every row gates S5 onward. An all-green board meets
+only the scoreboard part of S5's precondition. The status line names what S5
+still needs, including "T1 (lockstep) has 0 new differences", which this
+board does not measure.
+
+**App-parity rows (S4(h), plan §4.4).** `app-parity-rows.json` maps each row of
+the checklist of record (`docs/evidence/app-parity-2026-10-05/README.md`) to
+the tests that prove it and to its S5 class: `test` (named tests pass, not
+skipped), `fallback` (A9, A17: a visible fallback to the previous engine),
+`owner` ("different (intended)": the owner's retirement in writing, as a link
+in `owner_retirement`), `s6` or `s7`. `host_driven` lists the tests that need
+`flashtex-host` and TeX Live, which the hosted `mac-app` job skips.
+`app_parity_rows.py check` (the checks job, `gate.sh pr`) holds the rows to the
+checklist and every named test to the source; `check-log --leg hosted` (in
+`mac-app`) and `--leg host` (on the leg that has a host) fail when a row's test
+is missing, skipped or failed. Stages with `app_parity_gate` show the rows'
+state in the board's stage table (`gate S5` prints it, with what is still open).
+
+**The owner's bar (P5-BOARD-T4).** The owner confirmed decision 3's
+thresholds on 2026-10-05 (DESIGN §13): P-T2 >= 99 % and P-T1 >= 98 % of the
+measured documents on the arXiv and T4 tiers, zero crashes on T4, and new >=
+old on every tier. `OWNER_BAR` in `scoreboard.py` holds them; a row under its
+bar reads **below bar** (or **below bar (old n/a)**) even when new > old. The
+comparison is on counts, so 98.95 % is not 99 %.
+
+**T4 crashes.** The T4 tier has a `crashes` row. Its denominator is the
+documents the engine ran: those the oracle compiles and the harness scored. A
+document the oracle excludes never reaches the engine (`parity.score`), and is
+shown apart as excluded. The row counts every way the engine failed to finish
+such a document, by kind (`nightly.py crash_of`, `CRASH_KINDS`):
+- a Rust panic (exit 101);
+- a signal (a negative exit);
+- any other non-zero exit, such as a fatal or TeX error that pdfTeX did not hit
+  on a document it compiles;
+- a timeout;
+- a traced pass whose log stops before the end of the run;
+- a worker that died scoring the document.
+
+The bar is none of them. `nightly.py` writes `crashes`, `crash_kinds` and
+`crash_examples` per tier. For an older summary without them, the board
+recovers the kinds from `documents.json`'s causes and marks the row partial;
+with neither, the row is not run. The v1 one-off baseline counts no crashes,
+so the old column is n/a.
+
+**The v1 baseline's oracle.** `t4-v1-oneoff.json` records the oracle it was
+measured against: the Mac, texlive.tlpdb `ca39e6791582`, LaTeX 2025-11-01. When
+the board's own oracle is another one (the PC's is `909745461c89`, LaTeX
+2026-06-01), T4's old cells say **CROSS-ORACLE** with both identities. Decision
+1 accepts this for frozen v1, whose rates are far below the new engine's. It
+never changes a verdict at v1's 0/440 P-T2, but the board states it.
+
+**P-T2's size cap.** The comparison reads a qdf copy of each PDF, in which
+every stream is decoded. T4's 2511.15561v1, a 12.7 MB PDF with large images,
+expanded to 3.0 GB, and loading it OOM-killed an 8 GB scope. Over
+`FLASHTEX_PT2_MAX_QDF_MB` (default 1024), qpdf stops writing (`RLIMIT_FSIZE`)
+and the document is a **harness error**: unmeasured, never a pass or a fail.
+Its tier reads partial, so the gate stays red. This is a harness limit, to be
+lifted by a normaliser that leaves image data compressed.
+
+**Issues and the gate.** `--issues apply` opens or updates one issue per red
+tier, on complete runs only: a row behind v1, below a target (arXiv L1, T2's
+unexpected failures) or below the owner's bar (`ISSUE_VERDICTS`). It carries
+the label `p5-red` (created if missing) and the marker
+`<!-- p5-scoreboard:tier=NAME -->` in the body. The run closes that issue only
+when every row of the tier is green and no cell is partial, a sample or
+invalid, and the board has no `--sample-note`. `dry-run` prints the plan.
+`--require-green`, also with `--from-board`, is the gate: exit 1 unless the
+board is all green. A missing, partial or invalid tier therefore fails the run
+without filing an issue.
+
+A parity tier with documents that could not be fetched or scored (parity.py's
+excluded reasons `fetch` and `harness error`) is partial: such documents are
+not measured, and a tier is never silently smaller than its manifest.
+
+**T4 v1 (decision 1).** T4 runs the new engine only. The Commander ruled on
+2026-10-02 ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653))
+that a one-off v1 measurement suffices: v1 is frozen to fixes only (D13), so
+its output cannot drift. That measurement is committed as
+`baselines/t4-v1-oneoff.json`:
+- 440 nightly-5k documents measured with both engines (#1315 5922325696);
+- v1 at P-T2 0, L0 7, L1 5, L2 0 and L3 0 of 440; P-T1 is n/a, because the
+  CLI writes no trace;
+- the source links, the engine build, the measured date and the re-measure
+  trigger (a D13 fix to v1 that touches typesetting broadly).
+
+`scoreboard.py` reads it by default (`--t4-v1-baseline FILE`, or `none`). T4's
+old column shows it as **v1 one-off (decision 1, DATE)**. The baseline is its
+own slice of the tier, so the verdict compares rates, not counts, and on that
+slice: **ahead (v1 one-off)** or **equal (v1 one-off)** are green, and a lower
+rate is **behind**. The new side of the comparison is:
+- for a FINAL file: the new T4 run restricted to the file's `ids`, from the
+  run's `documents.json`. Without that file the column reads missing, and with
+  some IDs absent from the run it is partial. `id_list_sha256` is the SHA-256
+  of the sorted IDs, one per line, each ending in a newline;
+- for a PROVISIONAL file: its `new_same_slice` (the new engine on the same
+  slice in that measurement) where it has the metric, else the whole new run.
+
+The baseline may come from another oracle than the board's (another host or
+TeX Live snapshot). That is accepted for this frozen v1 measurement only,
+because v1's rates (at most 1.6 %) are far below the new engine's. The new
+engine's T4 is always the board's own oracle (DESIGN §12).
+
+The file is checked when it is read. A missing file, or a malformed one (wrong
+schema, a count over its denominator or over the measured documents, no
+decision record, or a FINAL file without its `ids` (each once, as many as
+measured), their `id_list_sha256` and an oracle),
+leaves T4's old column **missing** with the reason, never green. A
+PROVISIONAL file, one that does not yet record the ID-list hash and the
+oracle, marks its cells partial: the row can be green, the board cannot. A v1
+T4 run (`--nightly old=...`), if one is ever given, takes precedence.
+
+**T3 v1 (SCOREBOARD-POST).** Retirement stage S7 (#1888) deleted v1, so no
+board can measure the parity tiers' old column again. The Commander ruled on
+2026-11-01 (lane SCOREBOARD-POST) that, as for T4, a one-off measurement
+stands in: v1's last complete run on the board, the `parity-old/` of
+p5-scoreboard run
+[41203982275](https://github.com/flash-tex/flashtex/actions/runs/41203982275)
+(scheduled, 2026-10-31, main `5a42ab270`, the NixOS PC, oracle texlive.tlpdb
+`909745461c89`; that board was all green). `make_t3_v1_baseline.py` copied it
+verbatim into `baselines/t3-v1-oneoff.json`, with the run, artifact and file
+sha256s, the v1 binary's sha256 and the oracle record:
+- fixtures 88, arXiv 127, templates 17, packages 88 measured documents, each
+  with its id, level and P-T2; the documents the oracle excluded, with the
+  reason;
+- v1 at P-T2 0 on every tier; L0/L1/L2/L3 84/84/74/64 of 88 (fixtures),
+  2/1/0/0 of 127 (arXiv), 2/2/0/0 of 17 (templates), 11/9/6/3 of 88
+  (packages); P-T1 is n/a (the CLI writes no trace).
+
+`scoreboard.py` reads it by default (`--t3-v1-baseline FILE`, or `none`)
+for a parity tier that has no v1 run on the board. When it is read, every
+count is re-derived from the records and must agree, and each tier's
+`id_list_sha256` must match. The old cell shows **v1 one-off (last v1 run,
+p5-scoreboard 41203982275, 2026-10-31)**. Its rate is compared with the new run
+restricted to the baseline's IDs, from the new run's `documents.json`, so a
+manifest change cannot move the comparison. A baseline ID the new run lacks
+makes the cells partial. A missing or malformed file, a tier it does not
+cover, or a new run without `documents.json` leaves the old column
+**missing**, never green. Another oracle than the board's is stated in the
+cell as **CROSS-ORACLE**, as for T4. It is never re-measured: v1 no longer
+exists.
+
+T4's P-T1 is defined on its fixed 5% sample. A document outside it is listed
+as "outside the --pt1-sample (by rule)", not as skipped. `nightly.py` counts
+these in `P-T1_outside_sample`; in an older summary without that count,
+every P-T1 not evaluated is still a skip.
+
+`scoreboard-run.sh` runs everything but T4 end to end: it builds the new
+engine and its formats (v1 is deleted), then runs each harness on it and
+aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
+on its one official host, the NixOS PC. A heavy Mac runs it only when a
+dispatch names it (`-f route=mac`): that board is unofficial, so it files no
+issue, does not gate, and adds `reports/<date>-mac.*` to the summary branch
+without replacing `SUMMARY.md`. The T4 rows come from the route's own T4: the
+`corpus-t4` artifact uploaded in the last 36 h on the PC,
+`corpus-t4-mac` from the last 7 days on the Mac. The whole board is measured
+at the commit that T4 summary records.
+
+**The board's host (the NixOS PC).** Its runners are user services in
+`flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %, shared with agents'
+runs). The board runs in a scope of its own inside that slice
+(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=8G`, nice
+10), and never beside a T4 night: the board's PC job and nightly.yml's
+`corpus-t4` share the concurrency group `flashtex-pc-heavy`. On 10-06 the two
+together, beside the agents' runs, pushed the slice to 86 % full memory
+pressure, and GitHub dropped the board (37525986631). Its TeX
+Live 2026 is installed without doc files (`tlmgr option docfiles` is 0), and
+the templates and packages manifests pin files from TeX Live's `doc/` tree.
+Installing the docs would change the oracle's `texlive.tlpdb`, so the board
+does not: it copies those documents from
+`~/.cache/flashtex-corpus-texmf/texlive-2026` instead (`scoreboard-run.sh
+--corpus-texmf`, `parity.py --corpus-texmf`). The oracle stays the PC's own TeX
+Live. That directory holds each manifest entry's file, its `files` and, for a
+`copy_dir` entry, its directory, at their texmf-dist paths. Each file is
+checked against the manifest's sha256 when it is fetched. It was copied on
+2026-10-05 from MacTeX 2026's texmf-dist (texlive.tlpdb `ca39e6791582`, the
+snapshot the manifests were pinned on; all 112 entries match). Without the
+directory, those tiers' documents are unmeasured and the tiers read partial.
+
+**The hosted route** (p5-scoreboard.yml, route `hosted`, nightly at 02:23 UTC)
+measures the whole board, T4 included, on GitHub-hosted Ubuntu while the PC is
+off. Its oracle is TeX Live 2026 from the pinned image `HOSTED_TEXLIVE_IMAGE`
+(scheme-full, no doc files), so its reports carry `-hosted` and compare only
+with each other. One build (`hosted-build`) serves every job at one path, so
+every run, T4's included, is of one binary. T4 is split over hosted jobs
+(`scripts/ci/p5-hosted-t4.sh`: one run key for every job, then one merged
+summary); the board's stages run one per job (`scoreboard-run.sh --skip ...
+--no-board`) and are collected into one board (`--collect`). The templates and
+packages documents come from the release asset `corpus-texmf-tl2026-ca39e6791582`,
+the same selection as the PC's copy, made by `scripts/ci/corpus-texmf-bundle.py`
+and pinned by its sha256.
+
+**The new engine is the T4 run's own binary.** nightly.yml keeps it, with its
+formats and pool, in `~/.cache/flashtex-nightly/engines/<key>/` on the PC.
+`scoreboard-run.sh` uses it when the T4 summary names a binary on this host
+whose sha256 matches the one the summary records. A rebuild of the same
+commit is not the same binary: the engine's C sources (kpathsea and others)
+are compiled from the build's `OUT_DIR` and embed its path. On 2026-10-07 the
+board's build (`5b96720eae04`) and T4's (`4d42a00d944d`), both at
+`ac58ecfc7`, differed, and every T4 row read INVALID. Two scratch targets
+gave two more hashes. Without such a run, or with `--build-engine`, the
+engine is built alone, in its own `cargo build -p flashtex-engine`. Built
+together with another package, shared dependencies unify features and the
+binary differs again.
+
+Disk. The first board on a Mac (run 37113092020) died after 5 h with "No
+space left on device". The script now bounds what it writes:
+- every harness writes under `--work` (default `OUT/work`), its `TMPDIR`
+  too, and the script removes what it made there on exit (`--keep-work`
+  keeps it). parity.py removes each document's work directory once the
+  document is scored, and no traced log reaches the disk (`pt1_plan`).
+  On a local `--tiers fixtures --limit 11` board (P-T1 on, T2 sample), the
+  peak under `OUT` fell from 533 MB to 42 MB, and 200 KB is left after the
+  run instead of 41 MB;
+- a guard reads the free space of `OUT`, `WORK` and the parity cache every
+  `FLASHTEX_BOARD_DISK_POLL_S` seconds (default 30) while a stage runs.
+  Under `FLASHTEX_BOARD_MIN_FREE_GB` (default 10) it stops that stage
+  (SIGTERM to its process tree, SIGKILL after 60 s) and starts no other.
+  The board is still written; the rows of the stages that did not finish
+  read missing or invalid, a `::error::` names the disk and its free
+  space, and the script exits 1. It stops rather than pauses, because a
+  pause would run into the harnesses' wall-clock time limits.
+
+The workflow keeps write tokens away from third-party TeX sources:
+- the measuring job has read-only permissions and a checkout without
+  credentials. Its token is only in the step that downloads the T4
+  artifacts, before any TeX runs;
+- a separate job that runs no TeX files the issues with
+  `scoreboard.py --from-board`, and pushes the summary.
+
+```sh
+tools/parity/scoreboard-run.sh --out /tmp/p5 --jobs 2            # every tier but T4
+tools/parity/scoreboard-run.sh --out /tmp/p5 --limit 12 --sample-note "local sample"
+python3 tools/parity/scoreboard.py --parity new=<dir> \
+    --nightly new=<dir> --latex-suites new=<file> \
+    --latex-suites-reference <file> --package-smoke new=<file> --fonts new=<dir> \
+    --out <dir> [--summary FILE] [--issues dry-run|apply] [--require-green]
+```
 
 ## Root causes
 
@@ -97,7 +869,12 @@ Each cause is ranked by the number of documents whose next level it holds.
 
 - Identity is Unicode, not glyph id. An unmapped reference glyph name is
   reported (`unmapped_reference_glyphs`) and counts as a mismatch.
-- Text inside Form XObjects (included PDF figures) is read on neither side.
+- Text inside Form XObjects (included PDF figures) is read on neither side
+  by L2/L3. P-T2 compares them through the page resources.
+- P-T2 does not compare annotations (links), outlines or the document
+  catalogue. P-T3 (byte identity) is optional and not implemented.
+- A cold P-T1 oracle run is heavy: `\tracingall` logs run from 10 MB to
+  430 MB per fixture (beamer is the largest).
 - L1–L3 blockers are heuristics: the first-divergence label comes from the
   nearest candidate glyph's source span.
 - The fixtures tier uses the committed references. Twelve real-world fixtures

@@ -1,0 +1,6 @@
+% 383-xleaders-hbox-rule: verifies \xleaders spreads repeated rules evenly across an \hbox to.
+\input prelude
+\setbox0=\hbox to 120pt{\xleaders\hrule height4pt depth2pt\hfill}
+\message{383 wd=\the\wd0 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

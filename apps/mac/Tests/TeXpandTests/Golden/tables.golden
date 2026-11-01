@@ -1,0 +1,188 @@
+# Pack `tables`: tab and btab (the `table` generator), `.float`.
+
+=== tab
+requires: -
+---
+\begin{tabular}{${1:ll}}
+  $2 & $3 \\
+  $4 & $5 \\
+  $6 & $7
+\end{tabular}
+
+=== tab:lcr
+requires: -
+---
+\begin{tabular}{lcr}
+  $1 & $2 & $3 \\
+  $4 & $5 & $6 \\
+  $7 & $8 & $9
+\end{tabular}
+
+=== tab:lcr:2
+requires: -
+---
+\begin{tabular}{lcr}
+  $1 & $2 & $3 \\
+  $4 & $5 & $6
+\end{tabular}
+
+=== tab:lcr:4.float
+requires: -
+---
+\begin{table}
+  \centering
+  \caption{$1}
+  \begin{tabular}{lcr}
+    $2 & $3 & $4 \\
+    $5 & $6 & $7 \\
+    $8 & $9 & $10 \\
+    $11 & $12 & $13
+  \end{tabular}
+\end{table}
+
+=== tab:lcr:2.float#res
+requires: -
+---
+\begin{table}
+  \centering
+  \caption{$1}
+  \label{tab:res}
+  \begin{tabular}{lcr}
+    $2 & $3 & $4 \\
+    $5 & $6 & $7
+  \end{tabular}
+\end{table}
+
+=== tab:l|c|r:1
+requires: -
+---
+\begin{tabular}{l|c|r}
+  $1 & $2 & $3
+\end{tabular}
+
+=== tab:p{3cm}l:1
+requires: -
+---
+error: unexpected `l`
+
+=== tab:{p{3cm}l}:1
+requires: -
+---
+\begin{tabular}{p{3cm}l}
+  $1 & $2
+\end{tabular}
+
+=== tab:*{3}{c}:1
+requires: -
+---
+error: parameters go before `[…]`, `{…}`, labels and modifiers
+
+=== tab:{*{3}{c}}:1
+requires: -
+---
+\begin{tabular}{*{3}{c}}
+  $1 & $2 & $3
+\end{tabular}
+
+=== tab:lcr:2{A,B,C}
+requires: -
+---
+\begin{tabular}{lcr}
+  A & B & C \\
+  \hline
+  $1 & $2 & $3 \\
+  $4 & $5 & $6
+\end{tabular}
+
+=== btab
+requires: booktabs
+---
+\begin{tabular}{${1:ll}}
+  \toprule
+  $2 & $3 \\
+  \midrule
+  $4 & $5 \\
+  $6 & $7 \\
+  $8 & $9 \\
+  \bottomrule
+\end{tabular}
+
+=== btab:lrr:2{Name,Score,Time}
+requires: booktabs
+---
+\begin{tabular}{lrr}
+  \toprule
+  Name & Score & Time \\
+  \midrule
+  $1 & $2 & $3 \\
+  $4 & $5 & $6 \\
+  \bottomrule
+\end{tabular}
+
+=== btab:lrr:2{Name,Score,Time}.float#results
+requires: booktabs
+---
+\begin{table}
+  \centering
+  \caption{$1}
+  \label{tab:results}
+  \begin{tabular}{lrr}
+    \toprule
+    Name & Score & Time \\
+    \midrule
+    $2 & $3 & $4 \\
+    $5 & $6 & $7 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+=== btab:lrr:1
+packages: booktabs
+requires: -
+---
+\begin{tabular}{lrr}
+  \toprule
+  $1 & $2 & $3 \\
+  \midrule
+  $4 & $5 & $6 \\
+  \bottomrule
+\end{tabular}
+
+=== btab:lr:1{A,B,C}
+requires: -
+---
+error: the header has 3 cells but the table has 2 columns
+
+=== tab:lcr:0
+requires: -
+---
+error: a table has 1 to 200 rows
+
+=== tab:lcr:x
+requires: -
+---
+error: `tab`, param `rows`: `x` is not a whole number
+
+=== tab:l@c:1
+requires: -
+---
+error: `tab`, param `spec`: `l@c` is not a column specification
+
+=== tab.wide
+requires: -
+---
+error: `tab` has no modifier `.wide` (it has: .float)
+
+=== tab:lcr:2#x
+requires: -
+---
+error: `tab` has no place for a label
+
+=== tab:ll:1{a<<b,c}
+requires: -
+---
+\begin{tabular}{ll}
+  a<<b & c \\
+  \hline
+  $1 & $2
+\end{tabular}

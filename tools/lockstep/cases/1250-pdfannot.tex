@@ -1,0 +1,8 @@
+% 1250-pdfannot: verifies \pdfannot reserveobjnum and plain forms set \pdflastannot in a box (pdftex.web §1558)
+\input prelude
+\pdfannot reserveobjnum
+\message{1250 reserved=\the\pdflastannot}
+\setbox0=\hbox{\pdfannot width100pt height10pt{/Subtype/Text/Contents(Hello)}X}
+\message{1250 annot=\the\pdflastannot}
+\lsshipbox0
+\end

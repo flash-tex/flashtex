@@ -1,0 +1,9 @@
+% Verifies nested \csname construction with an expanding middle and \string spelled back from the built name.
+\input prelude
+\def\b{X}
+\expandafter\def\csname a\b c\endcsname{NESTED}
+\message{497 nest=\csname a\b c\endcsname}
+\message{497 built=\expandafter\string\csname a\b c\endcsname}
+\setbox0=\hbox{\vrule width497pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

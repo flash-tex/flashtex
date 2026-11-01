@@ -1,0 +1,8 @@
+% 1249-pdfxform-refxform: verifies \pdfxform with attr and resources sets \pdflastxform replayed by \pdfrefxform (pdftex.web §§1548-1549)
+\input prelude
+\setbox1=\hbox{\vrule width30pt height7pt depth3pt}
+\pdfxform attr{/LSXF1249 true} resources{/LSXR1249 true}1
+\message{1249 xform=\the\pdflastxform; void=\ifvoid1 T\else F\fi}
+\setbox0=\hbox{\pdfrefxform\pdflastxform\hskip5pt}
+\lsshipbox0
+\end

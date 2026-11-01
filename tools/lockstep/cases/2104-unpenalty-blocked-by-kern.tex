@@ -1,0 +1,7 @@
+% 2104-unpenalty-blocked-by-kern: \unpenalty leaves a trailing kern node alone, so the kern is still reported (tex.web §§1104, 1105)
+% new versus 1178-unskip-unkern-unpenalty-chain: 1178 removes tail items one after another; here unpenalty must leave the list alone because a kern is the tail
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth1pt\kern4pt\unpenalty\message{2104 kern=\the\lastkern}}
+\message{2104 wd=\the\wd0}
+\lsshipbox0
+\end

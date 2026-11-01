@@ -1,0 +1,11 @@
+% 1065-expr-boundary-sums: verifies sums and differences at the edge of the legal range pass the overflow guard without an arithmetic error (pdftex.web §1790).
+\input prelude
+\message{1065 maxminus=\the\numexpr 2147483647-1\relax}
+\message{1065 negplus=\the\numexpr -2147483647+1\relax}
+\message{1065 halves=\the\numexpr 1073741823+1073741823\relax}
+\message{1065 dimensp=\the\dimexpr 1073741823sp-1sp\relax}
+\message{1065 gluebig=\the\glueexpr 8000pt+8000pt\relax}
+\message{1065 dimenmax=\the\dimexpr 16383pt+0pt\relax}
+\setbox0=\hbox{\vrule width65pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

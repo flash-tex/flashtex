@@ -93,7 +93,8 @@ final class CaretSyncTests: XCTestCase {
     }
 }
 
-/// (c) ShellModel: the UTF-16 caret maps to a UTF-8 byte and then to preview items.
+/// (c) ShellModel: the UTF-16 caret maps to a UTF-8 byte, which maps to the
+/// sample's items.
 @MainActor
 final class ShellModelCaretSyncTests: XCTestCase {
     func testCaretMapsToByteAndPreviewItems() throws {
@@ -101,37 +102,40 @@ final class ShellModelCaretSyncTests: XCTestCase {
         // Pass no request: the `<name>-request.json` sibling must be discovered.
         model.loadFixtures(request: nil, result: CaretSyncTests.resultURL)
         XCTAssertNil(model.loadError, model.loadError ?? "")
-        XCTAssertEqual(model.resultID, "sample-multipage-1")
+        XCTAssertEqual(model.fixtureURL, CaretSyncTests.resultURL)
         XCTAssertEqual(model.activePath, "main.tex")
         XCTAssertTrue(model.activeText.contains("naïve"))
-        XCTAssertFalse(model.previewIsStale)
+        let result = try RuntimeV1.decodeCompileResult(Data(contentsOf: CaretSyncTests.resultURL)).payload
+        func items() -> [Int: Set<Int>] {
+            model.caretByte.map { CaretSync.indicesByPage(byte: $0, path: model.activePath, in: result) } ?? [:]
+        }
 
         // Caret on the "v" of "naïve": UTF-16 offset 69, UTF-8 byte 70 (ï is 2 bytes).
         let ns = (model.activeText as NSString).range(of: "naïve")
         XCTAssertEqual(ns.location, 66)
         model.caretUTF16 = ns.location + 3
         XCTAssertEqual(model.caretByte, 70)
-        XCTAssertEqual(model.caretItems, [1: [2]])
-        XCTAssertEqual(CaretSync.itemsContaining(byte: 70, path: "main.tex", in: model.result!).first?.index, 2)
+        XCTAssertEqual(items(), [1: [2]])
+        XCTAssertEqual(CaretSync.itemsContaining(byte: 70, path: "main.tex", in: result).first?.index, 2)
 
         // After the non-ASCII word, UTF-16 and UTF-8 offsets diverge by one.
         let resume = (model.activeText as NSString).range(of: "Résumé")
         XCTAssertEqual(resume.location, 114)
         model.caretUTF16 = resume.location
         XCTAssertEqual(model.caretByte, 115)
-        XCTAssertEqual(model.caretItems, [2: [1]])
+        XCTAssertEqual(items(), [2: [1]])
 
         // Gap and out-of-range carets highlight nothing.
         model.caretUTF16 = 63
-        XCTAssertEqual(model.caretItems, [:])
+        XCTAssertEqual(items(), [:])
         model.caretUTF16 = (model.activeText as NSString).length + 10
         XCTAssertNil(model.caretByte)
-        XCTAssertEqual(model.caretItems, [:])
+        XCTAssertEqual(items(), [:])
 
         // A different active document never matches items sourced from main.tex.
         model.caretUTF16 = 70
         model.activePath = "other.tex"
-        XCTAssertEqual(model.caretItems, [:])
+        XCTAssertEqual(items(), [:])
     }
 
     func testSiblingRequestURLDerivation() {
@@ -202,40 +206,48 @@ final class CaretSyncIndexTests: XCTestCase {
         }
     }
 
-    /// The multipage sample and the two-document fixture through the model:
-    /// `exactCaretItems` (index) equals `caretItems` (scan) at every UTF-16 caret.
+    /// The multipage sample and the two-document fixture through the model's
+    /// caret byte: the index equals the scan at every UTF-16 caret.
     @MainActor
     func testModelExactCaretItemsEqualScanAtEveryCaret() throws {
+        func indexed(_ model: ShellModel, _ result: RuntimeV1.CompileResult) -> [Int: Set<Int>] {
+            model.caretByte.map { CaretSync.Index(result: result, path: model.activePath).indicesByPage(byte: $0) } ?? [:]
+        }
+        func scanned(_ model: ShellModel, _ result: RuntimeV1.CompileResult) -> [Int: Set<Int>] {
+            model.caretByte.map { CaretSync.indicesByPage(byte: $0, path: model.activePath, in: result) } ?? [:]
+        }
         let model = ShellModel()
         model.loadFixtures(request: nil, result: CaretSyncTests.resultURL)
+        let sample = try RuntimeV1.decodeCompileResult(Data(contentsOf: CaretSyncTests.resultURL)).payload
         for path in ["main.tex", "other.tex"] {
             model.activePath = path
             let length = (model.activeText as NSString).length
             for caret in 0...(length + 1) {
                 model.caretUTF16 = caret
-                XCTAssertEqual(model.exactCaretItems, model.caretItems, "\(path) caret \(caret)")
+                XCTAssertEqual(indexed(model, sample), scanned(model, sample), "\(path) caret \(caret)")
             }
         }
         let multi = try MultiFileFixture.loadedModel()
+        let fixture = MultiFileFixture.result.payload
         for path in ["main.tex", "chapter.tex"] {
             multi.activePath = path
             let text = multi.activeText as NSString
             for caret in 0...text.length {
                 multi.caretUTF16 = caret
-                XCTAssertEqual(multi.exactCaretItems, multi.caretItems, "\(path) caret \(caret)")
+                XCTAssertEqual(indexed(multi, fixture), scanned(multi, fixture), "\(path) caret \(caret)")
             }
         }
         // Inside the ZWJ family the highlight stays on the one item; the ligature glyph likewise.
         multi.activePath = "main.tex"
         let main = MultiFileFixture.main as NSString
         let family = main.range(of: "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")
-        for caret in family.location..<NSMaxRange(family) { multi.caretUTF16 = caret; XCTAssertEqual(multi.exactCaretItems, [1: [9]], "caret \(caret)") }
+        for caret in family.location..<NSMaxRange(family) { multi.caretUTF16 = caret; XCTAssertEqual(indexed(multi, fixture), [1: [9]], "caret \(caret)") }
         multi.caretUTF16 = NSMaxRange(family)
-        XCTAssertEqual(multi.exactCaretItems, [:], "the space after the emoji")
+        XCTAssertEqual(indexed(multi, fixture), [:], "the space after the emoji")
         multi.caretUTF16 = main.range(of: "\u{FB01}le").location
-        XCTAssertEqual(multi.exactCaretItems, [1: [4]])
+        XCTAssertEqual(indexed(multi, fixture), [1: [4]])
         multi.caretUTF16 = main.range(of: "CRLF").location - 1 // between "\r" and "\n"
-        XCTAssertEqual(multi.exactCaretItems, [:])
+        XCTAssertEqual(indexed(multi, fixture), [:])
     }
 
     func testCaretByteRoundsSurrogateHalvesAndRefusesOutOfRange() {
@@ -289,29 +301,6 @@ final class CaretSyncIndexTests: XCTestCase {
         print(String(format: "CaretSync.Index 10k items: build %.2f ms; %.3f µs per caret query (20 000 queries); linear scan %.1f µs per query (extrapolated from 200)",
                      buildMs, perQueryUs, scanned / Double(carets.count) * 1e6))
         XCTAssertLessThan(indexed * 20, scanned, "index must be at least 20× faster than the scan for 10k items")
-    }
-
-    /// Repeated queries through the model rebuild the index only when the
-    /// result or the active document changes.
-    @MainActor
-    func testModelCachesIndexPerResultAndDocument() throws {
-        let model = try MultiFileFixture.loadedModel()
-        let a = try XCTUnwrap(model.caretIndex())
-        let b = try XCTUnwrap(model.caretIndex())
-        XCTAssertEqual(a.entries, b.entries)
-        XCTAssertEqual(a.path, "main.tex")
-        model.activePath = "chapter.tex"
-        XCTAssertEqual(model.caretIndex()?.path, "chapter.tex")
-        XCTAssertEqual(model.caretIndex()?.count, 6)
-        model.activePath = "main.tex"
-        XCTAssertEqual(model.caretIndex()?.count, 17)
-        // A new result (different id) is indexed afresh.
-        model.result = RuntimeV1.CompileResult(projectId: "demo", revision: 2, status: .ok, pages: [], diagnostics: [], pdfPath: nil)
-        model.resultID = "mf-2"
-        XCTAssertEqual(model.caretIndex()?.count, 0)
-        model.result = nil
-        XCTAssertNil(model.caretIndex())
-        XCTAssertEqual(model.exactCaretItems, [:])
     }
 }
 

@@ -1,0 +1,10 @@
+2026-10-14T18:49:15Z
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=22610019)	15%; charging; 2:34 remaining present: true
+ powermode            2
+{ 3.02 3.73 3.39 }
+2026-10-14T19:15:33Z
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=22610019)	40%; charging; 2:25 remaining present: true
+ powermode            2
+{ 3.46 3.99 4.24 }

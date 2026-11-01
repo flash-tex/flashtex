@@ -1,0 +1,6 @@
+% 1251-pdfstartlink-endlink: verifies \pdfstartlink with user and goto actions closed by \pdfendlink in a box (pdftex.web §§1560-1561)
+\input prelude
+\setbox0=\hbox{\pdfdest name{lk1251} fit\pdfstartlink height10pt depth4pt attr{/Border[0 0 0]} user{<< /S /URI /URI (http://example.com) >>}LINK\pdfendlink\hskip10pt\pdfstartlink goto name{lk1251}GO\pdfendlink}
+\message{1251 wd=\the\wd0}
+\lsshipbox0
+\end

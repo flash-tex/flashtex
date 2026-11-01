@@ -1,0 +1,6 @@
+% 364-hangindent-parshape: verifies \parshape overrides \hangindent so every line follows the parshape spec.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hangindent=60pt\hangafter=1\parshape=2 10pt 180pt 10pt 180pt\message{364 hang=\the\hangindent;after=\the\hangafter}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\par\message{364 lines=\the\prevgraf}}
+\lsshipbox0
+\end

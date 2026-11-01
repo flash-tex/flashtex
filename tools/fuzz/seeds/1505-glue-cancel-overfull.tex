@@ -1,0 +1,14 @@
+% 1505-glue-cancel-overfull: \hfilneg cancelling fill glue and \vfuzz ruling overfull reports in both directions.
+\input prelude
+\setbox0=\hbox to40pt{\hfil\vrule width5pt height4pt\hfilneg}
+\message{1505 neg=wd\the\wd0}
+\setbox1=\hbox to40pt{\hfil\vrule width5pt height4pt\hfil\hfilneg\hfilneg}
+\message{1505 neg2=wd\the\wd1}
+\vfuzz=50pt \hfuzz=20pt
+\setbox2=\hbox to30pt{\vrule width60pt height8pt depth2pt}
+\setbox3=\vbox to20pt{\hsize=30pt\vrule width10pt height60pt depth0pt}
+\message{1505 fuzz=\the\vfuzz,\the\hfuzz}
+\lsshipbox0
+\lsshipbox2
+\lsshipbox3
+\end

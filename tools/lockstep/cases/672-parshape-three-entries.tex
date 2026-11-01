@@ -1,0 +1,8 @@
+% 672-parshape-three-entries: verifies a three-line \parshape spec gives each line its own indent and width, unlike the control.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=220pt\parshape=3 0pt 200pt 20pt 160pt 40pt 120pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\message{672 shaped lines=\the\prevgraf}}
+\setbox1=\vbox{\parindent=0pt\hsize=220pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\message{672 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\end

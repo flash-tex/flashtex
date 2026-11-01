@@ -1,0 +1,9 @@
+\input prelude
+\iftrue \message{012 t1} \fi
+\iffalse \message{012 SHOULD-NOT-APPEAR} \fi
+\iftrue \iffalse \message{012 HIDDEN} \else \message{012 nested-else} \fi \else \message{012 outer-else} \fi
+\count0=4
+\ifnum\count0>1 \ifnum\count0>10 \message{012 big} \else \message{012 medium} \fi \else \message{012 small} \fi
+\setbox0=\hbox{\vrule width12pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

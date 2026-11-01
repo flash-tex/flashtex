@@ -1,0 +1,116 @@
+oracle: pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026) (/usr/local/texlive/2026/bin/universal-darwin/pdftex); qpdf: qpdf version 12.4.1; jobs: 3; work: <WORK>/ep
+== build
+warning: binary `corpus_augment` should have a kebab-case name
+  |
+1 | <REPO>/target/.../corpus_augment
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `corpus-augment`, convert the file stem
+  |
+1 - src/bin/corpus_augment.rs
+1 + src/bin/corpus-augment.rs
+  |
+warning: `flashtex-bridge` (manifest) generated 1 warning
+warning: binary `edit_latency_bench` should have a kebab-case name
+  |
+1 | <REPO>/target/.../edit_latency_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `edit-latency-bench`, convert the file stem
+  |
+1 - src/bin/edit_latency_bench.rs
+1 + src/bin/edit-latency-bench.rs
+  |
+warning: binary `fixture_digest` should have a kebab-case name
+  |
+1 | <REPO>/target/.../fixture_digest
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `fixture-digest`, convert the file stem
+  |
+1 - src/bin/fixture_digest.rs
+1 + src/bin/fixture-digest.rs
+  |
+warning: binary `incremental_bench` should have a kebab-case name
+  |
+1 | <REPO>/target/.../incremental_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `incremental-bench`, convert the file stem
+  |
+1 - src/bin/incremental_bench.rs
+1 + src/bin/incremental-bench.rs
+  |
+warning: binary `large_doc_bench` should have a kebab-case name
+  |
+1 | <REPO>/target/.../large_doc_bench
+  |                                                                                       ^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `large-doc-bench`, convert the file stem
+  |
+1 - src/bin/large_doc_bench.rs
+1 + src/bin/large-doc-bench.rs
+  |
+warning: binary `scaling_bench` should have a kebab-case name
+  |
+1 | <REPO>/target/.../scaling_bench
+  |                                                                                       ^^^^^^^^^^^^^
+  |
+help: to change the binary name to `scaling-bench`, convert the file stem
+  |
+1 - src/bin/scaling_bench.rs
+1 + src/bin/scaling-bench.rs
+  |
+warning: binary `ttfb_bench` should have a kebab-case name
+  |
+1 | <REPO>/target/.../ttfb_bench
+  |                                                                                       ^^^^^^^^^^
+  |
+help: to change the binary name to `ttfb-bench`, convert the file stem
+  |
+1 - src/bin/ttfb_bench.rs
+1 + src/bin/ttfb-bench.rs
+  |
+warning: `flashtex-compiler` (manifest) generated 6 warnings
+    Finished `release` profile [optimized] target(s) in 2m 03s
+-rw-r--r--@ 1 jay3332  wheel  15426120 Oct  2 13:17 <WORK>/ep/fmt/pdflatex.fmt
+-rw-r--r--@ 1 jay3332  wheel   4435688 Oct  2 13:17 <WORK>/ep/fmt/pdftex.fmt
+TIME build 137s rc=0
+== lockstep
+PASS 903-lastbox-hbox-after-unskip
+PASS 904-lastbox-vbox-unskip-then-take
+PASS 905-vtop-first-tall-vs-deep-box
+PASS 906-vtop-leading-kern-vs-box
+PASS 907-boxmaxdepth-vbox-to
+PASS 908-raise-lower-negative-nested
+PASS 909-moveleft-negative-nested
+PASS 910-hbox-spread-fil-in-vbox-to
+PASS 911-middle-hbox-tall
+PASS 912-middle-display
+PASS 913-interlinepenalties-array
+PASS 914-club-widowpenalties-array
+PASS 915-displaywidowpenalties-array
+PASS 916-savingvdiscards-both
+PASS 917-lastlinefit-two
+PASS 918-protected-edef-align
+PASS 919-numexpr-rounding-typeset
+PASS 920-dimexpr-rounding-typeset
+PASS 921-ifbranches-typeset
+PASS 922-unless-ifx-typeset
+PASS 923-scantokens-text
+PASS 924-readline-typeset
+PASS 925-parshapedimen-build
+1435 cases, 1435 equal, 0 differ
+accounting: 7 cases differ
+TIME lockstep 719s rc=0
+== parity
+scoring 83 documents with 3 workers
+indexing definitions under /usr/local/texlive/2026/texmf-dist (cached)
+fixtures: accounting (non-gating): 83/83 documents differ
+fixtures: 83 measured, P-T1 83/83 (100.0%), P-T2 83/83 (100.0%), L3 98.8%; at least: L0 100.0%, L1 100.0%, L2 100.0%, L3 98.8%, L4 —
+report: ../../../../../../..<WORK>/ep/parity/report.md
+P-T gate: all 83 measured documents pass P-T1 and P-T2
+TIME parity 394s rc=0
+engine-parity exit 0

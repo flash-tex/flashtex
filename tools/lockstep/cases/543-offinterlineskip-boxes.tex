@@ -1,0 +1,6 @@
+% 543-offinterlineskip-boxes: verifies plain-style \offinterlineskip (defined here; -ini has no plain macros) leaves only \lineskip glue.
+\input prelude
+\def\offinterlineskip{\baselineskip=-1000pt \lineskip=0pt \lineskiplimit=16383.99999pt \parskip=0pt}
+\setbox0=\vbox{\offinterlineskip\message{543 baselineskip=\the\baselineskip}\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\lsshipbox0
+\end

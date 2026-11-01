@@ -1,0 +1,83 @@
+warning: binary `corpus_augment` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../corpus_augment
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `corpus-augment`, convert the file stem
+  |
+1 - src/bin/corpus_augment.rs
+1 + src/bin/corpus-augment.rs
+  |
+warning: `flashtex-bridge` (manifest) generated 1 warning
+warning: binary `edit_latency_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../edit_latency_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `edit-latency-bench`, convert the file stem
+  |
+1 - src/bin/edit_latency_bench.rs
+1 + src/bin/edit-latency-bench.rs
+  |
+warning: binary `fixture_digest` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../fixture_digest
+  |                                                                                       ^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `fixture-digest`, convert the file stem
+  |
+1 - src/bin/fixture_digest.rs
+1 + src/bin/fixture-digest.rs
+  |
+warning: binary `incremental_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../incremental_bench
+  |                                                                                       ^^^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `incremental-bench`, convert the file stem
+  |
+1 - src/bin/incremental_bench.rs
+1 + src/bin/incremental-bench.rs
+  |
+warning: binary `large_doc_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../large_doc_bench
+  |                                                                                       ^^^^^^^^^^^^^^^
+  |
+help: to change the binary name to `large-doc-bench`, convert the file stem
+  |
+1 - src/bin/large_doc_bench.rs
+1 + src/bin/large-doc-bench.rs
+  |
+warning: binary `scaling_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../scaling_bench
+  |                                                                                       ^^^^^^^^^^^^^
+  |
+help: to change the binary name to `scaling-bench`, convert the file stem
+  |
+1 - src/bin/scaling_bench.rs
+1 + src/bin/scaling-bench.rs
+  |
+warning: binary `ttfb_bench` should have a kebab-case name
+  |
+1 | /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/target/.../ttfb_bench
+  |                                                                                       ^^^^^^^^^^
+  |
+help: to change the binary name to `ttfb-bench`, convert the file stem
+  |
+1 - src/bin/ttfb_bench.rs
+1 + src/bin/ttfb-bench.rs
+  |
+warning: `flashtex-compiler` (manifest) generated 6 warnings
+   Compiling flashtex-engine v0.1.0 (/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 2.28s
+     Running tests/incremental.rs (target/release/build/flashtex-engine/060dfb146ecc52dc/out/incremental-060dfb146ecc52dc)
+
+running 1 test
+test a_restore_after_several_convergences_equals_scratch_runs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 14.46s
+

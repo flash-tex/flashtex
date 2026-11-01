@@ -1,0 +1,17 @@
+% 1418-mathchoice-four-styles: \mathchoice branches selected in each of the four math styles.
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex
+\scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\def\mc{\mathchoice{\vrule width20pt height6pt depth1pt}{\vrule width14pt height5pt depth1pt}{\vrule width10pt height4pt depth1pt}{\vrule width7pt height3pt depth1pt}}
+\setbox0=\hbox{$\displaystyle\mc$}
+\setbox1=\hbox{$\textstyle\mc$}
+\setbox2=\hbox{$\scriptstyle\mc$}
+\setbox3=\hbox{$\scriptscriptstyle\mc$}
+\message{1418 wds=\the\wd0,\the\wd1,\the\wd2,\the\wd3}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\lsshipbox3
+\end

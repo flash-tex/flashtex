@@ -1,0 +1,16 @@
+runsystem(makeindex infdesc.idx)
+runsystem(makeindex vocabulary.idx)
+runsystem(makeindex notation.idx)
+runsystem(makeindex latex.idx)
+        0.12 real         0.11 user         0.00 sys
+           523981421  instructions retired
+           293567300  cycles elapsed
+        0.12 real         0.11 user         0.00 sys
+           508566628  instructions retired
+           305434568  cycles elapsed
+        0.13 real         0.12 user         0.00 sys
+           512889975  instructions retired
+           317329327  cycles elapsed
+        0.12 real         0.11 user         0.00 sys
+           515672833  instructions retired
+           304000613  cycles elapsed

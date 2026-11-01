@@ -1,0 +1,8 @@
+% 330-currentiflevel: verifies \currentiflevel counts active conditional nesting depth.
+\input prelude
+\message{330 top=\the\currentiflevel}
+\ifnum1=1 \message{330 one=\the\currentiflevel}\ifnum2=2 \message{330 two=\the\currentiflevel}\fi\fi
+\message{330 out=\the\currentiflevel}
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

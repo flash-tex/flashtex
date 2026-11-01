@@ -24,6 +24,7 @@ struct ContentView: View {
     @AppStorage("FlashTeX.workspace.outlineVisible") private var outlineVisible = false
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ContentView") // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: 0) {
             // The single title-bar control row, in the traffic lights' own
@@ -55,8 +56,18 @@ struct ContentView: View {
             CaptureInboxPanel(inbox: model.captureInbox).inspectorColumnWidth(min: DS.Layout.inspectorMinWidth, ideal: DS.Layout.inspectorIdealWidth, max: DS.Layout.inspectorMaxWidth)
         }
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
+        .alert("The mode was not changed", isPresented: Binding(get: { model.modeSwitchFailure != nil }, set: { if !$0 { model.modeSwitchFailure = nil } })) {
+            Button("OK", role: .cancel) { model.modeSwitchFailure = nil }
+        } message: { Text(model.modeSwitchFailure ?? "") } // ProjectMode.swift: a refused mode switch
         .sheet(isPresented: Binding(get: { model.projectFonts.shown }, set: { model.projectFonts.shown = $0 })) { ProjectFontsSheet().environment(model) } // File > Project Fonts… (ProjectFonts.swift)
         .sheet(isPresented: Binding(get: { model.projectPackages.shown }, set: { model.projectPackages.shown = $0 })) { ProjectPackagesSheet().environment(model) } // the package consent sheet (ProjectPackages.swift)
+        .alert(EngineV3Biber.consentText + ".", isPresented: Binding(get: { model.engineV3.biberConsentShown }, set: { model.engineV3.biberConsentShown = $0 })) { // biber with no TeX Live (EngineV3Bundle.swift)
+            Button("Download") { model.engineV3.answerBiberConsent(true) }
+            Button("Not Now", role: .cancel) { model.engineV3.answerBiberConsent(false) }
+        }
+        .sheet(isPresented: Binding(get: { model.engineV3.bundleConsentShown }, set: { model.engineV3.bundleConsentShown = $0 })) { EngineV3BundleSheet().environment(model) } // the TeX files download consent (EngineV3Bundle.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.sheetShown }, set: { model.liveShare.sheetShown = $0 })) { LiveShareSheet().environment(model) } // Live Share: invitation, approvals, participants (LiveShareViews.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.joinSheetShown }, set: { model.liveShare.joinSheetShown = $0 })) { LiveShareJoinSheet().environment(model) } // File > Join Live Share Session…
         .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
     }
 }
@@ -84,6 +95,7 @@ private struct ToolRail: View {
     @Binding var outlineVisible: Bool
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ToolRail") // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: DS.Space.s) {
             RailButton(icon: "folder", label: "Project", isOn: $projectVisible,
@@ -133,17 +145,25 @@ private struct RailButton: View {
 //
 // Each pane is its own view reading the model from the environment, so
 // `@Observable` tracking scopes invalidation: a keystroke (documents,
-// editorRevision) re-evaluates EditorPane and the status bar; a compile
-// result the status bar, PreviewPane and ProblemsPanel; bridge traffic the
-// bridge bar only.
+// editorRevision, caret) re-evaluates EditorPane only, the status bar follows
+// throttled mirrors (ShellChrome) and caret-driven tasks read the caret in
+// zero-size children (IsolatedTask); a compile result the status bar,
+// PreviewPane and ProblemsPanel; bridge traffic the bridge bar only.
+// KeystrokeInvalidationTests pins the keystroke half.
 
 struct EditorPane: View {
     @Environment(ShellModel.self) var model
-    /// Vim `:set nu` / `:set nonu` (VimMode.swift); the gutter is on by default.
-    @State private var lineNumbers = true
+    /// Gutter line numbers: Settings > Themes, also Vim's `:set nu` / `:set nonu`
+    /// (VimMode.swift); on by default (EditorPreferences.showLineNumbers).
+    @Bindable private var preferences: EditorPreferences = .shared
 
     var body: some View {
+        let _ = ViewBodyProbe.note("EditorPane") // KeystrokeInvalidationTests
         @Bindable var model = model
+        // Live Share: the session file this buffer is (nil outside a session);
+        // `generation` changes when a session starts, ends or opens its project.
+        let _ = model.liveShare.generation
+        let liveShareLink = model.liveShare.link(for: model.activePath)
         VStack(spacing: 0) {
             // Switching goes through ProjectDocuments so each document's
             // caret/selection is kept and a pending insertion is never
@@ -156,19 +176,20 @@ struct EditorPane: View {
             // the strip says where it really lives (ShellModel+PackageNavigation.swift).
             if let note = model.project.readOnlyNote(for: model.activePath) { ReadOnlyBanner(note: note) }
             SourceEditorView(
-                text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
+                text: Binding(get: { model.activeText }, set: { t in PerfSignposts.interval("modelUpdate") { model.updateActiveText(t) } }),
                 selection: model.selection,
                 pendingEdit: model.pendingEdit,
                 marks: model.editorMarks,
-                result: model.result,
                 editorRevision: model.editorRevision,
                 projectIndexMetadata: model.completionMetadata,
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
                 projectPackageFiles: { model.projectPackageFiles }, // `\usepackage{` offers the project's .sty files first (ShellModel+EditorHover.swift)
                 packageDocuments: { model.packageDocumentsForEditor() }, // macros of the project's .sty/.cls files complete as declared there (ShellModel+PackageNavigation.swift)
-                editable: model.project.readOnlyNote(for: model.activePath) == nil, // a package input from a virtual path is shown, never edited
+                editable: model.project.readOnlyNote(for: model.activePath) == nil && (liveShareLink == nil || model.liveShare.canEdit), // a package input from a virtual path is shown, never edited; a Live Share viewer reads only
                 graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
+                imagePasteHost: { model.imagePasteHost() }, // paste an image: saved under the project, a figure inserted (PasteImage.swift)
                 onCaretChange: { model.caretUTF16 = $0 },
+                initialCaretUTF16: { model.untitledDocumentCaret }, // the untitled document opens with the caret where typing starts
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },
                 onEditRefused: { model.editRefused($0, reason: $1) },
@@ -178,7 +199,7 @@ struct EditorPane: View {
                 autoClosePairs: EditorPreferences.shared.autoCloseBraces ? model.autoClosePairs : [] // EditorPreferences.swift gates the braces lane set
                 ,
                 syntaxHighlighting: true, // SyntaxHighlighter.swift / EditorIntelligence.swift (mac-syntax-highlight)
-                showLineNumbers: lineNumbers,
+                showLineNumbers: preferences.showLineNumbers,
                 onDefinitionRequest: { target in
                     switch target {
                     case .label, .citation: model.goToMatching() // caret already on the token
@@ -190,21 +211,19 @@ struct EditorPane: View {
                 hoverContext: { model.editorHoverContext() }, // what \ref/\cite/\includegraphics resolve to (EditorHoverResolution.swift)
                 bibliographySources: { model.bibliographySources() }, // `\cite{` keys straight from the project's .bib files (BibScanner.swift)
                 projectDocumentClass: { model.project.entryDocumentClass }, // `\frametitle` in a beamer deck's included slide file (Completion.swift)
+                texpandProject: { model.texpandProject }, // TeXpand's root file, packages and texpand.toml (ShellModel+TeXpand.swift)
                 language: model.editorLanguage, // BibTeX colouring for a declared bibliography (SyntaxHighlighter.swift)
-                mathPreviewContext: { // inline math hover preview (MathHoverPreview.swift)
-                    model.displayListV2?.frame.map {
-                        MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)
-                    }
-                },
+                mathPreviewV3: { span in model.engineV3Enabled ? model.engineV3.mathPreviewImage(span: span) : nil }, // EngineV3MathHover.swift
                 onExCommand: { command in // Vim `:` commands (VimMode.swift) mapped to the shell's own actions
                     switch command {
                     case .write: model.saveTexInteractive(); return nil
                     case .writeQuit: model.saveTexInteractive(); return closeActiveDocument(discardingEdits: false)
                     case .quit(let force): return closeActiveDocument(discardingEdits: force)
                     case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
-                    case .setNumber(let on): lineNumbers = on; return nil
+                    case .setNumber(let on): preferences.showLineNumbers = on; return nil
                     }
-                }
+                },
+                liveShare: liveShareLink // co-editing (SourceEditorView+LiveShare.swift)
             )
             // Vim's status line belongs to the window being edited, so it sits
             // directly under the source text — not in the window's status bar,
@@ -312,38 +331,23 @@ struct PreviewPane: View {
     @State private var hudActivity = 0
 
     var body: some View {
+        let _ = ViewBodyProbe.note("PreviewPane") // KeystrokeInvalidationTests
+        VStack(spacing: 0) {
+        // No TeX to compile with (RQ20), and the one-time notice for a
+        // document last typeset by the retired previous engine
+        // (EngineChoice.swift); never a silent fallback.
+        TeXMissingBanner()
+        PreviousEngineNoticeBanner()
+        // Memory pressure: a suggestion to use Low Memory, never a silent switch (PerformanceMode.swift).
+        MemoryPressureBanner()
+        // Chapter focus: "Previewing chapters/03.tex only", Show All (EngineV3FocusChapter.swift).
+        FocusChapterBanner()
         ZStack(alignment: .topTrailing) {
-            if model.previewV2 {
-                PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
-                    .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
-            } else if let result = model.result {
-                PreviewView(result: result, dark: model.darkPreview, caretItems: model.caretItems,
-                            zoom: model.previewZoom, onFitScale: { model.previewFitScale = $0 },
-                            // "the pdf moves to where the changes are happening" (CaretFollow.swift)
-                            follow: model.caretFollow.request,
-                            onUserScroll: { model.caretFollow.userDidScrollPreview(); hudActivity &+= 1 },
-                            onVisiblePage: { model.previewVisiblePage = $0 },
-                            onFitPageZoom: { model.previewFitPageZoom = $0 },
-                            onPageJump: { model.previewAnnouncer.notePageJump(page: $0, of: model.toolbarPageCount) }) { source, text in
-                    guard let source else { model.navigationNote = "This item has no source mapping."; return }
-                    model.navigate(to: source, expectedText: text)
-                }
-                .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
-            } else {
-                ContentUnavailableView {
-                    Label("No preview yet", systemImage: "doc.richtext")
-                } description: {
-                    Text("Attach a producer (File > Attach Built Compiler ⌘⇧K, or ⌘⇧R for Latin Modern) and compile (⌘B), or File > Open Compile Result Fixture… (⌘⇧O).")
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(DS.Colors.surfaceGround)
-            }
+            PreviewV3Pane() // the engine's preview (EngineV3Preview.swift)
             // The transient page/zoom HUD and the quiet state cluster
-            // (compile spinner, FIXTURE/HISTORICAL, staleness) float over
-            // the pages; nothing reserves a header row any more (#653).
-            if model.previewV2 || model.chrome.hasResult {
-                PreviewHUD(hovering: hovering, activity: hudActivity)
-            }
+            // (compile spinner, the engine's state line) float over the
+            // pages; nothing reserves a header row any more (#653).
+            PreviewHUD(hovering: hovering, activity: hudActivity)
             // The narrow layout's way back to the editor floats top-leading
             // (it lived on the removed header row).
             if model.narrowLayout && model.narrowPreviewShown {
@@ -352,11 +356,13 @@ struct PreviewPane: View {
                     .padding(DS.Space.l)
             }
         }
+        }
         // One container for VoiceOver ("PDF preview, Page 2 of 5"); the pages
-        // and HUD inside stay reachable (PreviewV2Accessibility.swift, AccessibilityOverlay).
+        // and HUD inside stay reachable (EngineV3Accessibility.swift).
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.accessibilityLabel)
-        .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage, of: model.toolbarPageCount) ?? "")
+        .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage,
+                                                    of: model.previewPageCount) ?? "")
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
         .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
         // Double-click to Fit Width (⌘9 does the same). Used to live on the
@@ -392,16 +398,15 @@ struct PreviewPane: View {
 /// The floating preview HUD (owner feedback on #653: no header row over
 /// the pages; further pared down after owner feedback that a "⚠ ⚠ 87 %"
 /// pill sat on top of the document — the zoom percentage readout and the
-/// capability-warning icons were removed from here entirely; capability
-/// notes now live in the status bar, and the zoom commands (⌘9/⌘0/pinch,
-/// plus double-click on the page) are unaffected). What is left: the
-/// always-quiet state — a mini spinner while compiling, FIXTURE/HISTORICAL
-/// when the pages are not the worker's current result, staleness and load
-/// errors — pins the chip visible; the page readout shows transiently on
+/// warning icons were removed from here entirely, and the zoom commands
+/// (⌘9/⌘0/pinch, plus double-click on the page) are unaffected). What is
+/// left: the always-quiet state — a mini spinner while compiling, the
+/// engine's highlighted state line (a failure, an error) and load errors —
+/// pins the chip visible; the page readout shows transiently on
 /// pointer-over and for a beat after scroll or page changes, then fades.
 /// Fading never reflows anything (§14); a healthy live preview at rest
 /// shows no chrome at all over the pages (§8, Canvas treatment).
-private struct PreviewHUD: View {
+struct PreviewHUD: View {
     @Environment(ShellModel.self) var model
     var hovering = false
     /// Bumped by the pane on scroll/page/zoom; each bump re-arms the fade.
@@ -409,49 +414,29 @@ private struct PreviewHUD: View {
     @State private var activityVisible = false
 
     var body: some View {
-        // Reads the throttled chrome mirror (ShellChrome.swift), not
-        // `result` / `inFlightRevision`: the old header re-evaluated on
-        // every keystroke and reply (FT-071 main-thread sample).
+        // Reads the throttled chrome mirror (ShellChrome.swift), not the
+        // engine session: the old header re-evaluated on every keystroke
+        // and reply (FT-071 main-thread sample).
         let chrome = model.chrome
-        let badge = Self.stateBadge(chrome)
-        let pinned = chrome.compiling || badge != nil || chrome.staleHighlighted
-            || chrome.loadError != nil
-            || (model.previewDebugStatus && chrome.resultStatus != nil)
+        let pinned = chrome.compiling || chrome.staleHighlighted || chrome.loadError != nil
         let visible = hovering || pinned || activityVisible
         HStack(spacing: DS.Space.m) {
             // Fixed-size slot: the compile indicator never reflows the chip.
             Color.clear.frame(width: DS.Size.inlineStatusSlot, height: DS.Size.inlineStatusSlot)
                 .overlay { if chrome.compiling { ProgressView().controlSize(.mini).accessibilityLabel("Compiling") } }
-            if let badge {
-                Text(badge.text)
-                    .font(DS.Fonts.header)
-                    .padding(.horizontal, DS.Space.s).padding(.vertical, DS.Space.xxs)
-                    .background(badge.color.opacity(DS.State.badgeFillOpacity), in: Capsule())
-            }
-            if model.previewDebugStatus, let status = chrome.resultStatus {
-                Text(status.rawValue).font(DS.Fonts.header).foregroundStyle(statusColor(status))
-            }
-            if let historical = chrome.historicalLabel {
-                Text(historical).font(DS.Fonts.header).foregroundStyle(DS.Colors.statusHistorical).lineLimit(1)
-                    .help("A completed older snapshot is shown while the helper compiles the newer revision; navigation, caret sync, capture destinations and export return with the current preview.")
-            } else if let stale = chrome.staleText { // the reply exceeded a bound, or "editor at rN — compiling…" (ShellChrome)
+            if let stale = chrome.staleText { // the engine's state line: "preparing the format…", "2 stale pages", a failure (ShellChrome)
                 Text(stale)
-                    .font(DS.Fonts.secondary).foregroundStyle(chrome.staleHighlighted ? DS.Colors.severityWarning : DS.Colors.textSecondary).lineLimit(1) // routine "compiling…" is quiet; only bounds/no-producer are highlighted
+                    .font(DS.Fonts.secondary).foregroundStyle(chrome.staleHighlighted ? DS.Colors.severityWarning : DS.Colors.textSecondary).lineLimit(1) // routine states are quiet; only failures and errors are highlighted
             }
             if let err = chrome.loadError {
                 Text(err).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityError).lineLimit(1).help(err)
             }
-            // Capability notes moved to the status bar (owner feedback: no
-            // floating warnings/percent over the page) — see StatusBar below.
-            // Both panes. This was gated on `!model.previewV2` while
-            // `previewV2` defaults true, so on the shipped default nobody ever
-            // saw a page number.
-            if model.toolbarPageCount > 0 {
-                let page = min(model.previewVisiblePage, model.toolbarPageCount)
-                Text("\(page) / \(model.toolbarPageCount)")
+            let pageCount = model.previewPageCount
+            if let readout = Self.pageReadout(page: model.previewVisiblePage, of: pageCount) {
+                Text(readout)
                     .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                     .help("Page under the top of the view")
-                    .accessibilityLabel("Page \(page) of \(model.toolbarPageCount)")
+                    .accessibilityLabel(PreviewPane.accessibilityValue(page: model.previewVisiblePage, of: pageCount) ?? "")
                     .accessibilityIdentifier("preview.page-readout")
             }
         }
@@ -464,9 +449,7 @@ private struct PreviewHUD: View {
         .allowsHitTesting(visible)
         .animation(DS.Motion.quick, value: visible)
         .accessibilityHidden(!visible)
-        .help(chrome.previewSource == .fixture
-              ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
-              : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
+        .help(Self.help(chrome: chrome))
         // The linger timer is a real pending Task for as long as it runs;
         // under XCTest that outlives the surface being captured and makes
         // both this shot and the next one depend on when it fires, so
@@ -486,20 +469,15 @@ private struct PreviewHUD: View {
     static let lingerSuppressed = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
 
-    /// Quiet state badge: shown only when the pages are *not* the worker's
-    /// current result — FIXTURE (not a real compile) or HISTORICAL (an older
-    /// snapshot while the newer revision compiles). A healthy live preview
-    /// shows nothing here.
-    static func stateBadge(_ chrome: ShellChrome) -> (text: String, color: Color)? {
-        switch chrome.previewSource {
-        case .none: nil
-        case .fixture: ("FIXTURE", DS.Colors.severityWarning)
-        case .worker: chrome.historicalLabel != nil ? ("HISTORICAL", DS.Colors.statusHistorical) : nil
-        }
+    /// The HUD's tooltip: the engine's route help (`ShellChrome.routeHelp`,
+    /// gap C21), or that the engine session is off.
+    static func help(chrome: ShellChrome) -> String {
+        chrome.route == .engineV3 ? "Engine v3 preview — " + chrome.routeHelp : "Preview — the engine is not running"
     }
 
-    private func statusColor(_ s: RuntimeV1.Status) -> Color {
-        switch s { case .ok: DS.Colors.severitySuccess; case .recovered: DS.Colors.severityWarning; case .failed: DS.Colors.severityError }
+    /// The "N / M" page readout (page clamped to the count), nil with no pages.
+    static func pageReadout(page: Int, of total: Int) -> String? {
+        total > 0 ? "\(min(page, total)) / \(total)" : nil
     }
 }
 
@@ -527,14 +505,15 @@ private struct NarrowBackButton: View {
     }
 }
 
-/// Bottom status bar: editor revision, the helper's durable revision of the
-/// active document, compile latency, the route (fixture / worker /
-/// controller), then the last navigation, staleness or capture note, and an
-/// exact-export progress control while one runs.
+/// Bottom status bar: the breadcrumb, the last navigation or staleness
+/// note, the keystroke-to-page latency, the mode, the editor revision (with
+/// View > Show Preview Debug Status), the problem counts, then the capture
+/// note or an export progress control while one runs.
 struct StatusBar: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
+        let _ = ViewBodyProbe.note("StatusBar") // KeystrokeInvalidationTests
         // Reads the throttled chrome mirror (ShellChrome.swift): the revision,
         // latency, route tooltip, problem counts and notes change on every
         // keystroke / reply, and this bar re-evaluated with each of them.
@@ -549,33 +528,19 @@ struct StatusBar: View {
             Text(chrome.note ?? "Click text in the preview to select its source range.")
                 .foregroundStyle(.secondary).lineLimit(1)
             Spacer()
+            LiveShareStatusItem() // who is co-editing (LiveShareViews.swift); absent outside a session
             WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
             if let ms = chrome.lastLatencyMs {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")
                     .help(chrome.latencyHelp)
             }
-            Label(route(chrome), systemImage: routeIcon(chrome))
-                .help(chrome.routeHelp)
-            // Capability warnings (moved off the preview HUD, owner feedback:
-            // a "⚠ ⚠ 87 %" pill was floating over the page). Still real
-            // diagnostics, just anchored in the status bar instead of
-            // overlapping the document.
-            if !chrome.capabilityNotes.isEmpty {
-                Label("\(chrome.capabilityNotes.count)", systemImage: "exclamationmark.circle")
-                    .foregroundStyle(DS.Colors.severityWarning)
-                    .help(chrome.capabilityNotes.joined(separator: "\n"))
-                    .accessibilityLabel("\(chrome.capabilityNotes.count) capability warning\(chrome.capabilityNotes.count == 1 ? "" : "s")")
-                    .accessibilityValue(chrome.capabilityNotes.joined(separator: "; "))
-            }
+            // Classic or Unicode, and the switch (ProjectMode.swift).
+            ModeStatusItem()
             // Revision counters are diagnostics, not writing state (owner,
             // #653): shown only with View > Show Preview Debug Status.
             if model.previewDebugStatus {
                 Label("r\(chrome.editorRevision)", systemImage: "pencil.line")
                     .help("Editor revision (increments on every edit)")
-                if let durable = chrome.durableRevision {
-                    Label("durable r\(durable)", systemImage: "internaldrive")
-                        .help("Durable revision of \(model.activePath) in the helper's edit ledger")
-                }
             }
             // The Vim mode indicator is NOT here: it is `VimStatusLine`, at the
             // bottom of the editor pane where vim puts a window's status line.
@@ -593,13 +558,13 @@ struct StatusBar: View {
                 .buttonStyle(.plain)
                 .help("Errors, warnings and not-implemented gaps of the last result — click to show or hide the Problems panel (⌘⇧M)")
             }
-            if case .running(let pid, _) = model.exportSession.state { // ShellModel+ExportSession.swift
+            if model.exportSession.state.isRunning { // ShellModel+ExportSession.swift
                 ProgressView().controlSize(.small)
-                Text("Exporting exact PDF (flashtex-pdf-exact pid \(pid))…")
+                Text("Exporting PDF…")
                     .foregroundStyle(.secondary).lineLimit(1)
                 Button("Cancel") { model.cancelExactExport() }
                     .ideSecondary()
-                    .help("Terminate flashtex-pdf-exact; nothing is written to the destination")
+                    .help("Cancel the export; nothing is written to the destination")
                     .accessibilityIdentifier("export.cancel")
             } else if let note = chrome.captureNote {
                 Text(note).foregroundStyle(.secondary).lineLimit(1).help(note)
@@ -613,23 +578,6 @@ struct StatusBar: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Status bar")
     }
-
-    private func route(_ chrome: ShellChrome) -> String {
-        switch chrome.route {
-        case .fixture: "fixture"
-        case .controller: "controller"
-        case .worker: "worker"
-        case .none: "no producer"
-        }
-    }
-
-    private func routeIcon(_ chrome: ShellChrome) -> String {
-        switch chrome.route {
-        case .fixture: "doc.badge.gearshape"
-        case .controller, .worker: "bolt.horizontal.circle.fill"
-        case .none: "bolt.horizontal.circle"
-        }
-    }
 }
 
 /// The status bar's leading breadcrumb: `main.tex › Chapter 2 › 2.3 Setup`.
@@ -642,6 +590,7 @@ private struct StatusBreadcrumb: View {
     @State private var chain: [DocumentOutline.Item] = []
 
     var body: some View {
+        let _ = ViewBodyProbe.note("StatusBreadcrumb") // KeystrokeInvalidationTests
         HStack(spacing: DS.Space.xs) {
             // The same colour-coded identity as the tree and the tabs (§6)
             // leads the breadcrumb — one of the deliberate small accents
@@ -664,18 +613,23 @@ private struct StatusBreadcrumb: View {
                 .accessibilityLabel("\(item.command) \(item.title), line \(item.line)")
             }
         }
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)") {
+        // The revision and the caret change on every keystroke: they are read in
+        // zero-size children (IsolatedTask.swift), so a keystroke re-evaluates
+        // those, not the breadcrumb or the status bar around it.
+        .background(IsolatedTask(id: { "\(model.activePath)@\(model.chrome.editorRevision)" }) { _ in
             if !items.isEmpty { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
-            items = model.outline
+            let scanned = await DocumentOutline.scanOffMain(model.activeText)
+            guard !Task.isCancelled else { return }
+            items = scanned
             chain = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
-        }
-        .task(id: model.caretUTF16) {
+        })
+        .background(IsolatedTask(id: { model.caretUTF16 }) { _ in
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled else { return }
             let new = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
             if new != chain { chain = new }
-        }
+        })
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Breadcrumb")
     }
@@ -688,6 +642,8 @@ private struct ReviewItem: Identifiable {
 
 /// Review sheet: the reviewer sees ambiguities and dependencies, may edit the
 /// LaTeX, and explicitly approves or rejects. Nothing is inserted otherwise.
+/// Approve inserts one undoable edit; the live compile then shows its pages
+/// and diagnostics (owner ruling E3: the shadow-compile preview retired).
 private struct ProposalReviewSheet: View {
     @Environment(ShellModel.self) var model
     @Environment(\.dismiss) private var dismiss
@@ -698,7 +654,6 @@ private struct ProposalReviewSheet: View {
     /// inspector — both behind this window-modal sheet. Without showing it
     /// here, a refused approval looks exactly like a dead button.
     @State private var failure: String?
-    @StateObject private var preview = ProposalPreview(executable: ShellModel.locateCompiler()) // shadow compile (ProposalPreview.swift)
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
@@ -736,7 +691,6 @@ private struct ProposalReviewSheet: View {
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: DS.Layout.sheetTextEditorMinHeight)
                 .border(.separator)
-            ProposalPreviewView(preview: preview)
             if !proposal.ambiguities.isEmpty {
                 Text("Ambiguities").font(.subheadline.bold())
                 ForEach(proposal.ambiguities, id: \.self) { Text("• \($0)").font(.caption) }
@@ -761,7 +715,6 @@ private struct ProposalReviewSheet: View {
                     .ideSecondary()
                     .accessibilityIdentifier("review.close")
                 Spacer()
-                ProposalApproveWarning(preview: preview)
                 Button("Approve and insert") {
                     failure = nil
                     if model.isBridgeCapture(proposal.captureId) {
@@ -779,11 +732,8 @@ private struct ProposalReviewSheet: View {
         }
         .padding(DS.Space.xl)
         .frame(width: DS.Layout.sheetWidth)
-        .onAppear { latex = proposal.latex; preview.update(from: model, latex: proposal.latex) }
-        .onChange(of: latex) { _, new in failure = nil; preview.update(from: model, latex: new) }
-        .onChange(of: model.editorRevision) { _, _ in preview.update(from: model, latex: latex) }
-        .onChange(of: model.anchor) { _, _ in preview.update(from: model, latex: latex) }
-        .onDisappear { preview.close() }
+        .onAppear { latex = proposal.latex }
+        .onChange(of: latex) { _, _ in failure = nil }
     }
 }
 

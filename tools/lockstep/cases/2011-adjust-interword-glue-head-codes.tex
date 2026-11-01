@@ -1,0 +1,52 @@
+\input prelude
+% #1219 review plants: a space that is the first item of a list, with the
+% list's head node last holding a letter token (\m's argument, flushed to
+% the free list just before the list starts). pdfTeX reads font(head) and
+% character(head) from that word as texmfmem.h lays it out: the font is
+% its high half (0, nullfont) and the character its low half (the token,
+% 11*256+`a' and so on). Nullfont gets kn codes and a quad, and sixteen
+% \efcode blocks (all 1000) follow its code block in pdf_mem, so that
+% pdf_mem[base+c] is 1000: pdfTeX widens the glue by the nullfont quad.
+\font\f=cmr10 \f
+\fontdimen6\nullfont=5pt
+\knbscode\nullfont`x=0
+\font\FA=cmr10 at 5pt \efcode\FA`x=1000
+\font\FB=cmr10 at 6pt \efcode\FB`x=1000
+\font\FC=cmr10 at 7pt \efcode\FC`x=1000
+\font\FD=cmr10 at 8pt \efcode\FD`x=1000
+\font\FE=cmr10 at 9pt \efcode\FE`x=1000
+\font\FF=cmr10 at 11pt \efcode\FF`x=1000
+\font\FG=cmr10 at 12pt \efcode\FG`x=1000
+\font\FH=cmr10 at 13pt \efcode\FH`x=1000
+\font\FI=cmr10 at 14pt \efcode\FI`x=1000
+\font\FJ=cmr10 at 15pt \efcode\FJ`x=1000
+\font\FK=cmr10 at 16pt \efcode\FK`x=1000
+\font\FL=cmr10 at 17pt \efcode\FL`x=1000
+\font\FM=cmr10 at 18pt \efcode\FM`x=1000
+\font\FN=cmr10 at 19pt \efcode\FN`x=1000
+\font\FO=cmr10 at 20pt \efcode\FO`x=1000
+\font\FP=cmr10 at 21pt \efcode\FP`x=1000
+\pdfadjustinterwordglue=1
+\chardef\zero=0
+\def\m#1{}
+% a restricted horizontal list
+\m{abc}\setbox\zero=\hbox{ }
+\lsshipbox0
+\setbox\zero=\hbox{ }
+\lsshipbox0
+% a paragraph
+\m{abc}\setbox\zero=\vbox{\hsize100pt \noindent{} x\par}
+\lsshipbox0
+% the inner list's head
+\m{abc}\setbox\zero=\hbox{\hbox{ }}
+\lsshipbox0
+\m{abc}\setbox\zero=\hbox{x\hbox{ }}
+\lsshipbox0
+\m{xyz}\setbox\zero=\hbox{ x x}
+\lsshipbox0
+% lists that do not start with the space: equal before this fix too
+\m{abc}\setbox\zero=\hbox{\kern1pt{} x}
+\lsshipbox0
+\m{abc}\setbox\zero=\hbox{\hbox{} x}
+\lsshipbox0
+\end

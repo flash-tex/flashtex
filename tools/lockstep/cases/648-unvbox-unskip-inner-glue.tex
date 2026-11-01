@@ -1,0 +1,11 @@
+% 648-unvbox-unskip-inner-glue: verifies \unskip after \unvbox removes the exposed inner glue, unlike the plain rebox.
+\input prelude
+\setbox4=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt}
+\setbox5=\vbox{\unvbox4\unskip}
+\message{648 unskipped-ht=\the\ht5}
+\setbox6=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt}
+\setbox7=\vbox{\unvbox6}
+\message{648 kept-ht=\the\ht7}
+\lsshipbox5
+\lsshipbox7
+\end

@@ -1,0 +1,247 @@
+//! Why a host ended (review 2026-09-30, track 1, finding 10b: three
+//! `flashtex-host iserve` sessions ended with nothing on stderr). Every way
+//! out leaves one line on stderr, and on `FLASHTEX_HOST_CRASH_LOG` (a file
+//! appended to) when that is set:
+//!
+//! * a panic: its message and location, the request being served, and a
+//!   backtrace (the Rust default hook runs too);
+//! * `SIGABRT` (an `abort`, which is also how Rust ends a thread that
+//!   overflowed its stack, after saying so), `SIGTERM`, `SIGINT`, `SIGHUP`:
+//!   the signal and the request being served, written from the handler with
+//!   `write(2)` only; then the signal's default action;
+//! * a normal end ([`exit`]): the reason (end of input, `quit`, the socket
+//!   closed) and how many requests were served.
+//!
+//! On Windows only the panic and normal-end lines exist (there are no
+//! POSIX signals to catch; console control events are not handled yet).
+//!
+//! A `SIGSEGV` or `SIGBUS` other than a stack overflow still ends the
+//! process silently: Rust's own handler for those restores the default
+//! action. `SIGKILL` (the kernel's out-of-memory killer, a supervisor) cannot
+//! be caught at all.
+
+#[cfg(unix)]
+use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::Once;
+
+const CAP: usize = 480;
+/// The request being served. Atomics, not a `static mut`: connection
+/// threads write it while a panic hook (any thread) or a signal handler reads
+/// it. A read that overlaps a write shows a mixed request, never touches
+/// other memory, and is not a data race. Relaxed byte loads and stores are
+/// plain loads and stores, so the signal handler stays async-signal-safe.
+static LAST: [AtomicU8; CAP] = [const { AtomicU8::new(0) }; CAP];
+static LAST_LEN: AtomicUsize = AtomicUsize::new(0);
+static REQUESTS: AtomicU64 = AtomicU64::new(0);
+static mut LOG_PATH: [u8; 512] = [0; 512];
+static LOG_LEN: AtomicUsize = AtomicUsize::new(0);
+static INSTALL: Once = Once::new();
+
+// The libc signatures exactly: since Rust 1.99 a declaration of a symbol the
+// standard library also uses (`write`, `open`) must match it, and `open` is
+// variadic (`mode` travels as a promoted `unsigned int`).
+#[cfg(unix)]
+extern "C" {
+    fn signal(sig: c_int, handler: usize) -> usize;
+    fn raise(sig: c_int) -> c_int;
+    fn write(fd: c_int, buf: *const c_void, n: usize) -> isize;
+    fn open(path: *const c_char, flags: c_int, ...) -> c_int;
+    fn close(fd: c_int) -> c_int;
+}
+
+#[cfg(unix)]
+const SIGHUP: i32 = 1;
+#[cfg(unix)]
+const SIGINT: i32 = 2;
+#[cfg(unix)]
+const SIGABRT: i32 = 6;
+#[cfg(unix)]
+const SIGTERM: i32 = 15;
+#[cfg(unix)]
+const SIG_DFL: usize = 0;
+#[cfg(target_os = "macos")]
+const O_WRONLY_CREAT_APPEND: i32 = 0x0001 | 0x0200 | 0x0008;
+#[cfg(target_os = "linux")]
+const O_WRONLY_CREAT_APPEND: i32 = 0o1 | 0o100 | 0o2000;
+
+/// Note the request now being served (shortened), for the lines above.
+pub fn serving(what: &str) {
+    REQUESTS.fetch_add(1, Ordering::Relaxed);
+    let b = what.as_bytes();
+    let n = b.len().min(CAP);
+    for (slot, &c) in LAST.iter().zip(&b[..n]) {
+        slot.store(c, Ordering::Relaxed);
+    }
+    LAST_LEN.store(n, Ordering::Release);
+}
+
+/// The request being served, as `serving` last noted it, into `out`.
+fn last_request(out: &mut [u8; CAP]) -> &[u8] {
+    let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
+    for (o, slot) in out.iter_mut().zip(&LAST[..n]) {
+        *o = slot.load(Ordering::Relaxed);
+    }
+    &out[..n]
+}
+
+#[cfg(not(unix))]
+fn emit(line: &[u8]) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(line);
+    if LOG_LEN.load(Ordering::Acquire) > 0 {
+        if let Ok(p) = std::env::var("FLASHTEX_HOST_CRASH_LOG") {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+            {
+                let _ = f.write_all(line);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn emit(line: &[u8]) {
+    // SAFETY: write(2) of a valid buffer; open(2)/close(2) of a
+    // NUL-terminated path kept in a static buffer.
+    unsafe {
+        write(2, line.as_ptr().cast(), line.len());
+        let n = LOG_LEN.load(Ordering::Acquire);
+        if n > 0 {
+            let fd = open(
+                std::ptr::addr_of!(LOG_PATH) as *const c_char,
+                O_WRONLY_CREAT_APPEND,
+                0o644 as c_uint,
+            );
+            if fd >= 0 {
+                write(fd, line.as_ptr().cast(), line.len());
+                close(fd);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+extern "C" fn on_signal(sig: i32) {
+    // Only async-signal-safe calls from here: fixed buffers and write(2).
+    let mut buf = [0u8; 700];
+    let mut k = 0;
+    let mut put = |s: &[u8], k: &mut usize| {
+        for &c in s {
+            if *k < buf.len() {
+                buf[*k] = c;
+                *k += 1;
+            }
+        }
+    };
+    put(b"flashtex-host: ended by signal ", &mut k);
+    let mut d = [0u8; 4];
+    let mut v = sig as u32;
+    let mut nd = 0;
+    loop {
+        d[nd] = b'0' + (v % 10) as u8;
+        nd += 1;
+        v /= 10;
+        if v == 0 || nd == d.len() {
+            break;
+        }
+    }
+    while nd > 0 {
+        nd -= 1;
+        put(&d[nd..nd + 1], &mut k);
+    }
+    put(b" while serving: ", &mut k);
+    let mut copy = [0u8; CAP];
+    put(last_request(&mut copy), &mut k);
+    put(b"\n", &mut k);
+    emit(&buf[..k]);
+    // SAFETY: back to the default action, then the signal again.
+    unsafe {
+        signal(sig, SIG_DFL);
+        raise(sig);
+    }
+}
+
+/// Install the panic hook and the signal handlers (once per process).
+pub fn install() {
+    INSTALL.call_once(|| {
+        if let Ok(p) = std::env::var("FLASHTEX_HOST_CRASH_LOG") {
+            let b = p.as_bytes();
+            if !b.is_empty() && b.len() < 511 {
+                // SAFETY: written once, before any reader (the handlers are
+                // installed below).
+                unsafe {
+                    let dst = std::ptr::addr_of_mut!(LOG_PATH) as *mut u8;
+                    std::ptr::copy_nonoverlapping(b.as_ptr(), dst, b.len());
+                    *dst.add(b.len()) = 0;
+                }
+                LOG_LEN.store(b.len(), Ordering::Release);
+            }
+        }
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // A reader that panics while an image is read again to check a
+            // persisted S₀ makes the open refuse (`images::probe`): not a crash.
+            if crate::pdftex::images::probing() {
+                return;
+            }
+            let mut copy = [0u8; CAP];
+            let last = last_request(&mut copy);
+            let line = format!(
+                "flashtex-host: panic in thread {:?}: {info}; while serving: {}\n{}\n",
+                std::thread::current().name().unwrap_or("?"),
+                String::from_utf8_lossy(last),
+                std::backtrace::Backtrace::force_capture()
+            );
+            emit(line.as_bytes());
+            prev(info);
+        }));
+        // SAFETY: installs a handler that only uses async-signal-safe calls.
+        #[cfg(unix)]
+        unsafe {
+            for s in [SIGABRT, SIGTERM, SIGINT, SIGHUP] {
+                signal(s, on_signal as *const () as usize);
+            }
+        }
+    });
+}
+
+/// A normal end: say why, and how many requests were served.
+pub fn exit(reason: &str) {
+    emit(
+        format!(
+            "flashtex-host: exiting: {reason} ({} requests served)\n",
+            REQUESTS.load(Ordering::Relaxed)
+        )
+        .as_bytes(),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Connection threads note requests while another thread reads the note
+    /// (the panic hook). With the old `static mut` buffer this was a data
+    /// race, which Miri's race detector reports (scripts/sanitizers.sh miri
+    /// runs this test); the note also stays within its capacity.
+    #[test]
+    fn the_request_note_is_race_free_and_bounded() {
+        let long = "x".repeat(CAP + 100);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                for i in 0..20 {
+                    serving(if i % 2 == 0 { "compile 1" } else { &long });
+                }
+            });
+            s.spawn(|| {
+                for _ in 0..20 {
+                    let mut copy = [0u8; CAP];
+                    assert!(last_request(&mut copy).len() <= CAP);
+                }
+            });
+        });
+    }
+}

@@ -1,0 +1,9 @@
+% 360-doublehyphendemerits: verifies \doublehyphendemerits is added for each of consecutive hyphen-ended lines, shown by the traced totals.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=38pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\doublehyphendemerits=10000\finalhyphendemerits=0\myrm banana banana banana banana banana\par\message{360 dbl10000 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=38pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=0\myrm banana banana banana banana banana\par\message{360 dbl0 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

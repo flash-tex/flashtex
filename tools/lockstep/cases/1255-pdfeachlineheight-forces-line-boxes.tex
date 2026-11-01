@@ -1,0 +1,10 @@
+% 1255-pdfeachlineheight-forces-line-boxes: verifies \pdfeachlineheight and \pdfeachlinedepth force the height and depth of every line box of a paragraph, whatever its content (pdftex.web §§1064, 1065)
+\input prelude
+\font\tf=cmr10 \tf \hsize=60pt \parindent=0pt \baselineskip=12pt \tolerance=10000
+\pdfeachlineheight=20pt \pdfeachlinedepth=6pt
+\setbox0=\vbox{aaa bbb ccc ddd eee fff}
+\lsshipbox0
+\pdfeachlineheight=30pt
+\setbox1=\vbox{aaa bbb ccc ddd eee fff}
+\lsshipbox1
+\end

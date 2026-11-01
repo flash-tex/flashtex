@@ -1,0 +1,9 @@
+% 2133-strings-openout: \tracingstats=2 string counts after immediate and shipped \openout, \write and \closeout (tex.web §§517, 1351, 1374; tex.ch [53.1374])
+\input prelude
+\tracingstats=2
+\immediate\openout5=ls2133-immediate-output.txt
+\immediate\write5{2133 now}
+\immediate\closeout5
+\setbox0=\hbox{\openout6=ls2133-shipped \write6{2133 later}\closeout6 \vrule width2133pt height8pt depth2pt}
+\lsshipbox0
+\end

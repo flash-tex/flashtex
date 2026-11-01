@@ -311,8 +311,8 @@ enum MoveTarget {
     }
 }
 
-/// How the project tree's rows map to drag sources and drop targets. The
-/// tree is flat (WorkspaceSidebar.swift): there are no folder rows, so a
+/// How the project tree's rows map to drag sources and drop targets. In the
+/// flat list (WorkspaceSidebar.swift) there are no folder rows, so a
 /// file row stands in for the folder it lives in — dropping on
 /// `chapters/b.tex` moves into `chapters/`; dropping on the tree's empty
 /// space moves to the project root.
@@ -320,7 +320,8 @@ enum ProjectTreeMove {
     /// The file a row stands for: open members by path, closed includes by
     /// their resolved path; nil for missing-file, caption and outline rows.
     static func path(forRowID id: String) -> String? {
-        if id.hasPrefix("missing:") || id.hasPrefix("outline:") { return nil }
+        if id.hasPrefix("missing:") || id.hasPrefix("outline:") || id.hasPrefix(ProjectFileTree.folderPrefix)
+            || id.hasPrefix("packages:") { return nil }
         if id.hasPrefix("closed:") { return String(id.dropFirst("closed:".count)) }
         return id
     }
@@ -329,6 +330,8 @@ enum ProjectTreeMove {
     /// the root); nil when the row is not a target.
     static func dropFolder(rowID: String?) -> String? {
         guard let rowID else { return "" }
+        // Tree mode's folder rows (ProjectFileTree.swift) are their folder.
+        if rowID.hasPrefix(ProjectFileTree.folderPrefix) { return String(rowID.dropFirst(ProjectFileTree.folderPrefix.count)) }
         guard let path = path(forRowID: rowID) else { return nil }
         return MoveTarget.folder(of: path)
     }

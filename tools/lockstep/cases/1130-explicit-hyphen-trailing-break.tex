@@ -1,0 +1,9 @@
+% 1130-explicit-hyphen-trailing-break: verifies a word ending in an explicit hyphen offers a break after the hyphen: the first line ends after well- with its discretionary, unlike the plain-word control (tex.web § 869)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=70pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\exhyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm well- aa bb cc well- dd ee ff well- gg hh ii\par\message{1130 trail lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=70pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\exhyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm well aa bb cc well dd ee ff well gg hh ii\par\message{1130 plain lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

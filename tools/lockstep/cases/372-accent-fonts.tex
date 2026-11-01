@@ -1,0 +1,7 @@
+% 372-accent-fonts: verifies \accent builds its kerned construction from the current font in two different fonts.
+\input prelude
+\font\myrm=cmr10 \font\mybf=cmbx10
+\setbox0=\hbox{{\myrm \accent19 e}{\mybf \accent19 e}}
+\message{372 wd=\the\wd0}
+\lsshipbox0
+\end

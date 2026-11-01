@@ -1,0 +1,9 @@
+% 662-double-vadjust-order: verifies two \vadjusts from one \hbox migrate out in order, unlike the plain control.
+\input prelude
+\setbox0=\vbox{\hbox{\vrule width40pt height6pt depth2pt\vadjust{\vskip7pt}\vadjust{\vskip3pt}}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{662 va-ht=\the\ht0}
+\setbox1=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{662 ctl-ht=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

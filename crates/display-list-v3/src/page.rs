@@ -1,0 +1,1491 @@
+//! The `PAGE` and `FORM` bodies (spec §4): a fixed header, then tagged
+//! sections. The item list is in painting order, as the PDF content stream
+//! paints.
+//!
+//! Coordinates. Glyph origins, rules, links and destinations are in scaled
+//! points (sp, 65536 per TeX point), x to the right from the left edge and y
+//! down from the top edge of the page (or of the form's bounding box).
+//! Matrices, path coordinates and colours are the PDF's own numbers (f64),
+//! in the stream's PDF space: points (bp), origin at the bottom-left corner,
+//! y up. A client that draws in a top-left, y-down space in points composes
+//! every matrix with `[1 0 0 -1 0 H]`, H the box height in bp.
+
+use crate::frame::{Cursor, Put};
+use crate::sha256::Sha256;
+
+/// Header flags.
+pub mod flags {
+    /// The stream used something this version cannot express (listed in
+    /// the UNSUPPORTED section and marked in the items); drawing the items
+    /// alone may differ from the PDF. A client may render the PDF page.
+    pub const INCOMPLETE: u32 = 1;
+    /// No geometry (\pdfdraftmode, or DVI mode): the items are empty.
+    pub const NO_GEOMETRY: u32 = 2;
+}
+
+/// Section tags.
+pub mod section {
+    pub const MATRICES: u32 = 1;
+    pub const PATHS: u32 = 2;
+    pub const ITEMS: u32 = 3;
+    pub const LINKS: u32 = 4;
+    pub const DESTS: u32 = 5;
+    pub const UNSUPPORTED: u32 = 6;
+    /// The exact origin of every GLYPH (spec §4.2): `u32 n`, then n ×
+    /// `f64[2]`, stream space (bp, y up), in item order. Every Typst page
+    /// carries it (spec §11.2).
+    pub const ORIGINS: u32 = 7;
+    /// 3.3 (spec §11.2): the page's metadata, UTF-8 JSON (`engine`,
+    /// `number`, `label`, `bleed`, `trim`).
+    pub const PAGE_META: u32 = 8;
+    /// The exact geometry of every RULE (spec §4.4): `u32 n`, then n ×
+    /// `f64[7]`, in item order.
+    pub const RULE_GEOMETRY: u32 = 9;
+    /// 3.3 (spec §11.3): the page's colour spaces, referenced 1..n by
+    /// FILL_COLOR_CS / STROKE_COLOR_CS.
+    pub const COLORSPACES: u32 = 10;
+}
+
+/// Item opcodes.
+pub mod op {
+    pub const GLYPH: u8 = 0x01;
+    pub const RULE: u8 = 0x02;
+    pub const PATH: u8 = 0x03;
+    pub const CLIP: u8 = 0x04;
+    pub const IMAGE: u8 = 0x05;
+    pub const FORM: u8 = 0x06;
+    pub const SAVE: u8 = 0x07;
+    pub const RESTORE: u8 = 0x08;
+    pub const FILL_COLOR: u8 = 0x09;
+    pub const STROKE_COLOR: u8 = 0x0A;
+    pub const MATRIX: u8 = 0x0B;
+    pub const SPAN: u8 = 0x0C;
+    pub const TEXT_RENDER: u8 = 0x0D;
+    pub const UNSUPPORTED: u8 = 0x0E;
+    /// 3.3, sent only to a client that accepts `color-spaces` (spec §11.3).
+    pub const FILL_COLOR_CS: u8 = 0x0F;
+    pub const STROKE_COLOR_CS: u8 = 0x10;
+    pub const FILL_ALPHA: u8 = 0x11;
+    pub const STROKE_ALPHA: u8 = 0x12;
+    /// 3.3, sent only to a client that accepts `line-state` (spec §11.4).
+    pub const LINE_STATE: u8 = 0x13;
+}
+
+/// Unknown column (the node was not made while reading a file line).
+pub const NO_COLUMN: u16 = 0xFFFF;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuleKind {
+    /// `re f`: fill the rectangle.
+    Fill = 0,
+    /// A stroked horizontal line along the rectangle's middle, line width
+    /// = its height, butt caps (pdfTeX's rule of at most 1 bp height).
+    StrokeH = 1,
+    /// A stroked vertical line along the middle, line width = its width.
+    StrokeV = 2,
+}
+
+impl RuleKind {
+    fn from(b: u8) -> Result<RuleKind, String> {
+        Ok(match b {
+            0 => RuleKind::Fill,
+            1 => RuleKind::StrokeH,
+            2 => RuleKind::StrokeV,
+            _ => return Err(format!("unknown rule kind {b}")),
+        })
+    }
+}
+
+/// A colour: DeviceGray (1), DeviceRGB (3) or DeviceCMYK (4) components.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Color(pub Vec<f64>);
+
+/// Later minor versions add items for clients that accept them (spec §3,
+/// §11.7), so a match outside this crate needs a wildcard arm.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Item {
+    /// Glyph `code` of font resource `font`, origin at (x, y) sp, drawn
+    /// with the current glyph matrix, fill colour and text render mode.
+    /// `col` is the source column (see `Span`), or [`NO_COLUMN`].
+    Glyph {
+        font: u16,
+        code: u16,
+        x: i32,
+        y: i32,
+        col: u16,
+    },
+    /// A rule: left x, top y, width, height (sp), painted with the fill
+    /// colour (`Fill`) or the stroke colour (the stroked kinds).
+    Rule {
+        kind: RuleKind,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
+    /// Paint path `n` of the PATHS section.
+    Path(u32),
+    /// Intersect the clip with path `n` (until the matching `Restore`).
+    Clip(u32),
+    /// Draw image resource `id` with matrix `m` (maps the unit square).
+    Image {
+        id: u32,
+        matrix: u32,
+    },
+    /// Draw form `id` with matrix `m` (maps the form's PDF space).
+    Form {
+        id: u32,
+        matrix: u32,
+    },
+    Save,
+    Restore,
+    FillColor(Color),
+    StrokeColor(Color),
+    /// The glyph matrix for the following glyphs: entries a, b, c, d of
+    /// matrix `n` map text space (1 unit = 1 em) to PDF space.
+    Matrix(u32),
+    /// The source span of the following items (0 = none).
+    Span(u32),
+    /// PDF text render mode (0 fill, 1 stroke, 2 fill+stroke, 3 invisible).
+    TextRender(u8),
+    /// Something at this point was not expressed: entry `n` of UNSUPPORTED.
+    Unsupported(u32),
+    /// 3.3: the fill colour in colour space `cs` (1-based, COLORSPACES).
+    FillColorCs {
+        cs: u32,
+        color: Color,
+    },
+    /// 3.3: the stroke colour in colour space `cs`.
+    StrokeColorCs {
+        cs: u32,
+        color: Color,
+    },
+    /// 3.3: constant fill alpha (the PDF's `ca`).
+    FillAlpha(f64),
+    /// 3.3: constant stroke alpha (the PDF's `CA`).
+    StrokeAlpha(f64),
+    /// 3.3: the line state for stroked glyphs (text render modes 1, 2).
+    LineState(Stroke),
+}
+
+/// Alternate spaces of a Separation (spec §11.3): the Device spaces by
+/// component count; any other value is an ICCBased entry of COLORSPACES.
+pub mod alternate {
+    pub const DEVICE_GRAY: u32 = 0x8000_0001;
+    pub const DEVICE_RGB: u32 = 0x8000_0003;
+    pub const DEVICE_CMYK: u32 = 0x8000_0004;
+}
+
+/// A 3.3 colour space (spec §11.3).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ColorSpace {
+    /// ICCBased: `n` components (1, 3 or 4) and the profile's bytes.
+    Icc { n: u8, profile: Vec<u8> },
+    /// Separation: the colorant, the alternate space ([`alternate`] or a
+    /// 1-based ICCBased entry before this one), and the Type 2 tint
+    /// transform `c0 + t^e (c1 - c0)`.
+    Separation {
+        name: String,
+        alternate: u32,
+        c0: Vec<f64>,
+        c1: Vec<f64>,
+        e: f64,
+    },
+}
+
+impl ColorSpace {
+    /// Components a colour in this space has.
+    pub fn components(&self) -> usize {
+        match self {
+            ColorSpace::Icc { n, .. } => *n as usize,
+            ColorSpace::Separation { .. } => 1,
+        }
+    }
+}
+
+/// Stroke parameters of a path.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stroke {
+    pub width: f64,
+    pub cap: u8,
+    pub join: u8,
+    pub miter: f64,
+    pub dash: Vec<f64>,
+    pub phase: f64,
+}
+
+/// Path segment.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Seg {
+    Move(f64, f64),
+    Line(f64, f64),
+    Curve(f64, f64, f64, f64, f64, f64),
+    Close,
+}
+
+/// Paint bits.
+pub mod paint {
+    pub const FILL: u8 = 1;
+    pub const FILL_EVEN_ODD: u8 = 2;
+    pub const STROKE: u8 = 4;
+    pub const CLIP: u8 = 8;
+    pub const CLIP_EVEN_ODD: u8 = 16;
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Path {
+    /// [`paint`] bits.
+    pub paint: u8,
+    /// The CTM (index into MATRICES; 0 = identity), mapping the segments'
+    /// user space to PDF space.
+    pub matrix: u32,
+    pub stroke: Option<Stroke>,
+    pub segs: Vec<Seg>,
+}
+
+/// A link annotation's action.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkKind {
+    /// `goto name{..}`: a named destination.
+    GotoName = 1,
+    /// `goto num N`: a numbered destination (data: decimal).
+    GotoNum = 2,
+    /// `goto page N {..}` (data: "N" then the destination spec).
+    GotoPage = 3,
+    /// A URI (`user{/S/URI/URI(..)}`), data: the URI bytes.
+    Uri = 4,
+    /// Any other action: the action dictionary as pdfTeX writes it.
+    Raw = 5,
+    /// An article thread.
+    Thread = 6,
+}
+
+impl LinkKind {
+    fn from(b: u8) -> LinkKind {
+        match b {
+            1 => LinkKind::GotoName,
+            2 => LinkKind::GotoNum,
+            3 => LinkKind::GotoPage,
+            4 => LinkKind::Uri,
+            6 => LinkKind::Thread,
+            _ => LinkKind::Raw,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Link {
+    /// Rectangle (sp, y down): left, top, right, bottom.
+    pub rect: [i32; 4],
+    pub span: u32,
+    pub kind: LinkKind,
+    /// A file (`goto file(..)`), when the action names one.
+    pub file: Vec<u8>,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Dest {
+    /// true: `name` is a name; false: a decimal number.
+    pub named: bool,
+    pub name: Vec<u8>,
+    /// 0 xyz, 1 fit, 2 fith, 3 fitv, 4 fitb, 5 fitbh, 6 fitbv, 7 fitr.
+    pub kind: u8,
+    /// left, top, right, bottom (sp, y down): xyz has left/top, fith and
+    /// fitbh top, fitv and fitbv left, fitr all four; the others are 0.
+    pub rect: [i32; 4],
+    /// xyz zoom in thousandths (0 = keep; 0 for the other kinds).
+    pub zoom: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamKind {
+    Page,
+    Form,
+}
+
+/// A decoded page or form.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Page {
+    pub kind: StreamKind,
+    /// Page: 0-based ship-out index. Form: the form's id (pdfTeX's `/Fm` n).
+    pub index: u32,
+    pub flags: u32,
+    /// Page: TeX's page width and height (sp). Form: box width and
+    /// height + depth.
+    pub width: i32,
+    pub height: i32,
+    /// \count0..\count9 at ship-out (pages; zero for forms).
+    pub counts: [i32; 10],
+    /// The PDF box: MediaBox (page) or BBox (form), in bp.
+    pub pdf_box: [f64; 4],
+    pub hash: [u8; 32],
+    /// Matrices 1..=n (index 0 is the identity and is not stored).
+    pub matrices: Vec<[f64; 6]>,
+    pub paths: Vec<Path>,
+    pub items: Vec<Item>,
+    pub links: Vec<Link>,
+    pub dests: Vec<Dest>,
+    pub unsupported: Vec<String>,
+    /// The exact origin (X, Y) of each GLYPH item, in item order, in stream
+    /// space (bp, y up): the PDF's origin, of which the item's (x, y) is the
+    /// sp rounding. Empty when the writer did not send ORIGINS; otherwise
+    /// exactly one per GLYPH (a decoder refuses any other count).
+    pub origins: Vec<[f64; 2]>,
+    /// The geometry the PDF draws each RULE item with, in item order:
+    /// `[e, f, x, y, w, h, 0]` for a FILL (`x y w h re` under the CTM's
+    /// translation e, f), `[e, f, x0, y0, x1, y1, lw]` for a stroked rule
+    /// (`x0 y0 m x1 y1 l`, line width lw); the item's rectangle is its sp
+    /// rounding. Empty, or exactly one per RULE (a decoder refuses any
+    /// other count).
+    pub rule_geometry: Vec<[f64; 7]>,
+    /// 3.3: the PAGE_META JSON text (spec §11.2), when the writer sent it.
+    pub meta: Option<String>,
+    /// 3.3: the COLORSPACES section (spec §11.3), referenced 1..n.
+    pub colorspaces: Vec<ColorSpace>,
+}
+
+impl Page {
+    pub fn new(kind: StreamKind, index: u32) -> Page {
+        Page {
+            kind,
+            index,
+            flags: 0,
+            width: 0,
+            height: 0,
+            counts: [0; 10],
+            pdf_box: [0.0; 4],
+            hash: [0; 32],
+            matrices: Vec::new(),
+            paths: Vec::new(),
+            items: Vec::new(),
+            links: Vec::new(),
+            dests: Vec::new(),
+            unsupported: Vec::new(),
+            origins: Vec::new(),
+            rule_geometry: Vec::new(),
+            meta: None,
+            colorspaces: Vec::new(),
+        }
+    }
+
+    /// Matrix `n` (0 = identity).
+    pub fn matrix(&self, n: u32) -> [f64; 6] {
+        if n == 0 {
+            [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        } else {
+            self.matrices
+                .get(n as usize - 1)
+                .copied()
+                .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+        }
+    }
+
+    /// Encode the body. The header's `hash` is written as given.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(256 + self.items.len() * 16);
+        out.put_u32(self.index);
+        out.put_u32(self.flags);
+        out.put_i32(self.width);
+        out.put_i32(self.height);
+        for c in self.counts {
+            out.put_i32(c);
+        }
+        for v in self.pdf_box {
+            out.put_f64(v);
+        }
+        out.extend_from_slice(&self.hash);
+        let mut sections: Vec<(u32, Vec<u8>)> = vec![
+            (section::MATRICES, self.enc_matrices()),
+            (section::PATHS, self.enc_paths()),
+            (section::ITEMS, self.enc_items(false)),
+            (section::LINKS, self.enc_links()),
+            (section::DESTS, self.enc_dests()),
+            (section::UNSUPPORTED, self.enc_unsupported()),
+        ];
+        if !self.origins.is_empty() {
+            sections.push((section::ORIGINS, self.enc_origins()));
+        }
+        if !self.rule_geometry.is_empty() {
+            sections.push((section::RULE_GEOMETRY, self.enc_rule_geometry()));
+        }
+        if let Some(m) = &self.meta {
+            sections.push((section::PAGE_META, m.as_bytes().to_vec()));
+        }
+        if !self.colorspaces.is_empty() {
+            sections.push((section::COLORSPACES, self.enc_colorspaces()));
+        }
+        out.put_u32(sections.len() as u32);
+        for (tag, data) in sections {
+            out.put_u32(tag);
+            out.put_u32(data.len() as u32);
+            out.extend_from_slice(&data);
+        }
+        out
+    }
+
+    fn enc_colorspaces(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.put_u32(self.colorspaces.len() as u32);
+        for cs in &self.colorspaces {
+            match cs {
+                ColorSpace::Icc { n, profile } => {
+                    o.put_u8(1);
+                    o.put_u8(*n);
+                    o.put_u32(profile.len() as u32);
+                    o.extend_from_slice(profile);
+                }
+                ColorSpace::Separation {
+                    name,
+                    alternate,
+                    c0,
+                    c1,
+                    e,
+                } => {
+                    o.put_u8(2);
+                    let b = name.as_bytes();
+                    let n = b.len().min(u16::MAX as usize);
+                    o.put_u16(n as u16);
+                    o.extend_from_slice(&b[..n]);
+                    o.put_u32(*alternate);
+                    // The tint transform's two ends have the alternate's
+                    // component count each (spec §11.3).
+                    assert_eq!(c0.len(), c1.len(), "Separation c0 and c1 differ in length");
+                    o.put_u8(c0.len() as u8);
+                    for v in c0.iter().chain(c1) {
+                        o.put_f64(*v);
+                    }
+                    o.put_f64(*e);
+                }
+            }
+        }
+        o
+    }
+
+    fn enc_matrices(&self) -> Vec<u8> {
+        let mut o = Vec::with_capacity(4 + self.matrices.len() * 48);
+        o.put_u32(self.matrices.len() as u32);
+        for m in &self.matrices {
+            for v in m {
+                o.put_f64(*v);
+            }
+        }
+        o
+    }
+
+    fn enc_paths(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.put_u32(self.paths.len() as u32);
+        for p in &self.paths {
+            o.put_u8(p.paint);
+            o.put_u32(p.matrix);
+            if p.paint & paint::STROKE != 0 {
+                let s = p.stroke.clone().unwrap_or(Stroke {
+                    width: 1.0,
+                    cap: 0,
+                    join: 0,
+                    miter: 10.0,
+                    dash: vec![],
+                    phase: 0.0,
+                });
+                enc_stroke(&mut o, &s);
+            }
+            o.put_u32(p.segs.len() as u32);
+            for s in &p.segs {
+                match s {
+                    Seg::Move(x, y) => {
+                        o.put_u8(0);
+                        o.put_f64(*x);
+                        o.put_f64(*y);
+                    }
+                    Seg::Line(x, y) => {
+                        o.put_u8(1);
+                        o.put_f64(*x);
+                        o.put_f64(*y);
+                    }
+                    Seg::Curve(a, b, c, d, e, f) => {
+                        o.put_u8(2);
+                        for v in [a, b, c, d, e, f] {
+                            o.put_f64(*v);
+                        }
+                    }
+                    Seg::Close => o.put_u8(3),
+                }
+            }
+        }
+        o
+    }
+
+    /// The ITEMS section. With `for_hash`, spans and columns are left out
+    /// (they locate the source; they do not change what is drawn).
+    fn enc_items(&self, for_hash: bool) -> Vec<u8> {
+        let mut o = Vec::with_capacity(self.items.len() * 15);
+        for it in &self.items {
+            match it {
+                Item::Glyph {
+                    font,
+                    code,
+                    x,
+                    y,
+                    col,
+                } => {
+                    o.put_u8(op::GLYPH);
+                    o.put_u16(*font);
+                    o.put_u16(*code);
+                    o.put_i32(*x);
+                    o.put_i32(*y);
+                    o.put_u16(if for_hash { 0 } else { *col });
+                }
+                Item::Rule { kind, x, y, w, h } => {
+                    o.put_u8(op::RULE);
+                    o.put_u8(*kind as u8);
+                    o.put_i32(*x);
+                    o.put_i32(*y);
+                    o.put_i32(*w);
+                    o.put_i32(*h);
+                }
+                Item::Path(n) => {
+                    o.put_u8(op::PATH);
+                    o.put_u32(*n);
+                }
+                Item::Clip(n) => {
+                    o.put_u8(op::CLIP);
+                    o.put_u32(*n);
+                }
+                Item::Image { id, matrix } => {
+                    o.put_u8(op::IMAGE);
+                    o.put_u32(*id);
+                    o.put_u32(*matrix);
+                }
+                Item::Form { id, matrix } => {
+                    o.put_u8(op::FORM);
+                    o.put_u32(*id);
+                    o.put_u32(*matrix);
+                }
+                Item::Save => o.put_u8(op::SAVE),
+                Item::Restore => o.put_u8(op::RESTORE),
+                Item::FillColor(c) | Item::StrokeColor(c) => {
+                    o.put_u8(if matches!(it, Item::FillColor(_)) {
+                        op::FILL_COLOR
+                    } else {
+                        op::STROKE_COLOR
+                    });
+                    o.put_u8(c.0.len() as u8);
+                    for v in &c.0 {
+                        o.put_f64(*v);
+                    }
+                }
+                Item::Matrix(n) => {
+                    o.put_u8(op::MATRIX);
+                    o.put_u32(*n);
+                }
+                Item::Span(n) => {
+                    if !for_hash {
+                        o.put_u8(op::SPAN);
+                        o.put_u32(*n);
+                    }
+                }
+                Item::TextRender(m) => {
+                    o.put_u8(op::TEXT_RENDER);
+                    o.put_u8(*m);
+                }
+                Item::Unsupported(n) => {
+                    o.put_u8(op::UNSUPPORTED);
+                    o.put_u32(*n);
+                }
+                Item::FillColorCs { cs, color } | Item::StrokeColorCs { cs, color } => {
+                    o.put_u8(if matches!(it, Item::FillColorCs { .. }) {
+                        op::FILL_COLOR_CS
+                    } else {
+                        op::STROKE_COLOR_CS
+                    });
+                    o.put_u32(*cs);
+                    o.put_u8(color.0.len() as u8);
+                    for v in &color.0 {
+                        o.put_f64(*v);
+                    }
+                }
+                Item::FillAlpha(a) => {
+                    o.put_u8(op::FILL_ALPHA);
+                    o.put_f64(*a);
+                }
+                Item::StrokeAlpha(a) => {
+                    o.put_u8(op::STROKE_ALPHA);
+                    o.put_f64(*a);
+                }
+                Item::LineState(s) => {
+                    o.put_u8(op::LINE_STATE);
+                    enc_stroke(&mut o, s);
+                }
+            }
+        }
+        o
+    }
+
+    fn enc_origins(&self) -> Vec<u8> {
+        let mut o = Vec::with_capacity(4 + self.origins.len() * 16);
+        o.put_u32(self.origins.len() as u32);
+        for [x, y] in &self.origins {
+            o.put_f64(*x);
+            o.put_f64(*y);
+        }
+        o
+    }
+
+    fn enc_rule_geometry(&self) -> Vec<u8> {
+        let mut o = Vec::with_capacity(4 + self.rule_geometry.len() * 56);
+        o.put_u32(self.rule_geometry.len() as u32);
+        for g in &self.rule_geometry {
+            for v in g {
+                o.put_f64(*v);
+            }
+        }
+        o
+    }
+
+    /// The number of RULE items.
+    pub fn rule_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|i| matches!(i, Item::Rule { .. }))
+            .count()
+    }
+
+    /// The number of GLYPH items.
+    pub fn glyph_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|i| matches!(i, Item::Glyph { .. }))
+            .count()
+    }
+
+    fn enc_links(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.put_u32(self.links.len() as u32);
+        for l in &self.links {
+            for v in l.rect {
+                o.put_i32(v);
+            }
+            o.put_u32(l.span);
+            o.put_u8(l.kind.clone() as u8);
+            o.put_u32(l.file.len() as u32);
+            o.extend_from_slice(&l.file);
+            o.put_u32(l.data.len() as u32);
+            o.extend_from_slice(&l.data);
+        }
+        o
+    }
+
+    fn enc_dests(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.put_u32(self.dests.len() as u32);
+        for d in &self.dests {
+            o.put_u8(d.named as u8);
+            o.put_u32(d.name.len() as u32);
+            o.extend_from_slice(&d.name);
+            o.put_u8(d.kind);
+            for v in d.rect {
+                o.put_i32(v);
+            }
+            o.put_i32(d.zoom);
+        }
+        o
+    }
+
+    fn enc_unsupported(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.put_u32(self.unsupported.len() as u32);
+        for s in &self.unsupported {
+            let b = s.as_bytes();
+            let n = b.len().min(u16::MAX as usize);
+            o.put_u16(n as u16);
+            o.extend_from_slice(&b[..n]);
+        }
+        o
+    }
+
+    /// The content hash (spec §4.6): SHA-256 over what is drawn -- the box,
+    /// the matrices, paths, items without spans and columns, the
+    /// unsupported list, and the key of every font and image the items use
+    /// (in order of first use), so that it is stable across compiles and
+    /// sessions. Forms are referenced by id; a client caching a page that
+    /// draws forms keys it with the forms' own hashes too.
+    pub fn content_hash(
+        &self,
+        font_key: &dyn Fn(u16) -> [u8; 32],
+        image_key: &dyn Fn(u32) -> [u8; 32],
+    ) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(b"display-list-v3 content\0");
+        h.update(&[(self.kind == StreamKind::Form) as u8]);
+        let mut head = Vec::new();
+        head.put_i32(self.width);
+        head.put_i32(self.height);
+        for v in self.pdf_box {
+            head.put_f64(v);
+        }
+        h.update(&head);
+        for data in [
+            self.enc_matrices(),
+            self.enc_paths(),
+            self.enc_items(true),
+            self.enc_unsupported(),
+        ] {
+            h.update(&(data.len() as u64).to_le_bytes());
+            h.update(&data);
+        }
+        // Exact geometry moves pixels; a page without it hashes as before.
+        if !self.origins.is_empty() {
+            let data = self.enc_origins();
+            h.update(&(data.len() as u64).to_le_bytes());
+            h.update(&data);
+        }
+        if !self.rule_geometry.is_empty() {
+            let data = self.enc_rule_geometry();
+            h.update(&(data.len() as u64).to_le_bytes());
+            h.update(&data);
+        }
+        // 3.3 (spec §4.6, §11): the metadata and the colour spaces, when
+        // present; a page without them hashes as in 3.2.
+        if let Some(m) = &self.meta {
+            h.update(&(m.len() as u64).to_le_bytes());
+            h.update(m.as_bytes());
+        }
+        if !self.colorspaces.is_empty() {
+            let data = self.enc_colorspaces();
+            h.update(&(data.len() as u64).to_le_bytes());
+            h.update(&data);
+        }
+        let mut fonts: Vec<u16> = Vec::new();
+        let mut images: Vec<u32> = Vec::new();
+        for it in &self.items {
+            match it {
+                Item::Glyph { font, .. } if !fonts.contains(font) => fonts.push(*font),
+                Item::Image { id, .. } if !images.contains(id) => images.push(*id),
+                _ => {}
+            }
+        }
+        for f in fonts {
+            h.update(&f.to_le_bytes());
+            h.update(&font_key(f));
+        }
+        for i in images {
+            h.update(&i.to_le_bytes());
+            h.update(&image_key(i));
+        }
+        h.finish()
+    }
+
+    /// Decode a PAGE (`kind` Page) or FORM body.
+    pub fn decode(kind: StreamKind, body: &[u8]) -> Result<Page, String> {
+        let mut c = Cursor::new(body);
+        let mut p = Page::new(kind, c.u32()?);
+        p.flags = c.u32()?;
+        p.width = c.i32()?;
+        p.height = c.i32()?;
+        for v in &mut p.counts {
+            *v = c.i32()?;
+        }
+        for v in &mut p.pdf_box {
+            *v = c.f64()?;
+        }
+        p.hash.copy_from_slice(c.take(32)?);
+        let n = c.count(8)?;
+        for _ in 0..n {
+            let tag = c.u32()?;
+            let len = c.u32()? as usize;
+            let data = c.take(len)?;
+            let mut d = Cursor::new(data);
+            match tag {
+                section::MATRICES => {
+                    let n = d.count(48)?;
+                    for _ in 0..n {
+                        let mut m = [0.0; 6];
+                        for v in &mut m {
+                            *v = d.f64()?;
+                        }
+                        p.matrices.push(m);
+                    }
+                }
+                section::PATHS => p.paths = dec_paths(&mut d)?,
+                section::ITEMS => p.items = dec_items(&mut d)?,
+                section::LINKS => {
+                    let n = d.count(29)?;
+                    for _ in 0..n {
+                        let mut rect = [0; 4];
+                        for v in &mut rect {
+                            *v = d.i32()?;
+                        }
+                        let span = d.u32()?;
+                        let kind = LinkKind::from(d.u8()?);
+                        let fl = d.u32()? as usize;
+                        let file = d.take(fl)?.to_vec();
+                        let dl = d.u32()? as usize;
+                        let data = d.take(dl)?.to_vec();
+                        p.links.push(Link {
+                            rect,
+                            span,
+                            kind,
+                            file,
+                            data,
+                        });
+                    }
+                }
+                section::DESTS => {
+                    let n = d.count(26)?;
+                    for _ in 0..n {
+                        let named = d.u8()? != 0;
+                        let nl = d.u32()? as usize;
+                        let name = d.take(nl)?.to_vec();
+                        let kind = d.u8()?;
+                        let mut rect = [0; 4];
+                        for v in &mut rect {
+                            *v = d.i32()?;
+                        }
+                        let zoom = d.i32()?;
+                        p.dests.push(Dest {
+                            named,
+                            name,
+                            kind,
+                            rect,
+                            zoom,
+                        });
+                    }
+                }
+                section::UNSUPPORTED => {
+                    let n = d.count(2)?;
+                    for _ in 0..n {
+                        let l = d.u16()? as usize;
+                        p.unsupported
+                            .push(String::from_utf8_lossy(d.take(l)?).into_owned());
+                    }
+                }
+                section::ORIGINS => {
+                    let n = d.count(16)?;
+                    p.origins.reserve(n);
+                    for _ in 0..n {
+                        p.origins.push([d.f64()?, d.f64()?]);
+                    }
+                }
+                section::RULE_GEOMETRY => {
+                    let n = d.count(56)?;
+                    p.rule_geometry.reserve(n);
+                    for _ in 0..n {
+                        let mut g = [0.0; 7];
+                        for v in &mut g {
+                            *v = d.f64()?;
+                        }
+                        p.rule_geometry.push(g);
+                    }
+                }
+                section::PAGE_META => {
+                    p.meta = Some(
+                        std::str::from_utf8(data)
+                            .map_err(|_| "PAGE_META is not UTF-8".to_string())?
+                            .to_string(),
+                    );
+                }
+                section::COLORSPACES => p.colorspaces = dec_colorspaces(&mut d)?,
+                _ => {} // a later minor version's section: skipped
+            }
+        }
+        if !p.origins.is_empty() && p.origins.len() != p.glyph_count() {
+            return Err(format!(
+                "ORIGINS has {} origins for {} glyphs",
+                p.origins.len(),
+                p.glyph_count()
+            ));
+        }
+        if !p.rule_geometry.is_empty() && p.rule_geometry.len() != p.rule_count() {
+            return Err(format!(
+                "RULE_GEOMETRY has {} entries for {} rules",
+                p.rule_geometry.len(),
+                p.rule_count()
+            ));
+        }
+        // Every reference must resolve (fail closed).
+        for it in &p.items {
+            match it {
+                Item::Path(n) | Item::Clip(n) if *n as usize >= p.paths.len() => {
+                    return Err(format!("item names path {n} of {}", p.paths.len()))
+                }
+                Item::Matrix(n) | Item::Image { matrix: n, .. } | Item::Form { matrix: n, .. }
+                    if *n as usize > p.matrices.len() =>
+                {
+                    return Err(format!("item names matrix {n} of {}", p.matrices.len()))
+                }
+                Item::Unsupported(n) if *n as usize >= p.unsupported.len() => {
+                    return Err(format!("item names unsupported entry {n}"))
+                }
+                Item::FillColorCs { cs, color } | Item::StrokeColorCs { cs, color } => {
+                    let space = (*cs as usize)
+                        .checked_sub(1)
+                        .and_then(|i| p.colorspaces.get(i))
+                        .ok_or_else(|| {
+                            format!("item names colour space {cs} of {}", p.colorspaces.len())
+                        })?;
+                    if color.0.len() != space.components() {
+                        return Err(format!(
+                            "colour of {} components in colour space {cs} of {}",
+                            color.0.len(),
+                            space.components()
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for path in &p.paths {
+            if path.matrix as usize > p.matrices.len() {
+                return Err(format!("path names matrix {}", path.matrix));
+            }
+        }
+        Ok(p)
+    }
+}
+
+fn enc_stroke(o: &mut Vec<u8>, s: &Stroke) {
+    o.put_f64(s.width);
+    o.put_u8(s.cap);
+    o.put_u8(s.join);
+    o.put_f64(s.miter);
+    o.put_u16(s.dash.len() as u16);
+    for d in &s.dash {
+        o.put_f64(*d);
+    }
+    o.put_f64(s.phase);
+}
+
+/// The item opcodes a PAGE or FORM body uses, as a bit set (bit `op`), read
+/// without decoding it: the items are stepped over by their sizes, as
+/// [`Page::decode`] reads them, and the other sections by their lengths.
+/// A forwarder that leaves out the items a client did not accept (spec
+/// §11.7) needs only this where none of those are used. `Err` where the
+/// body is not read so (the caller decodes it).
+pub fn item_ops(body: &[u8]) -> Result<u64, String> {
+    let mut c = Cursor::new(body);
+    // index, flags, width, height, \count0..9, the PDF box, the hash
+    c.take(4 * 4 + 10 * 4 + 4 * 8 + 32)?;
+    let n = c.count(8)?;
+    let mut ops = 0u64;
+    for _ in 0..n {
+        let tag = c.u32()?;
+        let len = c.u32()? as usize;
+        let data = c.take(len)?;
+        if tag != section::ITEMS {
+            continue;
+        }
+        let mut d = Cursor::new(data);
+        while d.left() > 0 {
+            let o = d.u8()?;
+            ops |= 1u64 << (o & 63);
+            let skip = match o {
+                op::GLYPH => 14,
+                op::RULE => 17,
+                op::PATH | op::CLIP | op::MATRIX | op::SPAN | op::UNSUPPORTED => 4,
+                op::IMAGE | op::FORM => 8,
+                op::SAVE | op::RESTORE => 0,
+                op::TEXT_RENDER => 1,
+                op::FILL_ALPHA | op::STROKE_ALPHA => 8,
+                op::FILL_COLOR | op::STROKE_COLOR | op::FILL_COLOR_CS | op::STROKE_COLOR_CS => {
+                    if matches!(o, op::FILL_COLOR_CS | op::STROKE_COLOR_CS) {
+                        d.u32()?;
+                    }
+                    let k = d.u8()?;
+                    if !matches!(k, 1 | 3 | 4) {
+                        return Err(format!("colour with {k} components"));
+                    }
+                    8 * k as usize
+                }
+                op::LINE_STATE => {
+                    // width, cap, join, miter, the dashes, the phase
+                    d.take(8 + 1 + 1 + 8)?;
+                    let nd = d.u16()? as usize;
+                    8 * nd + 8
+                }
+                _ => return Err(format!("unknown item opcode {o:#04x} at byte {}", d.i - 1)),
+            };
+            d.take(skip)?;
+        }
+    }
+    Ok(ops)
+}
+
+fn dec_stroke(d: &mut Cursor) -> Result<Stroke, String> {
+    let width = d.f64()?;
+    let cap = d.u8()?;
+    let join = d.u8()?;
+    let miter = d.f64()?;
+    let nd = d.u16()? as usize;
+    let mut dash = Vec::with_capacity(nd);
+    for _ in 0..nd {
+        dash.push(d.f64()?);
+    }
+    let phase = d.f64()?;
+    Ok(Stroke {
+        width,
+        cap,
+        join,
+        miter,
+        dash,
+        phase,
+    })
+}
+
+fn dec_colorspaces(d: &mut Cursor) -> Result<Vec<ColorSpace>, String> {
+    let n = d.count(2)?;
+    let mut out: Vec<ColorSpace> = Vec::with_capacity(n);
+    for i in 0..n {
+        out.push(match d.u8()? {
+            1 => {
+                let n = d.u8()?;
+                if !matches!(n, 1 | 3 | 4) {
+                    return Err(format!("ICCBased colour space of {n} components"));
+                }
+                let len = d.u32()? as usize;
+                ColorSpace::Icc {
+                    n,
+                    profile: d.take(len)?.to_vec(),
+                }
+            }
+            2 => {
+                let len = d.u16()? as usize;
+                let name = String::from_utf8_lossy(d.take(len)?).into_owned();
+                let alternate = d.u32()?;
+                let comps = match alternate {
+                    alternate::DEVICE_GRAY => 1,
+                    alternate::DEVICE_RGB => 3,
+                    alternate::DEVICE_CMYK => 4,
+                    a => match (a as usize).checked_sub(1).and_then(|j| out.get(j)) {
+                        Some(ColorSpace::Icc { n, .. }) if (a as usize) <= i => *n as usize,
+                        _ => return Err(format!("Separation alternate {a:#x} is not a space")),
+                    },
+                };
+                let m = d.u8()? as usize;
+                if m != comps {
+                    return Err(format!("Separation tint of {m} components for {comps}"));
+                }
+                let mut c0 = Vec::with_capacity(m);
+                let mut c1 = Vec::with_capacity(m);
+                for _ in 0..m {
+                    c0.push(d.f64()?);
+                }
+                for _ in 0..m {
+                    c1.push(d.f64()?);
+                }
+                ColorSpace::Separation {
+                    name,
+                    alternate,
+                    c0,
+                    c1,
+                    e: d.f64()?,
+                }
+            }
+            k => return Err(format!("unknown colour space kind {k}")),
+        });
+    }
+    Ok(out)
+}
+
+fn dec_paths(d: &mut Cursor) -> Result<Vec<Path>, String> {
+    let n = d.count(9)?;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let paint = d.u8()?;
+        let matrix = d.u32()?;
+        let stroke = if paint & paint::STROKE != 0 {
+            Some(dec_stroke(d)?)
+        } else {
+            None
+        };
+        let ns = d.count(1)?;
+        let mut segs = Vec::with_capacity(ns);
+        for _ in 0..ns {
+            segs.push(match d.u8()? {
+                0 => Seg::Move(d.f64()?, d.f64()?),
+                1 => Seg::Line(d.f64()?, d.f64()?),
+                2 => Seg::Curve(d.f64()?, d.f64()?, d.f64()?, d.f64()?, d.f64()?, d.f64()?),
+                3 => Seg::Close,
+                o => return Err(format!("unknown path segment {o}")),
+            });
+        }
+        out.push(Path {
+            paint,
+            matrix,
+            stroke,
+            segs,
+        });
+    }
+    Ok(out)
+}
+
+fn dec_items(d: &mut Cursor) -> Result<Vec<Item>, String> {
+    let mut out = Vec::with_capacity(d.left() / 12);
+    while d.left() > 0 {
+        let o = d.u8()?;
+        out.push(match o {
+            op::GLYPH => Item::Glyph {
+                font: d.u16()?,
+                code: d.u16()?,
+                x: d.i32()?,
+                y: d.i32()?,
+                col: d.u16()?,
+            },
+            op::RULE => Item::Rule {
+                kind: RuleKind::from(d.u8()?)?,
+                x: d.i32()?,
+                y: d.i32()?,
+                w: d.i32()?,
+                h: d.i32()?,
+            },
+            op::PATH => Item::Path(d.u32()?),
+            op::CLIP => Item::Clip(d.u32()?),
+            op::IMAGE => Item::Image {
+                id: d.u32()?,
+                matrix: d.u32()?,
+            },
+            op::FORM => Item::Form {
+                id: d.u32()?,
+                matrix: d.u32()?,
+            },
+            op::SAVE => Item::Save,
+            op::RESTORE => Item::Restore,
+            op::FILL_COLOR | op::STROKE_COLOR => {
+                let n = d.u8()?;
+                if !matches!(n, 1 | 3 | 4) {
+                    return Err(format!("colour with {n} components"));
+                }
+                let mut v = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    v.push(d.f64()?);
+                }
+                if o == op::FILL_COLOR {
+                    Item::FillColor(Color(v))
+                } else {
+                    Item::StrokeColor(Color(v))
+                }
+            }
+            op::MATRIX => Item::Matrix(d.u32()?),
+            op::SPAN => Item::Span(d.u32()?),
+            op::TEXT_RENDER => Item::TextRender(d.u8()?),
+            op::UNSUPPORTED => Item::Unsupported(d.u32()?),
+            op::FILL_COLOR_CS | op::STROKE_COLOR_CS => {
+                let cs = d.u32()?;
+                let n = d.u8()?;
+                if !matches!(n, 1 | 3 | 4) {
+                    return Err(format!("colour with {n} components"));
+                }
+                let mut v = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    v.push(d.f64()?);
+                }
+                let color = Color(v);
+                if o == op::FILL_COLOR_CS {
+                    Item::FillColorCs { cs, color }
+                } else {
+                    Item::StrokeColorCs { cs, color }
+                }
+            }
+            op::FILL_ALPHA => Item::FillAlpha(d.f64()?),
+            op::STROKE_ALPHA => Item::StrokeAlpha(d.f64()?),
+            op::LINE_STATE => Item::LineState(dec_stroke(d)?),
+            _ => return Err(format!("unknown item opcode {o:#04x} at byte {}", d.i - 1)),
+        });
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The opcodes of `items`, as `item_ops` gives them.
+    fn ops_of(items: &[Item]) -> u64 {
+        items.iter().fold(0, |m, it| {
+            m | 1u64
+                << match it {
+                    Item::Glyph { .. } => op::GLYPH,
+                    Item::Rule { .. } => op::RULE,
+                    Item::Path(_) => op::PATH,
+                    Item::Clip(_) => op::CLIP,
+                    Item::Image { .. } => op::IMAGE,
+                    Item::Form { .. } => op::FORM,
+                    Item::Save => op::SAVE,
+                    Item::Restore => op::RESTORE,
+                    Item::FillColor(_) => op::FILL_COLOR,
+                    Item::StrokeColor(_) => op::STROKE_COLOR,
+                    Item::Matrix(_) => op::MATRIX,
+                    Item::Span(_) => op::SPAN,
+                    Item::TextRender(_) => op::TEXT_RENDER,
+                    Item::Unsupported(_) => op::UNSUPPORTED,
+                    Item::FillColorCs { .. } => op::FILL_COLOR_CS,
+                    Item::StrokeColorCs { .. } => op::STROKE_COLOR_CS,
+                    Item::FillAlpha(_) => op::FILL_ALPHA,
+                    Item::StrokeAlpha(_) => op::STROKE_ALPHA,
+                    Item::LineState(_) => op::LINE_STATE,
+                }
+        })
+    }
+
+    #[test]
+    fn page_round_trip() {
+        let mut p = Page::new(StreamKind::Page, 3);
+        p.width = 100;
+        p.height = 200;
+        p.counts[0] = 4;
+        p.pdf_box = [0.0, 0.0, 612.0, 792.0];
+        p.matrices.push([9.9626, 0.0, 0.0, 9.9626, 0.0, 0.0]);
+        p.paths.push(Path {
+            paint: paint::STROKE | paint::FILL,
+            matrix: 1,
+            stroke: Some(Stroke {
+                width: 0.4,
+                cap: 1,
+                join: 0,
+                miter: 10.0,
+                dash: vec![3.0, 2.0],
+                phase: 0.5,
+            }),
+            segs: vec![
+                Seg::Move(0.0, 0.0),
+                Seg::Curve(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
+                Seg::Close,
+            ],
+        });
+        p.unsupported.push("sh".into());
+        p.items = vec![
+            Item::Span(7),
+            Item::Matrix(1),
+            Item::FillColor(Color(vec![0.0, 0.0, 1.0])),
+            Item::Glyph {
+                font: 41,
+                code: 65,
+                x: 5,
+                y: 6,
+                col: 3,
+            },
+            Item::Rule {
+                kind: RuleKind::StrokeH,
+                x: 1,
+                y: 2,
+                w: 3,
+                h: 4,
+            },
+            Item::Save,
+            Item::Clip(0),
+            Item::Path(0),
+            Item::Image { id: 1, matrix: 1 },
+            Item::Form { id: 2, matrix: 0 },
+            Item::Restore,
+            Item::TextRender(3),
+            Item::Unsupported(0),
+        ];
+        p.links.push(Link {
+            rect: [1, 2, 3, 4],
+            span: 7,
+            kind: LinkKind::GotoName,
+            file: vec![],
+            data: b"sec.1".to_vec(),
+        });
+        p.dests.push(Dest {
+            named: true,
+            name: b"sec.1".to_vec(),
+            kind: 0,
+            rect: [1, 2, 0, 0],
+            zoom: 0,
+        });
+        let k = |_: u16| [1u8; 32];
+        let ik = |_: u32| [2u8; 32];
+        p.hash = p.content_hash(&k, &ik);
+        let q = Page::decode(StreamKind::Page, &p.encode()).unwrap();
+        assert_eq!(p, q);
+        assert_eq!(item_ops(&p.encode()), Ok(ops_of(&p.items)));
+        // Spans and columns do not change the hash; positions do.
+        let mut r = q.clone();
+        r.items[0] = Item::Span(9);
+        if let Item::Glyph { col, .. } = &mut r.items[3] {
+            *col = 99;
+        }
+        assert_eq!(r.content_hash(&k, &ik), p.hash);
+        if let Item::Glyph { x, .. } = &mut r.items[3] {
+            *x = 6;
+        }
+        assert_ne!(r.content_hash(&k, &ik), p.hash);
+        // Corrupt input fails closed.
+        let mut bad = p.encode();
+        bad.truncate(bad.len() - 3);
+        assert!(Page::decode(StreamKind::Page, &bad).is_err());
+    }
+
+    #[test]
+    fn origins_round_trip_hash_and_fail_closed() {
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 612.0, 792.0];
+        let g = |x| Item::Glyph {
+            font: 1,
+            code: 65,
+            x,
+            y: 10,
+            col: NO_COLUMN,
+        };
+        p.items = vec![g(5), Item::Save, g(6)];
+        let k = |_: u16| [1u8; 32];
+        let ik = |_: u32| [2u8; 32];
+        // A writer without ORIGINS: no section, and the hash is unchanged.
+        let old = p.content_hash(&k, &ik);
+        assert_eq!(Page::decode(StreamKind::Page, &p.encode()).unwrap(), p);
+        p.origins = vec![[72.0001, 700.5], [80.25, 700.5]];
+        let q = Page::decode(StreamKind::Page, &p.encode()).unwrap();
+        assert_eq!(q.origins, p.origins);
+        assert_ne!(p.content_hash(&k, &ik), old);
+        let mut r = p.clone();
+        r.origins[1][0] = 80.250000001;
+        assert_ne!(r.content_hash(&k, &ik), p.content_hash(&k, &ik));
+        // One origin per glyph, or the page is refused.
+        r.origins.pop();
+        assert!(Page::decode(StreamKind::Page, &r.encode()).is_err());
+        // RULE_GEOMETRY: likewise one per rule.
+        let mut s = p.clone();
+        s.items.push(Item::Rule {
+            kind: RuleKind::StrokeH,
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+        });
+        s.rule_geometry = vec![[56.16, 487.034, 0.0, 0.0, 499.68, 0.0, 0.249]];
+        let t = Page::decode(StreamKind::Page, &s.encode()).unwrap();
+        assert_eq!(t.rule_geometry, s.rule_geometry);
+        assert_ne!(s.content_hash(&k, &ik), {
+            let mut u = s.clone();
+            u.rule_geometry[0][6] = 0.25;
+            u.content_hash(&k, &ik)
+        });
+        s.rule_geometry.clear();
+        s.rule_geometry.push([0.0; 7]);
+        s.rule_geometry.push([0.0; 7]);
+        assert!(Page::decode(StreamKind::Page, &s.encode()).is_err());
+    }
+
+    /// 3.3 (spec §11): PAGE_META, COLORSPACES and the new items round-trip,
+    /// enter the hash only when present, and fail closed on a colour space
+    /// that does not exist or a colour of the wrong component count.
+    #[test]
+    fn v33_sections_and_items_round_trip_and_fail_closed() {
+        let k = |_: u16| [1u8; 32];
+        let ik = |_: u32| [2u8; 32];
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 595.0, 842.0];
+        p.items = vec![Item::Glyph {
+            font: 0,
+            code: 7,
+            x: 1,
+            y: 2,
+            col: NO_COLUMN,
+        }];
+        let plain = p.content_hash(&k, &ik);
+
+        p.meta = Some(r#"{"engine":"typst","number":3}"#.into());
+        let with_meta = p.content_hash(&k, &ik);
+        assert_ne!(with_meta, plain);
+        p.colorspaces = vec![
+            ColorSpace::Icc {
+                n: 3,
+                profile: vec![9; 40],
+            },
+            ColorSpace::Separation {
+                name: "PANTONE 300 C".into(),
+                alternate: 1,
+                c0: vec![1.0, 1.0, 1.0],
+                c1: vec![0.0, 0.37, 0.72],
+                e: 1.0,
+            },
+            ColorSpace::Separation {
+                name: "Spot".into(),
+                alternate: alternate::DEVICE_CMYK,
+                c0: vec![0.0; 4],
+                c1: vec![1.0, 0.0, 0.0, 0.0],
+                e: 1.0,
+            },
+        ];
+        p.items.splice(
+            0..0,
+            [
+                Item::Save,
+                Item::FillColorCs {
+                    cs: 1,
+                    color: Color(vec![0.2, 0.4, 0.6]),
+                },
+                Item::StrokeColorCs {
+                    cs: 2,
+                    color: Color(vec![0.5]),
+                },
+                Item::FillAlpha(0.5019607843137255),
+                Item::StrokeAlpha(1.0),
+                Item::LineState(Stroke {
+                    width: 0.5,
+                    cap: 1,
+                    join: 2,
+                    miter: 4.0,
+                    dash: vec![1.0, 2.0],
+                    phase: 0.25,
+                }),
+                Item::TextRender(2),
+                Item::Restore,
+            ],
+        );
+        p.hash = p.content_hash(&k, &ik);
+        assert_ne!(p.hash, with_meta);
+        let q = Page::decode(StreamKind::Page, &p.encode()).unwrap();
+        assert_eq!(q, p);
+        assert_eq!(item_ops(&p.encode()), Ok(ops_of(&p.items)));
+        let mut bad = p.encode();
+        bad.truncate(bad.len() - 3);
+        assert!(item_ops(&bad).is_err());
+
+        // A 3.2 writer's page (no meta, no colour spaces) hashes as before.
+        let mut r = q.clone();
+        r.meta = None;
+        r.colorspaces.clear();
+        r.items.retain(|i| matches!(i, Item::Glyph { .. }));
+        assert_eq!(r.content_hash(&k, &ik), plain);
+
+        // Fail closed: an unknown space, a wrong component count, a
+        // Separation whose alternate is not an earlier ICCBased entry.
+        for bad in [
+            Item::FillColorCs {
+                cs: 4,
+                color: Color(vec![0.0]),
+            },
+            Item::FillColorCs {
+                cs: 0,
+                color: Color(vec![0.0]),
+            },
+            Item::StrokeColorCs {
+                cs: 1,
+                color: Color(vec![0.0]),
+            },
+            Item::FillColorCs {
+                cs: 3,
+                color: Color(vec![0.0, 0.0, 0.0]),
+            },
+        ] {
+            let mut s = p.clone();
+            s.items.push(bad.clone());
+            assert!(
+                Page::decode(StreamKind::Page, &s.encode()).is_err(),
+                "{bad:?}"
+            );
+        }
+        let mut s = p.clone();
+        s.colorspaces[1] = ColorSpace::Separation {
+            name: "x".into(),
+            alternate: 2,
+            c0: vec![1.0],
+            c1: vec![0.0],
+            e: 1.0,
+        };
+        assert!(Page::decode(StreamKind::Page, &s.encode()).is_err());
+    }
+}

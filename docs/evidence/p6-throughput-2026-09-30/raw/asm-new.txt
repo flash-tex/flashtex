@@ -1,0 +1,6 @@
+== get_next: 246 instructions, frame none, register pairs saved in the prologue 7
+__RNvNtCs8Mbv00yxnRz_4core9panicking18panic_bounds_check×3 flashtex_cs_read×2 fatal_error×2 begin_token_list×2 get_next_file×1 end_token_list×1 check_outer_validity×1 arena9save_cold×1 
+== get_next_file: 1007 instructions, frame sub	sp, sp, #0x1a0, register pairs saved in the prologue 6
+__RNvNtCs8Mbv00yxnRz_4core9panicking18panic_bounds_check×10 arena9save_cold×8 print×4 print_ln×3 arena13out_of_bounds×3 __RINvNtCs8Mbv00yxnRz_4core3ptr9drop_glueNtNtCs6Xkxd5ZTrPL_15flashtex_engine6system9AlphaFileEBF_×3 flashtex_cs_read×2 firm_up_the_line×2 end_file_reading×2 dyld_stub_binder+0x1002dd9a0×2 check_outer_validity×2 term_input×1 systemNtB4_9AlphaFileNtB4_7PasFile5flush×1 pseudo_input×1 
+== divide_scaled: 53 instructions, frame none, register pairs saved in the prologue 1
+pdf_error×2 __RNvNtNtCs8Mbv00yxnRz_4core9panicking11panic_const23panic_const_div_by_zero×1 __RNvNtCs8Mbv00yxnRz_4core9panicking18panic_bounds_check×1 

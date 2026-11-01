@@ -1,0 +1,6 @@
+% Verifies that \halign to spreads columns with stretchable \tabskip.
+\input prelude
+\setbox0=\vbox{\halign to 120pt{#\hfil&#\hfil\tabskip=0pt plus 1fil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{524 wd=\the\wd0}
+\lsshipbox0
+\end

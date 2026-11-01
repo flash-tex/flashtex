@@ -1,0 +1,9 @@
+% 1409-tracingonline: diagnostics under \tracingonline=0 leave an extra blank line before each shipout dump, one line at 1 (tex.web §245)
+\input prelude
+\tracingonline=0
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\tracingonline=1
+\setbox1=\hbox{\vrule width2pt height8pt depth2pt}
+\lsshipbox1
+\end

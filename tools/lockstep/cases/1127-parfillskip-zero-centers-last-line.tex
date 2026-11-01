@@ -1,0 +1,8 @@
+% 1127-parfillskip-zero-centers-last-line: verifies \parfillskip=0pt leaves the last line's shortfall to symmetric \leftskip/\rightskip stretch (centered), while 0pt plus1fil absorbs it (tex.web §§ 816, 888)
+\input prelude
+\font\myrm=cmr10
+\def\para{\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\setbox0=\vbox{\hsize=135pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\leftskip=0pt plus20pt\rightskip=0pt plus20pt\para\message{1127 fil lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=135pt\parindent=0pt\parfillskip=0pt\tolerance=200\leftskip=0pt plus20pt\rightskip=0pt plus20pt\para\message{1127 zero lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,9 @@
+% 385-cleaders-xleaders-vbox: verifies \cleaders and \xleaders space repeated boxes in a \vbox to.
+\input prelude
+\setbox0=\hbox{\vrule width20pt height6pt depth2pt}
+\setbox1=\vbox to 90pt{\cleaders\copy0\vfill}
+\setbox2=\vbox to 90pt{\xleaders\copy0\vfill}
+\message{385 ht1=\the\ht1 ht2=\the\ht2}
+\lsshipbox1
+\lsshipbox2
+\end

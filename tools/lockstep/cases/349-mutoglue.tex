@@ -1,0 +1,7 @@
+% 349-mutoglue: verifies \mutoglue converts muglue to glue (1mu = 1pt) and the shipped box carries the converted glue.
+\input prelude
+\muskip0=18mu plus6mu minus3mu
+\message{349 mu=\the\mutoglue\muskip0}
+\setbox0=\hbox{\vrule width10pt height8pt depth0pt\hskip\mutoglue\muskip0\vrule width10pt height8pt depth0pt}
+\lsshipbox0
+\end

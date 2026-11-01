@@ -1,0 +1,8 @@
+% 1018-negative-conditionals: verifies \ifcase picks \else and \ifodd is true for negative numbers (tex.web §§501-504)
+\input prelude
+\count0=-1
+\message{1018 case=[\ifcase\count0 zero\or one\else other\fi]}
+\message{1018 odd=[\ifodd-3 odd\else even\fi]}
+\setbox0=\hbox{\vrule width1018pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

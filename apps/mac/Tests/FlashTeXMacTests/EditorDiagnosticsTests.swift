@@ -279,7 +279,10 @@ final class EditorDiagnosticsTests: XCTestCase {
         #endif
         print(String(format: "EditorDiagnostics.report bench (%@): %d bytes, %d diagnostics, %d stale: best %.3f ms, median %.3f ms, worst %.3f ms",
                      build, bytes, diags.count, report.staleCount, best, median, worst))
-        XCTAssertLessThan(best, 2.0, "marks() after an edit must stay far below one frame so stale invalidation never blocks typing")
+        // marks() after an edit must stay far below one frame so stale
+        // invalidation never blocks typing; a speed budget, so gating only where
+        // the machine's speed is known (TimingBudget.swift).
+        TimingBudget.assertWithin(best, 2.0, "EditorDiagnostics.report after an edit (\(build), best of \(samples.count))")
     }
 
     // MARK: keyboard navigation
@@ -374,7 +377,7 @@ final class EditorDiagnosticsTests: XCTestCase {
         var effective = NSRange()
         let attrs = lm.temporaryAttributes(atCharacterIndex: 6, effectiveRange: &effective)
         XCTAssertEqual(effective, NSRange(location: 6, length: 5))
-        XCTAssertEqual(attrs[.underlineColor] as? NSColor, .systemRed)
+        XCTAssertEqual(attrs[.underlineColor] as? NSColor, SyntaxTheme.error) // the editor theme's error colour (EditorThemes.swift)
         XCTAssertEqual(attrs[.toolTip] as? String, "error here\n↳ recovery: rendered without bold")
         XCTAssertNil(lm.temporaryAttribute(.underlineStyle, atCharacterIndex: 0, effectiveRange: nil))
         XCTAssertEqual(tv.string, Self.text)

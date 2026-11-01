@@ -1,0 +1,12 @@
+% 1228-pagegoal-vsize-changed: verifies changing \vsize mid-page leaves \pagegoal until the next fresh page (tex.web §§991, 1001)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1228 goal=\the\pagegoal; vsize=\the\vsize}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vsize=200pt
+\message{1228 mid goal=\the\pagegoal; vsize=\the\vsize}
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

@@ -1,0 +1,13 @@
+% 1415-parshape-hangindent: a \parshape paragraph beside a \hangindent paragraph in one \vbox.
+\input prelude
+\font\pf=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\pf
+\parshape=3 20pt 120pt 30pt 100pt 40pt 80pt
+alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par
+\message{1415 shaped=\the\prevgraf}
+\hangindent=30pt \hangafter=2
+nu xi omicron pi rho sigma tau upsilon phi chi psi omega aleph beth\par
+\message{1415 hanging=\the\prevgraf}}
+\message{1415 ht=\the\ht0}
+\lsshipbox0
+\end

@@ -1,0 +1,16 @@
+% 1036-topmarks-firstmarks-page: verifies e-TeX \topmarks \firstmarks \botmarks for class 2 across shipped pages (tex.web §§1012-1016; pdftex.web §§412, 1809)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count251=0
+\output={\global\advance\count251 by1\message{1036 pg=\the\count251; t2=[\topmarks2] f2=[\firstmarks2] b2=[\botmarks2] top0=[\topmark] bot0=[\botmark]}\lsshipbox255}
+\marks2{k2-a}
+\mark{k0-a}
+\vrule height40pt depth0pt width80pt
+\vskip20pt
+\marks2{k2-b}
+\vrule height40pt depth0pt width80pt
+\vskip20pt
+\vrule height40pt depth0pt width80pt
+\vskip20pt
+\vrule height40pt depth0pt width80pt
+\end

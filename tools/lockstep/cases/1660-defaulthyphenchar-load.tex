@@ -1,0 +1,14 @@
+% 1660-defaulthyphenchar-load: a font loaded after \defaulthyphenchar=-1 inherits hyphenchar -1 while an earlier font keeps its hyphenchar, so one narrow paragraph hyphenates and the other stays whole (tex.web §§237, 576)
+\input prelude
+\font\oldrm=cmr10
+\hyphenchar\oldrm=`\-
+\message{1660 old-hyph=\the\hyphenchar\oldrm}
+\defaulthyphenchar=-1
+\font\newti=cmti10
+\message{1660 new-hyph=\the\hyphenchar\newti}
+\message{1660 old-still=\the\hyphenchar\oldrm}
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\oldrm alabama panama alabama\par}
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\newti alabama panama alabama\par}
+\lsshipbox0 \lsshipbox1
+\end

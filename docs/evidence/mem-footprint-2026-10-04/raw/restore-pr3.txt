@@ -1,0 +1,6 @@
+full-100   C-segpr  restore median 13.1 M instr, 2.91 ms; max 16.1 M
+full-100   C-codec  restore median 12.8 M instr, 2.76 ms; max 16.6 M
+long-deck  C-segpr  restore median 19.8 M instr, 3.10 ms; max 21.0 M
+long-deck  C-codec  restore median 19.8 M instr, 3.17 ms; max 20.8 M
+infdesc    C-segpr  restore median 36.1 M instr, 5.68 ms; max 69.1 M
+infdesc    C-codec  restore median 36.5 M instr, 5.51 ms; max 69.1 M

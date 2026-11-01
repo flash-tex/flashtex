@@ -1,0 +1,9 @@
+% x025-strcmp: \strcmp compares UTF-16 strings
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x025 \strcmp{abc}{abd} \strcmp{abd}{abc} \strcmp{é}{é} \strcmp{é}{e}}
+\message{x025 \strcmp{🍌}{\Uchar"1F34C} \strcmp{}{a} \strcmp{a}{}}
+\setbox0=\hbox{\vrule width\strcmp{b}{a}pt}
+\lsshipbox0
+\end

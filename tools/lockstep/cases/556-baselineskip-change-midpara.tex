@@ -1,0 +1,7 @@
+% 556-baselineskip-change-midpara: verifies a global \baselineskip change inside a paragraph governs all its glue.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\noindent\myrm alpha beta gamma delta epsilon\global\baselineskip=30pt zeta eta theta iota kappa lambda mu nu xi omicron pi\par}
+\message{556 done}
+\lsshipbox0
+\end

@@ -1,0 +1,7 @@
+\catcode`\{=1 \catcode`\}=2 \vsize=20pt \maxdepth=2pt \pdfoutput=0 \parskip=0pt \parindent=5pt \font\x=cmr10 \x
+\output={\message{[OR fires: page=\the\count0]}\global\advance\count0 by 1 \global\setbox1\box255 }
+\everypar={\message{[EVERYPAR sees page=\the\count0]}}
+\hrule height 15pt
+\vskip 10pt
+\indent A\par
+\penalty-10000 \end

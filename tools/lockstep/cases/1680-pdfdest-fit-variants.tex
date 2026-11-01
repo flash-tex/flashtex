@@ -1,0 +1,6 @@
+% 1680-pdfdest-fit-variants: named fith, fitv, fitbh and fitbv destinations land in the shipped box (pdftex.web §1565)
+% new versus 303-pdfdest-named-fit, 304-pdfdest-xyz and 1253-pdfdest: those cover fit, fitb, xyz and fitr; here the remaining fith, fitv, fitbh and fitbv forms
+\input prelude
+\setbox0=\hbox{\pdfdest name{dh1680} fith\pdfdest name{dv1680} fitv\pdfdest name{dbh1680} fitbh\pdfdest name{dbv1680} fitbv\vrule width10pt height5pt}
+\lsshipbox0
+\end

@@ -1,0 +1,8 @@
+host: mac-m5pro-kabir, Apple M5 Pro, 24 GiB, macOS 26.6.2, rustc 1.98.0
+engine under test: 2771b7d66 (flashtex-initex, flashtex-host); base: #1198 head 3a5ba1cbf; nb: HEAD with feature bench-no-barrier; store: unconditional flag-store barrier (experiment)
+start: 2026-09-29T16:48:53Z 12:48  up 5 days, 15:50, 2 users, load averages: 24.29 24.00 26.56
+after min: 12:48  up 5 days, 15:50, 2 users, load averages: 22.83 23.70 26.44
+after long-full: 12:49  up 5 days, 15:50, 2 users, load averages: 17.64 22.41 25.90
+after long8: 12:50  up 5 days, 15:51, 2 users, load averages: 11.75 19.94 24.76
+after host: 12:51  up 5 days, 15:52, 2 users, load averages: 8.23 17.55 23.57
+end: 2026-09-29T16:51:18Z 12:51  up 5 days, 15:52, 2 users, load averages: 7.89 17.33 23.45

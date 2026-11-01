@@ -1,0 +1,5 @@
+% 392-lastskip-lastkern-lastpenalty: verifies \lastskip, \lastkern and \lastpenalty read the tail of a horizontal list.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth2pt\hskip6pt\message{392 lastskip=\the\lastskip}\kern3pt\message{392 lastkern=\the\lastkern}\penalty7 \message{392 lastpenalty=\the\lastpenalty}}
+\lsshipbox0
+\end

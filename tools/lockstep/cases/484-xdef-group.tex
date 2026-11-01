@@ -1,0 +1,12 @@
+% Verifies \xdef escapes its group while a plain \edef in the same group is restored to undefined.
+\input prelude
+\toks0={tok-T0}
+\begingroup
+\xdef\gx{outer-\the\toks0}
+\edef\ge{inner-\the\toks0}
+\endgroup
+\message{484 gx=\meaning\gx}
+\message{484 ge=\meaning\ge}
+\setbox0=\hbox{\vrule width484pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

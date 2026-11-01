@@ -1,0 +1,25 @@
+   Compiling flashtex-engine v0.1.0 (/home/kubar/code/flashtex-incrfile/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 2.10s
+     Running tests/checkpoint.rs (target/release/deps/checkpoint-9f167d4d0a0b9f44)
+
+running 3 tests
+test selftest ... ok
+test persisted_s0_reopens ... ok
+test from_s0_equals_a_full_run ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.84s
+
+     Running tests/host_tools.rs (target/release/deps/host_tools-152280e450d849f8)
+
+running 7 tests
+test later_passes_reach_the_client ... ok
+test a_tool_out_of_time_is_reported_and_its_output_unused ... ok
+test a_missing_bib_file_is_not_run ... ok
+test off_runs_nothing_and_says_so ... ok
+test makeindex_runs_and_the_index_is_typeset ... ok
+test bibtex_runs_and_the_host_compiles_again ... ok
+test edits_tools_and_preemption_leave_the_output_files_exact ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.48s
+
+tools tests exit 0

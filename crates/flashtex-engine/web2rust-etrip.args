@@ -1,0 +1,104 @@
+# web2rust configuration for the e-TeX trip test (etrip) of the pdftex.web
+# engine. Used only by scripts/flashtex-etrip.sh, which generates into a
+# temporary directory, never into src/generated/.
+#
+# The capacities are those of TeX Live's etrip texmf.cnf
+# (third_party/pdftex/etrip/texmf.cnf), which is also what the pdfTeX oracle
+# logs in third_party/pdftex/etrip-oracle/ were made with: mem_bot stays 0
+# and main_memory=3999 gives mem_top=3998. pool_size and max_strings are
+# raised as for the oracle run (pdfTeX's strings do not fit in 32000).
+# Everything else is web2rust-default.args's.
+
+--change crates/flashtex-engine/changes/web2c.ch
+--change crates/flashtex-engine/changes/goto.ch
+--change crates/flashtex-engine/changes/precedence.ch
+--change crates/flashtex-engine/changes/ext.ch
+--change crates/flashtex-engine/changes/filenames.ch
+--change crates/flashtex-engine/changes/virtex.ch
+--change crates/flashtex-engine/changes/web2c-hooks.ch
+# TeX Live's own feature change files, public domain, unmodified, in the
+# order of pdftexdir/am/pdftex.am (third_party/pdftex/web2c/README.md).
+--change third_party/pdftex/web2c/tracingstacklevels.ch
+--change third_party/pdftex/web2c/partoken-102.ch
+--change third_party/pdftex/web2c/partoken.ch
+--change third_party/pdftex/web2c/locnull-optimize.ch
+--change third_party/pdftex/web2c/showstream.ch
+--change crates/flashtex-engine/changes/enctex.ch
+--change third_party/pdftex/web2c/unbalanced-braces.ch
+--change crates/flashtex-engine/changes/synctex.ch
+--change third_party/pdftex/web2c/char-warning-pdftex.ch
+--change crates/flashtex-engine/changes/web2c-run.ch
+--change crates/flashtex-engine/changes/checkpoint.ch
+--change crates/flashtex-engine/changes/readset.ch
+--change crates/flashtex-engine/changes/displaylist.ch
+--change crates/flashtex-engine/changes/intrinsics.ch
+--change crates/flashtex-engine/changes/diagnostics.ch
+--change crates/flashtex-engine/changes/throughput.ch
+# Where the line-shift journal observes the engine (DESIGN.md 5.3 rule (c);
+# changes nothing the program computes).
+--change crates/flashtex-engine/changes/lineshift.ch
+# The loaded format kept in memory and installed for a load from the same
+# state (lane COLD-FIXED; changes nothing the program computes).
+--change crates/flashtex-engine/changes/fmtimage.ch
+# BOX-MEMO (docs/design/engine-v2/BOX-MEMO.md): guarded replay of macro calls
+# that typeset only what they discard (changes nothing the program computes).
+--change crates/flashtex-engine/changes/boxmemo.ch
+# changes/throughput.ch [3]: get_next's fast path inlined into its callers,
+# the rest out of line.
+--inline get_next=always
+--inline get_next_slow=never
+# The token-level routines inlined into their callers (P6): a call through
+# `&mut Globals` costs its register saves and, after it, the reload of every
+# array's address the caller uses. Measured as a set (instructions, settled
+# pass, against get_next's fast path alone): Infinite Descent -9.4%,
+# long-deck -8.9%, full-100 -6.3%; adding the save-stack routines,
+# id_lookup, scan_keyword, get_node or free_node did not help further.
+--inline get_token=always
+--inline get_x_token=always
+--inline back_input=always
+--inline get_avail=always
+--inline delete_token_ref=always
+--inline flush_list=always
+--inline begin_token_list=always
+--inline end_token_list=always
+# Each routine indexes mem and eqtb through a local copy of the array header
+# (crate::arena::ArrView): an element write through a raw pointer otherwise
+# makes LLVM reload the address, length and flag pointer from Globals before
+# the next access (P6). Same checks, same barrier. Measured (instructions,
+# settled pass, with diag.rs's out-of-line thread-local): full-100 -4.1%,
+# long-deck -3.2%; viewing hash, the save, input and parameter stacks,
+# str_pool, str_start and buffer as well was worse (each view costs its loads
+# at every call of a routine that uses it).
+--array-view mem
+--array-view eqtb
+--stat
+--scalar longinteger=i64
+--macro max_halfword=268435455
+--macro mem_bot=0
+--macro mem_top=3998
+--const mem_min=0
+--const mem_max=3998
+--macro hash_size=15000
+--macro hash_prime=8501
+# TeX Live's triptrap texmf.cnf sets no hash_extra: web2c's default, 0.
+--macro hash_extra=0
+--const max_strings=5000
+--const pool_size=60000
+--const font_mem_size=20000
+--const font_max=75
+--const stack_size=200
+--const nest_size=40
+--const buf_size=500
+--const save_size=600
+--const dvi_buf_size=800
+--const trie_op_size=35111
+--const file_name_size=1024
+
+# The word space (DESIGN.md 4.2, 5.2; crates/flashtex-engine/src/arena.rs):
+# every array global is a region of one flat allocation, so the arrays web2c
+# grows with xrealloc_array reserve room for their largest size, pdfTeX's
+# sup_* limits. Untouched room costs address space, not memory.
+--arena-cap obj_tab=sup_obj_tab_size
+--arena-cap pdf_mem=sup_pdf_mem_size
+--arena-cap dest_names=sup_dest_names_size
+--arena-cap pdf_os_buf=sup_pdf_os_buf_size

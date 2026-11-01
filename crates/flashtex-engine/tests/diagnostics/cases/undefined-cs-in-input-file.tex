@@ -1,0 +1,10 @@
+\begin{filecontents*}[overwrite]{diag-sub.tex}
+A line in the sub file.
+The sub file says \foo here.
+\end{filecontents*}
+\documentclass{article}
+\begin{document}
+Main text.
+\input{diag-sub}
+Back in main.
+\end{document}

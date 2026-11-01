@@ -1,0 +1,6 @@
+% 1741-back-to-back-noaligns: verifies two \noalign blocks in a row both land between the same rows (tex.web §§ 785, 799)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\noalign{\kern2pt}\noalign{\kern4pt}\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1741 ht=\the\ht0}
+\lsshipbox0
+\end

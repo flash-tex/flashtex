@@ -1,0 +1,8 @@
+% 663-insert-hbox-vs-vlist-position: verifies an \insert from the second \hbox lands after that row, unlike one placed between the rows.
+\input prelude
+\count254=1000 \skip254=6pt \dimen254=50pt
+\setbox0=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt\insert254{\hrule width30pt height8pt depth0pt}}}
+\setbox1=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\insert254{\hrule width30pt height8pt depth0pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\lsshipbox0
+\lsshipbox1
+\end

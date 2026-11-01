@@ -1,0 +1,10 @@
+% 647-unvbox-exposes-inner-glue: verifies \unvbox exposes the inner trailing glue to \lastskip while \box hides it.
+\input prelude
+\setbox4=\vbox{\hrule width40pt height6pt depth0pt\vskip6pt}
+\setbox5=\vbox{\unvbox4\message{647 unboxed-lastskip=\the\lastskip}}
+\setbox6=\vbox{\hrule width40pt height6pt depth0pt\vskip6pt}
+\setbox7=\vbox{\box6\message{647 packed-lastskip=\the\lastskip}}
+\message{647 unboxed-ht=\the\ht5 packed-ht=\the\ht7}
+\lsshipbox5
+\lsshipbox7
+\end

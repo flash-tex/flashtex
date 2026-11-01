@@ -1,0 +1,13 @@
+FAILED: a worker died scoring fixtures/real-world/article-twocolumn; counted as failed at every level, and no gate may use this run
+[1mgate.sh pr -- summary[0m
+  PASS       1s  rustfmt (changed files)
+  PASS      65s  clippy (changed crates)
+  PASS    2068s  tests (changed crates)
+  PASS       2s  licence boundary (DESIGN §3)
+  PASS       1s  licence boundary self-test (poppler/MuPDF fire)
+  PASS       1s  licence boundary self-test (apps/mac links no GPL)
+  PASS       0s  native-assets manifest handoff copy matches the pinned one
+  PASS     133s  parity scoreboard and lockstep self-tests
+  PASS       8s  parity fixtures hold their baseline
+  PASS       1s  bundled inventory matches the compiler
+[1mgate.sh pr: passed[0m

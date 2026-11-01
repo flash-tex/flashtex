@@ -1,0 +1,9 @@
+% 617-hbox-to-fil-no-shrink: verifies fil glue cannot shrink so a narrow box goes overfull while matching finite shrink fits exactly.
+\input prelude
+\setbox0=\hbox to 30pt{\vrule width20pt height8pt depth2pt\hskip 0pt plus 1fil\vrule width20pt height8pt depth2pt}
+\message{617 fil-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox to 30pt{\vrule width20pt height8pt depth2pt\hskip 0pt minus 10pt\vrule width20pt height8pt depth2pt}
+\message{617 shrink-wd=\the\wd1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

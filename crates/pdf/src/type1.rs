@@ -7,7 +7,7 @@
 //! the decrypted charstrings of the glyphs both sides embed are identical).
 //!
 //! What is read (Adobe Type 1 Font Format, chapters 2, 6, 7 and 8; the
-//! Commander's passive reader in `crates/font-resources` documents the same
+//! Commander's passive reader in the retired old engine's font resources documented the same
 //! conventions and was consulted, not copied):
 //!
 //! - PFB segments (`0x80 0x01` ASCII, `0x80 0x02` binary, `0x80 0x03` end),
@@ -729,6 +729,8 @@ impl Type1Font {
             self.scan(&cs, &mut subrs, &mut seac, 0)?;
             queue.extend(seac);
         }
+        // Frozen old engine (D13): the index is the Subrs number kept.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..4.min(self.subrs.len()) {
             if self.subrs[i].is_some() {
                 subrs.insert(i);
@@ -923,7 +925,7 @@ mod tests {
         let plain = b"/Private 1 dict def\n";
         let enc = encrypt(plain, EEXEC_R, &[0, 1, 2, 3]);
         assert_eq!(decrypt(&enc, EEXEC_R, 4), plain);
-        // font-resources' synthetic vector: d9d73f4a50b9fa428d59a36bd8f46f9cb9c47adfb0f3297e
+        // The retired old engine's font-resource reader's synthetic vector: d9d73f4a50b9fa428d59a36bd8f46f9cb9c47adfb0f3297e
         // decodes to prefix 00010203 then the line above.
         let vector: Vec<u8> = (0..24)
             .map(|i| {

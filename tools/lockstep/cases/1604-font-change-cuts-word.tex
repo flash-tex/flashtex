@@ -1,0 +1,10 @@
+% 1604-font-change-cuts-word: verifies a font change inside a word ends the hyphenatable stretch at ban (too short, so no break), while the same letters in one font break normally (tex.web § 897)
+\input prelude
+\font\myrm=cmr10 \font\mybf=cmbx10
+\hyphenchar\myrm=`\- \hyphenchar\mybf=`\-
+\language=0 \patterns{an1}
+\message{1604 pats set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana\par\message{1604 plain lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2{\myrm ban}{\mybf ana} {\myrm ban}{\mybf ana} {\myrm ban}{\mybf ana}\par\message{1604 mixed lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

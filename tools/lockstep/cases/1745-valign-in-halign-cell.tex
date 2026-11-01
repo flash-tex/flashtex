@@ -1,0 +1,6 @@
+% 1745-valign-in-halign-cell: verifies a \valign nested in a \halign cell stacks its own columns inside that row (tex.web §§ 770, 796)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vbox{\valign{#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\hbox{\vrule width8pt height6pt depth2pt}\cr}}&\vrule width30pt height8pt depth2pt\cr}}
+\message{1745 wd=\the\wd0 ht=\the\ht0}
+\lsshipbox0
+\end

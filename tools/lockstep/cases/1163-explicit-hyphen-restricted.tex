@@ -1,0 +1,9 @@
+% 1163-explicit-hyphen-restricted: a-b keeps the hyphen char while a\-b makes a discretionary (tex.web §§1035, 1117)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm a-b}
+\message{1163 hyph=\the\wd0}
+\setbox1=\hbox{\myrm a\-b}
+\message{1163 disc=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

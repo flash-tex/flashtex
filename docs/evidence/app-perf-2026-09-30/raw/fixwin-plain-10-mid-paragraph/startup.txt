@@ -1,0 +1,1 @@
+/app.log: first live frame published 2673 ms, first page blit 2686 ms, first paint 2691 ms

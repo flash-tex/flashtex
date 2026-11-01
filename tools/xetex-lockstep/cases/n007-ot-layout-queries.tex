@@ -1,0 +1,15 @@
+% n007-ot-layout-queries: \XeTeXOT... queries: scripts, languages, features
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[texgyretermes-regular.otf]"
+\count1=\XeTeXOTcountscripts\x
+\message{[\the\count1]}
+\def\one#1{\count3=\XeTeXOTscripttag\x#1
+  \message{[script \the\count3: \the\XeTeXOTcountlanguages\x\count3 languages, \the\XeTeXOTcountfeatures\x\count3 0 features]}
+  \message{[\the\XeTeXOTfeaturetag\x\count3 0 0][\the\XeTeXOTfeaturetag\x\count3 0 5][\the\XeTeXOTlanguagetag\x\count3 0]}
+  \message{[\the\XeTeXOTcountfeatures\x\count3 "44455520 ][\the\XeTeXOTfeaturetag\x\count3 "44455520 1]}}
+\one0 \one1 \one2 \one7
+\setbox0=\hbox{\x x}
+\lsshipbox0
+\end

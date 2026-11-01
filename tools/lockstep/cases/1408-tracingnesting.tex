@@ -1,0 +1,12 @@
+% 1408-tracingnesting: \tracingnesting=1 warns when the \scantokens file ends with the group open, silent at 0 (pdftex.web §§384,1777)
+\input prelude
+\tracingnesting=0
+\scantokens{\begingroup}
+\endgroup
+\tracingnesting=1
+\scantokens{\begingroup}
+\endgroup
+\message{1408 done}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\end

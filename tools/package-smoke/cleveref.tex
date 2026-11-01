@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{cleveref}
+\begin{document}
+\section{Opening}\label{sec:open}
+\begin{equation}\label{eq:one}
+1+1=2
+\end{equation}
+The result in \cref{eq:one} sits inside \cref{sec:open}.
+Both \cref{sec:open,eq:one} are named automatically.
+\end{document}

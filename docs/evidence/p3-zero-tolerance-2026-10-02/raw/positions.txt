@@ -1,0 +1,2 @@
+positions: 83/83 documents exact (0 sp); 230 pages, 118899 glyphs, 1513 rules
+positions: 4/4 documents exact (0 sp); 4 pages, 469 glyphs, 0 rules

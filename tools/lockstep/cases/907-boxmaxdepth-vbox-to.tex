@@ -1,0 +1,11 @@
+% 907-boxmaxdepth-vbox-to: verifies \boxmaxdepth clamps the depth of a \vbox to built with a deep last box.
+\input prelude
+\boxmaxdepth=5pt
+\setbox0=\vbox to 60pt{\hrule width40pt height6pt depth0pt\vfil\hbox{\vrule width40pt height8pt depth20pt}}
+\message{907 clamp-ht=\the\ht0 dp=\the\dp0}
+\boxmaxdepth=16383pt
+\setbox1=\vbox to 60pt{\hrule width40pt height6pt depth0pt\vfil\hbox{\vrule width40pt height8pt depth20pt}}
+\message{907 free-ht=\the\ht1 dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

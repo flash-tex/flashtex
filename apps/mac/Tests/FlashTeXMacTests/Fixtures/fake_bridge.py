@@ -281,6 +281,10 @@ def dispatch(kind, p):
                                     "has_proposal": old["proposal"] is not None,
                                     "applied": old["applied"] is not None}
     if kind == "capture_convert":
+        # every payload as received, for tests of what the Mac sends
+        # (`engine`: retirement plan #1236, S3r)
+        with open(os.path.join(store_dir, "convert-requests.jsonl"), "a") as f:
+            f.write(json.dumps(p) + "\n")
         rec = require(p["capture_id"])
         if rec["rejected"]:
             raise Err("capture_rejected", "This capture was rejected during review")

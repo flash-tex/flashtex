@@ -1,0 +1,12 @@
+% 396-setbox-global: verifies \global\setbox survives its group while a local \setbox does not.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth2pt}
+\begingroup
+\setbox0=\hbox{\vrule width20pt height6pt depth2pt}
+\global\setbox1=\hbox{\vrule width30pt height6pt depth2pt}
+\message{396 in-wd0=\the\wd0 in-wd1=\the\wd1}
+\endgroup
+\message{396 out-wd0=\the\wd0 out-wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

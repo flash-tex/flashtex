@@ -1,0 +1,13 @@
+% 1423-boxregs-wdhtdp-ifbox: \wd/\ht/\dp assignment on boxes with \ifhbox/\ifvbox/\ifvoid probes.
+\input prelude
+\setbox0=\hbox{\vrule width40pt height6pt depth2pt}
+\setbox1=\vbox{\vrule width20pt height30pt depth5pt}
+\wd0=60pt \ht1=50pt \dp1=9pt
+\message{1423 w0=\the\wd0,h1=\the\ht1,d1=\the\dp1}
+\ifhbox0\message{1423 b0-h}\else\message{1423 b0-nh}\fi
+\ifvbox1\message{1423 b1-v}\else\message{1423 b1-nv}\fi
+\setbox2=\copy0
+\ifvoid3\message{1423 b3-void}\else\message{1423 b3-full}\fi
+\lsshipbox2
+\lsshipbox1
+\end

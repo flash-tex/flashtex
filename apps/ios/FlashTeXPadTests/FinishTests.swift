@@ -26,7 +26,7 @@ final class FinishTests: XCTestCase {
     override func tearDown() async throws { mac.stop(); try? FileManager.default.removeItem(at: tmp) }
 
     private func pairedModel(store: CaptureStore? = nil, pairs: PairingStore? = nil) async -> PadModel {
-        let m = PadModel(link: MacLink(store: pairs), captureStore: store)
+        let m = PadModel(link: MacLink(store: pairs, connectTimeout: FakeMac.handshakeTimeout), captureStore: store)
         m.pollInterval = 0.05
         await m.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                      fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Status Mac", code: code)
@@ -194,7 +194,7 @@ final class FinishTests: XCTestCase {
     func testPairFromTheMacsQRPayloadWithTypedHostPort() async throws {
         let payload = NearbyBootstrapPayload(code: code, salt: salt, macName: "Status Mac")
         XCTAssertTrue(payload.urlString.hasPrefix("flashtex-nearby://pair?v=1&code=\(code)&salt=\(NearbyCrypto.hex(salt))&fp=\(NearbyCrypto.fingerprint(salt: salt))&name="))
-        let model = PadModel(link: MacLink(store: nil))
+        let model = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))
         let ok = await model.pair(bootstrapText: " \(payload.urlString)\n", host: "127.0.0.1", port: String(mac.port))
         XCTAssertTrue(ok, model.linkError ?? "")
         XCTAssertEqual(model.pairedMac?.fingerprint, NearbyCrypto.fingerprint(salt: salt))
@@ -204,7 +204,7 @@ final class FinishTests: XCTestCase {
         XCTAssertEqual(model.destination?.destinationId, "dest-1")
         // A tampered payload (fp not derived from the salt) never connects.
         let bad = payload.urlString.replacingOccurrences(of: "fp=\(NearbyCrypto.fingerprint(salt: salt))", with: "fp=0000000000000000")
-        let m2 = PadModel(link: MacLink(store: nil))
+        let m2 = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))
         let badOK = await m2.pair(bootstrapText: bad, host: "127.0.0.1", port: String(mac.port))
         XCTAssertFalse(badOK)
         XCTAssertTrue(m2.linkError?.contains("fp does not match") ?? false, m2.linkError ?? "nil")
@@ -212,7 +212,7 @@ final class FinishTests: XCTestCase {
         let foreignOK = await m2.pair(bootstrapText: "https://example.com/?code=1", host: "127.0.0.1", port: String(mac.port))
         XCTAssertFalse(foreignOK)
         // No host/port and no Bonjour service with that fp: an explicit error, not a hang.
-        let m3 = PadModel(link: MacLink(store: nil))
+        let m3 = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))
         let browsed = await m3.pair(bootstrapText: payload.urlString, host: "", port: "")
         XCTAssertFalse(browsed)
         XCTAssertNotNil(m3.linkError, "browse outcome is reported (no matching Mac, or Bonjour unavailable in this simulator)")
@@ -271,7 +271,7 @@ final class FinishTests: XCTestCase {
 
         // "Relaunch": a new model over the same stores, before any connection.
         model.disconnect()
-        let again = PadModel(link: MacLink(store: KeychainPairStore(service: keychain.service)), captureStore: CaptureStore(directory: tmp))
+        let again = PadModel(link: MacLink(store: KeychainPairStore(service: keychain.service), connectTimeout: FakeMac.handshakeTimeout), captureStore: CaptureStore(directory: tmp))
         XCTAssertEqual(again.pairedMac?.pairId, stored.pairId, "pairing restored from the Keychain")
         XCTAssertEqual(again.captures.map(\.id), [gone.id, draft.id, sent.id], "order kept, newest first")
         let restored = try XCTUnwrap(again.captures.first { $0.id == sent.id })

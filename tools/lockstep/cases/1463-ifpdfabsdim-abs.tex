@@ -1,0 +1,5 @@
+% 1463-ifpdfabsdim-abs: \ifpdfabsdim compares absolute dimensions, so -3pt equals 3pt and chooses the narrow rule (pdftex.web §§1762, 1769)
+\input prelude
+\ifpdfabsdim-3pt=3pt \setbox0=\hbox{\vrule width3pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width5pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

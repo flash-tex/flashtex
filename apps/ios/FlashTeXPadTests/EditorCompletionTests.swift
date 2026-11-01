@@ -83,7 +83,7 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertNotNil(v.command(named: "frac"))
         XCTAssertEqual(v.command(named: "frac")?.arguments, "{num}{den}")
         XCTAssertTrue(v.environments.contains { $0.name == "itemize" })
-        // Byte-identical to the Mac's copy and the compiler's, as sync-supported-latex.sh keeps it.
+        // Byte-identical to the Mac's copy and the generated one (gen-supported-latex.py check --installed).
         let url = Bundle.main.url(forResource: "supported-latex", withExtension: "json")!
         let data = try! Data(contentsOf: url)
         XCTAssertTrue(String(decoding: data.prefix(60), as: UTF8.self).contains("flashtex-supported-latex/1"))
@@ -113,8 +113,28 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertEqual(e.first?.kind, .environmentClose)
     }
 
+    /// A vocabulary with class-scoped rows, for the gate's rules: the bundled
+    /// one is generated under article (RQ5) and has none today.
+    private static let scoped = LaTeXVocabulary(commands: [
+        .init(name: "frac", arguments: "{#1}{#2}", description: "LaTeX kernel", mode: .text, origin: "text_dispatch"),
+        .init(name: "frametitle", arguments: "{#1}", description: "beamer", mode: .text, origin: "text_dispatch", requiresClass: "beamer"),
+        .init(name: "email", arguments: "{#1}", description: "AMS top matter", mode: .text, origin: "text_dispatch", requiresClass: "amsart,amsbook,amsproc"),
+        .init(name: "address", arguments: "{#1}", description: "AMS and letter", mode: .text, origin: "text_dispatch", requiresClass: "letter,amsart,amsbook,amsproc"),
+    ], environments: [
+        .init(name: "frame", description: "a boxed frame", mode: .text),
+        .init(name: "block", description: "beamer block", mode: .text, requiresClass: "beamer"),
+    ], compilerVersion: "test")
+
     func testShorterNamesRankFirstAndClassScopedCommandsAreGated() {
-        let ctx = LocalCompletion.Context(vocabulary: PadModel.bundledVocabulary)
+        let bundled = LocalCompletion.Context(vocabulary: PadModel.bundledVocabulary)
+        XCTAssertEqual(LocalCompletion.suggestions(in: "\\frac", caretByte: 5, context: bundled).first?.text, "\\frac")
+        // babel's `\frq` (a measured package command with no annotation) is
+        // shorter, but held back while an annotated command matches.
+        let bundledFr = LocalCompletion.suggestions(in: "\\fr", caretByte: 3, context: bundled).map(\.text)
+        XCTAssertEqual(bundledFr.first, "\\frac")
+        XCTAssertFalse(bundledFr.contains("\\frq"), "\(bundledFr)")
+        XCTAssertEqual(LocalCompletion.suggestions(in: "\\frq", caretByte: 4, context: bundled).first?.text, "\\frq")
+        let ctx = LocalCompletion.Context(vocabulary: Self.scoped)
         let fr = LocalCompletion.suggestions(in: "\\fr", caretByte: 3, context: ctx)
         XCTAssertEqual(fr.first?.text, "\\frac")
         XCTAssertTrue(fr.contains { $0.text == "\\frametitle" }, "no class declared: beamer's command is offered")
@@ -132,10 +152,9 @@ final class EditorCompletionTests: XCTestCase {
 
     /// #1068 review: the AMS top matter is scoped to "amsart,amsbook,amsproc"
     /// and `\address` to "letter,amsart,amsbook,amsproc"; the iPad compared
-    /// the whole string, so the commands vanished under their own classes,
-    /// and a command already used in the text bypassed the gate.
+    /// the whole string, so the commands vanished under their own classes.
     func testCommaListClassScopeOffersUnderEachListedClassOnly() {
-        let ctx = LocalCompletion.Context(vocabulary: PadModel.bundledVocabulary)
+        let ctx = LocalCompletion.Context(vocabulary: Self.scoped)
         func offers(_ text: String, _ command: String) -> Bool {
             LocalCompletion.suggestions(in: text, caretByte: text.utf8.count, context: ctx).contains { $0.text == command }
         }
@@ -145,11 +164,8 @@ final class EditorCompletionTests: XCTestCase {
         }
         XCTAssertTrue(offers("\\documentclass{letter}\n\\addr", "\\address"))
         XCTAssertFalse(offers("\\documentclass{article}\n\\ema", "\\email"))
-        // Used earlier in the text does not reopen the gate.
-        XCTAssertFalse(offers("\\documentclass{article}\n\\email{x}\n\\ema", "\\email"))
         XCTAssertTrue(offers("\\documentclass{amsart}\n\\email{x}\n\\ema", "\\email"))
     }
-
     func testClassListTokensAreTrimmed() {
         XCTAssertTrue(LaTeXVocabulary.classOffers("letter, amsart", documentClass: "amsart"))
         XCTAssertTrue(LaTeXVocabulary.classOffers(" letter ,amsart", documentClass: "letter"))

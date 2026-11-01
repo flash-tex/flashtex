@@ -1,0 +1,8 @@
+% 402-kern-vmode-hmode: verifies \kern adds vertical space in a \vbox and horizontal space in an \hbox.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\kern8pt\hrule width40pt height6pt depth0pt}
+\setbox1=\hbox{\vrule width10pt height6pt depth0pt\kern8pt\vrule width10pt height6pt depth0pt}
+\message{402 vht=\the\ht0 hwd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

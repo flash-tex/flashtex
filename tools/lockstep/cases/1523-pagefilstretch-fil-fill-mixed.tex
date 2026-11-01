@@ -1,0 +1,13 @@
+% 1523-pagefilstretch-fil-fill-mixed: verifies fil and fill glue on one page accumulate into \pagefilstretch and \pagefillstretch separately (tex.web §§421, 982, 983, 1004)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1523 total=\the\pagetotal; fil=\the\pagefilstretch; fill=\the\pagefillstretch}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip0pt plus1fil
+\vskip0pt plus2fill
+\penalty0
+\message{1523 after-penalty fil=\the\pagefilstretch; fill=\the\pagefillstretch}
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\hrule width80pt height30pt depth0pt
+\end

@@ -1,0 +1,6 @@
+% Verifies cmtt10 has no ligature program so fi, dashes and quotes stay separate.
+\input prelude
+\font\tt=cmtt10
+\setbox0=\hbox{\tt fi -- ``}
+\lsshipbox0
+\end

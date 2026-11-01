@@ -1,0 +1,5 @@
+\input prelude % Verifies \pdfstartlink goto with border attr and matching \pdfendlink.
+\setbox0=\hbox{\pdfdest name{go} fit\pdfstartlink attr{/Border[0 0 1]} goto name{go}\vrule width20pt height8pt\pdfendlink}
+\message{305 lastlink=\the\pdflastlink}
+\lsshipbox0
+\end

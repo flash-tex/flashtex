@@ -1,0 +1,9 @@
+% 1167-char-ligature-and-range: f\char105 forms fi; \char0/65/127 exist, \char255 warns and makes nothing (tex.web §§434, 1038)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm f\char105}
+\message{1167 lig=\the\wd0}
+\setbox1=\hbox{\myrm\char0\char65\char127\char255}
+\message{1167 edges=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

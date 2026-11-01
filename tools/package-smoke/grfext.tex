@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage[draft]{graphicx}
+\usepackage{grfext}
+\AppendGraphicsExtensions{.tif}
+\PrependGraphicsExtensions{.eps}
+\begin{document}
+Extra graphics extensions are registered with \texttt{graphicx}.
+\includegraphics[width=4cm]{demo-picture.png}
+The file above resolves through the extended search list.
+\end{document}

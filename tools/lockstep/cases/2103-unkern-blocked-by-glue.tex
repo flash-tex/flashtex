@@ -1,0 +1,7 @@
+% 2103-unkern-blocked-by-glue: \unkern leaves a trailing glue node alone, so the list keeps its width (tex.web §§1104, 1105)
+% new versus 547-unskip-blocked-by-kern: 547 tests unskip stopped by a kern; here unkern is stopped by a glue item
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth1pt\hskip5pt\unkern\message{2103 skip=\the\lastskip}}
+\message{2103 wd=\the\wd0}
+\lsshipbox0
+\end

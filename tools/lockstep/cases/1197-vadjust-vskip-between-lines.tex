@@ -1,0 +1,6 @@
+% 1197-vadjust-vskip-between-lines: \vadjust material leaves the line and lands in the vlist after the current line (tex.web §§888, 1097, 1100)
+\input prelude
+\hsize=150pt \parindent=0pt \baselineskip=12pt \lineskiplimit=0pt \lineskip=1pt
+\setbox0=\vbox{\noindent\vrule width30pt height8pt depth2pt\hskip6pt\vrule width30pt height8pt depth2pt\hskip6pt\vrule width30pt height8pt depth2pt\vadjust{\vskip8pt}\hskip6pt\vrule width30pt height8pt depth2pt\hskip6pt\vrule width30pt height8pt depth2pt\hskip6pt\vrule width30pt height8pt depth2pt\hskip6pt\vrule width30pt height8pt depth2pt\hskip6pt\vrule width30pt height8pt depth2pt\par}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 2545-pdfmapfile-empty-noop: two empty \pdfmapfile calls trace without opening any map file (pdftex.web §§1524, 1590)
+% new versus 1252-pdfoutline: that log shows a \pdfdest whatsit inside the shipped box and one post-ship {\pdfoutline}; this log shows {\pdfmapfile} twice before the ship with no file path lines
+\input prelude
+\pdfmapfile{}
+\pdfmapfile{}
+\message{2545 mapfile-done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

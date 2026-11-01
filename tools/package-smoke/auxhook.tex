@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{auxhook}
+\AddLineBeginAux{\string\gdef\string\myhookvalue{42}}
+\begin{document}
+An extra line is added to the aux file at the start of the run.
+Value from the previous run: \ifdefined\myhookvalue\myhookvalue\else(none yet)\fi.
+\end{document}

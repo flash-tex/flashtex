@@ -1,0 +1,18 @@
+% 1086-noexpand-chains: verifies one and two \noexpand in \edef and \expandafter-\noexpand freezing a \csname (tex.web §§366, 368).
+\input prelude
+\def\naA{X}\def\nbA{\naA}
+\edef\rNone{\naA\nbA}
+\message{1086 none=[\meaning\rNone]}
+\edef\rOne{\noexpand\naA\nbA}
+\message{1086 one=[\meaning\rOne]}
+\edef\rTwo{\noexpand\noexpand\naA}
+\message{1086 two=[\meaning\rTwo]}
+\count0=5
+\edef\rCs{\expandafter\noexpand\csname item\the\count0\endcsname}
+\message{1086 cs=[\meaning\rCs]}
+\def\wantOne{\naA X}
+\count1=1
+\ifx\rOne\wantOne\else\count1=0\fi
+\ifnum\count1=1 \setbox0=\hbox{\vrule width1086pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width86pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

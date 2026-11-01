@@ -1,0 +1,22 @@
+\input prelude
+% -ini has no plain.tex aliases, so provide them (plain.tex does the same)
+\let\bgroup={\let\egroup=}
+\count0=10
+% braces group restores
+{\count0=11 \message{236 braces-in=\the\count0}}
+\message{236 braces-out=\the\count0}
+% begingroup/endgroup restores the same way
+\begingroup\count0=12 \message{236 beg-in=\the\count0}\endgroup
+\message{236 beg-out=\the\count0}
+% bgroup/egroup (implicit braces) behave like braces
+\bgroup\count0=13 \message{236 bgroup-in=\the\count0}\egroup
+\message{236 bgroup-out=\the\count0}
+% def scoping is identical under both group kinds
+\def\foo{outer}
+{\def\foo{brace}\message{236 brace-def=\meaning\foo}}
+\message{236 brace-def-out=\meaning\foo}
+\begingroup\def\foo{begingroup}\message{236 beg-def=\meaning\foo}\endgroup
+\message{236 beg-def-out=\meaning\foo}
+\setbox0=\hbox{\vrule width236pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

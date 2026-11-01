@@ -1,0 +1,15 @@
+% 1026-unless-ifeof-skipped: verifies \unless-flipped tests, \ifeof on missing/closed streams, skipped-text nesting and \currentiftype/\currentifbranch (tex.web §§489,501; pdftex.web §§513, 1666, 1762)
+\input prelude
+\unless\ifnum1=2 \message{1026 unless-num}\else\message{1026 unless-num-no}\fi
+\unless\ifodd2 \message{1026 unless-odd}\else\message{1026 unless-odd-no}\fi
+\ifeof1\message{1026 s1-eof}\else\message{1026 s1-open}\fi
+\ifeof15\message{1026 s15-eof}\else\message{1026 s15-open}\fi
+\openin3=ls1026missing.txt \ifeof3\message{1026 miss-eof}\else\message{1026 miss-open}\fi \closein3
+\ifeof3\message{1026 closed-eof}\else\message{1026 closed-open}\fi
+\unless\ifeof1 \message{1026 unless-eof-no}\else\message{1026 unless-eof}\fi
+\iffalse\message{1026 skipped}\ifnum1=1\message{1026 skipped-inner}\fi\message{1026 skipped2}\fi
+\message{1026 after-skip}
+\ifnum1=1 \message{1026 lvl=\the\currentiflevel,typ=\the\currentiftype,br=\the\currentifbranch}\fi
+\setbox0=\hbox{\vrule width1026pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,7 @@
+% [fonts] fixture (M3): the document's \setmainfont wins over fonts.text.
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Pagella}
+\begin{document}
+Roman text in Pagella, \textsf{sans from the role}, \texttt{mono from the role}.
+\end{document}

@@ -1,0 +1,4 @@
+\input prelude % Verifies a delayed \write in a shipped box lands in the log at shipout.
+\setbox0=\hbox{\vrule width100pt height8pt depth2pt\write-1{delayed hello 434}}
+\lsshipbox0
+\end
