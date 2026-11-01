@@ -148,6 +148,128 @@ pub struct PathOp {
     pub paint_state: u32,
 }
 
+/// How an image XObject's data is encoded in the PDF.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageEncoding {
+    /// Samples, Flate-compressed.
+    Flate,
+    /// Samples, uncompressed.
+    Plain,
+    /// The JPEG file's bytes (DCTDecode), passed through.
+    Jpeg,
+}
+
+/// An image XObject as typst-pdf (krilla) writes it (spec §11.5), its
+/// streams still encoded: decoding is left to the one compile that sends
+/// the image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PdfImage {
+    pub width: u32,
+    pub height: u32,
+    /// Bits per component (8 or 16).
+    pub bits: u8,
+    /// Components per pixel (1, 3, 4).
+    pub components: u8,
+    /// The ICC profile when the colour space is ICCBased.
+    pub icc: Option<std::sync::Arc<Vec<u8>>>,
+    /// `/Interpolate true` (Typst's `smooth` scaling).
+    pub interpolate: bool,
+    pub encoding: ImageEncoding,
+    pub data: Vec<u8>,
+    /// The soft mask: 8-bit grey samples of the same size (encoded as
+    /// `mask_encoding` says).
+    pub mask: Option<(ImageEncoding, Vec<u8>)>,
+}
+
+/// The largest ICC profile read (a profile is a few kB to a few hundred).
+pub const MAX_ICC: usize = 4 << 20;
+
+/// `expected`: the exact decoded length (inflating stops one byte past it).
+fn decode_samples(enc: ImageEncoding, data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
+    match enc {
+        ImageEncoding::Flate => crate::pdf::inflate_limited(data, expected),
+        ImageEncoding::Plain | ImageEncoding::Jpeg => Ok(data.to_vec()),
+    }
+}
+
+impl PdfImage {
+    /// The samples' length: rows top first, each `width × components ×
+    /// bits / 8` rounded up (`None` past `u64`).
+    pub fn samples_len(&self) -> Option<u64> {
+        let row = (self.width as u64)
+            .checked_mul(self.components as u64)?
+            .checked_mul(self.bits as u64)?
+            .div_ceil(8);
+        row.checked_mul(self.height as u64)
+    }
+
+    /// The bytes IMAGE_DATA carries for it (parts 0 to 2), before decoding.
+    pub fn data_len(&self) -> Option<u64> {
+        let data = match self.encoding {
+            ImageEncoding::Jpeg => self.data.len() as u64,
+            _ => self.samples_len()?,
+        };
+        let mask = match self.mask {
+            Some(_) => (self.width as u64).checked_mul(self.height as u64)?,
+            None => 0,
+        };
+        let icc = self.icc.as_ref().map_or(0, |p| p.len() as u64);
+        data.checked_add(mask)?.checked_add(icc)
+    }
+
+    /// IMAGE_DATA part 0: the samples, rows top first, or the JPEG file.
+    pub fn data_part(&self) -> Result<Vec<u8>, String> {
+        let expected = usize::try_from(self.samples_len().ok_or("image too large")?)
+            .map_err(|_| "image too large")?;
+        let d = decode_samples(self.encoding, &self.data, expected)?;
+        if self.encoding != ImageEncoding::Jpeg {
+            let row =
+                (self.width as usize * self.components as usize * self.bits as usize).div_ceil(8);
+            if d.len() != row * self.height as usize {
+                return Err(format!(
+                    "image samples: {} bytes for {}x{}x{} at {} bits",
+                    d.len(),
+                    self.width,
+                    self.height,
+                    self.components,
+                    self.bits
+                ));
+            }
+        }
+        Ok(d)
+    }
+
+    /// IMAGE_DATA part 1: the soft mask's samples.
+    pub fn mask_part(&self) -> Result<Option<Vec<u8>>, String> {
+        let Some((enc, data)) = &self.mask else {
+            return Ok(None);
+        };
+        let n = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .ok_or("soft mask too large")?;
+        let d = decode_samples(*enc, data, n)?;
+        if d.len() != n {
+            return Err(format!("soft mask: {} bytes", d.len()));
+        }
+        Ok(Some(d))
+    }
+}
+
+/// One `Do`: an image or form XObject drawn with the CTM (for an image, the
+/// matrix mapping the unit square to stream space, spec §5.2).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageOp {
+    pub ctm: F6,
+    /// The constant fill alpha in effect (`ca`).
+    pub fill_alpha: f64,
+    /// A Form XObject (a PDF image, or what typst-pdf groups), not an image.
+    pub form: bool,
+    /// ExtGState keys in effect that v3.3 does not draw (spec §11.3).
+    pub unsupported_state: Option<String>,
+    /// The image, or why the host cannot send it (fail closed).
+    pub image: Result<std::sync::Arc<PdfImage>, String>,
+}
+
 /// One page of the export.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PagePos {
@@ -159,6 +281,8 @@ pub struct PagePos {
     pub paths: Vec<PathOp>,
     /// The paint states glyphs and paths refer to.
     pub paints: Vec<Paint>,
+    /// Every XObject the content stream draws, in painting order.
+    pub images: Vec<ImageOp>,
 }
 
 /// Export `pages` (0-based, ascending) of `doc` with typst-pdf, untagged,
@@ -288,6 +412,8 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
         paths: Vec::new(),
         paints: Vec::new(),
         profiles: HashMap::new(),
+        images: Vec::new(),
+        xobjects: HashMap::new(),
         depth: 0,
     };
     let mut gs = Gs::default();
@@ -297,6 +423,7 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
         glyphs: it.glyphs,
         paths: it.paths,
         paints: it.paints,
+        images: it.images,
     })
 }
 
@@ -371,6 +498,9 @@ struct Interp<'p, 'a> {
     paints: Vec<Paint>,
     /// ICC profiles by object number, decoded once: (/N, the profile).
     profiles: HashMap<u32, (u8, std::sync::Arc<Vec<u8>>)>,
+    images: Vec<ImageOp>,
+    /// XObjects by object number, read once: (a form?, the image).
+    xobjects: HashMap<u32, (bool, Result<std::sync::Arc<PdfImage>, String>)>,
     depth: u32,
 }
 
@@ -472,6 +602,119 @@ impl Interp<'_, '_> {
         Ok(w)
     }
 
+    /// XObject `r`: whether it is a form, and the image it is (or why the
+    /// host cannot send it).
+    fn xobject(&mut self, r: u32) -> (bool, Result<std::sync::Arc<PdfImage>, String>) {
+        if let Some(x) = self.xobjects.get(&r) {
+            return x.clone();
+        }
+        let x = match self.pdf.get(r) {
+            Err(e) => (false, Err(e)),
+            Ok(ind) => match &ind.obj {
+                Obj::Dict(d) => match d.get("Subtype").and_then(Obj::name) {
+                    Some(b"Form") => (true, Err("a Form XObject".into())),
+                    Some(b"Image") => (
+                        false,
+                        self.image(d, ind.stream.unwrap_or_default())
+                            .map(std::sync::Arc::new),
+                    ),
+                    s => (false, Err(format!("an XObject of subtype {s:?}"))),
+                },
+                o => (false, Err(format!("XObject {r} is {o:?}"))),
+            },
+        };
+        self.xobjects.insert(r, x.clone());
+        x
+    }
+
+    /// An image XObject's dictionary as typst-pdf writes it; anything else
+    /// (a /Decode array, an image mask, predictors, a colour key mask) is
+    /// refused, never approximated.
+    fn image(&mut self, d: &Dict, raw: &[u8]) -> Result<PdfImage, String> {
+        let pdf = self.pdf;
+        let int = |k: &str| -> Result<u32, String> {
+            match d.get(k).map(|o| pdf.resolve(o)).transpose()? {
+                Some(Obj::Num(n)) => n
+                    .as_i64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or_else(|| format!("image /{k} {n:?}")),
+                o => Err(format!("image /{k} {o:?}")),
+            }
+        };
+        for k in ["Decode", "DecodeParms", "ImageMask", "Mask", "Matte"] {
+            if let Some(o) = d.get(k) {
+                if !(k == "ImageMask" && *o == Obj::Bool(false)) {
+                    return Err(format!("an image with /{k}"));
+                }
+            }
+        }
+        let encoding = |d: &Dict| -> Result<ImageEncoding, String> {
+            match d.get("Filter").map(|f| pdf.resolve(f)).transpose()? {
+                None => Ok(ImageEncoding::Plain),
+                Some(Obj::Name(f)) if f == b"FlateDecode" => Ok(ImageEncoding::Flate),
+                Some(Obj::Name(f)) if f == b"DCTDecode" => Ok(ImageEncoding::Jpeg),
+                Some(f) => Err(format!("an image with filter {f:?}")),
+            }
+        };
+        let (width, height) = (int("Width")?, int("Height")?);
+        let bits = int("BitsPerComponent")?;
+        if bits != 8 && bits != 16 {
+            return Err(format!("an image of {bits} bits per component"));
+        }
+        let enc = encoding(d)?;
+        let cs = d
+            .get("ColorSpace")
+            .ok_or("an image without /ColorSpace")?
+            .clone();
+        let (components, icc) = match self.space(&cs, 0)? {
+            Space::Gray => (1, None),
+            Space::Rgb => (3, None),
+            Space::Cmyk => (4, None),
+            Space::Icc { n, profile } => (n, Some(profile)),
+            s => return Err(format!("an image in colour space {s:?}")),
+        };
+        let interpolate = matches!(d.get("Interpolate"), Some(Obj::Bool(true)));
+        let mask = match d.get("SMask") {
+            None => None,
+            Some(Obj::Ref(m)) => {
+                let ind = pdf.get(*m)?;
+                let Obj::Dict(md) = &ind.obj else {
+                    return Err("an /SMask that is not a stream".into());
+                };
+                for k in ["Decode", "DecodeParms", "Matte", "SMask", "Mask"] {
+                    if md.get(k).is_some() {
+                        return Err(format!("a soft mask with /{k}"));
+                    }
+                }
+                let mint = |k: &str| md.get(k).and_then(Obj::num).and_then(Num::as_i64);
+                if mint("Width") != Some(width as i64)
+                    || mint("Height") != Some(height as i64)
+                    || mint("BitsPerComponent") != Some(8)
+                    || md.get("ColorSpace").and_then(Obj::name) != Some(b"DeviceGray")
+                {
+                    return Err("a soft mask other than 8-bit grey of the image's size".into());
+                }
+                let menc = encoding(md)?;
+                if menc == ImageEncoding::Jpeg {
+                    return Err("a JPEG soft mask".into());
+                }
+                Some((menc, ind.stream.unwrap_or_default().to_vec()))
+            }
+            Some(o) => return Err(format!("an /SMask {o:?}")),
+        };
+        Ok(PdfImage {
+            width,
+            height,
+            bits: bits as u8,
+            components,
+            icc,
+            interpolate,
+            encoding: enc,
+            data: raw.to_vec(),
+            mask,
+        })
+    }
+
     /// The index of `gs`'s paint state (consecutive equal states share one).
     fn paint(&mut self, gs: &Gs) -> u32 {
         let p = Paint {
@@ -519,7 +762,14 @@ impl Interp<'_, '_> {
                     let (n, profile) = match self.profiles.get(r) {
                         Some(p) => p.clone(),
                         None => {
-                            let (d, data) = pdf.stream(*r)?;
+                            // The cap holds while inflating, not after.
+                            let (d, data) = pdf.stream_limited(*r, MAX_ICC + 1)?;
+                            if data.len() > MAX_ICC {
+                                return Err(format!(
+                                    "an ICC profile of {} bytes (at most {MAX_ICC})",
+                                    data.len()
+                                ));
+                            }
                             let n = d.get("N").and_then(Obj::num).and_then(Num::as_i64);
                             let n = match n {
                                 Some(n @ (1 | 3 | 4)) => n as u8,
@@ -614,6 +864,10 @@ impl Interp<'_, '_> {
             None => Dict::default(),
         };
         let gs_res = match res.get("ExtGState") {
+            Some(f) => pdf.dict(f)?,
+            None => Dict::default(),
+        };
+        let xobj_res = match res.get("XObject") {
             Some(f) => pdf.dict(f)?,
             None => Dict::default(),
         };
@@ -897,7 +1151,35 @@ impl Interp<'_, '_> {
                 // never put in a Form XObject (checked over Typst's test suite
                 // by examples/positions_suite.rs: a run drawn in one would
                 // leave the walk short, and the page INCOMPLETE).
-                b"Do" => {}
+                // Images are recorded for the IMAGE items (spec §5.2,
+                // §11.5): the CTM maps an image's unit square to stream space.
+                b"Do" => {
+                    let Some(Tok::Name(name)) = args.first() else {
+                        return Err("Do without a name".into());
+                    };
+                    let (form, image) = match xobj_res.0.iter().find(|(k, _)| k == name) {
+                        Some((_, Obj::Ref(r))) => {
+                            let r = *r;
+                            self.xobject(r)
+                        }
+                        _ => (
+                            false,
+                            Err(format!(
+                                "XObject /{} is not a resource",
+                                String::from_utf8_lossy(name)
+                            )),
+                        ),
+                    };
+                    let pi = self.paint(gs) as usize;
+                    let unsupported_state = self.paints[pi].unsupported_state.clone();
+                    self.images.push(ImageOp {
+                        ctm: gs.ctm,
+                        fill_alpha: gs.fill_alpha,
+                        form,
+                        unsupported_state,
+                        image,
+                    });
+                }
                 b"BI" => return Err("inline image".into()),
                 // Paths (spec §4.4), in the PDF's numbers.
                 b"m" => {
