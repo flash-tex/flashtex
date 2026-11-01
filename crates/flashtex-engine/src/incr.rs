@@ -1505,10 +1505,24 @@ impl Obs {
         if !new.cstate.same_as(&o.cstate) {
             return Err("pdfTeX's C-part state differs".into());
         }
-        // (the convergence test's dead `pdf_last_byte` and `\pdfdest`
-        // dimensions rest on the old run's whole future, which a restart at
-        // `P2` does not keep: compared here)
-        let (last_byte_dead, dest_dims_dead) = (false, false);
+        // (the convergence test's dead `pdf_last_byte` rests on the old
+        // run's whole future, which a restart at `P2` does not keep:
+        // compared here)
+        let last_byte_dead = false;
+        // The dimensions `\pdfdest` leaves unset (`crate::iso`) hold
+        // whatever the memory held, which differs between runs that
+        // allocated differently (on Infinite Descent x2 the keystroke after
+        // the first at a new place failed here on a destination's words,
+        // and typeset 4 pages instead of 1; lane LATE-EDIT). They are read
+        // only with a `\pdfsetmatrix` in effect (`matrix_uses`). What a
+        // restart at `P2` keeps of the old run past `P1` is its pages up to
+        // `P2`: when the old run found no matrix in effect between them,
+        // those pages never read the words, and from `P2` on the run is
+        // live from the old run's state there, as from any restart point
+        // (whose unset words are the old run's too).
+        let dest_dims_dead = g
+            .pending_record(pr.p2)
+            .is_some_and(|r| r.matrix_uses == o.matrix_uses);
         let mut char_or = vec![];
         let mut stages = self
             .old_lines
