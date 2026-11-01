@@ -10,7 +10,8 @@ usage: l6ab.py --engines A,B [--docs D,...] [--variant NAME=ENV ...] [--reps N] 
   --docs      plain-N / full-N (mkdocs.py's src-DOC), beamer-5 / beamer-30 (docs/DOC), fx:NAME
               (fixtures/real-world/NAME), and books under docs/ (mkbook.py: infdesc). Default:
               plain-100,full-100,beamer-30,fx:beamer-madrid,fx:framed-tikz-theorems
-  --variant   'NAME=VAR=VALUE [VAR=VALUE ...]': an environment the engine runs in; repeatable
+  --variant   'NAME=VAR=VALUE [VAR=VALUE ...]': an environment the engine runs in; repeatable.
+              {out}, {doc}, {eng} and {variant} in a value are filled in per run
               (default: one variant, base, with nothing set)
   --reps      measured compiles per (engine, variant, document), interleaved (default 3)
 
@@ -151,6 +152,13 @@ def compile_once(eng, extra, d, main, pre=()):
     return r
 
 
+def expand(venv, doc, eng, vname):
+    """A variant's environment with {out}, {doc}, {eng} and {variant} filled in (a statistics
+    file per cell, say: FLASHTEX_BOXMEMO_STATS={out}/bm-{doc}-{eng}-{variant}.txt)."""
+    names = {'out': a.out, 'doc': doc.replace(':', '_'), 'eng': eng, 'variant': vname}
+    return {k: v.format(**names) for k, v in venv.items()}
+
+
 docs = [x for x in a.docs.split(',') if x]
 seeds = {}
 for doc in docs:
@@ -158,7 +166,8 @@ for doc in docs:
     seed = f'{WORK}/seed-{doc.replace(":", "_")}'
     copy_tree(src, seed)
     for _ in range(3):
-        compile_once(engines[0], variants[0][1], seed, main, pre=('nice', '-n', '0'))
+        compile_once(engines[0], expand(variants[0][1], doc, engines[0], 'settle'), seed, main,
+                     pre=('nice', '-n', '0'))
     seeds[doc] = (seed, main)
     print(f'settled {doc}', flush=True)
 
@@ -171,7 +180,7 @@ for rep in range(a.reps):
             for vname, venv in variants:
                 d = f'{WORK}/run'
                 copy_tree(seed, d)
-                r = compile_once(eng, venv, d, main)
+                r = compile_once(eng, expand(venv, doc, eng, vname), d, main)
                 r.update(doc=doc, engine=eng, variant=vname, rep=rep)
                 rows.append(r)
                 out.write(json.dumps(r) + '\n')
@@ -186,7 +195,7 @@ if a.perf_record and PERF:
         d = f'{WORK}/perf'
         copy_tree(seed, d)
         data = f'{WORK}/perf.data'
-        compile_once(engines[0], variants[0][1], d, main,
+        compile_once(engines[0], expand(variants[0][1], doc, engines[0], 'perf'), d, main,
                      pre=('perf', 'record', '-q', '-e', 'instructions:u', '-c', '200000', '-o', data, '--'))
         # (sorted by overhead: `-F overhead,sym` would sort by the symbol's name)
         rep = subprocess.run(['perf', 'report', '-i', data, '--no-children', '--sort', 'symbol', '--stdio',
@@ -202,7 +211,8 @@ for doc in [x for x in a.macro_profile.split(',') if x]:
             d = f'{WORK}/macro'
             copy_tree(seed, d)
             f = os.path.join(a.out, f'macro-{doc.replace(":", "_")}-{eng}-{vname}.tsv')
-            compile_once(eng, dict(venv, FLASHTEX_MACRO_PROFILE=f), d, main, pre=('nice', '-n', '0'))
+            compile_once(eng, dict(expand(venv, doc, eng, vname), FLASHTEX_MACRO_PROFILE=f), d, main,
+                         pre=('nice', '-n', '0'))
 
 
 def med(xs):
