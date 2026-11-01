@@ -21,6 +21,7 @@ pub mod pdf;
 pub mod pdfpos;
 pub mod seeded;
 pub mod server;
+pub mod stages;
 pub mod watchdog;
 pub mod world;
 

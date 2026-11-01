@@ -223,6 +223,14 @@ fn generate(dir: &Path, sections: usize, chapter_every: usize) {
     std::fs::write(dir.join("main.typ"), s).unwrap();
 }
 
+fn num_json(j: &Json, k: &str) -> Json {
+    match j.get(k) {
+        Some(Json::Num(v)) => Json::Num(*v),
+        Some(Json::Int(v)) => Json::Num(*v as f64),
+        _ => Json::Null,
+    }
+}
+
 fn pct(v: &[f64], p: f64) -> f64 {
     if v.is_empty() {
         return f64::NAN;
@@ -377,6 +385,9 @@ fn run(args: &[String]) {
         let mut pages_sent = vec![];
         let mut rss = vec![];
         let mut not_ok = 0;
+        // DONE's `stages` (ms), and the client's time to the first page
+        // past the host's (reading the request before it, the frames after).
+        let mut stages: std::collections::BTreeMap<String, Vec<f64>> = Default::default();
         let (mut checked_same, mut checked_differ, mut seeded) = (0, 0, 0);
         for k in 0..keys {
             let off = text.find(loc.as_str()).expect("marker");
@@ -415,6 +426,19 @@ fn run(args: &[String]) {
                 pos_ms.push(num("positions_ms"));
                 hash_ms.push(num("hash_ms"));
                 host_first.push(num("first_page_ms"));
+                if let (Some(f), Json::Num(h)) = (f, num_json(&done, "first_page_ms")) {
+                    stages
+                        .entry("client_extra_ms".into())
+                        .or_default()
+                        .push(f - h);
+                }
+                if let Some(Json::Obj(kv)) = done.get("stages") {
+                    for (k, v) in kv {
+                        if let Json::Num(v) = v {
+                            stages.entry(k.clone()).or_default().push(*v);
+                        }
+                    }
+                }
                 iters.push(num("iterations"));
                 pages_sent.push(num("typeset_pages"));
             }
@@ -423,7 +447,7 @@ fn run(args: &[String]) {
             }
         }
         println!(
-            "{{\"label\":{label:?},\"loc\":{loc:?},\"keys\":{keys},\"first_page_p50\":{:.2},\"first_page_p95\":{:.2},\"first_page_max\":{:.2},\"done_p50\":{:.2},\"done_p95\":{:.2},\"compile_p50\":{:.2},\"compile_p95\":{:.2},\"host_first_page_p95\":{:.2},\"positions_p50\":{:.3},\"positions_p95\":{:.3},\"hash_p50\":{:.3},\"iterations_max\":{},\"pages_sent_max\":{},\"not_ok\":{not_ok},\"seeded\":{seeded},\"verified_same\":{checked_same},\"verified_differ\":{checked_differ},\"rss_mb\":{:.1},\"rss\":[{}],\"load\":{:?}}}",
+            "{{\"label\":{label:?},\"loc\":{loc:?},\"keys\":{keys},\"first_page_p50\":{:.2},\"first_page_p95\":{:.2},\"first_page_max\":{:.2},\"done_p50\":{:.2},\"done_p95\":{:.2},\"compile_p50\":{:.2},\"compile_p95\":{:.2},\"host_first_page_p95\":{:.2},\"positions_p50\":{:.3},\"positions_p95\":{:.3},\"hash_p50\":{:.3},\"iterations_max\":{},\"pages_sent_max\":{},\"not_ok\":{not_ok},\"seeded\":{seeded},\"verified_same\":{checked_same},\"verified_differ\":{checked_differ},\"rss_mb\":{:.1},\"rss\":[{}],\"stages\":{{{}}},\"load\":{:?}}}",
             pct(&first, 50.0),
             pct(&first, 95.0),
             pct(&first, 100.0),
@@ -439,6 +463,11 @@ fn run(args: &[String]) {
             pct(&pages_sent, 100.0),
             rss_mb(pid),
             rss.join(","),
+            stages
+                .iter()
+                .map(|(k, v)| format!("{k:?}:[{:.3},{:.3}]", pct(v, 50.0), pct(v, 95.0)))
+                .collect::<Vec<_>>()
+                .join(","),
             load()
         );
     }
