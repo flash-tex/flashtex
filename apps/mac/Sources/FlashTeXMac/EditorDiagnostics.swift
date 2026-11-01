@@ -65,11 +65,23 @@ enum EditorDiagnostics {
         var hasFix: Bool = false
         /// The diagnostic's `code` (`unsupported_feature`, `unknown_command`, …),
         /// carried so the editor classifies a gap exactly as the panel does.
-        var code: String? = nil
+        let code: String?
+        /// A FlashTeX gap by the panel's rule (`EditorDiagnostics.isGap(code:message:)`).
+        /// Classified once, here: the underlines, the gutter and the error lens
+        /// each ask for every mark at every key, and the rule searches the
+        /// message's text (3,000 marks: most of a key's main-thread time).
+        let isGap: Bool
+
+        init(identity: Identity, nsRange: NSRange, severity: RuntimeV1.Severity, message: String, recovery: String?,
+             resultStatus: RuntimeV1.Status, explanation: String? = nil, carried: Carried? = nil, hasFix: Bool = false,
+             code: String? = nil) {
+            self.identity = identity; self.nsRange = nsRange; self.severity = severity; self.message = message
+            self.recovery = recovery; self.resultStatus = resultStatus; self.explanation = explanation
+            self.carried = carried; self.hasFix = hasFix; self.code = code
+            isGap = EditorDiagnostics.isGap(code: code, message: message)
+        }
 
         var id: String { identity.key }
-        /// A FlashTeX gap by the panel's rule (`EditorDiagnostics.isGap(code:message:)`).
-        var isGap: Bool { EditorDiagnostics.isGap(code: code, message: message) }
         var diagnosticIndex: Int { identity.index }
         /// The original byte span (for the list row's "bytes a..<b" text).
         var originalSource: RuntimeV1.SourceRange { identity.source }
@@ -182,20 +194,12 @@ enum EditorDiagnostics {
         let n = Array(needle.utf8)
         return m.withUTF8 { contains($0, n) }
     }
+    /// libc's `memmem`: the same answer as a byte loop, and as fast in a
+    /// debug build as in a release one (3,000 rows × 5 phrases per reply).
     private static func contains(_ b: UnsafeBufferPointer<UInt8>, _ needle: [UInt8]) -> Bool {
         let n = needle.count
-        guard n > 0, b.count >= n else { return n == 0 }
-        let first = needle[0]
-        var i = 0
-        while i <= b.count - n {
-            if b[i] == first {
-                var j = 1
-                while j < n, b[i + j] == needle[j] { j += 1 }
-                if j == n { return true }
-            }
-            i += 1
-        }
-        return false
+        guard n > 0, b.count >= n, let base = b.baseAddress else { return n == 0 }
+        return needle.withUnsafeBufferPointer { memmem(base, b.count, $0.baseAddress, n) != nil }
     }
     static func isGap(_ diagnostic: RuntimeV1.Diagnostic) -> Bool {
         isGap(code: diagnostic.code, message: diagnostic.message)
@@ -533,9 +537,13 @@ extension EditorDiagnostics {
 
     static func occurrenceLabel(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic],
                                 texts: [String: String] = [:]) -> String {
+        occurrenceLabel(k, of: group, in: diagnostics, lines: Lines(texts: texts))
+    }
+
+    static func occurrenceLabel(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic], lines: Lines) -> String {
         let prefix = "\(k + 1) of \(group.count): "
         guard let s = occurrence(k, of: group, in: diagnostics) else { return prefix + "no source" }
-        if let text = texts[s.path], let line = lineNumber(ofByte: s.startByte, in: text) {
+        if let line = lines.line(ofByte: s.startByte, in: s.path) {
             return prefix + "\(s.path) line \(line)"
         }
         return prefix + "\(s.path) bytes \(s.startByte)..<\(s.endByte)"
