@@ -2447,7 +2447,6 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
                     self.eq("intrinsics eq_type", t, an(self, ty));
                     self.equiv(t, ao(self, i), an(self, i));
                 }
-                LiveWord::Tok(i) => self.ptr(K::Tok, ao(self, i), an(self, i)),
             }
             if self.err.is_some() {
                 return;

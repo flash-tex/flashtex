@@ -65,11 +65,14 @@
 //! entry, so redefining it (or anything it read) fails the guard; then the
 //! macro is expanded normally and recorded afresh.
 //!
-//! Token lists the recording read or created are *pinned* (their reference
-//! count raised) while the recording lives, so that an equal pointer is
-//! always the same, unchanged list; a replay makes the pinned list the new
-//! meaning (as `\let` would) instead of a copy of it. Only the memory-usage
-//! statistics can tell (and P-T1 normalises those out, DESIGN.md §1.1).
+//! The token lists the recording read or created are kept as copies of
+//! their tokens in the slot's token store (`intr_data`, never `mem`): a
+//! watched macro's meaning is compared token by token with its copy, and a
+//! list the recording defined is made again from its copy on every replay,
+//! one `get_avail` per node as `scan_toks` makes it. So a recording holds no
+//! node of `mem`, and `\tracingstats`' one-word count (`dyn_used`) is
+//! pdfTeX's at every point (#2039: pinning the lists kept 33 to 44 nodes
+//! pdfTeX had freed).
 //!
 //! Everything lives in the word space (`intr_state`, `intr_data`,
 //! `intr_watch`, `intr_seen`, `intr_cand`), so checkpoints and restores
@@ -266,6 +269,7 @@ const WATCH_RECORDS: usize = 400_000;
 const REGION0: usize = WATCH_INTS * WATCH_RECORDS;
 const RW_CAP: usize = 2048; // (loc, value) pairs
 const RH_CAP: usize = 30_000; // watch record indices
+/// The token store: a list copied as its length, then its tokens.
 const PIN_CAP: usize = 16_000;
 const OPS_CAP: usize = 10_000; // 4 ints each
 const REGION_INTS: usize = 2 * RW_CAP + RH_CAP + PIN_CAP + 4 * OPS_CAP;
@@ -293,8 +297,6 @@ pub(crate) enum LiveWord {
     /// The `equiv` of the `eq_type` held at `ty`, as in `eqtb` (a watch
     /// record's wanted meaning, a `K_DEF` operation's value).
     Equiv { ty: usize, at: usize },
-    /// A pinned token list (reference-count node).
-    Tok(usize),
 }
 
 /// Every word of `intr_data` that the intrinsics can read again, given the
@@ -355,13 +357,18 @@ pub(crate) fn live_words(
             for k in [0, 1, 3, 4, 5] {
                 out(LiveWord::Value(b + k));
             }
-            out(LiveWord::Equiv {
-                ty: b + 1,
-                at: b + 2,
+            // a macro's meaning is a place in the token store
+            out(if (CALL..=LONG_OUTER_CALL).contains(&data(b + 1)) {
+                LiveWord::Value(b + 2)
+            } else {
+                LiveWord::Equiv {
+                    ty: b + 1,
+                    at: b + 2,
+                }
             });
         }
         for i in 0..count(F_NPIN, PIN_CAP)? {
-            out(LiveWord::Tok(base + R_PIN + i));
+            out(LiveWord::Value(base + R_PIN + i));
         }
         for i in 0..count(F_NOPS, OPS_CAP)? {
             let o = base + R_OPS + 4 * i;
@@ -373,7 +380,6 @@ pub(crate) fn live_words(
                     ty: o + 2,
                     at: o + 3,
                 },
-                K_FRESH => LiveWord::Tok(o + 3),
                 _ => LiveWord::Value(o + 3),
             });
         }
@@ -781,8 +787,23 @@ impl Globals {
         } else {
             self.eq_type_of(p)
         };
-        self.intr_data[b + 2] = if plain { 0 } else { self.equiv_of(p) };
-        self.intr_data[b + 3] = self.holds(p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
+        let t = self.intr_data[b + 1];
+        self.intr_data[b + 2] = if plain {
+            0
+        } else if (CALL..=LONG_OUTER_CALL).contains(&t) {
+            match self.store_list(slot, self.equiv_of(p)) {
+                Some(o) => o,
+                None => {
+                    // give the record back
+                    self.intr_data[b + 4] = self.st(S_WATCH_FREE);
+                    self.set_st(S_WATCH_FREE, r as i32 + 1);
+                    return false;
+                }
+            }
+        } else {
+            self.equiv_of(p)
+        };
+        self.intr_data[b + 3] = self.holds_for(slot, p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
         if self.intr_data[b + 3] == 0 {
             let m = self.sf(slot, F_MISMATCH) + 1;
             self.set_sf(slot, F_MISMATCH, m);
@@ -795,33 +816,78 @@ impl Globals {
         true
     }
 
-    /// Do the token lists `a` and `b` (reference-count nodes) hold the same
-    /// tokens? TeX never looks at an address, only at the tokens.
-    pub(crate) fn same_tokens(&self, a: i32, b: i32) -> bool {
-        let (mut a, mut b) = (self.link(a), self.link(b));
-        while a != 0 && b != 0 {
-            if self.info(a) != self.info(b) {
+    /// Copy the tokens of the list `l` (a reference-count node, or null)
+    /// into `slot`'s token store; its place there, or `None` when the store
+    /// is full. Null is stored as length -1.
+    fn store_list(&mut self, slot: usize, l: i32) -> Option<i32> {
+        let n0 = self.sf(slot, F_NPIN) as usize;
+        let at = Self::region(slot) + R_PIN;
+        let mut n = n0 + 1;
+        let mut r = if l == 0 { 0 } else { self.link(l) };
+        while r != 0 {
+            if n >= PIN_CAP {
+                return None;
+            }
+            self.intr_data[at + n] = self.info(r);
+            n += 1;
+            r = self.link(r);
+        }
+        if n > PIN_CAP {
+            return None;
+        }
+        self.intr_data[at + n0] = if l == 0 { -1 } else { (n - n0 - 1) as i32 };
+        self.set_sf(slot, F_NPIN, n as i32);
+        Some(n0 as i32)
+    }
+
+    /// Does the list `l` (a reference-count node, or null) hold the tokens
+    /// stored at `o` in `slot`'s token store? TeX never looks at an
+    /// address, only at the tokens.
+    fn same_as_stored(&self, slot: usize, o: i32, l: i32) -> bool {
+        let at = Self::region(slot) + R_PIN + o as usize;
+        let len = self.intr_data[at];
+        if len < 0 || l == 0 {
+            return len < 0 && l == 0;
+        }
+        let mut r = self.link(l);
+        for i in 0..len as usize {
+            if r == 0 || self.info(r) != self.intr_data[at + 1 + i] {
                 return false;
             }
-            a = self.link(a);
-            b = self.link(b);
+            r = self.link(r);
         }
-        a == b
+        r == 0
+    }
+
+    /// A new token list (reference count null) with the tokens stored at
+    /// `o` in `slot`'s token store, as `scan_toks` would have made it.
+    fn list_from_store(&mut self, slot: usize, o: i32) -> i32 {
+        let at = Self::region(slot) + R_PIN + o as usize;
+        let len = self.intr_data[at].max(0) as usize;
+        let head = self.get_avail();
+        self.mem[head as usize].set_hh_lh(0);
+        let mut q = head;
+        for i in 0..len {
+            let n = self.get_avail();
+            let t = self.intr_data[at + 1 + i];
+            self.mem[n as usize].set_hh_lh(t);
+            self.mem[q as usize].set_hh_rh(n);
+            q = n;
+        }
+        head
     }
 
     /// Does `eqtb[p]` hold the meaning (`t`, `e`) -- the same value, or,
-    /// for a macro or token list, the same tokens?
-    fn holds(&self, p: i32, t: i32, e: i32) -> bool {
+    /// for a macro, the tokens at `e` in the token store of `slot`?
+    fn holds_for(&self, slot: usize, p: i32, t: i32, e: i32) -> bool {
         let (t2, e2) = (self.eq_type_of(p), self.equiv_of(p));
         if t == WANT_PLAIN {
             return t2 != MAC_PARAM && t2 != OUTER_CALL && t2 != LONG_OUTER_CALL;
         }
-        t2 == t
-            && (e2 == e
-                || ((CALL..=LONG_OUTER_CALL).contains(&t)
-                    && e != 0
-                    && e2 != 0
-                    && self.same_tokens(e, e2)))
+        if (CALL..=LONG_OUTER_CALL).contains(&t) {
+            return t2 == t && self.same_as_stored(slot, e, e2);
+        }
+        t2 == t && e2 == e
     }
 
     /// `eqtb[p]`, which some recording watches, was just written.
@@ -829,10 +895,10 @@ impl Globals {
         let mut r = self.intr_watch[p as usize];
         while r > 0 {
             let b = (r - 1) as usize * WATCH_INTS;
-            let now = self.holds(p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
+            let slot = self.intr_data[b] as usize;
+            let now = self.holds_for(slot, p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
             if now != self.intr_data[b + 3] {
                 self.intr_data[b + 3] = now;
-                let slot = self.intr_data[b] as usize;
                 let m = self.sf(slot, F_MISMATCH) + if now == 1 { -1 } else { 1 };
                 self.set_sf(slot, F_MISMATCH, m);
             }
@@ -865,24 +931,9 @@ impl Globals {
             self.intr_data[b + 4] = self.st(S_WATCH_FREE);
             self.set_st(S_WATCH_FREE, target);
         }
-        for i in 0..self.sf(slot, F_NPIN) as usize {
-            let p = self.intr_data[base + R_PIN + i];
-            self.delete_token_ref(p);
-        }
         for f in [F_MISMATCH, F_NRW, F_NRH, F_NPIN, F_NOPS] {
             self.set_sf(slot, f, 0);
         }
-    }
-
-    fn pin(&mut self, slot: usize, p: i32) -> bool {
-        let n = self.sf(slot, F_NPIN) as usize;
-        if n >= PIN_CAP {
-            return false;
-        }
-        self.add_token_ref(p);
-        self.intr_data[Self::region(slot) + R_PIN + n] = p;
-        self.set_sf(slot, F_NPIN, n as i32 + 1);
-        true
     }
 
     fn push_op(&mut self, slot: usize, k: i32, a: i32, b: i32, c: i32) -> bool {
@@ -981,12 +1032,9 @@ impl Globals {
             self.set_sf(slot, F_NRW, n as i32 + 1);
             return;
         }
-        let (t, e) = (self.eq_type_of(p), self.equiv_of(p));
+        let t = self.eq_type_of(p);
         if t == GLUE_REF || t == SHAPE_REF || t == BOX_REF {
             return self.rec_abort(Why::PointerType);
-        }
-        if (CALL..=LONG_OUTER_CALL).contains(&t) && e != 0 && !self.pin(slot, e) {
-            return self.rec_abort(Why::Capacity);
         }
         if !self.watch_add(slot, p, false) {
             self.rec_abort(Why::Capacity);
@@ -1209,10 +1257,14 @@ impl Globals {
         }
         let (op, a2) = if (CALL..=LONG_OUTER_CALL).contains(&t) && e != 0 {
             if self.info(e) == 0 {
-                if !verify && !self.pin(slot, e) {
-                    return self.rec_abort(Why::Capacity);
+                if verify {
+                    (K_FRESH, e)
+                } else {
+                    match self.store_list(slot, e) {
+                        Some(o) => (K_FRESH, o),
+                        None => return self.rec_abort(Why::Capacity),
+                    }
                 }
-                (K_FRESH, e)
             } else {
                 let src = self.cur_cs;
                 if src == 0 || self.eq_type_of(src) != t || self.equiv_of(src) != e {
@@ -1438,7 +1490,7 @@ impl Globals {
                 kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], kinds[6], ops.last()
             );
             eprintln!(
-                "intrinsics: recorded \\{}: {} ops, {} watched, {} integers, {} pins, {} now differ",
+                "intrinsics: recorded \\{}: {} ops, {} watched, {} integers, {} stored tokens, {} now differ",
                 self.cs_name_string(self.sf(slot, F_CS)),
                 self.sf(slot, F_NOPS),
                 self.sf(slot, F_NRH),
@@ -1635,7 +1687,7 @@ impl Globals {
             match k & 0xff {
                 K_DEF | K_FRESH | K_LETCS => {
                     let (t, e) = match k & 0xff {
-                        K_FRESH => (b, self.copy_token_list(c)),
+                        K_FRESH => (b, self.list_from_store(slot, c)),
                         K_LETCS => {
                             let (t, e) = (self.eq_type_of(c), self.equiv_of(c));
                             if (CALL..=LONG_OUTER_CALL).contains(&t)
@@ -1717,23 +1769,6 @@ impl Globals {
                 self.flashtex_cs_read(p);
             }
         }
-    }
-
-    /// A new token list with the tokens of `l` (reference count null), as
-    /// `scan_toks` would have made it.
-    fn copy_token_list(&mut self, l: i32) -> i32 {
-        let head = self.get_avail();
-        self.mem[head as usize].set_hh_lh(0);
-        let (mut q, mut r) = (head, self.link(l));
-        while r != 0 {
-            let n = self.get_avail();
-            let t = self.info(r);
-            self.mem[n as usize].set_hh_lh(t);
-            self.mem[q as usize].set_hh_rh(n);
-            q = n;
-            r = self.link(r);
-        }
-        head
     }
 
     /// The recorded operations of `slot` (for the verifier).
