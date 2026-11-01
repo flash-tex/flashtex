@@ -1,1 +1,0 @@
-{"protocol_version": 1, "id": "comment", "type": "compile", "payload": {"project_id": "comment", "revision": 1, "entry_path": "main.tex", "documents": [{"path": "main.tex", "text": "\\documentclass[12pt]{article}\n\\begin{document}\n$\\text% before\n{and}$\n\\end{document}\n"}]}}

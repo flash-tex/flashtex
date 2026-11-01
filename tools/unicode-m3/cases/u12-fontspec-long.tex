@@ -1,0 +1,20 @@
+% Unicode corpus (M3): a longer fontspec document: a table of contents,
+% footnotes, hyperref links and bookmarks, xcolor, a float, several pages.
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{lipsum}
+\usepackage[colorlinks=true]{hyperref}
+\begin{document}
+\tableofcontents
+\section{Première partie}\label{s:one}
+\lipsum[1-4]\footnote{Une note de bas de page avec des accents : é, è, à.}
+\begin{figure}[h]\centering\includegraphics[width=4cm]{example-image-a}
+\caption{Une figure}\label{f:a}\end{figure}
+\section{Zweiter Teil}
+Siehe Abschnitt~\ref{s:one} und Abbildung~\ref{f:a}; \textcolor{blue}{farbig}.
+\lipsum[5-12]
+\section{Tercera parte}
+\lipsum[13-20]
+\end{document}

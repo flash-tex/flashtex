@@ -1200,6 +1200,8 @@ pub struct Globals {
     pub eight_bit_p: bool,
     // §1900
     pub translate_filename_p: bool,
+    // §1900
+    pub kpse_make_tex_discard_errors: bool,
     // §1908
     pub ckpt_request: i32,
     // §1908
@@ -1207,11 +1209,19 @@ pub struct Globals {
     // §1908
     pub ckpt_arm_level: i32,
     // §1908
+    pub dorm_level: i32,
+    // §1908
+    pub pop_watch: i32,
+    // §1908
+    pub dorm_fired: i32,
+    // §1908
     pub ckpt_resuming: bool,
     // §1908
     pub ckpt_on_shipout: i32,
     // §1908
     pub ckpt_on_segment: i32,
+    // §1908
+    pub ckpt_on_arm: i32,
     // §1910
     pub rs_on: bool,
     // §1910
@@ -1242,6 +1252,36 @@ pub struct Globals {
     pub intr_pre: crate::arena::Arr<memory_word>,
     // §1915
     pub intr_data: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_nest_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_grp_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_cond_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_cond_depth: i32,
+    // §1920
+    pub ls_taints: i32,
+    // §1920
+    pub ls_taint_bits: i32,
+    // §1920
+    pub ls_the_def: bool,
+    // §1920
+    pub ls_def_reads: bool,
+    // §1920
+    pub ls_tag_file: crate::arena::Arr<str_number>,
+    // §1924
+    pub bm_on: bool,
+    // §1924
+    pub bm_rec_on: bool,
+    // §1924
+    pub bm_at_switch: bool,
+    // §1924
+    pub bm_cand: crate::arena::Arr<bool>,
+    // §1924
+    pub bm_font_version: i32,
+    // §1924
+    pub bm_hyph_version: i32,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
 }
@@ -1733,19 +1773,34 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<halfword>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
-    + crate::arena::slot::<bool>();
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -1921,6 +1976,11 @@ impl Globals {
         let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 630193);
         let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 630193);
         let __r_intr_data = __plan.reserve::<i32>("intr_data", 8388608);
+        let __r_ls_nest_tag = __plan.reserve::<i32>("ls_nest_tag", 1001);
+        let __r_ls_grp_tag = __plan.reserve::<i32>("ls_grp_tag", 256);
+        let __r_ls_cond_tag = __plan.reserve::<i32>("ls_cond_tag", 1001);
+        let __r_ls_tag_file = __plan.reserve::<str_number>("ls_tag_file", 65536);
+        let __r_bm_cand = __plan.reserve::<bool>("bm_cand", 630193);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -2518,12 +2578,17 @@ impl Globals {
             dump_line: false,
             eight_bit_p: false,
             translate_filename_p: false,
+            kpse_make_tex_discard_errors: false,
             ckpt_request: 0,
             ckpt_arm_cs: 0,
             ckpt_arm_level: 0,
+            dorm_level: 0,
+            pop_watch: 0,
+            dorm_fired: 0,
             ckpt_resuming: false,
             ckpt_on_shipout: 0,
             ckpt_on_segment: 0,
+            ckpt_on_arm: 0,
             rs_on: false,
             rs_seen: __arena.arr(__r_rs_seen, 630193),
             dl_side: __arena.arr(__r_dl_side, 5000000),
@@ -2539,6 +2604,21 @@ impl Globals {
             intr_seen: __arena.arr(__r_intr_seen, 630193),
             intr_pre: __arena.arr(__r_intr_pre, 630193),
             intr_data: __arena.arr(__r_intr_data, 8388608),
+            ls_nest_tag: __arena.arr(__r_ls_nest_tag, 1001),
+            ls_grp_tag: __arena.arr(__r_ls_grp_tag, 256),
+            ls_cond_tag: __arena.arr(__r_ls_cond_tag, 1001),
+            ls_cond_depth: 0,
+            ls_taints: 0,
+            ls_taint_bits: 0,
+            ls_the_def: false,
+            ls_def_reads: false,
+            ls_tag_file: __arena.arr(__r_ls_tag_file, 65536),
+            bm_on: false,
+            bm_rec_on: false,
+            bm_at_switch: false,
+            bm_cand: __arena.arr(__r_bm_cand, 630193),
+            bm_font_version: 0,
+            bm_hyph_version: 0,
             arena: __arena,
         })
     }
@@ -3031,12 +3111,17 @@ impl Globals {
         v.pod(&mut self.dump_line);
         v.pod(&mut self.eight_bit_p);
         v.pod(&mut self.translate_filename_p);
+        v.pod(&mut self.kpse_make_tex_discard_errors);
         v.pod(&mut self.ckpt_request);
         v.pod(&mut self.ckpt_arm_cs);
         v.pod(&mut self.ckpt_arm_level);
+        v.pod(&mut self.dorm_level);
+        v.pod(&mut self.pop_watch);
+        v.pod(&mut self.dorm_fired);
         v.pod(&mut self.ckpt_resuming);
         v.pod(&mut self.ckpt_on_shipout);
         v.pod(&mut self.ckpt_on_segment);
+        v.pod(&mut self.ckpt_on_arm);
         v.pod(&mut self.rs_on);
         v.pod(&mut self.macro_prof_on);
         v.pod(&mut self.intr_on);
@@ -3044,6 +3129,16 @@ impl Globals {
         v.pod(&mut self.intr_rec_on);
         v.pod(&mut self.intr_all);
         v.pod(&mut self.intr_weak);
+        v.pod(&mut self.ls_cond_depth);
+        v.pod(&mut self.ls_taints);
+        v.pod(&mut self.ls_taint_bits);
+        v.pod(&mut self.ls_the_def);
+        v.pod(&mut self.ls_def_reads);
+        v.pod(&mut self.bm_on);
+        v.pod(&mut self.bm_rec_on);
+        v.pod(&mut self.bm_at_switch);
+        v.pod(&mut self.bm_font_version);
+        v.pod(&mut self.bm_hyph_version);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

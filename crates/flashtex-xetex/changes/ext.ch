@@ -168,6 +168,15 @@ procedure font_feature_warning(@!featureNameP:void_pointer; @!featLen:integer;
 @d total_pic_node_size(#) == (pic_node_size + (pic_path_length(#) + 8 - 1) div 8)
 @z
 
+@x xetex.web l.30410 - |pic_page| is a C |short| in TeX Live's memory words (a negative page prints as such)
+print("page "); print_int(pic_page(p)); print(" ");
+@y
+print("page ");
+if pic_page(p)>@"7FFF then print_int(pic_page(p)-@"10000)
+else print_int(pic_page(p));
+print(" ");
+@z
+
 @x xetex.web l.30586 - a picture's path is a handle
   pic_path: ^char;
 @y

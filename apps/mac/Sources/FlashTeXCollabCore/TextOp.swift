@@ -126,3 +126,17 @@ public struct RelativePosition: Hashable, Sendable {
         }
     }
 }
+
+/// One change to a document's visible text (`TextDocument.changeObserver`):
+/// replace `length` UTF-16 units at `location` with `text`.
+public struct TextChange: Equatable, Sendable {
+    public var location: Int
+    public var length: Int
+    public var text: String
+
+    public init(location: Int, length: Int, text: String) {
+        self.location = location
+        self.length = length
+        self.text = text
+    }
+}

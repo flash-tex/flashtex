@@ -3,9 +3,8 @@ import Combine
 import Observation
 import FlashTeXProtocol
 
-/// State for the editor/preview shell. The preview is fixture-backed: nothing
-/// here compiles LaTeX. `isFixture` is surfaced in the UI so the shell never
-/// implies a real compiler ran.
+/// State for the editor/preview shell. The engine (`flashtex-host`, through
+/// `EngineV3Session`) typesets; nothing here compiles LaTeX itself.
 /// `@Observable`: SwiftUI tracks the properties each view actually reads, so a
 /// keystroke (documents/editorRevision) re-evaluates the editor pane and the
 /// footer, and a compile result the preview — not the whole window.
@@ -19,7 +18,7 @@ final class ShellModel {
     }
 
     var documents: [RuntimeV1.Document] = [] {
-        didSet { documentsRevision &+= 1; refreshDocumentMirror() }
+        didSet { documentsRevision &+= 1; refreshDocumentMirror(); scheduleUnicodeFontsCheck() }
     }
     /// Advances on every mutation of `documents` — a keystroke, a disk
     /// reload, a project swap — so a reader that derives something from a
@@ -31,6 +30,7 @@ final class ShellModel {
             guard activePath != oldValue else { return }
             navigationToken &+= 1; refreshDocumentMirror()
             if engineV3Enabled { engineV3.scheduleCaretMark() }
+            projectPackages.caretMoved()
         }
     }
     /// Bumped by every document switch and every `openAndSwitch` request, so a
@@ -39,20 +39,6 @@ final class ShellModel {
     /// Bumped by every `replaceProject` (open, fixture): an asynchronous save
     /// that resumes in a different generation must not touch the new project.
     @ObservationIgnored private(set) var projectGeneration = 0
-    var result: RuntimeV1.CompileResult? {
-        didSet {
-            refreshToolbarMirrors()
-            if result != nil {
-                caretFollow.note(.recompile) // CaretFollow.swift: the preview moved on, re-aim at the caret
-                projectPackages.noteCompileResult() // ProjectPackages.swift: packages the compiler could not find
-            }
-            previewAnnouncer.noteResult(result) // PreviewAnnouncements.swift: VoiceOver hears a completed compile
-            // A cleared result (new project) forgets the spoken counts; an
-            // applied one is announced from `bindLayout`, once the layout
-            // diagnostics of the same reply are in `displayedDiagnostics`.
-            if result == nil { noteCompileCompletedForVoiceOver() } // DiagnosticsPanel.swift
-        }
-    }
     /// VoiceOver announcements for the preview (PreviewAnnouncements.swift):
     /// a completed compile, a refused display list, a keyboard page jump.
     @ObservationIgnored let previewAnnouncer = PreviewAnnouncer()
@@ -63,24 +49,13 @@ final class ShellModel {
     @ObservationIgnored var diagnosticsFlushToken = 0
     /// Count summaries announced (tests and evidence).
     @ObservationIgnored var diagnosticAnnouncements: [String] = []
-    var resultID: String?
-    /// Test-only: fires synchronously, once per applied result, with the id
-    /// `resultID` was just set to. Not `@Observable`-tracked and never read by
-    /// the app; exists because reconstructing `resultID`'s full history from
-    /// observation alone is racy (see the call site in `handle(_:)`, GH-680).
-    @ObservationIgnored var onResultApplied: ((String) -> Void)?
-    /// Test-only: fires synchronously, once per applied result, right after
-    /// `bindLayout` has bound this reply's negotiation. Carries the applied
-    /// revision and the now-current negotiation, so a test can record the
-    /// `(revision, negotiation)` pair atomically. Reading `negotiation`
-    /// through the earlier `onResultApplied` hook (or via a deferred
-    /// observation read) would see the *previous* reply's negotiation, and
-    /// deferred reads can additionally coalesce two rapid replies (GH-680).
-    @ObservationIgnored var onResultBound: ((Int, LayoutNegotiation) -> Void)?
     var fixtureURL: URL?
     var loadError: String?
     var selection: Selection?
     var navigationNote: String?
+    /// Why the last mode switch (ProjectMode.swift) was not made: shown as an
+    /// alert, so a refusal is never silent.
+    var modeSwitchFailure: String?
     var darkPreview = EditorPreferences.shared.darkPreviewDefault // EditorPreferences.swift: appearance preference
     /// Openers the editor auto-closes (`{`, `[`, `$`, and `(` for `\(`/`\[`); SourceEditorView.
     var autoClosePairs: Set<Character> = ["{", "[", "$", "("]
@@ -105,67 +80,50 @@ final class ShellModel {
     /// off by that view itself on appear/edit/document-set change — no
     /// scheduling logic lives here.
     let wordCount = WordCountModel()
-    /// The display-list-v2 pane (PreviewV2View.swift) is the default; `FLASHTEX_PREVIEW_V2=0` selects the v1 pane.
-    var previewV2 = ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_V2"] != "0" {
-        // Leaving the v2 pane: a result whose v1 pages were elided
-        // (`display-list-v2-only`) is re-requested with pages.
-        didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
-    }
-    /// The window's effective engine (EngineChoice.swift decides it per
-    /// document): when on, the pane shows the new pdfLaTeX-compatible
-    /// engine's pages and the old engine compiles nothing (one engine at a
-    /// time, `suspendOldEngineForV3`); when off, nothing of v3 runs. Set
-    /// directly (a bench, a test), it is the window's own override.
+    /// Whether this window's engine session runs (`EngineV3Session`; there
+    /// is one engine since the old one retired, #1236 S6). On in the app;
+    /// under XCTest off until a test turns it on, so a model made for a test
+    /// starts no host process (`EngineV3.enabledAtLaunch`).
     var engineV3Enabled = EngineV3.enabledAtLaunch {
         didSet {
-            engineV3EnabledSetDirectly() // EngineChoice.swift; a no-op while a choice is applied
             guard engineV3Enabled != oldValue else { return }
-            if engineV3Enabled {
-                suspendOldEngineForV3()
-                engineV3.start(model: self)
-            } else {
-                engineV3.stop()
-                compiledDocuments = [:] // the v3 compile's texts (EngineV3Session, DONE); an old result binds its own
-                // The durable helper set aside for v3 comes back (it compiles at ready).
-                if let helper = controllerSuspendedForV3 {
-                    controllerSuspendedForV3 = nil
-                    attachController(at: helper)
-                } else if autoCompile, workerAttached { compile() }
-            }
+            if engineV3Enabled { engineV3.start(model: self) } else { engineV3.stop(); compiledDocuments = [:] }
         }
     }
     @ObservationIgnored let engineV3 = EngineV3Session()
-    /// Which engine typesets the open document, why, and any fallback (EngineChoice.swift).
-    var engineChoice = EngineChoice.atLaunch
-    /// The fallback banner was dismissed (until the next open or change).
-    var engineFallbackDismissed = false
-    /// `engineV3Enabled` set directly: the engine every document of this window uses.
-    @ObservationIgnored var engineWindowOverride: EngineChoice.Engine?
-    @ObservationIgnored var applyingEngineChoice = false
-    /// An open is in progress and its engine is not chosen yet: the v3
-    /// session is not told about the new project until it is (no compile
-    /// of a document the previous engine will typeset).
+    /// Where the `engine:` line goes each time a document opens (FLASHTEX_LOG;
+    /// tests replace it): the label the attribution tools read (old-engine
+    /// retirement plan #1236, stage S3r).
+    @ObservationIgnored var engineLog: (String) -> Void = { FlashTeXLog.write($0) }
+    /// An open is in progress and its manifest is not read yet: the engine
+    /// session is not told about the new project until it is.
     @ObservationIgnored var engineChoicePending = false
-    /// The document `engineChoice` was resolved for.
+    /// The document the open path last resolved (EngineChoice.swift).
     @ObservationIgnored var engineChoiceDocument: URL?
-    /// The host reported no TeX Live (sticky for the window until the user chooses again).
-    @ObservationIgnored var engineHostLacksTeXLive = false
+    /// The open document was last typeset by the retired previous engine:
+    /// the one-time notice over the preview (EngineChoice.swift,
+    /// `PreviousEngineNoticeBanner`; dismissed for good).
+    var previousEngineNotice = false
+    /// There is no TeX to compile with (EngineChoice.swift, `TeXMissingBanner`;
+    /// owner ruling RQ20): said over the preview, never replaced by another engine.
+    var texMissing: TeXMissing?
+    var texMissingDismissed = false
+    /// A Classic run stopped on a package that needs XeTeX or LuaTeX
+    /// (UnicodeFonts.swift; until the next open). With it, what the
+    /// preamble scan found then: once the scan finds something else (the
+    /// user deleted the line), the report is dropped.
+    @ObservationIgnored var engineHostNeedsUnicode: (document: URL?, need: UnicodeFontsNeed, scanned: UnicodeFontsNeed?)?
+    /// The preamble scan for the open document, by `documentsRevision`
+    /// (UnicodeFonts.swift), and the pending re-check after an edit.
+    @ObservationIgnored var unicodeFontsScan: (revision: Int, entry: String, need: UnicodeFontsNeed?)?
+    @ObservationIgnored var unicodeFontsCheck: DispatchWorkItem?
+    /// The project files the scan read (by modification date).
+    @ObservationIgnored let unicodeFontsFiles = UnicodeFontsFileCache()
     /// Fallback announcements made (tests; VoiceOver hears them as they are posted).
     @ObservationIgnored var engineAnnouncements: [String] = []
-    /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
-    /// detached while the engine-v3 preview is on: the helper compiles every
-    /// edit it records with the old engine, and has no way to record without
-    /// compiling. Attached again when v3 is turned off.
-    @ObservationIgnored var controllerSuspendedForV3: URL?
-    /// Whether the applied result's runtime-v1 `pages` were elided at this
-    /// shell's request (`display-list-v2-only`, DisplayListDelta.swift).
-    var v1PagesElided: Bool { negotiation.accepted.contains(DisplayListDelta.v2OnlyCapability) }
-    /// Preview debug status (compile status word, "provisional rendering", v2 frame/font identity line,
-    /// display-list diagnostics under the pages): off by default; View > Show Preview Debug Status.
-    var previewDebugStatus = UserDefaults.standard.bool(forKey: ShellModel.previewDebugStatusKey) {
-        didSet { UserDefaults.standard.set(previewDebugStatus, forKey: ShellModel.previewDebugStatusKey) }
-    }
-    static let previewDebugStatusKey = "FlashTeX.Preview.v1.debugStatus"
+    /// Preview debug status (the engine's counters under the pages, EngineV3Preview.swift):
+    /// off by default; View > Show Preview Debug Status. Not kept across launches.
+    var previewDebugStatus = false
     /// Preview zoom multiplier over the fit-to-width scale (PreviewZoom.swift); persisted.
     var previewZoom: CGFloat = PreviewZoom.load(.standard) {
         didSet { let c = PreviewZoom.clamped(previewZoom); if c != previewZoom { previewZoom = c } else { PreviewZoom.store(c, in: .standard) } }
@@ -175,20 +133,6 @@ final class ShellModel {
     /// Zoom multiplier that fits the tallest page's height to the pane
     /// (PreviewView reports it with the pane geometry; View > Fit Page).
     var previewFitPageZoom: CGFloat = 1
-    var displayListV2: V2PreviewState? {
-        didSet {
-            refreshToolbarMirrors()
-            if case .loaded = displayListV2 {
-                caretFollow.note(.recompile) // CaretFollow.swift
-                v2WindowFrameInstalled() // V2PageWindow.swift: a window without the viewer's page is re-requested
-            }
-            // A refusal with nothing verified on screen (a live refusal keeps the
-            // previous frame and stays .loaded). The announcer dedupes the same
-            // error across the failed → loading → failed retries of auto-compile.
-            if case .failed(let error, _) = displayListV2 { previewAnnouncer.noteRefusal(error) }
-        }
-    }
-    var previewSource: PreviewSource = .none
     /// File backing the entry document, if any, and its last saved contents.
     var documentURL: URL? {
         // Engine-v3 instant reopen: the project's stored pages go on screen
@@ -227,19 +171,13 @@ final class ShellModel {
             guard caretUTF16 != oldValue else { return }
             caretFollow.noteCaretMove() // CaretFollow.swift: re-arms across a line/page boundary
             if engineV3Enabled { engineV3.scheduleCaretMark() } // the caret on the v3 page, outside SwiftUI (EngineV3CaretMark.swift)
+            projectPackages.caretMoved() // ProjectPackages.swift: leaving a half-typed \usepackage{…} shows its sheet
         }
     }
     /// Debounced "the preview follows what you are editing" (CaretFollow.swift).
     /// Triggers: `updateActiveText` (edit), a result or v2 frame landing
     /// (recompile), a caret move, and ⌘⇧J (explicit).
     @ObservationIgnored let caretFollow = CaretFollowController()
-    /// Clicking an internal hyperref destination: a one-shot scroll request
-    /// the v2 pane's `PreviewAnchorKeeper` acts on (token space separate from
-    /// caret following).
-    var previewReveal: CaretFollowController.Request?
-    /// Last link activation (tests); never opens a URL by itself.
-    private(set) var lastPreviewLinkAction: DisplayListLinks.Action?
-    private var previewRevealTokens = 0
     var anchor: InsertionAnchor?
     var proposals: [RuntimeV1.CaptureProposal] = []
     var reviewing: RuntimeV1.CaptureProposal?
@@ -273,35 +211,23 @@ final class ShellModel {
     private(set) var bridge: BridgeSession?
     /// Deadline for each `capture_status` during restart reconciliation.
     var bridgeStatusTimeout: TimeInterval = 15
-    var workerStatus: String = "no worker attached" { didSet { FlashTeXLog.write("status: " + workerStatus); refreshToolbarMirrors() } }
 
     // MARK: change-only mirrors for the window toolbar (ContentView.WorkspaceToolbar)
     //
-    // The toolbar's body read `result`, `displayListV2`, `displayedDiagnostics`
-    // and `workerStatus` directly, so every compile result, every v2 frame and
-    // both status lines of every request re-evaluated the toolbar content and
-    // re-laid out the NSToolbar with the whole window (typing-bench sample,
-    // 2026-09-13: the toolbar preference update and NSToolbarItemViewer layout
-    // were ~20% of a saturated main thread while typing; app code < 2%).
-    // These mirrors are assigned only when their value changes, so observation
-    // fires for the toolbar exactly when something it shows changes.
-    private(set) var toolbarHasResult = false
-    private(set) var toolbarHasV2Frame = false
-    /// A complete (non-windowed) v2 display list with at least one page: what
-    /// `File > Export PDF…` and `File > Print…` both need, change-only so the
-    /// File menu and the toolbar do not re-evaluate on every frame. The strict
-    /// refusal (historical preview, missing `flashtex-pdf-exact`) is
-    /// `exportPDFRefusal()`; this only decides whether the item is enabled.
-    private(set) var toolbarExportable = false
+    // The toolbar's body read `displayedDiagnostics` directly, so every
+    // compile re-evaluated the toolbar content and re-laid out the NSToolbar
+    // with the whole window (typing-bench sample, 2026-09-13: the toolbar
+    // preference update and NSToolbarItemViewer layout were ~20% of a
+    // saturated main thread while typing; app code < 2%). These mirrors are
+    // assigned only when their value changes, so observation fires for the
+    // toolbar exactly when something it shows changes.
     private(set) var toolbarProblemCount = 0
-    /// `result?.pages.count`, change-only, so File > Print… can refuse a failed
-    /// or empty-page result without the App scene reading `result` per reply.
-    private(set) var toolbarPageCount = 0
-    /// Page under the top of the preview viewport, reported by whichever pane
-    /// is on screen (`PreviewAnchorKeeper`). The page readout in the preview
-    /// HUD reads this; before it existed the readout was wired only to the v1
-    /// pane's callback and so showed nothing on the default v2 route.
+    /// Page under the top of the preview viewport, reported by the pane
+    /// (`PreviewAnchorKeeper`). The page readout in the preview HUD reads this.
     var previewVisiblePage = 1
+    /// Pages the preview shows (`EngineV3Session.pageCount`). The HUD's
+    /// "N / M" readout and the pane's accessibility value both count these.
+    var previewPageCount: Int { engineV3.pageCount }
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false
@@ -313,14 +239,50 @@ final class ShellModel {
     /// `entryPath` reads `documents`, so the App scene (every menu) was
     /// re-evaluated on every keystroke (P5-KEYSTROKE-MAIN).
     private(set) var menuEntryPath = "main.tex"
-    /// The producer as attached ("attached: flashtex-render"), not the
-    /// per-request status line: tooltips read this instead of `workerStatus`.
-    private(set) var producerSummary = "no worker attached"
-    /// `displayedDiagnostics` assigned only when the list changes, for the
-    /// Problems panel: `displayedDiagnostics` itself reads `result`, so every
-    /// reply re-evaluated the panel's List (an AppKit table) while typing.
-    private(set) var problemsList: [RuntimeV1.Diagnostic] = []
-    /// `result?.status`, change-only, for the Problems panel header.
+    /// `engineV3Problems` for the Problems panel, assigned only when it is
+    /// another model, so a compile that changes nothing it lists does not
+    /// re-evaluate the panel's List (an AppKit table) while typing, and at
+    /// most every `problemsListInterval` (the last change always follows):
+    /// typing in a long book answers each key with a compile whose thousands
+    /// of rows all moved (EDITOR-FREEZE). The panel's actions find their rows
+    /// in `displayedDiagnostics` again by identity (`goToOccurrence`, `DiagnosticHelpFixSlot`).
+    private(set) var problems: ProblemsModel = .empty
+    /// The panel's rows (`problems.diagnostics`).
+    var problemsList: [RuntimeV1.Diagnostic] { problems.diagnostics }
+    /// The rows' line labels, over `compiledDocuments` as of `problems`
+    /// (`ProblemsModel.lines(over:)`): read by every row, so it changes only
+    /// with the list, not at every reply.
+    private(set) var problemsLines = EditorDiagnostics.Lines.none { didSet { problemsRevision &+= 1 } }
+    /// Bumped with `problemsLines` (and so with `problems`): the panel's table reloads its visible rows.
+    private(set) var problemsRevision = 0
+    @ObservationIgnored private var problemsListAt: UInt64 = 0
+    @ObservationIgnored private var problemsListPending = false
+    static let problemsListInterval: Double = 0.5
+
+    private func publishProblemsList() {
+        let now = MonotonicClock.nowNs(), interval = UInt64(Self.problemsListInterval * 1e9)
+        let latest = engineV3Problems
+        guard problems !== latest else { return }
+        // At once after a quiet spell, and when the list empties or fills.
+        if now &- problemsListAt >= interval || problems.diagnostics.isEmpty || latest.diagnostics.isEmpty {
+            problemsListAt = now
+            problemsLines = latest.lines(over: compiledDocuments)
+            problems = latest
+            return
+        }
+        guard !problemsListPending else { return }
+        problemsListPending = true
+        let timer = Timer(timeInterval: Double(problemsListAt &+ interval &- now) / 1e9, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.problemsListPending = false
+                self.problemsListAt = 0
+                self.publishProblemsList()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    /// The last compile's status (`engineV3ResultStatus`), change-only, for the Problems panel header.
     private(set) var resultStatus: RuntimeV1.Status?
     /// Throttled mirror the status bar / preview header / tab bar read (ShellChrome.swift).
     let chrome = ShellChrome()
@@ -332,7 +294,7 @@ final class ShellModel {
     private func refreshChrome() {
         var again = false
         withObservationTracking {
-            again = chrome.refresh(from: self)
+            again = MainThreadProbe.time("chrome.refresh") { chrome.refresh(from: self, offMain: true) }
         } onChange: { [weak self] in
             // Observation calls this at the mutation (main actor: every writer is).
             MainActor.assumeIsolated { self?.scheduleChromeRefresh() }
@@ -356,7 +318,7 @@ final class ShellModel {
     }
 
     /// Applies pending chrome changes now (tests, and the bench's paint point).
-    func flushChrome() { chromeRefreshPending = false; refreshChrome() }
+    func flushChrome() { chromeRefreshPending = false; chrome.settleNext = true; refreshChrome() }
 
     private func refreshDocumentMirror() {
         let has = !documents.isEmpty
@@ -367,148 +329,35 @@ final class ShellModel {
     }
 
     private func refreshToolbarMirrors() {
-        let hasResult = result != nil
-        if toolbarHasResult != hasResult { toolbarHasResult = hasResult }
-        let retained = displayListV2?.retained?.frame
-        // Pages the preview is SHOWING, which is not `result.pages`: the v2
-        // route asks for `display-list-v2-only`, so a live reply carries no v1
-        // pages at all and this read zero. A windowed frame still lists every
-        // page of the document (the non-resident ones carry no items), so the
-        // count is the document's real length either way.
-        let pages = retained.map { $0.list.pages.count } ?? (result?.pages.count ?? 0)
-        if toolbarPageCount != pages { toolbarPageCount = pages }
-        let hasFrame = displayListV2?.frame != nil
-        if toolbarHasV2Frame != hasFrame { toolbarHasV2Frame = hasFrame }
-        // A windowed frame stays exportable: Export re-renders the whole
-        // document (WholeDocumentList.swift). Whether that route is actually
-        // available is a filesystem question, so it is answered when the
-        // command runs (`exportPDFRefusal`), not on every frame here.
-        let exportable = retained.map { !$0.list.pages.isEmpty } ?? false
-        if toolbarExportable != exportable { toolbarExportable = exportable }
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
-        if problemsList != diagnostics { problemsList = diagnostics }
-        // Under engine v3: a compile that failed (no pages) keeps the last
-        // pages, as an old failed result did (the Problems line, gap B8).
-        let status = engineV3Enabled ? engineV3ResultStatus : result?.status
-        if resultStatus != status { resultStatus = status }
+        publishProblemsList()
+        // A compile that failed (no pages) keeps the last pages (the Problems line, gap B8).
+        if resultStatus != engineV3ResultStatus { resultStatus = engineV3ResultStatus }
         refreshDocumentMirror()
-        let summary: String
-        if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
-        else if let worker, worker.isRunning { summary = "attached: \(worker.executable.lastPathComponent)" }
-        else { summary = "no worker attached" }
-        if producerSummary != summary { producerSummary = summary }
     }
     let nearbyInbox = NearbyInbox() // captures from paired companions (ShellModel+Nearby.swift)
     let captureInbox = CaptureInbox() // Captures inspector rows (CaptureInbox.swift)
     var captureInboxVisible = ProcessInfo.processInfo.environment["FLASHTEX_SHOW_CAPTURES"] == "1" // View > Captures (⌘⇧I)
+    /// The window's log lines (`log`), newest last; at most 200.
     var workerLog: [String] = []
-    @ObservationIgnored private var worker: WorkerClient?
-    /// The running worker's executable, for tools that need to run the same
-    /// producer one-shot (`WholeDocumentList.swift`).
-    var attachedWorkerExecutable: URL? { worker?.isRunning == true ? worker?.executable : nil }
-    /// How the current worker was launched, so an abnormal exit can relaunch
-    /// the same executable (bounded: `maxWorkerRelaunches` per minute).
-    @ObservationIgnored private var workerLaunch: (url: URL, arguments: [String])?
-    @ObservationIgnored private var workerRelaunchTimes: [Date] = []
-    @ObservationIgnored private var workerRelaunchWork: DispatchWorkItem?
-    static let maxWorkerRelaunches = 3
-    /// Relaunch delays after the 1st, 2nd, 3rd abnormal exit within a minute.
-    static let workerRelaunchDelays: [TimeInterval] = [0.2, 1.0, 3.0]
-    /// Number of automatic relaunches performed so far (for status/tests).
-    private(set) var workerRelaunchCount = 0
-    /// Durable-source helper (`flashtex-preview-controller`), see ShellModel+Controller.swift.
-    @ObservationIgnored var controller: PreviewControllerClient?
-    /// Executable of the attached helper, so an abnormal exit can relaunch it
-    /// (same bound and delays as the worker); cleared by an explicit detach.
-    @ObservationIgnored var controllerLaunchURL: URL?
-    @ObservationIgnored var controllerRelaunchTimes: [Date] = []
-    @ObservationIgnored var controllerRelaunchWork: DispatchWorkItem?
-    /// Number of automatic helper relaunches performed so far (status/tests).
-    var controllerRelaunchCount = 0
-    @ObservationIgnored var controllerState = ControllerState()
-    /// Status of the helper route (attached / ready / durable revision / errors).
-    var controllerStatus: String = "no preview controller attached"
-    /// Set while the displayed result is a completed OLDER snapshot from the
-    /// helper (HistoricalPreview.swift): navigation, diagnostic jump, caret
-    /// sync, capture destinations and export are disabled until a current
-    /// preview replaces it. Explicit, never inferred from staleness.
-    var historicalPreview: HistoricalDisplay?
-    @ObservationIgnored var historicalState = HistoricalPreviewState()
-    /// Helper display-candidate route (ShellModel+DisplayCandidates.swift): opt-in, negotiation and gate state.
-    let displayCandidates = DisplayCandidateState()
     /// Project-index completion vocabulary (labels/citations/commands) bound to
     /// the editor revision it was fetched for (Completion.swift).
     var completionMetadata: Completion.Metadata?
-    @ObservationIgnored let completionFetcher = ProjectIndexCompletionFetcher()
-    @ObservationIgnored private var nextRequestID = 1
-    /// Text each document had when the current `result` was produced, so stale
-    /// byte offsets can be rebased (or refused) after edits.
-    private(set) var compiledDocuments: [String: String] = [:]
-    struct InFlight {
-        var projectId: String; var revision: Int; var documents: [RuntimeV1.Document]; var sentAt: Date
-        /// `layout_capabilities` this request carried; the reply is checked against it.
-        var layoutCapabilities: [String] = []
-        /// `display_list_window` this request carried (display-list-v2-window
-        /// consumer, V2PageWindow.swift); nil for an unwindowed request.
-        var window: RuntimeV1.CompileRequest.DisplayListWindow?
-        /// `fonts` this request carried (the manifest's `[fonts]`,
-        /// ProjectManifest.swift); nil when it named nothing.
-        var fonts: RuntimeV1.CompileRequest.Fonts?
-        /// The resolved-packages revision (ProjectPackages.swift) the
-        /// request's documents were assembled at.
-        var packagesRevision = 0
+    /// Text each document had when the engine's last completed compile read
+    /// it (EngineV3Session, at DONE), so diagnostics' byte offsets can be
+    /// rebased (or refused) after edits.
+    private(set) var compiledDocuments: [String: String] = [:] {
+        // The Problems rows take the texts with the list (`publishProblemsList`),
+        // and here when the set of documents changes (texts set after the rows,
+        // a document opened): not at each reply while typing.
+        didSet {
+            if Set(problemsLines.texts.keys) != Set(compiledDocuments.keys) { problemsLines = problems.lines(over: compiledDocuments) }
+        }
     }
-    private(set) var inFlightRequests: [String: InFlight] = [:]
-    /// `fonts` the applied result was requested with: a manifest change
-    /// with unchanged buffers must re-request (`compile()`), like a window.
-    private(set) var fontsApplied: RuntimeV1.CompileRequest.Fonts?
-    /// `ProjectPackagesState.revision` of the applied result (a newly resolved package recompiles).
-    private(set) var packagesApplied = 0
-    /// `display-list-v2-delta`: the live v2 frame currently published, as the
-    /// producer may relocate it (DisplayListDelta.swift). Set only when a live
-    /// frame is published after full validation; cleared by any refusal,
-    /// worker exit or relaunch, or a result that did not accept `display-list-v2`.
-    @ObservationIgnored var deltaInstalled: DisplayListDelta.Installed?
-    /// `display-list-v2-window` consumer state (V2PageWindow.swift): engaged
-    /// on demand after an over-limit failure/decline, anchored by the pane's
-    /// scroll position. Never engaged by default — an unwindowed reply stays
-    /// byte-for-byte what it is today.
-    @ObservationIgnored var v2Window = V2Window.Controller()
-    /// Id of the most recently sent compile request. A reply to any older
-    /// request is valid but stale (`scripts/check_runtime.py`: `stale_ignore`):
-    /// it is checked, logged and dropped, and never changes the preview or the
-    /// renderer mode. Only one request is normally in flight (edits coalesce);
-    /// a capability-set switch is the exception and goes out immediately.
-    private(set) var latestRequestID: String?
-    /// Optional verbatim JSON Lines record for `scripts/check_runtime.py`
-    /// (`FLASHTEX_TRANSCRIPT=<path>`; tests inject their own).
-    var transcript: RuntimeTranscript? = RuntimeTranscript.fromEnvironment()
 
-    // MARK: negotiated layout capabilities (runtime-v1-layout-capabilities.md)
-
-    /// Capabilities sent with every compile request. Default: `rules-v1` and
-    /// `font-hints-v1` (gate 3: consumer tests pass), overridable with
-    /// `FLASHTEX_LAYOUT_CAPABILITIES` (comma-separated; empty string disables).
-    /// Changing the set is a mode switch: with auto-compile on, the current
-    /// buffers are re-requested at the *same* revision under the new set.
-    var requestedLayoutCapabilities: [String] = ShellModel.defaultLayoutCapabilities() {
-        didSet { if oldValue != requestedLayoutCapabilities, autoCompile, workerAttached { compile() } }
-    }
-    /// Negotiation bound to the *applied* result: what its own request asked for
-    /// and what the producer accepted. A late reply for another request never
-    /// changes this (results are correlated by id + project + revision first).
-    private(set) var negotiation: LayoutNegotiation = .legacy
-    var acceptedLayoutCapabilities: [String] { negotiation.accepted }
-    /// Font hints the applied result carries that could not be honored exactly.
-    private(set) var fontSubstitutions: [PreviewFonts.Substitution] = []
-    /// Source-aware errors for unknown primitives in the applied result
-    /// (negotiated route only; the legacy route still skips unknown kinds).
-    private(set) var layoutDiagnostics: [RuntimeV1.Diagnostic] = [] { didSet { refreshToolbarMirrors() } }
-    /// Producer diagnostics followed by the shell's own layout diagnostics.
-    var displayedDiagnostics: [RuntimeV1.Diagnostic] {
-        engineV3Enabled ? engineV3Diagnostics : (result?.diagnostics ?? []) + layoutDiagnostics
-    }
+    /// The engine's diagnostics of its last completed compile.
+    var displayedDiagnostics: [RuntimeV1.Diagnostic] { engineV3Diagnostics }
     /// The engine-v3 preview's last completed compile's TeX errors and
     /// warnings (EngineV3Session: `DIAGNOSTIC` messages; diag-v1 later),
     /// shown in the Problems panel and the status bar while the flag is on.
@@ -517,8 +366,31 @@ final class ShellModel {
     var engineV3ResultStatus: RuntimeV1.Status? {
         didSet { if engineV3ResultStatus != oldValue { refreshToolbarMirrors() } }
     }
-    var engineV3Diagnostics: [RuntimeV1.Diagnostic] = [] {
-        didSet { if engineV3Diagnostics != oldValue { engineV3MarksRevision &+= 1; refreshToolbarMirrors() } }
+    /// The rows with their groups and counts, made where the rows are made
+    /// (off the main thread for a long document: EngineV3Problems.swift)
+    /// and published here as one assignment (`publishEngineV3Problems`).
+    private(set) var engineV3Problems: ProblemsModel = .empty
+    var engineV3Diagnostics: [RuntimeV1.Diagnostic] {
+        get { engineV3Problems.diagnostics }
+        // (tests, and the session's reset: a model made here)
+        set {
+            guard newValue != engineV3Problems.diagnostics else { return }
+            publishEngineV3Problems(ProblemsModel(diagnostics: newValue, texts: compiledDocuments, documentOrder: chrome.listing.map(\.path)))
+        }
+    }
+
+    /// Shows `made` (EngineV3Session's DONE and tools): nothing when it is
+    /// the model already shown, which the pipeline returns for the same rows.
+    func publishEngineV3Problems(_ made: ProblemsModel) {
+        guard made !== engineV3Problems else { return }
+        engineV3Problems = made
+        engineV3MarksRevision &+= 1
+        refreshToolbarMirrors()
+    }
+
+    /// The editor's texts by path (the first document of a path).
+    var documentTexts: [String: String] {
+        Dictionary(documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
     }
     /// Bumped when the v3 rows or their compiled texts change: the editor
     /// marks' memo key under engine v3 (there is no old-engine result id).
@@ -530,94 +402,35 @@ final class ShellModel {
     private(set) var engineV3CompiledEditorRevision: Int?
     /// The revision a diagnostic's mechanical fix was computed against:
     /// "Fix…" and Tab apply it only while the editor is at that revision.
-    var fixCompiledRevision: Int? { engineV3Enabled ? engineV3CompiledEditorRevision : result?.revision }
+    var fixCompiledRevision: Int? { engineV3CompiledEditorRevision }
 
     /// What the editor marks (underlines, gutter, Error Lens, ⌘⇧]/[) are built
-    /// from: the old engine's result, or under engine v3 the host's rows of the
-    /// last completed compile as one result, with `compiledDocuments` (set at
-    /// its DONE) as the texts they rebase from.
+    /// from: the host's rows of the last completed compile as one result, with
+    /// `compiledDocuments` (set at its DONE) as the texts they rebase from.
     var markSource: (result: RuntimeV1.CompileResult, id: String?)? {
-        if engineV3Enabled {
-            let failed = engineV3Diagnostics.contains { $0.severity == .error }
-            return (RuntimeV1.CompileResult(projectId: "engine-v3", revision: engineV3MarksRevision, status: failed ? .recovered : .ok,
-                                            pages: [], diagnostics: engineV3Diagnostics, pdfPath: nil), nil)
-        }
-        return result.map { ($0, resultID) }
+        let problems = engineV3Problems
+        return (RuntimeV1.CompileResult(projectId: "engine-v3", revision: engineV3MarksRevision, status: problems.hasErrors ? .recovered : .ok,
+                                        pages: [], diagnostics: problems.diagnostics, pdfPath: nil), nil)
     }
 
-    /// Explicit banner notes: requested-but-unaccepted capabilities and font
-    /// substitutions. Never inferred from item shapes.
-    var capabilityNotes: [String] {
-        negotiation.missing.map { "capability \($0) not accepted by the worker" } + fontSubstitutions.map(\.description)
-    }
-
-    /// Gate 3 (contract): requested by default now that the consumer tests
-    /// (LayoutCapabilityTests, LayoutCapabilityConsumerTests) pass.
-    static let builtInLayoutCapabilities = RuntimeV1.LayoutCapabilities.supported
-
-    /// `FLASHTEX_LAYOUT_CAPABILITIES` (unset → built-in default; "" → none).
-    static func defaultLayoutCapabilities(environment: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
-        guard let raw = environment["FLASHTEX_LAYOUT_CAPABILITIES"] else { return builtInLayoutCapabilities }
-        return raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-    }
-
-    /// Binds a result's negotiation state, substitutions, and layout diagnostics.
-    func bindLayout(of applied: RuntimeV1.CompileResult, requested: [String]) {
-        // Change-only (see handle(.result)): these are read by the preview header and toolbar.
-        // The per-request opt-ins are decided by the producer per reply; their
-        // absence is never a missing capability.
-        let bound = LayoutNegotiation(requested: DisplayListDelta.stripPerRequest(requested), accepted: applied.layoutCapabilities ?? [])
-        if negotiation != bound { negotiation = bound }
-        if !negotiation.accepted.contains(V2Live.capability) { deltaInstalled = nil }
-        let substitutions = PreviewFonts.substitutions(in: applied)
-        if fontSubstitutions != substitutions { fontSubstitutions = substitutions }
-        let diagnostics = LayoutNegotiation.unsupportedPrimitiveDiagnostics(in: applied, negotiation: negotiation)
-        if layoutDiagnostics != diagnostics { layoutDiagnostics = diagnostics }
-        for note in capabilityNotes { log(note) }
-        for d in layoutDiagnostics { log(d.message) }
-        // Every applied result (worker, helper, fixture) binds its layout right
-        // after `result =`; the list is final here, layout diagnostics included.
-        noteCompileCompletedForVoiceOver() // DiagnosticsPanel.swift: "3 errors, 1 warning" when the counts changed
-    }
-
-    /// Click on a v2 link: allowlisted URIs go through `NSWorkspace`;
-    /// internal destinations scroll the preview. Scheme policy is the app's
-    /// (proposal §6: writer does not filter).
-    func activatePreviewLink(_ link: RenderingV2.Navigation.Link, in list: RenderingV2.DisplayList) {
-        let destinations = list.navigation?.destinations ?? [:]
-        let action = DisplayListLinks.action(for: link, destinations: destinations)
-        lastPreviewLinkAction = action
-        switch action {
-        case .openURI(let url):
-            if DisplayListLinks.openURL(url) { navigationNote = "Opened \(url.absoluteString)" }
-            else { navigationNote = "Could not open \(url.absoluteString)" }
-        case .reveal(let dest):
-            previewRevealTokens += 1
-            previewReveal = CaretFollowController.Request(token: previewRevealTokens, target: DisplayListLinks.previewTarget(for: dest), reason: .explicit)
-            navigationNote = "Scrolled to page \(dest.page)"
-        case .rejectedScheme(let scheme):
-            navigationNote = "Blocked link scheme ‘\(scheme.isEmpty ? "none" : scheme)’ (allowed: http, https, mailto)"
-        case .unknownDestination(let name):
-            navigationNote = "Unknown destination \(name)"
-        }
-    }
-    /// Settings > Compile > Auto-compile after edits. Under the engine-v3
-    /// preview it decides whether edits go to the host as they are typed;
-    /// turning it back on sends what was typed meanwhile.
+    /// Settings > Compile > Auto-compile after edits: whether edits go to
+    /// the host as they are typed; turning it back on sends what was typed
+    /// meanwhile.
     var autoCompile = true {
         didSet { if autoCompile, !oldValue, engineV3Enabled { engineV3.textChanged(model: self) } }
     }
-    private(set) var lastLatencyMs: Double?
-    private(set) var latenciesMs: [Double] = []
-    @ObservationIgnored private var debounce: DispatchWorkItem?
-    @ObservationIgnored private var compileQueued = false
-    /// Keystroke-to-compile delay. The compiler answers in ~1–9 ms for typical
-    /// documents, so the default is 0: every edit submits immediately and the
-    /// one-in-flight coalescing absorbs bursts. `FLASHTEX_DEBOUNCE_MS` overrides.
-    static let debounceInterval: TimeInterval = {
-        if let s = ProcessInfo.processInfo.environment["FLASHTEX_DEBOUNCE_MS"], let ms = Double(s) { return max(0, ms) / 1000 }
-        return 0
-    }()
+    /// Settings > Compile > Stop at the first error (EngineV3ErrorPolicy):
+    /// off (the default) is best effort, nonstopmode with the errors TeX
+    /// recovers from shown as warnings; on is `-halt-on-error`. Kept in the
+    /// engine-v3 defaults (a test suite of its own under XCTest).
+    var strictTeXErrors = EngineV3ErrorPolicy.storedMode == .strict {
+        didSet {
+            guard strictTeXErrors != oldValue else { return }
+            EngineV3.defaults.set(strictTeXErrors, forKey: EngineV3ErrorPolicy.strictKey)
+            engineV3.errorMode = strictTeXErrors ? .strict : .bestEffort
+            if engineV3Enabled { engineV3.compile(model: self, reason: "error mode") }
+        }
+    }
     @ObservationIgnored private var autosaveWork: DispatchWorkItem?
     /// Asynchronous (helper-routed) saves per document path — autosave and
     /// Command-S alike — that have not answered yet (`enqueueSave`).
@@ -644,17 +457,16 @@ final class ShellModel {
     /// (shared with `PreviewHUD.lingerSuppressed` / `ThinSplitViewController`).
     static let runningUnderXCTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
-    /// Revision of the compile request currently in flight (nil if idle).
-    var inFlightRevision: Int?
     /// Revision the editor buffer corresponds to. Bumps on every edit so the
     /// UI can say when the preview's source ranges no longer match the buffer.
     private(set) var editorRevision = 1
 
-    enum PreviewSource: Equatable { case none, fixture, worker(String) }
-
-    /// Project ID used for compile requests and the bridge (`demo` until a
-    /// result names one). Bridge IDs must be 1–128 `[A-Za-z0-9_-]`.
-    var projectId: String { result?.projectId ?? "demo" }
+    /// Project ID the bridge and the review history use. It was the old
+    /// engine's compile project id, which was always `demo`; it stays that
+    /// constant, so captures and destination pins already stored under it
+    /// keep matching (app-parity row E2, ruled the same on both routes,
+    /// DESIGN.md §13 2026-10-21). Bridge IDs must be 1–128 `[A-Za-z0-9_-]`.
+    var projectId: String { "demo" }
 
     func setBridge(_ session: BridgeSession?) {
         bridge?.terminate()
@@ -669,22 +481,7 @@ final class ShellModel {
     func advanceEditorRevision(atLeast revision: Int) {
         guard revision > editorRevision else { return }
         editorRevision = revision
-        // The buffer did not change, but a result compiled at the old revision
-        // would now read as stale forever (until the next keystroke); recompile
-        // so the preview and caret sync bind to the revision the bridge knows.
-        if result != nil { scheduleAutoCompile() }
     }
-
-    var isFixture: Bool { previewSource == .fixture }
-    var previewIsStale: Bool { (result?.revision ?? editorRevision) != editorRevision }
-    var medianLatencyMs: Double? {
-        guard !latenciesMs.isEmpty else { return nil }
-        let sorted = latenciesMs.sorted()
-        return sorted[sorted.count / 2]
-    }
-    var workerAttached: Bool { worker?.isRunning == true || controller?.isRunning == true }
-    /// True when previews come from the durable helper instead of the direct worker.
-    var controllerAttached: Bool { controller?.isRunning == true }
 
     var activeText: String {
         get { documents.first { $0.path == activePath }?.text ?? "" }
@@ -702,73 +499,51 @@ final class ShellModel {
     /// shown in the footer. Memoized: ContentView reads this on every body
     /// evaluation and the rebase compares the compiled and current texts.
     var editorMarkReport: EditorDiagnostics.Report {
-        // Historical spans are inert: not drawn even when their offsets are in bounds.
-        // Under engine v3 the marks are the host's rows (`markSource`), never
-        // the old engine's (one engine at a time).
-        guard historicalPreview == nil else { return .empty }
-        if engineV3Enabled {
-            let key = EditorMarksKey(resultID: "engine-v3", resultRevision: engineV3MarksRevision, editorRevision: editorRevision,
-                                     path: activePath, explanationsCount: -1, carriedExplanationsCount: -1)
-            if let cached = editorMarksCache, cached.key == key { return cached.report }
-            let report = diagnosticReport(for: activePath, currentText: activeText)
-            editorMarksCache = (key, report)
-            return report
-        }
-        guard let result else { return .empty }
-        let key = EditorMarksKey(resultID: resultID, resultRevision: result.revision, editorRevision: editorRevision, path: activePath,
-                                 explanationsCount: explanations[resultID]?.count ?? -1,
-                                 carriedExplanationsCount: explanations[retainedMarks?.resultID]?.count ?? -1)
+        projectPackages.withholding(unheldMarkReport) // ProjectPackages.swift: a half-typed package name is not underlined yet
+    }
+
+    private var unheldMarkReport: EditorDiagnostics.Report {
+        let key = EditorMarksKey(resultRevision: engineV3MarksRevision, editorRevision: editorRevision, path: activePath)
         if let cached = editorMarksCache, cached.key == key { return cached.report }
-        // Retention: a failed result with no pages keeps the last marks, flagged
-        // (ShellModel+DiagnosticRetention.swift); carried marks take their
-        // explanation lines from the retained result's cache entry.
-        let report = EditorDiagnostics.attach(explanations[resultID], carried: explanations[retainedMarks?.resultID],
-                                              to: diagnosticReport(for: activePath, currentText: activeText))
+        let report = diagnosticReport(for: activePath, currentText: activeText)
         editorMarksCache = (key, report)
         return report
     }
-    /// The last result that produced output (`EditorDiagnostics.Retained`),
-    /// kept while a later result fails with no pages; see `retainMarksAfterResultBound`.
-    var retainedMarks: EditorDiagnostics.Retained?
     private struct EditorMarksKey: Equatable {
-        var resultID: String?; var resultRevision: Int; var editorRevision: Int; var path: String
-        var explanationsCount: Int; var carriedExplanationsCount: Int
+        var resultRevision: Int; var editorRevision: Int; var path: String
+    }
+
+    /// The report for `path` (any open document): what `editorMarkReport`
+    /// memoizes for the active document and what diagnostic navigation reads
+    /// for the others. The host's rows of the last completed compile, rebased
+    /// from the texts that compile read (set at DONE); a failed compile still
+    /// reports its rows, so there is nothing to carry over.
+    func diagnosticReport(for path: String, currentText: String) -> EditorDiagnostics.Report {
+        guard let source = markSource else { return .empty }
+        return EditorDiagnostics.report(for: source.result, resultID: source.id, path: path,
+                                        compiledText: compiledDocuments[path], currentText: currentText)
     }
     @ObservationIgnored private var editorMarksCache: (key: EditorMarksKey, report: EditorDiagnostics.Report)?
     /// Identity of the mark last reached by ⌘⇧]/⌘⇧[, so marks sharing a
     /// start offset are each visited once (Navigation.swift).
     @ObservationIgnored var currentDiagnosticID: String?
 
-    /// Offline explanations per result id (crates/diagnostic-explanations via
-    /// flashtex-explain); attached to marks, never blocking a keystroke.
-    private(set) var explanations = EditorDiagnostics.ExplanationCache()
-    @ObservationIgnored private var explanationClient: ExplanationClient?
-    var explanationStatus: String?
-
     /// A reviewed quick fix being previewed (sheet); nil when none.
     var quickFix: EditorDiagnostics.QuickFix.Preview?
     var quickFixIndex: Int?
 
-    /// "Fix…" on a diagnostics row: prepare the suggestion against the current
-    /// buffer and show the preview; refusals go to the footer.
+    /// "Fix…" on a diagnostics row: prepare the diagnostic's mechanical fix
+    /// against the current buffer and show the preview; refusals go to the footer.
     func previewQuickFix(diagnosticIndex: Int, suggestion: Int = 0) {
         let diags = displayedDiagnostics
-        if diags.indices.contains(diagnosticIndex) {
-            let d = diags[diagnosticIndex]
-            if EditorDiagnostics.canApplyHelpReplacement(d, path: activePath, currentText: activeText,
-                                                         compiledRevision: fixCompiledRevision, editorRevision: editorRevision) {
-                let compiled = compiledDocuments[activePath] ?? activeText
-                switch EditorDiagnostics.prepareHelpReplacement(d, path: activePath, in: activeText, compiledText: compiled) {
-                case .success(let preview): quickFix = preview; quickFixIndex = diagnosticIndex; navigationNote = nil; return
-                case .failure(let why): quickFix = nil; navigationNote = "Fix not applied: " + why.text; return
-                }
-            }
+        guard diags.indices.contains(diagnosticIndex) else { navigationNote = "No fix for this diagnostic."; return }
+        let d = diags[diagnosticIndex]
+        guard EditorDiagnostics.canApplyHelpReplacement(d, path: activePath, currentText: activeText,
+                                                        compiledRevision: fixCompiledRevision, editorRevision: editorRevision) else {
+            navigationNote = "No fix for this diagnostic."; return
         }
-        guard let x = explanations.explanation(resultID: resultID, index: diagnosticIndex) else {
-            navigationNote = "No explanation for this diagnostic yet."; return
-        }
-        switch EditorDiagnostics.QuickFix.prepare(x, suggestion: suggestion, path: activePath,
-                                                  in: activeText, compiledText: compiledDocuments[activePath]) {
+        let compiled = compiledDocuments[activePath] ?? activeText
+        switch EditorDiagnostics.prepareHelpReplacement(d, path: activePath, in: activeText, compiledText: compiled) {
         case .success(let preview): quickFix = preview; quickFixIndex = diagnosticIndex; navigationNote = nil
         case .failure(let why): quickFix = nil; navigationNote = "Fix not applied: " + why.text
         }
@@ -807,9 +582,7 @@ final class ShellModel {
         // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
         // linear in the document: this is read on every keystroke, and most
         // documents carry no mechanical fix at all.
-        guard fixCompiledRevision == editorRevision,
-              diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
-        else { return nil }
+        guard fixCompiledRevision == editorRevision, engineV3Problems.hasFixes else { return nil }
         guard let caretByte, let fix = EditorDiagnostics.fixOffered(
             at: caretByte, in: diagnostics, path: activePath,
             currentText: activeText, compiledRevision: fixCompiledRevision,
@@ -837,29 +610,6 @@ final class ShellModel {
         dismissedCaretFix = nil
     }
 
-    /// Asks the helper once per result; the cache is read by `editorMarkReport`.
-    private func fetchExplanations(for result: RuntimeV1.CompileResult, id: String, documents: [RuntimeV1.Document]) {
-        guard explanations[id] == nil else { return }
-        if explanations.reuse(for: id, result: result, documents: documents) { // ExplanationMemo.swift: unchanged diagnostics, no helper request
-            editorMarksCache = nil; explanationStatus = nil; return
-        }
-        if explanationClient == nil || explanationClient?.isRunning == false {
-            guard let exe = ExplanationClient.locate() else { explanationStatus = nil; return }
-            explanationClient = try? ExplanationClient(executable: exe) { [weak self] e in self?.explanationStatus = "flashtex-explain: " + e }
-        }
-        explanationClient?.explain(result: result, documents: documents, supported: Completion.defaultSupported) { [weak self] outcome in
-            guard let self else { return }
-            switch outcome {
-            case .success(let list):
-                self.explanations.store(list, for: id, result: result, documents: documents)
-                self.editorMarksCache = nil // re-attach on the next read
-                self.explanationStatus = nil
-            case .failure(let f):
-                self.explanationStatus = f.text // shown in the footer; marks stay as they are
-            }
-        }
-    }
-
     // MARK: caret sync (source -> preview)
 
     /// UTF-8 byte offset of the editor caret in `activeText`, or nil when the
@@ -868,11 +618,14 @@ final class ShellModel {
         CaretSync.byteOffset(ofCaretUTF16: caretUTF16, in: activeText) // mid-surrogate carets rounded, never split
     }
 
-    /// Preview items under the caret, as `page number -> item indices`.
-    /// Empty when there is no result or the caret maps to nothing.
-    var caretItems: [Int: Set<Int>] { exactCaretItems } // CaretSync.swift: O(log n) index, memoized per result
+    /// What a new model holds before anything is opened: the protocol
+    /// contract fixture's documents (`protocol/fixtures/compile-request.json`,
+    /// the default: tests and automation are written against it), or — the
+    /// app's window — the untitled LaTeX document (`UntitledDocument`,
+    /// ProjectScaffold.swift).
+    enum Startup { case fixture, untitledDocument }
 
-    init() {
+    init(startup: Startup = .fixture) {
         let env = ProcessInfo.processInfo.environment
         // Caret following asks for the target only when a follow actually
         // fires, so this closure runs at most once per debounce interval.
@@ -884,34 +637,11 @@ final class ShellModel {
             return EditorDiagnostics.lineNumber(ofByte: byte, in: self.activeText)
         }
         defer {
-            // Demo/automation hooks: seed the editor from a .tex file and attach the
-            // built compiler at launch when FLASHTEX_AUTOATTACH=1 (opt-in so tests
-            // that construct ShellModel stay fixture-backed).
+            // Demo/automation hook: seed the editor from a .tex file.
             if let seed = env["FLASHTEX_SEED_FILE"], let text = try? String(contentsOfFile: seed, encoding: .utf8) {
                 replaceProject(entryText: text, named: URL(fileURLWithPath: seed).lastPathComponent)
                 documentURL = URL(fileURLWithPath: seed)
                 savedText = text
-            }
-            // A producer shipped inside the .app bundle attaches by default: the
-            // render pipeline (Latin Modern, display-list-v2) when bundled, else
-            // the plain compiler. FLASHTEX_COMPILER still names an explicit worker.
-            let bundledDir = Bundle.main.executableURL?.deletingLastPathComponent()
-            let hasBundled = ["flashtex-render", "flashtex-compiler"].contains { name in
-                bundledDir.map { FileManager.default.isExecutableFile(atPath: $0.appendingPathComponent(name).path) } ?? false
-            }
-            if env["FLASHTEX_AUTOATTACH"] == "1", let helper = env["FLASHTEX_PREVIEW_CONTROLLER"],
-               FileManager.default.isExecutableFile(atPath: helper) {
-                // Durable helper route (STDIO.md): the helper owns the ledger and the
-                // compiler; the direct worker is not attached alongside it.
-                if engineV3Enabled {
-                    controllerSuspendedForV3 = URL(fileURLWithPath: helper) // attached when v3 is turned off
-                } else {
-                    attachController(at: URL(fileURLWithPath: helper))
-                }
-            } else if env["FLASHTEX_AUTOATTACH"] != "0", (env["FLASHTEX_AUTOATTACH"] == "1" || hasBundled),
-               let url = Self.locateDefaultProducer() {
-                attachWorker(at: url)
-                compile()
             }
             let bundledBridge = Bundle.main.executableURL?.deletingLastPathComponent()
                 .appendingPathComponent("flashtex-bridge").path
@@ -922,7 +652,9 @@ final class ShellModel {
             }
             refreshChrome() // ShellChrome.swift: from here on the chrome follows the model, throttled
         }
-        if let fixtures = Self.locateFixturesDirectory() {
+        if startup == .untitledDocument {
+            loadUntitledDocument()
+        } else if let fixtures = Self.locateFixturesDirectory() {
             loadFixtures(request: fixtures.appendingPathComponent("compile-request.json"),
                          result: fixtures.appendingPathComponent("compile-result.json"))
         } else {
@@ -933,14 +665,39 @@ final class ShellModel {
 
     // MARK: loading
 
-    /// `beforeReplacing` runs once the fixture is valid, just before the
-    /// project is replaced; returning false replaces nothing (#806).
+    /// The window FlashTeX opens with no file (`Startup.untitledDocument`):
+    /// File › New Project…'s blank article, caret on the empty line under
+    /// `\section{Introduction}`. Like the fixture it replaces, it is fresh —
+    /// revision 1, no file, no saved text — so it is dirty only once edited
+    /// and quitting or opening a file asks nothing. The engine compiles it
+    /// like any other buffer (the pane's first compile).
+    /// `UntitledDocument.caretUTF16` while the window still shows the untouched
+    /// untitled document (the editor view places its caret there when made),
+    /// else nil.
+    var untitledDocumentCaret: Int? {
+        guard documentURL == nil, activePath == UntitledDocument.path,
+              activeText.utf8.count == UntitledDocument.text.utf8.count, activeText == UntitledDocument.text else { return nil }
+        return UntitledDocument.caretUTF16
+    }
+
+    private func loadUntitledDocument() {
+        documents = [.init(path: UntitledDocument.path, text: UntitledDocument.text)]
+        activePath = UntitledDocument.path
+        compiledDocuments = [:]
+        caretUTF16 = UntitledDocument.caretUTF16
+    }
+
+    /// Seeds the project from a runtime-v1 fixture pair: the documents,
+    /// entry and revision of `request` (or, for `<name>-result.json`, a
+    /// sibling `<name>-request.json`, e.g. Samples/multipage-*.json). The
+    /// result must be a valid `compile_result`; nothing of it is shown (the
+    /// engine typesets the documents). `beforeReplacing` runs once the
+    /// fixture is valid, just before the project is replaced; returning
+    /// false replaces nothing (#806).
     func loadFixtures(request: URL?, result: URL, beforeReplacing: () -> Bool = { true }) {
         loadError = nil
         do {
-            let res = try RuntimeV1.decodeCompileResult(Data(contentsOf: result))
-            // Seed the editor from `request` or, for `<name>-result.json`, a
-            // sibling `<name>-request.json` (e.g. Samples/multipage-*.json).
+            _ = try RuntimeV1.decodeCompileResult(Data(contentsOf: result))
             var candidates: [URL] = []
             if let request { candidates.append(request) }
             if let sibling = Self.siblingRequestURL(forResult: result) { candidates.append(sibling) }
@@ -948,13 +705,6 @@ final class ShellModel {
                 guard let data = try? Data(contentsOf: url) else { return nil }
                 return try? RuntimeV1.decodeCompileRequest(data)
             }).first
-            // A fixture is checked against its request's capabilities when that
-            // request is available, else against the set it declares itself.
-            let requested = req?.payload.layoutCapabilities ?? res.payload.layoutCapabilities ?? []
-            if let violation = LayoutNegotiation.violation(in: res.payload, requested: requested) {
-                loadError = "Rejected \(result.lastPathComponent): \(violation)"
-                return
-            }
             guard beforeReplacing() else { return }
             // Fixtures replace the whole project: detach any real file identity
             // first so Save can never write fixture content over the user's
@@ -964,23 +714,15 @@ final class ShellModel {
             files.conflict = nil
             watchOpenDocument()
             resetDiagnosticsAnnouncer() // DiagnosticsPanel.swift: the old project's spoken counts and timer do not carry over
-            self.result = res.payload
-            self.resultID = res.id
             self.fixtureURL = result
-            self.previewSource = .fixture
-            self.historicalPreview = nil
-            bindLayout(of: res.payload, requested: requested)
             if let req {
                 documents = req.payload.documents
                 activePath = req.payload.entryPath
                 editorRevision = req.payload.revision
-                compiledDocuments = Dictionary(uniqueKeysWithValues: req.payload.documents.map { ($0.path, $0.text) })
-                fetchExplanations(for: res.payload, id: res.id, documents: req.payload.documents)
-            } else {
-                if documents.isEmpty { documents = [.init(path: "main.tex", text: "")] }
-                compiledDocuments = [:]
+            } else if documents.isEmpty {
+                documents = [.init(path: "main.tex", text: "")]
             }
-            retainMarksAfterResultBound() // ShellModel+DiagnosticRetention.swift
+            compiledDocuments = [:]
             selection = nil
             navigationNote = nil
         } catch {
@@ -996,68 +738,6 @@ final class ShellModel {
         return result.deletingLastPathComponent().appendingPathComponent("\(stem)-request.json")
     }
 
-    func reloadFixture() {
-        guard let url = fixtureURL else { return }
-        let request = url.deletingLastPathComponent().appendingPathComponent("compile-request.json")
-        confirmLoadFixtures { self.loadFixturesReplacingProject(request: request, result: url, dirty: $0) }
-    }
-
-    func openFixturePanel() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
-        panel.message = "Choose a runtime v1 compile_result JSON file"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let request = url.deletingLastPathComponent().appendingPathComponent("compile-request.json")
-        confirmLoadFixtures { self.loadFixturesReplacingProject(request: request, result: url, dirty: $0) }
-    }
-
-    /// Loading a fixture replaces the whole project, so when a real document is
-    /// open or any document has unsaved edits, confirm first — same
-    /// Save/Discard/Cancel flow `openTexPanel` uses before opening another file
-    /// (#72, #786).
-    private func confirmLoadFixtures(_ load: (DirtyDisposition) -> Void) {
-        guard documentURL != nil || hasUnsavedDocuments else { load(.none); return }
-        let alert = NSAlert()
-        alert.messageText = "Save changes to \(unsavedDocumentsDescription) before loading the fixture?"
-        alert.informativeText = "Loading a fixture replaces the whole project." + (hasUnsavedDocuments ? " Discarded text stays recoverable: \(discardRecoveryRoutes)" : "")
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Discard")
-        alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            if documentURL == nil, hasUnsavedDocuments {
-                guard saveTexAs() else { return }
-            }
-            load(.saveFirst)
-            if files.conflict != nil { resolveConflictPanel() }
-        case .alertSecondButtonReturn:
-            load(.discard)
-        default: break
-        }
-    }
-
-    /// Loads a fixture in place of the project once every dirty document is
-    /// saved or explicitly discarded (`authorizeProjectReplacement`): a failed
-    /// or conflicted save of any document — entry or member, active or not —
-    /// loads nothing. A discard is recorded only once the fixture is valid, and
-    /// a discard whose text cannot be kept loads nothing (#806).
-    @discardableResult
-    func loadFixturesReplacingProject(request: URL?, result: URL, dirty: DirtyDisposition) -> OpenOutcome {
-        switch authorizeProjectReplacement(dirty, before: "loading the fixture") {
-        case .refused(let outcome):
-            return outcome
-        case .proceed(let discarding):
-            var kept = true
-            loadFixtures(request: request, result: result) {
-                guard let discarding else { return true }
-                kept = keepDiscarded(discarding, reason: "discarded when a fixture was loaded", before: "loading the fixture")
-                return kept
-            }
-            guard kept else { return .saveFailed }
-            return loadError == nil ? .opened : .readFailed
-        }
-    }
-
     // MARK: editing
 
     /// Replaces the whole project with one entry document (File > Open).
@@ -1071,22 +751,16 @@ final class ShellModel {
         documents = [.init(path: entryName, text: text)]
         activePath = entryName
         compiledDocuments = [:]
-        resetDiagnosticsAnnouncer() // DiagnosticsPanel.swift (also reached through `result = nil`; explicit, like loadFixtures)
-        result = nil
-        resultID = nil
-        retainedMarks = nil
-        previewSource = .none
-        historicalPreview = nil
-        negotiation = .legacy
-        fontSubstitutions = []
-        layoutDiagnostics = []
+        fixtureURL = nil
+        unicodeFontsScan = nil // the new project's preamble is scanned afresh (UnicodeFonts.swift)
+        resetDiagnosticsAnnouncer() // DiagnosticsPanel.swift: the old project's spoken counts and timer do not carry over
         selection = nil
         anchor = nil
         editorRevision += 1
         project.clearSaveConflicts() // a new project inherits no member conflicts
         bridgeDocumentReplaced()
-        // Engine-v3 preview: compile the new project once its file URL is set
-        // (the caller assigns `documentURL` right after this returns).
+        // The engine compiles the new project once its file URL is set (the
+        // caller assigns `documentURL` right after this returns).
         if engineV3Enabled {
             let openedAt = MonotonicClock.nowNs()
             engineV3OpenedAt = openedAt
@@ -1100,47 +774,11 @@ final class ShellModel {
         }
     }
 
-    /// One engine at a time: with the engine-v3 preview on, the old engine
-    /// compiles nothing and nothing it produced earlier stays in use. Every
-    /// old compile goes through `compile()` or `scheduleAutoCompile()`, which
-    /// return at once under v3; here the old engine's last output is dropped,
-    /// so underlines, explanations, navigation baselines, Export and Print
-    /// never read an old-engine result while v3 is shown. The worker process
-    /// stays attached and idle, so turning v3 off compiles at once.
-    func suspendOldEngineForV3() {
-        // The durable helper compiles every edit and save it records: under
-        // v3 it is set aside (saves take the direct route meanwhile).
-        if let helper = controllerLaunchURL ?? controller?.executable {
-            controllerSuspendedForV3 = helper
-            detachController()
-        }
-        debounce?.cancel()
-        debounce = nil
-        compileQueued = false
-        inFlightRequests = [:] // a late reply is then an unknown id, never applied
-        latestRequestID = nil
-        inFlightRevision = nil
-        result = nil
-        resultID = nil
-        retainedMarks = nil
-        compiledDocuments = [:]
-        previewSource = .none
-        historicalPreview = nil
-        negotiation = .legacy
-        fontSubstitutions = []
-        layoutDiagnostics = []
-        displayListV2 = nil
-        deltaInstalled = nil
-        lastLatencyMs = nil
-        latenciesMs = []
-    }
-
     /// The engine-v3 compile whose diagnostics are shown was made from these
     /// texts (EngineV3Session, at DONE): the baseline that the Problems panel's
     /// line labels and navigation rebase from, as an old result's request
     /// text was.
     func setEngineV3CompiledDocuments(_ docs: [String: String]) {
-        guard engineV3Enabled else { return }
         // The editor revision the compile's texts are, when the editor still
         // has them: a mechanical fix applies only then (`fixCompiledRevision`).
         let current = documents.allSatisfy { doc in docs[doc.path].map { $0.sameBytes(as: doc.text) } ?? true }
@@ -1151,28 +789,16 @@ final class ShellModel {
     }
 
     func updateActiveText(_ text: String) {
-        if engineV3Enabled { engineV3.textChanged(model: self, activeText: text) } // EngineV3Session.swift: first, before the model's own work
+        if engineV3Enabled { MainThreadProbe.time("model.v3TextChanged") { engineV3.textChanged(model: self, activeText: text) } } // EngineV3Session.swift: first, before the model's own work
         guard let i = documents.firstIndex(where: { $0.path == activePath }) else { return }
-        guard !documents[i].text.sameBytes(as: text) else { return }
+        guard !MainThreadProbe.time("model.compare", { documents[i].text.sameBytes(as: text) }) else { return }
         let old = documents[i].text, base = editorRevision
-        documents[i].text = text
-        editorRevision += 1
-        TypingBench.shared.noteRevision(editorRevision) // keystroke -> paint instrumentation
-        if !engineV3Enabled { scheduleAutoCompile() } // with the engine-v3 preview on, the old worker does not auto-compile
-        scheduleAutosave()
-        caretFollow.note(.edit) // CaretFollow.swift: an edit also re-arms following after a manual scroll
-        bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision)
-    }
-
-    private func scheduleAutoCompile() {
-        guard !engineV3Enabled else { return } // one engine at a time (`suspendOldEngineForV3`)
-        guard autoCompile, workerAttached else { return }
-        if controllerAttached { controllerSubmitEdit(); return }
-        debounce?.cancel()
-        if Self.debounceInterval == 0 { compile(); return }
-        let item = DispatchWorkItem { [weak self] in self?.compile() }
-        debounce = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: item)
+        MainThreadProbe.time("model.store") { documents[i].text = text }
+        MainThreadProbe.time("model.revision") { editorRevision += 1 }
+        MainThreadProbe.time("model.typingBench") { TypingBench.shared.noteRevision(editorRevision) } // keystroke -> paint instrumentation
+        MainThreadProbe.time("model.autosave") { scheduleAutosave() }
+        MainThreadProbe.time("model.caretFollow") { caretFollow.note(.edit) } // CaretFollow.swift: an edit also re-arms following after a manual scroll
+        MainThreadProbe.time("model.bridge") { bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision) }
     }
 
     /// Writes every dirty, file-backed document to disk a quiet moment after
@@ -1204,19 +830,11 @@ final class ShellModel {
         guard EditorPreferences.shared.autosave, documentURL != nil else { return }
         let entry = project.entryPath
         if project.isDirty(entry), files.conflict == nil, savesInFlight[entry] == nil {
-            if activePath == entry, controllerRoutesFiles {
-                enqueueSave(entry) { [weak self] in _ = await self?.saveEntryRouted() }
-            } else {
-                saveEntryTex()
-            }
+            saveEntryTex()
         }
         for path in documents.map(\.path) where path != entry && project.isDirty(path) && savesInFlight[path] == nil {
             if project.saveConflict(for: path) != nil { continue } // not retried until that member's conflict is resolved (#789)
-            if controllerAttached {
-                enqueueSave(path) { [weak self] in _ = await self?.project.saveDocument(path) }
-            } else {
-                _ = project.saveDocumentNow(path)
-            }
+            _ = project.saveDocumentNow(path)
         }
     }
 
@@ -1246,15 +864,6 @@ final class ShellModel {
         return task
     }
 
-    /// The entry's helper-routed save when it is still the active document
-    /// (`controllerSave` exports the *active* path), else the direct entry
-    /// save — a queued save may run after the user switched tabs.
-    func saveEntryRouted() async -> DocumentFilesState.SaveResult? {
-        if activePath == project.entryPath, controllerRoutesFiles { return await controllerSave() }
-        saveEntryTex()
-        return nil
-    }
-
     /// Performs a pending autosave immediately instead of waiting out
     /// `autosaveInterval` (real time is suppressed under XCTest, see
     /// `autosaveSuppressedUnderTest`, so tests exercise the write through
@@ -1281,422 +890,29 @@ final class ShellModel {
         navigateExactly(to: source, expectedText: expectedText)
     }
 
-    // MARK: worker transport (runtime v1 JSON Lines)
+    // MARK: compiling
 
-    /// Finds a built FT-002 worker: $FLASHTEX_COMPILER, then
-    /// crates/compiler/target/{release,debug}/flashtex-compiler under the repo root.
-    /// Finds a built render pipeline (`flashtex-render`, crates/render-pipeline:
-    /// a drop-in runtime-v1 producer measured with Latin Modern metrics, so
-    /// the preview draws Computer Modern-style text): $FLASHTEX_RENDER, the
-    /// app bundle, then crates/render-pipeline/target/{release,debug}.
-    static func locateRenderPipeline() -> URL? {
-        let fm = FileManager.default
-        if let env = ProcessInfo.processInfo.environment["FLASHTEX_RENDER"], fm.isExecutableFile(atPath: env) {
-            return URL(fileURLWithPath: env)
-        }
-        if let bundled = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("flashtex-render"),
-           fm.isExecutableFile(atPath: bundled.path) {
-            return bundled
-        }
-        guard let root = locateRepoRoot() else { return nil }
-        for profile in ["release", "debug"] {
-            let url = root.appendingPathComponent("crates/render-pipeline/target/\(profile)/flashtex-render")
-            if fm.isExecutableFile(atPath: url.path) { return url }
-        }
-        return nil
-    }
-
-    /// File > Attach Render Pipeline: the Latin Modern producer when it is built.
-    @discardableResult
-    func attachDiscoveredRenderPipeline() -> Bool {
-        guard let url = Self.locateRenderPipeline() else {
-            workerStatus = "no built flashtex-render found (build crates/render-pipeline or set FLASHTEX_RENDER)"
-            return false
-        }
-        attachWorker(at: url)
-        compile()
-        return true
-    }
-
-    /// The worker attached at launch: an explicit `FLASHTEX_COMPILER`, else the
-    /// bundled/built render pipeline, else the bundled/built compiler.
-    static func locateDefaultProducer() -> URL? {
-        let fm = FileManager.default
-        if let env = ProcessInfo.processInfo.environment["FLASHTEX_COMPILER"], fm.isExecutableFile(atPath: env) {
-            return URL(fileURLWithPath: env)
-        }
-        return locateRenderPipeline() ?? locateCompiler()
-    }
-
-    static func locateCompiler() -> URL? {
-        let fm = FileManager.default
-        if let env = ProcessInfo.processInfo.environment["FLASHTEX_COMPILER"], fm.isExecutableFile(atPath: env) {
-            return URL(fileURLWithPath: env)
-        }
-        if let bundled = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("flashtex-compiler"),
-           fm.isExecutableFile(atPath: bundled.path) {
-            return bundled
-        }
-        guard let root = locateRepoRoot() else { return nil }
-        for profile in ["release", "debug"] {
-            let url = root.appendingPathComponent("crates/compiler/target/\(profile)/flashtex-compiler")
-            if fm.isExecutableFile(atPath: url.path) { return url }
-        }
-        return nil
-    }
-
-    /// Attaches the discovered worker if any; returns whether one was found.
-    @discardableResult
-    func attachDiscoveredWorker() -> Bool {
-        guard let url = Self.locateCompiler() else {
-            workerStatus = "no built flashtex-compiler found (build crates/compiler or set FLASHTEX_COMPILER)"
-            return false
-        }
-        attachWorker(at: url)
-        return true
-    }
-
-    func attachWorkerPanel() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.message = "Choose the Rust worker executable (runtime v1 JSON Lines on stdin/stdout)"
-        if panel.runModal() == .OK, let url = panel.url { attachWorker(at: url) }
-    }
-
-    func attachWorker(at url: URL, arguments: [String] = []) {
-        detachWorker()
-        workerRelaunchTimes = []
-        launchWorker(at: url, arguments: arguments)
-    }
-
-    private func launchWorker(at url: URL, arguments: [String]) {
-        do {
-            worker = try WorkerClient(executable: url, arguments: arguments, transcript: transcript) { [weak self] event in
-                self?.handle(event)
-            }
-            workerLaunch = (url, arguments)
-            workerStatus = "attached: \(url.lastPathComponent)"
-            PreviewFonts.producerFace = PreviewFonts.face(forProducer: url.lastPathComponent)
-            log("launched \(url.path) (preview face: \(PreviewFonts.active.rawValue))")
-        } catch {
-            workerStatus = "launch failed: \(error.localizedDescription)"
-        }
-    }
-
-    func detachWorker() {
-        debounce?.cancel()
-        workerRelaunchWork?.cancel()
-        workerRelaunchWork = nil
-        workerLaunch = nil
-        worker?.terminate()
-        worker = nil
-        inFlightRequests.removeAll()
-        latestRequestID = nil
-        inFlightRevision = nil
-        compileQueued = false
-        if previewSource != .fixture { workerStatus = "no worker attached" }
-    }
-
-    /// Sends the current buffers as a `compile` request. Never blocks the UI.
-    ///
-    /// Edits coalesce behind the request in flight (the newest buffer goes out
-    /// when it returns). A layout-capability switch does not wait: it is sent
-    /// at once under a new id — at the same revision when the buffer has not
-    /// changed — and the older request's reply is then classified stale.
-    /// ⌘B, the title bar's ▶ and the palette's Compile: compile with the
-    /// engine the preview shows. Under v3 that is the host (and, after the
-    /// host stopped, a restart); otherwise the old engine, as before.
+    /// ⌘B, the title bar's ▶ and the palette's Compile: the engine compiles
+    /// now (and, after the host stopped, restarts).
     func compileCommand() {
-        if engineV3Enabled { engineV3.compileNow(model: self); return }
-        if !outputBoundExplicitRetry() { compile() }
+        projectPackages.explicitRequest(compiling: true) // ProjectPackages.swift: ⌘B ends the typing grace period
+        engineV3.compileNow(model: self)
     }
 
     /// Whether ⌘B and the auto-compile setting have an engine to drive.
-    var canCompile: Bool { engineV3Enabled || workerAttached }
+    var canCompile: Bool { engineV3Enabled }
 
-    /// Whether Export PDF… and Print… are enabled: the engine-v3 host's
-    /// export under v3, else a complete display list (change-only mirror).
-    var exportAvailable: Bool { engineV3Enabled ? engineV3.exportAvailable : toolbarExportable }
+    /// Whether Export PDF… and Print… are enabled: the engine's export.
+    var exportAvailable: Bool { engineV3Enabled && engineV3.exportAvailable }
 
     /// An unopened file the project reads changed on disk (ProjectDocuments'
-    /// include watchers): recompile with the engine the preview shows.
+    /// include watchers): the engine compiles again.
     func implicitFilesChanged() {
-        if engineV3Enabled { engineV3.compileNow(model: self, reason: "files"); return }
-        compile()
+        if engineV3Enabled { engineV3.compileNow(model: self, reason: "files") }
     }
 
-    func compile() {
-        // One engine at a time: with the engine-v3 preview on, the old engine
-        // never compiles (on open, ⌘B, a file watcher, a package fetch, a
-        // relaunch, a layout or window change).
-        guard !engineV3Enabled else { return }
-        if controllerAttached { controllerCompile(); return }
-        guard let worker, worker.isRunning else {
-            workerStatus = "no worker attached"
-            return
-        }
-        if outputBoundBlocksCompile { return } // the document still exceeds the worker line limit (ShellModel+OutputBounds.swift)
-        debounce?.cancel()
-        let capabilities = requestedLayoutCapabilities
-        if let latestID = latestRequestID, let latest = inFlightRequests[latestID] {
-            guard DisplayListDelta.stripPerRequest(latest.layoutCapabilities) != capabilities else {
-                compileQueued = true
-                return
-            }
-            log("layout capability switch while \(latestID) is in flight: re-requesting revision \(editorRevision) under \(LayoutNegotiation.describe(capabilities))")
-        } else if let current = result, previewSource != .fixture, current.revision == editorRevision,
-                  negotiation.requested == capabilities, previewV2 || !v1PagesElided,
-                  !v2WindowResendNeeded, fontsApplied == manifest.requestFonts, packagesApplied == projectPackages.revision {
-            return // buffers, capability set, window, fonts and resolved packages unchanged since the applied result
-        }
-        let id = "mac-\(nextRequestID)"
-        nextRequestID += 1
-        // include-closure-compile (lane mac-includes-auto): every unopened
-        // \input/\include the entry transitively reaches goes out too, read
-        // fresh from disk (never a project member, never durable) — see
-        // ProjectDocuments.implicitClosureDocuments().
-        let sendDocuments = documents + project.implicitClosureDocuments().map { RuntimeV1.Document(path: $0.path, text: $0.text) }
-        let projectId = result?.projectId ?? "demo"
-        // Per-request opt-ins next to `display-list-v2` (never a mode switch):
-        // the v1 pages are elided while the v2 pane paints, and the installed
-        // v2 frame is acknowledged so the producer may answer with a delta.
-        var sent = capabilities
-        var displayListBase: RuntimeV1.CompileRequest.DisplayListBase?
-        var displayListWindow: RuntimeV1.CompileRequest.DisplayListWindow?
-        if previewV2, capabilities.contains(V2Live.capability) {
-            if DisplayListDelta.v2OnlyEnabled { sent.append(DisplayListDelta.v2OnlyCapability) }
-            if let window = v2WindowDesired(capabilities: capabilities) {
-                // display-list-v2-window (§7): mutually exclusive with -delta
-                // in r1 — a windowed producer cannot digest pages it has not
-                // materialised — so an engaged window suppresses the delta
-                // acknowledgement; it composes with -only above.
-                sent.append(V2Window.capability)
-                displayListWindow = window
-            } else if DisplayListDelta.enabled, let installed = deltaInstalled, installed.list.projectId == projectId {
-                sent.append(DisplayListDelta.capability)
-                displayListBase = installed.acknowledgement
-            }
-        }
-        sent = DisplayListLinks.sent(with: sent)
-        let request = RuntimeV1.CompileRequest(
-            projectId: projectId,
-            revision: editorRevision,
-            entryPath: project.entryPath, // the entry stays first whichever document is being edited
-            documents: sendDocuments,
-            layoutCapabilities: sent.isEmpty ? nil : sent,
-            displayListBase: displayListBase,
-            displayListWindow: displayListWindow,
-            // display-list-v2-images: the producer sizes `\includegraphics`
-            // files under the open project's directory (V2ImageStore.swift).
-            projectRoot: capabilities.contains(RenderingV2.imagesCapability) ? project.projectRoot?.path : nil,
-            // `\today` must print today's date, and the compiler is forbidden
-            // from reading a clock (runtime-v1 requires byte-identical output
-            // for byte-identical input). So the app reads it -- in the user's
-            // own timezone, which is the whole point of a *local* calendar date
-            // -- and sends it as an ordinary request input.
-            // protocol/proposals/runtime-v1-request-date.md
-            date: RuntimeV1.localDate(),
-            // The manifest's `[fonts]` (ProjectManifest.swift): the families
-            // the text/sans/mono/math slots default to; nil sends nothing.
-            fonts: manifest.requestFonts)
-        do {
-            PerfSignposts.event("compileSend", editorRevision)
-            if TypingBench.isBenchActive { FlashTeXLog.write("compile: sending revision \(editorRevision) at \(MonotonicClock.nowNs())") }
-            try worker.send(request, id: id)
-            inFlightRequests[id] = InFlight(projectId: request.projectId, revision: request.revision,
-                                            documents: sendDocuments, sentAt: Date(), layoutCapabilities: sent,
-                                            window: displayListWindow, fonts: request.fonts, packagesRevision: projectPackages.revision)
-            latestRequestID = id
-            inFlightRevision = editorRevision
-            workerStatus = "compiling revision \(editorRevision) (\(id))…"
-        } catch {
-            workerStatus = "send failed: \(error.localizedDescription)"
-        }
-    }
-
-    /// Delivers an event as if the worker had sent it; a `compile_result` or
-    /// `error` is also written to the transcript (re-encoded) so hand-delivered
-    /// asynchronous replies are visible to `check_runtime.py`.
-    func handleForTesting(_ event: WorkerClient.Event) {
-        if let transcript {
-            switch event {
-            case .result(let env):
-                if let line = try? RuntimeV1.encodeLine(env) { transcript.record(line) }
-            case .error(let id, let message):
-                let env = RuntimeV1.Envelope(protocolVersion: RuntimeV1.protocolVersion, id: id, type: "error",
-                                             payload: RuntimeV1.ErrorPayload(message: message))
-                if let line = try? RuntimeV1.encodeLine(env) { transcript.record(line) }
-            default: break
-            }
-        }
-        handle(event)
-    }
-
-    /// `inFlightRevision` tracks the latest request while it is unanswered.
-    private func refreshInFlightRevision() {
-        inFlightRevision = latestRequestID.flatMap { inFlightRequests[$0]?.revision }
-    }
-
-    private func handle(_ event: WorkerClient.Event) {
-        switch event {
-        case .result(let env):
-            let incoming = env.payload
-            // Correlate to the exact in-flight request: id, project, and revision must
-            // all match. Unsolicited or mismatched results are logged and never applied.
-            guard let sent = inFlightRequests[env.id] else {
-                log("ignored compile_result with unknown id \(env.id) (revision \(incoming.revision))")
-                return
-            }
-            inFlightRequests.removeValue(forKey: env.id)
-            refreshInFlightRevision()
-            guard incoming.projectId == sent.projectId, incoming.revision == sent.revision else {
-                let msg = "compile_result \(env.id) reports project \(incoming.projectId) revision \(incoming.revision); request was project \(sent.projectId) revision \(sent.revision)"
-                log("rejected mismatched " + msg)
-                workerStatus = "protocol violation: " + msg
-                return
-            }
-            // Layout capabilities are per request: the reply may only claim what
-            // this request asked for, and may only carry negotiated shapes.
-            if let violation = LayoutNegotiation.violation(in: incoming, requested: sent.layoutCapabilities) {
-                let msg = "compile_result \(env.id): \(violation)"
-                log("rejected " + msg)
-                workerStatus = "protocol violation: " + msg
-                return
-            }
-            // Superseded: a newer request went out after this one (capability
-            // switch, or an edit sent after an error). Valid, but stale for the
-            // preview — check_runtime.py's `stale_ignore` — so it never changes
-            // the result or the renderer mode.
-            if let latest = latestRequestID, latest != env.id {
-                log("ignored stale compile_result \(env.id) (revision \(incoming.revision), \(LayoutNegotiation.describe(sent.layoutCapabilities))): superseded by \(latest)")
-                return
-            }
-            // Contract: never replace a newer preview with an older revision.
-            if let current = result, previewSource != .fixture, incoming.revision < current.revision {
-                log("ignored stale compile_result revision \(incoming.revision) < \(current.revision)")
-                return
-            }
-            result = incoming
-            resultID = env.id
-            // Test-only, synchronous, in order: an `@Observable` willChange
-            // notification fires before the new value lands, so a test that
-            // wants every id `resultID` ever took (not just the latest) cannot
-            // reconstruct that history by deferring its read to a later
-            // main-actor turn -- two applies close enough together in
-            // wall-clock time can otherwise coalesce before the deferred read
-            // runs, silently dropping the earlier one under load (GH-680).
-            onResultApplied?(env.id)
-            // Change-only: `@Observable` fires for every assignment, equal or not,
-            // and each of these re-evaluated the header/status views per reply.
-            let source = PreviewSource.worker(worker?.executable.lastPathComponent ?? "worker")
-            if previewSource != source { previewSource = source }
-            if historicalPreview != nil { historicalPreview = nil }
-            bindLayout(of: incoming, requested: sent.layoutCapabilities)
-            // Test-only, synchronous, after binding: `negotiation` now
-            // reflects THIS reply (it still held the previous reply's value
-            // at the `onResultApplied` call above).
-            onResultBound?(incoming.revision, negotiation)
-            compiledDocuments = Dictionary(uniqueKeysWithValues: sent.documents.map { ($0.path, $0.text) })
-            retainMarksAfterResultBound() // ShellModel+DiagnosticRetention.swift
-            fetchExplanations(for: incoming, id: env.id, documents: sent.documents)
-            let ms = Date().timeIntervalSince(sent.sentAt) * 1000
-            TypingBench.shared.noteCompile(revision: incoming.revision, ms: ms)
-            if TypingBench.isBenchActive { FlashTeXLog.write("compile: applied revision \(incoming.revision) at \(MonotonicClock.nowNs())") }
-            lastLatencyMs = ms
-            latenciesMs.append(ms)
-            if latenciesMs.count > 100 { latenciesMs.removeFirst(latenciesMs.count - 100) }
-            let latencyText = String(format: " in %.0f ms", ms)
-            workerStatus = "revision \(incoming.revision): \(incoming.status.rawValue), \(incoming.diagnostics.count) diagnostics\(latencyText)"
-            if selection != nil { selection = nil } // the editor observes `selection`; a nil-to-nil write still invalidates it
-            // display-list-v2-window (V2PageWindow.swift): bind the applied
-            // request's window, engage after an over-limit failure/decline,
-            // and re-request the same buffers under the now-desired window.
-            let windowRetry = v2WindowNote(applied: incoming, sentWindow: sent.window)
-            fontsApplied = sent.fonts
-            packagesApplied = sent.packagesRevision
-            if compileQueued {
-                compileQueued = false
-                compile() // no-op when buffers and capability set are unchanged
-            } else if windowRetry {
-                compile() // same buffers, new window: a new id at the same revision
-            }
-        case .displayList(let id, let line):
-            receiveDisplayListV2(id: id, line: line) // negotiated live v2 frame (PreviewV2View.swift)
-        case .error(let id, let message):
-            let wasLatest = latestRequestID == id
-            inFlightRequests.removeValue(forKey: id)
-            refreshInFlightRevision()
-            workerStatus = "worker error for \(id): \(message)"
-            log("error \(id): \(message)")
-            // A keystroke coalesced behind the errored request still wants its
-            // preview: send the newest buffer once (a new revision, a new id).
-            // Nothing is re-sent when the buffer did not change.
-            if wasLatest, inFlightRevision == nil, compileQueued {
-                compileQueued = false
-                compile()
-            } else if inFlightRevision == nil {
-                compileQueued = false
-            }
-        case .protocolViolation(let message):
-            workerStatus = "protocol violation: \(message)"
-            log("protocol violation: \(message)")
-            outputBoundHandleWorkerViolation(message) // an oversized compile_result: name the bound and the document size
-        case .stderr(let text):
-            log(text.trimmingCharacters(in: .whitespacesAndNewlines))
-        case .exited(let code):
-            inFlightRequests.removeAll()
-            deltaInstalled = nil // a restarted producer holds no snapshot
-            v2Window.applied = nil // the next request states its window afresh
-            latestRequestID = nil
-            inFlightRevision = nil
-            compileQueued = false
-            workerStatus = "worker exited (\(code))"
-            log("worker exited with status \(code)")
-            worker = nil
-            scheduleWorkerRelaunch(afterExit: code)
-        }
-    }
-
-    /// An abnormal exit of a worker we launched relaunches the same executable
-    /// after a short backoff, at most `maxWorkerRelaunches` times per minute;
-    /// beyond that the exit is left visible for the user. A clean exit (0) or
-    /// an explicit detach never relaunches. The preview keeps the last result.
-    private func scheduleWorkerRelaunch(afterExit code: Int32) {
-        guard code != 0, let launch = workerLaunch else { return }
-        let now = Date()
-        workerRelaunchTimes = workerRelaunchTimes.filter { now.timeIntervalSince($0) < 60 }
-        guard workerRelaunchTimes.count < Self.maxWorkerRelaunches else {
-            workerStatus = "worker exited (\(code)); not relaunched: \(Self.maxWorkerRelaunches) relaunches in the last minute — File > Attach Built Compiler to retry"
-            log("worker relaunch limit reached")
-            return
-        }
-        let delay = Self.workerRelaunchDelays[min(workerRelaunchTimes.count, Self.workerRelaunchDelays.count - 1)]
-        workerRelaunchTimes.append(now)
-        workerStatus = String(format: "worker exited (%d); relaunching in %.1f s", code, delay)
-        log("relaunching \(launch.url.lastPathComponent) in \(delay) s (attempt \(workerRelaunchTimes.count))")
-        let item = DispatchWorkItem { [weak self] in
-            guard let self, self.worker == nil, let launch = self.workerLaunch else { return }
-            self.launchWorker(at: launch.url, arguments: launch.arguments)
-            self.workerRelaunchCount += 1
-            if self.workerAttached {
-                self.log("relaunched \(launch.url.lastPathComponent)")
-                if self.autoCompile { self.compile() }
-            }
-        }
-        workerRelaunchWork = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
-    }
-
-    /// Documents (path → text) the current result was compiled from.
+    /// Documents (path → text) the engine's last compile read.
     func setCompiledDocuments(_ docs: [String: String]) { compiledDocuments = docs }
-
-    /// Records one producer round trip for the status line's latency summary.
-    func recordLatency(_ ms: Double) {
-        lastLatencyMs = ms
-        latenciesMs.append(ms)
-        if latenciesMs.count > 100 { latenciesMs.removeFirst(latenciesMs.count - 100) }
-    }
 
     func log(_ line: String) {
         FlashTeXLog.write(line)
@@ -1708,7 +924,6 @@ final class ShellModel {
 
     /// Pins the current caret as the insertion destination (`destination_id`).
     func pinAnchorAtCaret() {
-        if let why = historicalRefusal(of: "pinning an insertion point") { captureNote = why; return }
         guard let anchor = Insertion.makeAnchor(id: "mac-anchor-\(nextAnchorNumber)", path: activePath,
                                                 text: activeText, caretUTF16: caretUTF16, revision: editorRevision)
         else { captureNote = "Caret position is not valid."; return }

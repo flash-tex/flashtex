@@ -1,0 +1,14 @@
+% u02-texgyre-features: \setmainfont with Bold/Italic/SmallCaps faces and OpenType features (TeX Live fonts by file name)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyrepagella}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold,
+  ItalicFont=*-italic, BoldItalicFont=*-bolditalic, Ligatures=TeX, Numbers=OldStyle]
+\setsansfont{texgyreheros}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, Scale=MatchLowercase]
+\setmonofont{texgyrecursor}[Extension=.otf, UprightFont=*-regular, Scale=MatchLowercase]
+\newfontfamily\lining{texgyrepagella-regular.otf}[Numbers=Lining]
+\begin{document}
+Pagella --- ``TeX ligatures'' -- 1234567890 oldstyle, \textbf{bold 2026}, \textit{italic fi ffl},
+\textbf{\textit{bold italic}}, \textsc{Small Caps Text}, {\lining lining 1234567890}.
+\textsf{Heros sans scaled to match lowercase xyz}, \texttt{cursor mono 0Ol1}.
+{\addfontfeatures{LetterSpace=10}spaced out} and {\addfontfeatures{Color=AA0000}red via fontspec}.
+\end{document}

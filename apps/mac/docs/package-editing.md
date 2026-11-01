@@ -5,6 +5,12 @@ intelligence (lane pkg-editor): the engine's `metadata.packages` first, the
 package inputs' text as the fallback.
 User-facing behaviour is in [docs/user/gui.md › Packages and classes](../../../docs/user/gui.md#packages-and-classes).
 
+**Since retirement stage S6** the app runs only the new engine
+(`flashtex-host`), which does not send `metadata.packages`. Nothing sets
+`compileResult` in `Completion.swift` any more, so the records path described
+next is dormant and every feature works from the fallback, the package
+inputs' text.
+
 ## What the engine puts on the wire
 
 Every `compile_result` for a project whose document loads a project
@@ -19,7 +25,7 @@ command, the parameter shape (`arity`, `optional_default`, `signature`)
 and the byte span of the whole defining statement in that file. Both
 producers write it: the compiler's own `compile_result` and
 `flashtex-render` (`crates/render-pipeline`, `v1::metadata_json`), the
-worker the app actually runs. The object is absent, never null, for a
+worker the app ran until S6. The object is absent, never null, for a
 project without package files.
 
 The app decodes it as `RuntimeV1.CompileResult.metadata`

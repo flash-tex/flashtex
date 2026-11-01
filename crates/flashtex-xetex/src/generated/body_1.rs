@@ -131,6 +131,7 @@ impl Globals {
             }
             if __goto_1 <= 1 { // found
                 self.mem[crate::ix::U((r) as usize)].set_hh_rh((268435455i32).wrapping_neg());
+                self.dl_new_node(r);
                 self.var_used = (self.var_used).wrapping_add(s);
                 // §1705
                 if (s >= medium_node_size) {
@@ -2217,6 +2218,7 @@ impl Globals {
                     }
                 }
                 // §230
+                self.dl_copy(r, p);
                 self.mem[crate::ix::U((q) as usize)].set_hh_rh(r);
                 q = r;
                 p = self.mem[crate::ix::U((p) as usize)].hh().rh();

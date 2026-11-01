@@ -1,0 +1,18 @@
+% polyglossia: Russian with CM Unicode (TeX Live's cm-unicode)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{cmunrm.otf}[BoldFont=cmunbx.otf, ItalicFont=cmunti.otf, BoldItalicFont=cmunbi.otf]
+\setsansfont{cmunss.otf}[BoldFont=cmunsx.otf, ItalicFont=cmunsi.otf]
+\setmonofont{cmuntt.otf}
+\usepackage{polyglossia}
+\setmainlanguage{russian}
+\setotherlanguage{english}
+\begin{document}
+\section{Введение}
+Съешь же ещё этих мягких французских булок, да выпей чаю. Широкая электрификация
+южных губерний даст мощный толчок подъёму сельского хозяйства.
+\textbf{Полужирный}, \textit{курсив}, \textsf{рубленый}, \texttt{моноширинный}.
+\subsection{Формулы}
+Если $x>0$, то $\sqrt{x}^2 = x$. \textenglish{English text inside Russian.}
+Дата: \today.
+\end{document}

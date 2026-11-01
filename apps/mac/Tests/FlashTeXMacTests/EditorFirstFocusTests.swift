@@ -17,7 +17,6 @@ final class EditorFirstFocusTests: XCTestCase {
                 selection: model.selection,
                 pendingEdit: model.pendingEdit,
                 marks: model.editorMarks,
-                result: model.result,
                 editorRevision: model.editorRevision,
                 projectIndexMetadata: model.completionMetadata,
                 projectFiles: model.documents.map(\.path),

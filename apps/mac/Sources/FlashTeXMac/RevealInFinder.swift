@@ -8,8 +8,7 @@ import Foundation
 /// `ProjectDocuments.rootedFile` applies to every other read, so the action
 /// can never reach outside the project root.
 enum RevealInFinder {
-    /// Replaceable so tests never call `NSWorkspace`
-    /// (DisplayListLinks.swift's `openURL` is the same pattern).
+    /// Replaceable so tests never call `NSWorkspace`.
     static var activateFileViewerSelecting: ([URL]) -> Void = { NSWorkspace.shared.activateFileViewerSelecting($0) }
 
     /// The file to reveal for `path` under `root`, or nil when there is

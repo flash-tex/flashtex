@@ -230,6 +230,8 @@ typedef struct kpathsea_instance {
     hash_table_type db;                 /* The hash table for all ls-R's */
     hash_table_type alias_db;           /* The hash table for the aliases */
     str_list_type db_dir_list;          /* list of ls-R's */
+    /* FlashTeX change (2026-10-09): ls-R's entries, packed (db.c). */
+    struct flashtex_packed_db *flashtex_packed_db;
     /* from debug.c */
     unsigned debug;                     /* for --kpathsea-debug */
     /* from dir.c */

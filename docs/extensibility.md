@@ -14,9 +14,13 @@ use. None of them require patching the app.
 
 Every non-trivial feature in FlashTeX is a separate executable the app
 launches as a child process and talks to over private pipes with
-newline-delimited JSON. The compiler, PDF writer, preview controller, edit
-ledger, project-files indexer, capture bridge and the rule-based diagnostics
-explainer all work this way; so did the removed assistant, and so can yours.
+newline-delimited JSON. The edit ledger, project-files indexer and capture
+bridge work this way; so did the old engine's compiler, PDF writer and
+preview controller, the rule-based diagnostics explainer and the removed
+assistant (all gone from the app since retirement stage S6), and so can
+yours. The engine host (`flashtex-host`) is the exception: it speaks the
+display-list-v3 protocol over a Unix socket
+(`apps/mac/docs/engine-v3-preview.md`).
 
 The shape (`apps/mac/Sources/FlashTeXMac/LineProcessClient.swift`):
 
@@ -42,9 +46,9 @@ The shape (`apps/mac/Sources/FlashTeXMac/LineProcessClient.swift`):
   `components.json`.
 
 The runtime-v1 (`docs/contracts/runtime-v1.md`) and transfer-v1 contracts are
-the reference wire shapes; `crates/diagnostic-explanations` (the
-`flashtex-explain` front end) is the smallest complete example: one request
-type in, one reply type out, no state, no network.
+the reference wire shapes; `ExplanationClient` (`EditorDiagnostics.swift`),
+the client of the former `flashtex-explain`, is the smallest complete client:
+one request type in, one reply type out, no state, no network.
 
 A third-party feature therefore is: an executable speaking this protocol, a
 `FLASHTEX_<NAME>` variable (or a bundle copy), and a small Swift client that

@@ -1,0 +1,8 @@
+% n001-lm-text: Latin Modern Roman OTF by file name: ligatures, kerns, accents
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\hbox{office difficult flag AVAT Ta. Wo, ``quotes'' -- --- é ñ ß Ŵ}
+\lsshipbox0
+\end

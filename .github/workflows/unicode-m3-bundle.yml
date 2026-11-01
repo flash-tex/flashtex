@@ -1,0 +1,226 @@
+# Unicode mode's no-TeX-Live corpus run against the bundle THIS COMMIT defines
+# (lane M3-BUNDLE; criterion 5 of docs/evidence/unicode-m3-2026-10-11). It
+# needs no published release: the bundle is packed here from the pinned tree
+# and the branch's tools/bundle/tl2026 lists, and the macOS leg reads it over
+# file:// (FLASHTEX_BUNDLE_URL + FLASHTEX_BUNDLE_DIGEST), as the published one
+# would be read over https.
+#
+#   linux  the pinned scheme-full tree (bundle-publish.yml's BUNDLE_IMAGE,
+#          laid out by fetch_image.py):
+#            gaps     TeX Live's xelatex -recorder over the corpus; every file
+#                     it reads (and every font file its XDV names), mapped to
+#                     the tlpdb package owning it, against what the bundle
+#                     packs (tools/unicode-m3/bundle_gaps.py), with licences
+#            pack     texbundle.py pack from this commit's lists (licence
+#                     check included), and the release notes' licence table
+#            texlive  the corpus through flashtex-host-unicode with this TeX
+#                     Live (notex_corpus.py --mode texlive): the PDFs the
+#                     bundle's run must equal byte for byte
+#   mac    macos-15, no TeX Live: the corpus from the packed bundle alone,
+#          sandboxed (notex_corpus.py --mode notex), compared with the Linux
+#          TeX Live run
+name: unicode-m3-bundle
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main, "gh-readonly-queue/**"]
+    paths:
+      - ".github/workflows/unicode-m3-bundle.yml"
+      - "tools/unicode-m3/bundle_gaps.py"
+      - "tools/bundle/tl2026/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicode-m3-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # bundle-publish.yml's BUNDLE_IMAGE (texlive/texlive:latest, scheme-full,
+  # TeX Live 2026, 2026-10-04) and its GHCR mirror
+  BUNDLE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+  MIRROR: ghcr.io/flash-tex/texlive
+
+jobs:
+  linux:
+    name: gaps, pack, TeX Live run (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      digest: ${{ steps.pack.outputs.digest }}
+    steps:
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / /mnt
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: the TeX Live tree (on /mnt)
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /mnt/tl && sudo chown "$(id -u):$(id -g)" /mnt/tl
+          python3 tools/bundle/fetch_image.py "$BUNDLE_IMAGE" /mnt/tl/texlive --mirror "$MIRROR"
+          TL=/mnt/tl/texlive/2026
+          echo "TL=$TL" >> "$GITHUB_ENV"
+          echo "OUT=$RUNNER_TEMP/m3" >> "$GITHUB_ENV"
+          echo "$TL/bin/x86_64-linux" >> "$GITHUB_PATH"
+      - name: fonts by name for both engines (as unicode-m3.yml)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq fontconfig qpdf
+          python3 -m pip install -q fonttools pillow
+          # one file per font name in both engines (tools/unicode-m3/fontconfig.py)
+          python3 tools/unicode-m3/fontconfig.py --texlive "$TL" --out "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          export FONTCONFIG_FILE="$RUNNER_TEMP/fonts.conf"
+          FONTCONFIG_FILE="$RUNNER_TEMP/fonts.conf" fc-cache -f >/dev/null 2>&1 || true
+          xelatex --version | head -1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unicode-m3-bundle-linux
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: flashtex-dist, flashtex-host-unicode, fonts_line, dl3-client
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-dist
+          cargo build --release --locked -p flashtex-display-list --bin dl3-client
+          (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode --example fonts_line)
+      - name: assemble the corpus
+        run: |
+          set -euo pipefail
+          python3 tools/unicode-m3/corpus.py assemble --out "$OUT/corpus" \
+            --fonts-line crates/flashtex-xetex/target/release/examples/fonts_line --cache "$RUNNER_TEMP/corpus-cache"
+      - name: "gaps: what xelatex reads that the bundle lacks"
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/bundle_gaps.py --root "$TL" --cases-dir "$OUT/corpus" -j 4 \
+            --json "$OUT/gaps.json" 2>&1 | tee "$OUT/gaps.txt"
+          { echo '## gaps'; echo '```'; sed -n '/packages the bundle lacks/,$p' "$OUT/gaps.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: "pack: the bundle of this commit's lists"
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ttb"
+          idx=()
+          if python3 tools/bundle/texbundle.py pack --help | grep -q -- --font-index-tool; then
+            idx=(--font-index-tool crates/flashtex-xetex/target/release/flashtex-host-unicode)
+          fi
+          python3 tools/bundle/texbundle.py pack --root "$TL" --dist target/release/flashtex-dist "${idx[@]}" \
+            --out "$RUNNER_TEMP/ttb/bundle.ttb" --json "$OUT/pack.json"
+          d="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["digest"])' "$OUT/pack.json")"
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+          echo "packed digest $d ($(stat -c %s "$RUNNER_TEMP/ttb/bundle.ttb") bytes)" | tee -a "$GITHUB_STEP_SUMMARY"
+          # the release notes' licence table (notes checks the lock's digest:
+          # give it a lock naming this one)
+          lock="$RUNNER_TEMP/test.lock"
+          sed "s/^digest = .*/digest = \"$d\"/" tools/bundle/tl2026/flashtex-bundle.lock > "$lock"
+          python3 tools/bundle/texbundle.py notes --root "$TL" --pack "$OUT/pack.json" --lock "$lock" \
+            --image "$BUNDLE_IMAGE" --commit "$GITHUB_SHA" --out "$OUT/notes.md" --licences "$OUT/packages.tsv"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m3-bundle-ttb
+          path: ${{ runner.temp }}/ttb/bundle.ttb
+          retention-days: 7
+          compression-level: 0
+      - name: "texlive: the corpus through flashtex-host-unicode with this TeX Live"
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/notex_corpus.py --mode texlive \
+            --host crates/flashtex-xetex/target/release/flashtex-host-unicode --client target/release/dl3-client \
+            --cases-dir "$OUT/corpus" --out "$OUT/texlive" --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m3-bundle-linux
+          path: |
+            ${{ runner.temp }}/m3/*.json
+            ${{ runner.temp }}/m3/*.txt
+            ${{ runner.temp }}/m3/*.md
+            ${{ runner.temp }}/m3/*.tsv
+            ${{ runner.temp }}/m3/texlive/pdf/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  mac:
+    name: the corpus from the packed bundle alone (macos-15)
+    needs: linux
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - name: results directory
+        run: echo "OUT=$RUNNER_TEMP/m3" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: no TeX Live here
+        run: |
+          for x in pdflatex pdftex kpsewhich xelatex; do
+            if command -v "$x"; then echo "::error::$x is installed: this leg needs a Mac without TeX Live"; exit 1; fi
+          done
+          if ls -d /usr/local/texlive /Library/TeX 2>/dev/null; then echo "::error::a TeX Live tree is present"; exit 1; fi
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unicode-m3-mac
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: build the Unicode host, fonts_line and dl3-client
+        run: |
+          set -euo pipefail
+          (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode --example fonts_line)
+          cargo build --release --locked -p flashtex-display-list --bin dl3-client
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: python and qpdf
+        run: |
+          brew install qpdf >/dev/null
+          python3 -m pip install -q fonttools pillow
+      - uses: actions/download-artifact@v4
+        with:
+          name: m3-bundle-ttb
+          path: ${{ runner.temp }}/ttb
+      - uses: actions/download-artifact@v4
+        with:
+          name: m3-bundle-linux
+          path: ${{ runner.temp }}/linux
+      - name: assemble the corpus
+        run: |
+          python3 tools/unicode-m3/corpus.py assemble --out "$OUT/corpus" \
+            --fonts-line crates/flashtex-xetex/target/release/examples/fonts_line --cache "$RUNNER_TEMP/corpus-cache"
+      - name: "the corpus from the packed bundle alone (no TeX Live)"
+        env:
+          DIGEST: ${{ needs.linux.outputs.digest }}
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/notex_corpus.py --mode notex \
+            --url "file://$RUNNER_TEMP/ttb/bundle.ttb" --digest "$DIGEST" \
+            --host crates/flashtex-xetex/target/release/flashtex-host-unicode --client target/release/dl3-client \
+            --cases-dir "$OUT/corpus" --out "$OUT/notex" --compare-with "$RUNNER_TEMP/linux/texlive/pdf" \
+            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || true
+          { echo '## no TeX Live'; echo '```'; cat "$OUT/notex.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m3-bundle-mac
+          path: |
+            ${{ runner.temp }}/m3/*.json
+            ${{ runner.temp }}/m3/*.txt
+          if-no-files-found: ignore
+          retention-days: 14

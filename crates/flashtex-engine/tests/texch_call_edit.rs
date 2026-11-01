@@ -17,8 +17,23 @@ mod common;
 use flashtex_engine::resolver::find_texlive_bin;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+
+// The same numbers on Linux and macOS; SIG_DFL is 0 on both.
+const SIGINT: std::ffi::c_int = 2;
+const SIGQUIT: std::ffi::c_int = 3;
+
+extern "C" {
+    fn signal(sig: std::ffi::c_int, handler: usize) -> usize;
+}
+
+/// `signal(sig, SIG_DFL)`.
+fn default_signal(sig: std::ffi::c_int) {
+    // SAFETY: SIG_DFL (0) is a valid disposition for SIGINT and SIGQUIT.
+    unsafe { signal(sig, 0) };
+}
 
 const T_TEX: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\\undefined\n\\end\n";
 
@@ -83,6 +98,21 @@ fn run(bin: &Path, dir: &Path, case: &Case, ours: bool) -> Seen {
             "FLASHTEX_POOL",
             Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
         );
+    }
+    // A shell starts a background job (`cmd &`, `nohup`, a non-interactive
+    // script's `&`) with SIGINT and SIGQUIT ignored, the engines inherit
+    // that, and system(3) gives the editor what the program started with:
+    // the_editor_itself_gets_sigint_as_usual then saw the editor survive its
+    // own SIGINT. Both engines start with the default actions, as they do
+    // from a terminal, whatever ran this test.
+    // SAFETY: signal(2) is async-signal-safe, and nothing else runs between
+    // fork and exec.
+    unsafe {
+        c.pre_exec(|| {
+            default_signal(SIGINT);
+            default_signal(SIGQUIT);
+            Ok(())
+        });
     }
     let mut child = c.spawn().unwrap();
     child

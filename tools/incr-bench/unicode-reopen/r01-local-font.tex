@@ -1,0 +1,9 @@
+\documentclass{article}
+% unicode_reopen.py's `font` scenario: a font loaded by file name from the
+% document's directory (the script puts Latin Modern Roman there)
+\font\mine="[myfont.otf]" at 11pt
+\begin{document}
+{\mine A paragraph in the document's own font, ffi fl.} And text in the default font.
+
+\mine More words in the local font, to be shaped again after a reopen.
+\end{document}

@@ -1,0 +1,11 @@
+% u08-cjk: xeCJK with Chinese system fonts, line breaking and punctuation
+\documentclass{article}
+\usepackage{xeCJK}
+\setCJKmainfont{Songti SC}
+\setCJKsansfont{Hiragino Sans GB}
+\begin{document}
+中文排版测试：这是一段用于测试的中文文本，包含标点符号“引号”、（括号）和《书名号》。
+中文与English混排，数字123也在其中。这一段需要足够长才能换行，所以我们继续写下去，直到超过一行的宽度为止，再看看行末的标点处理是否正确。
+
+\textsf{黑体：冬青黑体简体中文。}
+\end{document}

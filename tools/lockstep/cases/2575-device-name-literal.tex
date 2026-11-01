@@ -1,0 +1,20 @@
+% 2575-device-name-literal: a tex.web device name (TeXformats:, TeXinputs:, TeXfonts:; §§514, 520) in a document's file name is literal under web2c, for reading and writing: \openin of TeXformats:/etc/hosts finds nothing (pdfTeX: "I can't find file `TeXformats:/etc/hosts'"), and \openout to TeXinputs:ls2575.tex writes a file of exactly that name, never ls2575.tex
+\input prelude
+\openin0=TeXformats:/etc/hosts
+\ifeof0\message{2575 formats-area eof}\else\message{2575 formats-area read}\fi
+\closein0
+\openin0=TeXfonts:/etc/hosts
+\ifeof0\message{2575 fonts-area eof}\else\message{2575 fonts-area read}\fi
+\closein0
+\immediate\openout1=TeXinputs:ls2575.tex
+\immediate\write1{\relax}
+\immediate\closeout1
+\openin0=ls2575.tex
+\ifeof0\message{2575 stripped-name eof}\else\message{2575 stripped-name found}\fi
+\closein0
+\openin0=TeXinputs:ls2575.tex
+\ifeof0\message{2575 literal-name eof}\else\message{2575 literal-name found}\fi
+\closein0
+\setbox0=\hbox{\vrule width175pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

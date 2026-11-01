@@ -128,7 +128,10 @@ fn transcript_and_dvi_names_with_a_space_are_quoted() {
 #[test]
 fn output_comment_is_the_dvi_comment() {
     let long = format!("-output-comment={}", "c".repeat(300));
+    // 260 bytes of UTF-8: texmfmp.c keeps 255, splitting the last `é`.
+    let accents = format!("-output-comment={}", "\u{e9}".repeat(130));
     for args in [
+        vec![accents.as_str()],
         vec!["-output-comment=HELLO"],
         vec!["-output-comment="],
         vec![long.as_str()],

@@ -77,6 +77,11 @@ pub mod accept {
 /// 3.3 host capability: the host answers RESOLVE and LOCATE (spec §11.6).
 pub const RESOLVE_CAPABILITY: &str = "resolve-v1";
 
+/// Host capability for performance modes (spec §6.9): the client's `HELLO`
+/// may name a `profile`, a `PROFILE` message changes it, and the host's
+/// `HELLO` and `PROFILE` reply carry the effective knobs.
+pub const PROFILE_CAPABILITY: &str = "profile-v1";
+
 /// Message kinds (the byte after a frame's length).
 pub mod kind {
     // client -> host
@@ -88,6 +93,8 @@ pub mod kind {
     pub const RESOLVE: u8 = 0x05;
     /// 3.3: source -> page (spec §11.6).
     pub const LOCATE: u8 = 0x06;
+    /// `profile-v1` (capability-gated, spec §6.9): choose a performance mode.
+    pub const C_PROFILE: u8 = 0x07;
     // host -> client
     pub const HELLO: u8 = 0x41;
     pub const STARTED: u8 = 0x42;
@@ -113,6 +120,9 @@ pub mod kind {
     /// 3.3, the Typst host: what happened to a package (spec §11.8), for a
     /// client that accepts `packages-v1`.
     pub const PACKAGE: u8 = 0x50;
+    /// `profile-v1` (spec §6.9): the performance mode now in effect, after a
+    /// client's `PROFILE`.
+    pub const PROFILE: u8 = 0x51;
     /// `diag-v1` (capability-gated, spec §6.7): one structured diagnostic.
     /// The diagnostics family has its own range (0x60..=0x6F) so that it
     /// never meets the page-protocol kinds of a later minor version.
@@ -133,6 +143,7 @@ pub mod kind {
             BYE => "bye",
             RESOLVE => "resolve",
             LOCATE => "locate",
+            C_PROFILE => "client-profile",
             HELLO => "hello",
             STARTED => "started",
             FONT => "font",
@@ -149,6 +160,7 @@ pub mod kind {
             RESOLVED => "resolved",
             LOCATED => "located",
             PACKAGE => "package",
+            PROFILE => "profile",
             DIAG => "diag",
             PROGRESS => "progress",
             _ => "unknown",

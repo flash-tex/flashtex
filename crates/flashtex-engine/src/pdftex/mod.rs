@@ -38,6 +38,7 @@ pub mod avlstuff;
 pub mod cfile;
 pub mod cfmt;
 pub mod epdf;
+pub mod fmtable;
 pub mod fonts;
 pub mod images;
 pub mod macnames;
@@ -59,7 +60,9 @@ pub mod writet1;
 pub mod writet3;
 pub mod writettf;
 pub mod xpdf;
-pub mod zlib;
+/// TeX Live's zlib, built and bound by the runtime (crates/flashtex-runtime,
+/// docs/design/xetex/PLAN.md §3.3), under its old path.
+pub use flashtex_runtime::zlib;
 
 use crate::generated::Globals;
 use std::cell::RefCell;
@@ -151,6 +154,7 @@ pub fn note_printed() {
 pub fn reset_state() {
     STATE.with(|s| *s.borrow_mut() = CState::default());
     crate::displaylist::engine_reset();
+    crate::lineshift::reset();
 }
 
 crate::codec_struct!(CState {
@@ -190,7 +194,7 @@ impl CState {
     pub fn same_as(&self, o: &CState) -> bool {
         let (f, g) = (&self.fonts, &o.fonts);
         same_enc(&self.utils, &o.utils)
-            && same_shared(&self.vf, &o.vf)
+            && (shared::Shared::ptr_eq(&self.vf, &o.vf) || self.vf.same_as(&o.vf))
             && self.avl.same_as(&o.avl)
             && self.fonts_busy == o.fonts_busy
             && same_enc(&self.out, &o.out)

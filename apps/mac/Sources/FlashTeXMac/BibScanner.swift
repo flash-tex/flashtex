@@ -10,8 +10,8 @@ import Foundation
 /// project without the helper attached offered nothing but `\bibitem`s.
 ///
 /// Which files: `\bibliography{refs,more}` and `\addbibresource{…}` in the
-/// open documents, the paths the helper reports as declared bibliographies
-/// (`DocumentKinds`), and any `.bib` that is itself open (parsed from the
+/// open documents, the paths declared as bibliographies (`DocumentKinds`),
+/// and any `.bib` that is itself open (parsed from the
 /// buffer, which is ahead of the disk). Files are read off-main by the
 /// completion job and cached per path by modification date and size.
 enum BibScanner {
@@ -152,8 +152,8 @@ enum BibScanner {
         /// The saved project's directory, which `\bibliography{refs}` names
         /// are rooted under; nil (an unsaved buffer) reads nothing from disk.
         var projectRoot: URL? = nil
-        /// Project-relative paths the helper reports as declared
-        /// bibliographies (`DocumentKinds.bibliographyPaths`).
+        /// Project-relative paths declared as bibliographies
+        /// (`DocumentKinds.bibliographyPaths`).
         var declaredPaths: [String] = []
         /// The open documents, the active one first. A `.bib` among them is
         /// parsed from its buffer; a LaTeX one is scanned for declarations.

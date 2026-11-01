@@ -49,7 +49,7 @@ passed through to the candidate's `capture()` call only, never the oracle.
 
 ## Output cap
 
-Every entry point (`run.py`, `docgen.py`, the five parsers,
+Every entry point (`run.py`, `docgen.py`, the six parsers,
 `minimize.py`) calls `run.apply_fsize_limit()` first: `RLIMIT_FSIZE`
 is set to `FUZZ_FSIZE_LIMIT_BYTES` (default 64 MiB), inherited by all
 engine children, so a runaway engine is killed by SIGXFSZ instead of
@@ -65,7 +65,7 @@ and is filed.
 ## Shell escape and random seeds
 
 Every fuzz engine run — candidate and oracle alike, in `run.py`,
-`docgen.py`, the five parser jobs, `minimize.py` and (through them)
+`docgen.py`, the six parser jobs, `minimize.py` and (through them)
 `nightly.py` — passes `-cnf-line=shell_escape=f`
 (`FUZZ_SHELL_ESCAPE_FLAGS` in `run.py`, the one shared place), so a
 mutated `\write16` that becomes `\write18` can never run a program. The
@@ -184,7 +184,7 @@ Fake shell-script engines only, in the style of
 
 ## Parser fuzzers and the document generator
 
-`tools/fuzz/parsers/{tfm,type1,png,jpeg,pdfinc}.py` fuzz the candidate's
+`tools/fuzz/parsers/{tfm,type1,png,jpeg,pdfinc,ttf}.py` fuzz the candidate's
 file parsers (no oracle, only the no-panic contract) and `docgen.py` is a
 document-level differential generator (see `parsers/README-*.md` and
 `README-docgen.md`). All take `--candidate BIN` (required) and read
@@ -196,7 +196,7 @@ candidate cannot start and every run looks like a graceful error.
 ## Nightly
 
 `nightly.py` runs every fuzzer (`run.py`, `docgen.py`, and
-`parsers/{tfm,type1,png,jpeg,pdfinc}.py`) one after another as
+`parsers/{tfm,type1,png,jpeg,pdfinc,ttf}.py`) one after another as
 subprocesses inside a wall-clock budget. Each fuzzer gets a base target
 iteration count (see `FUZZERS` in `nightly.py`); the driver first runs
 20 probe iterations of each to estimate seconds per iteration, then
@@ -247,14 +247,26 @@ New findings are triaged as engine-diff issues.
 
 ## Findings so far
 
-- **Type 1 self-recursive subroutine (both engines crash).** A charstring
-  subroutine that calls itself (`callsubr` to its own index) overflows the
-  stack: pdfTeX 1.40.29 dies with SIGSEGV (exit 139) and the candidate aborts
+All three are fixed on main, so `known-findings.json` no longer lists them:
+a known finding is ignored every night, and a fixed bug coming back must fail
+the run, not pass it. Re-checked 2026-10-03 against main `c41a7b56a`.
+
+- **Type 1 self-recursive subroutine (both engines crashed).** A charstring
+  subroutine that calls itself (`callsubr` to its own index) overflowed the
+  stack: pdfTeX 1.40.29 dies with SIGSEGV (exit 139) and the candidate aborted
   with `fatal runtime error: stack overflow` (SIGABRT, exit 134). Found by
   `parsers/type1.py` (mutation `cs-recursion`, 12 of 2000 iterations, seed 202
-  against a `cmr10.pfb` seed). pdfTeX's own crash, so this is listed apart from
-  the engine-diff issues; DESIGN §4.5 (no panics) still wants the candidate to
-  fail gracefully. The seed font is a TeX Live file and is not committed.
-- **Header `\hbox{ }` with microtype `spacing`** (candidate panics, pdfTeX
-  exits 0) is #1219; `docgen.py` rediscovers it in about 7% of documents,
-  including the `\oddfoot` variant.
+  against a `cmr10.pfb` seed). Fixed by #1281 (#1237: `cs_mark` keeps its own
+  stack and gives a font error where pdfTeX never returns;
+  `crates/flashtex-engine/tests/type1_subr_nesting.rs`). Re-run: seed 202,
+  2000 iterations, no crash.
+- **Header `\hbox{ }` with microtype `spacing`** (candidate panicked at
+  `body_0.rs:1033`, pdfTeX exits 0) was #1219; `docgen.py` rediscovered it in
+  about 7% of documents, including the `\oddfoot` variant. Fixed by #1279
+  (`crates/flashtex-engine/tests/list_head_space.rs`, lockstep cases
+  2010-2015). Re-run: the header and footer variant exits 0 with no panic,
+  and `docgen.py` (seed 7, 150 documents) found no candidate crash.
+- **Font-count differences with font expansion** (`fontcount-diff:*`, #1220):
+  `\font` reused an expandable font. Fixed by #1280 (lockstep case
+  `2006-fontexpand-font-reuse.tex`). Re-run: the same 150 `docgen.py`
+  documents, no `fontcount-diff`.

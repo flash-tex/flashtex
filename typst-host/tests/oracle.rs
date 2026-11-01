@@ -85,7 +85,8 @@ pub fn check_doc(name: &str, source: &str) -> Report {
         host_pdf.len(),
         oracle_pdf.len()
     );
-    let reference = checker::reference(&oracle_pdf);
+    let mut reference = checker::reference(&oracle_pdf);
+    checker::device_only(&mut reference);
 
     let pages: Vec<Page> = frames
         .iter()
@@ -133,6 +134,18 @@ pub fn check_doc(name: &str, source: &str) -> Report {
         );
         assert_eq!(p.origins.len(), g.len());
         let h = p.pdf_box[3];
+        // The whole paint state: colours, spaces, alphas, render mode,
+        // line state.
+        let colours = checker::host_glyph_paints(p);
+        assert_eq!(colours.len(), g.len());
+        for (j, (rg, h)) in r.glyphs.iter().zip(&colours).enumerate() {
+            if let Some(d) = checker::glyph_paint_mismatch(h, rg) {
+                if rep.mismatches < 5 {
+                    eprintln!("{name} page {i} glyph {j}: {d}");
+                }
+                rep.mismatches += 1;
+            }
+        }
         for (j, ((d, o), (rg, id))) in g
             .iter()
             .zip(&p.origins)
@@ -228,12 +241,14 @@ fn the_checker_rejects_frame_positions() {
         .output
         .unwrap();
     let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
-    let reference = checker::reference(&pdf);
+    let mut reference = checker::reference(&pdf);
+    checker::device_only(&mut reference);
     let caps = ClientCaps {
         minor: 3,
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        ..Default::default()
     };
     let mut t = Tables::new();
     let out = convert::page(&world, &doc, 0, &mut t, caps, &[], Positions::Frame).unwrap();
@@ -287,12 +302,14 @@ fn the_checker_rejects_frame_paths() {
         .output
         .unwrap();
     let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
-    let reference = checker::reference(&pdf);
+    let mut reference = checker::reference(&pdf);
+    checker::device_only(&mut reference);
     let caps = ClientCaps {
         minor: 3,
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        ..Default::default()
     };
     let decode = |body: &[u8]| {
         flashtex_display_list::page::Page::decode(

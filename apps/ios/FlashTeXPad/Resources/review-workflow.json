@@ -2,16 +2,6 @@
   "kind": "offline_native_review_fixture",
   "provider_called": false,
   "source_mutated": false,
-  "provenance": {
-    "compiler": {
-      "path": "/tmp/flashtex-compiler4425-target/release/flashtex-compiler",
-      "sha256": "554c9e054f9159c01f8ec184d85dec86b83bcd5da7d69ea99a7bdb6416108322"
-    },
-    "helper": {
-      "path": "/home/natkarri/flashtex-assistant-context/crates/assistant-context/target/debug/flashtex-assistant-context",
-      "sha256": "9707dd3756ffd407829150e2177d9de79cfdee0c56835c54debccb30b5aa2f19"
-    }
-  },
   "steps": [
     {
       "request": {

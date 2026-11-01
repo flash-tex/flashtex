@@ -19,7 +19,7 @@ import FlashTeXProtocol
 /// ticked). Resolved files reach the compiler as documents at
 /// `packages/<name>/<file>` (ProjectDocuments.implicitClosureDocuments, the
 /// direct route) and show under the sidebar's Packages group; a delivery
-/// bumps `revision`, which ShellModel.compile compares to recompile.
+/// bumps `revision` and the engine compiles again (`recompile`).
 ///
 /// Under the new engine (engine v3, which reads TeX Live and the project
 /// copy, EngineV3Session.swift) the same state serves it: TeX's own
@@ -85,7 +85,7 @@ final class ProjectPackagesState {
     private(set) var declined: Set<String> = []
     private(set) var root: URL?
     private(set) var status = "no packages resolved yet"
-    /// Bumped whenever the delivered set changes; ShellModel.compile recompiles when it differs from the applied result's.
+    /// Bumped whenever the delivered set changes.
     private(set) var revision = 0
     private(set) var resolving = false
     var applying = false
@@ -166,6 +166,9 @@ final class ProjectPackagesState {
         for d in diagnostics {
             let texts = [d.message] + (d.notes ?? [])
             for text in texts {
+                // (one scan for the three phrases below; each row's notes hold TeX's box display)
+                guard text.hasPrefix("packages ") || EditorDiagnostics.bytesContain(text, "File `")
+                        || EditorDiagnostics.bytesContain(text, "no project file found") else { continue }
                 if let file = texMissingFile(in: text) {
                     // TeX's wording under the new engine: LaTeX Error: File `x.sty' not found.
                     for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count)), ext) }
@@ -185,7 +188,8 @@ final class ProjectPackagesState {
     /// The file a LaTeX "File `x' not found" error names (`\usepackage`,
     /// `\documentclass`, `\input` under the new engine), nil otherwise.
     nonisolated static func texMissingFile(in message: String) -> String? {
-        guard let open = message.range(of: "LaTeX Error: File `"),
+        // TeX's message, or the Problems row's headline without "LaTeX Error: " (EngineV3DiagPresent).
+        guard let open = message.range(of: "LaTeX Error: File `") ?? (message.hasPrefix("File `") ? message.range(of: "File `") : nil),
               let close = message.range(of: "' not found", range: open.upperBound ..< message.endIndex) else { return nil }
         let name = String(message[open.upperBound ..< close.lowerBound])
         return name.isEmpty ? nil : name
@@ -242,26 +246,172 @@ final class ProjectPackagesState {
         }
         if wanted.allSatisfy(pending.contains) { shown = true; return }
         let todo = wanted.filter { !pending.contains($0) }
-        if model.engineV3Enabled { spawn { await $0.resolveForEngineV3(todo) }; return }
-        let consent = manifestFetch == "always"
-        spawn { await $0.resolve(todo, consent: consent) }
+        spawn { await $0.resolveForEngineV3(todo) }
     }
 
-    /// Called from `ShellModel.result`'s observer (the previous engine) and
-    /// from the new engine's DONE with its rows (`diagnostics`): resolves
-    /// what the latest compile could not find and is not yet delivered,
-    /// unavailable, declined or in flight. A new project root resets everything.
-    func noteCompileResult(diagnostics: [RuntimeV1.Diagnostic]? = nil) {
+    /// Called from the engine's DONE with its rows (`diagnostics`):
+    /// resolves what the latest compile could not find and is not yet
+    /// delivered, unavailable, declined or in flight. A new project root
+    /// resets everything.
+    func noteCompileResult(diagnostics: [RuntimeV1.Diagnostic]) {
+        noteCompileResult(unresolved: Self.unresolvedNames(in: diagnostics))
+    }
+
+    /// The same with the names already found (`ProblemsModel.unresolvedPackages`,
+    /// made with the rows off the main thread).
+    func noteCompileResult(unresolved found: [String]) {
         guard let projectRoot = model.project.projectRoot else { return }
         if root != projectRoot { reset(for: projectRoot) }
+        if holdWhileTyping(found, engineV3: true) { return }
         let pending = Set(offers.map(\.name))
-        let names = Self.unresolvedNames(in: diagnostics ?? model.result?.diagnostics ?? []).filter { name in
+        let names = found.filter { name in
             delivered[name] == nil && unavailable[name] == nil && !declined.contains(name) && !inFlight.contains(name) && !pending.contains(name)
         }
         guard !names.isEmpty else { return }
-        if diagnostics != nil, model.engineV3Enabled { spawn { await $0.resolveForEngineV3(names) }; return }
-        let consent = manifestFetch == "always"
-        spawn { await $0.resolve(names, consent: consent) }
+        spawn { await $0.resolveForEngineV3(names) }
+    }
+
+    // MARK: the grace period while a name is being typed
+
+    /// A compile while the caret is in a `\usepackage{…}` (or `\documentclass`,
+    /// `\RequirePackage`, `\input`, `\includegraphics`, …) argument edited
+    /// less than `graceDelay` ago names a half-typed package (`a` on the way
+    /// to `amsmath`): the sheet and the not-found underline wait. They come
+    /// once that argument has gone `graceDelay` without an edit, at once when
+    /// the caret leaves it, on ⌘B or ⌘S, and through Fetch Missing Packages…
+    /// as before. Compiling and the preview are unaffected; both engines
+    /// report through `noteCompileResult`, so both wait the same way.
+    @ObservationIgnored var graceDelay: TimeInterval = 3
+    /// The names a held compile reported missing: the editor hides their
+    /// not-found underlines until the hold ends (`withholding`).
+    private(set) var heldNames: Set<String> = []
+    /// Whether the held compile was the new engine's (its rows are re-read).
+    @ObservationIgnored private var heldEngineV3 = false
+    /// The load argument the caret was last seen in, and since when its text
+    /// has been what it is (an edit to it restarts the clock).
+    @ObservationIgnored private var argumentSeen: (argument: LoadArgument, since: Date)?
+    @ObservationIgnored private var graceWork: DispatchWorkItem?
+    /// Set by ⌘B / ⌘S / leaving the argument: the next check shows at once.
+    @ObservationIgnored private var graceBypass = false
+
+    /// A file-loading command's brace argument: where its text starts
+    /// (UTF-16, after `{`) in which document, and the text so far.
+    struct LoadArgument: Equatable {
+        var path: String
+        var start: Int
+        var text: String
+    }
+
+    /// Commands whose argument names a file the compile may not find.
+    nonisolated static let loadCommands: Set<String> = [
+        "usepackage", "RequirePackage", "documentclass", "LoadClass", "input", "include", "includegraphics", "InputIfFileExists",
+    ]
+
+    /// The load argument the caret (UTF-16) is inside or at the end of:
+    /// `\usepackage{a|}`, `\usepackage[opt]{am|`, `\usepackage{amsmath}|`.
+    nonisolated static func loadArgument(in text: String, caret: Int, path: String = "") -> LoadArgument? {
+        let s = text as NSString
+        guard caret >= 0, caret <= s.length else { return nil }
+        let open: unichar = 0x7B, close: unichar = 0x7D, newline: unichar = 0x0A, backslash: unichar = 0x5C
+        // Back from the caret to the argument's `{` (a `}` right before the caret ends it).
+        var i = caret - 1
+        if i >= 0, s.character(at: i) == close { i -= 1 }
+        let floor = max(0, caret - 256)
+        while i >= floor, s.character(at: i) != open {
+            let c = s.character(at: i)
+            if c == close || c == newline { return nil }
+            i -= 1
+        }
+        guard i >= floor, i >= 0 else { return nil }
+        let start = i + 1
+        // Before `{`: spaces and one `[options]`, then `\command`.
+        var j = i - 1
+        while j >= 0, s.character(at: j) == 0x20 { j -= 1 }
+        if j >= 0, s.character(at: j) == 0x5D {
+            while j >= 0, s.character(at: j) != 0x5B { j -= 1 }
+            j -= 1
+            while j >= 0, s.character(at: j) == 0x20 { j -= 1 }
+        }
+        let end = j + 1
+        while j >= 0, let u = Unicode.Scalar(s.character(at: j)), CharacterSet.letters.contains(u) { j -= 1 }
+        guard j >= 0, s.character(at: j) == backslash, end > j + 1,
+              loadCommands.contains(s.substring(with: NSRange(location: j + 1, length: end - j - 1))) else { return nil }
+        // Forward to `}` or the end of the line; the caret may sit just past the `}`.
+        var k = start
+        while k < s.length, s.character(at: k) != close, s.character(at: k) != newline { k += 1 }
+        guard caret <= k + (k < s.length && s.character(at: k) == close ? 1 : 0) else { return nil }
+        return LoadArgument(path: path, start: start, text: s.substring(with: NSRange(location: start, length: k - start)))
+    }
+
+    private func caretArgument() -> LoadArgument? {
+        Self.loadArgument(in: model.activeText, caret: model.caretUTF16, path: model.activePath)
+    }
+
+    /// How much longer a compile's missing packages wait (nil: show now).
+    /// Notes the argument at the caret; a change to its text restarts the clock.
+    private func graceRemaining() -> TimeInterval? {
+        guard let arg = caretArgument() else { argumentSeen = nil; return nil }
+        let now = engineV3Now()
+        if argumentSeen?.argument != arg { argumentSeen = (arg, now) }
+        let left = graceDelay - now.timeIntervalSince(argumentSeen?.since ?? now)
+        return left > 0 ? left : nil
+    }
+
+    /// Holds a compile's missing `names` while the argument at the caret is
+    /// being typed and schedules the re-check; false: go on now.
+    private func holdWhileTyping(_ names: [String], engineV3: Bool) -> Bool {
+        graceWork?.cancel()
+        graceWork = nil
+        let bypass = graceBypass
+        graceBypass = false
+        guard !bypass, !names.isEmpty, let wait = graceRemaining() else {
+            if !heldNames.isEmpty { heldNames = [] }
+            return false
+        }
+        if heldNames != Set(names) { heldNames = Set(names) }
+        heldEngineV3 = engineV3
+        let work = DispatchWorkItem { [weak self] in self?.recheckHeld() }
+        graceWork = work
+        engineV3Schedule(wait, work)
+        return true
+    }
+
+    /// The held compile again, from the latest rows (never a stale name).
+    private func recheckHeld() {
+        guard !heldNames.isEmpty else { return }
+        noteCompileResult(unresolved: model.engineV3Problems.unresolvedPackages)
+    }
+
+    /// The caret moved or the document switched (ShellModel): leaving the
+    /// held argument shows what was held at once. Free when nothing is held.
+    /// Checked on the next turn, once a keystroke's text and caret both landed.
+    func caretMoved() {
+        guard !heldNames.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in self?.caretMovedNow() }
+    }
+
+    private func caretMovedNow() {
+        guard !heldNames.isEmpty else { return }
+        if let arg = caretArgument(), let seen = argumentSeen?.argument, arg.path == seen.path, arg.start == seen.start { return }
+        graceBypass = true
+        recheckHeld()
+    }
+
+    /// ⌘B or ⌘S: what is held shows now, and so does the compile ⌘B starts.
+    func explicitRequest(compiling: Bool) {
+        if !heldNames.isEmpty { graceBypass = true; recheckHeld() }
+        if compiling { graceBypass = true }
+    }
+
+    /// The editor's marks without the not-found underlines of held names.
+    func withholding(_ report: EditorDiagnostics.Report) -> EditorDiagnostics.Report {
+        guard !heldNames.isEmpty else { return report }
+        var out = report
+        out.marks.removeAll { mark in
+            let row = RuntimeV1.Diagnostic(severity: mark.severity, message: mark.message, source: nil, recovery: nil, code: nil)
+            return Self.unresolvedNames(in: [row]).contains(where: heldNames.contains)
+        }
+        return out
     }
 
     /// The menu command: asks again about everything the last compile could
@@ -277,8 +427,7 @@ final class ProjectPackagesState {
         declined = []
         unavailable = [:]
         if !offers.isEmpty { shown = true; return }
-        let last = model.engineV3Enabled ? model.engineV3Diagnostics : model.result?.diagnostics ?? []
-        let names = Self.unresolvedNames(in: last).filter { delivered[$0] == nil && !inFlight.contains($0) }
+        let names = model.engineV3Problems.unresolvedPackages.filter { delivered[$0] == nil && !inFlight.contains($0) }
         guard !names.isEmpty else {
             model.navigationNote = delivered.isEmpty ? "Every package the last compile asked for was found." : "Every package the last compile asked for is resolved: \(delivered.keys.sorted().joined(separator: ", "))."
             return
@@ -286,9 +435,7 @@ final class ProjectPackagesState {
         if manifestFetch == "never" || manifestSource == "none" {
             model.navigationNote = "\(ProjectManifest.fileName) says [packages] fetch = \"\(manifestFetch)\", source = \"\(manifestSource)\": nothing is fetched for this project (edit the manifest to change that)."
         }
-        if model.engineV3Enabled { spawn { await $0.resolveForEngineV3(names) }; return }
-        let consent = manifestFetch == "always"
-        spawn { await $0.resolve(names, consent: consent) }
+        spawn { await $0.resolveForEngineV3(names) }
     }
 
     /// Starts a resolution unless the window's model is gone by the time it
@@ -444,9 +591,7 @@ final class ProjectPackagesState {
 
     private func recompile() {
         recompiles += 1
-        if model.engineV3Enabled { model.engineV3.packagesChanged(model: model); return }
-        guard model.workerAttached else { return }
-        model.compile()
+        if model.engineV3Enabled { model.engineV3.packagesChanged(model: model) }
     }
 
     // MARK: the new engine: missing packages without asking the source

@@ -3,9 +3,11 @@
 Owner: `mac-accessibility` (parent `mac-claude-a`), issue #2. Target
 `FlashTeXAccessibility` (`apps/mac/Sources/FlashTeXAccessibility`, depends only
 on `FlashTeXProtocol`) plus `Tests/FlashTeXAccessibilityTests`. The shell
-attaches it through seven hook lines (marked `// FlashTeXAccessibility`) in
-`PreviewView.swift`, `ContentView.swift`, and `SourceEditorView.swift`. No
-visible behavior changed.
+attaches it through hook lines (marked `// FlashTeXAccessibility`) in
+`ContentView.swift` and `SourceEditorView.swift`, and the engine-v3 pane
+reads its pages through `EngineV3Accessibility.swift`. No visible behavior
+changed. (The v1 and v2 preview panes, whose overlays this target first fed,
+were removed with the old engine's route in retirement stage S6.)
 
 ## What the models provide
 
@@ -52,11 +54,10 @@ visible behavior changed.
 
 | Hook | Effect for VoiceOver |
 |---|---|
-| `PreviewView` `PageView.overlay { AccessibilityOverlay(…) }` | Each page is a container labelled `Page N[ of T], k lines`; each item is a static-text element (label = spoken form, value = size/source context, hint = `Page N, line k`) in reading order (`accessibilitySortPriority`), with a `Go to source` custom action that calls the same closure as a mouse click. Frames are measured with the face the preview draws (`PreviewFonts.postScriptName(size:)`: Latin Modern or Times). Hit testing is disabled, so mouse behavior is unchanged. |
-| `PreviewV2View` `PageV2View.overlay { PageV2AccessibilityOverlay(…) }` (`PreviewV2Accessibility.swift`) | The shipped v2 pane reads the same shape: each page is a landmark labelled `Page N[ of T], k lines` (an elided page of a windowed frame: `Page N of T, not loaded`) whose **value is the page's text**, one line per line; each line is a static-text element `Page N, line k: text` (value = the line's text, help = `Page N, line k`) with a `Go to source` action that navigates like a click on the line's first word (the clusters' source spans merged into the word). Lines follow the v1 model's script rule (`AccessibleDocumentModel.lines(of:)`): runs cluster by baseline, a smaller cluster within `scriptReachEm` of a larger one is a script of it (superscript, subscript, footnote mark, fraction part) and joins that line, so `$a^2+b_1$` reads "a 2 + b 1" and never "2" before "a"; within a line words read left to right, stacked scripts subscript then superscript ("x i 2"), a fraction numerator then denominator at its bar; beyond v1, full-size display fractions join the line their bar sits on (`\frac{a+b}{c} = d` reads "a + bc = d"). A space is inserted at an inter-word gap (> 0.15 em) or a change of baseline. Pinned over real producer output by `testMathReadsInSpokenOrderOverRealProducerOutput`. Built lazily on first request; afterwards updated in place — zoom moves the elements, a new page token relabels them (rebuilt only when the line count differs), a page-count change touches only the landmark's live label — so VoiceOver's cursor on a line survives typing and zooming; `layoutChanged` is posted only when elements actually changed. |
-| `PreviewAnchorProbe.pagesRotor` (`PreviewPagesRotor.swift`), offered by every page view and line element | A custom **Pages** rotor listing every page of the document from the anchor probe's layout — `Page 3 of 12`, `Page 7 of 12, not loaded` for an elided page — because the v2 pane's lazy stack builds only the pages in view and the Landmarks rotor sees only those. Built pages are rotor targets themselves; the rest are `itemLoadingToken` results (VoiceOver lists them by label without touching the pane) and choosing one calls the rotor's `itemLoadingDelegate` (the same object) with `accessibilityElement(withToken:)`, which scrolls there without animation through the Page Up/Down path (announcing the landing), lays out, and returns the page's view; should the lazy stack build it only on a later turn, a stand-in landmark at the page's place is returned and a `layoutChanged` naming the real view is posted when it appears, so VoiceOver moves onto it; a mounted placeholder of an elided page is listed as a loading token too and stays pending until the page is resident. The load speaks no landing (VoiceOver reads the element it is handed), and a pending load is dropped when the reader scrolls, steps, follows the caret or activates a link, so a late appearance never pulls the cursor. The full transition tables are in the two source files. Search semantics as `EditorRotorSearch`: strictly after/before the current page, type-ahead on the label, no wrap. |
-| `PreviewPane` (`ContentView.swift`) `.accessibilityElement(children: .contain)` | The pane is the `PDF preview` group; its value is the page under the top of the view (`Page 2 of 5`), so landing on it says where the reader is even while the HUD's readout is faded (and so hidden). Both panes are `.focusable()`; with focus, **Page Down / Page Up step whole pages** (`PreviewPageStep`, via the anchor probe) and announce `Page n of m`. |
-| `ShellModel.previewAnnouncer` (`PreviewAnnouncements.swift`) | A completed compile is announced: `Preview updated: 3 pages` (low priority), `Preview updated with 2 errors recovered: 3 pages`, `Compile failed: 2 errors` (high). The first result speaks at once; every later result — status flips included, since typing through a brace alternates failed/ok — coalesces to one announcement of the newest state 2 s after the last result (a failure at high priority). A refused display list with nothing verified on screen says `Preview display list refused: …` (high) once per distinct error — auto-compile retries the same one on every keystroke — until a frame verifies; a project reset forgets everything spoken so the new project's first result is spoken at once; a refused LIVE sibling that keeps the previous frame says `Preview not updated: …` (low) once per distinct error, again only after a frame verified in between, and withdraws the pending `Preview updated` of the compile result it arrived with (the pages did not change). On the default live v2 route the reply honours `display-list-v2-only` and its v1 `pages` are empty by design, so such a result is not spoken until its v2 frame verifies and supplies the document's page count (`noteFrame`); a v1-route result counts its own pages. |
+| `EngineV3PageView` (`EngineV3Accessibility.swift`) | Each page of the engine-v3 pane is a landmark whose **value is the page's text**, one line per line; each line is a static-text element (value = the line's text, help = `Page N, line k`) with a `Go to source` action that does what a click on the line's first glyph does (reverse search). The display list carries glyph codes, so a glyph's text comes from its font-program name through pdfTeX's `glyphtounicode.tex` (from the TeX Live the engine uses) and the Adobe Glyph List's rules. Lines are grouped by `PreviewPageText.lines(words:rules:)` (`EngineV3PageText.swift`): runs cluster by baseline and scripts join the line they belong to, so `$a^2+b_1$` reads "a 2 + b 1". The elements are built when a client first asks and kept while the page's content is the same, so VoiceOver's cursor on a line survives zooming. |
+| `PreviewAnchorProbe.pagesRotor` (`PreviewPagesRotor.swift`), offered by every page view and line element | A custom **Pages** rotor listing every page of the document from the anchor probe's layout — `Page 3 of 12`, `Page 7 of 12, not loaded` for an elided page — because the pane builds only the pages near the view and the Landmarks rotor sees only those. Built pages are rotor targets themselves; the rest are `itemLoadingToken` results (VoiceOver lists them by label without touching the pane) and choosing one calls the rotor's `itemLoadingDelegate` (the same object) with `accessibilityElement(withToken:)`, which scrolls there without animation through the Page Up/Down path (announcing the landing), lays out, and returns the page's view; should the lazy stack build it only on a later turn, a stand-in landmark at the page's place is returned and a `layoutChanged` naming the real view is posted when it appears, so VoiceOver moves onto it; a mounted placeholder of an elided page is listed as a loading token too and stays pending until the page is resident. The load speaks no landing (VoiceOver reads the element it is handed), and a pending load is dropped when the reader scrolls, steps, follows the caret or activates a link, so a late appearance never pulls the cursor. The full transition tables are in the two source files. Search semantics as `EditorRotorSearch`: strictly after/before the current page, type-ahead on the label, no wrap. |
+| `PreviewPane` (`ContentView.swift`) `.accessibilityElement(children: .contain)` | The pane is the `PDF preview` group; its value is the page under the top of the view (`Page 2 of 5`), so landing on it says where the reader is even while the HUD's readout is faded (and so hidden). The pane takes keyboard focus; with focus, **Page Down / Page Up step whole pages** (`PreviewPageStep`, via the anchor probe) and announce `Page n of m`. |
+| `ShellModel.previewAnnouncer` (`PreviewAnnouncements.swift`) | A page the reader moved to from the keyboard is announced (`Page 3 of 12`, low priority). A completed compile is announced by the diagnostics announcer (`ShellModel.noteCompileCompletedForVoiceOver`, `DiagnosticsPanel.swift`), from the engine's `DONE`. |
 | `ContentView` diagnostics row `.accessibleDiagnostic(d, index:, total:)` | The row is one element: `Diagnostic 1 of 2: Error: Missing } inserted for \textbf.`, value `recovery: …`, custom action `Go to source` (or hint `No source mapping; listed only.`). |
 | `ContentView` capture bar `.accessibleCaptureBar(anchor:, proposals:)` | Group `Capture bar` with value `Insertion point pinned: a1 at main.tex byte 66, revision 3; 1 proposal to review` (or `No insertion point pinned; 0 proposals to review`); the buttons inside stay reachable. |
 | `SourceEditorView` `tv.setAccessibilityLabel("LaTeX source")` | The `NSTextView` is announced as `LaTeX source, text area`. Native VoiceOver text navigation (VO-arrows, line/word/character) is AppKit's. |
@@ -86,10 +87,16 @@ following script confirms VoiceOver actually speaks them.
 
 ## VoiceOver test script (human)
 
-Setup: `cd apps/mac && swift build && FLASHTEX_REPO=$(git rev-parse
---show-toplevel) .build/debug/FlashTeXMac`, then `File > Open Compile Result
-Fixture…` (⌘⇧O) → `apps/mac/Samples/multipage-result.json`. Turn VoiceOver on
-(⌘F5). VO = Control-Option (or Caps Lock if configured).
+Setup: `scripts/run-mac-dev.sh`, then `File > Open LaTeX File…` (⌘O) on a
+file holding the `main.tex` text of `apps/mac/Samples/multipage-request.json`
+(two pages, non-ASCII words, a missing brace). Turn VoiceOver on (⌘F5). VO =
+Control-Option (or Caps Lock if configured).
+
+The expected strings in rows 6–12 were recorded with the retired v1 overlay
+and its compile-result fixture (removed in retirement stage S6). On the
+engine-v3 pane a line is one element (value = the line's text, help `Page N,
+line k`) and the diagnostics are TeX's own messages, so record the actual
+strings at the next run.
 
 | # | Step | Expected announcement / result |
 |---|---|---|
@@ -105,8 +112,7 @@ Fixture…` (⌘⇧O) → `apps/mac/Samples/multipage-result.json`. Turn VoiceOv
 | 10 | VO-Right into the diagnostics list | Header `Diagnostics (2) — the preview above is still shown; errors are not hidden`, then `Diagnostic 1 of 2: Error: Missing } inserted for \textbf.` with value `recovery: Closed the group at end of paragraph and rendered its contents in bold.` |
 | 11 | On that row, VO-Command-Space → `Go to source` | Editor selects `\textbf{oops` (bytes 157..<169); footer names the range |
 | 12 | VO-Right | `Diagnostic 2 of 2: Warning: Overfull \hbox on page 2.`, value `no provisional rendering`, hint `No source mapping; listed only.`; the actions menu has no `Go to source` |
-| 13 | Edit line 4 (change `naïve` to `naive`), then step 8 again | With auto-compile off/no worker: the preview item still reads `naïve`; `Go to source` is refused with the footer's `recompile to navigate` note (the overlay never maps onto edited text) |
-| 14 | Math (needs the FT-002 compiler, ⌘⇧K then a buffer with `$x^2 + \frac{a}{b}$`) | The line reads `x superscript 2 + numerator a fraction bar denominator b`; the superscript's value is `8.4 point, 70% of the 12 point line` |
+| 13 | Edit line 4 (change `naïve` to `naive`), then step 8 again | With auto-compile off (Settings › Compile): the preview item still reads `naïve`; `Go to source` is refused with the footer's `recompile to navigate` note (the overlay never maps onto edited text) |
 
 Record pass/fail per row plus macOS and VoiceOver versions in
 `docs/evidence/` when run.
@@ -118,11 +124,5 @@ Record pass/fail per row plus macOS and VoiceOver versions in
   `NSAccessibility` notifications on caret change needs a `SourceEditorView`
   coordinator change beyond the hook budget. Rotor categories are likewise
   model-only (no custom VoiceOver rotor yet).
-- `AccessibilityHelpView` is not reachable from a menu (needs
-  `FlashTeXMacApp.swift`).
-- The overlay does not receive the page count or the current document text,
-  so page labels omit `of N` and element values say `source not mapped to the
-  current text` even when it would map; `AccessibleDocumentModel(result:
-  documents:compiledDocuments:)` supports both when a caller passes them.
-- Line grouping is heuristic (baseline clusters + size/reach); the compiler
-  does not tag items with a line or script level in runtime v1.
+- Line grouping is heuristic (baseline clusters + size/reach); the display
+  list does not tag glyphs with a line or script level.

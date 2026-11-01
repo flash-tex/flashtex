@@ -269,11 +269,11 @@ chmod +x "$HOOKS_DIR/job-started.sh" "$HOOKS_DIR/job-completed.sh"
 # checkouts and the toolchains survive the wipe: that is where the time goes,
 # not in target/.
 #
-# CARGO_TARGET_DIR is deliberately NOT set. The root workspace and
-# crates/render-pipeline/vendor/ contain crates with the SAME package names at
-# the same versions (see Cargo.toml), so one shared target directory would have
-# them overwrite each other's artifacts. Build caching across jobs comes from
-# Swatinem/rust-cache in the workflows instead.
+# CARGO_TARGET_DIR is deliberately NOT set. The root workspace and the
+# standalone crates/flashtex-xetex workspace contain crates with the SAME
+# package names (path dependencies of both), so one shared target directory
+# would have them overwrite each other's artifacts. Build caching across jobs
+# comes from Swatinem/rust-cache in the workflows instead.
 say "Writing $RUNNER_DIR/.env"
 cat > "$RUNNER_DIR/.env" <<ENV
 ACTIONS_RUNNER_HOOK_JOB_STARTED=$HOOKS_DIR/job-started.sh

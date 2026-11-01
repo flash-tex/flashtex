@@ -19,7 +19,7 @@ final class ProjectMoveTests: XCTestCase {
 
     override func tearDown() { try? FileManager.default.removeItem(at: tmp) }
 
-    private func model() -> ShellModel { let m = ShellModel(); m.detachWorker(); return m }
+    private func model() -> ShellModel { ShellModel() }
 
     private func expect<T: Equatable>(_ actual: T, _ expected: T, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(actual, expected, file: file, line: line)

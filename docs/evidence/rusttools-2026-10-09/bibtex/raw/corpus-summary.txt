@@ -1,0 +1,2 @@
+cases 3168 mismatches 0; oracle exit statuses {"0": 2386, "2": 782}; styles 397, databases 79
+exit 0

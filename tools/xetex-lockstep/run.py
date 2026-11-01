@@ -51,6 +51,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 LOCKSTEP = os.path.join(ROOT, "tools", "lockstep")
 LOCKSTEP_CASES = os.path.join(LOCKSTEP, "cases")
 OWN_CASES = os.path.join(HERE, "cases")
+PICTURES = os.path.join(HERE, "pictures")
 PRELUDE = os.path.join(HERE, "prelude.tex")
 SUITE = os.path.join(HERE, "suite.txt")
 XETEX_TESTS = os.path.join(ROOT, "third_party", "xetex", "tests")
@@ -101,14 +102,194 @@ def normalise(text, tmpdir):
 XDV_PRE = 247
 
 
+# XDV's opcodes after the preamble: the number of parameter bytes of each
+# fixed-size one (DVI's, plus XeTeX's `set_glyphs` and
+# `set_text_and_glyphs`, whose sizes are read from the stream).
+def _dvi_param_len(op, b, i):
+    if op < 128 or 171 <= op <= 234 or op in (138, 141, 142, 147, 152, 161, 166):
+        return 0
+    for base in (128, 133, 143, 148, 153, 157, 162, 167, 235):
+        if base <= op <= base + 3:
+            return op - base + 1
+    if op in (132, 137):
+        return 8
+    if op == 139:
+        return 44
+    if op == 140:
+        return 0
+    if 239 <= op <= 242:
+        n = op - 238
+        return n + int.from_bytes(b[i:i + n], "big")
+    if 243 <= op <= 246:
+        n = op - 242
+        return n + 12 + 2 + b[i + n + 12] + b[i + n + 13]
+    if op == 253:
+        g = int.from_bytes(b[i + 4:i + 6], "big")
+        return 6 + 10 * g
+    if op == 254:
+        n = int.from_bytes(b[i:i + 2], "big")
+        j = 2 + 2 * n
+        g = int.from_bytes(b[i + j + 4:i + j + 6], "big")
+        return j + 6 + 10 * g
+    if op == 248:
+        return 28
+    return None
+
+
+def _native_font_def_len(b, i):
+    """Bytes of a `define_native_font` record's parameters at `i` (after
+    the opcode): k[4] size[4] flags[2] l[1] name[l] index[4], then a colour,
+    extend, slant and embolden value of 4 bytes each as the flags say."""
+    flags = int.from_bytes(b[i + 8:i + 10], "big")
+    n = 4 + 4 + 2 + 1 + b[i + 10] + 4
+    for bit in (0x0200, 0x1000, 0x2000, 0x4000):
+        if flags & bit:
+            n += 4
+    return n
+
+
 def normalise_xdv(data):
-    """The XDV bytes with the preamble's comment blanked, else unchanged.
-    (A native font's path, the second normalisation, is phase S1's.)"""
+    """The XDV bytes with the two normalisations of PLAN.md §3.5: the
+    preamble's comment blanked, and in each `define_native_font` record the
+    font file's path replaced by its base name (the length byte follows;
+    every other byte of the record is kept). The stream is walked opcode by
+    opcode, so a 252 inside another command's parameters is never taken
+    for a record. A stream that cannot be walked is returned unchanged
+    after the first normalisation, so it still compares byte for byte."""
     b = bytearray(data)
-    if len(b) >= 15 and b[0] == XDV_PRE:
-        k = b[14]
-        b[15:15 + k] = b"\0" * k
-    return bytes(b)
+    if not (len(b) >= 15 and b[0] == XDV_PRE):
+        return bytes(b)
+    k = b[14]
+    b[15:15 + k] = b"\0" * k
+    out = bytearray(b[:15 + k])
+    i = 15 + k
+    try:
+        while i < len(b):
+            op = b[i]
+            if op == 249:  # post_post: the rest is q[4], i[1] and the 223s
+                out += b[i:]
+                return bytes(out)
+            if op == 252:
+                n = _native_font_def_len(b, i + 1)
+                rec = b[i + 1:i + 1 + n]
+                l = rec[10]
+                name = bytes(rec[11:11 + l])
+                base = name.rsplit(b"/", 1)[-1]
+                out.append(op)
+                out += rec[:10] + bytes([len(base)]) + base + rec[11 + l:]
+                i += 1 + n
+                continue
+            n = _dvi_param_len(op, b, i + 1)
+            if n is None:
+                raise ValueError("opcode %d at %d" % (op, i))
+            out += b[i:i + 1 + n]
+            i += 1 + n
+    except (IndexError, ValueError):
+        return bytes(b)
+    return bytes(out)
+
+
+def _self_test_normalise_xdv():
+    """A native font record's path is cut to its base name; the rest stays."""
+    pre = bytes([247, 7]) + bytes(12) + bytes([3]) + b"abc"
+    rec = (bytes([252]) + (1).to_bytes(4, "big") + (655360).to_bytes(4, "big")
+           + (0x1000).to_bytes(2, "big") + bytes([12]) + b"/a/b/font.otf"[:12]
+           + (0).to_bytes(4, "big") + (65536).to_bytes(4, "big"))
+    post = bytes([249]) + bytes(5) + bytes([223] * 4)
+    got = normalise_xdv(pre + rec + post)
+    want_rec = (bytes([252]) + (1).to_bytes(4, "big") + (655360).to_bytes(4, "big")
+                + (0x1000).to_bytes(2, "big") + bytes([7]) + b"font.ot"
+                + (0).to_bytes(4, "big") + (65536).to_bytes(4, "big"))
+    assert got == pre[:15] + b"\0\0\0" + want_rec + post, got
+    other = bytes([247, 7]) + bytes(12) + bytes([3]) + b"xyz"
+    rec2 = bytearray(rec)
+    rec2[12:24] = b"/c/d/font.ot"
+    assert normalise_xdv(other + bytes(rec2) + post) == got
+
+
+def native_font_files(data):
+    """The font file of each `define_native_font` record, as written, in
+    stream order (the postamble's copies included); [] for a stream that
+    cannot be walked."""
+    b = bytes(data)
+    if not (len(b) >= 15 and b[0] == XDV_PRE):
+        return []
+    i = 15 + b[14]
+    out = []
+    try:
+        while i < len(b):
+            op = b[i]
+            if op == 249:
+                break
+            if op == 252:
+                n = _native_font_def_len(b, i + 1)
+                l = b[i + 11]
+                out.append(b[i + 12:i + 12 + l])
+                i += 1 + n
+                continue
+            n = _dvi_param_len(op, b, i + 1)
+            if n is None:
+                return out
+            i += 1 + n
+    except IndexError:
+        pass
+    return out
+
+
+def different_font_files(a, b):
+    """Fonts the two XDVs load from different files of one base name:
+    [(base, reference path, candidate path)], each once. The normalisation
+    compares base names only, but a path's length still moves every later
+    byte, so `bop`'s pointer to the previous page (and the postamble's) can
+    differ where every record is equal: the engines found the font in
+    different directories, which is their font search order, not their
+    typesetting."""
+    out = []
+    for x, y in zip(native_font_files(a), native_font_files(b)):
+        if x != y and x.rsplit(b"/", 1)[-1] == y.rsplit(b"/", 1)[-1]:
+            t = (x.rsplit(b"/", 1)[-1].decode("latin1"), x.decode("latin1"), y.decode("latin1"))
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def compare_xdv_bytes(a, b):
+    """None when equal after normalisation, else a description."""
+    na, nb = normalise_xdv(a), normalise_xdv(b)
+    if na == nb:
+        return None
+    i = next((k for k in range(min(len(na), len(nb))) if na[k] != nb[k]),
+             min(len(na), len(nb)))
+    msg = "XDV differs at byte %d (sizes %d vs %d)" % (i, len(a), len(b))
+    files = different_font_files(a, b)
+    if files:
+        msg += "; the engines loaded different files for %s" % ", ".join(
+            "%s (reference %s, candidate %s)" % f for f in files)
+    return msg
+
+
+def _self_test_font_files():
+    """A font found in another directory is named, with both paths."""
+    pre = bytes([247, 7]) + bytes(12) + bytes([0])
+
+    def rec(path):
+        return (bytes([252]) + (1).to_bytes(4, "big") + (655360).to_bytes(4, "big")
+                + (0).to_bytes(2, "big") + bytes([len(path)]) + path + (0).to_bytes(4, "big"))
+
+    def bop(prev):
+        return bytes([139]) + bytes(40) + prev.to_bytes(4, "big", signed=True)
+
+    post = bytes([249]) + bytes(5) + bytes([223] * 4)
+    def xdv(path):  # two pages; the second bop points at the first
+        head = pre + rec(path)
+        return head + bop(-1) + bytes([140]) + bop(len(head)) + bytes([140]) + post
+
+    a, b = xdv(b"/usr/f/X.ttf"), xdv(b"/tl/texmf/f/X.ttf")
+    assert normalise_xdv(a) != normalise_xdv(b)  # the second bop's pointer moved
+    msg = compare_xdv_bytes(a, b)
+    assert "different files for X.ttf (reference /usr/f/X.ttf, candidate /tl/texmf/f/X.ttf)" in msg, msg
+    assert compare_xdv_bytes(a, a) is None
+    assert different_font_files(a, a) == []
 
 
 def compare_xdv(ref_path, cand_path):
@@ -125,12 +306,7 @@ def compare_xdv(ref_path, cand_path):
         return None
     if a is None or b is None:
         return "XDV only from %s" % ("candidate" if a is None else "reference")
-    na, nb = normalise_xdv(a), normalise_xdv(b)
-    if na == nb:
-        return None
-    i = next((k for k in range(min(len(na), len(nb))) if na[k] != nb[k]),
-             min(len(na), len(nb)))
-    return "XDV differs at byte %d (sizes %d vs %d)" % (i, len(a), len(b))
+    return compare_xdv_bytes(a, b)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +339,10 @@ def run_one(binary, workdir, args, job, timeout):
 def stage_case(src, name, tmp):
     shutil.copy(PRELUDE, os.path.join(tmp, "prelude.tex"))
     shutil.copy(src, os.path.join(tmp, name + ".tex"))
+    # The picture files of the p-cases (make_cases.py writes them).
+    if os.path.basename(name).startswith("p") and os.path.isdir(PICTURES):
+        for f in sorted(os.listdir(PICTURES)):
+            shutil.copy(os.path.join(PICTURES, f), os.path.join(tmp, f))
 
 
 def case_source(name):
@@ -413,7 +593,15 @@ def main(argv=None):
     ap.add_argument("--select", action="store_true")
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--no-xetex-tests", action="store_true")
+    ap.add_argument("--test-normalise", action="store_true",
+                    help="only test the XDV normalisation (no TeX needed)")
     a = ap.parse_args(argv)
+    # The normalisation is checked on every run, before it is relied on.
+    _self_test_normalise_xdv()
+    _self_test_font_files()
+    if a.test_normalise:
+        print("XDV normalisation: ok")
+        return 0
     if not check_reference(a.reference):
         print("reference %s is not %s" % (a.reference, PINNED_REFERENCE))
         return 2

@@ -20,11 +20,25 @@
 use std::collections::HashMap;
 use std::io::Read;
 
-/// One glyph: origin (X, Y) in stream space and the glyph matrix [a b c d].
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// One glyph: origin (X, Y) in stream space and the glyph matrix [a b c d],
+/// and the fill colour's components (as the PDF writes them, read as §4.2
+/// reads an operand) and fill alpha it is painted with.
+#[derive(Clone, Debug, PartialEq)]
 pub struct RefGlyph {
     pub origin: [f64; 2],
     pub matrix: [f64; 4],
+    pub fill: Vec<f64>,
+    pub fill_alpha: f64,
+    /// The full paint state: colour spaces ([`space_key`]), the stroke
+    /// colour and `CA`, the text render mode `Tr`, and the line state in
+    /// stream space (user-space `w`, `d` times the CTM's similarity scale;
+    /// `None` when the CTM is not a similarity).
+    pub fill_space: String,
+    pub stroke: Vec<f64>,
+    pub stroke_space: String,
+    pub stroke_alpha: f64,
+    pub render: u8,
+    pub line: Option<(f64, u8, u8, f64, Vec<f64>, f64)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -44,6 +58,70 @@ pub struct RefPath {
     pub ctm: [f64; 6],
     pub line: Option<(f64, u8, u8, f64, Vec<f64>, f64)>,
     pub segs: Vec<(u8, Vec<f64>)>,
+    /// The fill and stroke colours' components it is painted with.
+    pub fill: Vec<f64>,
+    pub stroke: Vec<f64>,
+    /// Their spaces ([`space_key`]) and the alphas (`ca`, `CA`).
+    pub fill_space: String,
+    pub stroke_space: String,
+    pub fill_alpha: f64,
+    pub stroke_alpha: f64,
+}
+
+/// A colour space as text, so that the host's and the PDF's compare:
+/// `G`, `RGB`, `CMYK`, `ICC:<n>:<SHA-256 of the profile>`,
+/// `Sep:<name>:<alternate>:<C0>:<C1>:<N>`, `Pattern`.
+pub fn icc_key(n: u8, profile: &[u8]) -> String {
+    format!(
+        "ICC:{n}:{}",
+        flashtex_display_list::sha256::hex(&flashtex_display_list::sha256::sha256(profile))
+    )
+}
+
+pub fn sep_key(name: &str, alt: &str, c0: &[f64], c1: &[f64], e: f64) -> String {
+    format!("Sep:{name}:{alt}:{c0:?}:{c1:?}:{e:?}")
+}
+
+fn space_key(o: &Objs, v: &V) -> String {
+    match o.val(v) {
+        V::Name(n) => match n.as_str() {
+            "DeviceGray" | "G" => "G".into(),
+            "DeviceRGB" | "RGB" => "RGB".into(),
+            "DeviceCMYK" | "CMYK" => "CMYK".into(),
+            "Pattern" => "Pattern".into(),
+            n => format!("Other:{n}"),
+        },
+        V::Arr(a) => match &a[0] {
+            V::Name(k) if k == "ICCBased" => {
+                let V::Ref(r) = &a[1] else { panic!() };
+                let (d, data) = &o.objs[r];
+                let n: u8 = d.get("N").unwrap().num().parse().unwrap();
+                icc_key(n, data.as_ref().unwrap())
+            }
+            V::Name(k) if k == "Separation" => {
+                let V::Name(name) = &a[1] else { panic!() };
+                let alt = space_key(o, &a[2]);
+                let f = o.val(&a[3]);
+                let arr = |k: &str, d: f64| match f.get(k).map(|v| o.val(v)) {
+                    Some(V::Arr(x)) => x.iter().map(|v| operand(v.num())).collect(),
+                    _ => vec![d],
+                };
+                let e = operand(o.val(f.get("N").unwrap()).num());
+                sep_key(name, &alt, &arr("C0", 0.0), &arr("C1", 1.0), e)
+            }
+            k => format!("Other:{k:?}"),
+        },
+        v => format!("Other:{v:?}"),
+    }
+}
+
+/// A line state: width, cap, join, miter limit, dash array, phase.
+pub type Line = (f64, u8, u8, f64, Vec<f64>, f64);
+
+/// The scale of a similarity CTM `[a b -b a]` or `[a b b -a]`.
+fn pen_scale(m: [f64; 6]) -> Option<f64> {
+    let [a, b, c, d, _, _] = m;
+    ((a == d && b == -c) || (a == -d && b == c)).then(|| (a * a + b * b).sqrt())
 }
 
 /// A number token: its text.
@@ -207,7 +285,25 @@ fn tokens(b: &[u8]) -> Vec<T> {
                     .iter()
                     .position(|&x| delim(x))
                     .unwrap_or(b.len() - i - 1);
-            v.push(T::Name(String::from_utf8_lossy(&b[i + 1..j]).into_owned()));
+            // `#xx` is the byte xx (PDF 32000-1 §7.3.5).
+            let raw = &b[i + 1..j];
+            let mut name = Vec::with_capacity(raw.len());
+            let mut k = 0;
+            while k < raw.len() {
+                if raw[k] == b'#' && k + 3 <= raw.len() {
+                    if let Ok(x) = u8::from_str_radix(
+                        std::str::from_utf8(&raw[k + 1..k + 3]).unwrap_or("zz"),
+                        16,
+                    ) {
+                        name.push(x);
+                        k += 3;
+                        continue;
+                    }
+                }
+                name.push(raw[k]);
+                k += 1;
+            }
+            v.push(T::Name(String::from_utf8_lossy(&name).into_owned()));
             i = j;
         } else {
             let j = i + b[i..].iter().position(|&x| delim(x)).unwrap_or(b.len() - i);
@@ -401,6 +497,13 @@ struct St {
     tl: f64,
     rise: f64,
     line: (f64, u8, u8, f64, Vec<f64>, f64),
+    fill: Vec<f64>,
+    stroke: Vec<f64>,
+    ca: f64,
+    fill_space: String,
+    stroke_space: String,
+    stroke_ca: f64,
+    tr: u8,
 }
 
 fn mul(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
@@ -523,6 +626,13 @@ fn page(o: &Objs, p: &V) -> RefPage {
         tl: 0.0,
         rise: 0.0,
         line: (1.0, 0, 0, 10.0, vec![], 0.0),
+        fill: vec![0.0],
+        stroke: vec![0.0],
+        ca: 1.0,
+        fill_space: "G".into(),
+        stroke_space: "G".into(),
+        stroke_ca: 1.0,
+        tr: 0,
     };
     run(o, &content, &res, st, &mut glyphs, &mut paths);
     RefPage {
@@ -544,6 +654,29 @@ fn run(
     let mut cur = (0.0, 0.0);
     let mut clip = 0u8;
     let fonts = res.get("Font").map(|f| o.val(f));
+    let spaces = res.get("ColorSpace").map(|f| o.val(f));
+    let states = res.get("ExtGState").map(|f| o.val(f));
+    // A colour space's initial colour: zeros of its component count; a
+    // Separation's full tint.
+    let initial = |name: &str| -> Vec<f64> {
+        match name {
+            "DeviceGray" => vec![0.0],
+            "DeviceRGB" => vec![0.0; 3],
+            "DeviceCMYK" => vec![0.0, 0.0, 0.0, 1.0],
+            "Pattern" => vec![],
+            _ => match spaces.as_ref().and_then(|d| d.get(name)).map(|v| o.val(v)) {
+                Some(V::Arr(a)) => match a.first() {
+                    Some(V::Name(k)) if k == "ICCBased" => {
+                        let n: usize = o.val(&a[1]).get("N").unwrap().num().parse().unwrap();
+                        vec![0.0; n]
+                    }
+                    Some(V::Name(k)) if k == "Separation" => vec![1.0],
+                    k => panic!("colour space {k:?}"),
+                },
+                v => panic!("colour space /{name}: {v:?}"),
+            },
+        }
+    };
     let mut widths: HashMap<u32, Fw> = HashMap::new();
     let toks = tokens(content);
     let mut stack: Vec<St> = vec![];
@@ -606,6 +739,24 @@ fn run(
                         st.fs * trm[2],
                         st.fs * trm[3],
                     ],
+                    fill: st.fill.clone(),
+                    fill_alpha: st.ca,
+                    fill_space: st.fill_space.clone(),
+                    stroke: st.stroke.clone(),
+                    stroke_space: st.stroke_space.clone(),
+                    stroke_alpha: st.stroke_ca,
+                    render: st.tr,
+                    line: pen_scale(st.ctm).map(|k| {
+                        let l = &st.line;
+                        (
+                            l.0 * k,
+                            l.1,
+                            l.2,
+                            l.3,
+                            l.4.iter().map(|d| d * k).collect(),
+                            l.5 * k,
+                        )
+                    }),
                 });
                 let (w, space) = match fw {
                     Fw::Cid(w, dw) => (*w.get(&c).unwrap_or(dw), false),
@@ -679,6 +830,12 @@ fn run(
                         ctm: st.ctm,
                         line: (bits & 4 != 0).then(|| st.line.clone()),
                         segs: std::mem::take(&mut segs),
+                        fill: st.fill.clone(),
+                        stroke: st.stroke.clone(),
+                        fill_space: st.fill_space.clone(),
+                        stroke_space: st.stroke_space.clone(),
+                        fill_alpha: st.ca,
+                        stroke_alpha: st.stroke_ca,
                     });
                 }
                 segs.clear();
@@ -708,6 +865,65 @@ fn run(
                 st.fs = a(0);
             }
             "Tc" => st.tc = a(0),
+            "Tr" => st.tr = nums[0].parse().unwrap(),
+            "cs" | "CS" => {
+                let T::Name(n) = &args[0] else { panic!() };
+                let c = initial(n);
+                let key = match n.as_str() {
+                    "DeviceGray" | "DeviceRGB" | "DeviceCMYK" | "Pattern" => {
+                        space_key(o, &V::Name(n.clone()))
+                    }
+                    _ => space_key(o, spaces.as_ref().unwrap().get(n).unwrap()),
+                };
+                if op == "cs" {
+                    st.fill = c;
+                    st.fill_space = key;
+                } else {
+                    st.stroke = c;
+                    st.stroke_space = key;
+                }
+            }
+            "sc" | "scn" | "SC" | "SCN" => {
+                let c: Vec<f64> = (0..nums.len()).map(a).collect();
+                if op.starts_with('s') {
+                    st.fill = c;
+                } else {
+                    st.stroke = c;
+                }
+            }
+            "g" | "rg" | "k" | "G" | "RG" | "K" => {
+                let c: Vec<f64> = (0..nums.len()).map(a).collect();
+                let key = match op.to_lowercase().as_str() {
+                    "g" => "G",
+                    "rg" => "RGB",
+                    _ => "CMYK",
+                };
+                if op.chars().next().unwrap().is_lowercase() {
+                    st.fill = c;
+                    st.fill_space = key.into();
+                } else {
+                    st.stroke = c;
+                    st.stroke_space = key.into();
+                }
+            }
+            "gs" => {
+                let T::Name(n) = &args[0] else { panic!() };
+                let d = o.val(
+                    states
+                        .as_ref()
+                        .and_then(|s| s.get(n))
+                        .expect("an ExtGState"),
+                );
+                if let Some(v) = d.get("ca") {
+                    st.ca = operand(v.num());
+                }
+                if let Some(v) = d.get("CA") {
+                    st.stroke_ca = operand(v.num());
+                }
+                if let Some(v) = d.get("LW") {
+                    st.line.0 = operand(v.num());
+                }
+            }
             "Tw" => st.tw = a(0),
             "Tz" => st.tz = a(0),
             "TL" => st.tl = a(0),
@@ -814,8 +1030,236 @@ pub fn host_paths(p: &flashtex_display_list::page::Page) -> Vec<RefPath> {
                     Seg::Close => (3, vec![]),
                 })
                 .collect(),
+            fill: vec![],
+            stroke: vec![],
+            fill_space: String::new(),
+            stroke_space: String::new(),
+            fill_alpha: 1.0,
+            stroke_alpha: 1.0,
+        })
+        .zip(host_paints(p).1)
+        .map(|(mut r, h)| {
+            r.fill = h.fill;
+            r.stroke = h.stroke;
+            r.fill_space = h.fill_space;
+            r.stroke_space = h.stroke_space;
+            r.fill_alpha = h.fill_alpha;
+            r.stroke_alpha = h.stroke_alpha;
+            r
         })
         .collect()
+}
+
+/// The fill colour's components and fill alpha in effect at each GLYPH,
+/// and the fill and stroke colours at each PATH or CLIP, in item order
+/// (SAVE and RESTORE scope them; FILL_COLOR and FILL_COLOR_CS alike).
+#[allow(clippy::type_complexity)]
+pub fn host_colors(
+    p: &flashtex_display_list::page::Page,
+) -> (Vec<(Vec<f64>, f64)>, Vec<(Vec<f64>, Vec<f64>)>) {
+    use flashtex_display_list::page::Item;
+    let mut st = (vec![0.0], vec![0.0], 1.0);
+    let mut stack = vec![];
+    let (mut glyphs, mut paths) = (vec![], vec![]);
+    for it in &p.items {
+        match it {
+            Item::Save => stack.push(st.clone()),
+            Item::Restore => st = stack.pop().unwrap(),
+            Item::FillColor(c) | Item::FillColorCs { color: c, .. } => st.0 = c.0.clone(),
+            Item::StrokeColor(c) | Item::StrokeColorCs { color: c, .. } => st.1 = c.0.clone(),
+            Item::FillAlpha(a) => st.2 = *a,
+            Item::Glyph { .. } => glyphs.push((st.0.clone(), st.2)),
+            Item::Path(_) | Item::Clip(_) => paths.push((st.0.clone(), st.1.clone())),
+            _ => {}
+        }
+    }
+    (glyphs, paths)
+}
+
+/// The paint state of each host GLYPH, in item order, in [`RefGlyph`]'s
+/// terms (origin and matrix left zero).
+pub fn host_glyph_paints(p: &flashtex_display_list::page::Page) -> Vec<RefGlyph> {
+    host_paints(p).0
+}
+
+/// A host colour space as [`space_key`] writes the PDF's.
+fn host_space_key(p: &flashtex_display_list::page::Page, cs: u32) -> String {
+    use flashtex_display_list::page::{alternate, ColorSpace};
+    match cs {
+        alternate::DEVICE_GRAY => return "G".into(),
+        alternate::DEVICE_RGB => return "RGB".into(),
+        alternate::DEVICE_CMYK => return "CMYK".into(),
+        _ => {}
+    }
+    match p.colorspaces.get((cs as usize).wrapping_sub(1)) {
+        Some(ColorSpace::Icc { n, profile }) => icc_key(*n, profile),
+        Some(ColorSpace::Separation {
+            name,
+            alternate,
+            c0,
+            c1,
+            e,
+        }) => sep_key(name, &host_space_key(p, *alternate), c0, c1, *e),
+        None => format!("Other:cs{cs}"),
+    }
+}
+
+/// Every GLYPH's and PATH/CLIP's full paint state as the display list
+/// sets it (SAVE and RESTORE scope it).
+fn host_paints(p: &flashtex_display_list::page::Page) -> (Vec<RefGlyph>, Vec<RefPath>) {
+    use flashtex_display_list::page::Item;
+    let dev = |c: &[f64]| match c.len() {
+        1 => "G".to_string(),
+        3 => "RGB".into(),
+        4 => "CMYK".into(),
+        n => format!("Other:{n}"),
+    };
+    #[derive(Clone)]
+    struct H {
+        fill: (Vec<f64>, String),
+        stroke: (Vec<f64>, String),
+        ca: f64,
+        sca: f64,
+        tr: u8,
+        line: Option<(f64, u8, u8, f64, Vec<f64>, f64)>,
+    }
+    let mut st = H {
+        fill: (vec![0.0], "G".into()),
+        stroke: (vec![0.0], "G".into()),
+        ca: 1.0,
+        sca: 1.0,
+        tr: 0,
+        line: None,
+    };
+    let mut stack = vec![];
+    let (mut glyphs, mut paths) = (vec![], vec![]);
+    for it in &p.items {
+        match it {
+            Item::Save => stack.push(st.clone()),
+            Item::Restore => st = stack.pop().unwrap(),
+            Item::FillColor(c) => st.fill = (c.0.clone(), dev(&c.0)),
+            Item::FillColorCs { cs, color } => st.fill = (color.0.clone(), host_space_key(p, *cs)),
+            Item::StrokeColor(c) => st.stroke = (c.0.clone(), dev(&c.0)),
+            Item::StrokeColorCs { cs, color } => {
+                st.stroke = (color.0.clone(), host_space_key(p, *cs))
+            }
+            Item::FillAlpha(a) => st.ca = *a,
+            Item::StrokeAlpha(a) => st.sca = *a,
+            Item::TextRender(r) => st.tr = *r,
+            Item::LineState(l) => {
+                st.line = Some((l.width, l.cap, l.join, l.miter, l.dash.clone(), l.phase))
+            }
+            Item::Glyph { .. } => glyphs.push(RefGlyph {
+                origin: [0.0; 2],
+                matrix: [0.0; 4],
+                fill: st.fill.0.clone(),
+                fill_alpha: st.ca,
+                fill_space: st.fill.1.clone(),
+                stroke: st.stroke.0.clone(),
+                stroke_space: st.stroke.1.clone(),
+                stroke_alpha: st.sca,
+                render: st.tr,
+                line: st.line.clone(),
+            }),
+            Item::Path(_) | Item::Clip(_) => paths.push(RefPath {
+                paint: 0,
+                ctm: [0.0; 6],
+                line: None,
+                segs: vec![],
+                fill: st.fill.0.clone(),
+                stroke: st.stroke.0.clone(),
+                fill_space: st.fill.1.clone(),
+                stroke_space: st.stroke.1.clone(),
+                fill_alpha: st.ca,
+                stroke_alpha: st.sca,
+            }),
+            _ => {}
+        }
+    }
+    (glyphs, paths)
+}
+
+/// What differs between a host glyph's paint and the PDF's (spec §11.3,
+/// §11.4): the fill colour, its space and `ca` when the glyph is filled;
+/// the stroke colour, its space, `CA` and the line state in stream space
+/// when it is stroked; the render mode. `None` when equal bit for bit.
+pub fn glyph_paint_mismatch(h: &RefGlyph, r: &RefGlyph) -> Option<String> {
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    if h.render != r.render {
+        return Some(format!("Tr {} vs the PDF's {}", h.render, r.render));
+    }
+    let fills = matches!(r.render, 0 | 2 | 4 | 6);
+    let strokes = matches!(r.render, 1 | 2 | 5 | 6);
+    if fills
+        && (bits(&h.fill) != bits(&r.fill)
+            || h.fill_space != r.fill_space
+            || h.fill_alpha.to_bits() != r.fill_alpha.to_bits())
+    {
+        return Some(format!(
+            "fill {:?} {} ca {} vs the PDF's {:?} {} ca {}",
+            h.fill, h.fill_space, h.fill_alpha, r.fill, r.fill_space, r.fill_alpha
+        ));
+    }
+    if strokes {
+        let line_bits = |l: &Option<Line>| {
+            l.as_ref().map(|l| {
+                (
+                    l.0.to_bits(),
+                    l.1,
+                    l.2,
+                    l.3.to_bits(),
+                    bits(&l.4),
+                    l.5.to_bits(),
+                )
+            })
+        };
+        if bits(&h.stroke) != bits(&r.stroke)
+            || h.stroke_space != r.stroke_space
+            || h.stroke_alpha.to_bits() != r.stroke_alpha.to_bits()
+            || r.line.is_none()
+            || line_bits(&h.line) != line_bits(&r.line)
+        {
+            return Some(format!(
+                "stroke {:?} {} CA {} line {:?} vs the PDF's {:?} {} CA {} line {:?}",
+                h.stroke,
+                h.stroke_space,
+                h.stroke_alpha,
+                h.line,
+                r.stroke,
+                r.stroke_space,
+                r.stroke_alpha,
+                r.line
+            ));
+        }
+    }
+    None
+}
+
+/// The PDF as a client without `color-spaces` gets it drawn: ICCBased
+/// colours in the Device space of their component count, no alpha.
+pub fn device_only(pages: &mut [RefPage]) {
+    let dev = |k: &mut String| {
+        if let Some(rest) = k.strip_prefix("ICC:") {
+            *k = match rest.split(':').next() {
+                Some("1") => "G",
+                Some("3") => "RGB",
+                _ => "CMYK",
+            }
+            .into();
+        }
+    };
+    for p in pages {
+        for g in &mut p.glyphs {
+            dev(&mut g.fill_space);
+            dev(&mut g.stroke_space);
+        }
+        for path in &mut p.paths {
+            dev(&mut path.fill_space);
+            dev(&mut path.stroke_space);
+            path.fill_alpha = 1.0;
+            path.stroke_alpha = 1.0;
+        }
+    }
 }
 
 /// How many of the host's paths are not, in order, one of the PDF's paths
@@ -828,7 +1272,16 @@ pub fn unmatched_paths(host: &[RefPath], pdf: &[RefPath]) -> usize {
         let fills = 1 | 2;
         let paint_ok =
             h.paint & !(fills) & !r.paint == 0 && (h.paint & fills == 0 || r.paint & fills != 0);
+        let colours_ok = (h.paint & fills == 0
+            || (bits(&h.fill) == bits(&r.fill)
+                && h.fill_space == r.fill_space
+                && h.fill_alpha.to_bits() == r.fill_alpha.to_bits()))
+            && (h.paint & 4 == 0
+                || (bits(&h.stroke) == bits(&r.stroke)
+                    && h.stroke_space == r.stroke_space
+                    && h.stroke_alpha.to_bits() == r.stroke_alpha.to_bits()));
         paint_ok
+            && colours_ok
             && bits(&h.ctm) == bits(&r.ctm)
             && h.segs.len() == r.segs.len()
             && h.segs

@@ -1,4 +1,4 @@
-//! `flashtex-v3` end to end, through a built `flashtex-host` and the user's
+//! `flashtex` end to end, through a built `flashtex-host` and the user's
 //! TeX Live (skipped when either is missing). The PDF `build` writes is the
 //! host's `export` run, which the parity gates hold byte-identical to
 //! pdflatex's (P-T2); here it is compared with MacTeX's pdflatex as an
@@ -25,8 +25,21 @@ fn host() -> Option<PathBuf> {
 
 /// A skipped test says so where it is seen: the test harness captures
 /// `eprintln!` of a passing test, but not a direct write to stderr.
+///
+/// A run that must have both sets `FLASHTEX_REQUIRE_TEXLIVE=1`, as the
+/// engine's TeX Live tests read it (crates/flashtex-engine/tests/common):
+/// then a missing host or TeX Live fails the test instead, so the leg that
+/// sets it (ci.yml's `rust workspace` on a self-hosted Mac, app-parity row
+/// D5) proves these tests ran.
 fn skip(why: &str) {
     use std::io::Write;
+    if std::env::var_os("FLASHTEX_REQUIRE_TEXLIVE").is_some_and(|v| v == "1") {
+        panic!(
+            "{why}, and FLASHTEX_REQUIRE_TEXLIVE=1 says this run must have both \
+             (cargo build --release -p flashtex-engine --bin flashtex-host, or \
+             $FLASHTEX_HOST; pdflatex on PATH or in /Library/TeX/texbin)"
+        );
+    }
     let _ = writeln!(std::io::stderr(), "SKIPPED {}: {why} (build it: cargo build --release -p flashtex-engine --bin flashtex-host)", std::thread::current().name().unwrap_or("?"));
 }
 
@@ -40,10 +53,10 @@ fn pdflatex() -> Option<PathBuf> {
 }
 
 fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_flashtex-v3"))
+    PathBuf::from(env!("CARGO_BIN_EXE_flashtex"))
 }
 
-/// `flashtex-v3`, with the engine's format cache in the temporary
+/// `flashtex`, with the engine's format cache in the temporary
 /// directory (shared by these tests, validated per engine build), never
 /// the user's `~/Library/Caches/FlashTeX/formats`: the Mac app's test
 /// guard watched that directory and these tests, run by the self-hosted
@@ -52,13 +65,14 @@ fn cli() -> Command {
     let mut c = Command::new(bin());
     c.env(
         "FLASHTEX_FORMAT_CACHE_DIR",
-        std::env::temp_dir().join("flashtex-v3-e2e-formats"),
+        std::env::temp_dir().join("flashtex-build-e2e-formats"),
     );
     c
 }
 
 fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("flashtex-v3-e2e-{name}-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("flashtex-build-e2e-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for (n, t) in files {
@@ -141,7 +155,7 @@ fn build_writes_the_pdf_pdflatex_writes() {
     assert_eq!(
         normalised(&pdf),
         normalised(&oracle.join("paper.pdf")),
-        "flashtex-v3 build's PDF is pdflatex's"
+        "flashtex build's PDF is pdflatex's"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -429,7 +443,7 @@ fn a_signal_cleans_up_the_work_dir_and_the_host() {
             .trim()
             .parse()
             .unwrap();
-        let work = format!("flashtex-v3-{}-", cli.id());
+        let work = format!("flashtex-build-{}-", cli.id());
         assert!(
             entries(&tmp).iter().any(|e| e.starts_with(&work)),
             "{:?}",
@@ -471,8 +485,8 @@ fn a_run_sweeps_what_a_killed_run_left() {
     dead.wait().unwrap();
     let me = std::process::id();
     for name in [
-        format!("flashtex-v3-{dead_pid}-1-0"),
-        format!("flashtex-v3-{me}-1-0"),
+        format!("flashtex-build-{dead_pid}-1-0"),
+        format!("flashtex-build-{me}-1-0"),
     ] {
         std::fs::create_dir_all(tmp.join(&name).join("sub")).unwrap();
     }
@@ -486,8 +500,74 @@ fn a_run_sweeps_what_a_killed_run_left() {
     assert!(!out.status.success());
     assert_eq!(
         entries(&tmp),
-        vec![format!("flashtex-v3-{me}-1-0"), "unrelated.txt".to_string()],
+        vec![
+            format!("flashtex-build-{me}-1-0"),
+            "unrelated.txt".to_string()
+        ],
         "the dead run's leftovers went, the live one's stayed"
     );
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Progress (lane CLI-PROGRESS) is for a terminal: without one (a pipe, as
+/// here, as in CI and scripts) `build` prints exactly what it printed before
+/// it existed, one line on stderr and nothing on stdout, and no `\r` or
+/// escape sequence; `--quiet` prints nothing; `--progress` asks for plain
+/// lines (a pass, the export) and keeps the last line.
+#[test]
+fn without_a_terminal_progress_prints_nothing_unless_asked() {
+    let Some(host) = host() else {
+        skip("no flashtex-host");
+        return;
+    };
+    if pdflatex().is_none() {
+        skip("no TeX Live");
+        return;
+    }
+    let dir = project("progress", &[("paper.tex", DOC)]);
+    let run = |extra: &[&str]| {
+        let mut c = cli();
+        c.args([
+            "build",
+            &dir.to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .args(extra);
+        let out = c.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stdout.is_empty(), "stdout stays empty");
+        String::from_utf8(out.stderr).unwrap()
+    };
+    // As before progress: `flashtex: wrote <pdf> (<n> ms)` and a newline.
+    let plain = run(&[]);
+    let pdf = dir.join("paper.pdf").canonicalize().unwrap();
+    let ms = plain
+        .strip_prefix(&format!("flashtex: wrote {} (", pdf.display()))
+        .and_then(|r| r.strip_suffix(" ms)\n"));
+    assert!(
+        ms.is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+        "{plain:?}"
+    );
+    assert_eq!(run(&["--no-progress"]).lines().count(), 1);
+    assert_eq!(run(&["--quiet"]), "");
+    let asked = run(&["--progress"]);
+    assert!(
+        !asked.contains('\r') && !asked.contains('\x1b'),
+        "{asked:?}"
+    );
+    let lines: Vec<&str> = asked.lines().collect();
+    assert!(lines.contains(&"flashtex: pass 1"), "{asked}");
+    assert!(lines.contains(&"flashtex: writing the PDF"), "{asked}");
+    assert!(
+        lines
+            .last()
+            .is_some_and(|l| l.starts_with("flashtex: wrote ")),
+        "{asked}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

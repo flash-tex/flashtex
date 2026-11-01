@@ -45,6 +45,17 @@ enum PerfSignposts {
     /// Runs `body` inside a signpost interval (just `body()` when disabled).
     @inline(__always)
     static func interval<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
+        // MainThreadProbe (EditorInstantTests, the cold-typing bench) times the same sections.
+        if MainThreadProbe.recordingFlag, Thread.isMainThread {
+            let t0 = MonotonicClock.nowNs()
+            defer { MainThreadProbe.record(name, since: t0) }
+            return try signposted(name, body)
+        }
+        return try signposted(name, body)
+    }
+
+    @inline(__always)
+    private static func signposted<T>(_ name: StaticString, _ body: () throws -> T) rethrows -> T {
         guard enabled else { return try body() }
         let state = signposter.beginInterval(name, id: signposter.makeSignpostID())
         defer { signposter.endInterval(name, state) }

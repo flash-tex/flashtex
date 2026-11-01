@@ -9,7 +9,7 @@ import FlashTeXProtocol
 /// docs/proposals/packages-fonts-manifest.md §2.4 — "set font settings
 /// globally") as four rows, Text, Math, Sans and Mono, each a searchable
 /// picker over the families the engine's own index finds
-/// (`flashtex-render --list-fonts`, the same names `\setmainfont{` completes
+/// (`flashtex-host-unicode --list-fonts`, the same names `\setmainfont{` completes
 /// with) with a sample line set in that family, and "Class default" first.
 ///
 /// Apply writes the table into `flashtex.toml` — created from the helper's
@@ -17,7 +17,7 @@ import FlashTeXProtocol
 /// `set_fonts` (`crates/project-manifest` `Manifest::with_fonts`, the one
 /// TOML writer: everything else in the file is kept byte for byte) and the
 /// ordinary rooted save, then the manifest is re-read and the preview
-/// follows (ProjectManifest.refresh → ShellModel.manifestFontsDidChange).
+/// follows (ProjectManifest.refresh → ShellModel.manifestDidRefresh → EngineV3Session.manifestChanged).
 /// A project without a manifest and every row at "Class default" writes
 /// nothing. The document's own `\setmainfont` etc. always outrank the table.
 ///
@@ -160,9 +160,9 @@ final class ProjectFontsState {
     func listFamilies() {
         guard families.isEmpty, !listing else { return }
         listing = true
-        let tool = ShellModel.locateRenderPipeline()
+        let tool = InstalledFonts.lister()
         let list: @Sendable (URL?) -> (families: [String], math: [String]) = lister ?? { tool in
-            (InstalledFonts.families(renderPipeline: tool), InstalledFonts.mathFamilies(renderPipeline: tool))
+            (InstalledFonts.families(tool: tool), InstalledFonts.mathFamilies(tool: tool))
         }
         Task.detached(priority: .userInitiated) {
             let listed = list(tool)
@@ -209,7 +209,7 @@ final class ProjectFontsState {
         applies += 1
         opened = selection
         shown = false
-        // Re-read the table: a change recompiles (ShellModel.manifestFontsDidChange).
+        // Re-read the table: a change recompiles (ShellModel.manifestDidRefresh).
         model.manifest.refresh()
         let outcome = note(.applied(path: reply.path))
         model.navigationNote = selection.isClassDefault
@@ -287,10 +287,10 @@ struct ProjectFontsSheet: View {
             if state.listing {
                 HStack(spacing: DS.Space.s) {
                     ProgressView().controlSize(.small)
-                    Text("Listing the installed families (flashtex-render --list-fonts)…").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                    Text("Listing the installed families…").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
                 }
             } else if state.families.isEmpty {
-                Text("No families listed: attach or build flashtex-render (crates/render-pipeline) so the index the render resolves against can be asked. A name can still be typed.")
+                Text("No families listed: this build has no Unicode-mode engine (flashtex-host-unicode) to ask which fonts it finds. A name can still be typed.")
                     .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.severityWarning).fixedSize(horizontal: false, vertical: true)
             }
             if let note = state.note {
@@ -375,7 +375,9 @@ struct FontFamilyPicker: View {
                 Text(family ?? Self.classDefault).lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(family == nil ? DS.Colors.textSecondary : DS.Colors.textPrimary)
                 Spacer(minLength: DS.Space.s)
-                Image(systemName: "chevron.up.chevron.down").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                // Not DS.Fonts.secondary: a bare disclosure-chevron glyph,
+                // same "icon, not text" rule as railIcon/toolbarIcon.
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 11)).foregroundStyle(DS.Colors.textSecondary)
             }
             .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
             .background(DS.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.control))
