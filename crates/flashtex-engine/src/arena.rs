@@ -260,52 +260,60 @@ const NIBBLE_LEN: [usize; 16] = {
     t
 };
 
+/// A half's tag: 0 for zero, else 1, 2 or 3 as it takes 1, 2 or 4 bytes,
+/// sign-extended. Without branches: the widths of TeX's halves vary from
+/// word to word, and a branch on them mispredicts (lane COLD-FIRST: packing
+/// was 2.6 % of a cold open's instructions on the PC).
 #[inline]
 fn half_tag(x: u32) -> usize {
     let v = x as i32;
-    if v == 0 {
-        0
-    } else if v as i8 as i32 == v {
-        1
-    } else if v as i16 as i32 == v {
-        2
-    } else {
-        3
-    }
+    (v != 0) as usize + (v as i8 as i32 != v) as usize + (v as i16 as i32 != v) as usize
 }
 
-#[inline]
-fn put_half(out: &mut Vec<u8>, x: u32, t: usize) {
-    match t {
-        0 => {}
-        1 => out.push(x as u8),
-        2 => out.extend_from_slice(&(x as u16).to_le_bytes()),
-        _ => out.extend_from_slice(&x.to_le_bytes()),
-    }
-}
+/// By tag: the shift that sign-extends a 4-byte load's low bytes, and the
+/// mask that makes a zero half zero.
+const HALF_SHIFT: [u32; 4] = [0, 24, 16, 0];
+const HALF_MASK: [u32; 4] = [0, u32::MAX, u32::MAX, u32::MAX];
 
 /// The half at `b[p..]` with tag `t`.
 #[inline]
 fn get_half(b: &[u8], p: usize, t: usize) -> u32 {
-    match t {
-        0 => 0,
-        1 => b[p] as i8 as i32 as u32,
-        2 => i16::from_le_bytes([b[p], b[p + 1]]) as i32 as u32,
-        _ => u32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]),
+    match b.get(p..p + 4) {
+        // one load and two shifts, whatever the width
+        Some(w) => {
+            let raw = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+            let s = HALF_SHIFT[t];
+            (((raw << s) as i32 >> s) as u32) & HALF_MASK[t]
+        }
+        // the last bytes of the log
+        None => match t {
+            0 => 0,
+            1 => b[p] as i8 as i32 as u32,
+            2 => i16::from_le_bytes([b[p], b[p + 1]]) as i32 as u32,
+            _ => u32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]),
+        },
     }
 }
 
 /// Append `vals`, packed, to `out`.
 fn pack_words(vals: &[u64], out: &mut Vec<u8>) {
     let t0 = out.len();
-    out.resize(t0 + vals.len().div_ceil(2), 0);
+    let n = vals.len();
+    let mut p = t0 + n.div_ceil(2);
+    // Room for every half at its widest plus 4 bytes: each half is stored
+    // as all 4 of its bytes, of which its width keeps the low ones; the
+    // next half's store, or the truncation, covers the rest.
+    out.resize(p + n * 8 + 4, 0);
     for (i, &x) in vals.iter().enumerate() {
         let (lo, hi) = (x as u32, (x >> 32) as u32);
         let (tl, th) = (half_tag(lo), half_tag(hi));
         out[t0 + i / 2] |= ((tl | th << 2) as u8) << ((i & 1) * 4);
-        put_half(out, lo, tl);
-        put_half(out, hi, th);
+        out[p..p + 4].copy_from_slice(&lo.to_le_bytes());
+        p += HALF_LEN[tl];
+        out[p..p + 4].copy_from_slice(&hi.to_le_bytes());
+        p += HALF_LEN[th];
     }
+    out.truncate(p);
 }
 
 /// The word at byte `p` of `b` with nibble `t`.
@@ -3900,11 +3908,33 @@ mod tests {
             1 << 32,
             0x8000_0000_0000_0000,
         ]);
+        // The packing as it was written before it lost its branches
+        // (COLD-FIRST): the bytes must be the same.
+        let reference = |vals: &[u64], out: &mut Vec<u8>| {
+            let tag = |x: u32| match x as i32 {
+                0 => 0usize,
+                v if v as i8 as i32 == v => 1,
+                v if v as i16 as i32 == v => 2,
+                _ => 3,
+            };
+            let t0 = out.len();
+            out.resize(t0 + vals.len().div_ceil(2), 0);
+            for (i, &x) in vals.iter().enumerate() {
+                let (lo, hi) = (x as u32, (x >> 32) as u32);
+                let (tl, th) = (tag(lo), tag(hi));
+                out[t0 + i / 2] |= ((tl | th << 2) as u8) << ((i & 1) * 4);
+                out.extend_from_slice(&lo.to_le_bytes()[..HALF_LEN[tl]]);
+                out.extend_from_slice(&hi.to_le_bytes()[..HALF_LEN[th]]);
+            }
+        };
         for n in [0usize, 1, 2, 3, 127, 128] {
             for start in [0usize, 5, 333] {
                 let chunk = &vals[start..start + n];
                 let mut bytes = vec![9u8; 3];
                 pack_words(chunk, &mut bytes);
+                let mut want = vec![9u8; 3];
+                reference(chunk, &mut want);
+                assert_eq!(bytes, want, "n {n} start {start}");
                 let mut mask = [0u64; MASK_WORDS];
                 // the first n bits set, any n words do
                 for k in 0..n {
