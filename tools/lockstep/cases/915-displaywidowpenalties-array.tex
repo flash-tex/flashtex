@@ -1,0 +1,21 @@
+% 915-displaywidowpenalties-array: verifies the e-TeX \displaywidowpenalties array sets the penalty before the line preceding a display, unlike the default control.
+\input prelude
+% plain-style math fonts (== tools/lockstep/mathsetup.tex; inlined: harness stages only prelude+case)
+\font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
+\font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
+\font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+\font\tenex=cmex10
+\skewchar\teni='177 \skewchar\seveni='177 \skewchar\fivei='177
+\skewchar\tensy='60 \skewchar\sevensy='60 \skewchar\fivesy='60
+\textfont0=\tenrm \scriptfont0=\sevenrm \scriptscriptfont0=\fiverm
+\textfont1=\teni \scriptfont1=\seveni \scriptscriptfont1=\fivei
+\textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\font\myrm=cmr10
+\mathcode`a="7161
+\def\paratext{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu}
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\displaywidowpenalties=2 777 888\myrm \paratext$$a$$\par}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\myrm \paratext$$a$$\par}
+\message{915 done}
+\lsshipbox0 \lsshipbox1
+\end

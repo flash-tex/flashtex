@@ -1,0 +1,6 @@
+% Verifies a v-part with braces smuggled past the scanner via \iffalse.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&\iffalse{\fi#\hfil\iffalse}\fi\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{519 wd=\the\wd0}
+\lsshipbox0
+\end

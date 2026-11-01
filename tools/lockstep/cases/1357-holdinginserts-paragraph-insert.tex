@@ -1,0 +1,11 @@
+% 1357-holdinginserts-paragraph-insert: with \holdinginserts=1 an \insert typed in paragraph text rides its line onto the page and stays there as an insertion node while \box254 stays void (pdftex.web §1191; tex.web §§655, 888)
+\input prelude
+\font\myrm=cmr10
+\hsize=200pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\baselineskip=12pt \lineskiplimit=0pt \lineskip=1pt
+\parfillskip=0pt plus1fil \linepenalty=10 \tolerance=200
+\count254=1000 \skip254=12pt \dimen254=200pt
+\holdinginserts=1
+\output={\message{1357 box254=\ifvoid254 void\else full\fi}\lsshipbox254\lsshipbox255}
+\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau\insert254{\myrm held note}\par
+\end

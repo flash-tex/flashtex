@@ -5,107 +5,81 @@ import PhotosUI
 import SwiftUI
 
 /// Primary screen, one tap to the Mac (lane mac-capture-fluid): draw with
-/// Apple Pencil (or a finger in the simulator), take a photo with the camera
-/// (the Photos picker where there is no camera, e.g. the simulator), pick an
-/// instruction chip or type one, tap **Send**. Prepare and Send are one step:
-/// the PNG is rendered, validated (`CaptureQueue.validate`), drafted to disk
-/// and sent as a transfer-v1 `capture_submit`; the list below follows the
-/// Mac's states (received → converting → proposal ready → inserted) and shows
-/// the returned LaTeX/TikZ read-only. The Mac converts and the Mac user
-/// approves insertion — from here (Insert) or on the Mac; the iPad
-/// receives receipts, status and the proposal text it approves.
+/// Apple Pencil (or a finger), take a photo with the camera (the Photos
+/// picker where there is no camera, e.g. the simulator), pick an instruction
+/// chip or type one, tap **Send**. Prepare and Send are one step: the PNG is
+/// rendered, validated (`CaptureQueue.validate`), drafted to disk and sent as
+/// a transfer-v1 `capture_submit`; the Captures panel follows the Mac's
+/// states (received → converting → proposal ready → inserted) and shows the
+/// returned LaTeX/TikZ read-only. The Mac converts and the Mac user approves
+/// insertion — from here (Insert) or on the Mac.
+///
+/// Layout: the canvas fills the whole scene, edge to edge (`PencilCanvas`,
+/// ignoring the safe area); every control floats over it inside the safe
+/// area — sidebar and connection at the top-leading corner, canvas actions at
+/// the top-trailing corner, the instruction + Send composer under them, the
+/// Captures panel at the trailing edge (a sheet in compact width). The
+/// controls fade while a stroke is being drawn, and the chevron collapses
+/// them to one button. PencilKit's tool picker keeps the bottom edge.
+///
+/// Gestures (`CanvasGestures.swift`): two-finger double-tap undoes,
+/// three-finger double-tap redoes, and the Apple Pencil double-tap undoes
+/// (or follows the system setting), each switchable in the settings popover.
 struct CaptureView: View {
     @EnvironmentObject var model: PadModel
-    @State private var drawing = PKDrawing()
-    @State private var canvasSize = CGSize(width: 1024, height: 640)
+    /// Reveals the navigation sidebar, which the full-screen canvas hides.
+    var showSidebar: () -> Void = {}
+
+    @StateObject private var canvas = CanvasController()
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @AppStorage(CanvasSettings.twoFingerUndoKey) private var twoFingerUndo = true
+    @AppStorage(CanvasSettings.threeFingerRedoKey) private var threeFingerRedo = true
+    @AppStorage(CanvasSettings.pencilDoubleTapKey) private var pencilDoubleTap = PencilDoubleTapMode.undo
+    @AppStorage(CanvasSettings.fingerDrawingKey) private var fingerDrawing = true
+    @AppStorage(CanvasSettings.autoHideControlsKey) private var autoHideControls = true
+    static let capturesPanelOpenKey = "flashtexpad.capture.capturesPanelOpen"
+    @AppStorage(CaptureView.capturesPanelOpenKey) private var capturesOpen = false
+
     @State private var photo: PhotosPickerItem?
     @State private var picked: UIImage?
     @State private var pickedSource: CaptureRecord.Source = .photo
     @State private var instructions = PadModel.defaultInstructions[0]
     @State private var problem: String?
-    @State private var toolsVisible = true
     @State private var sending = false
     @State private var cameraShown = false
+    @State private var settingsShown = false
+    @State private var collapsed = false
+    @State private var fadedForDrawing = false
+    @State private var fadeWork: DispatchWorkItem?
 
     static var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
 
+    private var settings: CanvasSettings {
+        CanvasSettings(twoFingerUndo: twoFingerUndo, threeFingerRedo: threeFingerRedo, pencilDoubleTap: pencilDoubleTap,
+                       fingerDrawing: fingerDrawing, autoHideControls: autoHideControls)
+    }
+
+    private var sidePanel: Bool { sizeClass != .compact }
+
     var body: some View {
-        VStack(spacing: 8) {
-            connectionRow
-
-            if let img = picked {
-                Image(uiImage: img).resizable().scaledToFit().frame(maxHeight: 360)
-                    .overlay(alignment: .topTrailing) {
-                        Button("Back to canvas") { picked = nil }.buttonStyle(.bordered).padding(6)
-                    }
-                    .accessibilityIdentifier("capture.pickedImage")
-            } else {
-                PencilCanvas(drawing: $drawing, size: $canvasSize, toolsVisible: $toolsVisible)
-                    .frame(minHeight: 320)
-                    .layoutPriority(1)
-                    .background(Color.white)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.gray.opacity(0.4)))
-                    .padding(.horizontal)
-                    .accessibilityIdentifier("capture.canvas")
-            }
-
-            HStack {
-                Button { drawing = PKDrawing(); picked = nil; toolsVisible = true; problem = nil } label: { Label("Clear", systemImage: "trash") }
-                    .accessibilityLabel("Clear drawing")
-                    .accessibilityIdentifier("capture.clear")
-                if Self.cameraAvailable {
-                    Button { cameraShown = true } label: { Label("Camera", systemImage: "camera") }
-                        .accessibilityLabel("Take photo with camera")
-                        .accessibilityIdentifier("capture.camera")
-                }
-                PhotosPicker(selection: $photo, matching: .images) { Label(Self.cameraAvailable ? "Photo…" : "Photo… (no camera here)", systemImage: "photo") }
-                    .accessibilityLabel("Choose photo from library")
-                    .accessibilityIdentifier("capture.photo")
-                Button { loadSample() } label: { Label("Sample image", systemImage: "photo.on.rectangle") }
-                    .accessibilityLabel("Load sample image")
-                    .accessibilityIdentifier("capture.sample")
-                Spacer()
-                Text("\(drawing.strokes.count) stroke\(drawing.strokes.count == 1 ? "" : "s")").font(.footnote).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("capture.strokes")
-            }.padding(.horizontal)
-
-            // One instruction field with recent-instruction chips.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(model.recentInstructions, id: \.self) { chip in
-                        Button(chip) { instructions = chip }
-                            .buttonStyle(.bordered).controlSize(.small)
-                            .tint(chip.caseInsensitiveCompare(instructions) == .orderedSame ? .accentColor : .secondary)
-                            .accessibilityIdentifier("capture.chip.\(chip)")
-                    }
-                }.padding(.horizontal)
-            }
-            .accessibilityIdentifier("capture.chips")
-            TextField("Instruction for the Mac, e.g. “convert this to TikZ”, “this is a matrix”", text: $instructions, axis: .vertical)
-                .textFieldStyle(.roundedBorder).padding(.horizontal)
-                .accessibilityIdentifier("capture.instructions")
-
-            HStack {
-                Button { Task { await send() } } label: {
-                    Label(sending ? "Sending…" : "Send", systemImage: "paperplane.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(sending)
-                .accessibilityLabel("Send capture")
-                .accessibilityValue(sending ? "Sending" : model.link.isConnected ? "Ready to send" : "Disabled, not connected")
-                .accessibilityIdentifier("capture.send")
-                if !model.link.isConnected {
-                    Text("not connected").font(.footnote).foregroundStyle(.secondary)
-                }
-                Spacer()
-            }.padding(.horizontal)
-            if let p = problem { Text(p).foregroundStyle(.red).font(.footnote).padding(.horizontal).accessibilityIdentifier("capture.problem") }
-
-            Divider()
-            CapturesList()
-        }
-        .padding(.vertical, 8)
+        // The canvas sizes the screen; everything else is an overlay on it,
+        // so no control can ever push the canvas off the edges.
+        PencilCanvas(controller: canvas)
+            .ignoresSafeArea()
+            .accessibilityIdentifier("capture.canvas")
+            .overlay { overlays }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: canvas.toast)
+            .animation(.easeInOut(duration: 0.2), value: fadedForDrawing)
+        // Regular width: no bar, the canvas is the whole window. Compact
+        // width: the split view is a stack, so keep the bar and its back
+        // button as a second way out besides the floating sidebar button.
+        .toolbar(sidePanel ? .hidden : .visible, for: .navigationBar)
         .navigationTitle("Capture")
+        .onAppear { canvas.settings = settings }
+        .onChange(of: settings) { _, s in canvas.settings = s }
+        .onChange(of: canvas.isDrawing) { _, drawing in fade(drawing) }
         .onChange(of: photo) { _, item in
             guard let item else { return }
             Task {
@@ -118,16 +92,121 @@ struct CaptureView: View {
             CameraPicker { img in picked = img; pickedSource = .photo; cameraShown = false } onCancel: { cameraShown = false }
                 .ignoresSafeArea()
         }
+        .sheet(isPresented: Binding(get: { capturesOpen && !sidePanel }, set: { if !$0 { capturesOpen = false } })) {
+            NavigationStack {
+                CapturesList()
+                    .navigationTitle("Captures")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { Button("Done") { capturesOpen = false } }
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
-    private var connectionRow: some View {
-        HStack {
-            Text(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")"
-                 : "Not connected — \(model.linkStatus)\(model.linkError.map { ": \($0)" } ?? "") — pair in Mac link")
-                .font(.footnote).foregroundStyle(model.link.isConnected ? .green : .secondary)
-                .accessibilityLabel("Connection status")
-                .accessibilityValue(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")" : "Not connected: \(model.linkStatus)")
-                .accessibilityIdentifier("capture.connection")
+    private var overlays: some View {
+        ZStack {
+            if let img = picked { pickedImage(img) }
+
+            controls
+                .opacity(fadedForDrawing ? 0 : 1)
+                .allowsHitTesting(!fadedForDrawing)
+
+            if let t = canvas.toast {
+                Text(t.text)
+                    .font(.headline)
+                    .padding(.horizontal, 18).padding(.vertical, 10)
+                    .floatingChrome(Capsule())
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .id(t.id)
+                    .accessibilityIdentifier("capture.toast")
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    /// Controls fade out while the Pencil is down and come back shortly after
+    /// it lifts, so they never sit on top of a stroke being drawn.
+    private func fade(_ drawing: Bool) {
+        fadeWork?.cancel()
+        guard autoHideControls else { fadedForDrawing = false; return }
+        if drawing { fadedForDrawing = true; return }
+        let work = DispatchWorkItem { fadedForDrawing = false }
+        fadeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+
+    // MARK: floating controls
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Side by side with the image sources inline, then with them in
+            // a menu, then stacked (a narrow Split View window).
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    leadingCluster
+                    Spacer(minLength: 8)
+                    trailingCluster(imageSourcesInline: true)
+                }
+                HStack(alignment: .top, spacing: 10) {
+                    leadingCluster
+                    Spacer(minLength: 8)
+                    trailingCluster(imageSourcesInline: false)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    leadingCluster
+                    trailingCluster(imageSourcesInline: false)
+                }
+            }
+            HStack(alignment: .top, spacing: 10) {
+                if !collapsed {
+                    composer.frame(maxWidth: 560, alignment: .leading)
+                }
+                Spacer(minLength: 0)
+                if capturesOpen, sidePanel, !collapsed {
+                    capturesCard
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+    }
+
+    private var leadingCluster: some View {
+        HStack(spacing: 8) {
+            chromeButton("Show sidebar", "sidebar.left", id: "capture.sidebar") { showSidebar() }
+            connectionStatus
+        }
+        .padding(.leading, 4).padding(.trailing, 12).padding(.vertical, 4)
+        .floatingChrome(Capsule())
+    }
+
+    private var connectionStatus: some View {
+        HStack(spacing: 6) {
+            Circle().fill(model.link.isConnected ? Color.green : Color.secondary.opacity(0.6))
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")"
+                     : "Not connected — \(model.linkStatus)\(model.linkError.map { ": \($0)" } ?? "") — pair in Mac link")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(model.link.isConnected ? .primary : .secondary)
+                    .lineLimit(1).truncationMode(.tail)
+                    .accessibilityLabel("Connection status")
+                    .accessibilityValue(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")" : "Not connected: \(model.linkStatus)")
+                    .accessibilityIdentifier("capture.connection")
+                Group {
+                    if let d = model.destination {
+                        Text("→ \(d.path) rev \(d.baseRevision)").font(.caption2.monospaced())
+                            .help("destination \(d.destinationId)")
+                    } else {
+                        Text("→ the Mac's caret").font(.caption2)
+                    }
+                }
+                .foregroundStyle(.secondary).lineLimit(1)
+            }
+            .frame(maxWidth: 300, alignment: .leading)
             if !model.link.isConnected, model.pairedMac != nil, !model.reconnecting {
                 Button("Reconnect") { Task { await model.autoReconnect() } }.buttonStyle(.bordered).controlSize(.small)
                     .accessibilityLabel("Reconnect to \(model.pairedMac?.macName ?? "Mac")")
@@ -135,14 +214,197 @@ struct CaptureView: View {
                     .accessibilityIdentifier("capture.reconnect")
             }
             if model.reconnecting { ProgressView().controlSize(.small) }
-            Spacer()
-            if let d = model.destination {
-                Text("→ \(d.path) rev \(d.baseRevision)").font(.footnote.monospaced()).foregroundStyle(.secondary)
-                    .help("destination \(d.destinationId)")
-            } else {
-                Text("→ the Mac's caret").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private func trailingCluster(imageSourcesInline: Bool) -> some View {
+        HStack(spacing: 4) {
+            if !collapsed {
+                actionButtons(imageSourcesInline: imageSourcesInline)
+                Divider().frame(height: 22)
             }
-        }.padding(.horizontal)
+            chromeButton(collapsed ? "Show controls" : "Hide controls",
+                         collapsed ? "chevron.down" : "chevron.up", id: "capture.collapse") {
+                withAnimation(.easeInOut(duration: 0.2)) { collapsed.toggle() }
+            }
+        }
+        .padding(.horizontal, 6).padding(.vertical, 4)
+        .floatingChrome(Capsule())
+    }
+
+    private func actionButtons(imageSourcesInline: Bool) -> some View {
+        HStack(spacing: 4) {
+            chromeButton("Undo", "arrow.uturn.backward", id: "capture.undo") { canvas.undo() }
+                .disabled(!canvas.canUndo)
+            chromeButton("Redo", "arrow.uturn.forward", id: "capture.redo") { canvas.redo() }
+                .disabled(!canvas.canRedo)
+            chromeButton(canvas.toolsVisible ? "Hide tools" : "Show tools", "pencil.tip.crop.circle", id: "capture.tools",
+                         selected: canvas.toolsVisible) { canvas.toolsVisible.toggle() }
+            if imageSourcesInline {
+                imageSourceButtons(inline: true)
+            } else {
+                Menu {
+                    imageSourceButtons(inline: false)
+                } label: {
+                    chromeLabel("Add image", "photo.badge.plus")
+                }
+                .accessibilityIdentifier("capture.imageMenu")
+            }
+            chromeButton("Clear", "trash", id: "capture.clear") {
+                canvas.clear(); picked = nil; problem = nil
+                canvas.toolsVisible = true
+            }
+            chromeButton(capturesOpen ? "Hide captures" : "Show captures", "tray.full", id: "capture.capturesToggle",
+                         selected: capturesOpen) { capturesOpen.toggle() }
+                .overlay(alignment: .topTrailing) {
+                    if !model.captures.isEmpty {
+                        Text("\(model.captures.count)").font(.caption2.bold()).foregroundStyle(.white)
+                            .padding(.horizontal, 4).background(Capsule().fill(Color.accentColor))
+                            .offset(x: 2, y: -2).accessibilityHidden(true)
+                    }
+                }
+            chromeButton("Canvas settings", "gearshape", id: "capture.settings") { settingsShown = true }
+                .popover(isPresented: $settingsShown) { settingsForm }
+        }
+    }
+
+    /// Camera (where there is one), Photos and the bundled sample: icon
+    /// buttons in the toolbar, or rows of the "Add image" menu when narrow.
+    @ViewBuilder private func imageSourceButtons(inline: Bool) -> some View {
+        if Self.cameraAvailable {
+            Button { cameraShown = true } label: { sourceLabel("Camera", "camera", inline) }
+                .accessibilityLabel("Take photo with camera")
+                .accessibilityIdentifier("capture.camera")
+        }
+        PhotosPicker(selection: $photo, matching: .images) {
+            sourceLabel(Self.cameraAvailable ? "Photo…" : "Photo… (no camera here)", "photo", inline)
+        }
+        .accessibilityLabel("Choose photo from library")
+        .accessibilityIdentifier("capture.photo")
+        Button { loadSample() } label: { sourceLabel("Sample image", "photo.on.rectangle", inline) }
+            .accessibilityLabel("Load sample image")
+            .accessibilityIdentifier("capture.sample")
+    }
+
+    @ViewBuilder private func sourceLabel(_ title: String, _ symbol: String, _ inline: Bool) -> some View {
+        if inline { chromeLabel(title, symbol) } else { Label(title, systemImage: symbol) }
+    }
+
+    /// A 36 pt icon with a full-circle hit area (an icon-only label alone
+    /// is only hittable on its glyph, and a miss would draw on the canvas).
+    private func chromeLabel(_ title: String, _ symbol: String, selected: Bool = false) -> some View {
+        Label(title, systemImage: symbol)
+            .labelStyle(.iconOnly)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(selected ? Color.accentColor.opacity(0.18) : .clear))
+            .contentShape(Circle())
+    }
+
+    private func chromeButton(_ title: String, _ symbol: String, id: String, selected: Bool = false,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) { chromeLabel(title, symbol, selected: selected) }
+        .accessibilityIdentifier(id)
+        .hoverEffect(.highlight)
+    }
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // One instruction field with recent-instruction chips.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(model.recentInstructions, id: \.self) { chip in
+                        Button(chip) { instructions = chip }
+                            .buttonStyle(.bordered).controlSize(.small)
+                            .tint(chip.caseInsensitiveCompare(instructions) == .orderedSame ? .accentColor : .secondary)
+                            .accessibilityIdentifier("capture.chip.\(chip)")
+                    }
+                }
+            }
+            .accessibilityIdentifier("capture.chips")
+            HStack(spacing: 8) {
+                TextField("Instruction for the Mac, e.g. “convert this to TikZ”", text: $instructions, axis: .vertical)
+                    .lineLimit(1...3)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("capture.instructions")
+                Text("\(canvas.strokeCount) stroke\(canvas.strokeCount == 1 ? "" : "s")")
+                    .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                    .fixedSize()
+                    .accessibilityIdentifier("capture.strokes")
+                Button { Task { await send() } } label: {
+                    Label(sending ? "Sending…" : "Send", systemImage: "paperplane.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(sending)
+                .accessibilityLabel("Send capture")
+                .accessibilityValue(sending ? "Sending" : model.link.isConnected ? "Ready to send" : "Disabled, not connected")
+                .accessibilityIdentifier("capture.send")
+            }
+            if let p = problem {
+                Text(p).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("capture.problem")
+            } else if !model.link.isConnected {
+                Text("not connected").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .floatingChrome(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var capturesCard: some View {
+        CapturesList()
+            .scrollContentBackground(.hidden)
+            .frame(width: 380)
+            .frame(maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .floatingChrome(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+    }
+
+    private var settingsForm: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle("Two-finger double-tap to undo", isOn: $twoFingerUndo)
+                        .accessibilityIdentifier("canvas.settings.twoFingerUndo")
+                    Toggle("Three-finger double-tap to redo", isOn: $threeFingerRedo)
+                        .accessibilityIdentifier("canvas.settings.threeFingerRedo")
+                    Picker("Apple Pencil double-tap", selection: $pencilDoubleTap) {
+                        ForEach(PencilDoubleTapMode.allCases) { Text($0.label).tag($0) }
+                    }
+                    .accessibilityIdentifier("canvas.settings.pencilDoubleTap")
+                } header: {
+                    Text("Gestures")
+                } footer: {
+                    Text("“System setting” follows Settings › Apple Pencil › Double-tap (normally switch to the eraser). If double-tap is turned off there, it does nothing here either.")
+                }
+                Section {
+                    Toggle("Draw with a finger", isOn: $fingerDrawing)
+                        .accessibilityIdentifier("canvas.settings.fingerDrawing")
+                    Toggle("Hide controls while drawing", isOn: $autoHideControls)
+                        .accessibilityIdentifier("canvas.settings.autoHideControls")
+                } header: {
+                    Text("Canvas")
+                } footer: {
+                    Text("With finger drawing off, one finger scrolls and only Apple Pencil draws.")
+                }
+            }
+            .navigationTitle("Canvas")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .frame(minWidth: 380, minHeight: 560)
+    }
+
+    private func pickedImage(_ img: UIImage) -> some View {
+        VStack(spacing: 12) {
+            Image(uiImage: img).resizable().scaledToFit()
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .shadow(radius: 8)
+                .accessibilityIdentifier("capture.pickedImage")
+                .accessibilityLabel("Image to send")
+            Button("Back to canvas") { picked = nil }.buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 40).padding(.top, 160).padding(.bottom, 40)
+        .frame(maxWidth: 900, maxHeight: .infinity)
     }
 
     func loadSample() {
@@ -160,8 +422,9 @@ struct CaptureView: View {
         defer { sending = false }
         switch await model.sendNow(png: png, source: source, instructions: instructions, pixelSize: (width: size.0, height: size.1)) {
         case .success:
-            toolsVisible = false // hide the PencilKit tool picker so the status list is readable
-            drawing = PKDrawing(); picked = nil
+            canvas.toolsVisible = false // hide the PencilKit tool picker so the status list is readable
+            canvas.reset(); picked = nil
+            withAnimation(.easeInOut(duration: 0.2)) { capturesOpen = true; collapsed = false }
         case .failure(let why):
             problem = "\(why)"
         }
@@ -172,11 +435,31 @@ struct CaptureView: View {
             guard let d = img.pngData() else { problem = "could not encode the image as PNG"; return nil }
             return (d, pickedSource, (Int(img.size.width * img.scale), Int(img.size.height * img.scale)))
         }
-        guard !drawing.strokes.isEmpty else { problem = "draw something first (or take a photo)"; return nil }
-        let img = drawing.image(from: CGRect(origin: .zero, size: canvasSize), scale: 2)
-        guard let d = img.pngData() else { problem = "could not encode the drawing as PNG"; return nil }
-        return (d, .pencil, (Int(img.size.width * img.scale), Int(img.size.height * img.scale)))
+        switch canvas.renderPNG() {
+        case .success(let r): return (r.png, .pencil, r.pixels)
+        case .failure(.empty): problem = "draw something first (or take a photo)"; return nil
+        case .failure(.encoding): problem = "could not encode the drawing as PNG"; return nil
+        }
     }
+}
+
+/// Floating control surface: Liquid Glass on iOS 26, a material elsewhere.
+private struct FloatingChrome<S: Shape>: ViewModifier {
+    let shape: S
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(), in: shape)
+        } else {
+            content
+                .background(.regularMaterial, in: shape)
+                .overlay(shape.stroke(Color.primary.opacity(0.08)))
+                .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        }
+    }
+}
+
+extension View {
+    func floatingChrome<S: Shape>(_ shape: S) -> some View { modifier(FloatingChrome(shape: shape)) }
 }
 
 /// In-app camera (AVFoundation through `UIImagePickerController`), shown only
@@ -233,47 +516,6 @@ struct CameraPicker: UIViewControllerRepresentable {
     }
 }
 
-struct PencilCanvas: UIViewRepresentable {
-    @Binding var drawing: PKDrawing
-    @Binding var size: CGSize
-    @Binding var toolsVisible: Bool
-
-    func makeUIView(context: Context) -> PKCanvasView {
-        let v = PKCanvasView()
-        v.drawingPolicy = .anyInput // finger works in the simulator; Pencil on hardware
-        v.tool = PKInkingTool(.pen, color: .black, width: 4)
-        v.backgroundColor = .white
-        v.delegate = context.coordinator
-        v.isAccessibilityElement = true
-        v.accessibilityIdentifier = "capture.canvasView"
-        v.drawing = drawing
-        let picker = PKToolPicker()
-        picker.setVisible(true, forFirstResponder: v)
-        picker.addObserver(v)
-        context.coordinator.picker = picker
-        DispatchQueue.main.async { v.becomeFirstResponder() }
-        return v
-    }
-
-    func updateUIView(_ v: PKCanvasView, context: Context) {
-        if v.drawing != drawing { v.drawing = drawing }
-        if let picker = context.coordinator.picker, picker.isVisible != toolsVisible {
-            picker.setVisible(toolsVisible, forFirstResponder: v)
-            if toolsVisible { DispatchQueue.main.async { v.becomeFirstResponder() } } else { DispatchQueue.main.async { v.resignFirstResponder() } }
-        }
-        DispatchQueue.main.async { if v.bounds.size != .zero, size != v.bounds.size { size = v.bounds.size } }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, PKCanvasViewDelegate {
-        var parent: PencilCanvas
-        var picker: PKToolPicker?
-        init(_ p: PencilCanvas) { parent = p }
-        func canvasViewDrawingDidChange(_ v: PKCanvasView) { parent.drawing = v.drawing }
-    }
-}
-
 struct CapturesList: View {
     @EnvironmentObject var model: PadModel
 
@@ -289,16 +531,12 @@ struct CapturesList: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.id).font(.caption.monospaced())
                             Text("\(c.source.rawValue) · \(c.png.count) bytes · “\(c.instructions)”").font(.caption).foregroundStyle(.secondary)
-                            Text(c.status.label).font(.footnote)
-                                .accessibilityLabel("Capture \(c.id) status")
-                                .accessibilityValue(c.status.label)
-                                .accessibilityIdentifier("capture.status.\(c.id)")
+                            Text(c.status.label).font(.footnote).accessibilityIdentifier("capture.status.\(c.id)")
                             if case .received(let r) = c.status {
                                 Text(verbatim: "capture_received capture_id=\(r.captureId) durable=\(r.durable) has_proposal=\(r.hasProposal) applied=\(r.applied)")
                                     .font(.caption2.monospaced()).foregroundStyle(.secondary)
                                 if let d = c.destinationId, let rev = c.baseRevision {
                                     Text("sent for destination \(d) base_revision \(rev)").font(.caption2.monospaced()).foregroundStyle(.secondary)
-                                        .accessibilityLabel("Sent for destination \(d), base revision \(rev)")
                                 }
                                 if c.outcome?.state == "inserted" {
                                     HStack(spacing: 4) {
@@ -306,16 +544,10 @@ struct CapturesList: View {
                                         Text("Inserted on Mac ✓").accessibilityIdentifier("capture.inserted.\(c.id)")
                                     }
                                     .font(.footnote.bold()).foregroundStyle(.green)
-                                    .accessibilityElement(children: .combine)
-                                    .accessibilityLabel("Capture \(c.id) status: inserted on Mac")
-                                    .accessibilityValue("Sent for destination \(c.destinationId ?? "unknown"), base revision \(c.baseRevision.map { String($0) } ?? "unknown")")
-                                    .accessibilityIdentifier("capture.statusIndicator.\(c.id)")
                                     .transition(.scale.combined(with: .opacity))
                                 }
                                 if let label = c.outcomeLabel {
                                     Text("Mac: \(label)").font(.footnote).foregroundStyle(c.outcomeIsFinal ? .primary : .secondary)
-                                        .accessibilityLabel("Mac capture status")
-                                        .accessibilityValue(label)
                                         .accessibilityIdentifier("capture.outcome.\(c.id)")
                                     if let o = c.outcome {
                                         Text(verbatim: "capture_status_ack state=\(o.state) durable=\(o.durable)" + (o.note.map { " note=“\($0)”" } ?? ""))
@@ -323,8 +555,6 @@ struct CapturesList: View {
                                     }
                                 } else {
                                     Text("Mac: waiting for the first capture_status reply…").font(.footnote).foregroundStyle(.secondary)
-                                        .accessibilityLabel("Mac capture status")
-                                        .accessibilityValue("Waiting for status")
                                         .accessibilityIdentifier("capture.outcome.\(c.id)")
                                 }
                                 if let latex = c.outcome?.latex {
@@ -356,8 +586,6 @@ struct CapturesList: View {
                                     }
                                     .buttonStyle(.borderedProminent).font(.caption)
                                     .disabled(c.inserting || !model.link.isConnected)
-                                    .accessibilityLabel("Insert capture on Mac")
-                                    .accessibilityValue(c.inserting ? "Inserting" : model.link.isConnected ? "Ready" : "Disabled, not connected")
                                     .accessibilityIdentifier("capture.insert.\(c.id)")
                                 }
                                 if let problem = c.insertProblem {
@@ -366,27 +594,18 @@ struct CapturesList: View {
                                 }
                                 if !c.outcomeIsFinal {
                                     Button("Refresh status") { Task { await model.refreshOutcome(c.id) } }.buttonStyle(.bordered).font(.caption)
-                                        .disabled(!model.link.isConnected)
-                                        .accessibilityLabel("Refresh capture status")
-                                        .accessibilityValue(model.link.isConnected ? "Available" : "Disabled, not connected")
-                                        .accessibilityIdentifier("capture.refresh.\(c.id)")
+                                        .disabled(!model.link.isConnected).accessibilityIdentifier("capture.refresh.\(c.id)")
                                 }
                             }
                             if case .refused(_, let msg) = c.status { Text(msg).font(.caption2).foregroundStyle(.red) }
                             if case .disconnected = c.status {
                                 Button("Retry (same capture_id)") { Task { await model.send(c.id) } }.buttonStyle(.bordered).font(.caption)
-                                    .accessibilityLabel("Retry sending capture \(c.id)")
-                                    .accessibilityValue("Available")
                                     .accessibilityIdentifier("capture.retry.\(c.id)")
                             }
                             if case .drafted = c.status {
                                 HStack {
                                     Button("Send") { Task { await model.send(c.id) } }.buttonStyle(.borderedProminent).font(.caption).disabled(!model.link.isConnected)
-                                        .accessibilityLabel("Send capture \(c.id)")
-                                        .accessibilityValue(model.link.isConnected ? "Ready to send" : "Disabled, not connected")
                                     Button("Discard") { model.discard(c.id) }.buttonStyle(.bordered).font(.caption)
-                                        .accessibilityLabel("Discard capture \(c.id)")
-                                        .accessibilityValue("Available")
                                 }
                             }
                         }

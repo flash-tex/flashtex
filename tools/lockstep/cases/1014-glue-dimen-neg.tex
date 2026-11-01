@@ -1,0 +1,10 @@
+% 1014-glue-dimen-neg: verifies glue-to-dimen takes the width and minus negates every glue part (tex.web §§429-431)
+\input prelude
+\skip0=10pt plus2pt minus1pt
+\dimen0=\skip0
+\skip1=-\skip0
+\message{1014 coerced=\the\dimen0}
+\message{1014 neg=\the\skip1}
+\setbox0=\hbox{\vrule width1014pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

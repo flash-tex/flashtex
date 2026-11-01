@@ -1,0 +1,9 @@
+% 602-fill-vs-filll-share: verifies 2fill plus 1filll still loses everything to filll while 2fill plus 1fill shares evenly.
+\input prelude
+\setbox0=\hbox to 110pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 2fill\vrule width10pt height8pt depth2pt\hskip 0pt plus 1filll}
+\message{602 mixed-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox to 110pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 2fill\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fill}
+\message{602 allfill-wd=\the\wd1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

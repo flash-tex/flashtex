@@ -1,0 +1,1828 @@
+{
+ "schema": "flashtex-t3-v1-oneoff/1",
+ "status": "FINAL",
+ "decision": {
+  "name": "SCOREBOARD-POST",
+  "ruling": "v1 was deleted in retirement stage S7 (#1888), so no board can run it. The old column of the T3 parity tiers is v1's last complete measurement on the board, committed once, as T4 decision 1 does for T4; new >= old is then compared on the baseline's own documents",
+  "ruled_by": "Commander kabir-claude (lane SCOREBOARD-POST)",
+  "date": "2026-11-01",
+  "url": "https://github.com/flash-tex/flashtex/pull/1888",
+  "remeasure_when": "never: v1 no longer exists (git keeps it); D13 froze it before that"
+ },
+ "measured_date": "2026-10-31",
+ "source": [
+  "https://github.com/flash-tex/flashtex/actions/runs/41203982275"
+ ],
+ "run": {
+  "workflow": "p5-scoreboard.yml",
+  "id": 41203982275,
+  "event": "schedule",
+  "created": "2026-10-31T13:05:22Z",
+  "url": "https://github.com/flash-tex/flashtex/actions/runs/41203982275",
+  "commit": "5a42ab270243440446e4f103e17a63350a8cf788",
+  "artifact": "p5-scoreboard",
+  "artifact_id": 13046836253,
+  "files_sha256": {
+   "parity-old/scoreboard.json": "570e3f02f9b52da4ef7799232c50f0ec0302dcaef08b89b7732b42efc4d67803",
+   "parity-old/documents.json": "e1d00468d3148895aa47b86a44ac54e7c6ef413bd823afb24418f95a8a4f6a95",
+   "oracle.json": "4d5f28ba5df74856b956400c7d453c0ed1b481770c343364518309a536bcc08f",
+   "board/scoreboard.json": "e2a19c3ffe591929a61d2e0b8e0943146078c9ddc5671d301575d3dbbb01b39f"
+  },
+  "board": "All green on that board (every row, every run complete)"
+ },
+ "engine": {
+  "label": "old",
+  "kind": "flashtex-cli",
+  "version": "flashtex 0.1.0 (5a42ab270243)",
+  "sha256": "26d73a5b63c3d5a2ed4e839dd2e9e351627d6e104745ad6385bde0f3dfe61d2e",
+  "host": "nixos",
+  "platform": "Linux 6.18.58 x86_64",
+  "started_utc": "2026-10-31T14:00:36Z",
+  "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner/_work/_temp/p5/work/eng/flashtex --out /home/kubar/.flashtex-actions-runner/_work/_temp/p5/parity-old --work /home/kubar/.flashtex-actions-runner/_work/_temp/p5/work/parity-old"
+ },
+ "oracle": {
+  "latex_format": "2026-06-01",
+  "pdftex": "/home/kubar/texlive/2026/bin/x86_64-linux/pdftex",
+  "pdftex_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
+  "platform": "Linux 6.18.58 x86_64",
+  "texlive_root": "/home/kubar/texlive/2026",
+  "tlpdb": {
+   "l3kernel": "80334",
+   "latex": "79618",
+   "latex-bin": "80015",
+   "pdftex": "79618",
+   "release": "2026"
+  },
+  "tlpdb_sha256": "909745461c89882e1afdaff0851db7277f055e2cdb35cd45630cf9b7e7d58934",
+  "version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+ },
+ "measured_by": "p5-scoreboard.yml (tools/parity/scoreboard-run.sh, parity.py on flashtex 0.1.0 (5a42ab270243))",
+ "tiers": {
+  "fixtures": {
+   "documents": 88,
+   "measured": 88,
+   "excluded": {},
+   "v1": {
+    "P-T2": [
+     0,
+     88
+    ],
+    "L0": [
+     84,
+     88
+    ],
+    "L1": [
+     84,
+     88
+    ],
+    "L2": [
+     74,
+     88
+    ],
+    "L3": [
+     64,
+     88
+    ]
+   },
+   "P-T1_not_evaluated": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+   "id_list_sha256": "a97d09584687807cea3bcfc3d8d591ece303f68840c60188199b2507a526c943",
+   "records": [
+    {
+     "id": "divergence-probes/min-abstract",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-bigdelim-12pt",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-chapter",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-curly-quote",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-description",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-float-table",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-footnote",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-footnote-float",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-hrulefill",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-huge-fences",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-langle",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-maketitle",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-natbib",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-newblock",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-norms",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-paragraph",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-quote",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-sqrt-tall",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-startsection",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-tabular",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-tall-parens",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-toc",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min-twocolumn",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-bigsum",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-cases",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-fence-nested",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-fence-onefrac",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-fence-plain",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-headings",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-itemize",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-nested-dfrac-bare",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-nested-lists",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-pagestyle",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-pmatrix-3row",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min2-preamble-switches",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-baselinestretch",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-centering",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-enumerate-only",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-itemize-multipar",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-itemize-only",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-setlength",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-subsubsection",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min3-verse-flushright",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min4-bib-sfcode",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min4-itemize-wrap",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min4-lig-hyphen",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min4-mapsto-rel",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min4-small-math",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min5-description-label",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min5-emph-punct-hyphen",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min5-proof-close-shrink",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min5-url-break",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "divergence-probes/min6-dimens-primitives",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/article-twocolumn",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-blocks-columns",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-default",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-fragile",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-madrid",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-overlays",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-polish",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-sans-operators",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-sans-operators-professional",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-sans-operators-serif",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/beamer-visuals",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/conf-paper",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/cv",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/enumitem-worksheet",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/framed-tikz-theorems",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/hw1",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/hw2",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/hyperref-toc",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/inline-math",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/input-bibliography",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/lab-report",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/lecture-notes",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/letter",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/listings-manual",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/lmodern-report",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/math-sheet",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/natbib-review",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/plain-article",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/proof-practice-21242",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/ps-calculus",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/siunitx-tables",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/thesis-chapter",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/tikzcd-shaded-notes",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/twelvept-plain",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "real-world/unicode-accents",
+     "level": 1,
+     "P-T2": false
+    }
+   ],
+   "excluded_ids": {}
+  },
+  "arxiv": {
+   "documents": 149,
+   "measured": 127,
+   "excluded": {
+    "oracle": 22
+   },
+   "v1": {
+    "P-T2": [
+     0,
+     127
+    ],
+    "L0": [
+     2,
+     127
+    ],
+    "L1": [
+     1,
+     127
+    ],
+    "L2": [
+     0,
+     127
+    ],
+    "L3": [
+     0,
+     127
+    ]
+   },
+   "P-T1_not_evaluated": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+   "id_list_sha256": "adc79fa5f7e07a5b1670cebde34c28023b09f3816155105f3aecb7db944717d8",
+   "records": [
+    {
+     "id": "2501.06980v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.06986v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.06992v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.06993v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07001v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07002v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07003v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07004v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07006v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07009v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07010v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07014v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07015v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07017v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07020v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07021v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07027v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07029v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07037v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07039v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07040v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07044v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07045v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07055v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07060v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07068v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07069v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07070v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07073v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07075v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07077v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07084v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07085v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07086v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07093v6",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07099v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07102v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07111v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07116v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07119v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07124v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07129v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07136v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07137v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07143v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07146v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07155v4",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07167v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07177v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07181v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07198v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07205v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07219v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07228v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07229v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07239v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07243v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07264v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07269v2",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07271v4",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07277v2",
+     "level": 0,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07300v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07301v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07311v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07314v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07315v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07325v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07328v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07338v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07356v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07361v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07364v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07367v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07371v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07372v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07391v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07413v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07442v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07469v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07477v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07483v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07488v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07509v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07512v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07528v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07537v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07538v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07541v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07542v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07551v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07552v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07558v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07559v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07623v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07655v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07662v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07667v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07691v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07692v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07738v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07745v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07777v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07821v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07833v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07840v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07843v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07848v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07872v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07877v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07889v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07944v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07958v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07965v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.07993v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08063v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08126v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08157v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08206v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08371v3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08602v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08607v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08775v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08846v1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.08950v2",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.09293v7",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.10102v8",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "2501.10230v1",
+     "level": -1,
+     "P-T2": false
+    }
+   ],
+   "excluded_ids": {
+    "2501.06999v1": "oracle: pdflatex exit 1: ! LaTeX Error: Missing \\begin{document}.",
+    "2501.07023v2": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@corollary already defined.",
+    "2501.07032v4": "oracle: pdflatex exit 1: ! Missing $ inserted.",
+    "2501.07050v3": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `fig1-eps-converted-to.pdf' not found: using d",
+    "2501.07072v1": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `Round_1/eks4.pdf' not found: using draft sett",
+    "2501.07091v2": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `lowtemp-eps-converted-to.pdf' not found: usin",
+    "2501.07098v2": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@corollary already defined.",
+    "2501.07105v1": "oracle: pdflatex exit 1: ! Package babel Error: Unknown option 'francais'.",
+    "2501.07184v1": "oracle: pdflatex exit 1: ! Extra \\or.",
+    "2501.07190v1": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `Fig_01-eps-converted-to.pdf' not found: using",
+    "2501.07457v1": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@lemma already defined.",
+    "2501.07471v1": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `Figure1-eps-converted-to.pdf' not found: usin",
+    "2501.07482v2": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `images/new_version/world_maps/Design sem nome",
+    "2501.07495v1": "oracle: did not converge in 6 passes",
+    "2501.07497v1": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@clm already defined.",
+    "2501.07822v1": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `Fig1-eps-converted-to.pdf' not found: using d",
+    "2501.08663v2": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@lemma already defined.",
+    "2501.08713v2": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@cor already defined.",
+    "2501.08928v2": "oracle: pdflatex exit 1: ! Missing $ inserted.",
+    "2501.09091v1": "oracle: pdflatex exit 1: ! File ended while scanning use of \\next.",
+    "2501.09225v1": "oracle: pdflatex exit 1: ! Extra }, or forgotten $.",
+    "2501.10183v1": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@lemma already defined."
+   }
+  },
+  "templates": {
+   "documents": 20,
+   "measured": 17,
+   "excluded": {
+    "oracle": 3
+   },
+   "v1": {
+    "P-T2": [
+     0,
+     17
+    ],
+    "L0": [
+     2,
+     17
+    ],
+    "L1": [
+     2,
+     17
+    ],
+    "L2": [
+     0,
+     17
+    ],
+    "L3": [
+     0,
+     17
+    ]
+   },
+   "P-T1_not_evaluated": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+   "id_list_sha256": "22a4ff98cc6efa9e2b01586478b435a4ce3e8dabe0250e9ca0b45d7b069ec058",
+   "records": [
+    {
+     "id": "acmart-sample-acmsmall",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "acmart-sample-sigconf",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "amscls-amsart-template",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "amscls-amsproc-template",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "amsmath-amsldoc",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "amsmath-testmath",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "beamer-themeexample",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "elsarticle-elsdoc",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "elsarticle-template-num",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "ieeetran-bare-conf",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "ieeetran-bare-conf-compsoc",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "ieeetran-bare-jrnl",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "latex-sample2e",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "latex-small2e",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "moderncv-template",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "revtex-apstemplate",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "tufte-sample-handout",
+     "level": -1,
+     "P-T2": false
+    }
+   ],
+   "excluded_ids": {
+    "amscls-amsbook-template": "oracle: pdflatex exit 1: ! I can't write on file `.aux'.",
+    "llncs-llncsdoc": "oracle: pdflatex exit 1: ! LaTeX Error: File `llncsdoc.sty' not found.",
+    "revtex-apssamp": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `fig_1-eps-converted-to.pdf' not found: using "
+   }
+  },
+  "packages": {
+   "documents": 92,
+   "measured": 88,
+   "excluded": {
+    "oracle": 4
+   },
+   "v1": {
+    "P-T2": [
+     0,
+     88
+    ],
+    "L0": [
+     11,
+     88
+    ],
+    "L1": [
+     9,
+     88
+    ],
+    "L2": [
+     6,
+     88
+    ],
+    "L3": [
+     3,
+     88
+    ]
+   },
+   "P-T1_not_evaluated": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+   "id_list_sha256": "267dcddc6bb75d1678699fe332c3513cead7126f028effe1205cb63068fd5092",
+   "records": [
+    {
+     "id": "adjustbox-readmefig",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "algorithm2e-geradwp",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "algorithmicx-algorithmicx",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "amsmath-subeqn",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "amssymb-latex-first",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "amsthm-latex-second-a",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "appendix-tikzpeople",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "array-p37",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "babel-sample-animals-de",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "beamer-beamerfontthemeexample",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "bm-beautynote",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "booktabs-6-6-6",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "braket-braket",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "calc-tools-overview",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "cancel-sample-tma",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "caption-test-tblr-extras",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "chemfig-chemfig-en",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "circuitikz-compatibility",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "cleveref-2-4-14",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "colortbl-colortbl-DE",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "comment-comm_test",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "csquotes-csquotes",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "datetime2-sample-calc",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "dcolumn-13-3-25",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "dsfont-dsdoc",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "empheq-11-4-28",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "enumitem-enumitem",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "esint-11-4-14",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "eso-pic-eso-ex1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "etoolbox-demo-opencolor",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "fancyhdr-nolink-pdftex",
+     "level": 0,
+     "P-T2": false
+    },
+    {
+     "id": "fancyvrb-verbatim-content",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "float-7-5-1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "fontawesome5-fontawesome5",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "fontenc-encguide",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "footmisc-3-5-17",
+     "level": 0,
+     "P-T2": false
+    },
+    {
+     "id": "fp-pgfmanual4bbox",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "geometry-geometry-samples",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "glossaries-glossaries-user-example027",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "hyperref-wiki_mwe",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "ifthen-A-5-6",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "imakeidx-test",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "inputenc-inputenc-iso-8859-7",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "keyval-kvsetkeys-example",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "koma-script-letter-example-00-en",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "lipsum-sampleRL",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "listings-sample8",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "lmodern-tstlmt1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "longtable-sample3",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "lscape-cahierprof-exemple",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "makeidx-pdfmarginpar",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "mathpazo-mathtest",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "mathtools-11-2-22",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "memoir-trims-example",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "mhchem-mhchem",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "microtype-sphack-doc",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "minted-main",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "multirow-6-7-7",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "natbib-p312",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "newtxmath-mathnotes",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "nicematrix-simples-matrices-fra",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "parskip-3-1-11",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "pdflscape-hologo-example",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "pdfpages-pdf-ex",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "pgfmath-qr-example",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "pgfplots-pgfplotsexample",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "physics-physics",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "qtree-qarrows",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "setspace-setspace-doc",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "siunitx-xsim.texsx-308883",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "soul-glossaries-extra-manual-example117",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "stmaryrd-11-8-11",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "subcaption-7-4-11",
+     "level": 1,
+     "P-T2": false
+    },
+    {
+     "id": "tabularx-tbx",
+     "level": 2,
+     "P-T2": false
+    },
+    {
+     "id": "tcolorbox-tcolorbox-example",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "threeparttable-uspace-test",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "tikz-zeichnung",
+     "level": 3,
+     "P-T2": false
+    },
+    {
+     "id": "titlesec-titlesec",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "tocloft-p46",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "todonotes-alterAppearenceOfListOfTodos",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "ulem-ulem",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "upgreek-sample-constants",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "url-url",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "verbatim-scalerel",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "wrapfig-6-4-1",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "xcolor-xcolor4",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "xparse-simpleicons",
+     "level": -1,
+     "P-T2": false
+    },
+    {
+     "id": "xspace-externalize",
+     "level": -1,
+     "P-T2": false
+    }
+   ],
+   "excluded_ids": {
+    "forest-milsymb": "oracle: pdflatex exit 1: ! Package tikz Error: Giving up on this path. Did you forget a semicolon?.",
+    "graphicx-grfguide": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `a-eps-converted-to.pdf' not found: using draf",
+    "rotating-rotex": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `cat-eps-converted-to.pdf' not found: using dr",
+    "tabu-europasscv": "oracle: pdflatex exit 1: ! Undefined control sequence."
+   }
+  }
+ }
+}

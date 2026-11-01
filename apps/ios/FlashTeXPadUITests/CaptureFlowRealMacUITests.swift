@@ -87,12 +87,20 @@ final class CaptureFlowRealMacUITests: XCTestCase {
     /// miss the Mac's 120s code), then send
     /// sample-capture.png and a synthetic drawing. Both must show a Mac inbox
     /// receipt (provider none: durable=false, no proposal).
+    /// The capture canvas is full-screen with the sidebar hidden; its
+    /// floating sidebar button brings the sidebar back.
+    private func revealSidebar(_ app: XCUIApplication) {
+        let button = app.descendants(matching: .any).matching(identifier: "capture.sidebar").firstMatch
+        if button.waitForExistence(timeout: 10), button.isHittable { button.tap() }
+    }
+
     func testPairByPastedBootstrapThenSendSampleAndDrawing() throws {
         let info = try loadInfo()
         let app = XCUIApplication()
         app.launchArguments = ["-flashtexpad-fresh"]
         app.launch()
 
+        revealSidebar(app)
         app.staticTexts.matching(NSPredicate(format: "label == %@", "Mac link")).firstMatch.tap()
         XCTAssertTrue(el(app, "pair.qr.text").waitForExistence(timeout: 10), "Mac link QR field missing")
 
@@ -135,13 +143,14 @@ final class CaptureFlowRealMacUITests: XCTestCase {
         attach(app, "e2e-04-sample-received")
 
         // Back to the canvas for a synthetic (finger) drawing. The first
-        // capture shrinks the canvas; three drags still produce strokes.
+        // capture opens the Captures panel at the trailing edge; three drags
+        // in the left half still produce strokes.
         if el(app, "capture.pickedImage").exists {
             app.buttons.matching(NSPredicate(format: "label == %@", "Back to canvas")).firstMatch.tap()
         }
         let canvas = el(app, "capture.canvas")
         XCTAssertTrue(canvas.waitForExistence(timeout: 5))
-        let pts = [(0.2, 0.8), (0.8, 0.8), (0.5, 0.2), (0.2, 0.8)]
+        let pts = [(0.12, 0.75), (0.45, 0.75), (0.28, 0.45), (0.12, 0.75)]
         for i in 0..<3 {
             let a = canvas.coordinate(withNormalizedOffset: CGVector(dx: pts[i].0, dy: pts[i].1))
             let b = canvas.coordinate(withNormalizedOffset: CGVector(dx: pts[i + 1].0, dy: pts[i + 1].1))

@@ -1,0 +1,13 @@
+% 1038-mark-break-sides: verifies a mark before the \vsplit breakpoint lands in the split part while one after leaves it empty (tex.web §§977,1101)
+\input prelude
+\setbox0=\vbox{\hrule width40pt height15pt depth0pt\mark{pre-mark}\vskip5pt\hrule width40pt height20pt depth0pt}
+\setbox1=\vsplit0 to 20pt
+\message{1038 pre first=[\splitfirstmark] bot=[\splitbotmark] rest=\the\ht0}
+\setbox2=\vbox{\hrule width40pt height15pt depth0pt\vskip5pt\mark{post-mark}\hrule width40pt height20pt depth0pt}
+\setbox3=\vsplit2 to 20pt
+\message{1038 post first=[\splitfirstmark] bot=[\splitbotmark] rest=\the\ht2}
+\lsshipbox1
+\lsshipbox0
+\lsshipbox3
+\lsshipbox2
+\end

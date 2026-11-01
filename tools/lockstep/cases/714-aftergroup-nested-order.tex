@@ -1,0 +1,23 @@
+% Verifies nested \aftergroup tokens fire FIFO per group with the inner group first, recording order B then C then A.
+\input prelude
+\def\order{}
+\count0=0
+\def\aa{\global\advance\count0 by1 \xdef\order{\order A}}
+\def\ab{\global\advance\count0 by1 \xdef\order{\order B}}
+\def\ac{\global\advance\count0 by1 \xdef\order{\order C}}
+\begingroup
+\aftergroup\aa
+\begingroup
+\aftergroup\ab
+\aftergroup\ac
+\message{714 inner}
+\endgroup
+\message{714 mid order=\meaning\order}
+\endgroup
+\message{714 final order=\meaning\order count=\the\count0}
+\setbox0=\hbox{\vrule width714pt height8pt depth2pt\hskip\count0 pt}
+\setbox1=\hbox{\vrule width714pt height8pt depth2pt}
+\message{714 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

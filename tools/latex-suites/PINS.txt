@@ -1,0 +1,8 @@
+# Pinned upstream commits. These match the TeX Live 2026 installation at
+# /Library/TeX/texbin (pdfTeX 3.141592653-2.6-1.40.29):
+#   installed LaTeX format date: 2025-11-01 (`pdflatex` prints FMT=2025-11-01,
+#     latex.ltx has \edef\fmtversion{2025-11-01}, \def\patch@level{0})
+#   installed expl3 date: 2026-01-19 (\ExplFileDate in texmf-dist/tex/latex/l3kernel/expl3.sty)
+# Format: <repo> <tag> <full-40-char-commit-sha>
+latex2e release-2025-11-01 22d4c5ec30bba33928a6e80dd26543daf6b438fc
+latex3 2026-01-19 3a56fdb57b0e8ff66ec5c72ab021001b028e22b8

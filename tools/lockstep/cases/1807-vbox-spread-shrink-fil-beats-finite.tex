@@ -1,0 +1,7 @@
+% 1807-vbox-spread-shrink-fil-beats-finite: a spread squeeze met by mixed shrink orders settles on fil, so the finite shrink is ignored and the box stays silent (tex.web §§ 665, 676)
+% new versus 626-infinite-shrink-vbox: 626 tries fil and finite shrink in separate boxes; here both orders share one spread box and only fil counts
+\input prelude
+\setbox0=\vbox spread -8pt{\hrule width40pt height20pt depth0pt\vskip 0pt minus 4pt\hrule width40pt height10pt depth0pt\vskip 0pt minus 1fil}
+\message{1807 ht=\the\ht0 badness=\the\badness}
+\lsshipbox0
+\end

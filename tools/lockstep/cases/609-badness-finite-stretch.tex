@@ -1,0 +1,9 @@
+% 609-badness-finite-stretch: verifies \the\badness reads 12 after a half-stretched box and 0 after an exact fit.
+\input prelude
+\setbox0=\hbox to 50pt{\vrule width10pt height8pt depth2pt\hskip 20pt plus 20pt\vrule width10pt height8pt depth2pt}
+\message{609 stretched-badness=\the\badness}
+\setbox1=\hbox to 40pt{\vrule width10pt height8pt depth2pt\hskip 20pt plus 20pt\vrule width10pt height8pt depth2pt}
+\message{609 exact-badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,9 @@
+% 1465-ifpdfprimitive-alias: \ifpdfprimitive is true for \hbox but false for an alias of it; the split feeds one box (pdftex.web §§513, 527)
+\input prelude
+\font\f=cmr10
+\let\myhbox\hbox
+\ifpdfprimitive\hbox\count0=1\else\count0=0\fi
+\ifpdfprimitive\myhbox\count1=1\else\count1=0\fi
+\ifnum\count0>\count1 \setbox0=\hbox{\f prim} \else \setbox0=\hbox{\vrule width9pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

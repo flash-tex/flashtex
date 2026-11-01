@@ -1,0 +1,6 @@
+% 1346-parshape-beats-hanging-first-lines: with \hangafter=-1 the first line would hang, but the \parshape spec shapes it instead and its last spec repeats on the tail lines (tex.web §847)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parshape=2 40pt 100pt 0pt 180pt\hangindent=60pt\hangafter=-1\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron\par\message{1346 lines=\the\prevgraf}}
+\lsshipbox0
+\end

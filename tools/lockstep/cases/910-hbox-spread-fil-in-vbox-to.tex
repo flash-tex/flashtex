@@ -1,0 +1,9 @@
+% 910-hbox-spread-fil-in-vbox-to: verifies an \hbox spread with fil glue sets its width while stacked in a \vbox to.
+\input prelude
+\setbox1=\hbox spread 20pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fil\vrule width20pt height8pt depth2pt}
+\message{910 spread-wd=\the\wd1}
+\setbox0=\vbox to 70pt{\hbox spread 20pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fil\vrule width20pt height8pt depth2pt}\vfil\hrule width60pt height4pt depth0pt}
+\message{910 vbox-ht=\the\ht0 vbox-dp=\the\dp0}
+\lsshipbox0
+\lsshipbox1
+\end

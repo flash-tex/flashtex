@@ -1,0 +1,13 @@
+% l006-microtype: microtype's character protrusion with native fonts (\rpcode and \lpcode)
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{microtype}
+\usepackage{lipsum}
+\setmainfont{texgyretermes-regular.otf}[
+  BoldFont=texgyretermes-bold.otf,
+  ItalicFont=texgyretermes-italic.otf]
+\begin{document}
+\lipsum[1-4]
+
+``Quoted,'' she said -- ``and hyphenated-words, at line ends.''
+\end{document}

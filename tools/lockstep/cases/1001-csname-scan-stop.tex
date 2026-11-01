@@ -1,0 +1,9 @@
+% 1001-csname-scan-stop: verifies a control word ends at the first non-letter and a control symbol is one non-letter (tex.web §§354-356)
+\input prelude
+\def\abc{ABC}
+\message{1001 word=\abc123}
+\def\/{SL}
+\message{1001 sym=\/!}
+\setbox0=\hbox{\vrule width1001pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

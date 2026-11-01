@@ -1,0 +1,27 @@
+flashtex-typst-host
+Copyright (c) 2026 flash-tex. Licensed under the MIT License (the repository's
+LICENSE file).
+
+This program provides Typst support in FlashTeX. It is not an official Typst
+product and is not endorsed by the Typst project.
+
+It links, unmodified, the Typst compiler crates version 0.15.1 (typst,
+typst-layout, typst-pdf, typst-kit and the crates they depend on) from the
+Typst project, https://github.com/typst/typst, licensed under the Apache
+License, Version 2.0. No Typst file is modified (Apache-2.0 §4(b)): the crates
+are used exactly as published on crates.io, pinned by version and checksum in
+Cargo.lock, with no [patch] and no fork.
+
+Apache-2.0 §4(a) and §4(d): the licence texts of every linked crate and the
+NOTICE files of the Apache-2.0 components -- typst/typst's own NOTICE (pinned
+by SHA-256), typst-assets, hayagriva, citationberg and subsetter -- are
+reproduced in THIRD-PARTY-LICENSES.txt and THIRD-PARTY-NOTICES.txt, which
+licenses/third_party.py generates from Cargo.lock for every distributed build
+and which ship with it (DESIGN.md §15.8). That script fails the build on an
+unknown licence, a missing licence text or a missing NOTICE.
+
+No font is compiled into this program (it is built without typst-kit's
+`embedded-fonts`); fonts are separate files that carry their own licences.
+
+It never links, calls or copies code from crates/flashtex-engine (GPL-2.0-or-
+later); scripts/check-license-boundary.sh (check D) enforces that.

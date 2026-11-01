@@ -1,0 +1,11 @@
+% 889-hyphenchar-star: verifies a non-default \hyphenchar supplies the break glyph: the same paragraph breaks with - under hyphenchar`\- and with * under hyphenchar`\*.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{889 pat set}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana banana\par\message{889dash lines=\the\prevgraf}}
+\hyphenchar\myrm=`\*
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana banana\par\message{889star lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

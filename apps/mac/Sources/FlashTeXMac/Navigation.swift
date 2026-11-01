@@ -226,77 +226,6 @@ enum Navigation {
             return .mapped(start: start, end: end, note: nil)
         }
     }
-
-    // MARK: - helper (project index) probe
-
-    /// Commands whose braced argument names a label or citation the project
-    /// index resolves; a caret on the command name probes the argument.
-    static let indexedArgumentCommands: Set<String> = [
-        "ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref",
-        "cite", "citep", "citet", "citeauthor", "citeyear", "parencite", "textcite", "autocite", "nocite",
-    ]
-
-    /// Byte offset to send to the helper's lexical `navigate` for the caret,
-    /// or nil when the caret is on `\begin`/`\end` (environments are matched
-    /// in the buffer). The index keys symbols by their *name* bytes (the
-    /// argument of `\ref{…}`, the letters of `\mycmd`), so a caret on the
-    /// backslash or on `ref` is moved onto the name it refers to; anywhere
-    /// else the caret byte itself is sent and the helper decides.
-    static func helperProbeOffset(in text: String, caretByte: Int) -> Int? {
-        Completion.withBytes(text) { b -> Int? in
-            guard let p = b.baseAddress, caretByte >= 0, caretByte <= b.count else { return caretByte }
-            let n = b.count
-            let table = Completion.wordByteClass
-            func isLetter(_ i: Int) -> Bool { i >= 0 && i < n && table[Int(p[i])] == 1 }
-            // A command token `\name` containing the caret (caret on `\`, a letter, or just after the name).
-            var s = caretByte
-            if s < n, p[s] == Completion.backslash { s += 1 } else { while isLetter(s - 1) { s -= 1 } }
-            if s >= 1, p[s - 1] == Completion.backslash, isLetter(s) {
-                var e = s
-                while isLetter(e) { e += 1 }
-                if caretByte >= s - 1, caretByte <= e, e > s {
-                    let name = String(decoding: UnsafeBufferPointer(start: p + s, count: e - s), as: UTF8.self)
-                    if name == "begin" || name == "end" { return nil }
-                    if indexedArgumentCommands.contains(name) {
-                        var k = e
-                        if k < n, p[k] == UInt8(ascii: "*") { k += 1 }
-                        while k < n, p[k] == UInt8(ascii: "[") {
-                            while k < n, p[k] != UInt8(ascii: "]"), p[k] != UInt8(ascii: "\n") { k += 1 }
-                            if k < n, p[k] == UInt8(ascii: "]") { k += 1 }
-                        }
-                        if k < n, p[k] == UInt8(ascii: "{") {
-                            k += 1
-                            while k < n, p[k] == UInt8(ascii: " ") { k += 1 }
-                            return k
-                        }
-                    }
-                    return s
-                }
-            }
-            // Inside a brace group right after `\name`: the helper resolves the
-            // item under the caret; a caret on the closing brace moves to the
-            // argument start so `\ref{x|}` still resolves.
-            var open = caretByte - 1
-            while open >= 0, p[open] != UInt8(ascii: "{"), p[open] != UInt8(ascii: "}"), p[open] != UInt8(ascii: "\n"), p[open] != Completion.backslash { open -= 1 }
-            if open >= 0, p[open] == UInt8(ascii: "{") {
-                var t = open - 1
-                if t >= 0, p[t] == UInt8(ascii: "]") { while t >= 0, p[t] != UInt8(ascii: "[") { t -= 1 }; t -= 1 }
-                if t >= 0, p[t] == UInt8(ascii: "*") { t -= 1 }
-                var ns = t
-                while isLetter(ns) { ns -= 1 }
-                if ns >= 0, p[ns] == Completion.backslash, t > ns {
-                    let name = String(decoding: UnsafeBufferPointer(start: p + ns + 1, count: t - ns), as: UTF8.self)
-                    if name == "begin" || name == "end" { return nil }
-                    if caretByte >= n || p[caretByte] == UInt8(ascii: "}") || p[caretByte] == UInt8(ascii: " ") {
-                        var k = open + 1
-                        while k < n, p[k] == UInt8(ascii: " ") { k += 1 }
-                        return k
-                    }
-                }
-            }
-            return caretByte
-        }
-    }
 }
 
 // MARK: - model actions
@@ -317,7 +246,6 @@ extension ShellModel {
     /// `compiledText` overrides the recorded baseline for `source.path` (a v2
     /// display list that attests the buffer's exact digest passes the buffer).
     func navigateExactly(to source: RuntimeV1.SourceRange?, expectedText: String? = nil, compiledText: String? = nil) {
-        if let why = historicalRefusal(of: "navigation") { navigationNote = why; return }
         guard let source else {
             navigationNote = "This item has no source mapping."
             return
@@ -329,19 +257,15 @@ extension ShellModel {
         }
         var start = source.startByte, end = source.endByte
         var notes: [String] = []
-        let revision = result?.revision ?? 0
         if let compiled = compiledText ?? self.compiledText(for: source.path) {
             switch Navigation.rebaseExactly(start: start, end: end, from: compiled, to: doc.text, path: source.path) {
             case .refused(let why):
-                navigationNote = "Source for this item was edited since revision \(revision) (\(why)); recompile to navigate."
+                navigationNote = "Source for this item was edited since the last compile (\(why)); recompile to navigate."
                 return
             case .mapped(let s, let e, let note):
                 if let note { notes.append(note) }
                 start = s; end = e
             }
-        } else if previewIsStale {
-            navigationNote = "Buffer edited since revision \(revision) and no compiled text is recorded; recompile to navigate."
-            return
         }
         let ns: NSRange
         switch Navigation.editorRange(start: start, end: end, in: doc.text, path: source.path) {
@@ -368,17 +292,9 @@ extension ShellModel {
             + (notes.isEmpty ? "" : " (" + notes.joined(separator: "; ") + ")")
     }
 
-    /// The exact text `path` was compiled from for the applied result: the
-    /// recorded request text or, on the helper route, the durable text at the
-    /// version the applied preview names — an include the helper compiled
-    /// before this window read it (Open All Includes / FLASHTEX_OPEN_INCLUDES=1
-    /// after the first preview) has no request text recorded, but its durable
-    /// text at that version is the same bytes once read.
-    func compiledText(for path: String) -> String? {
-        if let text = compiledDocuments[path] { return text }
-        guard controllerAttached, let revision = displayCandidates.applied?.sourceVersions[path] else { return nil }
-        return controllerState.textByDurable[path]?[revision]
-    }
+    /// The exact text `path` was compiled from by the engine's last
+    /// completed compile (`compiledDocuments`), if it read that file.
+    func compiledText(for path: String) -> String? { compiledDocuments[path] }
 
     /// ⌘⇧D: select the counterpart of the `\begin`/`\end`/`\label`/`\ref`
     /// under the caret; a label or reference in another open document
@@ -388,18 +304,10 @@ extension ShellModel {
             navigationNote = "Caret position \(caretUTF16) is not valid in \(activePath)."
             return
         }
-        // With the durable helper attached, labels, citations and user commands
-        // resolve project-wide through its lexical index (STDIO.md `navigate`);
-        // environments stay in the buffer. Without a helper: in-buffer matching.
-        if controllerAttached, controllerState.ready, let probe = Navigation.helperProbeOffset(in: activeText, caretByte: caretByte) {
-            navigationNote = "Looking up the project index…"
-            Task { await goToMatchingViaHelper(path: activePath, byteOffset: probe, text: activeText) }
-            return
-        }
         goToMatchingInBuffer(caretByte: caretByte)
     }
 
-    /// In-buffer matching across the open documents (the no-helper route).
+    /// In-buffer matching across the open documents.
     func goToMatchingInBuffer(caretByte: Int) {
         switch Navigation.matchingRange(in: documents, activePath: activePath, caretByte: caretByte) {
         case .notFound(let why):
@@ -418,222 +326,13 @@ extension ShellModel {
         }
     }
 
-    // MARK: helper (project index) navigation
-
-    /// One source location the helper reported: `{path, revision, start_byte, end_byte}`.
-    struct IndexLocation: Equatable {
-        var path: String
-        var revision: Int
-        var start: Int
-        var end: Int
-
-        init?(_ json: Any?) {
-            guard let o = json as? [String: Any], let path = o["path"] as? String, let revision = o["revision"] as? Int,
-                  let start = o["start_byte"] as? Int, let end = o["end_byte"] as? Int else { return nil }
-            self.path = path; self.revision = revision; self.start = start; self.end = end
-        }
-    }
-
-    enum HelperReply: Equatable {
-        /// `navigate` found a symbol: its name, origin span and lexical definitions.
-        case found(name: String, origin: IndexLocation, definitions: [IndexLocation], truncated: Bool)
-        /// The caret is on no indexed symbol.
-        case nothing
-        /// The version map no longer matches the helper's snapshot.
-        case staleVersions(String)
-        case refused(String)
-    }
-
-    /// One request → one reply through `controllerState.awaiting` (the pattern
-    /// `controllerSave`/`controllerFileStatus` use). Nil when nothing is attached.
-    func controllerRequest(_ type: String, _ payload: PreviewControllerClient.JSONObject) async -> Result<[String: Any], ControllerError>? {
-        guard let controller, controller.isRunning, controllerState.ready else { return nil }
-        let id: String
-        do { id = try controller.send(type, payload) } catch { return .failure(.init(message: "\(type) failed to send: \(error.localizedDescription)")) }
-        return await withCheckedContinuation { cont in
-            controllerState.awaiting[id] = { cont.resume(returning: $0) }
-        }
-    }
-
-    /// The helper's complete current version map (`snapshot`).
-    func controllerSourceVersions() async -> Result<[String: Int], ControllerError>? {
-        guard let reply = await controllerRequest("snapshot", [:]) else { return nil }
-        switch reply {
-        case .failure(let e): return .failure(e)
-        case .success(let payload):
-            guard let versions = payload["source_versions"] as? [String: Int] else {
-                return .failure(.init(message: "snapshot reply has no source_versions"))
-            }
-            return .success(versions)
-        }
-    }
-
-    /// Lexical `navigate {source_versions, path, byte_offset}`.
-    func controllerNavigate(sourceVersions: [String: Int], path: String, byteOffset: Int) async -> HelperReply? {
-        guard let reply = await controllerRequest("navigate", ["source_versions": sourceVersions, "path": path, "byte_offset": byteOffset]) else { return nil }
-        switch reply {
-        case .failure(let e):
-            return e.message.contains("source versions changed") ? .staleVersions(e.message) : .refused(e.message)
-        case .success(let payload):
-            guard let nav = payload["navigation"] as? [String: Any] else { return .nothing }
-            guard let name = nav["name"] as? String, let origin = IndexLocation(nav["origin"]) else {
-                return .refused("navigate reply is missing name or origin")
-            }
-            let definitions = (nav["definitions"] as? [Any] ?? []).compactMap(IndexLocation.init)
-            return .found(name: name, origin: origin, definitions: definitions, truncated: nav["definitions_truncated"] as? Bool ?? false)
-        }
-    }
-
-    /// Occurrences of one exact name (`complete` with the name as prefix), so
-    /// a caret on a definition can cycle through its references project-wide.
-    func controllerOccurrences(sourceVersions: [String: Int], category: String, name: String) async -> Result<[IndexLocation], ControllerError>? {
-        guard let reply = await controllerRequest("complete", ["source_versions": sourceVersions, "category": category, "prefix": name, "limit": 100]) else { return nil }
-        switch reply {
-        case .failure(let e): return .failure(e)
-        case .success(let payload):
-            let items = payload["completions"] as? [[String: Any]] ?? []
-            guard let item = items.first(where: { $0["name"] as? String == name }) else { return .success([]) }
-            return .success((item["occurrences"] as? [Any] ?? []).compactMap(IndexLocation.init))
-        }
-    }
-
-    /// ⌘⇧D through the helper: `snapshot` → `navigate` at `byteOffset` of the
-    /// durable `path`; a definition (or, from a definition, the next reference
-    /// in project order) is selected exactly in its document, opening that
-    /// document in this window when it is not open yet. Every step re-checks
-    /// versions: the buffer must equal the durable text the helper indexed,
-    /// and a stale-version error is refused, never retried against a guess.
-    func goToMatchingViaHelper(path: String, byteOffset: Int, text: String) async {
-        guard let versionsReply = await controllerSourceVersions() else { navigationNote = "Preview controller detached; nothing looked up."; return }
-        let versions: [String: Int]
-        switch versionsReply {
-        case .failure(let e): navigationNote = "Project index unavailable: \(e.message)"; return
-        case .success(let v): versions = v
-        }
-        guard let revision = versions[path] else {
-            navigationNote = "\(path) is not part of the helper's project (indexed: \(versions.keys.sorted().joined(separator: ", ")))."
-            return
-        }
-        guard let durable = controllerState.textByDurable[path]?[revision] else {
-            navigationNote = "Durable revision \(revision) of \(path) is not known to this session yet; try again."
-            return
-        }
-        guard durable.sameBytes(as: text) else {
-            navigationNote = "\(path) has edits the helper has not indexed yet (durable r\(revision)); try again in a moment."
-            return
-        }
-        guard let reply = await controllerNavigate(sourceVersions: versions, path: path, byteOffset: byteOffset) else {
-            navigationNote = "Preview controller detached; nothing looked up."; return
-        }
-        switch reply {
-        case .staleVersions(let why):
-            navigationNote = "Project changed while looking up the index (\(why)); try again."
-        case .refused(let why):
-            navigationNote = "Project index refused the lookup: \(why)"
-        case .nothing:
-            navigationNote = "Caret byte \(byteOffset) of \(path) is on no label, citation or command the project index knows (\\begin/\\end are matched in the buffer)."
-        case .found(let name, let origin, let definitions, let truncated):
-            let isDefinition = definitions.contains { $0.path == origin.path && $0.start == origin.start && $0.end == origin.end }
-            if isDefinition {
-                // From a definition: cycle its references, project order (helper path order), wrapping.
-                let category = Self.categoryGuess(originText: durable, origin: origin)
-                guard let occ = await controllerOccurrences(sourceVersions: versions, category: category, name: name) else {
-                    navigationNote = "Preview controller detached; nothing looked up."; return
-                }
-                switch occ {
-                case .failure(let e): navigationNote = "Project index refused the reference lookup: \(e.message)"
-                case .success(let all):
-                    let refs = all.filter { !definitions.contains($0) }
-                        .sorted { a, b in a.path != b.path ? a.path < b.path : a.start < b.start }
-                    guard !refs.isEmpty else { navigationNote = "No reference to \(name) in the project (lexical index)."; return }
-                    let after = refs.firstIndex { $0.path > origin.path || ($0.path == origin.path && $0.start > origin.start) } ?? 0
-                    let target = refs[after]
-                    await selectIndexLocation(target, versions: versions, label: "Reference \(after + 1) of \(refs.count) to \(name)")
-                }
-            } else {
-                guard let target = definitions.first else {
-                    navigationNote = "No definition of \(name) in the project (lexical index)."; return
-                }
-                let count = definitions.count > 1 ? " (definition 1 of \(definitions.count)\(truncated ? "+" : ""))" : ""
-                await selectIndexLocation(target, versions: versions, label: "Definition of \(name)\(count)")
-            }
-        }
-    }
-
-    /// Whether `origin` (a definition) is a label, citation or command, from
-    /// the command that introduces it in the durable text.
-    static func categoryGuess(originText: String, origin: IndexLocation) -> String {
-        let bytes = Array(originText.utf8)
-        var i = origin.start - 1
-        while i >= 0, bytes[i] != UInt8(ascii: "\\") { i -= 1 }
-        guard i >= 0 else { return "command" }
-        var e = i + 1
-        while e < bytes.count, Completion.wordByteClass[Int(bytes[e])] == 1 { e += 1 }
-        let name = String(decoding: bytes[(i + 1)..<e], as: UTF8.self)
-        if name == "label" { return "label" }
-        if name == "bibitem" { return "citation" }
-        return "command"
-    }
-
-    /// Selects a helper-reported location exactly: the document's durable text
-    /// at the reported revision is the baseline; an open buffer that moved on
-    /// is rebased across the edit (refused on overlap); a document not open in
-    /// this window is fetched (`document`) and opened.
-    func selectIndexLocation(_ loc: IndexLocation, versions: [String: Int], label: String) async {
-        guard versions[loc.path] == loc.revision else {
-            navigationNote = "\(label): \(loc.path) r\(loc.revision) is not the current durable revision (r\(versions[loc.path].map(String.init) ?? "?")); try again."
-            return
-        }
-        if controllerState.textByDurable[loc.path]?[loc.revision] == nil {
-            // Not read yet: ask for it; the parent's handler records the durable text.
-            _ = try? controller?.document(path: loc.path)
-            let deadline = Date().addingTimeInterval(2)
-            while controllerState.textByDurable[loc.path]?[loc.revision] == nil, Date() < deadline, controllerAttached {
-                try? await Task.sleep(nanoseconds: 5_000_000)
-            }
-        }
-        guard let baseline = controllerState.textByDurable[loc.path]?[loc.revision] else {
-            navigationNote = "\(label): durable revision \(loc.revision) of \(loc.path) could not be read from the helper."
-            return
-        }
-        var notes: [String] = []
-        if documents.firstIndex(where: { $0.path == loc.path }) == nil {
-            documents.append(.init(path: loc.path, text: baseline))
-            notes.append("opened \(loc.path) at durable r\(loc.revision)")
-        }
-        guard let doc = documents.first(where: { $0.path == loc.path }) else { return }
-        let start: Int, end: Int
-        switch Navigation.rebaseExactly(start: loc.start, end: loc.end, from: baseline, to: doc.text, path: loc.path) {
-        case .refused(let why):
-            navigationNote = "\(label): edited since the index was built (\(why)); try again when the edit is durable."
-            return
-        case .mapped(let s, let e, let note):
-            start = s; end = e
-            if let note { notes.append(note) }
-        }
-        let ns: NSRange
-        switch Navigation.editorRange(start: start, end: end, in: doc.text, path: loc.path) {
-        case .refused(let why): navigationNote = "\(label): \(why)"; return
-        case .selected(let range, let widenedFrom):
-            ns = range
-            if let widenedFrom { notes.append("widened from UTF-16 \(widenedFrom.location)..<\(NSMaxRange(widenedFrom)) to whole characters") }
-        }
-        if activePath != loc.path { activePath = loc.path; notes.append("switched to \(loc.path)") }
-        selection = .init(path: loc.path, nsRange: ns, token: (selection?.token ?? 0) + 1)
-        caretUTF16 = ns.location
-        caretLengthUTF16 = ns.length
-        navigationNote = "\(label): \(loc.path) bytes \(start)..<\(end) (project index, durable r\(loc.revision))"
-            + (notes.isEmpty ? "" : " (" + notes.joined(separator: "; ") + ")")
-    }
-
     /// ⌘⇧] / ⌘⇧[: step through the underlined diagnostics (`editorMarkReport`,
     /// exact mark identities, stale spans withheld) of the active document in
     /// document order; past its last mark the step continues into the next
     /// open document with marks (project order, wrapping), switching to it.
     /// Diagnostics under edited text are skipped and counted in the note.
     func goToDiagnostic(forward: Bool) {
-        if let why = historicalRefusal(of: "diagnostic navigation") { navigationNote = why; return }
-        guard let result else {
+        guard let result = markSource?.result else {
             navigationNote = "No compile result loaded; nothing to navigate to."
             return
         }
@@ -648,7 +347,7 @@ extension ShellModel {
             // mark of the next open document that has one.
             for offset in 1..<documents.count {
                 let doc = documents[(active + offset) % documents.count]
-                let other = diagnosticReport(for: doc.path, currentText: doc.text) // retention rule applied (ShellModel+DiagnosticRetention.swift)
+                let other = diagnosticReport(for: doc.path, currentText: doc.text)
                 if let step = EditorDiagnostics.step(other.marks, fromUTF16: forward ? -1 : Int.max, forward: forward, in: doc.text) {
                     chosen = (doc.path, step, other)
                     break
@@ -659,7 +358,7 @@ extension ShellModel {
         guard let chosen else {
             let total = result.diagnostics.count
             let open = documents.count > 1 ? "an open document (\(documents.map(\.path).joined(separator: ", ")))" : activePath
-            navigationNote = total == 0 ? "Revision \(result.revision) has no diagnostics."
+            navigationNote = total == 0 ? "The last compile has no diagnostics."
                 : report.staleNote.map { "No diagnostic can be selected: " + $0 + "." }
                 ?? "None of the \(total) diagnostic\(total == 1 ? "" : "s") has a source in \(open)."
             return
@@ -684,36 +383,8 @@ extension ShellModel {
     /// the preference is on) if a manual preview scroll had stopped it.
     func revealCaretInPreview() {
         caretFollow.note(.explicit)
-        guard let byte = CaretSync.byteOffset(ofCaretUTF16: caretUTF16, in: activeText) else {
-            navigationNote = "Caret position \(caretUTF16) is not valid in \(activePath)."
-            return
-        }
-        // The v2 pane is the default, and on that route the reply's v1 pages
-        // are elided at our own request (`display-list-v2-only`), so `result`
-        // has nothing to map the caret onto. Ask the display list instead
-        // (PreviewV2View.swift); the v1 branch below serves FLASHTEX_PREVIEW_V2=0.
-        if revealCaretInV2Preview(byte: byte) { return }
-        guard let result else {
-            navigationNote = "No compile result loaded; the caret maps to no preview item."
-            return
-        }
-        let hits = caretIndex()?.itemsContaining(byte: byte) ?? []
-        guard let hit = hits.first,
-              let page = result.pages.first(where: { $0.number == hit.page }),
-              hit.index < page.items.count,
-              case .text(let item) = page.items[hit.index], let source = item.source else {
-            navigationNote = "Caret byte \(byte) is inside no preview item" + (previewIsStale ? " (preview is from an older revision)." : ".")
-            return
-        }
-        let before = selection
-        navigateExactly(to: source, expectedText: item.text)
-        if let sel = selection, sel != before {
-            let pages = Set(hits.map(\.page)).sorted()
-            let more = hits.count > 1
-                ? " (+\(hits.count - 1) more" + (pages.count > 1 ? ", pages \(pages.map(String.init).joined(separator: ", "))" : "") + ")."
-                : "."
-            navigationNote = "Caret is in page \(hit.page) item \(hit.index) “\(item.text)”" + more
-        }
+        // The pane scrolls to and flashes the target (EngineV3Preview.swift).
+        if engineV3CaretTarget() == nil { navigationNote = "The caret maps to no glyph in the preview (a comment, the preamble, or not typeset yet)." }
     }
 }
 
@@ -746,10 +417,10 @@ struct NavigationCommands: Commands {
             Divider()
             Button("Next Diagnostic") { model.goToDiagnostic(forward: true) }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-                .disabled(!model.toolbarHasResult) // change-only mirror: a per-reply `result` read here re-evaluates the App scene (FlashTeXMacApp.commands)
+                .disabled(model.toolbarProblemCount == 0) // change-only mirror: a per-compile diagnostics read here re-evaluates the App scene (FlashTeXMacApp.commands)
             Button("Previous Diagnostic") { model.goToDiagnostic(forward: false) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
-                .disabled(!model.toolbarHasResult) // change-only mirror: a per-reply `result` read here re-evaluates the App scene (FlashTeXMacApp.commands)
+                .disabled(model.toolbarProblemCount == 0) // change-only mirror: a per-compile diagnostics read here re-evaluates the App scene (FlashTeXMacApp.commands)
             Button("Next Occurrence") { if let p = diagnosticsPanel { model.stepOccurrence(forward: true, panel: p) } }
                 .keyboardShortcut("]", modifiers: [.command, .option])
                 .disabled(diagnosticsPanel == nil)
@@ -759,7 +430,7 @@ struct NavigationCommands: Commands {
             Divider()
             Button("Reveal Caret in Preview") { model.revealCaretInPreview() }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
-                .disabled(!model.toolbarHasResult) // change-only mirror: a per-reply `result` read here re-evaluates the App scene (FlashTeXMacApp.commands)
+                .disabled(!model.engineV3Enabled)
         }
     }
 }

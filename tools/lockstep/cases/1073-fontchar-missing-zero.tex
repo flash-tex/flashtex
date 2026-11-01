@@ -1,0 +1,11 @@
+% 1073-fontchar-missing-zero: verifies the fontchar commands yield 0pt for characters missing from the font and for \nullfont (pdftex.web §1669).
+\input prelude
+\font\f=cmr10
+\message{1073 misswd=\the\fontcharwd\f255}
+\message{1073 missht=\the\fontcharht\f255}
+\message{1073 missdp=\the\fontchardp\f255}
+\message{1073 missic=\the\fontcharic\f255}
+\message{1073 nullwd=\the\fontcharwd\nullfont`A}
+\setbox0=\hbox{\vrule width73pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

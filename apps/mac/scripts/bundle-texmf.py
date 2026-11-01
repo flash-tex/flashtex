@@ -9,8 +9,8 @@ gate for those assets. It never downloads anything and never looks at a host
 TeX installation: every file comes from the explicit source root (by default
 the vendored `apps/mac/Fonts/texmf`) and is refused unless its byte length and
 SHA-256 match the Commander's pinned manifest
-(`crates/rendering-core/docs/handoffs/native-assets/manifest.json`, itself
-SHA-pinned inside `crates/rendering-core/tools/verify_bundle_resources.py`).
+(`apps/mac/scripts/native-assets-manifest.json`, itself
+SHA-pinned inside `apps/mac/scripts/verify_bundle_resources.py`).
 
 Usage:
   bundle-texmf.py check <source-texmf-root> [<source-fonts-dir>]
@@ -53,8 +53,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[2]
-VERIFIER = REPO_ROOT / "crates/rendering-core/tools/verify_bundle_resources.py"
+VERIFIER = HERE / "verify_bundle_resources.py"
 TEXMF_PREFIX = "texmf/"
 FONTS_PREFIX = "Fonts/"
 SUPPLEMENTARY = "SUPPLEMENTARY-METRICS.json"

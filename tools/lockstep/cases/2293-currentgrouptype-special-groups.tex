@@ -1,0 +1,21 @@
+% 2293-currentgrouptype-special-groups: \currentgrouptype inside an output routine, math, \vcenter, \noalign and \insert reports 8, 15, 12, 7 and 11 (pdftex.web §1665)
+% new versus 1031-math-group-types-modes: 1031 already prints math (15) and vcenter (12); the groups new here are output (8), noalign (7) and insert (11)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count251=0
+\output={\global\advance\count251 by1\message{2293 pg=\the\count251; out=\the\currentgrouptype}\lsshipbox255}
+\setbox0=\hbox{$\message{2293 math=\the\currentgrouptype}$}
+\setbox1=\hbox{$\vcenter{\message{2293 vcenter=\the\currentgrouptype}\hrule height4pt width20pt}$}
+\setbox2=\vbox{\halign{#\hfil\cr\vrule height4pt width20pt\cr\noalign{\message{2293 noalign=\the\currentgrouptype}}\vrule height4pt width20pt\cr}\insert254{\message{2293 insert=\the\currentgrouptype}\vskip1pt}}
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

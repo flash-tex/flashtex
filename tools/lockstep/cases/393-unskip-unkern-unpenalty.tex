@@ -1,0 +1,6 @@
+% 393-unskip-unkern-unpenalty: verifies \unskip, \unkern and \unpenalty drop the tail item of a horizontal list.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth2pt\hskip6pt\kern3pt\penalty7 \unpenalty\message{393 after-unpenalty=\the\lastpenalty}\unkern\message{393 after-unkern=\the\lastkern}\unskip\message{393 after-unskip=\the\lastskip}}
+\message{393 wd=\the\wd0}
+\lsshipbox0
+\end

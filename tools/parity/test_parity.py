@@ -3,6 +3,8 @@
     python3 -m unittest discover -s tools/parity -p 'test_*.py' -v
 """
 
+import contextlib
+import faulthandler
 import gzip
 import io
 import json
@@ -15,22 +17,34 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+
+@contextlib.contextmanager
+def watchdog(seconds=180):
+    """A test that runs parity.main's process pool in this process: if it
+    has not finished in `seconds`, print every thread's stack and exit, so
+    a hang fails the CI step at once with where it hung, instead of eating
+    the job's timeout."""
+    faulthandler.dump_traceback_later(seconds, exit=True)
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+
 import corpus  # noqa: E402
 import definers  # noqa: E402
 import glyphkeys  # noqa: E402
 import parity  # noqa: E402
 
 
+def meta_path_of(root, meta):
+    """The oracle.json of a P-T oracle entry cached under `<root>/cache`."""
+    return os.path.join(root, "cache", "pt-oracle", meta["key"][:2], meta["key"], "oracle.json")
+
+
 def rg(name, x, y, font="CMR10", size=10.0, text=None):
     """A reference glyph record as pdftext.page_glyphs makes it."""
     return {"name": name, "x": x, "y_top": y, "font": font, "size": size, "text": text or "?", "advance": 5.0,
             "bt": 1, "code": 0}
-
-
-def cg(text, x, y, cluster=None, font="LMRoman10-Regular", size=10.0, sources=None):
-    """A candidate glyph record as rank.v2_page_glyphs makes it."""
-    return {"text": text, "x": x, "y_top": y, "font": font, "size": size, "advance": 5.0, "bt": 0,
-            "math": False, "sources": sources or [], "gid": 1, "cluster": cluster}
 
 
 class GlyphKeys(unittest.TestCase):
@@ -81,38 +95,32 @@ class Atoms(unittest.TestCase):
         self.assertGreaterEqual(a[0][4], 20.0)   # stack height + allowance
         self.assertEqual(a[1][4], 0.0)
 
-    def test_candidate_cluster_counted_once(self):
-        a = parity.candidate_atoms([cg("(", 50, 10, cluster=(0, 0)), cg("(", 50, 20, cluster=(0, 0)),
-                                    cg("x", 60, 25, cluster=(0, 1))])
-        self.assertEqual([x[0] for x in a], ["(", "x"])
-
-
 class Matching(unittest.TestCase):
     def test_exact_and_within_tolerance(self):
         ra = parity.reference_atoms([rg("a", 10, 10), rg("b", 20, 10)])
-        ca = parity.candidate_atoms([cg("a", 10.3, 10.2), cg("b", 20, 10)])
+        ca = parity.reference_atoms([rg("a", 10.3, 10.2), rg("b", 20, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([], []))
 
     def test_beyond_tolerance_is_unmatched(self):
         ra = parity.reference_atoms([rg("a", 10, 10)])
-        ca = parity.candidate_atoms([cg("a", 10.6, 10)])
+        ca = parity.reference_atoms([rg("a", 10.6, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([0], [0]))
 
     def test_same_char_nearest_wins(self):
         ra = parity.reference_atoms([rg("e", 10, 10), rg("e", 10.8, 10)])
-        ca = parity.candidate_atoms([cg("e", 10.75, 10), cg("e", 10.1, 10)])
+        ca = parity.reference_atoms([rg("e", 10.75, 10), rg("e", 10.1, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([], []))
 
     def test_extension_glyph_is_held_on_x_only(self):
         ra = parity.reference_atoms([rg("summationdisplay", 100, 80, font="CMEX10")])
-        ok = parity.candidate_atoms([cg("∑", 100.2, 95, font="LatinModernMath-Regular")])
-        off = parity.candidate_atoms([cg("∑", 101, 80, font="LatinModernMath-Regular")])
+        ok = parity.reference_atoms([rg("summationdisplay", 100.2, 95, font="CMEX10")])
+        off = parity.reference_atoms([rg("summationdisplay", 101, 80, font="CMEX10")])
         self.assertEqual(parity.match_within(ra, ok), ([], []))
         self.assertEqual(parity.match_within(ra, off), ([0], [0]))
 
     def test_multiset(self):
         ra = parity.reference_atoms([rg("a", 0, 0), rg("b", 5, 0)])
-        ca = parity.candidate_atoms([cg("a", 0, 0), cg("c", 5, 0)])
+        ca = parity.reference_atoms([rg("a", 0, 0), rg("c", 5, 0)])
         missing, extra = parity.multiset_diff(ra, ca)
         self.assertEqual(dict(missing), {"b": 1})
         self.assertEqual(dict(extra), {"c": 1})
@@ -166,7 +174,7 @@ class Levels(unittest.TestCase):
         warn = {"severity": "warning", "code": "unsupported_feature",
                 "message": "packages tikz are recognised but not implemented [help: remove that \\usepackage]"}
         font = {"severity": "warning", "code": "math_resource_profile", "message": "lmmi10: glyphs drawn from ..."}
-        r0 = {"level": -1, "candidate": {"pdf": True, "v2": True, "errors": 1, "diagnostics": [diag_err, warn]}}
+        r0 = {"level": -1, "candidate": {"pdf": True, "errors": 1, "diagnostics": [diag_err, warn]}}
         self.assertEqual(parity.causes_for(r0, {}), ["unknown_command: cs \\foo"])
         r2 = {"level": 2, "divergence": "environment align (math glyph)",
               "candidate": {"diagnostics": [warn, font]}}
@@ -174,7 +182,7 @@ class Levels(unittest.TestCase):
                                                      "unsupported_feature: package tikz"])
         r3 = {"level": 3, "candidate": {"diagnostics": [font]}}
         self.assertEqual(parity.causes_for(r3, {}), ["fonts: math_resource_profile"])
-        crash = {"level": -1, "candidate": {"pdf": False, "v2": False, "errors": None, "exit": 101,
+        crash = {"level": -1, "candidate": {"pdf": False, "errors": None, "exit": 101,
                                             "stderr_tail": "thread 'main' panicked at src/x.rs:1:2:\nboom"}}
         self.assertTrue(parity.causes_for(crash, {})[0].startswith("engine: crash"))
 
@@ -185,6 +193,61 @@ class Levels(unittest.TestCase):
                 json.dump({"levels": {"a": 3, "b": 1, "gone": 0, "excl": None}}, f)
             rs = [self._r("a", 2), self._r("b", 4)]
             self.assertEqual(parity.check_baseline(rs, p), [("a", 3, 2), ("gone", 0, None)])
+
+    def test_baseline_host(self):
+        # RQ8: a baseline names its host; one recorded on another OS is refused,
+        # one on this OS (or a /1 baseline with no host) is checked as before
+        here = parity.baseline_host()
+        self.assertEqual(here["system"], parity.platform.system())
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "b.json")
+            other = "Plan9" if here["system"] != "Plan9" else "Darwin"
+            with open(p, "w") as f:
+                json.dump({"host": {"system": other}, "levels": {"a": 1}}, f)
+            with self.assertRaises(parity.BaselineHostMismatch):
+                parity.check_baseline([self._r("a", 3)], p)
+            for host in (here, None):
+                with open(p, "w") as f:
+                    json.dump({"host": host, "levels": {"a": 1}}, f)
+                self.assertEqual(parity.check_baseline([self._r("a", 3)], p), [])
+
+    def test_the_default_engine_is_the_new_one(self):
+        # with no --engine the new engine is measured, and it wants its formats;
+        # the old engine's command line is gone (S7), so its flag is refused
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("FLASHTEX_ENGINE", "FLASHTEX_FORMATS"):
+                os.environ.pop(k, None)
+            eng = os.path.join(d, "flashtex-initex")
+            with open(eng, "w") as f:
+                f.write("#!/bin/sh\necho 'pdfTeX 3.141592653-2.6-1.40.29 (flashtex-initex)'\n")
+            os.chmod(eng, 0o755)
+            missing = os.path.join(d, "none", "flashtex-initex")
+            err = io.StringIO()
+            with mock.patch.object(parity, "DEFAULT_ENGINE", eng), contextlib.redirect_stderr(err):
+                self.assertEqual(parity.main(["--tier", "fixtures", "--out", d, "--work", d]), 2)
+                self.assertIn("needs its formats", err.getvalue())
+                self.assertEqual(parity.main(["--tier", "fixtures", "--engine", missing, "--out", d, "--work", d]), 2)
+                self.assertIn(f"engine not found at {missing}", err.getvalue())
+                with self.assertRaises(SystemExit):
+                    parity.main(["--old-engine"])
+
+    def test_committed_fixtures_baseline_names_its_host(self):
+        with open(os.path.join(parity.REPO, "tools", "parity", "baseline-fixtures.json")) as f:
+            b = json.load(f)
+        self.assertEqual(b["schema"], "flashtex-parity-baseline/2")
+        self.assertIn("system", b["host"])
+
+    def test_pt_gate(self):
+        ok = {"id": "ok", "pt": {"P-T1": True, "P-T2": True, "why": {}}}
+        t2 = {"id": "t2", "pt": {"P-T1": True, "P-T2": False, "why": {"P-T2": "page 1 stream"}}}
+        na = {"id": "na", "pt": {"P-T1": None, "P-T2": None, "why": {}, "excluded": "oracle: does not compile"}}
+        off = {"id": "off", "pt": None}
+        skipped = {"id": "skip", "excluded": "no entry"}
+        self.assertEqual(parity.require_pt([ok, skipped]), [])
+        self.assertEqual([m[0] for m in parity.require_pt([ok, t2, na, off])], ["na", "off", "t2"])
+        self.assertIn("P-T2 fail (page 1 stream)", parity.require_pt([t2])[0][1])
+        self.assertEqual(parity.require_pt([skipped])[0][0], "(none)")
 
 
 class Localise(unittest.TestCase):
@@ -310,6 +373,2597 @@ class Corpus(unittest.TestCase):
             with open(os.path.join(d, "b.tex"), "w") as f:
                 f.write("\\documentclass{amsart}\n\\begin{document}\n\\end{document}\n")
             self.assertEqual(corpus.detect_entry(d), "b.tex")
+
+    def test_template_files_survive_skip_pdfs(self):
+        doc = b"\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n"
+        with tempfile.TemporaryDirectory() as d:
+            texmf = os.path.join(d, "texmf")
+            os.makedirs(os.path.join(texmf, "doc", "t"))
+            for name, data in (("s.tex", doc), ("s.pdf", b"%PDF prebuilt"), ("fig.pdf", b"%PDF fig"), ("x.bib", b"")):
+                with open(os.path.join(texmf, "doc", "t", name), "wb") as f:
+                    f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "templates", "entries": [
+                    {"id": "t", "path": "doc/t/s.tex", "copy_dir": True, "skip_pdfs": True, "files": ["fig.pdf"],
+                     "sha256": corpus.sha256_bytes(doc)}]}, f)
+            (rec,) = corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            self.assertIsNone(rec["problem"])
+            self.assertEqual(sorted(os.listdir(rec["dir"])), [".parity-copied", "fig.pdf", "s.tex", "x.bib"])
+            h = parity.tree_hash(rec["dir"])  # the marker is not part of the source tree
+            os.remove(os.path.join(rec["dir"], ".parity-copied"))
+            self.assertEqual(parity.tree_hash(rec["dir"]), h)
+            corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            ino = os.stat(os.path.join(rec["dir"], "s.tex")).st_ino
+            corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            self.assertEqual(os.stat(os.path.join(rec["dir"], "s.tex")).st_ino, ino)  # left alone, not rebuilt
+
+    def test_packages_tier_copies_from_texlive(self):
+        doc = b"\\documentclass{article}\n\\usepackage{p}\n\\begin{document}\nx\n\\end{document}\n"
+        with tempfile.TemporaryDirectory() as d:
+            texmf = os.path.join(d, "texmf")
+            os.makedirs(os.path.join(texmf, "doc", "p", "figures"))
+            for name, data in (("p.tex", doc), ("other.tex", b"%"), ("figures/fig.png", b"png")):
+                with open(os.path.join(texmf, "doc", "p", name), "wb") as f:
+                    f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "packages", "entries": [
+                    {"id": "p-single", "path": "doc/p/p.tex", "files": ["figures/fig.png"],
+                     "sha256": corpus.sha256_bytes(doc)},
+                    {"id": "p-bad", "path": "doc/p/other.tex", "sha256": "0" * 64}]}, f)
+            ok, bad = corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            self.assertIsNone(ok["problem"])
+            self.assertEqual((ok["tier"], ok["entry"]), ("packages", "p.tex"))
+            self.assertEqual(ok["dir"], os.path.join(d, "cache", "src", "packages", "p-single"))
+            self.assertEqual(sorted(os.listdir(ok["dir"])), [".parity-copied", "fig.png", "p.tex"])
+            self.assertIn("sha256 mismatch", bad["problem"])
+
+    def test_arxiv_fetch_retries_verifies_and_never_caches_short_bytes(self):
+        import http.client
+        from unittest import mock
+        good = b"pinned e-print bytes"
+        answers = [http.client.IncompleteRead(b"pinned"), b"pinned", good]  # a cut read, a short body, the bytes
+        calls = []
+
+        def get(url, timeout=120):
+            calls.append(url)
+            a = answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(corpus, "http_get", get), \
+                mock.patch.object(corpus.time, "sleep", lambda s: None):
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "nightly-5k", "entries": [
+                    {"id": "1603.06059v3", "url": "https://x/e-print/1603.06059v3", "sha256": corpus.sha256_bytes(good)},
+                    {"id": "1612.03571v1", "url": "https://x/e-print/1612.03571v1", "sha256": "0" * 64}]}, f)
+            cache = os.path.join(d, "cache")
+            with mock.patch.object(corpus, "unpack", lambda data, dest: os.makedirs(dest, exist_ok=True)):
+                rec = corpus.fetch_manifest(man, cache, log=lambda *_: None, delay=0, only={"1603.06059v3"})[0]
+                self.assertIsNone(rec["problem"])
+                self.assertEqual(len(calls), 3)
+                with open(os.path.join(cache, "eprints", "1603.06059v3"), "rb") as f:
+                    self.assertEqual(f.read(), good)
+                # changed bytes: fetched once more, then a sha256 mismatch, and nothing cached
+                answers[:] = [b"other", b"other"]
+                (bad,) = corpus.fetch_manifest(man, cache, log=lambda *_: None, delay=0, only={"1612.03571v1"})
+                self.assertIn("sha256 mismatch", bad["problem"])
+                self.assertFalse(os.path.exists(os.path.join(cache, "eprints", "1612.03571v1")))
+                # a network error on every try fails after FETCH_TRIES, and `fetch` exits non-zero
+                answers[:] = [OSError("reset")] * corpus.FETCH_TRIES
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                    rc = corpus.main(["--cache", cache, "--delay", "0", "fetch", "--manifest", man, "--shard", "1/2"])
+                self.assertEqual(rc, 1)
+                self.assertIn(f"fetch failed after {corpus.FETCH_TRIES} tries", err.getvalue())
+                self.assertEqual(answers, [])
+                # a cached file that is not the pinned bytes is fetched again
+                with open(os.path.join(cache, "eprints", "1603.06059v3"), "wb") as f:
+                    f.write(b"pin")
+                answers[:] = [good]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(corpus.main(["--cache", cache, "--delay", "0", "fetch", "--manifest", man,
+                                                  "--shard", "0/2"]), 0)
+                self.assertEqual(answers, [])
+
+    def test_packages_manifest_is_well_formed(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "packages-texlive-2026.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        with open(os.path.join(corpus.MANIFEST_DIR, "templates-texlive-2026.json"), encoding="utf-8") as f:
+            templates = {e["path"] for e in json.load(f)["entries"]}
+        self.assertEqual((man["schema"], man["tier"]), ("flashtex-parity-corpus/1", "packages"))
+        entries, skipped = man["entries"], man["skipped"]
+        self.assertEqual((len(entries), len(skipped)), (92, 6))
+        self.assertEqual([e["id"] for e in entries if e.get("pt1_skip")], [])  # tabu-europasscv: capture.ElapsedMask
+        ids, paths = [e["id"] for e in entries], [e["path"] for e in entries]
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertEqual(len(set(paths)), len(paths))  # no file pinned under two ids
+        self.assertFalse(set(paths) & templates)  # nor repeated from the templates tier
+        for e in entries:
+            self.assertTrue(e["path"].startswith("doc/"), e["id"])
+            self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+            self.assertLessEqual(e["pages"], 100, e["id"])
+            self.assertLessEqual(e["passes"], 3, e["id"])
+        self.assertTrue(all(s["package"] and s["reason"] for s in skipped))
+        self.assertEqual(len({s["package"] for s in skipped}), len(skipped))
+        self.assertIn("packages", corpus.TEXLIVE_TIERS)
+
+    def test_run_written_conversion_input_is_kept(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            src, work = os.path.join(d, "src"), os.path.join(d, "work")
+            os.makedirs(src)
+            os.makedirs(work)
+            for name in ("fig.eps",):  # shipped with the source
+                open(os.path.join(src, name), "w").close()
+            for name in ("fig.eps", "fig-eps-converted-to.pdf", "a.eps", "a-eps-converted-to.pdf", "b.eps", "x.aux"):
+                open(os.path.join(work, name), "w").close()
+            kept = tiers.keep_generated(src, work, os.path.join(d, "kept"))
+            # a.eps was written by the run (filecontents) and converted; b.eps was not converted
+            self.assertEqual(kept, ["a-eps-converted-to.pdf", "a.eps", "fig-eps-converted-to.pdf"])
+
+    def test_shipped_conversion_redone_by_the_run_is_kept(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            src, work = os.path.join(d, "src"), os.path.join(d, "work")
+            for root in (src, work):
+                os.makedirs(os.path.join(root, "figs"))
+                for rel in ("figs/same-eps-converted-to.pdf", "figs/redone-eps-converted-to.pdf"):
+                    with open(os.path.join(root, rel), "w") as f:
+                        f.write("%PDF shipped")
+                    os.utime(os.path.join(root, rel), (1000, 1000))
+            with open(os.path.join(work, "figs", "redone-eps-converted-to.pdf"), "w") as f:
+                f.write("%PDF converted again")  # the run's own conversion: new bytes, new time
+            os.utime(os.path.join(work, "figs", "same-eps-converted-to.pdf"), (1000, 1001))  # touched only
+            self.assertEqual(tiers.keep_generated(src, work, os.path.join(d, "kept")),
+                             ["figs/redone-eps-converted-to.pdf", "figs/same-eps-converted-to.pdf"])
+            os.utime(os.path.join(work, "figs", "same-eps-converted-to.pdf"), (1000, 1000))
+            self.assertEqual(tiers.keep_generated(src, work, os.path.join(d, "kept2")),
+                             ["figs/redone-eps-converted-to.pdf"])
+            with open(os.path.join(d, "kept", "figs", "redone-eps-converted-to.pdf")) as f:
+                self.assertEqual(f.read(), "%PDF converted again")
+
+    def test_entry_kept_under_an_older_conversion_rule_is_made_again(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            plain, ships = os.path.join(d, "plain"), os.path.join(d, "ships")
+            os.makedirs(plain)
+            os.makedirs(os.path.join(ships, "figs"))
+            open(os.path.join(ships, "figs", "a-eps-converted-to.pdf"), "w").close()
+            old = {"ok": True, "generated": []}
+            self.assertFalse(tiers.stale_entry(old, d, plain))
+            self.assertTrue(tiers.stale_entry(old, d, ships))
+            self.assertFalse(tiers.stale_entry(dict(old, generated_v=tiers.GENERATED_V), d, ships))
+            # v2 entries were made from trees with unpack-time file times (before corpus.UNPACK_V 2)
+            self.assertEqual(tiers.GENERATED_V, 3)
+            self.assertTrue(tiers.stale_entry(dict(old, generated_v=2), d, ships))
+            self.assertFalse(tiers.stale_entry({"ok": False, "why": "exit 1"}, d, ships))
+
+    def test_old_entry_of_a_tree_shipping_no_conversion_is_stamped(self):
+        import tiers
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        saved = tiers.engine_version, tiers.ships_conversion
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"id": "plain", "entry": "main.tex", "dir": os.path.join(d, "src")}
+            os.makedirs(doc["dir"])
+            key = tiers.oracle_key(doc, version, False, "t")
+            entry = os.path.join(d, "cache", "pt-oracle", key[:2], key)
+            os.makedirs(entry)
+            with open(os.path.join(entry, "oracle.json"), "w") as f:
+                json.dump({"ok": True, "generated": [], "key": key}, f)
+            walks = []
+            try:
+                tiers.engine_version = lambda _exe: version
+                tiers.ships_conversion = lambda src: walks.append(src) or saved[1](src)
+                for _ in range(2):
+                    meta, _, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), False, "t")
+                    self.assertTrue(meta["cached"])
+            finally:
+                tiers.engine_version, tiers.ships_conversion = saved
+            with open(os.path.join(entry, "oracle.json")) as f:
+                self.assertEqual(json.load(f)["generated_v"], tiers.GENERATED_V)
+            self.assertEqual(walks, [doc["dir"]])  # walked once, then stamped
+
+    def test_traced_time_limits(self):
+        import capture
+        import tiers
+        saved = capture.TIMEOUT
+        try:
+            self.assertEqual(saved, 1800)
+            self.assertEqual(tiers.oracle_pt1_timeout(), 7200)  # cached: a long one costs once
+            self.assertEqual(tiers.pt1_timeout(), 1800)
+            self.assertEqual(tiers.pt1_timeout(100, 30.5), 1800)  # a quick oracle: the floor
+            self.assertEqual(tiers.pt1_timeout(25 << 30), (25 << 30) // tiers.PT1_MIN_RATE + 1)  # its log
+            self.assertEqual(tiers.pt1_timeout(25 << 30, 2400.4), 7200)  # 3 times its traced pass, up to
+            self.assertEqual(tiers.pt1_timeout(0, 1403.67), 4212)  # the oracle's limit (2501.08663v2 here)
+            self.assertEqual(tiers.pt1_timeout(60 << 30, 7000), (60 << 30) // tiers.PT1_MIN_RATE + 1)
+            capture.TIMEOUT = 600  # --pt1-timeout 600
+            self.assertEqual((tiers.oracle_pt1_timeout(), tiers.pt1_timeout(None, None)), (2400, 600))
+        finally:
+            capture.TIMEOUT = saved
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": "/nonexistent"}
+        doc = {"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}
+        real = tiers.oracle
+        try:
+            tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 100, "trace_seconds": 1403.67}, None, "r.pdf")
+            self.assertEqual(parity.pt1_plan(doc, cfg, None), ("pipe", 4212))
+        finally:
+            tiers.oracle = real
+
+    def test_oracle_stopped_by_a_shorter_limit_is_traced_again_with_the_oracle_limit(self):
+        import capture
+        import tiers
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        stopped = {"ok": True, "generated": [], "generated_v": tiers.GENERATED_V,
+                   "trace_incomplete": tiers.TRACE_TIMEOUT.format(1800), "trace_timed_out": True,
+                   "trace_timeout": 1800}
+        self.assertTrue(tiers.stale_entry(stopped, "/nonexistent"))  # board run 37121600909's two entries
+        self.assertFalse(tiers.stale_entry(dict(stopped, trace_timeout=7200), "/nonexistent"))
+        saved = tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"id": "slow", "entry": "main.tex", "dir": os.path.join(d, "src")}
+            os.makedirs(doc["dir"])
+            key = tiers.oracle_key(doc, version, True, "t")
+            entry = os.path.join(d, "cache", "pt-oracle", key[:2], key)
+            os.makedirs(entry)
+            with open(os.path.join(entry, "oracle.json"), "w") as f:
+                json.dump(dict(stopped, key=key), f)
+            limits = []
+
+            def run_tex(doc, engine, work, trace=True, extra_env=None, seed=None, stream=False, timeout=None):
+                limits.append(timeout)  # stopped again: still a harness error, never a pass
+                os.makedirs(work)
+                pdf = os.path.join(work, "main.pdf")  # the converged pass's PDF, as run_tex keeps it
+                with open(pdf, "w") as f:
+                    f.write("%PDF")
+                return ({"ok": True, "passes": 2, "trace_timeout": timeout, "trace_timed_out": True,
+                         "trace_incomplete": tiers.TRACE_TIMEOUT.format(timeout)}, None, pdf)
+            try:
+                tiers.engine_version, tiers.run_tex = (lambda _exe: version), run_tex
+                meta, cap, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((limits, meta["cached"], cap), ([4 * capture.TIMEOUT], False, None))
+                meta, _, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((limits, meta["cached"]), ([7200], True))  # stopped at today's limit: kept
+                cfg = {"pt": "on", "oracle_pdftex": "/stub/pdftex", "cache": os.path.join(d, "cache")}
+                real_tree_hash = parity.tree_hash
+                parity.tree_hash = lambda _dir: "t"
+                try:
+                    skip = parity.pt1_skip_reason(dict(doc, tier="arxiv"), cfg)
+                finally:
+                    parity.tree_hash = real_tree_hash
+                self.assertEqual(skip["harness_error"], tiers.TRACE_TIMEOUT.format(7200))
+            finally:
+                tiers.engine_version, tiers.run_tex = saved
+
+    def test_seeded_conversions_count_only_conversions(self):
+        seed = {"a-eps-converted-to.pdf": "/c/a", "a.eps": "/c/a.eps", "figs/b-eps-converted-to.pdf": "/c/b"}
+        self.assertEqual((parity.seeded_conversions(seed), parity.seeded_conversions({}),
+                          parity.seeded_conversions(None)), (2, 0, 0))
+        s = parity.summarize_pt([{"pt": {"P-T1": True, "P-T2": True, "seeded_conversions": 2}},
+                                 {"pt": {"P-T1": True, "P-T2": False, "seeded_conversions": 0}}, {"pt": None}])
+        self.assertEqual(s["seeded_conversions"], {"documents": 1, "files": 2})
+
+    def test_unpack_keeps_the_archive_times(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for name, data, mtime in (("fig.eps", b"%!PS eps", 1500000000), ("figs/fig-eps-converted-to.pdf",
+                                                                             b"%PDF conv", 1400000000)):
+                info = tarfile.TarInfo(name)
+                info.size, info.mtime = len(data), mtime
+                tf.addfile(info, io.BytesIO(data))
+        with tempfile.TemporaryDirectory() as d:
+            hashes = []
+            for n in range(2):
+                dest = os.path.join(d, f"u{n}")
+                self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
+                self.assertEqual(os.stat(os.path.join(dest, "fig.eps")).st_mtime, 1500000000)
+                self.assertEqual(os.stat(os.path.join(dest, "figs", "fig-eps-converted-to.pdf")).st_mtime, 1400000000)
+                hashes.append(parity.tree_hash(dest))
+            os.utime(os.path.join(d, "u1", "fig.eps"), (2000000000, 2000000000))
+            self.assertEqual(parity.tree_hash(os.path.join(d, "u1")), hashes[0])  # the oracle key ignores times
+
+    def test_unpack_survives_a_time_the_os_cannot_set(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tf:
+            for name, mtime in (("huge.tex", 1e20), ("fine.tex", 1500000000)):
+                info = tarfile.TarInfo(name)
+                info.size, info.mtime = 1, mtime
+                tf.addfile(info, io.BytesIO(b"x"))
+        with tarfile.open(fileobj=io.BytesIO(buf.getvalue())) as tf:
+            self.assertEqual(tf.getmember("huge.tex").mtime, 1e20)  # the pax header carries it
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "src")
+            before = time.time() - 5
+            self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
+            self.assertGreater(os.stat(os.path.join(dest, "huge.tex")).st_mtime, before)  # the unpack's time
+            self.assertEqual(os.stat(os.path.join(dest, "fine.tex")).st_mtime, 1500000000)
+
+    def test_archive_tier_tree_is_its_root_directory(self):
+        # a forge's commit archive (the books tier): the tree is the archive's top directory,
+        # so the entry's relative \input{book/...} resolves as in the project's checkout
+        doc = b"\\documentclass{book}\\begin{document}\\input{book/ch.tex}\\end{document}\n"
+        data = self._targz({"proj/main.tex": doc, "proj/book/ch.tex": b"x"})
+        e = {"id": "proj-1234567", "url": "https://example.invalid/a.tar.gz", "sha256": corpus.sha256_bytes(data),
+             "root": "proj", "entry": "main.tex"}
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "cache")
+            os.makedirs(os.path.join(cache, "archives"))
+            with open(os.path.join(cache, "archives", e["id"]), "wb") as f:
+                f.write(data)  # already fetched: no network
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "books", "entries": [e, dict(e, id="other", root="nope")]}, f)
+            with open(os.path.join(cache, "archives", "other"), "wb") as f:
+                f.write(data)
+            ok, bad = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+            self.assertIsNone(ok["problem"])
+            self.assertEqual(ok["dir"], os.path.join(cache, "src", "books", e["id"]))
+            self.assertTrue(os.path.isfile(os.path.join(ok["dir"], "main.tex")))
+            self.assertTrue(os.path.isfile(os.path.join(ok["dir"], "book", "ch.tex")))
+            self.assertFalse(os.path.exists(os.path.join(ok["dir"], "proj")))
+            with open(os.path.join(ok["dir"], ".parity-unpacked")) as f:
+                self.assertEqual(f.read(), f"{e['sha256']} {corpus.UNPACK_V} root=proj")
+            self.assertIn("no top directory 'nope'", bad["problem"])
+            self.assertEqual([n for n in os.listdir(os.path.join(cache, "src", "books")) if ".tmp-" in n], [])
+
+    def test_books_manifest_pins_a_commit_archive(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "books.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertIn(man["tier"], corpus.ARCHIVE_TIERS)
+        self.assertTrue(man["on_demand"])  # a bare `corpus.py fetch` stays the T3 tiers'
+        for e in man["entries"]:
+            self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+            self.assertIn(e["commit"], e["url"])  # a commit, never a moving branch
+            self.assertTrue(e["root"] and e["entry"].endswith(".tex"))
+
+    def test_repo_entry_is_copied_with_its_directory_and_recopied_when_edited(self):
+        # the beamer tier's own decks: a `repo` entry names a committed document, unpinned (Git pins it)
+        with tempfile.TemporaryDirectory() as d:
+            repo, cache = os.path.join(d, "repo"), os.path.join(d, "cache")
+            deck = os.path.join(repo, "fixtures", "beamer-v3", "deck")
+            os.makedirs(deck)
+            with open(os.path.join(deck, "main.tex"), "w") as f:
+                f.write("\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n")
+            with open(os.path.join(deck, "fig.png"), "wb") as f:
+                f.write(b"png")
+            e = {"id": "v3-deck", "repo": "fixtures/beamer-v3/deck/main.tex", "copy_dir": True}
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "beamer", "entries": [e, dict(e, id="gone", repo="fixtures/nope/main.tex")]}, f)
+            old = corpus.REPO
+            corpus.REPO = repo
+            try:
+                ok, bad = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+                self.assertIsNone(ok["problem"])
+                self.assertEqual((ok["dir"], ok["entry"]), (os.path.join(cache, "src", "beamer", "v3-deck"), "main.tex"))
+                self.assertEqual(sorted(n for n in os.listdir(ok["dir"]) if not n.startswith(".")), ["fig.png", "main.tex"])
+                self.assertIn("missing in the repository", bad["problem"])
+                with open(os.path.join(deck, "main.tex"), "a") as f:
+                    f.write("% edited\n")
+                corpus.fetch_manifest(man, cache, log=lambda *_: None, only={"v3-deck"})
+                with open(os.path.join(ok["dir"], "main.tex")) as f:
+                    self.assertTrue(f.read().endswith("% edited\n"))
+            finally:
+                corpus.REPO = old
+
+    def test_beamer_manifest(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "beamer.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertIn(man["tier"], corpus.TEXLIVE_TIERS)
+        self.assertTrue(man["on_demand"])
+        ids = [e["id"] for e in man["entries"]]
+        self.assertEqual(len(set(ids)), len(ids))
+        for e in man["entries"]:
+            if "repo" in e:
+                self.assertTrue(os.path.isfile(os.path.join(corpus.REPO, e["repo"])), e["id"])
+            else:
+                self.assertTrue(e["path"].startswith("doc/"), e["id"])
+                self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_tree_unpacked_before_archive_times_is_unpacked_again(self):
+        data = self._targz({"main.tex": b"\\documentclass{article}\\begin{document}x\\end{document}\n"})
+        e = {"id": "2501.00001v1", "url": "https://example.invalid/e", "sha256": corpus.sha256_bytes(data),
+             "entry": "main.tex"}
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "cache")
+            os.makedirs(os.path.join(cache, "eprints"))
+            with open(os.path.join(cache, "eprints", e["id"]), "wb") as f:
+                f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "arxiv", "entries": [e]}, f)
+            dest = os.path.join(cache, "src", "arxiv", e["id"])
+            os.makedirs(dest)
+            with open(os.path.join(dest, ".parity-unpacked"), "w") as f:
+                f.write(e["sha256"])  # the marker as it was before UNPACK_V
+            (rec,) = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+            self.assertIsNone(rec["problem"])
+            self.assertTrue(os.path.isfile(os.path.join(dest, "main.tex")))
+            with open(os.path.join(dest, ".parity-unpacked")) as f:
+                self.assertEqual(f.read(), f"{e['sha256']} {corpus.UNPACK_V}")
+
+    def test_old_oracle_cache_entry_is_not_reused(self):
+        import capture
+        import hashlib
+        import tiers
+        doc = {"id": "grfguide", "entry": "grfguide.tex", "dir": "/nonexistent"}
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        # the v4 key exactly as tiers.oracle built it before keep_generated kept run-written inputs
+        v4 = hashlib.sha256(json.dumps({
+            "tree": "t", "entry": doc["entry"], "pdftex": version, "fmt": tiers.FMT, "trace": capture.TRACE,
+            "env": capture.TRACE_ENV, "passes": tiers.PASSES, "shell_escape": capture.SHELL_ESCAPE,
+            "argv0": capture.PROGRAM, "v": 4}, sort_keys=True).encode()).hexdigest()
+        self.assertNotEqual(tiers.oracle_key(doc, version, True, "t"), v4)
+        saved = tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as cache:
+            old = os.path.join(cache, "pt-oracle", v4[:2], v4)
+            os.makedirs(old)
+            with open(os.path.join(old, "oracle.json"), "w") as f:
+                json.dump({"ok": True, "generated": ["a-eps-converted-to.pdf"], "key": v4}, f)
+            def fresh(_doc, _exe, work, **_kw):  # the real run_tex makes the work dir under the entry
+                os.makedirs(work)
+                return {"ok": False, "why": "made afresh"}, None, None
+            try:
+                tiers.engine_version = lambda _exe: version
+                tiers.run_tex = fresh
+                meta, cap, pdf = tiers.oracle(doc, "/stub/pdftex", cache, True, "t")
+            finally:
+                tiers.engine_version, tiers.run_tex = saved
+            self.assertEqual((meta["cached"], meta["why"], cap, pdf), (False, "made afresh", None, None))
+            self.assertNotEqual(meta["key"], v4)
+
+    def test_traced_log_over_budget_is_never_read_whole(self):
+        import capture
+        import tiers
+        saved = capture.run_engine, capture.MAX_LOG_BYTES, tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as d:
+            def engine(_bin, _fmt, _args, workdir, _env=None, **_kw):
+                with open(os.path.join(workdir, "main.log"), "w") as f:
+                    f.write("**x\n" + "y" * 5000 + "\nOutput written on main.pdf (1 page, 9 bytes).\n")
+                return 0, False
+            try:
+                capture.run_engine, capture.MAX_LOG_BYTES = engine, 1000
+                for stream in (False, "pipe", "fingerprint"):  # a file, then a named pipe the stub writes into
+                    cap = capture.capture(os.path.join(d, "main.tex"), "/stub", d, stream=stream)
+                    self.assertEqual((cap.log, cap.boxes, cap.complete), (None, None, True))
+                    self.assertGreater(cap.size, 5000)
+                    self.assertEqual(cap.fingerprint["strict"]["lines"], 4)
+                    self.assertFalse(os.path.lexists(os.path.join(d, "main.log")))  # nothing left on disk
+                # the oracle keeps only the size and the fingerprint: no log.gz, and it is never loaded
+                pdf = os.path.join(d, "ref.pdf")
+                open(pdf, "wb").close()
+
+                def run(_doc, _exe, work, **_kw):
+                    os.makedirs(work)
+                    return {"ok": True, "passes": 1}, cap, pdf
+                tiers.engine_version, tiers.run_tex = (lambda _exe: "pdfTeX stub"), run
+                doc = {"id": "big", "entry": "main.tex", "dir": d}
+                meta, ref_cap, _ = tiers.oracle(doc, "/stub", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((meta["log_chars"], meta["log_unread"], ref_cap), (cap.size, True, None))
+                self.assertFalse(os.path.exists(os.path.join(os.path.dirname(meta_path_of(d, meta)), "log.gz")))
+                self.assertEqual(tiers.oracle_fingerprint(meta, os.path.join(d, "cache")), cap.fingerprint)
+                meta, ref_cap, _ = tiers.oracle(doc, "/stub", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((meta["cached"], ref_cap), (True, None))
+                # an entry cached before streaming (over the budget, no fingerprint) is made again
+                os.remove(os.path.join(os.path.dirname(meta_path_of(d, meta)), tiers.FINGERPRINT))
+                meta, _, _ = tiers.oracle(doc, "/stub", os.path.join(d, "cache"), True, "t")
+                self.assertFalse(meta["cached"])
+            finally:
+                capture.run_engine, capture.MAX_LOG_BYTES, tiers.engine_version, tiers.run_tex = saved
+
+    def test_every_pass_starts_with_the_pinned_seed(self):
+        import capture
+        self.assertEqual(capture.first_line("a/main.tex"), r"\pdfsetrandomseed 1\relax\input{a/main.tex}")
+        self.assertTrue(capture.first_line("main.tex", trace=True).startswith(capture.SEED + capture.TRACE))
+
+    def test_manifest_pt1_skip_is_not_evaluated(self):
+        doc = {"id": "d", "tier": "packages", "problem": None, "pt1_skip": "pdfTeX seeds \\pdfuniformdeviate from the clock"}
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/true"}
+        self.assertEqual(parity.pt1_skip_reason(doc, cfg), {
+            "why": "not evaluated: pdfTeX seeds \\pdfuniformdeviate from the clock", "traced_oracle": False})
+        self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
+
+
+import capture  # noqa: E402
+import pt1stream  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import tiers  # noqa: E402
+
+BOX = ("Completed box being shipped out [1]\n\\vbox(633.0+0.0)x407.0\n.\\glue 16.0\n.\\hbox(6.94+0.0)x407.0\n"
+       "..\\OT1/cmr/m/n/10 H")
+
+
+class PTOne(unittest.TestCase):
+    def test_normalise_log_drops_banner_and_paths(self):
+        raw = ("This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex)\n"
+               " restricted \\write18 enabled.\n**\\tracingall\\input{main.tex}\n(/w/d/main.tex\n"
+               "(/w/d/sub/a.tex)\nOutput written on main.pdf (1 page, 12345 bytes).\n")
+        out = capture.normalise_log(raw, "/w/d")
+        self.assertTrue(out.startswith("**\\tracingall"))
+        self.assertIn("(<WORKDIR>/main.tex", out)
+        self.assertIn("(<WORKDIR>/sub/a.tex)", out)
+        self.assertIn("Output written on main.pdf (1 page, 12345 bytes).", out)  # accounting is split later
+
+    def test_texmfvar_is_a_run_path(self):
+        # fontenc-encguide in the P5 run at 98ac398: the oracle log cached by an
+        # earlier run named that run's TEXMFVAR (where mktexpk wrote the PK
+        # fonts), the candidate this run's, and P-T1 failed at log line 4233913
+        def log(tv, wd):
+            return ("This is pdfTeX, Version 3.141592653-2.6-1.40.29\n**\\input{main.tex}\n"
+                    f"({wd}/main.tex\n <{tv}/fonts/pk/ljfour/jknappen/fc/fcr10.600pk> "
+                    f"<{tv}/fonts/pk/ljfour/jknappen/fc/fcr8.600pk>\nOutput written on main.pdf (1 page, 9 bytes).\n")
+        saved = os.environ.get("TEXMFVAR")
+        try:
+            os.environ["TEXMFVAR"] = "/s/old/texmfvar"
+            old = capture.normalise_log(log("/s/old/texmfvar", "/s/old/w"), "/s/old/w")
+            os.environ["TEXMFVAR"] = "/s/new/texmfvar/"
+            new = capture.normalise_log(log("/s/new/texmfvar", "/s/new/w"), "/s/new/w")
+            streamed = pt1stream.Stream("/s/new/w").feed(log("/s/new/texmfvar", "/s/new/w").encode()).close()
+            elsewhere = capture.normalise_log(log("/s/other", "/s/new/w"), "/s/new/w")
+        finally:
+            if saved is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = saved
+        self.assertEqual(old, new)
+        self.assertIn(" <<TEXMFVAR>/fonts/pk/ljfour/jknappen/fc/fcr10.600pk> ", new)
+        self.assertEqual(streamed["strict"], pt1stream.fingerprint_text(new)["strict"])  # one rule, both drivers
+        self.assertNotEqual(elsewhere, new)  # a PK font from any other directory is still a difference
+        # nothing to normalise: unset, relative, or a kpathsea path list
+        for tv in ("", "texmfvar", "{/a,/b}", "/a" + os.pathsep + "/b"):
+            self.assertEqual(capture.workdir_subs("/w", tv), capture.workdir_subs("/w", ""), tv)
+        # a v5 oracle entry holds a log with the literal TEXMFVAR: it is made again
+        doc, version = {"entry": "encguide.tex"}, "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        self.assertNotEqual(tiers.oracle_key(doc, version, True, "t"), tiers.oracle_key(doc, version, True, "t", v=5))
+
+    def test_split_boxes_at_every_shipout(self):
+        log = f"{{into \\vsize=633.0}}\n\n{BOX}\n\nMemory usage before: 1; after: 1\n\n{BOX.replace('[1]', '[2]')}\n\n"
+        boxes = capture.split_boxes(log)
+        self.assertEqual(len(boxes), 2)
+        self.assertEqual(boxes[0], BOX)
+        self.assertTrue(boxes[1].startswith("Completed box being shipped out [2]"))
+
+    def test_compare_equal_and_first_difference(self):
+        a = capture.Capture("x\n" + BOX + "\n\ny", [BOX], "a.pdf")
+        self.assertTrue(tiers.compare_pt1(a, a)["ok"])
+        other = BOX.replace("H", "I")
+        b = capture.Capture("x\n" + other + "\n\ny", [other], "b.pdf")
+        r = tiers.compare_pt1(a, b)
+        self.assertFalse(r["ok"])
+        self.assertEqual((r["first_shipout"], r["box_line"]["line"]), (1, 5))
+        self.assertEqual(r["log_line"]["line"], 6)
+        c = capture.Capture("x\n" + BOX + "\n\nz", [BOX], "c.pdf")  # same boxes, a log line differs
+        r = tiers.compare_pt1(a, c)
+        self.assertEqual((r["ok"], r["boxes_equal"], r["log_line"]["line"]), (False, True, 8))
+        d = capture.Capture(a.log, [BOX, BOX], "d.pdf")  # an extra shipout
+        self.assertEqual(tiers.compare_pt1(a, d)["first_shipout"], 2)
+
+ACC_TAIL = ("{vertical mode: \\end}\n ) \nHere is how much of TeX's memory you used:\n 492 strings out of 467525\n"
+            " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
+            "</usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb>\n"
+            "Output written on main.pdf (3 pages, 151150 bytes).\nPDF statistics:\n"
+            " 75 PDF objects out of 1000 (max. 8388607)\n 45 compressed objects within 1 object stream\n"
+            " 0 named destinations out of 1000 (max. 500000)\n"
+            " 1 words of extra memory for PDF output out of 10000 (max. 10000000)\n")
+ACC_MEM = "Memory usage before: 7222&399359; after: 4346&398095; still untouched: 4559244"
+
+
+def acc_capture(box=BOX, mem=ACC_MEM, tail=ACC_TAIL):
+    return capture.Capture(f"**\\tracingall\n{box}\n\n{mem}\n{tail}", [box], "x.pdf")
+
+
+def elapsed_log(stop=893544, start=12, inner=13, reg=4161, dim="0.0635pt", other=5, typeset="4", restore=None,
+                extra=""):
+    """A traced log shaped like pdfTeX's for tabu-europasscv (lane P5-PT1-SKIPS)
+    and the cases around it; every keyword is one value that may differ."""
+    restore = start if restore is None else restore
+    return "\n".join([
+        "This is pdfTeX, Version 3.141592653-2.6-1.40.29", "**\\input{main.tex}",
+        "{into \\pdf@elapsedtime=\\pdfelapsedtime}",
+        "{\\begingroup}", "{entering semi simple group (level 1) at line 364}",
+        # tabu's \tabu@message@etime: the body starts with the timer's \edef,
+        # and the message's ^^J breaks the expansion line
+        "~........\\tabu@elapsedtime ->\\edef \\tabu@stoptime {\\the \\pdfelapsedtime }\\tabu@message {(tabu)",
+        "", "}", "{\\edef}", "{changing \\tabu@stoptime=undefined}",
+        f"{{into \\tabu@stoptime=macro:->{stop}}}",
+        # an alias learnt from the run; two timer reads into one name, the
+        # second one inside a group
+        "~.\\stamp ->\\edef \\st {\\the \\pdf@elapsedtime }",
+        "{\\edef}", "{changing \\st=undefined}", f"{{into \\st=macro:->{start}}}",
+        f"~.\\st ->{start}",
+        "{\\begingroup}", "{entering semi simple group (level 2) at line 365}",
+        "~.\\stamp ->\\edef \\st {\\the \\pdf@elapsedtime }",
+        "{\\edef}", f"{{changing \\st=macro:->{start}}}", f"{{into \\st=macro:->{inner}}}",
+        # a register fed directly: \count and \dimen
+        "~.\\regstamp ->\\mycnt =\\pdfelapsedtime \\relax ",
+        "{\\count283}", "{changing \\count283=0}", f"{{into \\count283={reg}}}", "{\\relax}",
+        "~.\\dimstamp ->\\dimen@ =\\pdfelapsedtime sp",
+        "{\\dimen0}", "{changing \\dimen0=24.88pt}", f"{{into \\dimen0={dim}}}",
+        # an ordinary number after all of that stays compared
+        "{\\count255}", "{changing \\count255=92}", f"{{into \\count255={other}}}",
+        f"{{the character {typeset}}}",
+        "{\\endgroup}", f"{{restoring \\dimen0=24.88pt}}", "{restoring \\count283=0}",
+        f"{{restoring \\st=macro:->{restore}}}",
+        "{leaving semi simple group (level 2) entered at line 365}",
+        "{\\endgroup}", "{restoring \\st=undefined}", "{restoring \\tabu@stoptime=undefined}",
+        "{leaving semi simple group (level 1) entered at line 364}",
+        extra,
+        "Output written on main.pdf (1 page, 9 bytes).", ""])
+
+
+class PTElapsed(unittest.TestCase):
+    """Commander ruling (lane P5-PT1-SKIPS): P-T1 masks the values
+    `\\pdfelapsedtime` puts into a traced log, and only those
+    (capture.ElapsedMask)."""
+
+    def pt1(self, a, b):
+        cap = [capture.Capture(x, capture.split_boxes(x), "x.pdf")
+               for x in (capture.normalise_log(a, "/w"), capture.normalise_log(b, "/w"))]
+        mem = tiers.compare_pt1(*cap)
+        streamed = tiers.compare_pt1_streamed(*(pt1stream.Stream("/w").feed(x.encode("latin-1")).close()
+                                                for x in (a, b)))
+        self.assertEqual(mem["ok"], streamed["ok"])  # one rule, both drivers
+        self.assertEqual(mem.get("elapsed_masked"), streamed.get("elapsed_masked"))
+        return mem
+
+    def test_the_timer_is_masked(self):
+        a = elapsed_log()
+        b = elapsed_log(stop=910049, start=14, inner=15, reg=4170, dim="0.07pt")
+        self.assertNotEqual(a, b)  # pdfTeX against itself: the clock differs
+        r = self.pt1(a, b)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["elapsed_masked"], [8, 8])
+        out = capture.normalise_log(a, "/w")
+        for ln in ("{into \\tabu@stoptime=macro:-><ELAPSED>}", "{into \\st=macro:-><ELAPSED>}", "~.\\st -><ELAPSED>",
+                   "{changing \\st=macro:-><ELAPSED>}", "{into \\count283=<ELAPSED>}", "{into \\dimen0=<ELAPSED>}",
+                   "{restoring \\st=macro:-><ELAPSED>}"):
+            self.assertIn("\n" + ln + "\n", out)
+        self.assertIn("{changing \\count283=0}", out)  # the old values were not the timer's
+        self.assertIn("{restoring \\count283=0}", out)
+        # a later assignment of the same number from elsewhere is not the timer's
+        again = capture.normalise_log(elapsed_log(extra="{\\count283}\n{changing \\count283=4161}\n"
+                                                        "{into \\count283=4161}"), "/w")
+        self.assertIn("\n{changing \\count283=4161}\n{into \\count283=4161}\n", again)  # restored: no longer the timer's
+
+    def test_every_other_number_is_still_compared(self):
+        a = elapsed_log()
+        for kw in ({"other": 6}, {"typeset": "5"}, {"restore": 11}):
+            r = self.pt1(a, elapsed_log(**kw))
+            self.assertFalse(r["ok"], kw)
+            self.assertRegex(r["log_line"]["candidate"], r"=(macro:->)?\d+\}$|character \d\}$", kw)
+
+    def test_a_wrong_timer_value_restored_is_compared(self):
+        # review of #1462: \st holds two timer values, the outer one saved by
+        # the inner group; restoring the inner one at the group's end (a
+        # save-stack bug) shows a timer value, but not the one saved there
+        a = elapsed_log()
+        bug = elapsed_log(restore=13)  # \st's inner value restored instead of the outer 12
+        self.assertIn("{restoring \\st=macro:->13}", capture.normalise_log(bug, "/w"))
+        r = self.pt1(a, bug)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["log_line"]["candidate"], "{restoring \\st=macro:->13}")
+        # and with the clock different too: still caught
+        r = self.pt1(a, elapsed_log(start=14, inner=15, restore=15))
+        self.assertFalse(r["ok"])
+
+    def test_only_the_assignment_that_comes_next(self):
+        def two(n):
+            return elapsed_log(extra="\n".join([
+                # the timer's \edef is not the first thing the macro does
+                "~.\\late ->\\count@ =1 \\edef \\x {\\the \\pdfelapsedtime }",
+                "{\\count255}", "{changing \\count255=5}", f"{{into \\count255={n}}}",
+                "{\\edef}", "{changing \\x=undefined}", f"{{into \\x=macro:->{n}}}",
+                # armed, but another command comes first
+                "~.\\ifstamp ->\\ifnum \\pdfelapsedtime >0 \\count@ =7\\fi ",
+                "{\\ifnum: (level 1) entered on line 1}", "{true}", "{\\count255}",
+                "{changing \\count255=1}", f"{{into \\count255={n}}}",
+                # \edef of another name; a timer read from the input file (no macro)
+                "~.\\other ->\\edef \\y {\\the \\pdfelapsedtime }", "{\\edef}",
+                "{changing \\z=undefined}", f"{{into \\z=macro:->{n}}}",
+                "{\\edef}", "{changing \\w=undefined}", f"{{into \\w=macro:->{n}}}"]))
+        out = capture.normalise_log(two(1), "/w")
+        self.assertEqual(out.count("<ELAPSED>"), 8)  # elapsed_log's own, none of these
+        self.assertFalse(self.pt1(two(1), two(2))["ok"])
+
+    def test_a_macro_expanded_where_its_edef_does_not_run(self):
+        # review of #1462: \stamp expanded inside a \write, so its \edef never
+        # runs there; the next \edef of the same name is the input's own
+        def log(n):
+            return elapsed_log(extra="\n".join([
+                "{\\immediate}", "{\\write}",
+                "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                "~.\\v ->7",
+                "{\\edef}", "{changing \\v=macro:->7}", f"{{into \\v=macro:->{n}}}"]))
+        self.assertIn("\n{into \\v=macro:->1}\n", capture.normalise_log(log(1), "/w"))
+        self.assertFalse(self.pt1(log(1), log(2))["ok"])
+        # an expansion line or another command between arm and \edef disarms too
+        for between in ("~.\\foo ->", "{\\relax}", "#1<-x", "! Undefined control sequence."):
+            lg = elapsed_log(extra="\n".join(["~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }", between,
+                                              "{\\edef}", "{changing \\v=undefined}", "{into \\v=macro:->3}"]))
+            self.assertIn("\n{into \\v=macro:->3}\n", capture.normalise_log(lg, "/w"), between)
+
+    def test_a_let_alias_is_dropped_when_redefined(self):
+        extra = "\n".join(["{into \\pdf@elapsedtime=\\relax}", "~.\\again ->\\edef \\v {\\the \\pdf@elapsedtime }",
+                           "{\\edef}", "{changing \\v=undefined}", "{into \\v=macro:->{}}"])
+        a, b = elapsed_log(extra=extra.replace("{}", "8")), elapsed_log(extra=extra.replace("{}", "9"))
+        self.assertFalse(self.pt1(a, b)["ok"])
+
+    def test_a_rebound_primitive_name_is_not_the_timer(self):
+        # re-review of #1462: \let\pdfelapsedtime\count@, then \the\pdfelapsedtime is \count255's constant
+        def log(n):
+            return elapsed_log(extra="\n".join([
+                "{\\let}", "{changing \\pdfelapsedtime=\\pdfelapsedtime}", "{into \\pdfelapsedtime=\\count255}",
+                "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                "{\\edef}", "{changing \\v=undefined}", f"{{into \\v=macro:->{n}}}"]))
+        self.assertIn("\n{into \\v=macro:->7}\n", capture.normalise_log(log(7), "/w"))
+        self.assertFalse(self.pt1(log(7), log(8))["ok"])
+        # rebound back to the primitive: the timer again
+        back = log(7) + "\n".join(["", "{into \\pdfelapsedtime=\\pdfelapsedtime}",
+                                   "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                                   "{\\edef}", "{changing \\v=macro:->7}", "{into \\v=macro:->9}", ""])
+        self.assertIn("\n{into \\v=macro:-><ELAPSED>}\n", capture.normalise_log(back, "/w"))
+
+    def test_a_register_scaled_from_the_timer_is_not_armed(self):
+        # re-review of #1462: only the bare \R=<timer> (a \dimen's in sp) arms
+        for body, cmd, n in (("\\dimen@ =\\pdfelapsedtime \\dimen 2", "{\\dimen0}", "3.0pt"),
+                             ("\\dimen@ =\\pdfelapsedtime pt", "{\\dimen0}", "3.0pt"),
+                             ("\\count@ =2\\pdfelapsedtime ", "{\\count255}", "8"),
+                             ("\\count@ =\\pdfelapsedtime \\advance \\count@ 1 ", "{\\count255}", "8"),
+                             ("\\count@ =\\pdfelapsedtime sp", "{\\count255}", "8"),  # not a \dimen
+                             ("\\dimen@ =\\pdfelapsedtime \\relax ", "{\\dimen0}", "3.0pt")):  # not a \count
+            name = cmd[1:-1]
+            lg = elapsed_log(extra="\n".join([f"~.\\scaled ->{body}", cmd, f"{{changing {name}=0.0pt}}",
+                                              f"{{into {name}={n}}}"]))
+            self.assertIn(f"\n{{into {name}={n}}}\n", capture.normalise_log(lg, "/w"), body)
+
+    def test_tabu_shape_needs_the_mask(self):
+        # what two pdfTeX runs of tabu-europasscv differ in (one line, 2026-10-03)
+        a = elapsed_log()
+        b = a.replace("{into \\tabu@stoptime=macro:->893544}", "{into \\tabu@stoptime=macro:->910049}")
+        self.assertEqual(sum(x != y for x, y in zip(a.split("\n"), b.split("\n"))), 1)
+        self.assertTrue(self.pt1(a, b)["ok"])
+        plain = [capture.Capture(x, [], "x.pdf") for x in (a, b)]  # without the mask
+        self.assertFalse(tiers.compare_pt1(*plain)["log_equal"])
+
+    def test_chunks_and_cached_logs(self):
+        out = capture.normalise_log(elapsed_log(), "/w")
+        self.assertEqual(capture.ElapsedMask().text_in_pieces(out), out)  # idempotent: a cached log is masked again
+        self.assertEqual(capture.ElapsedMask().text_in_pieces(out, piece=7), out)
+        raw = elapsed_log()
+        whole = capture.ElapsedMask().text_in_pieces(raw)
+        for piece in (1, 5, 40, 200):  # any run of whole lines at a time, the group depth included
+            self.assertEqual(capture.ElapsedMask().text_in_pieces(raw, piece=piece), whole, piece)
+
+    def test_a_fingerprint_from_before_the_mask_is_a_harness_error(self):
+        a, b = elapsed_log(), elapsed_log(stop=1)
+        fa, fb = (pt1stream.Stream("/w").feed(x.encode()).close() for x in (a, b))
+        old = pt1stream.Stream("/w").feed(a.encode()).close()
+        for k in ("elapsed_mask", "elapsed_masked"):
+            old.pop(k)
+        old["strict"] = dict(old["strict"], sha256="0" * 64)  # what an unmasked log hashes to: something else
+        r = tiers.compare_pt1_streamed(old, fb)
+        self.assertFalse(r["ok"])
+        self.assertIn("before the \\pdfelapsedtime mask", r["harness_error"])
+        self.assertTrue(tiers.compare_pt1_streamed(fa, fb)["ok"])
+
+
+class PTAccounting(unittest.TestCase):
+    """DESIGN §1.1 N2 ruling: only end-of-run accounting leaves P-T1, and a
+    block ends at the first line that does not start with a space."""
+
+    def test_split_removes_exactly_the_accounting(self):
+        strict, acc = capture.split_accounting(acc_capture().log)
+        self.assertEqual(len(acc), 10)
+        self.assertEqual(acc[0], ACC_MEM)
+        self.assertIn("Output written on main.pdf (3 pages, <BYTES> bytes).", strict)
+        self.assertIn("cmr10.pfb>", strict)  # not accounting: stays compared
+        self.assertIn(" ) ", strict)  # an indented line outside a block stays compared
+        self.assertNotIn("strings out of", strict)
+        self.assertNotIn("PDF objects", strict)
+
+    def test_identical(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture())
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["accounting"], {"lines": [10, 10], "equal": True})
+
+    def test_byte_count_only_passes_and_is_reported(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace("151150 bytes", "151187 bytes")))
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["accounting"]["equal"])
+        self.assertIn("151187", r["accounting"]["first"]["candidate"])
+
+    def test_memory_accounting_passes_and_is_reported(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(mem=ACC_MEM.replace("7222", "7000"),
+                                                         tail=ACC_TAIL.replace(" 492 strings", " 500 strings")))
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["accounting"]["equal"])
+
+    def test_junk_line_after_a_block_fails(self):
+        for tail in (ACC_TAIL + "{\\glue 3.0}\n",  # after PDF statistics (the #1191 trap)
+                     ACC_TAIL.replace(" stack positions out of 10000i,1000n,20000p,200000b,200000s\n",
+                                      " stack positions out of 10000i,1000n,20000p,200000b,200000s\n{\\glue 3.0}\n")):
+            r = tiers.compare_pt1(acc_capture(), acc_capture(tail=tail))
+            self.assertFalse(r["ok"])
+            self.assertEqual(r["log_line"]["candidate"], "{\\glue 3.0}")
+
+    def test_indented_junk_inside_or_after_each_block_fails(self):
+        mem_last = " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
+        pdf_first = " 75 PDF objects out of 1000 (max. 8388607)\n"
+        pdf_last = " 1 words of extra memory for PDF output out of 10000 (max. 10000000)\n"
+        for junk in (" junk", " Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4"):
+            for tail in (ACC_TAIL.replace(" 492 strings out of 467525\n", f" 492 strings out of 467525\n{junk}\n"),
+                         ACC_TAIL.replace(mem_last, f"{mem_last}{junk}\n"),
+                         ACC_TAIL.replace(pdf_first, f"{pdf_first}{junk}\n"),
+                         ACC_TAIL.replace(pdf_last, f"{pdf_last}{junk}\n")):
+                self.assertNotEqual(tail, ACC_TAIL)
+                r = tiers.compare_pt1(acc_capture(), acc_capture(tail=tail))
+                self.assertFalse(r["ok"], (junk, tail))
+                self.assertEqual(r["log_line"]["candidate"], junk)
+
+    def test_block_lines_out_of_order_or_repeated_fail(self):
+        line = " 492 strings out of 467525\n"
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace(line, line + line)))
+        self.assertFalse(r["ok"])
+        a, b = " 75 PDF objects out of 1000 (max. 8388607)", " 0 named destinations out of 1000 (max. 500000)"
+        swapped = ACC_TAIL.replace(a, "\x00").replace(b, a).replace("\x00", b)
+        self.assertNotEqual(swapped, ACC_TAIL)
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=swapped))
+        self.assertFalse(r["ok"])  # pdfTeX's order is part of the shape
+
+    def test_header_mid_log_or_twice_fails(self):
+        block = "PDF statistics:\n 75 PDF objects out of 1000 (max. 8388607)\n"
+        mid = capture.Capture(f"**\\tracingall\n{block}{BOX}\n\n{ACC_MEM}\n{ACC_TAIL}", [BOX], "x.pdf")
+        r = tiers.compare_pt1(acc_capture(), mid)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["log_line"]["candidate"], "PDF statistics:")
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL + block))
+        self.assertFalse(r["ok"])
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace(
+            "Output written", "Output written on x.pdf (3 pages, 1 bytes).\nOutput written")))
+        self.assertFalse(r["ok"])
+
+    def test_nested_shipouts_each_owe_one_memory_line(self):
+        # beamer: a \shipout inside another's prints two headers, then two lines
+        nested = capture.Capture(f"**\n{BOX}\n\n{BOX}\n\n{ACC_MEM}\n{ACC_MEM}\n{ACC_TAIL}", [BOX, BOX], "x.pdf")
+        strict, acc = capture.split_accounting(nested.log)
+        self.assertNotIn("Memory usage", strict)
+        self.assertEqual(sum(1 for a in acc if a.startswith("Memory usage")), 2)
+
+    def test_second_memory_usage_line_after_one_shipout_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(mem=ACC_MEM + "\n" + ACC_MEM))
+        self.assertFalse(r["ok"])
+
+    def test_junk_on_a_memory_usage_line_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(mem=ACC_MEM + " \\glue 3.0"))
+        self.assertFalse(r["ok"])
+
+    def test_one_sp_glue_change_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(box=BOX.replace("\\glue 16.0", "\\glue 16.00002")))
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["boxes_equal"])
+        self.assertEqual(r["box_line"]["candidate"], ".\\glue 16.00002")
+
+    def test_page_count_change_fails(self):
+        r = tiers.compare_pt1(acc_capture(), acc_capture(tail=ACC_TAIL.replace("(3 pages", "(4 pages")))
+        self.assertFalse(r["ok"])
+        self.assertIn("(4 pages, <BYTES> bytes)", r["log_line"]["candidate"])
+
+
+class PTSummary(unittest.TestCase):
+    def test_counts_and_not_applicable(self):
+        rs = [{"id": "a", "pt": {"P-T1": None, "P-T2": True, "why": {"P-T1": parity.NOT_TEX}}},
+              {"id": "b", "pt": {"P-T1": None, "P-T2": False, "why": {"P-T1": parity.NOT_TEX}}},
+              {"id": "c", "pt": {"P-T1": None, "P-T2": None, "why": {}, "excluded": "oracle: exit 1"}}]
+        s = parity.summarize_pt(rs)
+        self.assertEqual((s["P-T2"]["evaluated"], s["P-T2"]["passed"], s["P-T2"]["percent"]), (2, 1, 50.0))
+        self.assertEqual(s["P-T1"]["evaluated"], 0)
+        self.assertTrue(s["P-T1"]["not_evaluated"].startswith("n/a: the flashtex CLI"))
+        self.assertEqual(s["excluded"], {"oracle": 1})
+        self.assertEqual(parity.pt_cell({"pt": s}, "P-T1"), "n/a")
+        self.assertEqual(parity.pt_cell({"pt": s}, "P-T2"), "1/2 (50.0%)")
+
+    def test_trace_complete_needs_the_end_of_run_line(self):
+        self.assertTrue(tiers.trace_complete("x\n" * 10 + "Output written on a.pdf (1 page, <BYTES> bytes).\n"))
+        self.assertTrue(tiers.trace_complete("x\nNo pages of output.\n"))
+        self.assertFalse(tiers.trace_complete("x\n" + "~.....\\" * 3))  # cut off mid-trace
+
+    def test_oversized_traced_log_is_streamed_not_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            logz = os.path.join(d, "log.gz")
+            with gzip.open(logz, "wt", encoding="latin-1") as f:
+                f.write("x" * 5000)
+            self.assertEqual(tiers.log_chars(logz, chunk=1024), 5000)
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": "/nonexistent", "pt1_max_log": 4096}
+        doc = {"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}
+        real, budget = tiers.oracle, capture.MAX_LOG_BYTES
+        try:
+            capture.MAX_LOG_BYTES = 4096
+            tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 50 << 30}, None, "ref.pdf")
+            self.assertIsNone(parity.pt1_skip_reason(doc, cfg))  # too big to hold is no reason to skip
+            stream, timeout = parity.pt1_plan(doc, cfg, None)
+            self.assertEqual(stream, "fingerprint")  # the candidate's log: a named pipe, streamed from byte 0
+            self.assertEqual(timeout, (50 << 30) // tiers.PT1_MIN_RATE + 1)  # the limit grows with the log
+            skip = parity.pt1_skip_reason(doc, dict(cfg, pt1_skip=["arxiv/d"]))
+            self.assertEqual(skip, {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False})
+            self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
+            tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 100}, None, "ref.pdf")
+            # under the budget: a pipe too (held in memory, streamed past the budget), never a file
+            self.assertEqual(parity.pt1_plan(doc, cfg, None), ("pipe", capture.TIMEOUT))
+            tiers.oracle = lambda *a, **k: ({"ok": True, "trace_incomplete": "the traced pass crashed"}, None, "ref.pdf")
+            self.assertNotIn("harness_error", parity.pt1_skip_reason(doc, cfg))
+            stopped = tiers.TRACE_TIMEOUT.format(1800)
+            tiers.oracle = lambda *a, **k: ({"ok": True, "trace_incomplete": stopped, "trace_timed_out": True},
+                                            None, "ref.pdf")
+            skip = parity.pt1_skip_reason(doc, cfg)
+            self.assertEqual((skip["harness_error"], skip["why"]), (stopped, "not evaluated: oracle: " + stopped))
+        finally:
+            tiers.oracle, capture.MAX_LOG_BYTES = real, budget
+        rs = [{"id": "a", "pt": {"P-T1": True, "P-T2": True, "why": {}}},
+              {"id": "b", "pt": {"P-T1": None, "P-T2": True, "why": {"P-T1": "not evaluated: ..."}}}]
+        s = parity.summarize_pt(rs)
+        self.assertEqual((s["P-T1"]["evaluated"], s["P-T1"]["passed"], s["P-T1"]["skipped"]), (1, 1, 1))
+
+    def test_where(self):
+        pt = {"P-T1": True, "P-T2": False, "pt2": {"fonts_equal": True, "first_page": {
+            "page": 2, "differs": ["content"], "content_line": {"line": 7}}}}
+        self.assertEqual(parity.pt_where(pt), "P-T2: page 2 content line 7")
+        pt = {"P-T1": False, "pt1": {"boxes_equal": False, "first_shipout": 3, "shipouts": [4, 4],
+                                     "box_line": {"line": 9}}}
+        self.assertEqual(parity.pt_where(pt), "P-T1: shipout 3 of [4, 4], box line 9")
+
+
+PDFTEX = tiers.DEFAULT_ORACLE if os.path.isfile(tiers.DEFAULT_ORACLE) else None
+DOC = r"""\documentclass{article}
+\begin{document}
+%s
+\newpage
+Second page, $x^2 + y_1$.
+\end{document}
+"""
+
+
+@unittest.skipUnless(PDFTEX and shutil.which("qpdf"), "needs pdfTeX and qpdf")
+class PTWithOracle(unittest.TestCase):
+    """End to end against the real pdfTeX: the self-test property on a tiny
+    document, object renumbering, and that real differences are caught."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def build(self, name, body):
+        src = os.path.join(self.d, name, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % body)
+        return tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, name, "run"))
+
+    def test_self_and_differences(self):
+        m1, c1, p1 = self.build("a", "Hello world.")
+        m2, c2, p2 = self.build("b", "Hello world.")
+        m3, c3, p3 = self.build("c", "Hello wordl.")
+        m4, c4, p4 = self.build("d", "Hello world!")  # '!' is a glyph the others' cmr10 subset lacks
+        self.assertTrue(m1["ok"] and m2["ok"] and m3["ok"] and m4["ok"])
+        self.assertEqual(len(c1.boxes), 2)
+        self.assertTrue(tiers.compare_pt1(c1, c2)["ok"])
+        self.assertTrue(tiers.compare_pt2(p1, p2, self.d)["ok"])
+        r1 = tiers.compare_pt1(c1, c3)
+        self.assertFalse(r1["ok"])
+        self.assertEqual(r1["first_shipout"], 1)
+        r2 = tiers.compare_pt2(p1, p3, self.d)
+        self.assertFalse(r2["content_equal"])
+        self.assertEqual(r2["first_page"]["page"], 1)
+        r4 = tiers.compare_pt2(p1, p4, self.d)
+        self.assertFalse(r4["fonts_equal"])
+        self.assertIn("CMR10", r4["fonts"]["different_program"])
+
+    def wrapper(self, name, edit):
+        """A candidate engine: pdfTeX, then `edit` (a Python expression over
+        `t`, the log text) applied to every .log in its working directory."""
+        p = os.path.join(self.d, name)
+        with open(p, "w") as f:
+            f.write(f"#!{sys.executable}\nimport glob, re, subprocess, sys\n"
+                    f"rc = subprocess.run([{PDFTEX!r}] + sys.argv[1:]).returncode\n"
+                    "for n in glob.glob('*.log'):\n"
+                    "    t = open(n, encoding='latin-1').read()\n"
+                    f"    open(n, 'w', encoding='latin-1').write({edit})\n"
+                    "sys.exit(rc)\n")
+        os.chmod(p, 0o755)
+        return p
+
+    def test_accounting_ruling_end_to_end(self):
+        src = os.path.join(self.d, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % "Hello world.")
+        doc = {"dir": src, "entry": "main.tex"}
+        _, ref, _ = tiers.run_tex(doc, PDFTEX, os.path.join(self.d, "ref"))
+        cases = {
+            "bytes": ("re.sub(r'(pages?), \\d+ bytes', r'\\1, 99 bytes', t)", True),
+            "junk": ("t + '{\\\\glue 3.0}\\n'", False),
+            "pages": ("re.sub(r'\\(\\d+ pages', '(9 pages', t)", False),
+        }
+        for name, (edit, ok) in cases.items():
+            _, cand, _ = tiers.run_tex(doc, self.wrapper(name, edit), os.path.join(self.d, "run-" + name))
+            r = tiers.compare_pt1(ref, cand)
+            self.assertEqual(r["ok"], ok, (name, r))
+            if name == "bytes":
+                self.assertFalse(r["accounting"]["equal"])
+
+    def test_shell_escape_is_the_engines_default_mode(self):
+        """Owner decision #1209: no shell-escape flag, so pdfTeX runs in TeX
+        Live's default mode: restricted, \\pdfshellescape=2 (l3kernel's
+        \\sys_if_shell reads it), with the ` restricted \\write18 enabled.`
+        status line, including in the fixtures where it changes the trace."""
+        self.assertIsNone(capture.SHELL_ESCAPE)
+        src = os.path.join(self.d, "se")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % r"\typeout{SHELLESCAPE=\the\pdfshellescape}")
+        m, cap, _ = tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "se-run"))
+        self.assertTrue(m["ok"])
+        self.assertIn("SHELLESCAPE=2", cap.log)
+        try:  # an explicit override reaches every run; `default` means no flag again
+            parity.set_shell_escape("-no-shell-escape")
+            _, cap0, _ = tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "se-off"))
+            self.assertIn("SHELLESCAPE=0", cap0.log)
+        finally:
+            parity.set_shell_escape("default")
+        self.assertIsNone(capture.SHELL_ESCAPE)
+        for fx in ("real-world/hyperref-toc", "real-world/conf-paper"):
+            d = os.path.join(parity.REPO, "fixtures", fx)
+            if not os.path.isdir(d):
+                continue
+            work = os.path.join(self.d, fx.replace("/", "_"))
+            m, _, _ = tiers.run_tex({"dir": d, "entry": "main.tex"}, PDFTEX, work, trace=False)
+            self.assertTrue(m["ok"], fx)
+            with open(os.path.join(work, "main.log"), encoding="latin-1") as f:
+                self.assertIn("\n restricted \\write18 enabled.\n", f.read(), fx)
+
+    def recorder(self, name):
+        """A candidate engine that records its argv and FLASHTEX_FORMATS, then
+        runs pdfTeX (by its full path, so kpathsea finds TeX Live)."""
+        p = os.path.join(self.d, name)
+        rec = os.path.join(self.d, name + ".rec")
+        with open(p, "w") as f:
+            f.write(f"#!{sys.executable}\nimport json, os, sys\n"
+                    f"open({rec!r}, 'a').write(json.dumps([sys.argv, os.environ.get('FLASHTEX_FORMATS')]) + '\\n')\n"
+                    f"os.execv({PDFTEX!r}, [{PDFTEX!r}] + sys.argv[1:])\n")
+        os.chmod(p, 0o755)
+        return p, rec
+
+    def test_extra_env_reaches_the_candidate_only(self):
+        src = os.path.join(self.d, "env")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % "Hello.")
+        doc = {"dir": src, "entry": "main.tex"}
+        eng, rec = self.recorder("cand-engine")
+        old = os.environ.get("FLASHTEX_FORMATS")
+        os.environ["FLASHTEX_FORMATS"] = "/inherited/must/not/leak"
+        try:
+            m, cap, _ = tiers.run_tex(doc, eng, os.path.join(self.d, "cand"), extra_env={"FLASHTEX_FORMATS": "/fmts"})
+            self.assertTrue(m["ok"])
+            m, _, _ = tiers.run_tex(doc, eng, os.path.join(self.d, "orac"), trace=False)  # as the oracle runs
+            self.assertTrue(m["ok"])
+        finally:
+            if old is None:
+                os.environ.pop("FLASHTEX_FORMATS")
+            else:
+                os.environ["FLASHTEX_FORMATS"] = old
+        with open(rec) as f:
+            runs = [json.loads(ln) for ln in f]
+        cand, orac = runs[:-m["passes"]], runs[-m["passes"]:]
+        self.assertTrue(cand and orac)
+        self.assertTrue(all(env == "/fmts" for _, env in cand))  # every pass, the traced one included
+        self.assertTrue(all(env is None for _, env in orac))
+        for argv, _ in runs:  # (a script's sys.argv[0] is its path; argv[0] is tested with real pdfTeX below)
+            self.assertEqual(argv[1], "-fmt=pdflatex")  # no shell-escape flag by default
+            self.assertFalse([a for a in argv if "shell" in a])
+
+    def test_warnings_print_the_same_program_name(self):
+        """pdfTeX prints argv[0] as given in warnings; every engine runs as
+        `pdftex`, so an engine binary called something else is invisible."""
+        src = os.path.join(self.d, "warn")
+        os.makedirs(src)
+        _, _, pdf = self.build("fig", "Figure.")
+        subprocess.run(["qpdf", "--force-version=2.0", pdf, os.path.join(src, "fig.pdf")], check=True, timeout=60)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
+                    "\\includegraphics{fig.pdf}\\end{document}\n")
+        other = os.path.join(self.d, "otherengine")
+        os.symlink(PDFTEX, other)
+        doc = {"dir": src, "entry": "main.tex"}
+        _, ref, _ = tiers.run_tex(doc, PDFTEX, os.path.join(self.d, "w-ref"))
+        _, cand, _ = tiers.run_tex(doc, other, os.path.join(self.d, "w-cand"))
+        self.assertIn("pdfTeX warning: pdftex (file ./fig.pdf)", cand.log)
+        self.assertNotIn("otherengine", cand.log)
+        self.assertTrue(tiers.compare_pt1(ref, cand)["ok"])
+
+    @unittest.skipUnless(shutil.which("gs"), "needs Ghostscript for epstopdf")
+    def test_converted_figures_are_seeded_from_the_oracle(self):
+        """epstopdf converts an EPS figure under restricted \\write18; two runs
+        converting it themselves differ (date in the log, Ghostscript's stamps
+        in the PDF). Seeded with the oracle's conversion, the candidate matches."""
+        src = os.path.join(self.d, "src")
+        os.makedirs(src)
+        with open(os.path.join(src, "fig.eps"), "w") as f:
+            f.write("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 20 20\nnewpath 0 0 moveto 20 20 lineto stroke\n")
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
+                    "\\includegraphics{fig.eps}\\end{document}\n")
+        doc = {"dir": src, "entry": "main.tex"}
+        old = capture.SHELL_ESCAPE
+        capture.SHELL_ESCAPE = "-shell-restricted"  # TeX Live's default, which allows repstopdf
+        try:
+            work = os.path.join(self.d, "oracle")
+            mo, co, po = tiers.run_tex(doc, PDFTEX, work)
+            self.assertTrue(mo["ok"], mo.get("why"))
+            kept = tiers.keep_generated(src, work, os.path.join(self.d, "kept"))
+            self.assertEqual(kept, ["fig-eps-converted-to.pdf"])
+            seed = {k: os.path.join(self.d, "kept", k) for k in kept}
+            self.assertEqual(os.stat(seed[kept[0]]).st_mtime, os.stat(os.path.join(work, kept[0])).st_mtime)
+            import time
+            time.sleep(1.1)  # a conversion of its own would carry another second
+            mc, cc, pc = tiers.run_tex(doc, PDFTEX, os.path.join(self.d, "cand"), seed=seed)
+            self.assertTrue(tiers.compare_pt1(co, cc)["ok"], tiers.compare_pt1(co, cc).get("log_line"))
+            self.assertTrue(tiers.compare_pt2(po, pc, self.d)["ok"])
+        finally:
+            capture.SHELL_ESCAPE = old
+
+    @unittest.skipUnless(shutil.which("gs"), "needs Ghostscript for epstopdf")
+    def test_pipeline_twice_keeps_eps_dates_equal(self):
+        """The whole per-document flow (parity.main), run twice some seconds
+        apart on a document whose EPS figures are converted during the run:
+        one at the top, and one in a subdirectory whose shipped conversion is
+        older than its EPS, so the run converts it again. Ghostscript's time
+        reaches the log (epstopdf's `\\pdffilemoddate`) and the PDF
+        (/PTEX.InfoDict), and P-T1 and P-T2 still pass both times: the
+        candidate is handed the oracle's conversions from the cached entry."""
+        texmf, cache = os.path.join(self.d, "texmf"), os.path.join(self.d, "cache")
+        src = os.path.join(texmf, "eps-dates")
+        os.makedirs(os.path.join(src, "figs"))
+        eps = "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 20 20\nnewpath 0 0 moveto 20 {} lineto stroke\n"
+        for rel, y in (("fig.eps", 20), ("figs/old.eps", 10)):
+            with open(os.path.join(src, rel), "w") as f:
+                f.write(eps.format(y))
+        shipped = os.path.join(src, "figs", "old-eps-converted-to.pdf")
+        with open(shipped, "w") as f:
+            f.write("an out-of-date conversion, never included\n")
+        os.utime(shipped, (time.time() - 100,) * 2)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
+                    "\\includegraphics{fig.eps}\\includegraphics{figs/old.eps}\\end{document}\n")
+        with open(os.path.join(src, "main.tex"), "rb") as f:
+            digest = tiers.sha(f.read())
+        manifest = os.path.join(self.d, "eps-dates.json")
+        with open(manifest, "w") as f:
+            json.dump({"tier": "packages", "entries": [{"id": "eps-dates", "path": "eps-dates/main.tex",
+                                                        "sha256": digest, "copy_dir": True}]}, f)
+        engine = os.path.join(self.d, "candidate-pdftex")
+        os.symlink(PDFTEX, engine)  # a TeX candidate that is not the oracle's path
+        runs = []
+        saved = corpus.manifests, capture.SHELL_ESCAPE
+        corpus.manifests = lambda paths=None, include_on_demand=False: [manifest]
+        try:
+            for n in range(2):
+                if n:
+                    time.sleep(2.1)  # a conversion of the candidate's own would carry another time
+                out, work = os.path.join(self.d, f"out{n}"), os.path.join(self.d, f"work{n}")
+                with watchdog(600):
+                    code = parity.main(["--tier", "packages", "--engine", engine, "--oracle-pdftex", PDFTEX,
+                                        "--shell-escape-flag=-shell-restricted", "--texmf", texmf, "--cache", cache,
+                                        "--raster", "none", "-j", "1", "--out", out, "--work", work, "--keep-work"])
+                with open(os.path.join(out, "documents.json")) as f:
+                    rec = json.load(f)["packages"][0]
+                entries = {p: os.stat(p).st_mtime_ns for p in glob.glob(os.path.join(cache, "pt-oracle", "*", "*",
+                                                                                           "oracle.json"))}
+                runs.append((code, rec, entries))
+                # visible, not gating: both figures came from the oracle, none from the candidate itself
+                self.assertEqual(rec["pt"]["seeded_conversions"], 2)
+                with open(os.path.join(out, "scoreboard.json")) as f:
+                    self.assertEqual(json.load(f)["tiers"]["packages"]["summary"]["pt"]["seeded_conversions"],
+                                     {"documents": 1, "files": 2})
+                with open(os.path.join(out, "report.md")) as f:
+                    self.assertIn("`packages` seeded conversions: 1 documents were handed 2", f.read())
+                tree = os.path.join(work, "packages", "eps-dates", "src")
+                self.assertTrue(os.path.isfile(os.path.join(tree, "fig-eps-converted-to.pdf")))
+                with open(os.path.join(tree, "figs", "old-eps-converted-to.pdf"), "rb") as f:
+                    self.assertEqual(f.read(5), b"%PDF-")  # the oracle's redone conversion, not the shipped file
+        finally:
+            corpus.manifests, capture.SHELL_ESCAPE = saved
+        for code, rec, _ in runs:
+            pt = rec["pt"]
+            self.assertEqual((code, pt["P-T1"], pt["P-T2"]), (0, True, True),
+                             json.dumps({k: pt.get(k) for k in ("pt1", "pt2", "why")})[:600])
+        self.assertTrue(runs[0][2])
+        self.assertEqual(runs[0][2], runs[1][2])  # the second run reused the first run's oracle entry
+        with open(os.path.join(cache, "src", "packages", "eps-dates", "main.tex")) as f:
+            self.assertIn("figs/old.eps", f.read())
+        # the noise is real: a run converting for itself, seconds later, differs from the oracle
+        doc = {"dir": os.path.join(cache, "src", "packages", "eps-dates"), "entry": "main.tex"}
+        capture.SHELL_ESCAPE = "-shell-restricted"
+        try:
+            meta, ref, _ = tiers.oracle(doc, PDFTEX, cache, True, parity.tree_hash(doc["dir"]))
+            self.assertEqual(sorted(meta["generated"]), ["fig-eps-converted-to.pdf", "figs/old-eps-converted-to.pdf"])
+            _, own, _ = tiers.run_tex(doc, engine, os.path.join(self.d, "unseeded"))
+        finally:
+            capture.SHELL_ESCAPE = saved[1]
+        self.assertFalse(tiers.compare_pt1(ref, own)["log_equal"])
+
+    def test_object_renumbering_is_invisible(self):
+        _, _, p1 = self.build("a", "Hello world.")
+        lin = os.path.join(self.d, "renumbered.pdf")
+        subprocess.run(["qpdf", "--linearize", "--object-streams=generate", p1, lin], check=True, timeout=60)
+        self.assertTrue(tiers.compare_pt2(p1, lin, self.d)["ok"])
+
+
+class NightlySelection(unittest.TestCase):
+    """T4: which documents a shard scores, and which are traced for P-T1."""
+
+    def args(self, **kw):
+        import argparse
+        return argparse.Namespace(**dict({"limit": 0, "spread": 0, "shard": None}, **kw))
+
+    def test_shards_partition_the_tier(self):
+        ids = [f"d{i}" for i in range(103)]
+        shards = [parity.select_documents(ids, self.args(shard=(k, 5))) for k in range(5)]
+        self.assertEqual(sorted(sum(shards, [])), sorted(ids))
+        self.assertEqual(shards[1][:3], ["d1", "d6", "d11"])
+        self.assertLessEqual(max(map(len, shards)) - min(map(len, shards)), 1)
+
+    def test_spread_then_shard(self):
+        ids = [f"d{i}" for i in range(100)]
+        spread = parity.select_documents(ids, self.args(spread=10))
+        self.assertEqual(spread, [f"d{i}" for i in range(0, 100, 10)])
+        both = [parity.select_documents(ids, self.args(spread=10, shard=(k, 3))) for k in range(3)]
+        self.assertEqual(sorted(sum(both, [])), sorted(spread))
+
+    def test_parse_shard(self):
+        self.assertEqual(parity.parse_shard("2/7"), (2, 7))
+        for bad in ("7/7", "x", "1/0", "-1/3"):
+            with self.assertRaises(Exception):
+                parity.parse_shard(bad)
+
+    def test_pt1_sample_is_fixed_and_about_the_fraction(self):
+        docs = [{"tier": "nightly-5k", "id": f"2001.{i:05d}v1"} for i in range(4000)]
+        picked = [d for d in docs if parity.in_pt1_sample(d, 0.05)]
+        self.assertTrue(150 < len(picked) < 250, len(picked))
+        self.assertEqual(picked, [d for d in docs if parity.in_pt1_sample(d, 0.05)])
+        self.assertFalse(any(parity.in_pt1_sample(d, 0.0) for d in docs))
+        self.assertTrue(all(parity.in_pt1_sample(d, 1.0) for d in docs))
+
+    def test_pt1_sample_is_a_skip_reason(self):
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "pt1_sample": {"nightly-5k": 0.0}}
+        doc = {"tier": "nightly-5k", "id": "x"}
+        skip = parity.pt1_skip_reason(doc, cfg)
+        self.assertIn("outside the P-T1 sample", skip["why"])
+        self.assertFalse(skip["traced_oracle"])  # neither engine is traced
+        self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
+        # --pt1-skip is reported as such, before the sample
+        self.assertIn("--pt1-skip", parity.pt1_skip_reason(doc, dict(cfg, pt1_skip=["x"]))["why"])
+
+    def test_parse_pt1_sample(self):
+        self.assertEqual(parity.parse_pt1_sample(["nightly-5k=0.05", "arxiv=1"]), {"nightly-5k": 0.05, "arxiv": 1.0})
+        for bad in (["x"], ["x=2"], ["=0.1"]):
+            with self.assertRaises(Exception):
+                parity.parse_pt1_sample(bad)
+
+    def test_grid_window_is_reproducible_and_inside_the_year(self):
+        a = corpus.grid_window("s", "math.AG", 2020, 14)
+        self.assertEqual(a, corpus.grid_window("s", "math.AG", 2020, 14))
+        self.assertNotEqual(a, corpus.grid_window("s", "math.AG", 2021, 14))
+        for y in range(2016, 2026):
+            lo, hi = corpus.grid_window("seed", "hep-th", y, 14)
+            self.assertTrue(lo.startswith(str(y)) and hi.startswith(str(y)), (lo, hi))
+            self.assertTrue(lo.endswith("0000") and hi.endswith("2359"))
+
+    def test_on_demand_manifests_are_left_out_of_a_bare_fetch(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, extra in (("small.json", {}), ("big.json", {"on_demand": True})):
+                with open(os.path.join(d, name), "w") as f:
+                    json.dump(dict({"tier": name[:-5], "entries": [{"id": "1/a"}]}, **extra), f)
+            old = corpus.MANIFEST_DIR
+            corpus.MANIFEST_DIR = d
+            try:
+                self.assertEqual([os.path.basename(m) for m in corpus.manifests()], ["small.json"])
+                self.assertEqual([os.path.basename(m) for m in corpus.manifests(include_on_demand=True)],
+                                 ["big.json", "small.json"])
+                self.assertEqual(corpus.manifest_tiers(), ["big", "small"])
+                self.assertEqual(corpus.manifest_ids(os.path.join(d, "big.json")), ["1_a"])
+            finally:
+                corpus.MANIFEST_DIR = old
+
+
+class NightlyMemoryBound(unittest.TestCase):
+    """nightly.py's worst-case memory with streaming P-T1: every worker may
+    hold both traced logs in memory up to --pt1-max-log-mb."""
+
+    def test_memory_bound(self):
+        import argparse
+        import nightly
+        a = argparse.Namespace(jobs=8, pt1_max_log_mb=64)
+        self.assertAlmostEqual(nightly.memory_bound_gib(a), 8 * (nightly.WORKER_GIB + 9 * 64 / 1024))
+        self.assertAlmostEqual(nightly.memory_bound_gib(argparse.Namespace(jobs=2, pt1_max_log_mb=256)),
+                               2 * (nightly.WORKER_GIB + 9 * 256 / 1024))
+
+
+class NightlyDiskAndCommit(unittest.TestCase):
+    """P5-T4-MAC: a disk floor between shards, and the commit of the checkout."""
+
+    def test_low_disk(self):
+        import argparse
+        import shutil
+        import nightly
+        d = tempfile.mkdtemp()
+        free = shutil.disk_usage(d).free / 2 ** 30
+        a = argparse.Namespace(min_free_gb=0, state=d, work=os.path.join(d, "not-yet", "work"))
+        self.assertIsNone(nightly.low_disk(a))                 # 0: no check
+        a.min_free_gb = max(free - 1, 0.001)
+        self.assertIsNone(nightly.low_disk(a))                 # a directory not made yet: its parent's disk
+        a.min_free_gb = free + 1024
+        self.assertIn("GB free", nightly.low_disk(a))
+
+    def test_git_sha_is_the_checkout_not_github_sha(self):
+        import subprocess
+        import nightly
+        saved = os.environ.get("GITHUB_SHA")
+        os.environ["GITHUB_SHA"] = "f" * 40  # the head of the dispatched ref, not what was checked out
+        try:
+            sha = nightly.git_sha()
+        finally:
+            if saved is None:
+                os.environ.pop("GITHUB_SHA")
+            else:
+                os.environ["GITHUB_SHA"] = saved
+        head = subprocess.run(["git", "-C", nightly.REPO, "rev-parse", "HEAD"], capture_output=True,
+                              text=True, timeout=60).stdout.strip()
+        self.assertEqual(sha, head if len(head) == 40 else "f" * 40)
+
+
+class NightlyRatchet(unittest.TestCase):
+    """T4: classification, the fixed denominator and the host-bound ratchet.
+    Each review 5907783236 finding has a planted case here."""
+
+    FP = {k: "x" for k in ("oracle_pdftex_version", "pdflatex", "shell_escape", "argv0", "pt", "levels",
+                           "pt1_sample", "pt1_sample_seed", "pt1_max_log_mb")}
+    ORACLE = {"pdftex": "/tl/bin/x86_64-linux/pdftex", "pdftex_sha256": "p", "texlive_root": "/tl",
+              "tlpdb_sha256": "t1"}
+    HERE_HOST = {"id": "linuxhost0000001", "label": "linux-linuxhost000", "system": "Linux", "node": "nixos",
+                 "platform": "Linux x86_64", "texlive_root": "/tl"}
+
+    def setUp(self):
+        import nightly
+        self.n = nightly
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = self.tmp.name
+        self.host = dict(self.HERE_HOST)
+        self.oracle_now = dict(self.ORACLE)
+        self.saved = (nightly.host_identity, nightly.oracle_identity)
+        nightly.host_identity = lambda root: dict(self.host)
+        nightly.oracle_identity = lambda texbin, pdftex=None: dict(self.oracle_now)
+        self.env = {k: os.environ.pop(k) for k in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF")
+                    if k in os.environ}
+
+    def tearDown(self):
+        self.n.host_identity, self.n.oracle_identity = self.saved
+        for k in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF"):
+            os.environ.pop(k, None)
+        os.environ.update(self.env)
+        self.tmp.cleanup()
+
+    def results(self, docs, host=None, expected=None, missing=(), not_returned=None, oracle=None):
+        out = os.path.join(self.d, "out")
+        os.makedirs(out, exist_ok=True)
+        recs = [self.n.compact(d) if "pt" in d else d for d in docs]
+        by = {}
+        for r in recs:
+            by.setdefault(r["tier"], []).append(r)
+        present = [f"{r['tier']}/{r['id']}" for r in recs]
+        expected = present if expected is None else expected
+        with open(os.path.join(out, "summary.json"), "w") as f:
+            json.dump({"host": host or dict(self.HERE_HOST), "fingerprint": dict(self.FP, oracle=oracle or self.ORACLE),
+                       "shards": {"missing": list(missing)}, "run_key": "k", "git_sha": "g", "engine": {},
+                       "expected": expected,
+                       "not_returned": sorted(set(expected) - set(present)) if not_returned is None else not_returned,
+                       "mixed_fingerprint": [],
+                       "tiers": {t: self.n.tier_row(rs) for t, rs in by.items()}}, f)
+        with open(os.path.join(out, "documents.json"), "w") as f:
+            json.dump({"documents": recs}, f)
+        return out
+
+    def ratchet(self, out, *extra):
+        return self.n.main(["--state", self.d, "ratchet", "--results", out, *extra])
+
+    def record(self, out):
+        return self.ratchet(out, "--record", "--local-proof")
+
+    @staticmethod
+    def doc(i, level, pt1=None, pt2=True, tier="nightly-5k", **kw):
+        return dict({"tier": tier, "id": i, "level_index": level, "P-T1": pt1, "P-T2": pt2}, **kw)
+
+    def test_classes(self):
+        c = self.n.classify
+        self.assertEqual(c({"excluded": "oracle: did not converge in 6 passes"})[0], "e")
+        self.assertEqual(c({"excluded": "oracle: pdflatex exit 1: ! Missing $ inserted."})[0], "d")
+        self.assertEqual(c({"excluded": "fetch: sha256 mismatch"})[0], "c")
+        self.assertEqual(c({"level": -1, "candidate": {"status": "exit 1: ! LaTeX Error: File `foo.sty' not found."}}),
+                         ("a", "missing foo.sty"))
+        self.assertEqual(c({"level": -1, "candidate": {"status": "exit 1 (timeout)"}})[0], "b")
+        r = {"level": 4, "pt": {"P-T1": False, "P-T2": True,
+                                "pt1": {"log_line": {"line": 9, "oracle": "a", "candidate": "b"}}}}
+        self.assertEqual(c(r), ("b", "P-T1 log line 9: oracle `a` vs `b`"))
+        self.assertEqual(c({"level": 2, "pt": {"P-T1": True, "P-T2": True}})[0], "c")
+        self.assertTrue(self.n.full_pass({"level": 4, "pt": {"P-T1": None, "P-T2": True}}))
+        self.assertEqual(self.n.signature("P-T1 log line 1234: `\\hbox(6.8+2.1)x397.4`"),
+                         "P-T1 log line: `\\hbox(#+#)x#`")
+
+    def test_no_baseline_fails_and_record_then_check_passes(self):
+        out = self.results([self.doc("a", 4, True), self.doc("b", 1, None, False)])
+        self.assertEqual(self.ratchet(out), 1)
+        self.assertEqual(self.record(out), 0)
+        self.assertEqual(self.ratchet(out), 0)
+        with open(os.path.join(self.d, "baseline", self.HERE_HOST["label"] + ".json")) as f:
+            base = json.load(f)
+        self.assertEqual(base["host"]["id"], self.HERE_HOST["id"])
+        self.assertEqual(base["fingerprint"]["oracle"]["tlpdb_sha256"], "t1")
+        self.assertEqual(base["documents"]["nightly-5k/a"], {"level": 4, "P-T1": True, "P-T2": True})
+
+    def test_a_drop_fails_and_an_improvement_does_not(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4, True), self.doc("b", 1)])), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 3)])), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 3, True), self.doc("b", 1)])), 1)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, False), self.doc("b", 1)])), 1)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 1, pt2=False)])), 1)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", None, excluded="oracle: x"), self.doc("b", 1)])), 1)
+
+    # finding 1: the denominator
+    def test_unmeasured_documents_fail(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("b", 1)])), 0)
+        for why in ("fetch: sha256 mismatch: manifest 83bff5aac779, fetched 855d382e26fd", "fetch: failed",
+                    "harness error: RuntimeError()"):
+            out = self.results([self.doc("a", None, excluded=why, unmeasured=True), self.doc("b", 1)])
+            self.assertEqual(self.ratchet(out), 1, why)
+            with open(os.path.join(out, "ratchet.json")) as f:
+                self.assertIn("not measured", json.load(f)["regressions"][0]["why"][0])
+
+    def test_a_document_not_returned_fails(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("b", 1)])), 0)
+        out = self.results([self.doc("b", 1)], expected=["nightly-5k/a", "nightly-5k/b"])
+        self.assertEqual(self.ratchet(out), 1)
+        # a document outside the baseline that is not returned fails too
+        out = self.results([self.doc("a", 4), self.doc("b", 1)],
+                           expected=["nightly-5k/a", "nightly-5k/b", "nightly-5k/new"])
+        self.assertEqual(self.ratchet(out), 1)
+
+    def test_a_shrunk_manifest_fails(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("b", 1)])), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("b", 1)], expected=["nightly-5k/b"])), 1)
+
+    def test_more_oracle_exclusions_than_recorded_fail(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("x", None, excluded="oracle: e")])), 0)
+        # a new document the oracle cannot compile raises the tier's exclusion count
+        out = self.results([self.doc("a", 4), self.doc("x", None, excluded="oracle: e"),
+                            self.doc("y", None, excluded="oracle: e")])
+        self.assertEqual(self.ratchet(out), 1)
+
+    def test_record_refuses_an_incomplete_run(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4)], missing=[3])), 2)
+        self.assertEqual(self.record(self.results([self.doc("a", 4)], expected=["nightly-5k/a", "nightly-5k/b"])), 2)
+        self.assertEqual(self.record(self.results([self.doc("a", None, excluded="fetch: failed", unmeasured=True)])), 2)
+
+    # finding 2: the host is the machine, not a label
+    def test_results_from_another_machine_are_refused(self):
+        other = dict(self.HERE_HOST, id="othermachine0001", node="mac")
+        out = self.results([self.doc("a", 4)], host=other)
+        self.assertEqual(self.ratchet(out), 2)
+        self.assertEqual(self.record(out), 2)
+
+    def test_a_baseline_of_another_machine_or_a_mac_is_refused(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4)])), 0)
+        path = os.path.join(self.d, "baseline", self.HERE_HOST["label"] + ".json")
+        with open(path) as f:
+            good = json.load(f)
+        for host in (dict(good["host"], id="othermachine0001"),
+                     dict(good["host"], system="Darwin", node="DN0a2301da.SUNet")):
+            with open(path, "w") as f:
+                json.dump(dict(good, host=host), f)
+            self.assertEqual(self.ratchet(self.results([self.doc("a", 4)])), 2, host)
+
+    def test_a_changed_tex_live_is_refused(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4)])), 0)
+        # tlmgr update between the run and the check
+        self.oracle_now = dict(self.ORACLE, tlpdb_sha256="t2")
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)])), 2)
+        # results measured under the new TeX Live against the old baseline
+        self.oracle_now = dict(self.ORACLE, tlpdb_sha256="t2")
+        out = self.results([self.doc("a", 4)], oracle=dict(self.ORACLE, tlpdb_sha256="t2"))
+        self.assertEqual(self.ratchet(out), 2)
+
+    def test_recording_is_ci_dispatch_of_main_or_a_local_proof(self):
+        out = self.results([self.doc("a", 4)])
+        self.assertEqual(self.ratchet(out, "--record"), 2)  # outside CI without --local-proof
+        os.environ.update(GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="schedule", GITHUB_REF="refs/heads/main")
+        self.assertEqual(self.ratchet(out, "--record"), 2)
+        os.environ.update(GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/some-branch")
+        self.assertEqual(self.ratchet(out, "--record"), 2)
+        os.environ.update(GITHUB_REF="refs/heads/main")
+        self.assertEqual(self.ratchet(out, "--record", "--local-proof"), 2)
+        self.assertEqual(self.ratchet(out, "--record"), 0)
+        # a local-proof baseline is never held in CI
+        for k in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF"):
+            os.environ.pop(k)
+        self.assertEqual(self.record(out), 0)
+        os.environ["GITHUB_ACTIONS"] = "true"
+        self.assertEqual(self.ratchet(out), 2)
+
+    def test_host_identity_is_derived_from_the_machine(self):
+        self.n.host_identity, self.n.oracle_identity = self.saved
+        old = self.n.machine_id
+        try:
+            self.n.machine_id = lambda: "machine-a"
+            a = self.n.host_identity("/tl")
+            self.assertEqual(a, self.n.host_identity("/tl"))
+            self.assertNotEqual(a["id"], self.n.host_identity("/other-texlive")["id"])
+            self.n.machine_id = lambda: "machine-b"
+            self.assertNotEqual(a["id"], self.n.host_identity("/tl")["id"])
+            self.n.machine_id = lambda: None
+            with self.assertRaises(SystemExit):
+                self.n.host_identity("/tl")
+        finally:
+            self.n.machine_id = old
+        self.assertTrue(self.n.machine_id())  # this machine has one
+
+    def test_oracle_identity_follows_the_tlpdb(self):
+        self.n.host_identity, self.n.oracle_identity = self.saved
+        root = os.path.join(self.d, "texlive")
+        os.makedirs(os.path.join(root, "bin", "x86_64-linux"))
+        os.makedirs(os.path.join(root, "tlpkg"))
+        exe = os.path.join(root, "bin", "x86_64-linux", "pdftex")
+        for p, text in ((exe, "binary"), (os.path.join(root, "tlpkg", "texlive.tlpdb"), "revision 1")):
+            with open(p, "w") as f:
+                f.write(text)
+        a = self.n.oracle_identity(os.path.dirname(exe))
+        self.assertEqual(a["texlive_root"], os.path.realpath(root))
+        with open(os.path.join(root, "tlpkg", "texlive.tlpdb"), "a") as f:
+            f.write("revision 2")
+        self.assertNotEqual(a["tlpdb_sha256"], self.n.oracle_identity(os.path.dirname(exe))["tlpdb_sha256"])
+
+    # finding 4: P-T1 is held, and over-cap is its own number
+    def test_pt1_pass_to_not_evaluated_fails(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4, True)])), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, None)])), 1)
+
+
+class NightlyRunKey(unittest.TestCase):
+    """Finding 3: every input of a run is in its key."""
+
+    def setUp(self):
+        import argparse
+        import nightly
+        self.n = nightly
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = self.tmp.name
+        self.files = {}
+        for name in ("engine", "pdflatex.fmt", "pdftex.pool", "parity.py", "run.py", "pdftext.py", "manifest.json"):
+            self.files[name] = os.path.join(self.d, name)
+            with open(self.files[name], "w") as f:
+                f.write(name)
+        os.makedirs(os.path.join(self.d, "fmt"))
+        os.replace(self.files["pdflatex.fmt"], os.path.join(self.d, "fmt", "pdflatex.fmt"))
+        self.files["pdflatex.fmt"] = os.path.join(self.d, "fmt", "pdflatex.fmt")
+        self.args = argparse.Namespace(engine=self.files["engine"], shards=3, pt1_sample=[], spread=0,
+                                       pt1_max_log_mb=64, texbin="/tl/bin", parity_args=[],
+                                       engine_env=[f"FLASHTEX_FORMATS={self.d}/fmt",
+                                                   f"FLASHTEX_POOL={self.files['pdftex.pool']}"])
+        self.saved = nightly.harness_paths
+        nightly.harness_paths = lambda: [self.files[k] for k in ("parity.py", "run.py", "pdftext.py")]
+        self.oracle = {"pdftex": "/tl/bin/pdftex", "pdftex_sha256": "p", "texlive_root": "/tl", "tlpdb_sha256": "t1"}
+
+    def tearDown(self):
+        self.n.harness_paths = self.saved
+        self.tmp.cleanup()
+
+    def key(self, oracle=None):
+        return self.n.run_key(self.args, ["nightly-5k"], [self.files["manifest.json"]], oracle or self.oracle,
+                              {"id": "h"})[0]
+
+    def test_the_harness_includes_every_imported_module(self):
+        names = {os.path.relpath(p, parity.REPO) for p in self.saved()}
+        for m in ("tools/parity/parity.py", "tools/parity/tiers.py", "tools/parity/capture.py",
+                  "tools/parity/harness.py", "tools/parity/pdftext.py", "tools/parity/wordalign.py"):
+            self.assertIn(m, names)
+
+    def test_each_input_changes_the_key(self):
+        base = self.key()
+        self.assertEqual(base, self.key())
+        for name in ("engine", "parity.py", "run.py", "pdftext.py", "pdflatex.fmt", "pdftex.pool", "manifest.json"):
+            with open(self.files[name], "a") as f:
+                f.write(" changed")
+            now = self.key()
+            self.assertNotEqual(now, base, name)
+            base = now
+        self.assertNotEqual(self.key(dict(self.oracle, tlpdb_sha256="t2")), base)
+        self.assertNotEqual(self.key(dict(self.oracle, pdftex_sha256="p2")), base)
+
+
+class WorkerDeath(unittest.TestCase):
+    """A candidate that kills the worker scoring it must not shrink any
+    denominator: the document is failed, the others are scored, and the run
+    exits non-zero."""
+
+    def test_denominators_hold_and_the_run_fails(self):
+        a, b = "real-world/article-twocolumn", "real-world/beamer-default"
+        with tempfile.TemporaryDirectory() as d:
+            probe = os.path.join(d, "probe")
+            with open(probe, "w") as f:  # a "TeX engine" that kills its parent (the worker) on document a
+                f.write("#!/bin/sh\ncase \"$1\" in --version) echo 'pdfTeX probe'; exit 0;; esac\n"
+                        "case \"$(pwd)\" in *article-twocolumn*) kill -9 $PPID; sleep 5;; esac\nexit 1\n")
+            os.chmod(probe, 0o755)
+            out = os.path.join(d, "out")
+            with watchdog():
+                code = parity.main(["--tier", "fixtures", "--only", a, "--only", b, "--engine", probe,
+                                    "--pt", "off", "--raster", "none", "-j", "2", "--out", out,
+                                    "--work", os.path.join(d, "work"), "--cache", os.path.join(d, "cache")])
+            self.assertEqual(code, parity.DIED_EXIT)
+            with open(os.path.join(out, "documents.json")) as f:
+                recs = {r["id"]: r for r in json.load(f)["fixtures"]}
+            with open(os.path.join(out, "scoreboard.json")) as f:
+                s = json.load(f)["tiers"]["fixtures"]["summary"]
+        self.assertEqual(sorted(recs), [a, b])
+        self.assertTrue(recs[a]["worker_died"])
+        self.assertEqual(recs[a]["level"], -1)
+        self.assertNotIn("excluded", recs[a])
+        self.assertNotIn("worker_died", recs[b])  # re-queued and scored normally (the probe fails it at L0)
+        self.assertEqual((s["documents"], s["measured"], s["at_least"]["L0"]["documents"]), (2, 2, 0))
+
+    def test_worker_died_record_fails_every_tier(self):
+        cfg = {"engine_kind": "tex", "pt": "on"}
+        r = parity.worker_died_record({"id": "x"}, "arxiv", cfg)
+        self.assertEqual((r["level"], r["pt"]["P-T1"], r["pt"]["P-T2"]), (-1, False, False))
+        s = parity.summarize([r])
+        self.assertEqual((s["measured"], s["pt"]["P-T1"]["evaluated"], s["pt"]["P-T1"]["passed"]), (1, 1, 0))
+
+
+class PTCandidateCap(unittest.TestCase):
+    """A log over the budget on either side is compared as a stream; the
+    oracle's in-memory log is then never loaded."""
+
+    def run_pt(self, ref_log, cand_cap, budget=4096):
+        seen = {}
+        with tempfile.TemporaryDirectory() as cache:
+            meta = {"ok": True, "key": "ab" + "0" * 62, "log_chars": len(ref_log)}
+            odir = os.path.join(cache, "pt-oracle", "ab", meta["key"])
+            os.makedirs(odir)
+            with gzip.open(os.path.join(odir, "log.gz"), "wt", encoding="latin-1") as f:
+                f.write(ref_log)
+
+            def fake(*a, **k):
+                seen["load_log"] = k.get("load_log")
+                return dict(meta), None, "ref.pdf"
+            real, saved = tiers.oracle, capture.MAX_LOG_BYTES
+            tiers.oracle, capture.MAX_LOG_BYTES = fake, budget
+            try:
+                cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": cache, "pt1_max_log": budget,
+                       "engine_kind": "tex", "qpdf": False}
+                pt = parity.score_pt({"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}, cfg,
+                                     {"capture": cand_cap, "pdf": None}, HERE)
+            finally:
+                tiers.oracle, capture.MAX_LOG_BYTES = real, saved
+            self.assertTrue(os.path.isfile(os.path.join(odir, tiers.FINGERPRINT)))  # kept for the next run
+        return pt, seen
+
+    def test_candidate_over_the_budget_is_compared_as_a_stream(self):
+        log = acc_capture().log + "\n" + "x" * 5000
+        big = pt1stream.fingerprint_text(log)
+        pt, seen = self.run_pt(log, capture.Capture(None, None, None, len(log), True, big))
+        self.assertIs(pt["P-T1"], True)
+        self.assertTrue(pt["pt1"]["streamed"])
+        self.assertIs(seen["load_log"], False)
+        other = pt1stream.fingerprint_text(log.replace("H", "I"))
+        pt, _ = self.run_pt(log, capture.Capture(None, None, None, len(log), True, other))
+        self.assertIs(pt["P-T1"], False)  # over the budget and different: a P-T1 failure
+        self.assertEqual((pt["pt1"]["first_shipout"], pt["pt1"]["boxes_equal"]), (1, False))
+
+    def test_candidate_in_memory_against_an_oracle_over_the_budget(self):
+        log = acc_capture().log + "\n" + "x" * 5000
+        pt, seen = self.run_pt(log, capture.Capture(log, capture.split_boxes(log), None))
+        self.assertIs(pt["P-T1"], True)
+        self.assertTrue(pt["pt1"]["streamed"])  # the oracle's side is over the budget
+        self.assertIs(seen["load_log"], True)  # asked for, but not loaded: over the budget
+
+    def test_candidate_timeout_is_a_counted_harness_error_never_a_pass(self):
+        stopped = tiers.TRACE_TIMEOUT.format(1800)
+        cand = {"capture": None, "pdf": None, "stderr_tail": stopped, "trace_harness_error": stopped}
+        real = tiers.oracle
+        tiers.oracle = lambda *a, **k: ({"ok": True, "key": "k", "log_chars": 1}, None, "ref.pdf")
+        try:
+            cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": "/nonexistent", "engine_kind": "tex",
+                   "qpdf": False}
+            pt = parity.score_pt({"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}, cfg, cand, HERE)
+        finally:
+            tiers.oracle = real
+        self.assertIs(pt["P-T1"], False)
+        self.assertEqual(pt["pt1"]["harness_error"], stopped)
+        s = parity.summarize_pt([{"id": "d", "pt": pt}])
+        self.assertEqual((s["P-T1"]["evaluated"], s["P-T1"]["passed"], s["P-T1"]["harness_errors"]), (1, 0, 1))
+
+
+class Engines(unittest.TestCase):
+    """engines.py: several parity runs side by side, failures classified."""
+
+    @staticmethod
+    def run_of(host, docs):
+        rs = list(docs)
+        summary = parity.summarize(rs)
+        return ({"meta": {"engine_version": "E", "host": host, "platform": "Darwin", "pdflatex": "TL 2026",
+                          "shell_escape": "-shell-restricted", "date": "2026-09-29"},
+                 "tiers": {"arxiv": {"summary": summary}}}, {"arxiv": rs})
+
+    @staticmethod
+    def rec(i, level, pt1=True, pt2=True, **kw):
+        checks = {name: level >= k for k, name in enumerate(parity.LEVELS)}
+        r = {"id": i, "tier": "arxiv", "level": level, "checks": checks,
+             "pt": {"P-T1": pt1, "P-T2": pt2, "why": {}}}
+        r.update(kw)
+        return r
+
+    def test_classes_and_table(self):
+        import engines
+        new = [self.rec("ok", 4),
+               self.rec("diff", 2, pt1=False, pt2=False,
+                        pt={"P-T1": False, "P-T2": False, "pt1": {"log_line": {"line": 7, "oracle": "a", "candidate": "b"}}}),
+               self.rec("pkg", -1, pt1=False, pt2=False,
+                        candidate={"status": "exit 1: ! LaTeX Error: File `foo.sty' not found."}),
+               {"id": "bad", "tier": "arxiv", "level": None, "excluded": "oracle: pdflatex exit 1"},
+               self.rec("meas", 3)]
+        old = [self.rec("ok", 1, pt1=None), self.rec("diff", 0, pt1=None), self.rec("pkg", 4, pt1=None),
+               {"id": "bad", "tier": "arxiv", "level": None, "excluded": "oracle: pdflatex exit 1"},
+               self.rec("meas", 4, pt1=None)]
+        rep = engines.build({"new": self.run_of("h", new), "v1": self.run_of("h", old)}, "new",
+                            shas={"new": "abc"}, notes={"arxiv/diff": {"section": "§1234", "issue": "#9"}})
+        self.assertEqual(rep["classes"], {"a": 1, "b": 1, "c": 1, "d": 1, "e": 0})
+        rows = {r["id"]: r for r in rep["documents"]["arxiv"]}
+        self.assertNotIn("class", rows["ok"])
+        self.assertEqual(rows["pkg"]["cause"], "missing foo.sty")
+        self.assertIn("log line 7", rows["diff"]["cause"])
+        self.assertEqual(rows["diff"]["section"], "§1234")
+        self.assertEqual(rows["meas"]["class"], "c")  # P-T1 and P-T2 pass, a level fails: the measurement
+        t = rep["tiers"]["arxiv"]
+        self.assertEqual(t["new"]["L1"], [3, 4])
+        self.assertEqual(t["new"]["P-T1"], [2, 4])
+        self.assertIsNone(t["v1"]["P-T1"])  # the CLI has no P-T1
+        self.assertEqual(rep["engines"]["new"]["git_sha"], "abc")
+        md = engines.markdown(rep, "T")
+        self.assertIn("| new | 5 | oracle 1 | 2/4 (50.0%) |", md)
+        self.assertIn("n/a", md)
+
+    def test_p_t1_not_evaluated_is_listed_but_the_cli_is_not(self):
+        import engines
+        big = self.rec("big", 4, pt1=None)
+        big["pt"]["why"] = {"P-T1": "not evaluated: listed in --pt1-skip"}
+        cli = self.rec("cli", 4, pt1=None)
+        cli["pt"]["why"] = {"P-T1": parity.NOT_TEX}
+        rep = engines.build({"new": self.run_of("h", [big]), "v1": self.run_of("h", [cli])}, "new", host_label="m")
+        self.assertEqual(rep["documents"]["arxiv"][0]["pt1_not_evaluated"], "not evaluated: listed in --pt1-skip")
+        self.assertIn("P-T1 not evaluated (new): 1 documents", engines.markdown(rep, "T"))
+        self.assertIn("Measured on **m**", engines.markdown(rep, "T"))
+        self.assertNotIn("harness at", engines.markdown(rep, "T"))
+        rep = engines.build({"new": self.run_of("h", [big])}, "new", harness_sha="abc1234")
+        self.assertEqual(rep["harness_sha"], "abc1234")
+        self.assertIn("tools/parity harness at **abc1234**", engines.markdown(rep, "T"))
+        rep = engines.build({"v1": self.run_of("h", [cli])}, "v1")
+        self.assertNotIn("pt1_not_evaluated", rep["documents"]["arxiv"][0])
+
+    def test_timeout_is_harness_crash_is_engine_rerun_rule_is_its_own(self):
+        import engines
+
+        def with_pt1_why(i, why):
+            r = self.rec(i, 4, pt1=False)
+            r["pt"]["pt1"] = {"ok": False, "why": "the candidate's traced pass did not run: " + why}
+            return r
+        rs = [with_pt1_why("slow", tiers.TRACE_TIMEOUT.format(600)), with_pt1_why("crash", tiers.TRACE_CRASH.format(0.3)),
+              {"id": "rerun", "tier": "arxiv", "level": None, "excluded": "oracle: did not converge in 6 passes"},
+              parity.worker_died_record({"id": "dead"}, "arxiv", {"engine_kind": "tex", "pt": "on"})]
+        rows = {r["id"]: r for r in engines.build({"new": self.run_of("h", rs)}, "new")["documents"]["arxiv"]}
+        self.assertEqual({k: v["class"] for k, v in rows.items()}, {"slow": "c", "crash": "b", "rerun": "e", "dead": "c"})
+
+    def test_note_overrides_class_and_keeps_the_automatic_one(self):
+        import engines
+        new = [self.rec("x", 2, pt1=False, pt2=False)]
+        rep = engines.build({"new": self.run_of("h", new)}, "new", notes={"x": {"class": "a", "note": "bundle"}})
+        row = rep["documents"]["arxiv"][0]
+        self.assertEqual((row["class"], row["auto_class"]), ("a", "b"))
+
+
+# ----------------------------------------------------------------------------
+# streamed P-T1 (pt1stream.py): the same verdict as the in-memory compare
+
+import collections  # noqa: E402
+import contextlib  # noqa: E402
+import glob  # noqa: E402
+import re  # noqa: E402
+import random  # noqa: E402
+import signal  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+VERDICT = ("ok", "boxes_equal", "log_equal", "shipouts", "first_shipout", "accounting")
+# lines that each drive a rule (`{WD}` is the log's own work directory), and plain ones
+VOCAB = ["a", "b", "\\glue 3.0", " ) ", " junk", "", "", "({WD}/main.tex", "({WD}/sub/a.tex)", "{WD}",
+         "Completed box being shipped out [1]", "{{into}} Completed box being shipped out [2]", ".\\hbox(6.94+0.0)x407.0",
+         ACC_MEM, ACC_MEM + " x", "Here is how much of TeX's memory you used:", "PDF statistics:",
+         " 492 strings out of 467525", " 1 string character out of 9", " 3 words of memory out of 9",
+         " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+         " 75 PDF objects out of 1000 (max. 8388607)", " 45 compressed objects within 1 object stream",
+         " 0 named destinations out of 1000 (max. 500000)",
+         " 1 words of extra memory for PDF output out of 10000 (max. 10000000)",
+         "Output written on main.pdf (3 pages, 151150 bytes).", "Output written on main.pdf (1 page, 9 bytes).",
+         "Output written on main.pdf (3 pages).", "**\\tracingall\\input{main.tex}", "**x", "* not a banner end",
+         "This is pdfTeX, Version 3.141592653-2.6-1.40.29", "No pages of output."]
+
+
+def verdict(rec):
+    return {k: rec.get(k) for k in VERDICT}
+
+
+def in_memory(raw, wd):
+    log = capture.normalise_log(raw, wd)
+    return capture.Capture(log, capture.split_boxes(log), None)
+
+
+def streamed(raw, wd, rng=None):
+    """The fingerprint of `raw`, fed in random pieces."""
+    s, data, i = pt1stream.Stream(wd), raw.encode("latin-1"), 0
+    while i < len(data):
+        n = rng.randint(1, 40) if rng else len(data)
+        s.feed(data[i:i + n])
+        i += n
+    return s.close()
+
+
+def both_verdicts(ref, ref_wd, cand, cand_wd, rng=None):
+    m = tiers.compare_pt1(in_memory(ref, ref_wd), in_memory(cand, cand_wd))
+    st = tiers.compare_pt1_streamed(streamed(ref, ref_wd, rng), streamed(cand, cand_wd, rng))
+    return verdict(m), verdict(st), st
+
+
+@contextlib.contextmanager
+def small_pieces(chunk=24, segment=64):
+    """pt1stream's CHUNK and SEGMENT made tiny, so a small log exercises the
+    fast path (runs of plain lines) and many localisation segments."""
+    saved = pt1stream.CHUNK, pt1stream.SEGMENT
+    pt1stream.CHUNK, pt1stream.SEGMENT = chunk, segment
+    try:
+        yield
+    finally:
+        pt1stream.CHUNK, pt1stream.SEGMENT = saved
+
+
+def synth_chunks(wd, size, pages=4, plant=None, box_lines=40):
+    """A pdfTeX-shaped `\\tracingall` log of about `size` bytes, as bytes
+    pieces (never held whole): banner, then per page a body of plain trace
+    lines, the shipout's box dump, a blank line and its Memory usage line,
+    then the end-of-run trailer. `plant="byte"` changes one byte of a body
+    line at the middle of the log."""
+    line = "{\\glue 3.0 plus 1.0 minus 0.5} \\hbox(6.94+1.94)x407.0, glue set 0.3fil []"
+    block = ("\n".join(f"{line} {i % 97}" for i in range(12000)) + "\n").encode("latin-1")  # ~1 MiB
+    yield (f"This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026)\n restricted \\write18 enabled.\n"
+           f"**\\tracingall\\input{{main.tex}}\n({wd}/main.tex\n").encode("latin-1")
+    per_page = max(1, size // len(block) // pages)
+    middle = (pages * per_page) // 2
+    k = 0
+    for p in range(1, pages + 1):
+        for _ in range(per_page):
+            if plant == "byte" and k == middle:
+                b = bytearray(block)
+                b[len(b) // 2 - 3] ^= 0x01  # a digit in the middle of a body line
+                yield bytes(b)
+            else:
+                yield block
+            k += 1
+        box = "\n".join(f"..\\OT1/cmr/m/n/10 {chr(65 + (i + p) % 26)}" for i in range(box_lines))
+        yield (f"Completed box being shipped out [{p}]\n\\vbox(633.0+0.0)x407.0\n{box}\n\n"
+               f"Memory usage before: {7000 + p}&399359; after: 4346&398095; still untouched: 4559244\n").encode()
+    yield ACC_TAIL.replace("(3 pages", f"({pages} pages").encode("latin-1")
+
+
+def synth(wd, size=1 << 20, **kw):
+    return b"".join(synth_chunks(wd, size, **kw)).decode("latin-1")
+
+
+class PTStream(unittest.TestCase):
+    """Equivalence: on every log, the streamed verdict is the in-memory one."""
+
+    def test_random_logs_have_the_in_memory_verdict(self):
+        rng = random.Random(20260930)
+        seen = collections.Counter()
+        for n in range(6000):
+            lines = [rng.choice(VOCAB) for _ in range(rng.randint(0, 24))]
+            other = list(lines)
+            op = rng.choice(["same", "same", "replace", "insert", "delete", "swap", "truncate"])
+            if op == "replace" and other:
+                other[rng.randrange(len(other))] = rng.choice(VOCAB)
+            elif op == "insert":
+                other.insert(rng.randint(0, len(other)), rng.choice(VOCAB))
+            elif op == "delete" and other:
+                del other[rng.randrange(len(other))]
+            elif op == "swap" and len(other) > 1:
+                i = rng.randrange(len(other) - 1)
+                other[i], other[i + 1] = other[i + 1], other[i]
+            elif op == "truncate":
+                other = other[:rng.randint(0, len(other))]
+            end = rng.choice(["", "\n"])
+            ref = "\n".join(lines).replace("{WD}", "/w/ref") + end
+            cand = "\n".join(other).replace("{WD}", "/tmp/c/and") + end
+            ctx = small_pieces() if n % 2 else contextlib.nullcontext()
+            with ctx:
+                a, b, _ = both_verdicts(ref, "/w/ref", cand, "/tmp/c/and", rng)
+            self.assertEqual(a, b, (ref, cand))
+            seen[(a["ok"], a["accounting"]["equal"])] += 1
+        # the cases cover passes, failures and accounting-only differences
+        self.assertTrue(all(seen[k] > 20 for k in ((True, True), (False, True), (False, False), (True, False))), seen)
+
+    def test_raw_and_normalised_logs_have_one_fingerprint(self):
+        raw = synth("/w/a/b", 200000)
+        for ctx in (contextlib.nullcontext(), small_pieces(4096, 8192)):
+            with ctx:
+                a = streamed(raw, "/w/a/b")
+                b = pt1stream.fingerprint_text(capture.normalise_log(raw, "/w/a/b"))
+            for k in ("strict", "boxes", "accounting"):
+                self.assertEqual(a[k], b[k], k)
+        self.assertEqual(len(a["boxes"]), 4)
+        self.assertEqual(len(a["accounting"]), 4 + 9)  # a Memory usage line per shipout, the trailer's 9
+        self.assertTrue(a["complete"])
+
+    def test_planted_differences_are_caught(self):
+        ref = synth("/w/ref", 3 << 20)
+        cand = ref.replace("/w/ref", "/w/cand")
+        mid = len(cand) // 2
+        mid = cand.index("\n", mid) + 1  # the start of a body line in the middle
+        last = cand.rindex("Completed box being shipped out")
+        ow = next(ln for ln in cand.split("\n") if ln.startswith("Output written on "))
+        planted = {
+            "one byte in the middle of the body": cand[:mid] + "X" + cand[mid + 1:],
+            "Memory usage mid-log, no shipout owes one": cand[:mid] + ACC_MEM + "\n" + cand[mid:],
+            "an accounting header twice": cand.replace("PDF statistics:\n", "PDF statistics:\nPDF statistics:\n"),
+            "a trailer line before the last shipout": cand[:last] + ow + "\n" + cand[last:].replace(ow + "\n", "", 1),
+            "a truncated candidate log": cand[:int(len(cand) * 0.6)],
+        }
+        for name, c in planted.items():
+            for ctx in (contextlib.nullcontext(), small_pieces(1 << 12, 1 << 14)):
+                with ctx:
+                    a, b, st = both_verdicts(ref, "/w/ref", c, "/w/cand")
+                self.assertEqual(a, b, name)
+                self.assertFalse(b["ok"], name)
+            if name.startswith("one byte"):
+                w = st["log_lines"]
+                self.assertLessEqual(w["from"], cand.count("\n", 0, mid) + 1)
+                self.assertGreaterEqual(w["to"], cand.count("\n", 0, mid) + 1)
+        self.assertFalse(pt1stream.fingerprint_text(capture.normalise_log(planted["a truncated candidate log"],
+                                                                          "/w/cand"))["complete"])
+        a, b, _ = both_verdicts(ref, "/w/ref", cand, "/w/cand")
+        self.assertEqual(a, b)
+        self.assertTrue(b["ok"])
+        a, b, _ = both_verdicts(ref, "/w/ref", cand.replace("151150 bytes", "9 bytes"), "/w/cand")
+        self.assertEqual(a, b)
+        self.assertTrue(b["ok"] and not b["accounting"]["equal"])  # the byte count is accounting only
+
+    def test_a_line_longer_than_the_limit_is_a_harness_error(self):
+        saved = pt1stream.MAX_LINE
+        pt1stream.MAX_LINE = 1000
+        try:
+            with self.assertRaises(pt1stream.StreamError):
+                s = pt1stream.Stream(None)
+                for _ in range(10):
+                    s.feed(b"x" * (pt1stream.CHUNK // 4))
+        finally:
+            pt1stream.MAX_LINE = saved
+
+    def pipe_run(self, d, body, budget):
+        """A writer process that does `body` (Python, with `p` the log path)
+        while a LogPipe at `p` reads."""
+        p = os.path.join(d, "main.log")
+        with pt1stream.LogPipe(p, d, budget) as pipe:
+            subprocess.run([sys.executable, "-c", "import os, sys\np = sys.argv[1]\n" + body, p], check=True,
+                           timeout=120)
+        return pipe, p
+
+    def test_log_pipe_reads_what_the_engine_writes(self):
+        log = synth("/w/x", 1 << 20).replace("/w/x", "{d}")
+        with tempfile.TemporaryDirectory() as d:
+            text = log.replace("{d}", d)
+            with open(os.path.join(d, "src.log"), "w", encoding="latin-1") as f:
+                f.write(text)
+            copy = f"open(p, 'wb').write(open(os.path.join(os.path.dirname(p), 'src.log'), 'rb').read())"
+            pipe, p = self.pipe_run(d, copy, 0)  # no budget: kept whole
+            self.assertEqual((pipe.raw, pipe.fingerprint, pipe.replaced), (text.encode("latin-1"), None, False))
+            self.assertFalse(os.path.lexists(p))  # the pipe is gone afterwards
+            for budget in (4096, None):  # over the budget, or streamed from the first byte
+                pipe, _ = self.pipe_run(d, copy, budget)
+                self.assertIsNone(pipe.raw)
+                self.assertEqual(pipe.fingerprint["strict"], streamed(text, d)["strict"])
+                self.assertEqual(pipe.fingerprint["bytes"], len(text))
+            pipe, _ = self.pipe_run(d, "pass", 4096)  # an engine that never opens its log
+            self.assertEqual(pipe.raw, b"")
+            pipe, p = self.pipe_run(d, "os.remove(p); open(p, 'w').write('**x\\n')", 4096)
+            self.assertTrue(pipe.replaced)  # a file where the pipe was: the capture reads the file
+            self.assertTrue(os.path.isfile(p))
+
+
+class PTStreamTexmfvar(unittest.TestCase):
+    """arXiv 2501.08775v2 (72 pages, an 800 MB traced log): P-T1 failed with
+    boxes, line counts and every line but the trailer's equal. The oracle's
+    streamed fingerprint was cached by a run with TEXMFVAR set to kpathsea's
+    default directory, so its font-list line read `<<TEXMFVAR>/fonts/pk/
+    .../bbm10.600pk>`; the candidate was scored by a run with TEXMFVAR unset,
+    which named the same directory literally. A synthetic log over several
+    SEGMENTs and CHUNKs, with the accounting differing too, as there."""
+
+    DEFAULT = "/home/u/Library/texlive/2026/texmf-var"  # kpathsea's TEXMFVAR when the variable is unset
+    PK = f" <{DEFAULT}/fonts/pk/ljfour/public/bbm/bbm10.600pk>"
+
+    def log(self, wd, strings_max=467525, plant=None):
+        text = synth(wd, size=12 << 20, pages=4, plant=plant)
+        self.assertGreater(len(text), 2 * pt1stream.SEGMENT)
+        text = text.replace("\n</usr/local/texlive/", f"\n{self.PK}</usr/local/texlive/", 1)
+        return text.replace(" strings out of 467525\n", f" strings out of {strings_max}\n", 1)
+
+    @contextlib.contextmanager
+    def run_as(self, texmfvar, default=DEFAULT):
+        """A run with TEXMFVAR `texmfvar` (None: unset) where kpathsea's default is `default`."""
+        saved_env, saved_default = os.environ.get("TEXMFVAR"), capture.default_texmfvar
+        capture.default_texmfvar = lambda: default
+        try:
+            if texmfvar is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = texmfvar
+            yield
+        finally:
+            capture.default_texmfvar = saved_default
+            if saved_env is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = saved_env
+
+    def fingerprint(self, text, wd, texmfvar, default=DEFAULT):
+        """`text` streamed as a run with TEXMFVAR `texmfvar` (None: unset) would."""
+        with self.run_as(texmfvar, default):
+            s, data = pt1stream.Stream(wd), text.encode("latin-1")
+            for i in range(0, len(data), pt1stream.READ):
+                s.feed(data[i:i + pt1stream.READ])
+            return s.close()
+
+    def test_cached_with_texmfvar_unset_scored_with_it_set_elsewhere(self):
+        # #1375 review: an oracle log cached before v2 with TEXMFVAR unset names kpathsea's default directory;
+        # scoreboard-run.sh scores with TEXMFVAR=$WORK/texmfvar, where the candidate's PK font is made
+        wd, run_var = "/w/cand/x", "/s/run/texmfvar"
+        old_cached = capture.normalise_log(synth("/w/oracle/work-1"), "/w/oracle/work-1")
+        old_cached = old_cached.replace("\n</usr/local/texlive/", f"\n{self.PK}</usr/local/texlive/", 1)
+        self.assertIn(self.DEFAULT, old_cached)  # the old rule left an unset TEXMFVAR literal
+        cand_raw = synth(wd).replace("\n</usr/local/texlive/", "\n" + self.PK.replace(self.DEFAULT, run_var)
+                                     + "</usr/local/texlive/", 1)
+        saved = tiers.engine_version
+        tiers.engine_version = lambda pdftex: "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        try:
+            with tempfile.TemporaryDirectory() as d, self.run_as(run_var):
+                doc = {"entry": "main.tex", "dir": os.path.join(d, "src")}
+                os.makedirs(doc["dir"])
+                key = tiers.oracle_key(doc, tiers.engine_version(None), True, "t")
+                odir = os.path.join(d, "pt-oracle", key[:2], key)
+                os.makedirs(odir)
+                with gzip.open(os.path.join(odir, "log.gz"), "wt", encoding="latin-1") as f:
+                    f.write(old_cached)
+                open(os.path.join(odir, "reference.pdf"), "wb").close()
+                with open(os.path.join(odir, "oracle.json"), "w", encoding="utf-8") as f:
+                    json.dump({"ok": True, "key": key, "generated_v": tiers.GENERATED_V,
+                               "log_chars": len(old_cached)}, f)
+                meta, ref_cap, _ = tiers.oracle(doc, "pdftex", d, True, "t")  # the in-memory path
+                self.assertTrue(meta["cached"])
+                cand_log = capture.normalise_log(cand_raw, wd)
+                cand_cap = capture.Capture(cand_log, capture.split_boxes(cand_log), "x.pdf")
+                self.assertTrue(tiers.compare_pt1(ref_cap, cand_cap)["ok"])
+                streamed = tiers.compare_pt1_streamed(pt1stream.fingerprint_gz(os.path.join(odir, "log.gz")),
+                                                      pt1stream.Stream(wd).feed(cand_raw.encode("latin-1")).close())
+                self.assertTrue(streamed["ok"], streamed)  # oracle_fingerprint's path from a cached log
+                # a PK font from a third directory is still a difference
+                other = cand_raw.replace(run_var, "/elsewhere/texmf-var")
+                other_log = capture.normalise_log(other, wd)
+                self.assertFalse(tiers.compare_pt1(ref_cap, capture.Capture(other_log, capture.split_boxes(other_log),
+                                                                            "x.pdf"))["ok"])
+        finally:
+            tiers.engine_version = saved
+
+    def test_texmfvar_set_or_unset_to_the_same_directory_passes(self):
+        ref = self.fingerprint(self.log("/w/oracle/work-1"), "/w/oracle/work-1", self.DEFAULT)
+        cand_text = self.log("/w/cand/x", strings_max=467558)
+        cand = self.fingerprint(cand_text, "/w/cand/x", None)
+        r = tiers.compare_pt1_streamed(ref, cand)
+        self.assertEqual((r["ok"], r["boxes_equal"], r["log_equal"], r["shipouts"]), (True, True, True, [4, 4]), r)
+        self.assertFalse(r["accounting"]["equal"])  # reported, never gating (DESIGN §1.1)
+        self.assertEqual(r["accounting"]["first"]["candidate"], " 492 strings out of 467558")
+        # the rule before the fix (an unset TEXMFVAR left alone): the false failure, in the last segment
+        old = tiers.compare_pt1_streamed(ref, self.fingerprint(cand_text, "/w/cand/x", None, default=""))
+        self.assertEqual((old["ok"], old["boxes_equal"], old["log_equal"]), (False, True, False))
+        self.assertEqual(old["log_lines"]["from"], ref["strict"]["segments"][-1][1])
+
+    def test_a_real_strict_difference_still_fails(self):
+        ref = self.fingerprint(self.log("/w/oracle/work-1"), "/w/oracle/work-1", self.DEFAULT)
+        for texmfvar in (None, self.DEFAULT):
+            cand = self.fingerprint(self.log("/w/cand/x", plant="byte"), "/w/cand/x", texmfvar)
+            r = tiers.compare_pt1_streamed(ref, cand)
+            self.assertEqual((r["ok"], r["boxes_equal"], r["log_equal"]), (False, True, False), texmfvar)
+            mid = ref["strict"]["lines"] // 2
+            self.assertLessEqual(r["log_lines"]["from"], mid + ref["strict"]["lines"] // 20)
+            self.assertLess(r["log_lines"]["to"], ref["strict"]["lines"])  # localised, not the trailer
+        # a PK font from any other directory is still a difference
+        other = self.log("/w/cand/x").replace(self.DEFAULT, "/elsewhere/texmf-var")
+        r = tiers.compare_pt1_streamed(ref, self.fingerprint(other, "/w/cand/x", None))
+        self.assertEqual((r["ok"], r["log_equal"]), (False, False))
+
+    def test_a_cached_log_normalised_under_the_old_rule_is_renormalised(self):
+        # an in-memory oracle entry cached with TEXMFVAR unset names the directory; reading it (tiers.oracle,
+        # oracle_fingerprint's Stream(None)) applies the TEXMFVAR pairs, which change nothing in a newer one
+        wd = "/w/oracle/work-1"
+        cached_old = self.log(wd).replace(wd, "<WORKDIR>")
+        new = self.fingerprint(self.log(wd), wd, None)
+        self.assertEqual(self.fingerprint(cached_old, None, None)["strict"], new["strict"])
+        cached_new = cached_old.replace(self.DEFAULT, "<TEXMFVAR>")
+        self.assertEqual(self.fingerprint(cached_new, None, None)["strict"], new["strict"])
+
+    def test_v1_streamed_oracle_entry_is_kept_only_without_a_type3_font(self):
+        saved = tiers.embeds_type3
+        try:
+            for type3, stale in ((False, False), (True, True)):
+                with tempfile.TemporaryDirectory() as odir:
+                    fpp = os.path.join(odir, tiers.FINGERPRINT)
+                    with open(fpp, "w", encoding="utf-8") as f:
+                        json.dump({"v": 1, "strict": {}}, f)
+                    tiers.embeds_type3 = lambda pdf, t=type3: t
+                    meta = {"ok": True, "log_unread": True, "trace_timeout": capture.TIMEOUT}
+                    self.assertEqual(tiers.stale_entry(meta, odir), stale, type3)
+                    with open(fpp, encoding="utf-8") as f:
+                        self.assertEqual(json.load(f)["v"], 1 if stale else pt1stream.V)
+            tiers.embeds_type3 = lambda pdf: self.fail("a current fingerprint needs no PDF check")
+            with tempfile.TemporaryDirectory() as odir:
+                with open(os.path.join(odir, tiers.FINGERPRINT), "w", encoding="utf-8") as f:
+                    json.dump({"v": pt1stream.V}, f)
+                self.assertFalse(tiers.stale_entry({"ok": True, "log_unread": True}, odir))
+        finally:
+            tiers.embeds_type3 = saved
+
+
+@unittest.skipUnless(os.environ.get("FLASHTEX_PT1_BIG_GB"), "set FLASHTEX_PT1_BIG_GB=N to stream two N GB logs")
+class PTStreamBig(unittest.TestCase):
+    """Multi-gigabyte synthetic logs through a real named pipe, in constant
+    memory (measure it: /usr/bin/time -l python3 -m unittest
+    test_parity.PTStreamBig). Nothing is written to disk."""
+
+    def fingerprint_through_pipe(self, d, wd, size, plant):
+        p = os.path.join(d, "main.log")
+        t0 = time.time()
+        with pt1stream.LogPipe(p, wd, None) as pipe:  # streamed from the first byte, as a candidate
+            def write():
+                with open(p, "wb") as f:
+                    for c in synth_chunks(wd, size, pages=40, plant=plant):
+                        f.write(c)
+            w = threading.Thread(target=write)
+            w.start()
+            w.join()
+        secs = time.time() - t0
+        print(f"\n  {pipe.fingerprint['bytes'] / (1 << 30):.2f} GiB in {secs:.1f} s "
+              f"({pipe.fingerprint['bytes'] / (1 << 20) / secs:.0f} MiB/s), plant={plant}", file=sys.stderr)
+        return pipe.fingerprint
+
+    def test_one_byte_in_the_middle_of_a_multi_gigabyte_log(self):
+        size = int(float(os.environ["FLASHTEX_PT1_BIG_GB"]) * (1 << 30))
+        with tempfile.TemporaryDirectory() as d:
+            ref = self.fingerprint_through_pipe(d, "/w/ref", size, None)
+            same = self.fingerprint_through_pipe(d, "/w/cand/x", size, None)
+            byte = self.fingerprint_through_pipe(d, "/w/cand/x", size, "byte")
+        self.assertGreaterEqual(ref["bytes"], size * 0.95)
+        self.assertTrue(tiers.compare_pt1_streamed(ref, same)["ok"])
+        r = tiers.compare_pt1_streamed(ref, byte)
+        self.assertEqual((r["ok"], r["boxes_equal"], r["log_equal"]), (False, True, False))
+        mid = ref["strict"]["lines"] // 2
+        self.assertLess(abs(r["log_lines"]["from"] - mid), ref["strict"]["lines"] // 100, r["log_lines"])
+
+
+@contextlib.contextmanager
+def lean_first_line_diff():
+    """tiers.first_line_diff without its split of both logs into lines (two
+    copies of a 400 MB log as line objects): the verdict only needs whether
+    they differ, and VERDICT holds no line numbers."""
+    saved = tiers.first_line_diff
+    tiers.first_line_diff = lambda a, b: None if a == b else (0, "", "")
+    try:
+        yield
+    finally:
+        tiers.first_line_diff = saved
+
+
+def fixture_logs():
+    """(document id, cached oracle log.gz) of every fixture the local P-T oracle cache holds."""
+    if not PDFTEX:
+        return []
+    version, cache = tiers.engine_version(PDFTEX), corpus.default_cache()
+    out, saved = [], capture.SHELL_ESCAPE
+    try:
+        for doc in parity.fixture_documents():
+            h = parity.tree_hash(doc["dir"])
+            for flag in (saved, None, "-no-shell-escape", "-shell-restricted"):  # any \write18 setting's log will do
+                capture.SHELL_ESCAPE = flag
+                key = tiers.oracle_key(doc, version, True, h)
+                logz = os.path.join(cache, "pt-oracle", key[:2], key, "log.gz")
+                if os.path.isfile(logz):
+                    out.append((doc["id"], logz))
+                    break
+    finally:
+        capture.SHELL_ESCAPE = saved
+    return out
+
+
+@unittest.skipUnless(fixture_logs(), "needs pdfTeX and fixture logs in the P-T oracle cache (run --tier fixtures "
+                                     "--engine <pdftex> once)")
+class PTStreamFixtures(unittest.TestCase):
+    """Every fixture's real pdfTeX traced log, against itself and planted
+    changes: the streamed verdict is the in-memory one."""
+
+    def test_every_fixture(self):
+        # every fixture takes minutes (each log is 10-400 MB): by default the three smallest,
+        # FLASHTEX_PT1_FIXTURES=all for every one
+        logs = sorted(fixture_logs(), key=lambda x: os.path.getsize(x[1]))
+        if os.environ.get("FLASHTEX_PT1_FIXTURES") != "all":
+            logs = logs[:3]
+        n = 0
+        for did, logz in logs:
+            with gzip.open(logz, "rt", encoding="latin-1") as f:
+                log = f.read()
+            mid = log.find("\n", len(log) // 2)  # the end of a line in the middle
+            variants = {"self": lambda: log,  # made one at a time: a log is up to 400 MB
+                        "a byte": lambda: log[:mid] + "~" + log[mid:],
+                        "Memory usage mid-log": lambda: log[:mid + 1] + ACC_MEM + "\n" + log[mid + 1:],
+                        "truncated": lambda: log[:mid],
+                        "bytes only": lambda: re.sub(r"(pages?), \d+ bytes\)", r"\1, 1 bytes)", log)}
+            ref, ref_fp = capture.Capture(log, capture.split_boxes(log), None), pt1stream.fingerprint_text(log)
+            for name, make in variants.items():
+                v = make()
+                with lean_first_line_diff():
+                    m = verdict(tiers.compare_pt1(ref, capture.Capture(v, capture.split_boxes(v), None)))
+                st = verdict(tiers.compare_pt1_streamed(ref_fp, pt1stream.fingerprint_text(v)))
+                del v
+                self.assertEqual(m, st, (did, name))
+                if name == "self":
+                    self.assertTrue(st["ok"], did)
+            del ref, log
+            n += 1
+        print(f"\n  {n} of {len(fixture_logs())} fixture logs", file=sys.stderr)
+        self.assertGreater(n, 0)
+
+
+class WorkCleanup(unittest.TestCase):
+    """The oracle's `work-<pid>` directory goes on every exit path; one left
+    by a killed process is swept at startup."""
+
+    def work_dirs(self, cache):
+        return glob.glob(os.path.join(cache, "pt-oracle", "*", "*", "work-*"))
+
+    def test_success_exception_and_timeout_remove_the_work_dir(self):
+        doc = {"id": "d", "entry": "main.tex", "dir": HERE}
+        saved = tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as cache:
+            def boom(_doc, _exe, work, **_kw):
+                os.makedirs(work)
+                with open(os.path.join(work, "main.log"), "w") as f:
+                    f.write("x" * 1000)
+                raise RuntimeError("the engine's bin vanished")
+
+            def stopped(_doc, _exe, work, **_kw):
+                os.makedirs(work)
+                return {"ok": False, "trace_incomplete": tiers.TRACE_TIMEOUT.format(5), "trace_timed_out": True,
+                        "why": "timeout"}, None, None
+            try:
+                tiers.engine_version = lambda _exe: "pdfTeX stub"
+                tiers.run_tex = boom
+                with self.assertRaises(RuntimeError):
+                    tiers.oracle(doc, "/stub", cache, True, "t")
+                self.assertEqual(self.work_dirs(cache), [])
+                tiers.run_tex = stopped
+                meta, _, _ = tiers.oracle(doc, "/stub", cache, True, "t2")
+                self.assertTrue(meta["trace_timed_out"])
+                self.assertEqual(self.work_dirs(cache), [])
+                self.assertEqual(tiers.ACTIVE_WORK, set())
+            finally:
+                tiers.engine_version, tiers.run_tex = saved
+
+    def test_sigterm_removes_the_work_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache, src = os.path.join(d, "cache"), os.path.join(d, "src")
+            os.makedirs(src)
+            ref = os.path.join(src, "ref.pdf")
+            open(ref, "wb").close()
+            child = f"""
+import os, sys, time
+sys.path.insert(0, {HERE!r})
+import parity, tiers
+parity.set_shell_escape("-no-shell-escape")  # as the pool's initializer: the SIGTERM handler
+def slow(_doc, _exe, work, **_kw):
+    os.makedirs(work)
+    open(os.path.join(work, "main.log"), "w").write("x" * 1000)
+    time.sleep(120)
+tiers.run_tex, tiers.engine_version = slow, lambda _exe: "pdfTeX stub"
+doc = {{"id": "x", "tier": "fixtures", "dir": {src!r}, "entry": "main.tex", "reference": {ref!r}}}
+cfg = {{"pt": "on", "oracle_pdftex": "/stub", "cache": {cache!r}, "engine_kind": "tex", "work": {d!r} + "/work",
+       "keep_work": False, "regenerate": False, "texbin": None, "pt1_skip": []}}
+parity.score_safe(doc, cfg)
+sys.exit(0)
+"""
+            p = subprocess.Popen([sys.executable, "-c", child])
+            try:
+                for _ in range(300):
+                    if self.work_dirs(cache):
+                        break
+                    time.sleep(0.1)
+                self.assertTrue(self.work_dirs(cache), "the child never started its oracle run")
+                p.send_signal(signal.SIGTERM)
+                self.assertEqual(p.wait(60), 128 + signal.SIGTERM)
+            finally:
+                if p.poll() is None:
+                    p.kill()
+            self.assertEqual(self.work_dirs(cache), [])
+
+    def test_sigterm_exits_even_when_terminated_is_swallowed(self):
+        """A `Terminated` raised in a `__del__` is printed and dropped, and one
+        raised inside subprocess's lock handling can leave the worker blocked
+        on that lock; either way the worker must still exit, or the pool's
+        join of it hangs the run (CI, 2026-10). A second SIGTERM exits at once.
+        (With two signals the grace is long, 60 s, so "at once" is told apart
+        from "after the grace" with no tight bound on a loaded runner.)"""
+        for signals, grace in ((1, 0.5), (2, 60.0)):
+            child = f"""
+import sys, time
+sys.path.insert(0, {HERE!r})
+import parity
+parity.TERM_GRACE = {grace!r}
+parity.set_shell_escape("-no-shell-escape")  # installs the worker's SIGTERM handler
+print("ready", flush=True)
+while True:
+    try:
+        time.sleep(0.05)
+    except BaseException:  # what a __del__ does to an exception
+        pass
+"""
+            p = subprocess.Popen([sys.executable, "-c", child], stdout=subprocess.PIPE)
+            try:
+                self.assertEqual(p.stdout.readline().strip(), b"ready")
+                t0 = time.monotonic()
+                for _ in range(signals):
+                    p.send_signal(signal.SIGTERM)
+                    time.sleep(0.05)
+                self.assertEqual(p.wait(30), 128 + signal.SIGTERM)
+                if signals == 2:
+                    self.assertLess(time.monotonic() - t0, grace / 2)  # before the grace ran out
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                p.wait(30)
+                p.stdout.close()
+
+    def test_stale_work_dirs_are_swept_at_startup(self):
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait(60)
+        live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                cache = os.path.join(d, "cache")
+                entry = os.path.join(cache, "pt-oracle", "ab", "ab" + "0" * 62)
+                for name in (f"work-{dead.pid}", f"work-{live.pid}", "work-notapid"):
+                    os.makedirs(os.path.join(entry, name))
+                    with open(os.path.join(entry, name, "main.log"), "w") as f:
+                        f.write("left by a killed worker")
+                probe = os.path.join(d, "probe")
+                with open(probe, "w") as f:
+                    f.write("#!/bin/sh\ncase \"$1\" in --version) echo 'pdfTeX probe'; exit 0;; esac\nexit 1\n")
+                os.chmod(probe, 0o755)
+                with watchdog():
+                    parity.main(["--tier", "fixtures", "--only", "real-world/article-twocolumn", "--engine", probe,
+                                 "--pt", "off", "--raster", "none", "-j", "1", "--out", os.path.join(d, "out"),
+                                 "--work", os.path.join(d, "work"), "--cache", cache])
+                left = sorted(os.path.basename(x) for x in self.work_dirs(cache))
+                self.assertEqual(left, sorted([f"work-{live.pid}", "work-notapid"]))
+                for pid in (dead.pid, live.pid):  # a half-written cache file of each
+                    with open(os.path.join(entry, f"log.gz.{pid}.tmp"), "w") as f:
+                        f.write("partial")
+                self.assertEqual([os.path.basename(x) for x in tiers.sweep_stale_work(cache)], [f"log.gz.{dead.pid}.tmp"])
+                self.assertTrue(os.path.isfile(os.path.join(entry, f"log.gz.{live.pid}.tmp")))
+        finally:
+            live.kill()
+            live.wait()
+
+
+@unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
+class PT2SizeCap(unittest.TestCase):
+    """P5-BOARD-T4: a PDF whose qdf copy is over the cap is a harness error (unmeasured),
+    never a P-T2 pass or fail, and qpdf stops writing at the cap (T4 2511.15561v1: 3.0 GB)."""
+
+    def test_over_the_cap_raises_and_leaves_nothing(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        src = os.path.join(d, "a.pdf")
+        body = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages "
+                b"/Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] "
+                b">>\nendobj\ntrailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n")
+        with open(src, "wb") as f:
+            f.write(body)
+        out = os.path.join(d, "a.qdf.pdf")
+        old = tiers.PT2_MAX_QDF_BYTES
+        try:
+            tiers.PT2_MAX_QDF_BYTES = 64
+            with self.assertRaises(tiers.PT2TooLarge):
+                tiers.normalise_pdf(src, out)
+            self.assertFalse(os.path.exists(out))
+            self.assertFalse(issubclass(tiers.PT2TooLarge, tiers.pdftext.PdfError))  # compare_pt2 lets it through
+        finally:
+            tiers.PT2_MAX_QDF_BYTES = old
+        tiers.normalise_pdf(src, out)  # under the default cap: as before
+        self.assertTrue(os.path.getsize(out) > 0)
+
+    def predictor_pdf(self, d, name, pixels, width, level, png_filter):
+        """A one-page PDF whose RGB image is Flate with a PNG predictor (as pdfTeX's PNG
+        copy writes it), every row with `png_filter` (0 None, 1 Sub), at zlib `level`."""
+        import zlib
+        bpp, rowbytes = 3, width * 3
+        rows = []
+        for y in range(len(pixels) // rowbytes):
+            row = pixels[y * rowbytes:(y + 1) * rowbytes]
+            if png_filter == 1:
+                row = bytes((row[i] - (row[i - bpp] if i >= bpp else 0)) & 0xff for i in range(rowbytes))
+            rows.append(bytes([png_filter]) + row)
+        data = zlib.compress(b"".join(rows), level)
+        img = (b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /BitsPerComponent 8 "
+               b"/ColorSpace /DeviceRGB /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 "
+               b"/Columns %d >> /Length %d >>\nstream\n" % (width, len(rows), width, len(data))) + data + b"\nendstream"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] /Resources << /XObject << /Im1 5 0 R >> >> "
+                b"/Contents 4 0 R >>",
+                b"<< /Length 18 >>\nstream\nq 9 0 0 9 0 0 cm /Im1 Do Q\nendstream", img]
+        body = b"%PDF-1.4\n" + b"".join(b"%d 0 obj\n%s\nendobj\n" % (i + 1, o) for i, o in enumerate(objs))
+        body += b"trailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n"
+        p = os.path.join(d, name)
+        with open(p, "wb") as f:
+            f.write(body)
+        return p
+
+    def test_same_pixels_other_encoding_is_equal(self):
+        """#1635 review: a Flate image with a PNG predictor is compared by its samples, not by
+        zlib's bytes (--recompress-flate): the same pixels at another level and with another
+        PNG row filter pass, and one changed pixel fails."""
+        import random
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        rnd = random.Random(1635)
+        width, height = 40, 30
+        pixels = bytes(rnd.randrange(256) for _ in range(width * height * 3))
+        a = self.predictor_pdf(d, "a.pdf", pixels, width, 9, 0)
+        b = self.predictor_pdf(d, "b.pdf", pixels, width, 1, 1)
+        self.assertTrue(tiers.compare_pt2(a, b, os.path.join(d, "w1"))["ok"])
+        changed = bytearray(pixels)
+        changed[1234] ^= 1
+        c = self.predictor_pdf(d, "c.pdf", bytes(changed), width, 9, 0)
+        r = tiers.compare_pt2(a, c, os.path.join(d, "w2"))
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["first_page"]["differs"], ["resources"])
+
+    def test_qdf_keeps_images_compressed_and_the_digest_is_unchanged(self):
+        """#1621: the qdf copy is written compressed (--compress-streams=y), and an image's
+        digest is the streamed one, equal to hashing its decoded, padding-cleared samples."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        rows = bytes([0xAA, 0b11101110] * 600)  # 9 px at 1 bit, 600 rows, padding bits set
+        img = (b"<< /Type /XObject /Subtype /Image /Width 9 /Height 600 /BitsPerComponent 1 "
+               b"/ColorSpace /DeviceGray /Length %d >>\nstream\n" % len(rows)) + rows + b"\nendstream"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] /Resources << /XObject << /Im1 5 0 R >> >> "
+                b"/Contents 4 0 R >>",
+                b"<< /Length 18 >>\nstream\nq 9 0 0 9 0 0 cm /Im1 Do Q\nendstream", img]
+        body = b"%PDF-1.4\n" + b"".join(b"%d 0 obj\n%s\nendobj\n" % (i + 1, o) for i, o in enumerate(objs))
+        body += b"trailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n"
+        src, out = os.path.join(d, "i.pdf"), os.path.join(d, "i.qdf.pdf")
+        with open(src, "wb") as f:
+            f.write(body)
+        tiers.normalise_pdf(src, out)
+        doc = tiers.pdftext.PdfDocument.load(out)
+        g = tiers.Graph(doc)
+        nums = [n for n, (o, raw) in doc.objects.items() if isinstance(o, dict) and o.get("Subtype") == "Image"]
+        self.assertEqual(len(nums), 1)
+        obj, raw = doc.objects[nums[0]]
+        self.assertEqual(obj.get("Filter"), "FlateDecode")  # compressed in the copy
+        self.assertLess(len(raw), len(rows))
+        cleared = bytes([0xAA, 0b10000000] * 600)
+        self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(cleared))
+        self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(g.stream(nums[0])))
+
+
+class RowPadding(unittest.TestCase):
+    """P5-BOARD-T4: pdfTeX leaves heap bytes in the unused bits of a sub-byte image row
+    (writepng.c's uninitialised row buffer and libpng's png_combine_row), so P-T2
+    compares image samples with those bits cleared, and every pixel still counts."""
+
+    class Doc:
+        def __init__(self, objs=None):
+            self.objs = objs or {}
+
+        def resolve(self, x):
+            return self.objs.get(x, x) if isinstance(x, (str, int)) else x
+
+    def image(self, width, **over):
+        o = {"Subtype": "Image", "Width": width, "Height": 2, "BitsPerComponent": 1,
+             "ColorSpace": ["Indexed", "DeviceRGB", 1, b"\x00\x00\x00\xff\xff\xff"]}
+        o.update(over)
+        return o
+
+    def test_padding_cleared_pixels_kept(self):
+        doc = self.Doc()
+        # 9 px at 1 bit: 2 bytes a row, 7 padding bits in the second
+        a = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b11101110, 0x55, 0b01101110]))
+        b = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b10000000, 0x55, 0b00000000]))
+        self.assertEqual(a, b)
+        c = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b00000000, 0x55, 0b00000000]))
+        self.assertNotEqual(a, c)  # the 9th pixel differs: still a difference
+
+    def test_left_alone(self):
+        doc = self.Doc()
+        whole = bytes([1, 2, 3, 4])
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(16), whole), whole)  # rows end on a byte
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(9), b"\xff" * 3), b"\xff" * 3)  # not plain rows
+        self.assertEqual(tiers.clear_row_padding(doc, {"Subtype": "Form"}, b"\xff\xff"), b"\xff\xff")
+        unknown = self.image(9, ColorSpace="Unknown")
+        self.assertEqual(tiers.clear_row_padding(doc, unknown, b"\xff" * 4), b"\xff" * 4)
+
+    def test_streamed_digest_is_the_in_memory_one(self):
+        """#1621: image_digest hashes an image as a stream, in chunks; it must give exactly
+        sha(clear_row_padding(decoded)) whatever the chunk boundaries."""
+        import random
+        import zlib
+        rnd = random.Random(1621)
+        doc = self.Doc()
+        old = tiers.DIGEST_CHUNK
+        try:
+            for chunk in (1, 7, 64, 1 << 20):
+                tiers.DIGEST_CHUNK = chunk
+                for width, h in ((9, 5), (16, 3), (977, 4), (1, 1)):
+                    o = self.image(width, Height=h, Filter="FlateDecode")
+                    rowbytes = (width + 7) // 8
+                    data = bytes(rnd.randrange(256) for _ in range(rowbytes * h))
+                    want = tiers.sha(tiers.clear_row_padding(doc, o, data))
+                    self.assertEqual(tiers.image_digest(doc, o, zlib.compress(data)), want, (chunk, width))
+                    # not plain rows (a longer stream): the plain digest, as clear_row_padding leaves it
+                    more = data + b"\xff"
+                    self.assertEqual(tiers.image_digest(doc, o, zlib.compress(more)), tiers.sha(more))
+        finally:
+            tiers.DIGEST_CHUNK = old
+        # anything but plain /FlateDecode is the caller's to decode as before
+        self.assertIsNone(tiers.image_digest(doc, self.image(9, Filter="DCTDecode"), b"x"))
+        self.assertIsNone(tiers.image_digest(doc, self.image(9, Filter="FlateDecode",
+                                                             DecodeParms={"Predictor": 15}), b"x"))
+        self.assertIsNone(tiers.image_digest(doc, {"Subtype": "Form", "Filter": "FlateDecode"}, b"x"))
+        with self.assertRaises(zlib.error):
+            tiers.image_digest(doc, self.image(9, Filter="FlateDecode"), zlib.compress(b"\x00" * 40)[:-6])
+
+    def test_components_from_the_colour_space(self):
+        doc = self.Doc({"icc": {"N": 3}})
+        rgb = self.image(3, ColorSpace="DeviceRGB", BitsPerComponent=4)  # 36 bits: 5 bytes, 4 spare bits
+        out = tiers.clear_row_padding(doc, rgb, b"\xff" * 10)
+        self.assertEqual(out, b"\xff\xff\xff\xff\xf0" * 2)
+        icc = self.image(3, ColorSpace=["ICCBased", "icc"], BitsPerComponent=4)
+        self.assertEqual(tiers.clear_row_padding(doc, icc, b"\xff" * 10), out)
+        mask = {"Subtype": "Image", "Width": 9, "Height": 1, "ImageMask": True}
+        self.assertEqual(tiers.clear_row_padding(doc, mask, b"\xff\xff"), b"\xff\x80")
 
 
 if __name__ == "__main__":

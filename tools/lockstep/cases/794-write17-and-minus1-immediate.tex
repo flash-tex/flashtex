@@ -1,0 +1,8 @@
+% 794-write17-and-minus1-immediate: verifies \immediate\write17 and \immediate\write-1 both reach the log.
+\input prelude
+\immediate\write17{to terminal 794}
+\immediate\write-1{to log 794}
+\message{794 marker done}
+\setbox0=\hbox{\vrule width94pt height8pt depth2pt}
+\lsshipbox0
+\end

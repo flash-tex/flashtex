@@ -1,0 +1,8 @@
+% Verifies that \omit in \valign skips the column template: box0 omits the second cell so its column vbox lacks the \kern10.0 template strut present in box1 (dimensions agree, dumps differ).
+\input prelude
+\setbox0=\hbox{\valign{\kern10pt#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\omit\hbox{\vrule width8pt height10pt depth2pt}\cr}}
+\setbox1=\hbox{\valign{\kern10pt#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\hbox{\vrule width8pt height10pt depth2pt}\cr}}
+\message{869 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

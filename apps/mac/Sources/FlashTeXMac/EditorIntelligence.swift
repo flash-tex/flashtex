@@ -394,19 +394,20 @@ enum EditorIntelligence {
         static let kernelByName: [String: KernelCommand] = Dictionary(kernel.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
 
         /// Standard LaTeX commands and environments the hover documents
-        /// although the compiler does not render them (it diagnoses them, so
-        /// the editor still explains what the user typed). Every other `table`
-        /// / `environments` key names a command or environment of the
-        /// compiler's inventory (`Completion.Vocabulary.inventory`;
-        /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
-        /// name listed here must leave the list once the compiler renders it.
+        /// although the bundled vocabulary does not list them: control
+        /// symbols (`\\`, `\,`, `\%`), which the probe does not measure,
+        /// commands of classes other than article (`\chapter`, `\part`), and
+        /// kernel commands the annotations do not present (`\def`,
+        /// `\newline`). Every other `table` / `environments` key names a
+        /// command or environment of the vocabulary
+        /// (`Completion.Vocabulary.inventory`;
+        /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a name
+        /// listed here must leave the list once the vocabulary lists it.
         static let beyondCompiler: Set<String> = [
-            "chapter", "autoref",
-            "def", "newline", "%", "$", "&", "#", "_", "{", "}",
-            "geometry", "onehalfspacing", "doublespacing",
+            "chapter", "part", "def", "newline", "\\", ",", "%", "$", "&", "#", "_", "{", "}",
         ]
         static let environmentsBeyondCompiler: Set<String> = [
-            "abstract", "minted", "theorem", "tikzpicture", "minipage",
+            "abstract", "lstlisting", "minted", "theorem", "frame",
         ]
 
         static func environmentDocumentation(for name: String) -> String? {
@@ -590,6 +591,14 @@ final class LineNumberGutter: NSRulerView {
         needsDisplay = true
     }
 
+    /// Redraws after an edit that moved lines (SourceEditorView's
+    /// textDidChange, CompletingTextView's edit tail); counted for tests.
+    private(set) var editRedraws = 0
+    func redrawAfterEdit() {
+        editRedraws += 1
+        needsDisplay = true
+    }
+
     init(scrollView: NSScrollView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         clientView = scrollView.documentView
@@ -656,7 +665,7 @@ final class LineNumberGutter: NSRulerView {
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let tv = textView, let lm = tv.layoutManager, let container = tv.textContainer, let table = lineTable?() else { return }
-        (tv.backgroundColor).setFill()
+        SyntaxTheme.gutterBackground.setFill() // the editor theme's gutter ground (EditorThemes.swift)
         bounds.fill()
         // Hairline separator.
         DS.NSColors.gutterHairline.setFill()
@@ -762,10 +771,10 @@ final class LineNumberGutter: NSRulerView {
 final class HoverController: NSResponder {
     static let delay: TimeInterval = 0.45
     var info: (Int) -> EditorIntelligence.QuickInfo? = { _ in nil }
-    /// Inline math preview (MathHoverPreview.swift): the formula's cropped
+    /// Inline math preview (EngineV3MathHover.swift): the formula's cropped
     /// bitmap and its range, when `index` is inside one. Tried before `info`,
     /// so a formula's crop wins over a command's quick info inside it (e.g.
-    /// `\alpha`); the owner's closure already applies `previewIsStale` and
+    /// `\alpha`); the owner's closure already applies the staleness and
     /// the "reads only the current bitmap" rule, so nil here just means "no
     /// preview" — hover falls back to `info`.
     var mathPreview: (Int) -> (image: CGImage, range: NSRange)? = { _ in nil }
@@ -857,7 +866,7 @@ final class HoverController: NSResponder {
 
     /// Records a presented math preview for `presentedMathPreviews` (evidence
     /// for tests); `presentedMathPreviews`'s setter is file-private, so
-    /// `presentMathPreview(_:range:in:)` (MathHoverPreview.swift) goes through this.
+    /// `presentMathPreview(_:range:in:)` (EngineV3MathHover.swift) goes through this.
     func recordMathPreview(_ range: NSRange) {
         presentedMathPreviews.append(range)
         if presentedMathPreviews.count > 32 { presentedMathPreviews.removeFirst(presentedMathPreviews.count - 32) }

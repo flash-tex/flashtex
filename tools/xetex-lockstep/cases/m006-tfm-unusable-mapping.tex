@@ -1,0 +1,8 @@
+% m006-tfm-unusable-mapping: a TFM font with a Unicode-to-Unicode mapping (tex-text): not usable
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\font\t=cmr10:mapping=tex-text \t
+\setbox0=\hbox{``x''}
+\lsshipbox0
+\end

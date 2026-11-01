@@ -1,0 +1,18 @@
+% Verifies \string of the backslash control symbol honors \escapechar, yielding two backslashes or one.
+\input prelude
+\font\f=cmr10
+\escapechar=92
+\edef\sa{\string\\}
+\message{723 esc92=\meaning\sa}
+\escapechar=-1
+\edef\sb{\string\\}
+\message{723 esc-1=\meaning\sb}
+\escapechar=`\@
+\edef\sc{\string\\}
+\message{723 esc-AT=\meaning\sc}
+\setbox0=\hbox{\f\sa}
+\setbox1=\hbox{\f\sb}
+\message{723 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

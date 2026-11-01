@@ -1,0 +1,9 @@
+% 1016-rule-spec: verifies rule keywords in any order and bare-rule defaults (tex.web §463)
+\input prelude
+\setbox0=\hbox{\vrule height3pt depth2pt width1pt}
+\setbox1=\hbox{\vrule}
+\message{1016 r0=\the\wd0,\the\ht0,\the\dp0}
+\message{1016 r1=\the\wd1,\the\ht1,\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,9 @@
+% 1260-fontdimen-quad-cmmi: reads back the default quad (fontdimen 6) of cmmi10, then assigns it; both values show as glue in the shipped boxes (tex.web §578).
+\input prelude
+\font\mymi=cmmi10
+\message{1260 quad-default=\the\fontdimen6\mymi}
+\setbox0=\hbox{\mymi\hskip\fontdimen6\mymi\vrule width10pt height8pt depth2pt}
+\fontdimen6\mymi=20pt
+\setbox1=\hbox{\mymi\hskip\fontdimen6\mymi\vrule width10pt height8pt depth2pt}
+\lsshipbox0 \lsshipbox1
+\end

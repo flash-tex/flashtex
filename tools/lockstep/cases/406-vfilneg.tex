@@ -1,0 +1,6 @@
+% 406-vfilneg: verifies \vfilneg cancels preceding \vfil stretch in a \vbox to.
+\input prelude
+\setbox0=\vbox to 60pt{\hrule width50pt height10pt depth0pt\vskip0pt plus1fil\vfilneg\vskip0pt plus1fil\hrule width50pt height10pt depth0pt}
+\message{406 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

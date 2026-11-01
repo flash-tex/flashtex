@@ -1,0 +1,8 @@
+\input prelude
+\def\greet{hello}
+\edef\both{\greet\ world}
+\message{001 greet=\meaning\greet}
+\message{001 both=\meaning\both}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

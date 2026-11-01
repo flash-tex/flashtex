@@ -1,0 +1,11 @@
+\input prelude % Verifies \pdfsavepos heights read via \pdflastypos typeset as digits.
+\font\f=cmr10
+\setbox0=\vbox{\pdfsavepos\vskip10pt}
+\lsshipbox0
+\setbox0=\hbox{\f Y=\the\pdflastypos}
+\lsshipbox0
+\setbox0=\vbox{\pdfsavepos\vskip50pt}
+\lsshipbox0
+\setbox0=\hbox{\f Y=\the\pdflastypos}
+\lsshipbox0
+\end

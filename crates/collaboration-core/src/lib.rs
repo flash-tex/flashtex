@@ -49,6 +49,16 @@
 //! guarantee. [`PendingOps`] buffers operations that arrive before their
 //! dependency (e.g. a reordered backlog after a reconnect) instead of
 //! rejecting them; see it for the chosen recovery strategy.
+//!
+//! # `collab-v1` (module [`v1`])
+//!
+//! Live collaboration (docs/design/live-collab/PROPOSAL.md) uses the [`v1`]
+//! module, not the API above: run-encoded FugueMax text operations, a
+//! file-map CRDT keyed by `FileId`, state-vector sync and the `collab-v1`
+//! codec (docs/contracts/collab-v1.md). It is the reference oracle the
+//! Swift product core (`apps/mac/Sources/FlashTeXCollabCore`) is checked
+//! against through shared fixtures. The two APIs are independent and not
+//! wire-compatible.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -56,6 +66,7 @@ use std::fmt;
 
 mod checkpoint;
 mod recovery;
+pub mod v1;
 
 pub use checkpoint::{Checkpoint, CheckpointDecodeError, CheckpointError};
 pub use recovery::PendingOps;

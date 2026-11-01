@@ -1,0 +1,8 @@
+% 1805-loose-vbox-small-excess: a small vertical excess prints Loose instead of Underfull once vbadness drops below the badness (tex.web § 674)
+% new versus 615-vbadness-mid-threshold: 615 silences its badness-12 vbox; here vbadness=0 lets the Loose report through
+\input prelude
+\vbadness=0
+\setbox0=\vbox to 45pt{\hrule width40pt height30pt depth0pt\vskip 10pt plus 10pt}
+\message{1805 badness=\the\badness}
+\lsshipbox0
+\end

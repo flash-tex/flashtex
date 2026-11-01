@@ -1,0 +1,7 @@
+% 1607-forced-penalty-break: verifies a mid-paragraph \penalty-10000 forces a line break there (two lines, the first underfull) while the same words without it set as one line (tex.web §§ 831, 866)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=300pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma delta epsilon zeta eta\par\message{1607 plain lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=300pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma\penalty-10000 delta epsilon zeta eta\par\message{1607 forced lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

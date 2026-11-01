@@ -1,3 +1,17 @@
+> **GOVERNING DESIGN — 2026-09-29 (supersedes every staffing/override block below).**
+> FlashTeX is building a faithful pdfTeX-compatible engine per
+> [`docs/design/engine-v2/DESIGN.md`](docs/design/engine-v2/DESIGN.md) — read it first.
+> **DESIGN.md is the single, ultimate source of truth: it overrides this file, issue comments,
+> handoffs and lane instructions wherever they conflict.** It is re-verified nightly (§14).
+> **Commander: `mac-claude-a` (mac-m1max-a)**, since 2026-10-09: kabir-claude's quiesced handoff (#1319,
+> 2026-10-07) plus owner Jaysen's instruction; all other sessions are engineers under the Commander and take lanes from #1319.
+> **Critical path first (owner, 2026-10-05):** no lane works on a feature outside the §12 P3–P5 gates
+> (XeTeX, Live Share, Typst, editor features, new platforms, P6 extras) while any lane that could
+> possibly be needed for P3–P5 is unstaffed.
+> **The old engine is frozen: fixes only (D13)** — no new hand-ported packages or features.
+> **Subagent models:** Opus 5.5 **high** for technically involved tasks, Opus 5.5 **medium**
+> for easier ones; no Fable, Sonnet or Haiku. Commander master prompt: DESIGN.md Appendix A.
+
 @AGENTS.md
 
 Read docs/INDEX.md, coordination/PROJECT.md, coordination/RESOURCES.md,

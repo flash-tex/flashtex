@@ -1,0 +1,319 @@
+{
+  "appFootprintMaxBytes" : 81414592,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0001.png",
+      "incomplete" : true,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:17",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:17" : 127
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : true,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0001-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 74.58603382110596,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.191091537475586
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0002.png",
+      "incomplete" : false,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:28",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:28" : 381
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : true,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0002-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 76.65002346038818,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 50.51898956298828
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 4,
+      "image" : "page-0003.png",
+      "incomplete" : true,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:40",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:40" : 213
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : true,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0003-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 77.19707489013672,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 52.0939826965332
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0004.png",
+      "incomplete" : true,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:51",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:51" : 245
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : true,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0004-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 76.4610767364502,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.306962966918945
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0005.png",
+      "incomplete" : true,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:65",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:65" : 243
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : true,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0005-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 80.07395267486572,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 51.54097080230713
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0006.png",
+      "incomplete" : true,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:78",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:78" : 284
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : true,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0006-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 78.09209823608398,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 50.436973571777344
+    },
+    {
+      "bitmapPixelsPerPoint" : 2,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0007.png",
+      "incomplete" : false,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 4.25,
+      "reverseAtCentre" : "main.tex:84",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:84" : 147
+      },
+      "tiles" : {
+        "deferred" : false,
+        "drawnWhole" : true,
+        "gridHeight" : 1157,
+        "gridWidth" : 1543,
+        "held" : 9,
+        "image" : "page-0007-tiles.png",
+        "missingVisible" : 0,
+        "pending" : 0,
+        "pixelsPerPoint" : 4.25,
+        "stale" : 0,
+        "waitedMs" : 76.21991634368896,
+        "wrongSize" : 0
+      },
+      "waitedMs" : 52.098989486694336
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/rw-beamer-madrid\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 2024.745,
+      "mode" : "cold",
+      "ms" : 2852.408917,
+      "pages" : 7,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 14
+    }
+  ],
+  "firstPageMs" : 1554.855334,
+  "firstPixelsMs" : 246.56475,
+  "forward" : {
+    "17" : 1,
+    "28" : 2,
+    "40" : 3,
+    "51" : 4,
+    "65" : 5,
+    "78" : 6,
+    "84" : 7
+  },
+  "hostFootprintEndBytes" : 194021568,
+  "hostFootprintMaxBytes" : 194021568,
+  "incompletePages" : [
+    1,
+    3,
+    4,
+    5,
+    6
+  ],
+  "load" : [
+    15.30126953125,
+    19.8671875,
+    23.17822265625
+  ],
+  "pages" : 7,
+  "settledMs" : 2852.408917,
+  "status" : "done"
+}

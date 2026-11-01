@@ -1,0 +1,11 @@
+% 1506-jobname-lines: \jobname with \string and \edef probes and \inputlineno tracking across lines.
+\input prelude
+\message{1506 job=\jobname}
+\message{1506 string=\string\jobname}
+\message{1506 line=\the\inputlineno}
+\edef\j{\jobname}
+\message{1506 edef=\meaning\j}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\message{1506 late=\the\inputlineno}
+\lsshipbox0
+\end

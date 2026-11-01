@@ -1,0 +1,9 @@
+% 1471-pdfxformname-ref: \pdfxformname names the last xform and the replayed xform ships with it in one box (pdftex.web §§497, 498)
+\input prelude
+\font\f=cmr10
+\setbox1=\hbox{\vrule width30pt height7pt depth3pt}
+\pdfxform1
+\edef\xn{\pdfxformname\pdflastxform}
+\setbox0=\hbox{\f \xn\pdfrefxform\pdflastxform}
+\lsshipbox0
+\end

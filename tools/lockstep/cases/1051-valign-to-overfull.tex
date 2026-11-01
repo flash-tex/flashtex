@@ -1,0 +1,7 @@
+% 1051-valign-to-overfull: verifies \valign to below natural height reports overfull (tex.web §§ 804)
+\input prelude
+\overfullrule=5pt
+\setbox0=\hbox{\valign to 20pt{#\vfil\cr\hbox{\vrule width8pt height30pt depth4pt}\cr\hbox{\vrule width8pt height10pt depth2pt}\cr}}
+\message{1051 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

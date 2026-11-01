@@ -1,0 +1,7 @@
+% 2424-setlanguage-snapshots-hyphenmin: each \setlanguage whatsit records the hyphenmin values in force, so two whatsits in one box dump different snapshot pairs (tex.web §§1356, 1377)
+% new versus 1669-setlanguage-range-edge: 1669 dumps one setlanguage whatsit per box with the default hyphenmin pair; here one box holds two whatsits with (5,7) and (2,2)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm a\lefthyphenmin=5 \righthyphenmin=7 \setlanguage1 b\lefthyphenmin=2 \righthyphenmin=2 \setlanguage2 c}
+\lsshipbox0
+\end

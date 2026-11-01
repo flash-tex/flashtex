@@ -1,0 +1,6 @@
+\input prelude % Verifies \pdfcolorstack set and current actions on a page-direct stack.
+\chardef\csb=\pdfcolorstackinit page direct {0 g 0 G}
+\message{294 stack=\the\csb}
+\setbox0=\hbox{\pdfcolorstack\csb push {0 0 1 rg}\vrule width10pt height5pt\pdfcolorstack\csb set {0 1 0 rg}\vrule width10pt height5pt\pdfcolorstack\csb current\vrule width10pt height5pt\pdfcolorstack\csb pop}
+\lsshipbox0
+\end

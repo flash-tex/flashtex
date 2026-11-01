@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{tkz-tab}
+\begin{document}
+\begin{center}
+\begin{tikzpicture}
+\tkzTabInit[lgt=2,espcl=3]{$x$/1,$f'(x)$/1,$f(x)$/3}%
+{$0$,$1$,$2$,$+\infty$}%
+\tkzTabLine{t,-,d,-,z,+,}%
+\tkzTabVar{+/ $0$ , -D+/ $3$/$1$,-/ $2$, +D/ $5$}%
+\end{tikzpicture}
+\end{center}
+\end{document}

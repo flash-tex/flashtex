@@ -1,0 +1,42 @@
+% A typical report: geometry, fancyhdr, siunitx, booktabs, csquotes, microtype, enumitem,
+% titlesec, caption, hyperref, cleveref
+\documentclass[11pt]{report}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{fontspec}
+\setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\setsansfont{texgyreheros}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage[english]{babel}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}\fancyhead[L]{Lab Report}\fancyhead[R]{\leftmark}\fancyfoot[C]{\thepage}
+\usepackage{siunitx}
+\usepackage{booktabs}
+\usepackage{csquotes}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\titleformat{\chapter}{\Large\bfseries\sffamily}{\thechapter}{1em}{}
+\usepackage{caption}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{lipsum}
+\begin{document}
+\tableofcontents
+\chapter{Measurements}\label{c:m}
+We quote: \enquote{measure twice, cut once}.
+\Cref{t:data} lists the data; all values in \si{\milli\metre}.
+\begin{table}[ht]\centering
+\caption{Measured lengths.}\label{t:data}
+\begin{tabular}{l S[table-format=3.2] S[table-format=1.2]}\toprule
+Sample & {Length (\si{\milli\metre})} & {Error}\\\midrule
+A & 123.45 & 0.05\\ B & 98.70 & 0.10\\ C & 101.00 & 0.02\\\bottomrule
+\end{tabular}
+\end{table}
+\begin{enumerate}[label=(\alph*)]
+\item First step at \SI{20}{\celsius}.
+\item Second step for \SI{3.5}{\hour}.
+\end{enumerate}
+\lipsum[1-4]
+\chapter{Discussion}
+\lipsum[5-8]
+\end{document}

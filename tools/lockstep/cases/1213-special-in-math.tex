@@ -1,0 +1,8 @@
+% 1213-special-in-math: verifies a \special in math mode survives mlist conversion between mathon/off (tex.web §§730, 1354)
+\input prelude
+\font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont2=\mtsy \textfont3=\mtex
+\scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\setbox0=\hbox{$\special{math-probe}$}
+\lsshipbox0
+\end

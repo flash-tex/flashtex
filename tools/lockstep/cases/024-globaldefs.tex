@@ -1,0 +1,21 @@
+\input prelude
+\count0=5
+\globaldefs=1
+\begingroup
+\count0=6
+\endgroup
+\message{024 g1-count=\the\count0}
+\globaldefs=0
+\begingroup
+\count0=7
+\endgroup
+\message{024 back-local=\the\count0}
+\globaldefs=-1
+\begingroup
+\global\count0=8
+\endgroup
+\message{024 neg-ignored=\the\count0}
+\globaldefs=0
+\setbox0=\hbox{\vrule width24pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

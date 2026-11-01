@@ -1,0 +1,6 @@
+% Verifies cmr10 reconstitutes hyphens into en and em dashes in the box dump.
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f - -- ---}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 1438-vsplit-insert-heldover: \vsplit of a \vbox holding an insert, with \splittopskip set.
+\input prelude
+\count253=500 \skip253=6pt \dimen253=150pt
+\splittopskip=10pt \splitmaxdepth=4pt
+\setbox0=\vbox{\vrule width80pt height50pt depth0pt\insert253{\vskip2pt\vrule width60pt height20pt depth0pt\vskip2pt}\vskip10pt\vrule width80pt height50pt depth0pt}
+\setbox1=\vsplit0 to 60pt
+\message{1438 top=\the\ht1,rest=\the\ht0}
+\lsshipbox1
+\lsshipbox0
+\end

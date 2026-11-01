@@ -1,0 +1,7 @@
+% 1098-everypar-dump: verifies \everypar tokens land in the paragraph dump (tex.web §1091).
+\input prelude
+\setbox0=\vbox{\hsize=200pt\everypar{\vrule width41pt height6pt depth0pt}\noindent\vrule height8pt depth2pt width10pt\par}
+\everypar{}
+\message{1098 done}
+\lsshipbox0
+\end

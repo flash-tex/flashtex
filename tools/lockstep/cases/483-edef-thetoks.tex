@@ -1,0 +1,13 @@
+% Verifies \edef expands \the\toks, \the\count and \the\dimen into characters frozen at definition time.
+\input prelude
+\toks0={tok-T0}
+\toks1={and-T1}
+\count0=42
+\dimen0=5.5pt
+\edef\e{\the\toks0\the\toks1!\the\count0!\the\dimen0}
+\message{483 e=\meaning\e}
+\toks0={changed}
+\message{483 frozen=\meaning\e}
+\setbox0=\hbox{\vrule width483pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

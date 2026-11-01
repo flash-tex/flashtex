@@ -1,0 +1,3 @@
+# Upstream checkouts (populated by fetch.sh, never committed).
+.cache/
+__pycache__/

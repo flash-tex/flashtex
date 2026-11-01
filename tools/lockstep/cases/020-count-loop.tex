@@ -1,0 +1,8 @@
+\input prelude
+\count10=3
+\def\down{\ifnum\count10>0 \message{020 n=\the\count10}\advance\count10 by -1 \down \fi}
+\down
+\message{020 done=\the\count10}
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

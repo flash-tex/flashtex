@@ -1,0 +1,10 @@
+\input prelude % Verifies \pagegoal and \pagetotal snapshots differ per page across two forced pages.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \message{821 page=\the\count1; goal=\the\pagegoal; total=\the\pagetotal}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\penalty-10000
+\hrule width80pt height30pt depth0pt
+\end

@@ -1,0 +1,8 @@
+% Verifies a missing character with \tracinglostchars=0 stays silent and exits 0.
+\input prelude
+\font\f=cmr10
+\tracinglostchars=0
+\message{469 lost=\the\tracinglostchars; has255=\iffontchar\f255 YES\else NO\fi}
+\setbox0=\hbox{\f A\char255 B}
+\lsshipbox0
+\end

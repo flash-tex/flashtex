@@ -1,0 +1,8 @@
+% 923-scantokens-text: verifies \scantokens produces typeset paragraph text from rescanned tokens, unlike the literal control paragraph.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\myrm\scantokens{scanned alpha beta gamma}\par}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\myrm literal delta epsilon zeta\par}
+\message{923 done}
+\lsshipbox0 \lsshipbox1
+\end

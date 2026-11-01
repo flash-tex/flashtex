@@ -12,7 +12,7 @@ fn stopped_stdin_child_timeout_cancel_drop_reaps_and_writer_exits() {
         handshake
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
-        let mut command = Command::new("/usr/bin/python3");
+        let mut command = Command::new("python3");
         command
             .arg("-c")
             .arg(
@@ -126,7 +126,7 @@ fn repeated_sessions_return_to_os_baseline_after_worker_witnesses() {
         ready
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
-        let mut command = Command::new("/usr/bin/python3");
+        let mut command = Command::new("python3");
         command.arg("-c").arg(r#"import os,sys,json,socket,signal,fcntl
 s=socket.socket(socket.AF_UNIX,socket.SOCK_DGRAM)
 capacity=fcntl.fcntl(0,fcntl.F_GETPIPE_SZ)

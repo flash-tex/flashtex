@@ -1,0 +1,6 @@
+% Verifies that \halign can sit inside a \vbox to with glue below.
+\input prelude
+\setbox0=\vbox to 60pt{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}\vfil}
+\message{510 ht=\the\ht0}
+\lsshipbox0
+\end

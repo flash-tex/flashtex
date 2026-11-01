@@ -1,0 +1,11 @@
+% 1021-ifx-undefined-long: verifies \ifx on two undefined tokens, undefined vs defined, \let copies and \long vs non-\long macros (tex.web §§507-508)
+\input prelude
+\ifx\undefA\undefB\message{1021 uu-true}\else\message{1021 uu-false}\fi
+\def\da{zzz}\ifx\undefA\da\message{1021 ud-true}\else\message{1021 ud-false}\fi
+\def\db{zzz}\ifx\da\db\message{1021 same-true}\else\message{1021 same-false}\fi
+\let\lc=\da\ifx\da\lc\message{1021 let-true}\else\message{1021 let-false}\fi
+\long\def\la#1{#1}\def\sa#1{#1}
+\ifx\la\sa\message{1021 long-same}\else\message{1021 long-diff}\fi
+\setbox0=\hbox{\vrule width1021pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

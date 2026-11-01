@@ -1,0 +1,11 @@
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\setbox1=\vbox{\hrule width20pt height5pt depth0pt}
+\ifhbox0 \message{035 0-hbox} \else \message{035 0-nothbox} \fi
+\ifvbox0 \message{035 0-vbox} \else \message{035 0-notvbox} \fi
+\ifhbox1 \message{035 1-hbox} \else \message{035 1-nothbox} \fi
+\ifvbox1 \message{035 1-vbox} \else \message{035 1-notvbox} \fi
+\ifvoid2 \message{035 2-void} \else \message{035 2-kept} \fi
+\lsshipbox0
+\lsshipbox1
+\end

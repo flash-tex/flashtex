@@ -1,0 +1,10 @@
+% 1421-countup-xdef-rules: count-up recursion appending rules to an \xdef-built list.
+\input prelude
+\def\acc{}
+\count6=1
+\def\build{\ifnum\count6<6 \xdef\acc{\acc\vrule width\the\count6pt height8pt depth2pt}\advance\count6 by1 \build\fi}
+\build
+\message{1421 end=\the\count6}
+\setbox0=\hbox{\acc\hskip10pt}
+\lsshipbox0
+\end

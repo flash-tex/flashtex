@@ -1,0 +1,15 @@
+% Verifies a combined torture: \romannumeral forcing, \csname building and \ifcase selection folded into \edef results.
+\input prelude
+\count0=65
+\edef\combo{\romannumeral0\the\count0}
+\message{500 combo=\meaning\combo}
+\count1=2
+\expandafter\def\csname pick\the\count1\endcsname{\ifcase\count1 zero\or one\or two\else other\fi}
+\edef\pick{\csname pick2\endcsname}
+\message{500 pick=\meaning\pick}
+\def\wrap#1{<#1>}
+\edef\fin{\expandafter\wrap\expandafter{\csname pick2\endcsname}}
+\message{500 fin=\meaning\fin}
+\setbox0=\hbox{\vrule width500pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

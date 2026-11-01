@@ -1,0 +1,8 @@
+% 1489-pdfgentounicode-level: verifies \pdfgentounicode assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfgentounicode=1
+{\pdfgentounicode=0}
+\message{1489 v=\the\pdfgentounicode}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

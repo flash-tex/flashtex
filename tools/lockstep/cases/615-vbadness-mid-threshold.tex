@@ -1,0 +1,10 @@
+% 615-vbadness-mid-threshold: verifies \vbadness=100 silences a badness-12 vbox but still reports a badness-800 vbox.
+\input prelude
+\vbadness=100
+\setbox0=\vbox to 50pt{\hrule width30pt height10pt depth0pt\vskip 20pt plus 20pt\hrule width30pt height10pt depth0pt}
+\message{615 small-badness=\the\badness}
+\setbox1=\vbox to 80pt{\hrule width30pt height10pt depth0pt\vskip 20pt plus 20pt\hrule width30pt height10pt depth0pt}
+\message{615 big-badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

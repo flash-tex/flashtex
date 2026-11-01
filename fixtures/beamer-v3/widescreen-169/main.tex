@@ -1,0 +1,26 @@
+\documentclass[aspectratio=169]{beamer}
+\usetheme{AnnArbor}
+\usecolortheme{wolverine}
+\title{Widescreen}
+\author{W. Wide}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Three columns}
+  \begin{columns}[onlytextwidth]
+    \column{0.32\textwidth}
+    \begin{block}{One}Left column.\end{block}
+    \column{0.32\textwidth}
+    \begin{block}{Two}Middle column.\end{block}
+    \column{0.32\textwidth}
+    \begin{block}{Three}<2->Right column, from slide two.\end{block}
+  \end{columns}
+\end{frame}
+\begin{frame}{A wide equation}
+  \[
+    \sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}
+    \qquad
+    \prod_{p\ \mathrm{prime}} \frac{1}{1-p^{-s}} = \zeta(s)
+  \]
+\end{frame}
+\end{document}

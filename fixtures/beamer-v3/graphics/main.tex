@@ -1,0 +1,31 @@
+\documentclass{beamer}
+\usetheme{default}
+\setbeamertemplate{background}{\includegraphics[width=\paperwidth,height=\paperheight]{example-image-a.png}}
+\logo{\includegraphics[height=0.8cm]{example-image.pdf}}
+\title{Graphics}
+\author{G. Graphic}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\setbeamertemplate{background}{}
+\begin{frame}{A PDF image}
+  \centering
+  \includegraphics[width=0.6\textwidth]{example-image.pdf}
+\end{frame}
+\begin{frame}{PNG and JPEG}
+  \includegraphics[width=0.45\textwidth]{example-image-a.png}\hfill
+  \includegraphics[width=0.45\textwidth]{example-image-b.jpg}
+\end{frame}
+\begin{frame}{Images with overlays}
+  \centering
+  \only<1>{\includegraphics[height=4cm]{example-image-a.png}}%
+  \only<2>{\includegraphics[height=4cm]{example-image-b.jpg}}%
+  \only<3>{\includegraphics[height=4cm]{example-image-c.pdf}}
+\end{frame}
+\begin{frame}{A figure}
+  \begin{figure}
+    \includegraphics[width=0.5\textwidth,angle=10]{example-image-golden.pdf}
+    \caption{A rotated, scaled PDF page.}
+  \end{figure}
+\end{frame}
+\end{document}

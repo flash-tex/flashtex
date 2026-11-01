@@ -1,0 +1,7 @@
+% 322-beginL-endL: verifies \beginL/\endL delimit a left-to-right segment whose direction nodes appear in the shipped hbox dump.
+\input prelude
+\TeXXeTstate=1
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm\beginL AB\endL}
+\lsshipbox0
+\end

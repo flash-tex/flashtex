@@ -1,0 +1,11 @@
+% x039-write-utf8: \message, \write and \immediate\write with Unicode text
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\immediate\write-1{x039 [ü 雪 🍌 \string\雪]}
+\immediate\write16{x039 [Ω≠ω]}
+\newlinechar=`¶
+\message{x039 a¶b¶c}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

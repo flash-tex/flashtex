@@ -1,0 +1,6 @@
+% 1445-pdfdecimaldigits: verifies \pdfdecimaldigits initial 3, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256, 672)
+\input prelude
+\message{1445 initial=\the\pdfdecimaldigits}
+{\pdfdecimaldigits=4\setbox0=\hbox{\hskip\pdfdecimaldigits sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1445 restored=\the\pdfdecimaldigits}
+\end

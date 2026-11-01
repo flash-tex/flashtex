@@ -1,0 +1,6 @@
+% 1757-spans-only-no-solo-column: verifies columns that never stand alone take zero width while the span width trails behind (tex.web §§ 798, 802)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil&#\hfil\cr\omit\span\omit\hfil\vrule width50pt height8pt depth2pt\hfil&\vrule width10pt height8pt depth2pt\cr\omit\span\omit\hfil\vrule width30pt height8pt depth2pt\hfil&\vrule width10pt height8pt depth2pt\cr}}
+\message{1757 wd=\the\wd0}
+\lsshipbox0
+\end

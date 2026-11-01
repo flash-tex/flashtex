@@ -1,0 +1,1 @@
+fixtures: 83 measured, P-T1 n/a, P-T2 83/83 (100.0%), L3 98.8%; at least: L0 100.0%, L1 100.0%, L2 100.0%, L3 98.8%, L4 —

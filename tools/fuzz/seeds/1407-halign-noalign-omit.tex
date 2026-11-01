@@ -1,0 +1,8 @@
+% 1407-halign-noalign-omit: \halign with a \noalign rule between rows and an \omit override in one cell.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr
+\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr
+\noalign{\vskip6pt\hrule height1pt}\omit\hfil\vrule width25pt height8pt depth2pt&\vrule width15pt height8pt depth2pt\cr}}
+\message{1407 wd=\the\wd0 ht=\the\ht0}
+\lsshipbox0
+\end

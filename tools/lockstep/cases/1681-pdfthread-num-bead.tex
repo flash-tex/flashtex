@@ -1,0 +1,7 @@
+% 1681-pdfthread-num-bead: a numeric thread identifier leaves a numbered bead whatsit in the dump (pdftex.web §§1566, 1567)
+% new versus 1482-pdfthread-bead: 1482 uses a named bead; here a numeric identifier
+\input prelude
+\setbox0=\vbox{\pdfthread num 3\hrule width20pt height4pt depth1pt}
+\message{1681 ht=\the\ht0}
+\lsshipbox0
+\end

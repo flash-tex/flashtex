@@ -1,0 +1,14 @@
+% Verifies \string of an active character yields its plain character, ignoring the active definition.
+\input prelude
+\font\f=cmr10
+\catcode`!=13
+\def!{BANG}
+\edef\s{\string!}
+\message{722 s=\meaning\s}
+\ifcat\s!\message{722 same-cat}\else\message{722 diff-cat}\fi
+\setbox0=\hbox{\f\s}
+\setbox1=\hbox{\f!}
+\message{722 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

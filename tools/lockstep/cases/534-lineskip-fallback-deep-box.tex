@@ -1,0 +1,5 @@
+% 534-lineskip-fallback-deep-box: verifies a deep box makes the builder use \lineskip instead of \baselineskip.
+\input prelude
+\setbox0=\vbox{\baselineskip=12pt\lineskip=5pt\lineskiplimit=0pt\parskip=0pt\hbox{\vrule width40pt height6pt depth10pt}\hbox{\vrule width40pt height6pt depth2pt}\message{534 lineskip=\the\lineskip}}
+\lsshipbox0
+\end

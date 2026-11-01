@@ -1,0 +1,12 @@
+% Verifies nested \ifcase selection with \or and \else, including another conditional inside a selected branch.
+\input prelude
+\count0=2
+\edef\nest{\ifcase\count0 a\or b\or c\else C\fi}
+\message{486 nest=\meaning\nest}
+\count0=9
+\ifcase\count0 \message{486 n-zero}\or\message{486 n-one}\else\message{486 n-other}\fi
+\count0=1
+\ifcase\count0 \message{486 A}\or\count1=5 \ifnum\count1=5 \message{486 B}\fi\or\message{486 C}\else\message{486 D}\fi
+\setbox0=\hbox{\vrule width486pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

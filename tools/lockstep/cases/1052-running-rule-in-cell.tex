@@ -1,0 +1,6 @@
+% 1052-running-rule-in-cell: verifies a rule with running dimensions keeps (*+*) in its cell (tex.web §§ 796, 810)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height20pt depth5pt&\vrule width10pt\cr}}
+\message{1052 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

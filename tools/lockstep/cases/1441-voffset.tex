@@ -1,0 +1,6 @@
+% 1441-voffset: verifies \voffset initial 0pt, grouped assignment and restore, and kern in shipped box (tex.web §§247, 248)
+\input prelude
+\message{1441 initial=\the\voffset}
+{\voffset=41pt\setbox0=\hbox{\kern\voffset\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1441 restored=\the\voffset}
+\end

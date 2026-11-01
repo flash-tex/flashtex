@@ -1,0 +1,7 @@
+% 1801-hbox-to-stretch-fil-beats-finite: finite stretch shares a to-box with fil, so the order scan picks fil and the dump carries the fil ratio (tex.web §§ 658-659)
+% new versus 601-glue-set-mixed-orders: 601 pits infinite orders against each other until filll wins; here a finite glue coexists with fil and is ignored in both order and ratio
+\input prelude
+\setbox0=\hbox to 60pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 10pt\vrule width20pt height8pt depth2pt\hskip 0pt plus 1fil}
+\message{1801 wd=\the\wd0 badness=\the\badness}
+\lsshipbox0
+\end

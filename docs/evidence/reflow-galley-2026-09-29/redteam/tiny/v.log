@@ -1,0 +1,30 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)  29 SEP 2026 02:10
+entering extended mode
+ restricted \write18 enabled.
+ %&-line parsing enabled.
+***v.tex
+(./v.tex [EVERYPAR sees page=0]
+Overfull \hbox (12.50002pt too wide) in paragraph at lines 6--6
+[]\x A
+
+\hbox(6.83331+0.0)x0.0 []
+
+[OR fires: page=0] [OR fires: page=1] [OR fires: page=2] [OR fires: page=3]
+[OR fires: page=4] [OR fires: page=5] [OR fires: page=6] [OR fires: page=7]
+[OR fires: page=8] [OR fires: page=9] [OR fires: page=10] [OR fires: page=11]
+[OR fires: page=12] [OR fires: page=13] [OR fires: page=14]
+[OR fires: page=15] [OR fires: page=16] [OR fires: page=17]
+[OR fires: page=18] [OR fires: page=19] [OR fires: page=20]
+[OR fires: page=21] [OR fires: page=22] [OR fires: page=23]
+[OR fires: page=24]
+! Output loop---25 consecutive dead cycles.
+<to be read again> 
+                   \end 
+l.7 \penalty-10000 \end
+                       
+I've concluded that your \output is awry; it never does a
+\shipout, so I'm shipping \box255 out myself. Next time
+increase \maxdeadcycles if you want me to be more patient!
+
+[25] )
+Output written on v.dvi (1 page, 128 bytes).

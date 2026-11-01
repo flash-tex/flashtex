@@ -1,0 +1,10 @@
+{
+ "expect_fonts": [
+  "texgyrepagella-regular.otf",
+  "texgyreheros-regular.otf",
+  "texgyrecursor-regular.otf"
+ ],
+ "forbid_fonts": [
+  "texgyretermes-regular.otf"
+ ]
+}

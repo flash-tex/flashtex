@@ -798,7 +798,7 @@ fn safe_path(p: &str) -> bool {
 /// Textual checks for a forwarded project root: absolute, UTF-8 (by type),
 /// bounded, no NUL/control characters and no empty, `.` or `..` components.
 /// Existence, directory-ness and symlink canonicalization are the caller's
-/// filesystem checks (preview-controller canonicalizes before forwarding).
+/// filesystem checks (the caller canonicalizes before forwarding).
 pub fn validate_project_root(root: &str) -> Result<(), String> {
     let components = root.strip_prefix('/').map(|rest| rest.split('/'));
     let ok = root.len() <= 4096
@@ -1177,7 +1177,7 @@ mod decode_cancellation_probe {
     #[test]
     #[ignore = "near-limit cancellation probe; run separately in a quiet window"]
     fn cancellation_during_entered_serde_invalidates_source_ownership() {
-        let mut command = std::process::Command::new("/usr/bin/python3");
+        let mut command = std::process::Command::new("python3");
         command.arg("-c").arg(r#"import sys,json
 r=json.loads(sys.stdin.readline());p=r['payload']
 v={'opaque':[''],'protocol_version':1,'type':'compile_result','id':r['id'],'payload':{'project_id':p['project_id'],'revision':p['revision'],'status':'ok','pages':[],'diagnostics':[]}}

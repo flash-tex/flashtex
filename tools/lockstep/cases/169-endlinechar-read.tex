@@ -1,0 +1,14 @@
+\input prelude
+\immediate\openout1=ls169data.txt
+\immediate\write1{xy}
+\immediate\write1{zz}
+\immediate\closeout1
+\openin0=ls169data.txt
+\endlinechar=`A \read0 to \gotA \endlinechar=13
+\read0 to \gotB
+\message{169 eolA=\meaning\gotA}
+\message{169 eoldef=\meaning\gotB}
+\closein0
+\setbox0=\hbox{\vrule width169pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

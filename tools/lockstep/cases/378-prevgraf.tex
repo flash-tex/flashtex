@@ -1,0 +1,8 @@
+% 378-prevgraf: verifies \prevgraf drives content: the first paragraph's line count is captured and used as the \hangafter line count (with \hangindent) for the second paragraph, so the second paragraph starts with a different indented run (one shifted line vs three) shown in the shipped box.
+\input prelude
+\font\myrm=cmr10
+\countdef\pc=11
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma\par\pc=\prevgraf\message{378 box0 first-lines=\the\pc}\hangafter=-\pc\hangindent=40pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\message{378 box0 second-lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=180pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\pc=\prevgraf\message{378 box1 first-lines=\the\pc}\hangafter=-\pc\hangindent=40pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\message{378 box1 second-lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

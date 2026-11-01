@@ -1,0 +1,6 @@
+% 1452-pdfpkresolution: verifies \pdfpkresolution initial 0, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256)
+\input prelude
+\message{1452 initial=\the\pdfpkresolution}
+{\pdfpkresolution=600\setbox0=\hbox{\hskip\pdfpkresolution sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1452 restored=\the\pdfpkresolution}
+\end

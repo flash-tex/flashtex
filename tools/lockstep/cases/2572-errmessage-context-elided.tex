@@ -1,0 +1,11 @@
+% 2572-errmessage-context-elided: \errmessage with \errorcontextlines=0 prints the top context, a `...` line for the hidden levels, and the `l.NN` line (tex.web §§311, 1277)
+% new versus none: no existing case ends in an error; this lane's no-halt option makes the context elision coverable
+% lockstep: no-halt
+\input prelude
+\def\inner{\errmessage{boom-ctx}}
+\def\outer{\inner\relax}
+\errorcontextlines=0
+\outer
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

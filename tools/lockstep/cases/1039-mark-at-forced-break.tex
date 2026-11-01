@@ -1,0 +1,10 @@
+% 1039-mark-at-forced-break: verifies a mark at a forced page break is the first page's \botmark and the second page's \topmark (tex.web §§1012-1016,1101)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count251=0
+\output={\global\advance\count251 by1\message{1039 pg=\the\count251; top=[\topmark] first=[\firstmark] bot=[\botmark]}\lsshipbox255}
+\vrule height60pt depth0pt width80pt
+\mark{at-break}
+\penalty-10000
+\vrule height60pt depth0pt width80pt
+\end

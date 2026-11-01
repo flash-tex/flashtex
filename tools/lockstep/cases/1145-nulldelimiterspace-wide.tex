@@ -1,0 +1,14 @@
+% 1145-nulldelimiterspace-wide: verifies null delimiters (\left.) take \nulldelimiterspace width in var_delimiter (tex.web §§ 247, 706)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161
+\nulldelimiterspace=0pt
+\setbox0=\hbox{$\left.a\right.$}
+\message{1145 nds0 wd=\the\wd0}
+\nulldelimiterspace=10pt
+\setbox1=\hbox{$\left.a\right.$}
+\message{1145 nds10 wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

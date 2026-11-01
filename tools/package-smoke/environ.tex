@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{environ}
+\NewEnviron{shout}{SHOUT: \MakeUppercase{\BODY} :END}
+\begin{document}
+\begin{shout}
+this sentence is collected as the body first.
+\end{shout}
+A second use:
+\begin{shout}
+no catcode tricks, just text.
+\end{shout}
+\end{document}

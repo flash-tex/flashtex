@@ -1,0 +1,26 @@
+% Verifies \expandafter chains that expand a macro one, two, three and four levels before \noexpand freezes it.
+\input prelude
+\def\aa{\bb}\def\bb{\cc}\def\cc{\dd}\def\dd{DONE}
+\edef\rone{\expandafter\noexpand\aa}
+\message{715 r1=\meaning\rone}
+\edef\rtwo{\expandafter\expandafter\expandafter\noexpand\aa}
+\message{715 r2=\meaning\rtwo}
+\edef\rthree{\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\noexpand\aa}
+\message{715 r3=\meaning\rthree}
+\edef\rfour{\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\expandafter\noexpand\aa}
+\message{715 r4=\meaning\rfour}
+\def\expA{\bb}\def\expB{\cc}\def\expC{\dd}\edef\expD{DONE}
+\count0=0
+\ifx\rone\expA \advance\count0 by1 \fi
+\ifx\rtwo\expB \advance\count0 by2 \fi
+\ifx\rthree\expC \advance\count0 by4 \fi
+\ifx\rfour\expD \advance\count0 by8 \fi
+\message{715 score=\the\count0}
+\setbox0=\hbox{\vrule width715pt height8pt depth2pt\hskip\count0 pt}
+\edef\rnone{\noexpand\aa}
+\message{715 r0=\meaning\rnone}
+\setbox1=\hbox{\vrule width715pt height8pt depth2pt}
+\message{715 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

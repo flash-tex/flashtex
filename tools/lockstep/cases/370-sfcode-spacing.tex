@@ -1,0 +1,8 @@
+% 370-sfcode-spacing: verifies a large \sfcode makes the interword glue use the extra space instead of the normal space.
+\input prelude
+\font\myrm=cmr10
+\message{370 sfcode-dot=\the\sfcode`.}
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\sfcode`.=1000 \myrm a. b. c.\par\message{370 plain lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\sfcode`.=3000 \myrm a. b. c.\par\message{370 high lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

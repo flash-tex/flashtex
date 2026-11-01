@@ -1,0 +1,13 @@
+% 918-protected-edef-align: verifies a \protected macro survives \edef unexpanded inside \halign cells, unlike the eagerly expanded control.
+\input prelude
+\font\myrm=cmr10
+\protected\def\pp{PP}
+\def\qp{QQ}
+\edef\eP{\pp}
+\edef\eQ{\qp}
+\message{918 prot=\meaning\eP}
+\message{918 plain=\meaning\eQ}
+\setbox0=\vbox{\halign{\hfil#\hfil\cr\myrm\meaning\eP\cr}}
+\setbox1=\vbox{\halign{\hfil#\hfil\cr\myrm\meaning\eQ\cr}}
+\lsshipbox0 \lsshipbox1
+\end

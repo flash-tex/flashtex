@@ -1,0 +1,9 @@
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\patterns{a1}
+\lccode`a=0
+\message{189 lccode-a=\the\lccode`a}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\myrm banana banana banana\par}
+\lsshipbox0
+\end

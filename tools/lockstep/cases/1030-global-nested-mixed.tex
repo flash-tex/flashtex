@@ -1,0 +1,13 @@
+% 1030-global-nested-mixed: verifies \global \dimen, \toks, macro and \advance assignments escape three group levels (tex.web §§276,279)
+\input prelude
+\dimen0=0pt \toks0={z} \def\w{top} \count0=0
+\begingroup \dimen0=1pt \toks0={a} \def\w{one} \advance\count0 by1
+\begingroup \dimen0=2pt \toks0={b} \def\w{two} \advance\count0 by10
+\begingroup \global\dimen0=3pt \global\toks0={c} \gdef\w{three} \global\advance\count0 by100
+\message{1030 deep=\the\dimen0,\the\toks0,\meaning\w,\the\count0}
+\endgroup \message{1030 L2=\the\dimen0,\the\toks0,\meaning\w,\the\count0}
+\endgroup \message{1030 L1=\the\dimen0,\the\toks0,\meaning\w,\the\count0}
+\endgroup \message{1030 L0=\the\dimen0,\the\toks0,\meaning\w,\the\count0}
+\setbox0=\hbox{\vrule width1030pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

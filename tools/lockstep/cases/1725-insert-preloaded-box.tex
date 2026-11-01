@@ -1,0 +1,11 @@
+% 1725-insert-preloaded-box: a first insert adds its height to a box already stored in \box254 instead of starting empty (tex.web §1009)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=6pt \dimen254=200pt
+\output={\message{1725 goal=\the\pagegoal; ht254=\the\ht254}\lsshipbox254\lsshipbox255}
+\setbox254=\vbox{\hrule width60pt height10pt depth0pt}
+\hrule width80pt height40pt depth0pt
+\insert254{\hrule width60pt height20pt depth0pt}
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

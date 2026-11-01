@@ -1,0 +1,8 @@
+% 1256-pdfnoligatures-font: verifies \pdfnoligatures on one font splits fi into two characters while another font instance keeps the fi ligature (pdftex.web §§604, 1431, 1432)
+\input prelude
+\font\tf=cmr10 \tf
+\pdfnoligatures\tf
+\setbox0=\hbox{fi}
+\setbox1=\hbox{\font\tg=cmr10 scaled 1200 \tg fi}
+\lsshipbox0 \lsshipbox1
+\end

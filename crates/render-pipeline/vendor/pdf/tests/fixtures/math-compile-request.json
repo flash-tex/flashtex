@@ -1,1 +1,0 @@
-{"protocol_version":1,"id":"math-pdf","type":"compile","payload":{"project_id":"math-pdf","revision":1,"entry_path":"main.tex","documents":[{"path":"main.tex","text":"$\\frac{a}{b}+\\alpha+\\sqrt{x}$"}]}}

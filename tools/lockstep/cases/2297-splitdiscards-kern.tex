@@ -1,0 +1,11 @@
+% 2297-splitdiscards-kern: \splitdiscards after \vsplit keeps a discarded kern node between the glue pieces (pdftex.web §§1859, 1863)
+% new versus 342-splitdiscards: 342 ships glue, penalty 300 and glue discards in a 12.0pt box; here a kern sits between the glue pieces in a 15.0pt box
+\input prelude
+\savingvdiscards=1
+\setbox0=\vbox{\hrule width60pt height10pt depth0pt\vskip5pt\kern3pt\vskip7pt\hrule width60pt height10pt depth0pt}
+\setbox1=\vsplit0 to 12pt
+\setbox2=\vbox{\splitdiscards}
+\message{2297 disc-ht=\the\ht2,dp=\the\dp2}
+\lsshipbox1
+\lsshipbox2
+\end

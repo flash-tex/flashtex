@@ -1,0 +1,74 @@
+{
+  "appFootprintMaxBytes" : 198314688,
+  "captured" : [
+    {
+      "current" : true,
+      "image" : "page-0002.png",
+      "incomplete" : false,
+      "page" : 2,
+      "waitedMs" : 52.01399326324463
+    },
+    {
+      "current" : true,
+      "image" : "page-0010.png",
+      "incomplete" : false,
+      "page" : 10,
+      "waitedMs" : 51.12302303314209
+    },
+    {
+      "current" : true,
+      "image" : "page-0100.png",
+      "incomplete" : false,
+      "page" : 100,
+      "waitedMs" : 51.14603042602539
+    },
+    {
+      "current" : true,
+      "image" : "page-0210.png",
+      "incomplete" : false,
+      "page" : 210,
+      "waitedMs" : 50.57108402252197
+    },
+    {
+      "current" : true,
+      "image" : "page-0575.png",
+      "incomplete" : false,
+      "page" : 575,
+      "waitedMs" : 51.138997077941895
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 592,
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/private\/tmp\/claude-501\/-Users-jay3332-Projects-flashtex\/211342f1-98df-4cd5-b564-1eec24da3de0\/scratchpad\/infdesc\/infdesc.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 279921.595,
+      "mode" : "cold",
+      "ms" : 280974.774,
+      "pages" : 580,
+      "passes" : 5,
+      "status" : "ok",
+      "typesetPages" : 2896
+    }
+  ],
+  "firstPageMs" : 3421.895875,
+  "firstPixelsMs" : 3411.040125,
+  "hostFootprintEndBytes" : 1291834112,
+  "hostFootprintMaxBytes" : 1414107520,
+  "incompletePages" : [
+
+  ],
+  "load" : [
+    76.89501953125,
+    54.1083984375,
+    75.13330078125
+  ],
+  "pages" : 580,
+  "settledMs" : 280974.774,
+  "status" : "done"
+}

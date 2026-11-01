@@ -1,0 +1,17 @@
+\input prelude
+\chardef\rd=0
+\chardef\wr=1
+\immediate\openout\wr=217-input.txt
+\immediate\write\wr{first line}
+\immediate\write\wr{second line}
+\immediate\closeout\wr
+\openin\rd=217-input.txt
+\readline\rd to\ln
+\message{217 first=\meaning\ln}
+\readline\rd to\ln
+\message{217 second=\meaning\ln}
+\message{217 eof=\ifeof\rd YES\else NO\fi}
+\closein\rd
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,6 @@
+% 1196-leftskip-rightskip-fil-fill-lines: line glue from \leftskip and \rightskip shares stretch by order; fill beats fil (tex.web §§658, 886-887)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\leftskip=0pt plus 1fil\rightskip=0pt plus 1fill\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\lsshipbox0
+\end

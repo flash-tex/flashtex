@@ -1,0 +1,7 @@
+% 1116-parshape-zero-clears: verifies \parshape=0 discards the pending shape so lines go full width (tex.web § 848)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parshape=2 40pt 100pt 40pt 100pt\parshape=0\message{1116 shape=\the\parshape}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parshape=2 40pt 100pt 40pt 100pt\message{1116 shape=\the\parshape}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par}
+\lsshipbox0 \lsshipbox1
+\end

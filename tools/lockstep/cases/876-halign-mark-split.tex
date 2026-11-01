@@ -1,0 +1,13 @@
+% Verifies that \mark in a \halign cell migrates into the enclosing vbox: splitting the marked box reports splitfirstmark/splitbotmark red, splitting the unmarked control reports empty marks.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil\cr\mark{red}\vrule width20pt height8pt depth2pt\cr\vrule width20pt height30pt depth2pt\cr}}
+\setbox1=\vsplit0 to 10pt
+\message{876 testfirst=\splitfirstmark,testbot=\splitbotmark}
+\setbox2=\vbox{\halign{#\hfil\cr\vrule width20pt height8pt depth2pt\cr\vrule width20pt height30pt depth2pt\cr}}
+\setbox3=\vsplit2 to 10pt
+\message{876 ctlfirst=\splitfirstmark,ctlbot=\splitbotmark}
+\lsshipbox1
+\lsshipbox0
+\lsshipbox3
+\lsshipbox2
+\end

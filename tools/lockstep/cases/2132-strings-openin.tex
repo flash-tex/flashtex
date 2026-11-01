@@ -1,0 +1,9 @@
+% 2132-strings-openin: \tracingstats=2 string counts after \openin/\closein of a file that exists and of one that does not (tex.web §§517, 1275; tex.ch [49.1275])
+\input prelude
+\tracingstats=2
+\openin3=prelude.tex \ifeof3\message{2132 eof}\else\message{2132 open}\fi \closein3
+\openin3=prelude \closein3
+\openin3=ls2132-no-such-file-anywhere.dat \ifeof3\message{2132 missing}\fi \closein3
+\setbox0=\hbox{\vrule width2132pt height8pt depth2pt}
+\lsshipbox0
+\end

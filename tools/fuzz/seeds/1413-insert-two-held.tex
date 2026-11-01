@@ -1,0 +1,7 @@
+% 1413-insert-two-held: two inserts of one class with \insertpenalties and register probes.
+\input prelude
+\count254=1000 \skip254=12pt plus2pt \dimen254=200pt
+\setbox0=\vbox{\vrule width80pt height10pt depth0pt\insert254{\vskip4pt\vrule width60pt height6pt depth0pt\vskip4pt}\vrule width80pt height10pt depth0pt\insert254{\vrule width40pt height5pt depth0pt}}
+\message{1413 ht=\the\ht0,penalties=\the\insertpenalties,skip=\the\skip254}
+\lsshipbox0
+\end

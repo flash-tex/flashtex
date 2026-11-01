@@ -1,0 +1,6 @@
+% 377-vadjust-paragraph: verifies \vadjust inside a paragraph migrates vertical material between the shipped lines.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta\vadjust{\vskip8pt}gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi\par\message{377 lines=\the\prevgraf}}
+\lsshipbox0
+\end

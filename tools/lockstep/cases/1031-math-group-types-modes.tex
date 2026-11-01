@@ -1,0 +1,15 @@
+% 1031-math-group-types-modes: verifies \currentgrouptype for math-shift, math-choice and vcenter groups with \ifmmode/\ifinner (tex.web §§268-269,501; pdftex.web §§1661, 1663)
+\input prelude
+\font\t=cmr10 \font\s=cmmi10 \font\ss=cmsy10 \font\e=cmex10
+\textfont0=\t \scriptfont0=\t \scriptscriptfont0=\t
+\textfont1=\s \scriptfont1=\s \scriptscriptfont1=\s
+\textfont2=\ss \scriptfont2=\ss \scriptscriptfont2=\ss
+\textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
+\ifmmode\message{1031 top-mm}\else\message{1031 top-notmm}\fi
+\setbox0=\hbox{$\message{1031 shift=\the\currentgrouptype}\ifmmode\message{1031 in-mm}\fi\ifinner\message{1031 in-inner}\fi x$}
+\setbox1=\hbox{$\mathchoice{\message{1031 ch=\the\currentgrouptype}D}{\message{1031 ch=\the\currentgrouptype}T}{\message{1031 ch=\the\currentgrouptype}S}{\message{1031 ch=\the\currentgrouptype}SS}$}
+\setbox2=\hbox{$\vcenter{\message{1031 vc=\the\currentgrouptype}\vrule width4pt height4pt depth0pt}$}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

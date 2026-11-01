@@ -1,0 +1,12 @@
+% biblatex with its default backend, biber
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyrepagella}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage[style=authoryear]{biblatex}
+\addbibresource{refs.bib}
+\begin{document}
+Knuth introduced literate programming \parencite{knuth1984}; see also \textcite{lamport1994}
+and \textcite{kew2005}. On style, \cite{bringhurst2004}; on characters, \cite{unicode16};
+on names with diacritics, \cite{muller2020}.
+\printbibliography
+\end{document}

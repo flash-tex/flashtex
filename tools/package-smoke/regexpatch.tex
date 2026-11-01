@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{regexpatch}
+\newcommand{\greet}{Hello, world}
+\begin{document}
+Before patching: \greet.
+\xpatchcmd{\greet}{world}{there}{}{}
+After patching: \greet.
+\regexpatchcmd{\greet}{there}{friend}{}{}
+After regex patch: \greet.
+\end{document}

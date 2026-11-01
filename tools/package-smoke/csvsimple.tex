@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{csvsimple}
+\begin{filecontents*}{fruit.csv}
+name,price
+apples,4
+oranges,7
+\end{filecontents*}
+\begin{document}
+\csvautotabular{fruit.csv}
+\end{document}

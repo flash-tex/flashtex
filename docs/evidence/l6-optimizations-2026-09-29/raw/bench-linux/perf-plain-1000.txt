@@ -1,0 +1,55 @@
+perf stat, plain-1000, pinned to core 3,  22:32:12  up   6:30,  1 user,  load average: 7.37, 5.79, 4.98
+base:
+    24,124,958,394      instructions:u                                                        
+     8,298,405,554      cycles:u                                                              
+u2:
+    17,281,199,562      instructions:u                                                        
+     6,639,181,062      cycles:u                                                              
+u2pgo:
+    17,299,355,476      instructions:u                                                        
+     6,628,626,129      cycles:u                                                              
+pdflatex:
+    12,117,992,601      instructions:u                                                        
+     5,721,185,297      cycles:u                                                              
+
+perf report, u2, plain-1000 (perf record -F 4000):
+    12.30%  [.] <flashtex_engine::generated::globals::Globals>::get_next
+     7.33%  [.] longest_match
+     6.91%  [.] <flashtex_engine::generated::globals::Globals>::macro_call
+     5.20%  [.] <flashtex_engine::generated::globals::Globals>::main_control
+     4.74%  [.] <flashtex_engine::generated::globals::Globals>::copy_node_list
+     4.60%  [.] <flashtex_engine::generated::globals::Globals>::divide_scaled
+     3.60%  [.] deflate_slow
+     3.51%  [.] <flashtex_engine::generated::globals::Globals>::flush_node_list
+     3.32%  [.] <flashtex_engine::generated::globals::Globals>::expand
+     3.29%  [.] <flashtex_engine::generated::globals::Globals>::get_node
+     3.15%  [.] <flashtex_engine::generated::globals::Globals>::end_token_list
+     2.91%  [.] <flashtex_engine::generated::globals::Globals>::free_node
+     2.34%  [.] <flashtex_engine::generated::globals::Globals>::try_break
+     2.04%  [.] <flashtex_engine::generated::globals::Globals>::hpack
+     1.93%  [.] <flashtex_engine::generated::globals::Globals>::begin_token_list
+     1.81%  [.] <flashtex_engine::generated::globals::Globals>::id_lookup
+     1.78%  [.] <flashtex_engine::generated::globals::Globals>::get_avail
+     1.72%  [.] <flashtex_engine::generated::globals::Globals>::line_break
+     1.64%  [.] <flashtex_engine::generated::globals::Globals>::adv_char_width
+     1.23%  [.] compress_block
+     1.21%  [.] <flashtex_engine::generated::globals::Globals>::delete_last
+     1.14%  [.] <flashtex_engine::generated::globals::Globals>::pdf_hlist_out
+     1.04%  [.] <flashtex_engine::generated::globals::Globals>::hyphenate
+     0.94%  [.] <flashtex_engine::generated::globals::Globals>::scan_toks
+     0.93%  [.] <flashtex_engine::generated::globals::Globals>::pdf_print_char
+     0.89%  [.] hash_insert_normalized
+     0.83%  [.] round
+     0.81%  [.] <flashtex_engine::generated::globals::Globals>::conditional
+     0.76%  [.] <flashtex_engine::generated::globals::Globals>::pdf_begin_string
+     0.70%  [.] <flashtex_engine::generated::globals::Globals>::input_ln
+     0.63%  [.] <flashtex_engine::generated::globals::Globals>::delete_token_ref
+     0.59%  [.] <flashtex_engine::generated::globals::Globals>::back_input
+     0.52%  [.] <flashtex_engine::generated::globals::Globals>::pdf_print_int
+     0.47%  [.] <flashtex_engine::generated::globals::Globals>::fm_read_info
+     0.47%  [.] <flashtex_engine::generated::globals::Globals>::isscalable
+     0.47%  [.] <flashtex_engine::generated::globals::Globals>::pdf_print
+     0.46%  [.] __strlen_evex
+     0.43%  [.] <flashtex_engine::generated::globals::Globals>::reconstitute
+     0.42%  [.] __memcmp_evex_movbe
+     0.41%  [.] <std::thread::local::LocalKey<core::cell::RefCell<flashtex_engine::pdftex::CState>>>::with::<flashtex_engine::pdftex::with_state<core::option::Option<bool>, <flashtex_engine::generated::globals::Globals>::isscalable::{closure#0}>::{closure#0}, core::option::Option<bool>>

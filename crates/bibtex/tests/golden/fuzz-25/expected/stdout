@@ -1,0 +1,14 @@
+This is BibTeX, Version 0.99e (TeX Live 2026)
+The top-level auxiliary file: doc.aux
+Case mismatch error between cite keys K0 and k0
+---line 5 of file doc.aux
+ : \citation{k2,K0
+ :                ,a1,k8}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 1 of file sub.aux
+ : \citation{a1
+ :             }
+I'm skipping whatever remains of this command
+d19.aux: Sorry---you've exceeded BibTeX's auxiliary file depth 20
+(That was a fatal error)

@@ -1,0 +1,6 @@
+% 1431-pdf-nested-save-matrix: nested \pdfsave/\pdfrestore with \pdfsetmatrix and \pdfliteral operators.
+\input prelude
+\setbox0=\hbox{\pdfsave\pdfsetmatrix{0.7 0 0 0.7}\pdfliteral{q 1 0 0 1 5 0 cm}\vrule width20pt height8pt depth2pt\pdfliteral{Q}\pdfrestore\vrule width20pt height8pt depth2pt}
+\message{1431 wd=\the\wd0}
+\lsshipbox0
+\end

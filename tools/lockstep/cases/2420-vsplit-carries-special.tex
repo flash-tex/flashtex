@@ -1,0 +1,9 @@
+% 2420-vsplit-carries-special: splitting a vbox keeps a \special whatsit with the top box and the shipped split shows it in the dump (tex.web §§1356, 1365)
+% new versus 036-vsplit: 036 ships split boxes whose dumps hold only rules and splittopskip glue; here the top dump holds a \special line between the split material
+\input prelude
+\splittopskip=0pt
+\setbox0=\vbox{\hrule width40pt height8pt depth0pt\special{probe 2420}\vskip6pt\hrule width40pt height8pt depth0pt}
+\setbox1=\vsplit0 to 10pt
+\lsshipbox1
+\lsshipbox0
+\end

@@ -1,0 +1,8 @@
+% x048-dash-break: \XeTeXdashbreakstate with a TFM font (it serves native fonts)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x \hsize=20pt \parindent=0pt \XeTeXdashbreakstate=1
+\setbox0=\vbox{aaa--bbb---ccc ddd}
+\lsshipbox0
+\end

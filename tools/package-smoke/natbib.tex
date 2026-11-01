@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage[numbers]{natbib}
+\begin{document}
+\setcitestyle{numbers,square}
+A claim supported inline \citetext{see Smith, 1990}.
+Another note with multiple sources \citetext{see Jones, 1991; Doe, 1992}.
+\defcitealias{lamport94}{Lamport's book}
+We refer to \citetext{\citetalias{lamport94}} for details.
+\end{document}

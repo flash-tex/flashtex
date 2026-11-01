@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{eso-pic}
+\AddToShipoutPictureBG{%
+  \AtPageCenter{\makebox[0pt]{\scalebox{4}{\color{black!10}DRAFT}}}}
+\begin{document}
+This page carries a background mark placed by eso-pic.
+\newpage
+The second page carries the same background mark.
+\end{document}

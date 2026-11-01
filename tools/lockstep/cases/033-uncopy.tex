@@ -1,0 +1,11 @@
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip5pt}
+\setbox1=\hbox{\unhcopy0\vrule width10pt height8pt depth2pt}
+\ifvoid0 \message{033 box0-void} \else \message{033 box0-kept} \fi
+\message{033 wd=\the\wd1}
+\setbox2=\vbox{\hrule width30pt height5pt depth0pt}
+\setbox3=\vbox{\unvcopy2\hrule width30pt height5pt depth0pt}
+\ifvoid2 \message{033 box2-void} \else \message{033 box2-kept} \fi
+\lsshipbox1
+\lsshipbox3
+\end

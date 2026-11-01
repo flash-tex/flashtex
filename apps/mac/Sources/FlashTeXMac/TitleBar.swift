@@ -5,8 +5,7 @@ import SwiftUI
 /// control lives in the bar that holds the traffic lights — Compile and the
 /// command palette leading, the preview controls that used to be the preview
 /// header's own row (dark pages, fit width/page, zoom) trailing over the
-/// preview column, then Open display list / Export PDF and the Captures
-/// inspector toggle. Icons only; tooltips carry the names and shortcuts.
+/// preview column, then Export PDF and the Captures inspector toggle. Icons only; tooltips carry the names and shortcuts.
 ///
 /// Drawn as content, IntelliJ-fashion, not as `NSToolbarItem`s: macOS 26
 /// floats every toolbar item on a Liquid Glass platter (`NSToolbarPlatterView`
@@ -29,6 +28,7 @@ struct TitleBarRow: View {
                            help: "Command Palette… (View, ⌘⇧P): every command with its shortcut",
                            identifier: "toolbar.command-palette") { $0.commandPaletteShown = true }
             Spacer(minLength: DS.Space.m)
+            if model.engineV3Enabled { FocusChapterTitleBarToggle() } // EngineV3FocusChapter.swift
             DarkPreviewTitleBarToggle()
             TitleBarButton(icon: "arrow.left.and.right.square", label: "Fit width",
                            help: "Fit Width (⌘9)") { $0.previewFitWidth() }
@@ -39,8 +39,6 @@ struct TitleBarRow: View {
             TitleBarButton(icon: "plus.magnifyingglass", label: "Zoom in preview",
                            help: "Zoom In (⌘=)") { $0.previewZoomIn() }
             Spacer(minLength: DS.Space.m).frame(maxWidth: DS.Space.xxl)
-            TitleBarButton(icon: "folder", label: "Open display list",
-                           help: "Open Display List (v2)… (File menu): a flashtex-render --v2 JSON file for the v2 preview pane") { $0.openDisplayListV2Panel() }
             ExportTitleBarButton()
             CapturesTitleBarToggle()
         }
@@ -52,6 +50,16 @@ struct TitleBarRow: View {
         .background(DS.Colors.surfaceSecondary)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Toolbar")
+    }
+}
+
+extension TitleBarRow {
+    /// The Compile button's tooltip: the engine with the route help the
+    /// preview HUD shows (`ShellChrome.routeHelp`, app-parity gap C21), or
+    /// the bare command while the engine session is off.
+    static func compileHelp(route: ShellChrome.Route, routeHelp: String) -> String {
+        if route == .engineV3 { return "Compile (File > Compile, ⌘B) — engine v3: " + routeHelp }
+        return "Compile (File > Compile, ⌘B)"
     }
 }
 
@@ -105,17 +113,15 @@ private struct TitleBarButton: View {
 /// The Compile button: a plain single-click action (⌘B) drawn as the
 /// JetBrains run-green triangle — the one deliberate colour accent in the
 /// title bar. No menu here (owner + review on #653): the press-and-hold
-/// `primaryAction:` menu was undiscoverable, and its contents — attaching
-/// compiler/render-pipeline executables, reloading fixtures — are a
-/// developer harness that stays in the File menu and the command palette.
-/// Auto-compile moved to Settings > Compile (EditorPreferences.swift).
+/// `primaryAction:` menu was undiscoverable. Auto-compile moved to
+/// Settings > Compile (EditorPreferences.swift).
 private struct CompileTitleBarButton: View {
     @Environment(ShellModel.self) var model
     @State private var hovering = false
 
     var body: some View {
         Button {
-            if !model.outputBoundExplicitRetry() { model.compile() }
+            model.compileCommand() // the engine (EngineV3Session)
         } label: {
             Image(systemName: "play.fill")
                 .font(DS.Fonts.toolbarIcon)
@@ -127,8 +133,9 @@ private struct CompileTitleBarButton: View {
         }
         .buttonStyle(PressableStyle())
         .onHover { hovering = $0 }
-        // `producerSummary`, not `workerStatus`: the title bar must not re-evaluate per request (ShellModel toolbar mirrors).
-        .help("Compile (File > Compile, ⌘B) — producer: " + (model.isFixture ? "fixture (not a real compile)" : model.producerSummary))
+        // The throttled chrome mirror, not the session: the title bar must
+        // not re-evaluate per request (ShellModel toolbar mirrors).
+        .help(TitleBarRow.compileHelp(route: model.chrome.route, routeHelp: model.chrome.routeHelp))
         .accessibilityLabel("Compile")
         .accessibilityIdentifier("toolbar.compile")
     }
@@ -151,8 +158,7 @@ private struct DarkPreviewTitleBarToggle: View {
 }
 
 /// Export PDF… — one route, so one plain button rather than a menu of
-/// near-duplicates (the CoreGraphics, Rust-writer and in-pane v2 exports were
-/// removed; `flashtex-pdf-exact` is the only writer the app uses).
+/// near-duplicates: the engine's export (ExactPDFExport.swift).
 private struct ExportTitleBarButton: View {
     @Environment(ShellModel.self) var model
     @State private var hovering = false
@@ -162,9 +168,9 @@ private struct ExportTitleBarButton: View {
             IconButtonLabel(icon: "square.and.arrow.up", hovering: hovering)
         }
         .buttonStyle(PressableStyle())
-        .disabled(!model.toolbarExportable)
+        .disabled(!model.exportAvailable)
         .onHover { hovering = $0 }
-        .help("Export PDF… (⌘⇧E): the display list through flashtex-pdf-exact — exact glyphs, embedded font programs, typed rules")
+        .help("Export PDF… (⌘⇧E): the PDF pdflatex would write for this document")
         .accessibilityLabel("Export PDF")
         .accessibilityIdentifier("toolbar.export-pdf")
     }

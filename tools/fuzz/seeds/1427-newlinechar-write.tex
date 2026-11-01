@@ -1,0 +1,8 @@
+% 1427-newlinechar-write: \newlinechar multiline \write lines with string probes.
+\input prelude
+\newlinechar=10
+\immediate\write16{1427 first\string^^J1427 second}
+\message{1427 nl=\the\newlinechar}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

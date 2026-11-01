@@ -1,0 +1,9 @@
+% 1435-regdef-primitives: \countdef, \dimendef, \skipdef, \muskipdef, \toksdef, \chardef and \mathchardef aliases.
+\input prelude
+\countdef\ca=20 \dimendef\da=21 \skipdef\sa=22 \muskipdef\ma=23 \toksdef\ta=24
+\chardef\ch=`A \mathchardef\mch="4241
+\ca=1400 \da=14pt \sa=1pt plus2pt \ma=3mu \ta={ta-toks}
+\message{1435 regs=\the\ca,\the\da,\the\sa,\the\ma,\the\ta,\the\ch,\the\mch}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -2,6 +2,7 @@
 name = "flashtex-project-index"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 publish = false
 description = "Original lexical LaTeX project symbol index with versioned UTF-8 navigation"
 

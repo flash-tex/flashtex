@@ -1,0 +1,6 @@
+\input prelude % Verifies bare \pdfcolorstackinit (no page/direct keywords) with push and pop.
+\chardef\csc=\pdfcolorstackinit{0 g}
+\message{295 stack=\the\csc}
+\setbox0=\hbox{\pdfcolorstack\csc push {0 1 1 rg}\vrule width10pt height5pt\pdfcolorstack\csc pop\vrule width10pt height5pt}
+\lsshipbox0
+\end

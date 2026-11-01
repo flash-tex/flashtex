@@ -1,0 +1,16 @@
+% Verifies \afterassignment fires after a \font definition, with the new font already visible inside the hook.
+\input prelude
+\count0=0
+\def\aftf{\count0=12 \message{712 hook font=\meaning\myfa}}
+\afterassignment\aftf
+\font\myfa=cmr10
+\message{712 after count=\the\count0 name=\fontname\myfa}
+\setbox0=\hbox{\myfa A\hskip\count0 pt}
+\count0=0
+\font\myfb=cmr10
+\message{712 control count=\the\count0}
+\setbox1=\hbox{\myfb A\hskip\count0 pt}
+\message{712 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

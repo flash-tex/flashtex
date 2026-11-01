@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{xparse}
+\NewDocumentCommand{\greet}{O{World} m}{Hello, #1 and #2!}
+\begin{document}
+\greet{Ada}
+
+\greet[Everyone]{Grace}
+
+\NewDocumentCommand{\pair}{m m}{(#1, #2)}
+Coordinates: \pair{3}{4}.
+\end{document}
