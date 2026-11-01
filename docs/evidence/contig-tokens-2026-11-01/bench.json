@@ -1,15 +1,24 @@
 {
-  "comment": "lane CONTIG-TOKENS: what contig-bench.yml builds and measures. builds: name -> git ref; engines: name -> build + extra environment; parts: the bench matrix",
+  "comment": "lane CONTIG-TOKENS: what contig-bench.yml builds and measures. builds: name -> git ref (src/generated/ is regenerated before the build); engines: name (no '-') -> build + extra environment; parts: the bench matrix (engines: the engines a part runs, default all)",
   "builds": {
-    "main": "3f835f488514786f1a46c4a5a62563cb05a0ddae"
+    "main": "3f835f488514786f1a46c4a5a62563cb05a0ddae",
+    "proto": "d493663ffecd76078a1595249ce9e9c7f52e8d93"
   },
   "engines": {
-    "main": {"build": "main", "env": {}}
+    "main": {"build": "main", "env": {}},
+    "off": {"build": "proto", "env": {}},
+    "on": {"build": "proto", "env": {"FLASHTEX_LAZY_FLUSH": "1"}}
   },
   "parts": [
-    {"id": "x2", "docs": "infdesc-x2", "reps": 3, "cg": "nosim"},
-    {"id": "infdesc-sim", "docs": "infdesc", "reps": 0, "cg": "sim"},
-    {"id": "arxiv-0", "docs": "arxiv:0/2", "reps": 3, "cg": "sim"},
-    {"id": "arxiv-1", "docs": "arxiv:1/2", "reps": 3, "cg": "sim"}
+    {"id": "x2-native", "docs": "infdesc-x2", "reps": 3, "cg": "none"},
+    {"id": "x2-cg-main", "docs": "infdesc-x2", "reps": 0, "cg": "nosim", "engines": ["main"]},
+    {"id": "x2-cg-off", "docs": "infdesc-x2", "reps": 0, "cg": "nosim", "engines": ["off"]},
+    {"id": "x2-cg-on", "docs": "infdesc-x2", "reps": 0, "cg": "nosim", "engines": ["on"]},
+    {"id": "infdesc-sim-main", "docs": "infdesc", "reps": 0, "cg": "sim", "engines": ["main"]},
+    {"id": "infdesc-sim-on", "docs": "infdesc", "reps": 0, "cg": "sim", "engines": ["on"]},
+    {"id": "arxiv-native", "docs": "arxiv:0/1", "reps": 3, "cg": "none"},
+    {"id": "arxiv-sim-main", "docs": "arxiv:0/1", "reps": 0, "cg": "sim", "engines": ["main"]},
+    {"id": "arxiv-sim-off", "docs": "arxiv:0/1", "reps": 0, "cg": "sim", "engines": ["off"]},
+    {"id": "arxiv-sim-on", "docs": "arxiv:0/1", "reps": 0, "cg": "sim", "engines": ["on"]}
   ]
 }

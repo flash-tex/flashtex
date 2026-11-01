@@ -58,12 +58,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: contig-bench-perf
+      - name: regenerate src/generated/ (web2rust, the committed configuration)
+        run: |
+          set -euo pipefail
+          cargo run --release --locked -q -p web2rust -- third_party/pdftex/pdftex.web \
+            @crates/flashtex-engine/web2rust-default.args \
+            --out-dir crates/flashtex-engine/src/generated --pool crates/flashtex-engine/pdftex.pool
+          git diff --stat
+          d="$RUNNER_TEMP/bin-${{ matrix.b.name }}"
+          mkdir -p "$d"
+          git diff --binary > "$d/regen.patch"
       - name: build (release codegen with line tables)
         run: |
           set -euo pipefail
           cargo build --profile perf --locked -p flashtex-engine --bin flashtex-initex
           d="$RUNNER_TEMP/bin-${{ matrix.b.name }}"
-          mkdir -p "$d"
           cp target/perf/flashtex-initex "$d/"
           cp crates/flashtex-engine/pdftex.pool "$d/"
           cp -r crates/flashtex-engine/src "$d/src"
@@ -76,6 +85,8 @@ jobs:
 
   bench:
     needs: [plan, build]
+    # a part runs the engines whose build succeeded
+    if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     strategy:
@@ -108,16 +119,20 @@ jobs:
         with:
           pattern: bin-*
           path: ${{ runner.temp }}/b
+      - name: what each build is
+        run: |
+          for d in "$RUNNER_TEMP"/b/bin-*; do echo "$d = $(head -1 "$d/BUILD" 2>/dev/null)"; done
       - name: formats
         run: |
           set -euo pipefail
           export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
           for d in "$RUNNER_TEMP"/b/bin-*; do
+            [ -f "$d/flashtex-initex" ] || continue
             chmod +x "$d/flashtex-initex"
             ln -sf "$d/flashtex-initex" "$d/pdftex"
             mkdir -p "$d/fmt"
             (cd "$d/fmt" && FLASHTEX_POOL="$d/pdftex.pool" "$d/pdftex" -ini -jobname=pdflatex -progname=pdflatex \
-              -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >/dev/null 2>&1) || { tail -20 "$d/fmt/pdflatex.log"; exit 1; }
+              -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >/dev/null 2>&1) || { tail -20 "$d/fmt/pdflatex.log"; rm -f "$d/fmt/pdflatex.fmt"; continue; }
             ls -l "$d/fmt/pdflatex.fmt"; sha256sum "$d/fmt/pdflatex.fmt"; cat "$d/BUILD"
           done
       - name: documents
@@ -143,7 +158,12 @@ jobs:
           import json, os
           c = json.load(open(os.environ['CFG']))
           b = os.environ['RUNNER_TEMP'] + '/b/bin-'
+          part = json.loads(os.environ['PART'])
           for k, e in c['engines'].items():
+              if part.get('engines') and k not in part['engines']:
+                  continue
+              if not os.path.isfile(f"{b}{e['build']}/fmt/pdflatex.fmt"):
+                  continue
               print('--engine')
               print(f"{k}={b}{e['build']}" + ''.join(f',{v}={w}' for v, w in e['env'].items()))
           EOF
