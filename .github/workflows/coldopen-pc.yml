@@ -2,7 +2,7 @@
 # page, each pass, DONE, pages per second, the engine thread's instructions and cycles, and
 # optionally a `perf` profile (lane COLD-FIRST-2; DESIGN.md §1.2 "Opening"). Measurement only, by
 # hand: workflow_dispatch, or a push to an `agent/kabir-claude-coldfirst2/pc/**` branch whose
-# tools/incr-bench/coldopen-pc.request (shell assignments of REFS, REPS, PERF) says what to run
+# tools/incr-bench/coldopen-pc.request (shell assignments of REFS, REPS, PERF, CLI_VARIANTS, CLI_PERF, HOST_VARIANTS) says what to run
 # (DESIGN §9.3: no pull request ever runs on a self-hosted runner). The script says what it runs:
 # tools/incr-bench/coldopen-pc.sh. Its wall times are a reference only when the PC is otherwise
 # quiet: the summary has each open's load1.
@@ -49,7 +49,7 @@ jobs:
           echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-coldopen" >> "$GITHUB_ENV"
           f=tools/incr-bench/coldopen-pc.request
           if [ "$GITHUB_EVENT_NAME" = push ] && [ -f "$f" ]; then
-            grep -E '^(REFS|REPS|PERF)=' "$f" | sed -E "s/^([A-Z]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
+            grep -E '^(REFS|REPS|PERF|CLI_VARIANTS|CLI_PERF|HOST_VARIANTS)=' "$f" | sed -E "s/^([A-Z_]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
             cat "$f"
           else
             { echo "REFS=$IN_REFS"; echo "REPS=$IN_REPS"; echo "PERF=$IN_PERF"; } >> "$GITHUB_ENV"
