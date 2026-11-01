@@ -1282,6 +1282,10 @@ pub struct Globals {
     pub bm_font_version: i32,
     // §1924
     pub bm_hyph_version: i32,
+    // §1927
+    pub seg_stack: crate::arena::Arr<halfword>,
+    // §1927
+    pub seg_ptr: i32,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
 }
@@ -1800,6 +1804,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>();
 
 impl Globals {
@@ -1981,6 +1986,7 @@ impl Globals {
         let __r_ls_cond_tag = __plan.reserve::<i32>("ls_cond_tag", 1001);
         let __r_ls_tag_file = __plan.reserve::<str_number>("ls_tag_file", 65536);
         let __r_bm_cand = __plan.reserve::<bool>("bm_cand", 630193);
+        let __r_seg_stack = __plan.reserve::<halfword>("seg_stack", 16384);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -2619,6 +2625,8 @@ impl Globals {
             bm_cand: __arena.arr(__r_bm_cand, 630193),
             bm_font_version: 0,
             bm_hyph_version: 0,
+            seg_stack: __arena.arr(__r_seg_stack, 16384),
+            seg_ptr: 0,
             arena: __arena,
         })
     }
@@ -3139,6 +3147,7 @@ impl Globals {
         v.pod(&mut self.bm_at_switch);
         v.pod(&mut self.bm_font_version);
         v.pod(&mut self.bm_hyph_version);
+        v.pod(&mut self.seg_ptr);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).
