@@ -3928,6 +3928,9 @@ impl Session {
         let first_line = self.first_line.clone();
         let mut clock = self.clock;
         let (g, s0, orep) = host::read_s0(path, &mut |key| {
+            // (a state of another day holds another `\today`: checked
+            // before the clock is pinned, so a refusal leaves it as it was)
+            host::same_day(key.clock, host::clock_now())?;
             // The session's clock is the one S₀ was taken with.
             clock = key.clock;
             crate::pdftex::utils::pin_clock(Some(key.clock));
@@ -4782,6 +4785,19 @@ impl Session {
         {
             let _check = crate::fswatch::check();
             system::refresh_disk_dirs();
+        }
+        // A new calendar day since the session's clock was taken (DESIGN.md
+        // §13, 2026-11-01): every state holds the old day's `\today`, so
+        // this compile runs from the format with the clock of now, and its
+        // S₀ replaces the stored one (`host::same_day`).
+        let now = host::clock_now();
+        if host::same_day(self.clock, now).is_err() {
+            if self.paused.is_some() {
+                self.abandon_paused(false)?;
+            }
+            self.clock = now;
+            crate::pdftex::utils::pin_clock(Some(now));
+            self.force_cold = Some("a new day: the clock moved on".into());
         }
         let i0 = crate::os::thread_counts();
         let f0 = crate::os::events();

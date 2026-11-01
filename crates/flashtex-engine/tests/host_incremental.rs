@@ -951,6 +951,118 @@ fn edit_site(view: &View, text: &str, main: &str, at: f64, word: bool) -> Option
         .min_by_key(|&(_, p)| p.abs_diff(want))
 }
 
+/// A host whose dates come from its clock, as the app's do: no
+/// `SOURCE_DATE_EPOCH` or `FORCE_SOURCE_DATE`, the clock injected
+/// (`FLASHTEX_PIN_CLOCK`, seconds) and the time zone UTC.
+fn start_host_at_clock(name: &str, env: &[(&str, &str)], clock: i64) -> Host {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let sock = PathBuf::from(format!("/tmp/fthc-{}-{n}-{name}.sock", std::process::id()));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-host"))
+        .args(["--socket", sock.to_str().unwrap()])
+        .env("FLASHTEX_POOL", pool())
+        .env("FLASHTEX_FORMATS", fmt_dir())
+        .env_remove("SOURCE_DATE_EPOCH")
+        .env_remove("FORCE_SOURCE_DATE")
+        .env_remove("FLASHTEX_S0_CACHE")
+        .env("FLASHTEX_PIN_CLOCK", format!("{clock}.0"))
+        .env("TZ", "UTC")
+        .envs(env.iter().copied())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    loop {
+        let mut line = String::new();
+        if out.read_line(&mut line).unwrap() == 0 {
+            panic!("the host exited before listening");
+        }
+        if line.contains("listening") {
+            break;
+        }
+    }
+    std::thread::spawn(move || for _ in out.lines() {});
+    Host(child, sock)
+}
+
+/// DESIGN.md §13 (2026-11-01): a stored S₀ holds its day's `\today` (every
+/// LaTeX run reads the date before S₀, expl3's constants at `\everyjob`), so
+/// a reopen uses it only on the same calendar day. A document with `\today`
+/// in its body, its S₀ stored at noon: reopened an hour later it opens S₀
+/// and equals a scratch compile then; reopened the next day it compiles
+/// from the format and shows the new date, as a scratch compile that day.
+#[test]
+fn a_persisted_s0_is_used_only_on_its_own_day() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s0-day");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    for d in [&proj, &out] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(
+        proj.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}\nToday is \\today.\n\\end{document}\n",
+    )
+    .unwrap();
+    let env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    // 2020-09-13 12:26:40 UTC
+    let t0 = 1_600_000_000;
+    {
+        let host = start_host_at_clock("da", &env, t0);
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        for id in 1..=4 {
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !stored(&cache, "s0") && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = c.bye();
+    }
+    assert!(stored(&cache, "s0"), "no S0 was stored");
+    for (case, at, opened) in [
+        ("an hour later", t0 + 3600, true),
+        ("the next day", t0 + 86_400, false),
+    ] {
+        let host = start_host_at_clock("db", &env, at);
+        let scratch = start_host_at_clock("ds", &[], at);
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+        assert_eq!(
+            o.done.str_field("mode") == Some("open"),
+            opened,
+            "{case}: {}",
+            o.done
+        );
+        if !opened {
+            let e = o.done.str_field("s0_error").unwrap_or_default();
+            assert!(
+                e.contains("another day"),
+                "{case}: refused for another reason: {e:?}"
+            );
+        }
+        for id in 2..=4 {
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("x{at}"));
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", case);
+        let _ = c.bye();
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A deterministic article of about `pages` pages: one paragraph per line.
 fn article(pages: usize) -> String {
     const WORDS: &[&str] = &[

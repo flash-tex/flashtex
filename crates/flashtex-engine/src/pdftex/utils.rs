@@ -246,6 +246,19 @@ pub(super) fn start_time_str() -> Vec<u8> {
     })
 }
 
+/// The calendar day (year, month, day of month) that `\year`, `\month` and
+/// `\day` take from the clock at `t` (seconds since the epoch), as
+/// `date_and_time` takes them: `None` when they do not depend on the clock
+/// (`FORCE_SOURCE_DATE=1` with `SOURCE_DATE_EPOCH`).
+pub fn calendar_day(t: i64) -> Option<(i32, i32, i32)> {
+    if force_source_date() {
+        return None;
+    }
+    let utc = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
+    let tm = broken_down(t, utc);
+    Some((tm.tm_year, tm.tm_mon, tm.tm_mday))
+}
+
 /// Whether `FORCE_SOURCE_DATE` and `SOURCE_DATE_EPOCH` are both set.
 fn force_source_date() -> bool {
     std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true)
