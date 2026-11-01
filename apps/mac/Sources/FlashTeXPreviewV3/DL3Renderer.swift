@@ -786,7 +786,8 @@ public enum DL3Renderer {
                     continue
                 }
                 let left = snap(Double(x) / K), top = snap(H - Double(y) / K)
-                let right = snap(Double(x + w) / K), bottom = snap(H - Double(y + h) / K)
+                // In Double: `x + w` overflows Int32 for a rule at the edge of the range.
+                let right = snap((Double(x) + Double(w)) / K), bottom = snap(H - (Double(y) + Double(h)) / K)
                 if let tile, kind == .fill { // (a tile by translation has only filled rules)
                     tileRule(left: left, right: right, top: top, bottom: bottom, tile: tile, in: ctx)
                     continue
@@ -1060,8 +1061,9 @@ public enum DL3Renderer {
     /// column and row included), as `rasterizeToSurface` lays it.
     public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba,
                                      smoothFonts: Bool = false, background: CGColor = CGColor(gray: 1, alpha: 1)) -> CGContext? {
-        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
-        guard w > 0, h > 0,
+        // Checked in Double first: a non-finite or absurd box (a corrupt
+        // page) sizes nothing instead of trapping in `Int(_:)`.
+        guard let (w, h, _) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale),
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: layout.bitmapInfo) else { return nil }
@@ -1135,8 +1137,7 @@ public enum DL3Renderer {
 
     static func surface(widthPt: Double, heightPt: Double, scale: Double, background: CGColor = CGColor(gray: 1, alpha: 1),
                         smoothFonts: Bool = false, _ body: (CGContext) -> Void) -> IOSurface? {
-        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
-        guard w > 0, h > 0,
+        guard let (w, h, _) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale), // as `bitmapContext`
               let s = IOSurface(properties: [.width: w, .height: h, .bytesPerElement: 4,
                                              .pixelFormat: 0x4247_5241 /* 'BGRA' */]) else { return nil }
         s.lock(options: [], seed: nil)
