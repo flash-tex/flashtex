@@ -4,7 +4,7 @@ one long document, through the same client (lane UNICODE).
 
     python3 tools/unicode-m3/mode_gap.py --classic DIR --unicode-host BIN
         [--pages 120] [--keys 20] [--at 0.5,0.98] [--variants a,b,...]
-        [--out DIR] [--json OUT]
+        [--out DIR] [--json OUT] [--unicode-env K=V ...]
 
 `--classic DIR` is a tools/incr-bench/mkeng.sh engine directory
 (flashtex-host, dl3-keys, pdftex.pool; its pdflatex format in
@@ -85,6 +85,7 @@ def run_one(a, variant, at, work):
         exe = os.path.join(eng, "flashtex-host")
     else:
         exe = a.unicode_host
+        env.update(kv.split("=", 1) for kv in a.unicode_env)
     err = open(os.path.join(d, "host.err"), "w")
     p = subprocess.Popen([exe, "--socket", sock, "--s0-cache", os.path.join(d, "s0"), "--once"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, text=True, env=env)
@@ -145,6 +146,8 @@ def main(argv=None):
     ap.add_argument("--at", default="0.5,0.98")
     ap.add_argument("--variants", default="classic,classic-pagella,unicode,unicode-fontspec")
     ap.add_argument("--out", default=os.path.join(tempfile.gettempdir(), "mode-gap"))
+    ap.add_argument("--unicode-env", action="append", default=[],
+                    help="K=V for flashtex-host-unicode (e.g. FLASHTEX_UNICODE_CONV_DEBUG=1)")
     ap.add_argument("--json")
     a = ap.parse_args(argv)
     results = []

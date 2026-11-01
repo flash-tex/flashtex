@@ -117,6 +117,18 @@ jobs:
             --unicode-host crates/flashtex-xetex/target/release/flashtex-host-unicode \
             --pages "$PAGES" --keys "$KEYS" --out "$RUNNER_TEMP/gap/work" \
             --json "$RUNNER_TEMP/gap/gap.json" 2>&1 | tee "$RUNNER_TEMP/gap/gap.txt"
+      - name: "the Unicode variants' convergence notes (FLASHTEX_UNICODE_CONV_DEBUG; not timed)"
+        if: runner.os == 'Linux'
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/mode_gap.py --classic "$INCR_BENCH_DIR/cur" \
+            --unicode-host crates/flashtex-xetex/target/release/flashtex-host-unicode \
+            --pages "$PAGES" --keys 3 --at 0.5 --variants unicode,unicode-fontspec \
+            --unicode-env FLASHTEX_UNICODE_CONV_DEBUG=1 --out "$RUNNER_TEMP/gap/conv" 2>&1 | grep -v '^|' || true
+          for d in "$RUNNER_TEMP"/gap/conv/*/; do
+            echo "== $(basename "$d"): $(grep -c '^\[conv\]' "$d/host.err") [conv] lines"
+            grep '^\[conv\]' "$d/host.err" | sort | uniq -c | sort -rn | head -25
+          done
       - name: report
         if: always()
         run: |
@@ -137,5 +149,6 @@ jobs:
             ${{ runner.temp }}/gap/gap.txt
             ${{ runner.temp }}/gap/work/*/keys.jsonl
             ${{ runner.temp }}/gap/work/*/host.err
+            ${{ runner.temp }}/gap/conv/*/host.err
           if-no-files-found: ignore
           retention-days: 30
