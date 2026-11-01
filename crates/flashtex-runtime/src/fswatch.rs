@@ -23,8 +23,13 @@
 //! * a watch could not be made (descriptor or watch limits), the file is on
 //!   a volume that is not local (NFS, SMB, FUSE, overlayfs: changes made
 //!   elsewhere raise no event), or the path is relative, or under the
-//!   document's directory or output directory ([`exclude`]), which the
-//!   host and the run write at every compile;
+//!   document's output directory ([`exclude`]), which the run writes at
+//!   every compile;
+//! * the path is under the document's directory ([`barrier`]) and this
+//!   check's barrier did not hold: before its drain the check writes a
+//!   sentinel file it watches, and the drain must find that write's event
+//!   (lane TYPING-50MS: the watcher proven current at each keystroke, which
+//!   the document's own files, the ones a user edits, are served under);
 //! * the kept signature is racy (`StatSig::racy`): it equals nothing, and
 //!   the caller compares content; a later `stat` may give one that is not.
 //!
@@ -106,8 +111,8 @@ pub fn enabled() -> bool {
     W.lock().unwrap().is_some()
 }
 
-/// Paths under `prefix` (the document's directory, its output directory)
-/// are never watched: `stat`ed every time.
+/// Paths under `prefix` (the document's output directory) are never
+/// watched: `stat`ed every time.
 pub fn exclude(prefix: &str) {
     if let Some(w) = W.lock().unwrap().as_mut() {
         let p = prefix.trim_end_matches('/').to_string();
@@ -118,13 +123,47 @@ pub fn exclude(prefix: &str) {
     }
 }
 
-/// Drain the kernel's queue of events now.
+/// Paths under `prefix` (the document's directory) are served only by a
+/// check whose barrier held (the drain found the event of the sentinel's
+/// write just before it): else `stat`ed. (FLASHTEX_FSWATCH_DOC=off keeps
+/// them `stat`ed every time, as [`exclude`] does.)
+///
+/// The sentinel is `.flashtex-fswatch` in `sentinel_dir` (the document's
+/// output directory, which the host writes anyway; written in place, so
+/// that the directory's entries do not change).
+pub fn barrier(prefix: &str, sentinel_dir: &str) {
+    if std::env::var("FLASHTEX_FSWATCH_DOC").is_ok_and(|v| v == "off") {
+        exclude(prefix);
+        return;
+    }
+    if let Some(w) = W.lock().unwrap().as_mut() {
+        let p = prefix.trim_end_matches('/').to_string();
+        if !p.is_empty() && !w.barriered.contains(&p) {
+            w.barriered.push(p);
+        }
+        let d = std::path::PathBuf::from(sentinel_dir);
+        if w.sentinel_dir.as_ref() != Some(&d) {
+            w.sentinel_dir = Some(d);
+            w.sentinel = None;
+        }
+    }
+}
+
+/// Drain the kernel's queue of events now, behind the barrier (`Watch::
+/// sync`).
 pub fn sync() {
     crate::os::io_time(crate::os::io::DRAIN, || {
         if let Some(w) = W.lock().unwrap().as_mut() {
-            w.drain();
+            w.sync();
         }
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// (the tests: the next barrier's sentinel is not written, as when the
+    /// queue dropped its event)
+    static DROP_SENTINEL: Cell<bool> = const { Cell::new(false) };
 }
 
 /// A check: [`sync`] first, then [`sig`] and [`readable`] serve vouched
@@ -157,7 +196,7 @@ pub fn sig(path: &str) -> Option<StatSig> {
         drop(g);
         return StatSig::of(path);
     };
-    if let Some(s) = w.kept(path).and_then(|e| e.sig) {
+    if let Some(s) = w.served(path).and_then(|e| e.sig) {
         count(0);
         return s;
     }
@@ -216,7 +255,7 @@ pub fn readable_as(path: &str, kind: Readable, test: impl FnOnce(&str) -> bool) 
         drop(g);
         return test(path);
     };
-    if let Some(r) = w.kept(path).and_then(|e| e.readable[k]) {
+    if let Some(r) = w.served(path).and_then(|e| e.readable[k]) {
         count(0);
         return r;
     }
@@ -264,6 +303,15 @@ struct Watch {
     /// Device -> whether it is a local volume.
     local: HashMap<u64, bool>,
     excluded: Vec<String>,
+    /// The prefixes served only behind the barrier ([`barrier`]).
+    barriered: Vec<String>,
+    /// The last [`Watch::sync`]'s barrier held.
+    current: bool,
+    /// The barrier's sentinel file, its watch and that watch's generation
+    /// after the last barrier.
+    sentinel: Option<(std::fs::File, u32, u64)>,
+    /// Where the sentinel is made ([`barrier`]).
+    sentinel_dir: Option<std::path::PathBuf>,
 }
 
 impl Watch {
@@ -278,7 +326,93 @@ impl Watch {
             entries: HashMap::new(),
             local: HashMap::new(),
             excluded: vec![],
+            barriered: vec![],
+            current: false,
+            sentinel: None,
+            sentinel_dir: None,
         }
+    }
+
+    /// [`kept`](Watch::kept), for a path under a [`barrier`] prefix only
+    /// when the last sync's barrier held.
+    fn served(&self, path: &str) -> Option<&Entry> {
+        if !self.current && self.barriered.iter().any(|x| under(path, x)) {
+            return None;
+        }
+        self.kept(path)
+    }
+
+    /// Drain the queue; with a [`barrier`] prefix, first write the
+    /// sentinel, and the barrier holds if the drain found its event: every
+    /// change completed before the write had queued its event before it (the
+    /// kernel posts them in the system call that makes the change), so the
+    /// drain saw them too. A sentinel that cannot be made or written, or
+    /// whose event is missing, leaves the barrier not holding (those paths
+    /// `stat`ed) until a later one holds.
+    fn sync(&mut self) {
+        self.current = false;
+        let wrote = !self.barriered.is_empty() && self.write_sentinel();
+        self.drain();
+        if wrote {
+            if let Some((_, i, gen)) = self.sentinel.as_mut() {
+                let t = &self.targets[*i as usize];
+                self.current = !t.dead && t.gen != *gen;
+                *gen = t.gen;
+                if t.dead {
+                    self.sentinel = None;
+                }
+            }
+        }
+    }
+
+    /// Write one byte in place into the sentinel file (made, and watched,
+    /// the first time): an event on its own watch only.
+    #[cfg(unix)]
+    fn write_sentinel(&mut self) -> bool {
+        use std::os::unix::fs::FileExt;
+        if self.sentinel.is_none() {
+            let Some(d) = self.sentinel_dir.clone() else {
+                return false;
+            };
+            let f = d.join(".flashtex-fswatch");
+            // (made once: later, written in place)
+            if !f.is_file() && std::fs::write(&f, b"0").is_err() {
+                return false;
+            }
+            let Some(p) = std::fs::canonicalize(&f)
+                .ok()
+                .and_then(|c| c.to_str().map(str::to_string))
+            else {
+                return false;
+            };
+            let Ok(h) = std::fs::OpenOptions::new().write(true).open(&p) else {
+                return false;
+            };
+            let Some((i, gen)) = self.target(&p) else {
+                return false;
+            };
+            self.sentinel = Some((h, i, gen));
+        }
+        #[cfg(test)]
+        if DROP_SENTINEL.with(|c| c.replace(false)) {
+            return true;
+        }
+        let Some((h, _, _)) = self.sentinel.as_ref() else {
+            return false;
+        };
+        h.write_at(b"1", 0).is_ok()
+    }
+
+    #[cfg(not(unix))]
+    fn write_sentinel(&mut self) -> bool {
+        false
+    }
+
+    /// Whether watch `i` is the sentinel's (its events are the barrier's,
+    /// not a change: not counted as a drain that found events).
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
+    fn is_sentinel(&self, i: usize) -> bool {
+        self.sentinel.as_ref().is_some_and(|s| s.1 as usize == i)
     }
 
     /// The entry for `path` while every watch it depends on is unchanged.
@@ -528,7 +662,6 @@ impl Watch {
             if n == 0 {
                 break;
             }
-            any = true;
             let bytes = buf.as_ptr() as *const u8;
             let hdr = std::mem::size_of::<libc::inotify_event>();
             let mut at = 0usize;
@@ -561,6 +694,7 @@ impl Watch {
                     continue;
                 };
                 for i in ids {
+                    any |= !self.is_sentinel(i as usize);
                     self.bump(i as usize, gone);
                 }
                 if gone {
@@ -672,10 +806,10 @@ impl Watch {
             if n == 0 {
                 break;
             }
-            any = true;
             for &ev in &evs[..n as usize] {
                 let gone = ev.flags & libc::EV_ERROR != 0
                     || ev.fflags & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE) != 0;
+                any |= !self.is_sentinel(ev.udata as usize);
                 self.bump(ev.udata as usize, gone);
             }
             if (n as usize) < evs.len() {
@@ -800,6 +934,105 @@ mod tests {
             assert!(!vouched(&p), "an excluded path is never served");
             assert_eq!(sig(&p).map(|s| s.len), Some(1));
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The document's directory (`barrier`): its files are served only by a
+    /// check whose barrier held. A file written just before a check is seen
+    /// by it; a check whose sentinel event is missing (as when the queue
+    /// dropped it) serves nothing there, the next one does again; an
+    /// overflowed or unreadable queue (`bump_all`) unvouches every path.
+    #[test]
+    fn document_files_are_served_behind_the_barrier() {
+        let d = std::env::temp_dir().join(format!("fswatch-doc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("out")).unwrap();
+        let d = std::fs::canonicalize(&d).unwrap();
+        let f = d.join("chap.tex");
+        std::fs::write(&f, b"one").unwrap();
+        let p = f.to_str().unwrap().to_string();
+        let missing = d.join("pkg.sty").to_str().unwrap().to_string();
+        std::env::set_var("FLASHTEX_RACY_MS", "0");
+        enable();
+        exclude(d.join("out").to_str().unwrap());
+        barrier(d.to_str().unwrap(), d.join("out").to_str().unwrap());
+        let served = |path: &str| {
+            W.lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|w| w.served(path).is_some_and(|e| e.sig.is_some()))
+        };
+        // (bounded: other tests and processes make files in the temporary
+        // directory, on the way, which unvouches both for a check)
+        let until_served = || {
+            let start = std::time::Instant::now();
+            loop {
+                let c = check();
+                assert_eq!(
+                    sig(&p).map(|s| s.len),
+                    std::fs::metadata(&p).ok().map(|m| m.len())
+                );
+                assert!(sig(&missing).is_none());
+                if served(&p) && served(&missing) {
+                    return c;
+                }
+                assert!(
+                    start.elapsed() < std::time::Duration::from_secs(10),
+                    "served behind the barrier"
+                );
+                drop(c);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        drop(until_served());
+        assert!(
+            std::path::Path::new(&d.join("out/.flashtex-fswatch")).is_file(),
+            "the sentinel is in the output directory"
+        );
+        // written immediately before the check, in place, the same length
+        // and its time put back: seen
+        let mtime = std::fs::metadata(&f).unwrap().modified().unwrap();
+        {
+            use std::io::Write;
+            let mut h = std::fs::File::options().write(true).open(&f).unwrap();
+            h.write_all(b"two").unwrap();
+            h.set_modified(mtime).unwrap();
+        }
+        {
+            let _c = check();
+            assert!(!served(&p), "a file written before the check is not served");
+            sig(&p);
+        }
+        std::fs::write(&missing, b"x").unwrap();
+        {
+            let _c = check();
+            assert!(
+                sig(&missing).is_some(),
+                "a file made before the check is seen"
+            );
+        }
+        std::fs::remove_file(&missing).unwrap();
+        drop(until_served());
+        // the barrier's event missing: nothing there is served
+        DROP_SENTINEL.with(|c| c.set(true));
+        {
+            let _c = check();
+            assert!(!served(&p) && !served(&missing), "no barrier, no serving");
+            assert_eq!(sig(&p).map(|s| s.len), Some(3));
+        }
+        drop(until_served());
+        // an overflowed or unreadable queue: nothing is served until a
+        // `stat` is kept again
+        W.lock().unwrap().as_mut().unwrap().bump_all();
+        {
+            let _c = check();
+            assert!(
+                !served(&p) && !served(&missing),
+                "an overflow unvouches all"
+            );
+            assert_eq!(sig(&p).map(|s| s.len), Some(3));
+        }
+        drop(until_served());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

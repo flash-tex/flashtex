@@ -1979,6 +1979,92 @@ fn a_package_outside_the_document_that_changes_is_seen() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// FS-WATCH for the document's own directory (lane TYPING-50MS): its files
+/// are served behind each check's barrier (`fswatch::barrier`). A file of
+/// the document changed on disk just before a compile must be seen: its
+/// content rewritten in place to the same length with its time put back (in
+/// the preamble: S₀'s key; in the body: the journal), a file made where a
+/// lookup found none, and a directory of the document replaced by another
+/// holding another version. Every compile equals a scratch run.
+#[test]
+fn a_document_file_that_changes_on_disk_is_seen() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-docwatch");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    for d in [&proj, &out, &proj.join("sub")] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let main = "main.tex";
+    let pre = proj.join("pre.tex");
+    let body = proj.join("body.tex");
+    let more = proj.join("sub/more.tex");
+    std::fs::write(&pre, "\\def\\pre{AAAA}\n").unwrap();
+    std::fs::write(&body, "Body: BBBB.\n").unwrap();
+    std::fs::write(&more, "More: GGGG.\n").unwrap();
+    let doc = "\\documentclass{article}\n\\input{pre}\n\\begin{document}\nPreamble: \\pre.\n\n\\input{body}\n\n\\input{sub/more}\n\n\\IfFileExists{extra.tex}{\\input{extra}}{No extra.}\n\\end{document}\n";
+    std::fs::write(proj.join(main), doc).unwrap();
+    let host = start_host("d");
+    let scratch = start_host("ds");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let settle = |c: &mut Client, view: &mut View, id: &mut i64| {
+        for _ in 0..4 {
+            *id += 1;
+            let o = compile(c, view, &req(*id, &proj, &out, main));
+            if o.done.str_field("mode") == Some("unchanged") {
+                return;
+            }
+        }
+    };
+    settle(&mut c, &mut view, &mut id);
+    let rewrite = |f: &Path, from: &str, to: &str| {
+        let mtime = std::fs::metadata(f).unwrap().modified().unwrap();
+        let t = std::fs::read_to_string(f).unwrap().replace(from, to);
+        use std::io::Write;
+        let mut h = std::fs::File::options().write(true).open(f).unwrap();
+        h.write_all(t.as_bytes()).unwrap();
+        h.set_modified(mtime).unwrap();
+    };
+    let steps: [(&str, &dyn Fn()); 4] = [
+        ("the body's file rewritten", &|| {
+            rewrite(&body, "BBBB", "CCCC")
+        }),
+        ("the preamble's file rewritten", &|| {
+            rewrite(&pre, "AAAA", "DDDD")
+        }),
+        ("a file made where a lookup found none", &|| {
+            std::fs::write(proj.join("extra.tex"), "Extra: HHHH.\n").unwrap()
+        }),
+        ("a directory replaced", &|| {
+            std::fs::rename(proj.join("sub"), proj.join("old")).unwrap();
+            std::fs::create_dir_all(proj.join("sub")).unwrap();
+            std::fs::write(&more, "More: JJJJ.\n").unwrap();
+        }),
+    ];
+    for (k, (what, change)) in steps.iter().enumerate() {
+        change();
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_ne!(
+            o.done.str_field("mode"),
+            Some("unchanged"),
+            "{what}: not seen: {}",
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("d{k}"));
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, what);
+        settle(&mut c, &mut view, &mut id);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// BOX-MEMO revision 3 (BOX-MEMO.md §12.3): a call that enters control
 /// sequences (`\csname` of names never made before) is recorded in an edit's
 /// window and replayed at the next keystroke, which restored to before the
