@@ -162,6 +162,8 @@ pub struct Stats {
     pub seen_cleared: u64,
     pub abandoned: BTreeMap<String, u64>,
     pub misses: BTreeMap<String, u64>,
+    /// Names whose recordings outside a window the budget stopped.
+    pub budget_stopped: u64,
     pub verify_details: Vec<String>,
     pub entries: usize,
     pub bytes: usize,
@@ -599,6 +601,8 @@ struct State {
     index: HashMap<i32, HashMap<u64, Vec<usize>>>,
     stale: HashSet<i32>,
     aborts: HashMap<i32, u32>,
+    /// [`RECORD_ANYWHERE`] names' recordings outside a window (`Budget`).
+    budget: HashMap<i32, Budget>,
     rec: Option<Rec>,
     clock: u64,
     bytes: usize,
@@ -673,8 +677,49 @@ pub fn mode() -> Mode {
 /// shading declaration around it is refused (its `\pdfxform`), and a call
 /// is never offered inside another's recording, so in the window it was
 /// first recorded at the second key on a frame; recorded where the open's
-/// cold run first parses each function, it hits from the first.
-pub const RECORD_ANYWHERE: &[&str] = &["pdfstringdefPreHook", "pgf@parsefunc"];
+/// cold run first parses each function, it hits from the first. And
+/// xcolor's `\XC@col@rlet` (`\colorlet`'s body; lane L6, E3,
+/// `docs/evidence/l6-2026-11-01/`): beamer's colour templates call it with
+/// a few dozen argument lists over and over, so a deck's cold pass hits it
+/// 89-95 % of the time (beamer-30: -31 % instructions). Where colours are
+/// defined again between calls the hits fall (*Infinite Descent* 37 %) and
+/// recording costs more than it saves, which [`Budget`] stops.
+pub const RECORD_ANYWHERE: &[&str] = &["pdfstringdefPreHook", "pgf@parsefunc", "XC@col@rlet"];
+
+/// A [`RECORD_ANYWHERE`] name's recordings outside an edit's window, and
+/// the hits they bought (lane L6, E3). Once `min` recordings are made, a
+/// name whose hits fall below `ratio` per recording is recorded no more
+/// outside a window for the session (`State`'s lifetime, as `aborts`): its
+/// entries still replay, and in a window it records as before. A miss
+/// records the call; at a hit rate h a recording buys h / (1 - h) hits,
+/// and measured cold passes break even at about three (evidence:
+/// `docs/evidence/l6-xc-anywhere-2026-11-01/`). Which calls are recorded
+/// never changes what a run computes, only how fast.
+#[derive(Default, Debug, Clone, Copy)]
+struct Budget {
+    recordings: u32,
+    hits: u32,
+    stopped: bool,
+}
+
+/// `FLASHTEX_BOXMEMO_BUDGET`: `MIN:RATIO` (recordings before the test,
+/// hits per recording below which a name stops), or `off`.
+fn budget_config() -> Option<(u32, f64)> {
+    static B: std::sync::OnceLock<Option<(u32, f64)>> = std::sync::OnceLock::new();
+    *B.get_or_init(
+        || match std::env::var("FLASHTEX_BOXMEMO_BUDGET").as_deref() {
+            Ok("off") | Ok("0") => None,
+            Ok(v) => v
+                .split_once(':')
+                .and_then(|(m, r)| Some((m.parse().ok()?, r.parse().ok()?)))
+                .or(BUDGET),
+            Err(_) => BUDGET,
+        },
+    )
+}
+
+/// The default budget (see [`Budget`]).
+const BUDGET: Option<(u32, f64)> = Some((64, 3.0));
 
 fn record_anywhere() -> &'static [Vec<u8>] {
     static R: std::sync::OnceLock<Vec<Vec<u8>>> = std::sync::OnceLock::new();
@@ -2465,6 +2510,13 @@ impl Globals {
             return self.bm_miss("Doomed");
         }
         if let Some(i) = found {
+            if WINDOW.with(|w| w.get()) != Some(true) {
+                ST.with(|s| {
+                    if let Some(b) = s.borrow_mut().budget.get_mut(&cs) {
+                        b.hits = b.hits.saturating_add(1);
+                    }
+                });
+            }
             if m == Mode::Verify {
                 // the full verifier, on the command line only. Its
                 // admission checkpoint stays the base of the state the run
@@ -2552,8 +2604,36 @@ impl Globals {
         if refused {
             return;
         }
+        if WINDOW.with(|w| w.get()) != Some(true)
+            && self.bm_name_is(cs, record_anywhere())
+            && !Self::bm_budget_allows(cs)
+        {
+            return;
+        }
         let (k2, k4) = (self.bm_k2(), k4_now);
         self.bm_start(cs, n, scanner, k1, ctx, k2, k4, None);
+    }
+
+    /// Whether a [`RECORD_ANYWHERE`] name may be recorded outside an edit's
+    /// window now ([`Budget`]); counts the recording when it may.
+    fn bm_budget_allows(cs: i32) -> bool {
+        let Some((min, ratio)) = budget_config() else {
+            return true;
+        };
+        ST.with(|s| {
+            let mut s = s.borrow_mut();
+            let b = s.budget.entry(cs).or_default();
+            if b.stopped {
+                return false;
+            }
+            if b.recordings >= min && (b.hits as f64) < ratio * b.recordings as f64 {
+                b.stopped = true;
+                s.stats.budget_stopped += 1;
+                return false;
+            }
+            b.recordings += 1;
+            true
+        })
     }
 
     fn bm_miss(&mut self, why: &str) {
