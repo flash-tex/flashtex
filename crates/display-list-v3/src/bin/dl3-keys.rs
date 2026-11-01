@@ -530,11 +530,18 @@ fn main() {
             clock_thread();
             for (k, r) in reqs.iter().enumerate() {
                 let due = t_start + Duration::from_millis(ms * k as u64);
+                let t_sleep = Instant::now();
+                let sleep_for = due.saturating_duration_since(t_sleep).as_secs_f64() * 1e3;
                 wait_until(due);
                 let now = Instant::now();
                 let late = now.saturating_duration_since(due).as_secs_f64() * 1e3;
                 sent2.lock().unwrap().push((now, late));
+                let t_w = Instant::now();
                 sender.compile(r).expect("send COMPILE");
+                eprintln!(
+                    "dl3-keys typist: key {k} slept {sleep_for:.1} ms, woke {late:.1} ms late, write {:.2} ms",
+                    t_w.elapsed().as_secs_f64() * 1e3
+                );
             }
         });
         let (mut started, mut covered, mut lat) = (0i64, 0usize, vec![]);
