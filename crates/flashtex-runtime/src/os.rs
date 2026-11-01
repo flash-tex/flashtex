@@ -355,14 +355,16 @@ thread_local! {
     static PHASES: std::cell::RefCell<Vec<PhaseMark>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// A [`phase_mark`]: its letter, when (monotonic, ns), and the thread's
-/// user and system CPU time then (µs; [`thread_user_sys_us`]).
+/// A [`phase_mark`]: its letter, when (monotonic, ns), the thread's
+/// user and system CPU time then (µs; [`thread_user_sys_us`]), and its
+/// instruction count then ([`thread_counts`]; `None` where there is none).
 #[derive(Clone, Copy, Debug)]
 pub struct PhaseMark {
     pub mark: char,
     pub ns: u64,
     pub user_us: u64,
     pub sys_us: Option<u64>,
+    pub instr: Option<u64>,
 }
 
 /// Note a point of a compile on this thread (every [`perf_mark_as`]; the
@@ -384,6 +386,7 @@ fn phase_push(mark: char) {
     #[cfg(not(unix))]
     let ns = 0u64;
     let (user_us, sys_us) = thread_user_sys_us();
+    let instr = thread_counts().map(|c| c.0);
     PHASES.with(|p| {
         let mut p = p.borrow_mut();
         if mark == 'a' {
@@ -396,6 +399,7 @@ fn phase_push(mark: char) {
                 ns,
                 user_us,
                 sys_us,
+                instr,
             });
         }
     });

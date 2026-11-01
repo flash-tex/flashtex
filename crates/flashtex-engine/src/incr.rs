@@ -1521,6 +1521,7 @@ impl Obs {
         new: &ExtRecord,
         pr: &crate::revalidate::Probe,
     ) -> Result<(), String> {
+        crate::os::phase_mark('q');
         let old = pr.p1;
         if self.patched.contains(&old) {
             return Err("the old checkpoint holds meanings a later .aux changed".into());
@@ -3299,6 +3300,7 @@ impl Observer for Obs {
                     match r {
                         Ok(None) => self.probe = Some(pr),
                         r => {
+                            crate::os::phase_mark('v');
                             let r = r.map(|p2| p2.unwrap_or(pr.p2));
                             if self.debug {
                                 eprintln!("[incr] revalidation at the read point {id}: {r:?}");
@@ -3396,6 +3398,7 @@ impl Observer for Obs {
                 } else {
                     Err("past the page".into())
                 };
+                crate::os::phase_mark('v');
                 if self.debug {
                     eprintln!("[incr] revalidation at page {j}: {r:?}");
                 }
@@ -7181,6 +7184,7 @@ impl Session {
                         if let Err(e) = g.reattach_pending() {
                             return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
                         }
+                        crate::os::phase_mark('j');
                         self.line_shifts = shifts;
                         if let Some((then_patch, then_probe)) = cont {
                             // the reads at the document's start left nothing
