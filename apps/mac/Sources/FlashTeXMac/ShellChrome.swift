@@ -122,9 +122,11 @@ final class ShellChrome {
 
     /// Copies what the chrome shows; assigns a field only when it changed.
     /// Returns whether another refresh is wanted (the include closure is
-    /// waiting for the texts to settle).
+    /// waiting for the texts to settle). `offMain`: once the typing has
+    /// paused, the include closure is made on `closureQueue` and published
+    /// when done (ShellModel's throttled refresh); a direct call makes it here.
     @discardableResult
-    func refresh(from model: ShellModel) -> Bool {
+    func refresh(from model: ShellModel, offMain: Bool = false) -> Bool {
         func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ShellChrome, T>, _ value: T) {
             if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
         }
@@ -150,8 +152,19 @@ final class ShellChrome {
         if revision != seenRevision { seenRevision = revision; seenRevisionNs = now }
         var closureWaits = false
         if revision != closureRevision {
-            if closureRevision < 0 || documentSetChanged || settleNext || now &- seenRevisionNs >= Self.closureQuietNs {
+            if closureRevision < 0 || documentSetChanged || settleNext {
+                closureJob &+= 1 // a job still running is superseded
                 set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
+                closureRevision = revision
+            } else if now &- seenRevisionNs >= Self.closureQuietNs {
+                // The typing paused: the texts changed, the document set did
+                // not. Discovery reads every unopened include from disk (a
+                // 1,152-page book: 144 ms), so it is made off the main thread
+                // and published when done; until then the last closure stays.
+                if offMain { discoverClosureOffMain(model) } else {
+                    closureJob &+= 1
+                    set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
+                }
                 closureRevision = revision
             } else {
                 closureWaits = true
@@ -174,4 +187,36 @@ final class ShellChrome {
     /// The next refresh brings the closure up to date whatever the typing (`ShellModel.flushChrome`).
     @ObservationIgnored var settleNext = false
     static let closureQuietNs: UInt64 = 600_000_000
+
+    /// The include closure made off the main thread (`refresh(offMain:)`):
+    /// one serial queue; a job's result is published only if no later job
+    /// (or a direct discovery) was started since.
+    nonisolated static let closureQueue = DispatchQueue(label: "FlashTeX.chrome.closure", qos: .userInitiated)
+    @ObservationIgnored private var closureJob = 0
+    /// Closures published by off-main jobs (tests, evidence).
+    @ObservationIgnored private(set) var closuresMadeOffMain = 0
+
+    private func discoverClosureOffMain(_ model: ShellModel) {
+        closureJob &+= 1
+        let job = closureJob
+        let inputs = model.project.closureInputs()
+        let weakSelf = ShellChromeWeakRef(self)
+        Self.closureQueue.async {
+            let closure = ProjectDocuments.discoverClosure(inputs)
+            RunLoop.main.perform(inModes: [.common]) {
+                MainActor.assumeIsolated {
+                    guard let chrome = weakSelf.value, chrome.closureJob == job else { return }
+                    chrome.closuresMadeOffMain += 1
+                    if chrome.closure != closure { chrome.closure = closure }
+                }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
+        }
+    }
+}
+
+/// `ShellChrome`, weakly, for a job on `ShellChrome.closureQueue`.
+final class ShellChromeWeakRef: @unchecked Sendable {
+    weak var value: ShellChrome?
+    init(_ v: ShellChrome) { value = v }
 }

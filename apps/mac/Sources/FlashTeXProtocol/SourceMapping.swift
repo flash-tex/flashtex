@@ -55,7 +55,11 @@ public enum SourceMapping {
         // keystroke, and a byte loop over a 4 MB document was milliseconds of
         // main thread per key (APP-EDITOR-INSTANT). Same result as the byte loop.
         let common = min(o.count, n.count)
+        // 4 KB blocks by `memcmp` first: as fast in a debug build (the app's
+        // tests) as in a release one.
+        let block = 4096
         if let po = o.baseAddress, let pn = n.baseAddress {
+            while prefix + block <= common, memcmp(po + prefix, pn + prefix, block) == 0 { prefix += block }
             while prefix + 8 <= common,
                   UnsafeRawPointer(po + prefix).loadUnaligned(as: UInt64.self) == UnsafeRawPointer(pn + prefix).loadUnaligned(as: UInt64.self) { prefix += 8 }
         }
@@ -66,6 +70,7 @@ public enum SourceMapping {
         var suffix = 0
         let room = min(o.count, n.count) - prefix
         if let po = o.baseAddress, let pn = n.baseAddress {
+            while suffix + block <= room, memcmp(po + o.count - suffix - block, pn + n.count - suffix - block, block) == 0 { suffix += block }
             while suffix + 8 <= room,
                   UnsafeRawPointer(po + o.count - suffix - 8).loadUnaligned(as: UInt64.self)
                     == UnsafeRawPointer(pn + n.count - suffix - 8).loadUnaligned(as: UInt64.self) { suffix += 8 }

@@ -64,6 +64,14 @@ struct ProblemsTable: NSViewRepresentable {
         return scroll
     }
 
+    /// The list takes what it is offered, as the pages view does: measured
+    /// by Auto Layout, the scroll view made the window's constraint engine
+    /// solve again, with every visible row's hosted cell in it, on each of
+    /// SwiftUI's layout passes (tens of ms when a compile's results arrive).
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 400, height: proposal.height ?? 400)
+    }
+
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.show(self)
     }
@@ -175,20 +183,21 @@ struct ProblemsRowContent: View {
     }
 }
 
-/// A reused cell: one hosting view filling it.
+/// A reused cell: one hosting view filling it. By its autoresizing mask, not
+/// constraints: four constraints per visible row put every row in the
+/// window's constraint engine, which then solved again for each of
+/// SwiftUI's layout passes when a compile's results arrived.
 final class ProblemsRowCell: NSTableCellView {
     let host: NSHostingView<ProblemsRowContent>
 
     init(_ content: ProblemsRowContent) {
         host = NSHostingView(rootView: content)
-        super.init(frame: .zero)
-        host.translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: NSRect(x: 0, y: 0, width: 400, height: ProblemsTable.rowHeight))
         host.sizingOptions = []
+        host.translatesAutoresizingMaskIntoConstraints = true
+        host.autoresizingMask = [.width, .height]
+        host.frame = bounds
         addSubview(host)
-        NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: leadingAnchor), host.trailingAnchor.constraint(equalTo: trailingAnchor),
-            host.topAnchor.constraint(equalTo: topAnchor), host.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("not from a nib") }

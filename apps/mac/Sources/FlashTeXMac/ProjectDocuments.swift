@@ -518,11 +518,29 @@ final class ProjectDocuments {
         var unresolvable: [ClosureNode] { nodes.filter { if case .unresolvable = $0.state { true } else { false } } }
     }
 
+    /// What discovery reads, copied on the main thread (the texts are
+    /// copy-on-write, so this is O(documents)): the closure can then be made
+    /// on any thread (`ShellChrome` makes it off the main thread: it reads
+    /// every unopened include from disk, 144 ms for a 1,152-page book).
+    struct DiscoveryInputs: @unchecked Sendable {
+        var entryPath: String
+        /// The open documents' buffers by path (the first document of a path).
+        var texts: [String: String]
+        var root: URL?
+        func isOpen(_ path: String) -> Bool { texts[path] != nil }
+    }
+
+    func discoveryInputs() -> DiscoveryInputs {
+        var texts: [String: String] = [:]
+        for doc in model.documents where texts[doc.path] == nil { texts[doc.path] = doc.text }
+        return DiscoveryInputs(entryPath: entryPath, texts: texts, root: projectRoot)
+    }
+
     /// Text a document contributes to discovery: the open buffer, else the
     /// rooted disk file. Nil when the text is not available.
-    private func discoveryText(for path: String) -> String? {
-        if let doc = model.documents.first(where: { $0.path == path }) { return doc.text }
-        guard let root = projectRoot, case .file(let url) = Self.rootedFile(path, under: root),
+    nonisolated private static func discoveryText(for path: String, _ inputs: DiscoveryInputs) -> String? {
+        if let text = inputs.texts[path] { return text }
+        guard let root = inputs.root, case .file(let url) = Self.rootedFile(path, under: root),
               let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               (attrs[.size] as? Int ?? 0) <= ProjectIncludes.maxDocumentBytes,
               let data = try? Data(contentsOf: url) else { return nil }
@@ -536,13 +554,24 @@ final class ProjectDocuments {
     /// document reached twice through different parents is listed once as
     /// `duplicate`. Lexical only: no macro expansion.
     func discoverClosure(maxDepth: Int = ProjectDocuments.maxIncludeDepth) -> Closure {
+        Self.discoverClosure(closureInputs(), maxDepth: maxDepth)
+    }
+
+    /// The inputs of `discoverClosure()` (stale metadata pruned first, as it does).
+    func closureInputs() -> DiscoveryInputs {
         prune()
+        return discoveryInputs()
+    }
+
+    /// `discoverClosure()` over a snapshot of its inputs, on any thread.
+    nonisolated static func discoverClosure(_ inputs: DiscoveryInputs, maxDepth: Int = ProjectDocuments.maxIncludeDepth) -> Closure {
+        let entryPath = inputs.entryPath
         var closure = Closure(nodes: [], paths: [])
         var reached: Set<String> = [entryPath]
         var chain: [String] = [entryPath]
         func visit(_ path: String, depth: Int) {
-            guard depth <= maxDepth, let text = discoveryText(for: path) else { return }
-            for d in resolve(ProjectIncludes.scan(text)) {
+            guard depth <= maxDepth, let text = discoveryText(for: path, inputs) else { return }
+            for d in resolve(ProjectIncludes.scan(text), inputs) {
                 var node = ClosureNode(reference: d.reference, from: path, depth: depth, candidates: d.candidates,
                                        resolvedPath: d.resolvedPath, state: d.state)
                 if let resolved = d.resolvedPath ?? d.candidates.first(where: reached.contains) {
@@ -556,7 +585,7 @@ final class ProjectDocuments {
                     if reached.contains(resolved) {
                         node.resolvedPath = resolved
                         node.duplicate = true
-                        node.state = isOpen(resolved) ? .open : .available
+                        node.state = inputs.isOpen(resolved) ? .open : .available
                         closure.nodes.append(node)
                         continue
                     }
@@ -682,14 +711,19 @@ final class ProjectDocuments {
 
     /// Resolves scanned references like `discoverIncludes` does.
     private func resolve(_ refs: [ProjectIncludes.Reference]) -> [Discovered] {
-        refs.map { ref in
+        Self.resolve(refs, discoveryInputs())
+    }
+
+    nonisolated private static func resolve(_ refs: [ProjectIncludes.Reference], _ inputs: DiscoveryInputs) -> [Discovered] {
+        let projectRoot = inputs.root
+        return refs.map { ref in
             guard ref.literal else {
                 return Discovered(reference: ref, candidates: [], resolvedPath: nil, state: .unresolvable("argument needs macro expansion"))
             }
             let candidates: [String]
             do { candidates = try ProjectIncludes.candidates(for: ref.argument) }
             catch { return Discovered(reference: ref, candidates: [], resolvedPath: nil, state: .unresolvable("\(error)")) }
-            if let open = candidates.first(where: isOpen) {
+            if let open = candidates.first(where: inputs.isOpen) {
                 return Discovered(reference: ref, candidates: candidates, resolvedPath: open, state: .open)
             }
             guard let root = projectRoot else {

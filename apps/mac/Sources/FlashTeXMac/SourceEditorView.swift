@@ -186,6 +186,14 @@ struct SourceEditorView: NSViewRepresentable {
         return scroll
     }
 
+    /// The editor takes what it is offered, as the pages view and the
+    /// Problems list do: SwiftUI measured the scroll view by Auto Layout,
+    /// which solved the window's constraint engine again on its layout
+    /// passes (at every key and compile reply).
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 400, height: proposal.height ?? 400)
+    }
+
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let tv = scroll.documentView as! NSTextView
         let co = context.coordinator
@@ -502,13 +510,18 @@ struct SourceEditorView: NSViewRepresentable {
             // error or warning wins over their grey underline.
             let gapAttrs: [NSAttributedString.Key: Any] = [.underlineStyle: NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDot.rawValue,
                                                             .underlineColor: NSColor.tertiaryLabelColor]
+            // Only the marks in the window are painted, found by a range test
+            // before any other work: a long book's thousands of marks are
+            // mostly far from the visible text.
+            let inWindow = marks.filter { m in
+                let r = m.nsRange
+                return r.location >= 0 && r.length > 0 && NSMaxRange(r) <= length && NSIntersectionRange(r, window).length > 0
+            }
+            guard !inWindow.isEmpty else { return }
             for severity in [RuntimeV1.Severity?.none, .warning, .error] {
                 let base = severity == .error ? errorAttrs : severity == .warning ? warningAttrs : gapAttrs
-                for mark in marks where (severity == nil) == mark.isGap && (severity == nil || mark.severity == severity) {
-                    let r = mark.nsRange
-                    guard r.location >= 0, r.length > 0, NSMaxRange(r) <= length else { continue }
-                    let clipped = NSIntersectionRange(r, window)
-                    guard clipped.length > 0 else { continue }
+                for mark in inWindow where (severity == nil) == mark.isGap && (severity == nil || mark.severity == severity) {
+                    let clipped = NSIntersectionRange(mark.nsRange, window)
                     var attrs = base
                     attrs[.toolTip] = mark.toolTip
                     lm.addTemporaryAttributes(attrs, forCharacterRange: clipped)
@@ -576,6 +589,11 @@ struct SourceEditorView: NSViewRepresentable {
 
         private func resetShadow() {
             guard EditorTextShadow.enabled, let storage = textView?.textStorage else { shadow = nil; return }
+            // A keystroke sets `lastKnownText` to the shadow's own text: keep
+            // the shadow, and with it the anchors near the last edit. Started
+            // again, the next delete counts the bytes from the caret to the
+            // end of the text (a long book: milliseconds per key).
+            if let s = shadow, s.length16 == storage.length, s.holds(lastKnownText) { return }
             shadow = EditorTextShadow(text: lastKnownText, length16: storage.length)
         }
 
