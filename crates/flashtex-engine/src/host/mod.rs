@@ -117,12 +117,44 @@ fn format_index(f: Format) -> u8 {
 /// process (both binaries), so that runs in different processes seed
 /// `\pdfuniformdeviate` alike (the tests). Returns the pin.
 pub fn pin_clock_from_env() -> Option<(i64, i32)> {
-    let v = std::env::var("FLASHTEX_PIN_CLOCK").ok()?;
-    let (s, m) = v.split_once('.').unwrap_or((&v, "0"));
-    let t = (s.parse().ok()?, format!("{m:0<6}")[..6].parse().ok()?);
+    let t = clock_from_env()?;
     crate::pdftex::utils::pin_clock(Some(t));
     crate::pdftex::utils::arm_pinned_seed();
     Some(t)
+}
+
+/// `FLASHTEX_PIN_CLOCK`'s clock, if set.
+fn clock_from_env() -> Option<(i64, i32)> {
+    let v = std::env::var("FLASHTEX_PIN_CLOCK").ok()?;
+    let (s, m) = v.split_once('.').unwrap_or((&v, "0"));
+    Some((s.parse().ok()?, format!("{m:0<6}")[..6].parse().ok()?))
+}
+
+/// The clock now: the system's, or `FLASHTEX_PIN_CLOCK`'s where the tests
+/// inject one.
+pub fn clock_now() -> (i64, i32) {
+    clock_from_env().unwrap_or_else(|| {
+        let d = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        (d.as_secs() as i64, d.subsec_micros() as i32)
+    })
+}
+
+/// Whether a state taken with clock `then` may stand for a run at `now`
+/// (DESIGN.md §13, 2026-11-01): only on the same calendar day, in local
+/// time (`pdftex::utils::calendar_day`; always where the date does not come
+/// from the clock). Every LaTeX run reads `\time`, `\day`, `\month`, `\year`
+/// and the creation date before S₀ (expl3's date constants, at its
+/// `\everyjob`), so a state of another day holds another `\today`; within
+/// the day the preview keeps the state's `\time` and creation date, and an
+/// export, a run of its own, is exact.
+pub fn same_day(then: (i64, i32), now: (i64, i32)) -> Result<(), String> {
+    let day = crate::pdftex::utils::calendar_day;
+    if day(then.0) != day(now.0) {
+        return Err("S0 was taken on another day".into());
+    }
+    Ok(())
 }
 
 /// The running executable's hash, once per process.
@@ -804,6 +836,7 @@ impl Session {
     pub fn open_s0(o: RunOptions, path: &str) -> Result<(Session, OpenReport), String> {
         let mut s: Option<Session> = None;
         let (g, s0, rep) = read_s0(path, &mut |key| {
+            same_day(key.clock, clock_now())?;
             let t = Session::new(o.clone(), Some(key.clock));
             key.check(t.clock, &t.first_line)?;
             key.check_arm()?;
@@ -1309,6 +1342,22 @@ use crate::os::MappedFile;
 #[cfg(test)]
 mod key_tests {
     use super::*;
+
+    /// A state stands for a run on its own calendar day only (DESIGN.md
+    /// §13): a minute later yes, a day later no. (Noon UTC, so a minute
+    /// does not cross midnight in any time zone.)
+    #[test]
+    fn a_state_stands_for_a_run_on_its_own_day_only() {
+        if std::env::var("FORCE_SOURCE_DATE").as_deref() == Ok("1")
+            && std::env::var_os("SOURCE_DATE_EPOCH").is_some()
+        {
+            return; // the date does not come from the clock
+        }
+        let t0 = (1_600_000_000, 0);
+        assert!(same_day(t0, (t0.0 + 60, 0)).is_ok());
+        assert!(same_day(t0, (t0.0 + 86_400, 0)).is_err());
+        assert!(same_day((t0.0 + 86_400, 0), t0).is_err());
+    }
 
     /// A directory opened so that its times can be set: a plain open does
     /// on Unix; Windows wants write access and FILE_FLAG_BACKUP_SEMANTICS
