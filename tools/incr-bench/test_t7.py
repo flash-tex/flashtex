@@ -323,6 +323,17 @@ class HostedGateTests(unittest.TestCase):
         self.assertIn('re-typeset up to 254 pages > 3', why)
         self.assertIn(f"up to 2900 M instructions to the edited page > {t7.REAL['pr_gate']['edited_instr_m_max']} M", why)
 
+    def test_instructions_from_the_start_reported_not_gated(self):
+        d = self.doc(ms=5.0, rerun=2, instr_m=60)
+        for k in d['phases']['letter@x2-late']['keys']:
+            k['host'] = dict(k['host'], stages=dict(edited_instr_k=60e3, to_edited_instr_k=400e3))
+        rows = t7.summarise([d])
+        letter = next(r for r in rows if 'to_edited_instr_m' in r)
+        self.assertEqual(letter['to_edited_instr_m']['max'], 400.0)
+        self.assertEqual(t7.verdict(rows, None), [])
+        old = t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=60)])  # (a host without the stage)
+        self.assertEqual(next(r for r in old if 'to_edited_instr_m' in r)['to_edited_instr_m']['n'], 0)
+
     def test_own_compile_still_gated(self):
         fails = t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=50, by_own=False)]), None)
         self.assertEqual(len(fails), 1)

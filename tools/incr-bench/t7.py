@@ -654,17 +654,23 @@ def typing_row(d, name, ph):
 def real_fields(d, hosts=()):
     """A real document's row fields: the oracle's page count, the gate profile (`wall`: the target;
     `hosted`: realdocs.json's `pr_gate`), and per keystroke the pages re-typeset and the engine
-    thread's instructions to the edited page (DONE's `rerun_pages`, `stages.edited_instr_k`)."""
+    thread's instructions to the edited page (DONE's `rerun_pages`, `stages.edited_instr_k`; and,
+    reported only, `stages.to_edited_instr_k`, counted from the compile's start)."""
     if not d.get('real'):
         return {}
-    instr = [x['stages']['edited_instr_k'] / 1e3 for x in hosts
-             if isinstance((x.get('stages') or {}).get('edited_instr_k'), (int, float))]
+    def instr_m(key):
+        return [x['stages'][key] / 1e3 for x in hosts
+                if isinstance((x.get('stages') or {}).get(key), (int, float))]
+    instr = instr_m('edited_instr_k')
     out = dict(real=True, oracle_pages=d['real'].get('oracle_pages'), gate=d['real'].get('gate', 'wall'),
                pr_gate=REAL.get('pr_gate') or d['real'].get('pr_gate', {}))  # (the budgets in force now)
     if hosts:  # (a letter@ row: one DONE per keystroke; a typing@ row's compiles are superseded)
         out.update(rerun_pages=stats([x['rerun_pages'] if x.get('rerun_pages') is not None else x.get('typeset_pages') or 0
                                       for x in hosts]),
-                   edited_instr_m=stats(instr))
+                   edited_instr_m=stats(instr),
+                   # (reported, not gated: from the compile's start, the find phase and the
+                   # restore included; hosts before `stages.to_edited_instr_k` have none)
+                   to_edited_instr_m=stats(instr_m('to_edited_instr_k')))
     return out
 
 
