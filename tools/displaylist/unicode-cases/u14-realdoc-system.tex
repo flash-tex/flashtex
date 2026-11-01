@@ -1,0 +1,77 @@
+% u14-realdoc-system: a real document (lane UNICODE) on macOS system fonts by name, everything at once: Georgia/Helvetica Neue/Menlo, STIX Two Math (unicode-math), polyglossia Greek, Hebrew and Arabic (bidi), xeCJK (Songti SC, Hiragino Sans GB), hyperref, contents, footnotes, a table, cross references
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setmainfont{Georgia}
+\setsansfont{Helvetica Neue}[Scale=MatchLowercase]
+\setmonofont{Menlo}[Scale=MatchLowercase]
+\setmathfont{STIX Two Math}
+\usepackage{xeCJK}
+\setCJKmainfont{Songti SC}
+\setCJKsansfont{Hiragino Sans GB}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!60!black]{hyperref}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{greek}
+\setotherlanguage{hebrew}
+\setotherlanguage{arabic}
+\newfontfamily\greekfont{Georgia}
+\newfontfamily\hebrewfont{Times New Roman}[Script=Hebrew]
+\newfontfamily\arabicfont{Geeza Pro}[Script=Arabic]
+\title{Many Scripts on System Fonts}
+\author{A. Author\thanks{\texttt{author@example.org}}}
+\date{1 November 2026}
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Introduction}\label{s:intro}
+A paper an author writes on a Mac: the body in Georgia, headings and
+\textsf{sans text in Helvetica Neue, \textbf{bold}}, code in
+\texttt{Menlo: fn main() \{\}}, ligatures fi fl, \textit{italic},
+\textbf{\textit{bold italic}}.\footnote{A footnote, as papers have.}
+Section~\ref{s:math} has the mathematics.
+
+\section{Mathematics}\label{s:math}
+Inline $\int_0^1 x^2\,dx=\frac13$ and displayed:
+\begin{equation}\label{eq:e}
+  e^{iπ}+1=0,\qquad ∀ε>0\ ∃δ>0:\ |x-a|<δ ⇒ |f(x)-f(a)|<ε .
+\end{equation}
+\begin{align}
+  \nabla\cdot\mathbf{E} &= \frac{ρ}{ε_0}, &
+  \mathbb{E}[X] &= \sum_{k} k\,\mathbb{P}(X=k).
+\end{align}
+Equation~\eqref{eq:e} uses $ℝ$, $\mathcal{L}$, $\symbf{v}$.
+
+\section{Other scripts}\label{s:scripts}
+\begin{greek}
+Ἐν ἀρχῇ ἦν ὁ λόγος, καὶ ὁ λόγος ἦν πρὸς τὸν θεόν.
+\end{greek}
+
+Hebrew inline, \texthebrew{שלום עולם}, then a paragraph.
+
+\begin{hebrew}
+זהו טקסט בעברית עם מספרים 2026 ו\textbf{הדגשה}, ארוך מספיק כדי להתפרס על יותר משורה אחת בעמוד.
+\end{hebrew}
+
+Arabic inline, \textarabic{سلام}, then a paragraph.
+
+\begin{Arabic}
+مرحبا بالعالم. هذا نص عربي للاختبار، مع أرقام ١٢٣٤٥ وكلمات متصلة تمتد على أكثر من سطر واحد.
+\end{Arabic}
+
+中文排版：这是一个中文段落，包含标点符号“引号”、（括号）和《书名号》。中文与English混排，数字123和公式$a^2+b^2=c^2$。\textsf{黑体文字。}这一段要足够长，才能检验中文的断行。
+
+\section{Results}
+\begin{tabular}{ll}
+Script & Font \\ \hline
+Latin & Georgia \\
+Hebrew & Times New Roman: \texthebrew{עברית} \\
+Arabic & Geeza Pro: \textarabic{عربي} \\
+Chinese & Songti SC: 中文 \\
+\end{tabular}
+
+See Section~\ref{s:intro} and \href{https://ctan.org/pkg/fontspec}{fontspec}.
+\end{document}

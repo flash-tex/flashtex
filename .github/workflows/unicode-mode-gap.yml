@@ -1,0 +1,141 @@
+# Unicode mode's keystroke latency against the pdfTeX (Classic) mode on one
+# 120-page document (lane UNICODE): tools/unicode-m3/mode_gap.py. Both hosts
+# are built from the same commit and driven by the same client (dl3-keys,
+# Classic's T7 typist) on the same runner, one after the other.
+#
+#   linux  ubuntu-latest with the pinned TeX Live 2026 (unicode-m3.yml's)
+#   mac    macos-15, a GitHub-hosted M1 VM (DESIGN.md §1.2 names an M1-class
+#          Mac as reference hardware; a shared VM is still non-reference),
+#          with MacTeX 2026 (t7-hosted.yml's)
+#
+# Hosted runners are shared: their wall times are not §1.2's verdicts. The
+# result is the ratio between the modes on one machine. Informational: the
+# run is red only when a host or the typist fails.
+#
+# Fork safety: no secrets; read-only `contents`; checkouts without persisted
+# credentials.
+name: unicode-mode-gap
+
+on:
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: "pages of T7's full-N document"
+        required: false
+        default: "120"
+      keys:
+        description: "keystrokes per variant and position"
+        required: false
+        default: "20"
+  push:
+    branches-ignore: [main, "gh-readonly-queue/**"]
+    paths:
+      - ".github/workflows/unicode-mode-gap.yml"
+      - "tools/unicode-m3/mode_gap.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicode-mode-gap-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+  PAGES: ${{ inputs.pages || '120' }}
+  KEYS: ${{ inputs.keys || '20' }}
+  # (/tmp: the hosts' socket paths must fit in 104 bytes)
+  INCR_BENCH_DIR: /tmp/ib
+  TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+jobs:
+  gap:
+    name: mode gap (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        if: runner.os == 'Linux'
+        id: tl
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          cache: "false"
+      - name: TeX Live 2026 (MacTeX 2026, mactex-no-gui)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          brew install --cask mactex-no-gui >/dev/null
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+      - name: font directories (TeX Live's, by name, as sweeps-unicode.yml)
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Linux ]]; then tl="$(dirname "$(dirname "${{ steps.tl.outputs.bin }}")")"; else tl=/usr/local/texlive/2026; fi
+          ls -d "$tl/texmf-dist/fonts/opentype"
+          {
+            echo "FLASHTEX_FONT_DIRS=$tl/texmf-dist/fonts/opentype:$tl/texmf-dist/fonts/truetype"
+            echo "FLASHTEX_CACHE_DIR=$RUNNER_TEMP/flashtex-cache"
+          } >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unicode-mode-gap
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: both hosts and the typist (release)
+        run: |
+          set -euo pipefail
+          (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode)
+          cargo build --release --locked -p flashtex-engine -p flashtex-display-list
+          tools/incr-bench/mkeng.sh cur
+          ls -l crates/flashtex-xetex/target/release/flashtex-host-unicode "$INCR_BENCH_DIR/cur"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: mode_gap.py
+        run: |
+          set -o pipefail
+          uname -a
+          if [[ "$RUNNER_OS" == macOS ]]; then sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize; else nproc; fi
+          mkdir -p "$RUNNER_TEMP/gap"
+          python3 tools/unicode-m3/mode_gap.py --classic "$INCR_BENCH_DIR/cur" \
+            --unicode-host crates/flashtex-xetex/target/release/flashtex-host-unicode \
+            --pages "$PAGES" --keys "$KEYS" --out "$RUNNER_TEMP/gap/work" \
+            --json "$RUNNER_TEMP/gap/gap.json" 2>&1 | tee "$RUNNER_TEMP/gap/gap.txt"
+      - name: report
+        if: always()
+        run: |
+          {
+            echo "### Unicode vs Classic keystroke latency (${{ matrix.os }}, non-reference)"
+            echo
+            echo '```'
+            grep -v '^|' "$RUNNER_TEMP/gap/gap.txt" || true
+            echo '```'
+            grep '^|' "$RUNNER_TEMP/gap/gap.txt" || true
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unicode-mode-gap-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/gap/gap.json
+            ${{ runner.temp }}/gap/gap.txt
+            ${{ runner.temp }}/gap/work/*/keys.jsonl
+            ${{ runner.temp }}/gap/work/*/host.err
+          if-no-files-found: ignore
+          retention-days: 30
