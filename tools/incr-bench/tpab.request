@@ -1,5 +1,4 @@
-REFS='main agent/kabir-claude-throughput/push-input agent/kabir-claude-throughput/narrow-reads'
+REFS='agent/kabir-claude-throughput/png-rows agent/kabir-claude-throughput/image-precompress'
 TPAB_DOCS='arxiv13'
-TPAB_REPS='3'
+TPAB_REPS='5'
 TPAB_PERF='0'
-TPAB_EVENTS='ls_bad_status2.stli_other'
