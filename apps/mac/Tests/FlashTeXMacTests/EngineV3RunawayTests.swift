@@ -180,14 +180,16 @@ final class EngineV3RunawayTests: XCTestCase {
         var lastFrame = Date(), maxGap = 0.0, passes = Set<Int>()
         var trace: [String] = []
         let t0 = Date()
-        s.afterEvent = { out in
+        // `s` weakly: the session keeps this closure, and a strong capture
+        // made a cycle that leaked the session (leaks(1), 2026-10-04).
+        s.afterEvent = { [weak s] out in
             let t = String(format: "%.2f", Date().timeIntervalSince(t0))
             switch out {
             case .progress(let j):
                 if let p = j["pass"]?.int { passes.insert(Int(p)) }
                 trace.append("\(t) P\(j["pass"]?.int ?? 0):\(j["page"]?.int ?? 0)")
             default:
-                if s.compiling { maxGap = max(maxGap, Date().timeIntervalSince(lastFrame)) }
+                if s?.compiling == true { maxGap = max(maxGap, Date().timeIntervalSince(lastFrame)) }
                 lastFrame = Date()
                 switch out {
                 case .page(let p, _, _, _): trace.append("\(t) page\(p.page.index)")

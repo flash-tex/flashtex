@@ -1,5 +1,8 @@
 # Proposal: `payload.date` — the compile request carries the document date
 
+> **Partly historical.** `payload.date` is live in the apps' `RuntimeV1` types; the old engine's
+> worker that read it was deleted in S7 (retirement plan, row 11), so the producer notes are history.
+
 Status: **IMPLEMENTED** (owner bug "`\date{\today}` always renders January 1, 1970",
 issue #2, lane `nixos-today`, branch `engine/today-date-compiler`). Additive and
 optional. It changes no frozen shape: `protocol/rendering-v2.schema.json`, the

@@ -1,0 +1,9 @@
+plain written 16.9
+plain reusable r=0 0.9
+plain reused+written 16.9
+part reusable r=0 8.9
+copied 0.9
+copy written 32.9
+copy reusable r=0 0.9
+c half 8.9
+c reusable r=0 0.9

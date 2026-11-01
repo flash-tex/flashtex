@@ -1,0 +1,131 @@
+# T7 smoke run on a GitHub-hosted Apple-Silicon Mac (macos-15: an M1 VM, 3 vCPU, 7 GB). It runs
+# scripts/t7-reference.sh --force, so every machine check that fails is written down and the run
+# goes on: the run is NON-REFERENCE by construction. The hosted class is shared, slower hardware;
+# its rows prove that the harness runs end to end (every document, every phase, no harness error)
+# and show which rows miss there. They are never the P4 latency number: that is the reference run
+# (t7-reference.yml, DESIGN.md §1.2, §8 T7, §12), on the owner's reference class.
+#
+#   gh workflow run t7-hosted.yml -f ref=<branch|sha> [-f docs=plain-10,infdesc] [-f quick=true]
+#
+# A push to a branch named t7-hosted/** runs it on that commit too (a new workflow file cannot be
+# dispatched before it is on the default branch).
+#
+# Outcome: exit 0 and 3 (a pass; non-reference) and 1 (rows missed: on this class, expected; the
+# table and the misses are the run summary, with a warning) pass the job. 2 (a harness error) and
+# anything else fail it: the smoke run exists to keep the harness runnable.
+#
+# Fork safety: workflow_dispatch and push only, `contents: read`, no secrets, a checkout without
+# persisted credentials.
+name: t7-hosted
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "branch, tag or SHA to measure"
+        required: true
+        default: main
+      docs:
+        description: "t7.py --docs (default: the ten T7 documents and infdesc)"
+        required: false
+        default: ""
+      quick:
+        description: "t7.py --quick (plain-10, full-100, fewer keys)"
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches: ["t7-hosted/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t7-hosted-${{ inputs.ref || github.sha }}
+  cancel-in-progress: false
+
+env:
+  REF: ${{ inputs.ref || github.sha }}
+  DOCS: ${{ inputs.docs || 'plain-10,full-10,plain-100,full-100,plain-300,full-300,plain-1000,full-1000,beamer-5,beamer-30,infdesc' }}
+  QUICK: ${{ inputs.quick == true }}
+  # (/tmp: the hosts' socket paths must fit in 104 bytes)
+  INCR_BENCH_DIR: /tmp/ib
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  t7:
+    name: T7 smoke (hosted M1, non-reference)
+    runs-on: macos-15
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: TeX Live 2026 (MacTeX 2026, mactex-no-gui)
+        run: |
+          set -euo pipefail
+          brew install --cask mactex-no-gui >/dev/null
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH=/Library/TeX/texbin:$PATH
+          pdftex --version | head -1
+          kpsewhich pdflatex.ini
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/ib/cache
+          key: t7-hosted-books-${{ hashFiles('tools/parity/corpus/books.json') }}
+      - name: scripts/t7-reference.sh --force
+        id: t7
+        run: |
+          # (+e: the script's exit code is the result, read below)
+          set +e -uo pipefail
+          out="$RUNNER_TEMP/t7-evidence"
+          log="$RUNNER_TEMP/t7-hosted.log"
+          echo "out=$out" >> "$GITHUB_OUTPUT"
+          echo "log=$log" >> "$GITHUB_OUTPUT"
+          args=(--force --out "$out" --wait 300 --docs "$DOCS")
+          [[ "$QUICK" == true ]] && args+=(--quick)
+          echo "+ scripts/t7-reference.sh ${args[*]}"
+          scripts/t7-reference.sh "${args[@]}" 2>&1 | tee "$log"
+          code=${PIPESTATUS[0]}
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          case $code in
+            0|3) echo "T7 smoke: every gated row met its target (a non-reference run)" ;;
+            1) echo "::warning::T7 smoke: gated rows missed on the hosted class (non-reference; see the summary)" ;;
+            2) echo "::error::T7 smoke: harness error (see t7-output.txt)" ;;
+            *) echo "::error::T7 smoke: exit $code" ;;
+          esac
+          case $code in 0|1|3) exit 0 ;; *) exit 1 ;; esac
+      - name: the table as the run summary
+        if: always() && steps.t7.outputs.out != ''
+        env:
+          OUT: ${{ steps.t7.outputs.out }}
+          CODE: ${{ steps.t7.outputs.code }}
+        run: |
+          set -euo pipefail
+          {
+            echo "ref \`$REF\` = \`$(git rev-parse HEAD)\`; runner $RUNNER_NAME ($(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs)"
+            echo
+            echo "### T7 smoke on a hosted Mac: NON-REFERENCE (exit ${CODE:-?})"
+            echo
+            if [[ -f "$OUT/t7-output.txt" ]]; then
+              echo '```'
+              grep -E '^T7: |^  [^ |].*: ' "$OUT/t7-output.txt" | head -80 || true
+              echo '```'
+              echo
+            fi
+            if [[ -f "$OUT/table.md" ]]; then cat "$OUT/table.md"; else echo "(no table: the script did not reach t7.py)"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.t7.outputs.out != ''
+        with:
+          name: t7-hosted-${{ github.run_id }}
+          path: ${{ steps.t7.outputs.out }}
+          if-no-files-found: ignore
+          retention-days: 30

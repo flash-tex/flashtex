@@ -1,0 +1,8 @@
+% x035-char-big: \char above 255 in a TFM font is a lost character
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x \tracinglostchars=2
+\setbox0=\hbox{\char"41 \char"FF \char"100 \char"1F34C \char"10FFFF}
+\lsshipbox0
+\end

@@ -1,13 +1,11 @@
 import AppKit
-import SwiftUI
 import XCTest
-import FlashTeXProtocol
-import HostedWindows
 @testable import FlashTeXMac
 
-/// Latency aggregation, bench configuration parsing, and the insertion path
-/// through the real `NSTextView` -> delegate -> `ShellModel` -> fake worker ->
-/// `PreviewView` render, with the paint hooks recording every keystroke.
+/// Latency aggregation, bench configuration parsing and the summary
+/// (TypingBench.swift). The end-to-end runs through the old engine's worker
+/// and its preview retired with that engine (#1236 S6); the engine's own
+/// keystroke-to-page bench is EngineV3Bench.
 @MainActor
 final class TypingBenchTests: XCTestCase {
 
@@ -131,133 +129,22 @@ final class TypingBenchTests: XCTestCase {
         XCTAssertEqual(TypingBenchConfig.parse(["FLASHTEX_TYPING_BENCH": "s.txt", "FLASHTEX_TYPING_BENCH_AT": "first-paragraph"])?.insertAfterNeedle, "first-paragraph")
     }
 
-    // MARK: insertion path against fake_worker.py
+    // MARK: the summary
 
-    /// Hosts the real editor and preview so keystrokes take the production path.
-    private struct BenchHost: View {
-        var model: ShellModel // @Observable: reads inside body are tracked
-        var body: some View {
-            HStack {
-                SourceEditorView(text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
-                                 selection: model.selection, pendingEdit: model.pendingEdit, result: model.result)
-                    .frame(width: 400)
-                if let result = model.result {
-                    PreviewView(result: result, dark: false) { _, _ in }
-                }
-            }
-        }
-    }
-
-    private func makeWindow(_ model: ShellModel) -> NSWindow {
-        HostedWindowSupport.prepare() // non-activating: hosted windows must never pull the app forward
-        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled],
-                                                backing: .buffered, defer: false)
-        window.contentView = NSHostingView(rootView: BenchHost(model: model))
-        window.orderFrontRegardless() // never makeKey: the test must not steal focus
-        return window
-    }
-
-    struct TimedOut: Error {}
-
-    private func waitUntil(_ what: String, timeout: TimeInterval = 15, _ cond: @escaping @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if cond() { return }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        XCTFail("timed out waiting for \(what)")
-        throw TimedOut()
-    }
-
-    private func runBench(script: String, intervalMs: Double, seed: String) async throws -> (TypingBenchSummary, [String], NSWindow) {
+    /// The summary names the engine that typeset the run: the new one, the
+    /// only engine since S6; no worker produced anything.
+    func testTheSummaryNamesTheNewEngine() throws {
         let model = ShellModel()
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        XCTAssertTrue(model.workerAttached)
-        let window = makeWindow(model)
-        model.replaceProject(entryText: seed)
-        model.compile()
-        try await waitUntil("first compile") { model.inFlightRevision == nil && !model.isFixture }
-        let tv = try XCTUnwrap(TypingBenchDriver.findTextView(in: [window.contentView!]))
-        try await waitUntil("first paint") { model.result.map { TypingBench.shared.recorder.lastPaintedRevision >= $0.revision } ?? false }
-
-        var lines: [String] = []
-        TypingBench.shared.recorder.log = { lines.append($0) }
-        defer { TypingBench.shared.recorder.log = { FlashTeXLog.write($0) } }
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("typing-bench-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let scriptURL = dir.appendingPathComponent("script.txt")
-        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-        var config = TypingBenchConfig(scriptPath: scriptURL.path, outputPath: dir.appendingPathComponent("out.json").path)
-        config.intervalMs = intervalMs
-        config.settleTimeoutMs = 5_000
-        config.insertBeforeEndDocument = false
-
-        let driver = TypingBenchDriver(config: config, model: model, bench: TypingBench.shared, textView: tv)
-        var finished: TypingBenchSummary?
-        driver.onFinish = { finished = $0 }
-        driver.start()
-        try await waitUntil("bench finish", timeout: 30) { finished != nil }
-        let summary = try XCTUnwrap(finished)
-        // The JSON summary round-trips.
-        let data = try Data(contentsOf: URL(fileURLWithPath: config.outputPath))
-        let decoded = try JSONDecoder().decode(TypingBenchSummary.self, from: data)
-        XCTAssertEqual(decoded.keystrokes, summary.keystrokes)
-        XCTAssertEqual(decoded.paintPoint, TypingBench.paintPointDescription)
-        XCTAssertEqual(tv.string, model.activeText, "editor and model agree")
-        return (summary, lines, window)
-    }
-
-    func testEveryTypedKeystrokeIsPaintedThroughTheRealEditorAndPreview() async throws {
-        let script = "Hello naïve café — typed.\n"
-        let (s, lines, window) = try await runBench(script: script, intervalMs: 5, seed: "Seed line\n")
-        defer { window.orderOut(nil) }
-        XCTAssertEqual(s.typed, TypingBenchConfig.keystrokes(from: script).count)
-        XCTAssertEqual(s.keystrokes, s.typed, "every insertText produced exactly one keystroke revision")
-        XCTAssertEqual(s.unpainted, 0)
-        XCTAssertEqual(s.painted, s.keystrokes)
-        XCTAssertGreaterThan(s.paints, 0)
-        XCTAssertEqual(s.documentBytesAfter - s.documentBytesBefore, script.utf8.count)
-        XCTAssertEqual(s.keystrokeToPaintMs.count, s.keystrokes)
-        let p50Ms = try XCTUnwrap(s.keystrokeToPaintMs.p50Ms)
-        let p99Ms = try XCTUnwrap(s.keystrokeToPaintMs.p99Ms)
-        let maxMs = try XCTUnwrap(s.keystrokeToPaintMs.maxMs)
-        XCTAssertGreaterThan(p50Ms, 0)
-        XCTAssertGreaterThanOrEqual(p99Ms, p50Ms)
-        XCTAssertGreaterThanOrEqual(maxMs, p99Ms)
-        // Every keystroke revision has its own log line, and a paint line whose
-        // revision is >= it appears after it.
-        for k in s.perKeystroke {
-            let ki = try XCTUnwrap(lines.firstIndex { $0.hasPrefix("keystroke: revision \(k.revision) at \(k.keystrokeNs)") }, "no keystroke line for revision \(k.revision)")
-            XCTAssertNotNil(k.delegateNs, "the text view delegate stamped revision \(k.revision)")
-            let painted = lines[ki...].contains { $0.hasPrefix("paint: revision \(k.paintedByRevision!) at \(k.paintNs!)") }
-            XCTAssertTrue(painted, "no paint line covering revision \(k.revision)")
-            XCTAssertGreaterThanOrEqual(k.paintedByRevision!, k.revision)
-            XCTAssertNotNil(k.compileMs, "the covering paint knows its compile round trip")
-        }
-        // The final text is what the preview painted: the last keystroke's paint is
-        // the result for the editor's current revision.
-        let last = try XCTUnwrap(s.perKeystroke.last)
-        XCTAssertEqual(last.paintedByRevision, last.revision)
-        XCTAssertEqual(lines.filter { $0.hasPrefix("paint:") }.count, s.paints)
-    }
-
-    func testBurstTypingCoalescesButNeverLeavesTheFinalTextUnpainted() async throws {
-        // `%slow` makes the fake worker answer after 400 ms, so a 0 ms burst of 12
-        // keystrokes must coalesce into few compiles; the final revision still paints.
-        let script = "abcdefghijkl"
-        let (s, lines, window) = try await runBench(script: script, intervalMs: 0, seed: "%slow\nSeed line\n")
-        defer { window.orderOut(nil) }
-        XCTAssertEqual(s.keystrokes, 12)
-        XCTAssertEqual(s.unpainted, 0, "coalescing must not strand a keystroke")
-        XCTAssertGreaterThan(s.coalesced, 0, "burst keystrokes were made visible by a later revision's paint")
-        XCTAssertLessThan(s.paints, s.keystrokes)
-        XCTAssertLessThan(s.compiles, s.keystrokes, "one request in flight; the newest buffer goes out when it returns")
-        let last = try XCTUnwrap(s.perKeystroke.last)
-        XCTAssertEqual(last.paintedByRevision, last.revision, "the final text was painted at its own revision")
-        XCTAssertTrue(lines.contains { $0.hasPrefix("paint: revision \(last.revision) at \(last.paintNs!)") })
-        // Coalesced keystrokes wait for a later paint, so their latency is at least the
-        // 400 ms worker delay they queued behind; none exceed two worker round trips + settle.
-        for k in s.perKeystroke where k.coalesced { XCTAssertGreaterThan(try XCTUnwrap(k.latencyMs), 100) }
-        XCTAssertLessThan(try XCTUnwrap(s.keystrokeToPaintMs.maxMs), 2_500)
+        let config = TypingBenchConfig(scriptPath: "/nonexistent/script.txt", outputPath: "/nonexistent/script.txt.bench.json")
+        let driver = TypingBenchDriver(config: config, model: model, bench: TypingBench.shared)
+        let s = driver.summary()
+        XCTAssertEqual(s.engine, "new")
+        XCTAssertEqual(s.producer, "none")
+        XCTAssertEqual(s.paintPoint, TypingBench.paintPointDescription)
+        XCTAssertEqual(s.typed, 0)
+        // The JSON summary round-trips, the engine with it.
+        let decoded = try JSONDecoder().decode(TypingBenchSummary.self, from: try JSONEncoder().encode(s))
+        XCTAssertEqual(decoded.engine, "new")
+        XCTAssertEqual(decoded.paintPoint, s.paintPoint)
     }
 }

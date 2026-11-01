@@ -355,15 +355,23 @@ impl Globals {
                             if (!self.open_fmt_file()) {
                                 break 'l_final_end_f;
                             }
-                            if (!self.load_fmt_file()) {
+                            if (!self.flashtex_fmt_restore()) {
                                 {
-                                    { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
-                                    break 'l_final_end_f;
+                                    if (!self.load_fmt_file()) {
+                                        {
+                                            { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
+                                            break 'l_final_end_f;
+                                        }
+                                    }
+                                    self.flashtex_fmt_loaded();
                                 }
                             }
                             { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
                             if self.intr_on {
                                 self.flashtex_intr_loaded();
+                            }
+                            if self.bm_on {
+                                self.flashtex_bm_loaded();
                             }
                             while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 32i32)) {
                                 self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
@@ -372,10 +380,10 @@ impl Globals {
                     }
                 }
                 if (self.pdf_output_option != 0i32) {
-                    { let __v2336 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2336); }
+                    { let __v2348 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2348); }
                 }
                 if (self.pdf_draftmode_option != 0i32) {
-                    { let __v2337 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2337); }
+                    { let __v2349 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2349); }
                 }
                 self.pdf_init_map_file();
                 if (self.eTeX_mode == 1i32) {
@@ -387,7 +395,7 @@ impl Globals {
                 if ((self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix2338 = self.cur_input.limit_field; let __v2339 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2338) as usize)] = __v2339; }
+                    { let __ix2350 = self.cur_input.limit_field; let __v2351 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2350) as usize)] = __v2351; }
                 }
                 self.fix_date_and_time();
                 if self.trie_not_ready {

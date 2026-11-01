@@ -28,4 +28,8 @@ path = "src/bin/dl3-client.rs"
 name = "dl3-keys"
 path = "src/bin/dl3-keys.rs"
 
+[[bin]]
+name = "dl3-coldopen"
+path = "src/bin/dl3-coldopen.rs"
+
 [dependencies]

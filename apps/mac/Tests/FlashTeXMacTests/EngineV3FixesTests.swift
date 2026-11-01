@@ -74,8 +74,9 @@ final class EngineV3FixesTests: XCTestCase {
         XCTAssertNil(EngineV3Fixes.fix(row, named: nil, texts: ["main.tex": text]).help, "a macro frame: no name, no fix")
     }
 
-    /// The same text and the same old-engine diagnostic on the v2 path and as
-    /// a v3 row give the same caret fix; Tab applies it, one edit.
+    /// The same text with the old engine's diagnostic (its own fix attached,
+    /// as its results had it) and with the host's TeX row give the same caret
+    /// fix; Tab applies it, one edit.
     func testCaretFixAndFixPreviewMatchTheOldPath() {
         let text = "Hello \\alpah world.\n"
         let start = 6, end = 12
@@ -84,10 +85,9 @@ final class EngineV3FixesTests: XCTestCase {
                                        code: "unknown_command", suggestion: "\\alpha",
                                        help: .init(message: "did you mean \\alpha?", replacement: .init(startByte: start, endByte: end, text: "\\alpha", path: "main.tex")))
         let v2 = ShellModel()
-        v2.engineV3Enabled = false
         v2.replaceProject(entryText: text, named: "main.tex")
-        v2.result = RuntimeV1.CompileResult(projectId: "p", revision: v2.editorRevision, status: .recovered, pages: [], diagnostics: [old], pdfPath: nil)
-        v2.setCompiledDocuments(["main.tex": text])
+        v2.setEngineV3CompiledDocuments(["main.tex": text])
+        v2.engineV3Diagnostics = [old]
         env.set("FLASHTEX_HOST", "none")
         let v3 = ShellModel()
         v3.replaceProject(entryText: text, named: "main.tex")
@@ -188,7 +188,8 @@ final class EngineV3FixesTests: XCTestCase {
         let rows = m.engineV3Diagnostics.filter { $0.code == EngineV3Fixes.undefinedCode }
         XCTAssertEqual(rows.count, 3, "\(m.engineV3Diagnostics.map(\.message))")
         for r in rows {
-            XCTAssertNil(r.help?.replacement, "no mechanical fix for a macro call: \(r)")
+            // The fix (if any) is in the definition (EngineV3DiagPresent), never on the call.
+            if let f = r.help?.replacement, let s = r.source { XCTAssertTrue(f.endByte < s.startByte || f.startByte > s.endByte, "no fix on a macro call: \(r)") }
             XCTAssertNil(r.suggestion)
         }
         for cs in ["\\mycite", "\\mysec", "\\myemph"] {

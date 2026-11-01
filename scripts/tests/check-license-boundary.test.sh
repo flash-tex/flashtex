@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Self-test for scripts/check-license-boundary.sh, checks C (no poppler or
 # MuPDF on the MIT side) and D (the Typst host links, copies and names no GPL
-# code). Runs the real script against a copy of
+# code), and G (every package declares a licence). Runs the real script
+# against a copy of
 # scripts/tests/fixtures/license-boundary-copyleft-pdf:
 #
 #   1. as is: an MIT crate reaching mupdf-sys and an app linking mupdf must
 #      both be reported, and the check must exit 1; the GPL crate using
-#      poppler-rs and the MIT crate using pdfium-render must not be.
+#      poppler-rs and the MIT crate using pdfium-render must not be. For this
+#      run mit-pdfium also loses its `license` line, which G must report.
 #   2. with the two FIXTURE-VIOLATION lines removed: the check must pass.
 #
 # Needs cargo (offline is fine: every dependency is a path) and python3.
@@ -26,17 +28,23 @@ expect() { # expect <description> <command...>
   if "$@"; then printf 'ok    %s\n' "$what"; else printf 'FAIL  %s\n' "$what" >&2; FAILS=$((FAILS + 1)); fi
 }
 
-# 1. The violations fire.
+# 1. The violations fire. G: mit-pdfium loses its `license` line for this run.
+pdfium_toml="$WORK/tree/crates/mit-pdfium/Cargo.toml"
+cp "$pdfium_toml" "$WORK/mit-pdfium.toml"
+grep -v '^license' "$WORK/mit-pdfium.toml" > "$pdfium_toml"
 set +e
 FLASHTEX_BOUNDARY_ROOT="$WORK/tree" "$CHECK" > "$WORK/out1" 2>&1
 rc=$?
 set -e
+cp "$WORK/mit-pdfium.toml" "$pdfium_toml"
+expect "G a package without a licence is reported" grep -q 'G \[\.\]  mit-pdfium declares no licence' "$WORK/out1"
+expect "G a package with one is not" bash -c "! grep -q 'mit-viewer declares no licence' '$WORK/out1'"
 expect "violating tree exits 1 (got $rc)" test "$rc" -eq 1
 expect "mit-viewer -> mupdf-sys is reported" grep -q 'MIT crate mit-viewer reaches a copyleft PDF renderer: mupdf-sys <- mit-viewer' "$WORK/out1"
 expect "the app's linkedLibrary(\"mupdf\") is reported" grep -q 'C2  app build input names a copyleft PDF renderer: apps/demo/Package.swift:8:' "$WORK/out1"
 expect "the comment naming poppler is not reported" bash -c "! grep -q 'Package.swift:2:' '$WORK/out1'"
 expect "GPL crate gpl-tool may use poppler-rs" bash -c "! grep -E '^VIOLATION  C' '$WORK/out1' | grep -q 'gpl-tool'"
-expect "pdfium-render is allowed" bash -c "! grep -q 'pdfium' '$WORK/out1'"
+expect "pdfium-render is allowed" bash -c "! grep -v '^VIOLATION  G ' '$WORK/out1' | grep -q 'pdfium'"
 expect "D1 typst-host locking a GPL package is reported" grep -q 'D1  typst-host/Cargo.lock contains the GPL package gpl-tool' "$WORK/out1"
 expect "D1 typst-host path dependency on a GPL crate is reported" grep -q 'D1  typst-host/Cargo.toml has a path dependency on crates/gpl-tool' "$WORK/out1"
 expect "D2 a byte copy of a GPL file is reported" grep -q 'D2  typst-host/copied-from-gpl-tool.toml is a byte copy of the GPL file crates/gpl-tool/Cargo.toml' "$WORK/out1"

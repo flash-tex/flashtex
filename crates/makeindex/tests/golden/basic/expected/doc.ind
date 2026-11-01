@@ -1,0 +1,44 @@
+\begin{theindex}
+
+  \item +plus, 7
+
+  \indexspace
+
+  \item 1984, 6
+
+  \indexspace
+
+  \item a
+    \subitem b
+      \subsubitem c, 1--3
+      \subsubitem d, 3
+  \item $\alpha$, 4
+
+  \indexspace
+
+  \item bar
+    \subitem baz, \textbf{2}
+    \subitem qux, 3
+
+  \indexspace
+
+  \item foo, 1
+
+  \indexspace
+
+  \item leading, \see{spacing}{3}
+
+  \indexspace
+
+  \item spacing, 2--9
+
+  \indexspace
+
+  \item x, \seealso{y}{4}
+
+  \indexspace
+
+  \item Zeta, 5
+  \item zeta, 5
+
+\end{theindex}

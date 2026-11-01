@@ -1,0 +1,16 @@
+% n005-common-options: letterspace, color, extend, slant and embolden options
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\a="[lmroman10-regular.otf]:letterspace=10"
+\font\b="[lmroman10-regular.otf]:color=FF0000"
+\font\c="[lmroman10-regular.otf]:color=00FF0080"
+\font\d="[lmroman10-regular.otf]:extend=1.2"
+\font\e="[lmroman10-regular.otf]:slant=0.2"
+\font\f="[lmroman10-regular.otf]:embolden=2"
+\font\g="[lmroman10-regular.otf]:extend=0.85;slant=-0.167"
+\font\h="[lmroman10-regular.otf]:color=12"
+\message{[\the\fontdimen1\d][\the\fontdimen1\e][\the\fontdimen1\g][\the\fontdimen2\a]}
+\setbox0=\hbox{\a office \b office \c office \d office \e office \f office \g office \h office}
+\lsshipbox0
+\end

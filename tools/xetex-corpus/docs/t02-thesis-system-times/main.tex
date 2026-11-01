@@ -1,0 +1,33 @@
+% A thesis skeleton with system fonts (Times New Roman, Arial), lists of figures and
+% tables, subcaption, listings
+\documentclass[12pt]{report}
+\usepackage{geometry}
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Menlo}[Scale=0.85]
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{listings}
+\lstset{basicstyle=\ttfamily\small,frame=single,columns=fullflexible}
+\begin{document}
+\tableofcontents
+\listoffigures
+\listoftables
+\chapter{Introduction}
+Figure~\ref{f:two} has two parts.
+\begin{figure}[ht]\centering
+\begin{subfigure}{.4\linewidth}\includegraphics[width=\linewidth]{example-image-a}\caption{First}\end{subfigure}
+\begin{subfigure}{.4\linewidth}\includegraphics[width=\linewidth]{example-image-b}\caption{Second}\end{subfigure}
+\caption{Two images.}\label{f:two}
+\end{figure}
+\begin{table}[ht]\centering\caption{A table.}
+\begin{tabular}{|c|c|}\hline a & b\\\hline 1 & 2\\\hline\end{tabular}
+\end{table}
+\chapter{Code}
+\begin{lstlisting}[language=Python]
+def greet(name: str) -> str:
+    return f"Hello, {name}!"  # café
+\end{lstlisting}
+\end{document}

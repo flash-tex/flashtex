@@ -4,7 +4,7 @@
 //!
 //!     dl3-keys --socket PATH --root DIR --main main.tex [--output-dir DIR]
 //!         [--keys N] [--at FRACTION] [--gap-ms MS] [--overlap] [--no-viewport]
-//!         [--page INDEX] [--where start|middle|end] [--sentence]
+//!         [--page INDEX] [--where start|middle|end] [--sentence] [--includeonly NAME,...]
 //!
 //! Opens the document (compiles until nothing changes), picks a prose line
 //! whose glyphs are on one page about FRACTION (default 0.5) into the
@@ -34,6 +34,17 @@
 //! A bad `--line`/`--page` (out of range, or a line the display list places
 //! on other pages than `--page`), or a line with no plain word for the edit,
 //! exits 2 with a message.
+//!
+//! `--interval-ms MS` types on a clock instead (keystroke k sent at k * MS,
+//! whatever the host is doing, as a user types): each keystroke's latency
+//! is the time to the watched page's first `PAGE` from its own compile or a
+//! later one (what the app paints), so compiles superseded before their
+//! edited page show as waiting keystrokes; `unpainted` counts those never
+//! shown.
+//!
+//! `--edit FILE` (relative to `--root`) types in another file of the project
+//! than `--main`, e.g. a book chapter the main file `\input`s; the line search
+//! and `--line` then look at that file.
 //!
 //! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
 //! changes and the next changes back: `letter` (the default: a letter
@@ -188,7 +199,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport] [--includeonly NAME,...]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -209,6 +220,8 @@ fn main() {
         let mut r = CompileRequest::new(id, &root, &main);
         r.output_dir = arg("--output-dir");
         r.incremental = true;
+        // `--includeonly a,b`: a chapter focus (`\includeonly{a,b}`).
+        r.includeonly = arg("--includeonly").map(|v| v.split(',').map(str::to_string).collect());
         r
     };
     // Open: until nothing changes.
@@ -236,8 +249,11 @@ fn main() {
         let _ = c.bye();
         return;
     }
+    // `--edit FILE`: type in another file of the project (a book's chapter
+    // under `\input`), relative to the root; the main file by default.
+    let efile = arg("--edit").unwrap_or_else(|| main.clone());
     // A prose line on one page, about `at` into the document.
-    let path = std::path::Path::new(&root).join(&main);
+    let path = std::path::Path::new(&root).join(&efile);
     let text = std::fs::read_to_string(&path).expect("read the main file");
     let lines: Vec<&str> = text.split('\n').collect();
     let want = match arg("--page").and_then(|v| v.parse::<u32>().ok()) {
@@ -248,7 +264,7 @@ fn main() {
     let main_file = |f: u32| {
         held.files
             .get(&f)
-            .is_some_and(|p| p.ends_with(&format!("/{main}")))
+            .is_some_and(|p| p.ends_with(&format!("/{efile}")))
     };
     let on_pages = |line: u32| -> Vec<u32> {
         let mut v: Vec<u32> = held
@@ -290,7 +306,13 @@ fn main() {
         }
         (l, p)
     });
+    // A preamble edit types after `\documentclass` and watches page 0: it
+    // needs no prose line, and a book's main file (only `\include`s) has none.
+    let preamble = arg("--kind").as_deref() == Some("preamble");
     let (line, page) = given.unwrap_or_else(|| {
+        if preamble {
+            return (1, 0);
+        }
         (1..=lines.len() as u32)
             .filter(|&l| lines[l as usize - 1].split(' ').count() > 40)
             .filter_map(|l| {
@@ -409,7 +431,7 @@ fn main() {
             (&new, &old)
         };
         Edit {
-            path: main.clone(),
+            path: efile.clone(),
             offset: at_byte,
             delete: from.len() as u64,
             insert: to.clone(),
@@ -427,6 +449,148 @@ fn main() {
     let mut cancelled = 0;
     // (overlap) DONEs still to come for keystrokes already answered
     let mut owed: Vec<i64> = vec![];
+    // `--interval-ms MS`: a typist on a clock, as the app's user: keystroke
+    // k is sent at k * MS whatever the host is doing, and its latency is
+    // the time to the watched page's first `PAGE` from its compile or a
+    // later one (the app's measure: the first commit that shows it). A
+    // keystroke whose compile is superseded before that page waits for
+    // the next compile's.
+    if let Some(ms) = arg("--interval-ms").and_then(|v| v.parse::<u64>().ok()) {
+        let reqs: Vec<CompileRequest> = (0..keys)
+            .map(|k| {
+                let mut r = req(id + 1 + k as i64);
+                r.viewport = viewport.then_some(page);
+                r.edits = vec![edit(k)];
+                r
+            })
+            .collect();
+        let first_id = id + 1;
+        let last_id = id + keys as i64;
+        let mut sender = c.canceller().expect("a sending handle");
+        let t_start = Instant::now();
+        // (each keystroke's send time, and how late it went after its due
+        // time: `sent_late_ms`)
+        let sent: std::sync::Arc<std::sync::Mutex<Vec<(Instant, f64)>>> = Default::default();
+        let sent2 = sent.clone();
+        let typist = std::thread::spawn(move || {
+            clock_thread();
+            for (k, r) in reqs.iter().enumerate() {
+                let due = t_start + Duration::from_millis(ms * k as u64);
+                wait_until(due);
+                let now = Instant::now();
+                let late = now.saturating_duration_since(due).as_secs_f64() * 1e3;
+                sent2.lock().unwrap().push((now, late));
+                sender.compile(r).expect("send COMPILE");
+            }
+        });
+        let (mut started, mut covered, mut lat) = (0i64, 0usize, vec![]);
+        let (mut cancelled, mut done_last) = (0, false);
+        while !done_last {
+            let ev = c
+                .next_event()
+                .expect("read")
+                .expect("host closed the connection");
+            let now = Instant::now();
+            match ev {
+                Event::Started(j) => started = j.int_field("id").unwrap_or(0),
+                // A compile can find its keystroke's page already on screen:
+                // the run a newer keystroke had stopped typeset this very
+                // text (a letter typed and deleted again) and the client
+                // holds that page. The host says so in `PAGES`' `current`
+                // instead of sending the page again; for the user it is
+                // painted then (lane P4-TYPING-200WPM).
+                Event::Pages(j)
+                    if started >= first_id
+                        && j.int_field("id") == Some(started)
+                        && j.get("current").and_then(Json::as_array).is_some_and(|rs| {
+                            rs.iter().any(|r| {
+                                r.as_array().is_some_and(|a| {
+                                    a.len() == 2
+                                        && a[0].as_i64().is_some_and(|lo| lo <= page as i64)
+                                        && a[1].as_i64().is_some_and(|hi| page as i64 <= hi)
+                                })
+                            })
+                        }) =>
+                {
+                    let upto = (started - first_id + 1) as usize;
+                    let s = sent.lock().unwrap();
+                    while covered < upto.min(s.len()) {
+                        let l = (now - s[covered].0).as_secs_f64() * 1e3;
+                        println!(
+                            "{}",
+                            Json::Obj(vec![
+                                ("key".into(), Json::Int(covered as i64)),
+                                ("edited_page_ms".into(), Json::Num(l)),
+                                ("by".into(), Json::Int(started)),
+                                ("sent_late_ms".into(), Json::Num(s[covered].1)),
+                                ("current".into(), Json::Bool(true)),
+                            ])
+                        );
+                        lat.push(l);
+                        covered += 1;
+                    }
+                }
+                Event::Page(p) if p.index == page && started >= first_id => {
+                    let upto = (started - first_id + 1) as usize;
+                    let s = sent.lock().unwrap();
+                    while covered < upto.min(s.len()) {
+                        let l = (now - s[covered].0).as_secs_f64() * 1e3;
+                        println!(
+                            "{}",
+                            Json::Obj(vec![
+                                ("key".into(), Json::Int(covered as i64)),
+                                ("edited_page_ms".into(), Json::Num(l)),
+                                ("by".into(), Json::Int(started)),
+                                ("sent_late_ms".into(), Json::Num(s[covered].1)),
+                            ])
+                        );
+                        lat.push(l);
+                        covered += 1;
+                    }
+                }
+                Event::Done(d) => {
+                    println!("{}", Json::Obj(vec![("done".into(), d.clone())]));
+                    if d.str_field("status") == Some("cancelled") {
+                        cancelled += 1;
+                    }
+                    done_last = d.int_field("id") == Some(last_id);
+                }
+                Event::Error(e) => {
+                    eprintln!("dl3-keys: host error: {e}");
+                    std::process::exit(1)
+                }
+                _ => {}
+            }
+        }
+        typist.join().expect("the typist");
+        let unpainted = keys - covered;
+        let mut late: Vec<f64> = sent.lock().unwrap().iter().map(|x| x.1).collect();
+        let sum = |v: &mut Vec<f64>| {
+            Json::Obj(vec![
+                ("n".into(), Json::Int(v.len() as i64)),
+                ("p50".into(), Json::Num(pct(v, 0.5))),
+                ("p95".into(), Json::Num(pct(v, 0.95))),
+                ("max".into(), Json::Num(pct(v, 1.0))),
+            ])
+        };
+        println!(
+            "{}",
+            Json::Obj(vec![
+                ("summary".into(), s(main.as_str())),
+                ("kind".into(), s(kind.as_str())),
+                ("interval_ms".into(), Json::Int(ms as i64)),
+                ("pages".into(), Json::Int(held.count as i64)),
+                ("edited_page".into(), Json::Int(page as i64)),
+                ("edited_page_ms".into(), sum(&mut lat)),
+                ("unpainted".into(), Json::Int(unpainted as i64)),
+                ("cancelled".into(), Json::Int(cancelled)),
+                ("sent_late_ms".into(), sum(&mut late)),
+            ])
+        );
+        let _ = std::io::stdout().flush();
+        let _ = c.bye();
+        return;
+    }
     for k in 0..keys {
         if overlap {
             id += 1;
@@ -573,4 +737,45 @@ fn main() {
     }
     let _ = std::io::stdout().flush();
     let _ = c.bye();
+}
+
+/// `--interval-ms`'s typist keeps its clock (lane BEAMER, 2026-11-01). A
+/// thread sleeping in a process macOS runs in the background band
+/// (`PRIO_DARWIN_BG`) has its timers coalesced: on the hosted M1 the typist
+/// woke 100 ms and more late and sent two to four keystrokes at once, and
+/// each burst counted every key but its last as not painted by its own
+/// compile (18 of the 18-20 such keys of each typing@50ms beamer row). This
+/// takes the thread out of the background band and to the user-interactive
+/// QoS, as the app's key events are; `wait_until` spins the last stretch.
+fn clock_thread() {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn setpriority(which: i32, who: u32, prio: i32) -> i32;
+            fn pthread_set_qos_class_self_np(qos: u32, relpri: i32) -> i32;
+        }
+        const PRIO_DARWIN_THREAD: i32 = 3;
+        const PRIO_DARWIN_PROCESS: i32 = 4;
+        const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+        // SAFETY: plain system calls on this thread and process, no pointers.
+        unsafe {
+            setpriority(PRIO_DARWIN_PROCESS, 0, 0);
+            setpriority(PRIO_DARWIN_THREAD, 0, 0);
+            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+        }
+    }
+}
+
+/// Sleep until `due`, spinning the last 2 ms (a timer's leeway alone made
+/// keystrokes late).
+fn wait_until(due: Instant) {
+    const SPIN: Duration = Duration::from_millis(2);
+    if let Some(d) = due.checked_duration_since(Instant::now()) {
+        if d > SPIN {
+            std::thread::sleep(d - SPIN);
+        }
+    }
+    while Instant::now() < due {
+        std::hint::spin_loop();
+    }
 }

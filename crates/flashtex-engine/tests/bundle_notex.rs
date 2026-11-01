@@ -1,9 +1,12 @@
 //! No TeX Live: the engine and the host compile from a bundle alone
 //! (DESIGN.md 4.4, lane NOTEX-WIRING).
 //!
-//! 1. Over the installed TeX Live, the engine builds its format and compiles
-//!    a hello-world and an amsmath document, recording what it reads (the
-//!    documents' `FLASHTEX_READ_SET`, the format's cache manifest).
+//! 1. Over the installed TeX Live alone (the trees outside TEXMFROOT --
+//!    TEXMFHOME, TEXMFLOCAL, a user's TEXMFVAR and TEXMFCONFIG -- empty,
+//!    since what they hold is not TeX Live's to pack), the engine builds
+//!    its format and compiles a hello-world and an amsmath document,
+//!    recording what it reads (the documents' `FLASHTEX_READ_SET`, the
+//!    format's cache manifest).
 //! 2. `flashtex-dist bundle-pack` packs exactly those files into a TTBv1
 //!    bundle, with the installation's own `TEXMFROOT/texmf.cnf` and its
 //!    installed `pdflatex.fmt` added to the read list, which a bundle must
@@ -44,9 +47,23 @@ fn engine_bin() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_flashtex-initex"))
 }
 
+/// The trees kpathsea searches outside TEXMFROOT, each set to `empty` for
+/// the TeX Live runs and the pack: a file found there (a `cmr10.tfm` in
+/// the runner's `~/Library/texmf`, say) shadows TeX Live's own, is not
+/// TeX Live's to pack, and the bundle then lacks it.
+const USER_TREES: [&str; 4] = ["TEXMFHOME", "TEXMFVAR", "TEXMFCONFIG", "TEXMFLOCAL"];
+
+fn only_texlive(c: &mut Command, empty: &Path) {
+    for v in USER_TREES {
+        c.env(v, empty);
+    }
+}
+
 /// The TeX Live runs: format cache in `fmt`, read set appended to `read_set`.
-fn texlive_run(bin: &Path, dir: &Path, fmt: &Path, read_set: &Path) -> Vec<u8> {
-    let st = Command::new(bin)
+fn texlive_run(bin: &Path, dir: &Path, fmt: &Path, read_set: &Path, empty: &Path) -> Vec<u8> {
+    let mut c = Command::new(bin);
+    only_texlive(&mut c, empty);
+    let st = c
         .args(["-fmt=pdflatex", "-interaction=nonstopmode", "main.tex"])
         .current_dir(dir)
         .env("FLASHTEX_FORMAT_CACHE_DIR", fmt)
@@ -154,6 +171,7 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
         "nt/amsmath",
         "home",
         "tmp",
+        "empty",
     ] {
         std::fs::create_dir_all(d.join(s)).unwrap();
     }
@@ -169,8 +187,9 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
     let fmt_tl = d.join("fmt-tl");
     let reads_hello = d.join("reads-hello.txt");
     let reads_ams = d.join("reads-amsmath.txt");
-    let pdf_hello = texlive_run(&bin, &d.join("tl/hello"), &fmt_tl, &reads_hello);
-    let pdf_ams = texlive_run(&bin, &d.join("tl/amsmath"), &fmt_tl, &reads_ams);
+    let empty = d.join("empty");
+    let pdf_hello = texlive_run(&bin, &d.join("tl/hello"), &fmt_tl, &reads_hello, &empty);
+    let pdf_ams = texlive_run(&bin, &d.join("tl/amsmath"), &fmt_tl, &reads_ams, &empty);
     let mut ms = vec![];
     manifests(&fmt_tl, &mut ms);
     assert_eq!(ms.len(), 1, "one format built: {ms:?}");
@@ -185,7 +204,9 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
     )
     .unwrap();
     let ttb = d.join("b.ttb");
-    let o = Command::new(env!("CARGO_BIN_EXE_flashtex-dist"))
+    let mut pack = Command::new(env!("CARGO_BIN_EXE_flashtex-dist"));
+    only_texlive(&mut pack, &empty);
+    let o = pack
         .arg("bundle-pack")
         .arg("--out")
         .arg(&ttb)
@@ -215,6 +236,13 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
         .find_map(|l| l.strip_prefix("digest "))
         .expect("bundle-pack prints the digest")
         .to_string();
+    // Nothing outside TeX Live but this test's own files (the format
+    // cache's format and pool).
+    for l in out.lines() {
+        if let Some(p) = l.strip_prefix("outside TeX Live: ") {
+            assert!(Path::new(p).starts_with(&d), "{out}");
+        }
+    }
     if top_cnf.is_file() {
         assert!(out.contains("left out texmf.cnf: "), "{out}");
     }

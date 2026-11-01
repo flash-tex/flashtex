@@ -253,9 +253,7 @@ final class KeystrokeInvalidationTests: XCTestCase {
             _ = model.chrome.routeHelp
             _ = model.chrome.hasResult
             _ = model.chrome.compiling
-            _ = model.chrome.previewSource
             _ = model.chrome.staleText
-            _ = model.chrome.capabilityNotes
         } onChange: { fired = true }
         model.flushChrome()
         model.flushChrome()

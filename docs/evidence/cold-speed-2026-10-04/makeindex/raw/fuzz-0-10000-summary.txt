@@ -1,0 +1,2 @@
+cases 10000 mismatches 0; oracle exit statuses {"0": 8613, "1": 1270, "never ends": 117}
+exit 0

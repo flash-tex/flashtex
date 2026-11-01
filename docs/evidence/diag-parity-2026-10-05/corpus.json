@@ -1,0 +1,360 @@
+{
+ "cases": [
+  {
+   "id": "overfull-hbox",
+   "group": "warning",
+   "what": "one overfull line (an unbreakable word)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nLorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\nShort words then AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious and more text follows here.\n\nLorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "overfull-many",
+   "group": "warning",
+   "what": "50 overfull lines in 50 paragraphs",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nParagraph 0 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 1 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 2 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 3 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 4 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 5 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 6 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 7 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 8 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 9 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 10 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 11 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 12 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 13 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 14 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 15 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 16 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 17 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 18 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 19 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 20 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 21 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 22 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 23 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 24 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 25 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 26 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 27 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 28 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 29 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 30 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 31 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 32 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 33 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 34 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 35 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 36 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 37 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 38 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 39 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 40 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 41 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 42 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 43 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 44 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 45 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 46 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 47 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 48 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\nParagraph 49 has AntidisestablishmentarianismsupercalifragilisticexpialidociousAntidisestablishmentarianismsupercalifragilisticexpialidocious in it.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "underfull-hbox",
+   "group": "warning",
+   "what": "underfull line: \\\\ twice",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nShort line.\\\\\n\\\\\nNext.\n\nLorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "overfull-vbox",
+   "group": "warning",
+   "what": "overfull \\vbox: a 3cm rule in a 1cm parbox",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText \\parbox[t][1cm]{3cm}{\\rule{1pt}{3cm}} text.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "overfull-alignment",
+   "group": "warning",
+   "what": "overfull line inside a tabular p-column",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{tabular}{p{2cm}}\nAntidisestablishmentarianismsupercalifragilisticexpialidocious \\\\\n\\end{tabular}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "undefined-ref",
+   "group": "warning",
+   "what": "\\ref to a label that does not exist (a near miss exists)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{Intro}\\label{sec:intro}\nSee Section~\\ref{sec:intr}.\n\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "undefined-cite",
+   "group": "warning",
+   "what": "\\cite of a key the bibliography lacks (a near miss exists)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nAs shown by \\cite{knuth84}.\n\\begin{thebibliography}{9}\n\\bibitem{knuth1984} D. Knuth. The TeXbook.\n\\end{thebibliography}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "undefined-ref-many",
+   "group": "warning",
+   "what": "30 undefined references",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nSee \\ref{missing0}.\nSee \\ref{missing1}.\nSee \\ref{missing2}.\nSee \\ref{missing3}.\nSee \\ref{missing4}.\nSee \\ref{missing5}.\nSee \\ref{missing6}.\nSee \\ref{missing7}.\nSee \\ref{missing8}.\nSee \\ref{missing9}.\nSee \\ref{missing10}.\nSee \\ref{missing11}.\nSee \\ref{missing12}.\nSee \\ref{missing13}.\nSee \\ref{missing14}.\nSee \\ref{missing15}.\nSee \\ref{missing16}.\nSee \\ref{missing17}.\nSee \\ref{missing18}.\nSee \\ref{missing19}.\nSee \\ref{missing20}.\nSee \\ref{missing21}.\nSee \\ref{missing22}.\nSee \\ref{missing23}.\nSee \\ref{missing24}.\nSee \\ref{missing25}.\nSee \\ref{missing26}.\nSee \\ref{missing27}.\nSee \\ref{missing28}.\nSee \\ref{missing29}.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "multiply-defined-label",
+   "group": "warning",
+   "what": "the same \\label twice",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\section{B}\\label{sec:a}\nSee \\ref{sec:a}.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "labels-changed",
+   "group": "warning",
+   "what": "\\ref before its \\label (first pass: Rerun)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nSee~\\ref{sec:later}.\n\\section{Later}\\label{sec:later}\nText.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "font-shape",
+   "group": "warning",
+   "what": "font shape substitution (bold small caps, bold italic tt)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\textsc{\\textbf{Bold Small Caps}} and \\texttt{\\textbf{\\textit{tt}}}.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "missing-glyph",
+   "group": "warning",
+   "what": "a character the font lacks (\\char200 in OT1 cmr)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\tracinglostchars=2\n\\begin{document}\nA missing glyph: \\char200.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "hyperref-token",
+   "group": "warning",
+   "what": "math in a \\section title with hyperref",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{The case $x^2$}\nText.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "float-too-large",
+   "group": "warning",
+   "what": "a figure taller than the page",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}\\centering\\rule{1cm}{30cm}\\caption{Tall}\\end{figure}\nText.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "float-lost",
+   "group": "warning",
+   "what": "a figure inside a \\parbox (Not in outer par mode; Float(s) lost)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText \\parbox{4cm}{\\begin{figure}x\\end{figure}} text.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "empty-bibliography",
+   "group": "warning",
+   "what": "an empty thebibliography",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText.\n\\begin{thebibliography}{9}\n\\end{thebibliography}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "include-missing",
+   "group": "warning",
+   "what": "\\include of a file that does not exist (No file chap9.tex)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText.\n\\include{chap9}\n\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "unicode-not-set-up",
+   "group": "warning",
+   "what": "a Unicode character LaTeX has no definition for",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nA check mark: \u2713.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "package-not-found",
+   "group": "files",
+   "what": "\\usepackage of a package that does not exist",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{nosuchpackage}\n\\begin{document}\nText.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "class-not-found",
+   "group": "files",
+   "what": "\\documentclass typo",
+   "files": {
+    "main.tex": "\\documentclass{artcle}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "figure-missing",
+   "group": "files",
+   "what": "\\includegraphics of a missing file",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}\\centering\\includegraphics[width=3cm]{figs/plot}\\caption{P}\\end{figure}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "option-clash",
+   "group": "files",
+   "what": "a package loaded twice with different options",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\usepackage{xcolor}\n\\usepackage[dvipsnames]{xcolor}\n\\begin{document}\nText.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "usepackage-in-body",
+   "group": "files",
+   "what": "\\usepackage after \\begin{document}",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText.\n\\usepackage{amssymb}\nMore.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "display-unclosed",
+   "group": "math",
+   "what": "\\[ never closed before a blank line",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nBefore\n\\[ x^2 + y^2\n\nAfter.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "dollar-dollar-unclosed",
+   "group": "math",
+   "what": "$$ display closed by a single $",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nBefore $$ x^2 $ after.\n\nNext.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "left-no-right",
+   "group": "math",
+   "what": "\\left( without \\right",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nWe have $\\left( x + y $ here.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "right-no-left",
+   "group": "math",
+   "what": "\\right) without \\left",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nWe have $ x + y \\right) $ here.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "missing-rbrace-math",
+   "group": "math",
+   "what": "\\frac{a}{b with the brace closed by $",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nWe have $\\frac{a}{b $ here.\n\nNext.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "extra-alignment-tab",
+   "group": "math",
+   "what": "three cells in a two-column tabular",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{tabular}{ll}\na & b & c \\\\\n\\end{tabular}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "double-superscript",
+   "group": "math",
+   "what": "x^2^3",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nWe have $x^2^3$ here.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "align-no-amsmath",
+   "group": "math",
+   "what": "align without amsmath",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{align}x&=1\\end{align}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "mathcmd-in-text-macro",
+   "group": "math",
+   "what": "\\mathbf in text mode, inside a preamble macro",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\newcommand{\\vect}[1]{\\mathbf{#1}}\n\\begin{document}\nThe vector \\vect{v} is long.\n\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "mismatch-across-files",
+   "group": "structure",
+   "what": "\\begin{itemize} in main, \\end{enumerate} in an \\input file",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{itemize}\n\\input{list}\nText.\n\\end{document}\n",
+    "list.tex": "\\item one\n\\item two\n\\end{enumerate}\n"
+   }
+  },
+  {
+   "id": "error-in-input",
+   "group": "structure",
+   "what": "an undefined command in an \\input file",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nIntro.\n\\input{chap}\nOutro.\n\\end{document}\n",
+    "chap.tex": "Chapter text.\nHere is \\textbff{bold}.\nMore.\n"
+   }
+  },
+  {
+   "id": "error-in-include",
+   "group": "structure",
+   "what": "an unmatched } in an \\include file",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nIntro.\n\\include{part}\nOutro.\n\\end{document}\n",
+    "part.tex": "Part text.\nOops } here.\n"
+   }
+  },
+  {
+   "id": "error-in-macro",
+   "group": "structure",
+   "what": "an undefined command inside a preamble macro, used twice",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\newcommand{\\note}[1]{\\textbf{Note:} \\emphh{#1}}\n\\begin{document}\nFirst use: \\note{hello}.\n\nSecond use: \\note{world}.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "error-in-env-def",
+   "group": "structure",
+   "what": "a misplaced & inside a preamble environment, used twice",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\newenvironment{mybox}{\\par A & B:}{\\par}\n\\begin{document}\n\\begin{mybox}one\\end{mybox}\n\\begin{mybox}two\\end{mybox}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "bib-syntax",
+   "group": "structure",
+   "what": "a .bib entry missing a comma (BibTeX error)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nSee \\cite{knuth1984}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n",
+    "refs.bib": "@book{knuth1984,\n  author = {Donald Knuth}\n  title = {The TeXbook},\n  year = 1984\n}\n"
+   }
+  },
+  {
+   "id": "caption-outside-float",
+   "group": "structure",
+   "what": "\\caption outside a float",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText \\caption{Hi}.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "command-already-defined",
+   "group": "structure",
+   "what": "\\newcommand of an existing command",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\newcommand{\\section}{x}\n\\begin{document}\nText.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "missing-item",
+   "group": "structure",
+   "what": "text directly inside itemize",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{itemize}\nNo item here.\n\\end{itemize}\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "illegal-unit",
+   "group": "structure",
+   "what": "\\vspace{2} without a unit",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\nText.\n\n\\vspace{2}\nMore.\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "capacity-grouping",
+   "group": "engine",
+   "what": "unbounded group nesting (grouping levels)",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\begin{document}\n\\def\\x{{\\x}}\\x\n\\end{document}\n"
+   }
+  },
+  {
+   "id": "capacity-recursion",
+   "group": "engine",
+   "what": "a macro that calls itself and grows",
+   "files": {
+    "main.tex": "\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{graphicx}\n\\newcommand{\\loopit}{a\\loopit b}\n\\begin{document}\n\\loopit\n\\end{document}\n"
+   }
+  }
+ ]
+}

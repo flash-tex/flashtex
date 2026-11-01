@@ -1,0 +1,355 @@
+# Unicode mode's M3 gate (docs/design/modes/PROPOSAL.md, the M3 row of the
+# milestone table; lane UNICODE-M3), on GitHub-hosted runners. Every expected
+# result comes from the oracle: TeX Live 2026's xelatex/xetex (the scheme-full
+# texlive/texlive image nightly.yml pins, the tree the no-TeX-Live bundle is
+# packed from), never in the product path. tools/unicode-m3/README.md says
+# what each criterion is and how it is measured here.
+#
+#   build    flashtex-xetex (the port, flashtex-host-unicode, fonts_line) and
+#            dl3-client, release, kept in the Actions cache for the parts
+#   linux    one ubuntu-latest job per part, each with the pinned TeX Live:
+#              pt1      the Unicode corpus and the [fonts] fixtures: P-T1 +
+#                       XDV against xelatex -no-pdf (tools/xetex-lockstep/latex.py)
+#              export   the same corpus's PDFs against xelatex's, structural
+#                       (tools/xetex-pdfparity/run.py --no-visual); both PDFs
+#                       kept for the macOS visual leg
+#              host     the corpus through flashtex-host-unicode with TeX Live
+#                       (its PDFs, for the no-TeX-Live comparison), the edit
+#                       sweep (spares against cold), the latency bench
+#                       (instructions, perf), the host's own tests (tests/host.rs,
+#                       the [fonts] precedence tests among them) and its start-up
+#   mac      macos-15 (no TeX Live on GitHub's images): the corpus from the
+#            published bundle alone (tools/unicode-m3/notex_corpus.py --mode
+#            notex), compared with the Linux TeX Live run and with xelatex;
+#            the export PDFs rasterised by Core Graphics at 2x and 3x
+#   classic  flashtex-host (Classic) built at each U3 merge and at its first
+#            parent: size, SHA-256 and start-up to HELLO (instructions)
+#
+# Wall times here are not the §1.2 gate: that needs the M1-class reference
+# Mac (DESIGN.md §1.2). Instruction counts are the load-independent measure.
+name: unicode-m3
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main, "gh-readonly-queue/**"]
+    paths:
+      - ".github/workflows/unicode-m3.yml"
+      - "tools/unicode-m3/**"
+      - "crates/flashtex-xetex/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicode-m3-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # a candidate's panic is reported with its frames (latex.py)
+  RUST_BACKTRACE: "1"
+  # nightly.yml's oracle: texlive/texlive:latest (scheme-full, TeX Live 2026)
+  # of 2026-10-04, the image bundle-publish.yml packs the bundle from.
+  TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+  # ci.yml's scheme-medium pin (Classic's host only needs pdflatex.fmt).
+  TEXLIVE_MEDIUM: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+
+jobs:
+  build:
+    name: build (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unicode-m3-linux
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: the port, its host, fonts_line, its tests
+        run: |
+          set -euo pipefail
+          (cd crates/flashtex-xetex && cargo build --release --locked --bins --example fonts_line \
+             && cargo test --release --locked --test host --no-run)
+      - name: the port's unit tests (no TeX; ICU's bidi vectors among them)
+        working-directory: crates/flashtex-xetex
+        run: cargo test --release --locked --lib
+      - name: dl3-client; the binaries collected
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-display-list --bin dl3-client
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp crates/flashtex-xetex/target/release/{flashtex-xetex,flashtex-host-unicode} \
+             crates/flashtex-xetex/target/release/examples/fonts_line target/release/dl3-client "$RUNNER_TEMP/bin/"
+          ls -l "$RUNNER_TEMP/bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m3-bin-linux
+          path: ${{ runner.temp }}/bin
+          retention-days: 7
+
+  linux:
+    name: linux ${{ matrix.part }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [pt1, export, host]
+    steps:
+      - name: results directory
+        run: echo "OUT=$RUNNER_TEMP/m3" >> "$GITHUB_ENV"
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        id: tl
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          name: m3-bin-linux
+          path: ${{ runner.temp }}/bin
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: tools, fonts by name for both engines
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP"/bin/*
+          sudo apt-get update -qq && sudo apt-get install -y -qq qpdf fontconfig valgrind linux-tools-common "linux-tools-$(uname -r)" || true
+          sudo sysctl -w kernel.perf_event_paranoid=1 || true
+          python3 -m pip install -q fonttools pillow
+          tl="$(dirname "$(dirname "${{ steps.tl.outputs.bin }}")")"
+          # xetex finds fonts by name through fontconfig; the port through its
+          # own index (FLASHTEX_FONT_DIRS, then the system's directories).
+          # Both see TeX Live's OpenType and TrueType trees and /usr/share/fonts,
+          # with one file per name (a system copy of a file TeX Live ships is
+          # rejected: fontconfig lists duplicates in hash order, fontconfig.py).
+          # one file per font name in both engines (tools/unicode-m3/fontconfig.py)
+          python3 tools/unicode-m3/fontconfig.py --texlive "$tl" --out "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          export FONTCONFIG_FILE="$RUNNER_TEMP/fonts.conf"
+          FONTCONFIG_FILE="$RUNNER_TEMP/fonts.conf" fc-cache -f >/dev/null 2>&1 || true
+          FONTCONFIG_FILE="$RUNNER_TEMP/fonts.conf" fc-list : family | grep -c . || true
+          xetex --version | head -1
+          perf stat -e instructions:u true 2>&1 | tail -3 || true
+      - name: assemble the corpus
+        run: |
+          set -euo pipefail
+          python3 tools/unicode-m3/corpus.py assemble --out "$OUT/corpus" --fonts-line "$RUNNER_TEMP/bin/fonts_line" \
+            --cache "$RUNNER_TEMP/corpus-cache"
+      - name: "pt1: P-T1 + XDV against xelatex -no-pdf"
+        if: matrix.part == 'pt1'
+        run: |
+          set -o pipefail
+          python3 tools/xetex-lockstep/latex.py --engine "$RUNNER_TEMP/bin/flashtex-xetex" \
+            --cases-dir "$OUT/corpus" --jobs 2 --timeout 3600 --json "$OUT/pt1.json" 2>&1 | tee "$OUT/pt1.txt" || true
+      - name: "export: PDFs against xelatex's (structural)"
+        if: matrix.part == 'export'
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tools/xetex-pdfparity -p 'test_outline.py'
+          python3 tools/xetex-pdfparity/run.py --engine "$RUNNER_TEMP/bin/flashtex-xetex" \
+            --cases-dir "$OUT/corpus" --jobs 4 --timeout 3600 --no-visual \
+            --json "$OUT/export.json" --pdf-dir "$OUT/pdf" 2>&1 | tee "$OUT/export.txt" || true
+      - name: "host: the corpus through flashtex-host-unicode (TeX Live)"
+        if: matrix.part == 'host'
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/notex_corpus.py --mode texlive --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
+            --client "$RUNNER_TEMP/bin/dl3-client" --cases-dir "$OUT/corpus" --out "$OUT/texlive" \
+            --json "$OUT/host-texlive.json" 2>&1 | tee "$OUT/host-texlive.txt" || true
+      - name: "host: edit sweep (spares against cold)"
+        if: matrix.part == 'host'
+        run: |
+          set -o pipefail
+          mkdir -p "$OUT/bench"
+          cp tools/unicode-m3/bench/*.tex "$OUT/bench/"
+          python3 tools/unicode-m3/host_sweep.py --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
+            --client "$RUNNER_TEMP/bin/dl3-client" --cases-dir "$OUT/bench" --cases-dir "$OUT/corpus" \
+            --json "$OUT/sweep.json" 2>&1 | tee "$OUT/sweep.txt" || true
+      - name: "host: latency bench (instructions; wall time is not the reference Mac's)"
+        if: matrix.part == 'host'
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/latency.py --engine "$RUNNER_TEMP/bin/flashtex-xetex" \
+            --host "$RUNNER_TEMP/bin/flashtex-host-unicode" --client "$RUNNER_TEMP/bin/dl3-client" \
+            --json "$OUT/latency-linux.json" 2>&1 | tee "$OUT/latency-linux.txt" || true
+          python3 tools/unicode-m3/host_startup.py --host "$RUNNER_TEMP/bin/flashtex-host-unicode" \
+            --json "$OUT/startup-unicode-linux.json" 2>&1 | tee "$OUT/startup-unicode-linux.txt" || true
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.part == 'host'
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.part == 'host'
+        with:
+          shared-key: unicode-m3-linux
+          save-if: "false"
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: "host: tests/host.rs with TeX Live ([fonts] precedence, spares, cancel)"
+        if: matrix.part == 'host'
+        working-directory: crates/flashtex-xetex
+        run: |
+          set -o pipefail
+          cargo test --release --locked --test host -- --nocapture 2>&1 | tee "$OUT/host-tests.txt" || true
+      - name: report
+        if: always()
+        run: python3 tools/unicode-m3/summarize.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m3-linux-${{ matrix.part }}
+          path: |
+            ${{ runner.temp }}/m3/*.json
+            ${{ runner.temp }}/m3/*.txt
+            ${{ runner.temp }}/m3/pdf
+            ${{ runner.temp }}/m3/texlive/pdf
+            ${{ runner.temp }}/m3/corpus/corpus-index.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  mac:
+    name: macos-15 (no TeX Live; Core Graphics)
+    needs: linux
+    if: always()
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - name: results directory
+        run: echo "OUT=$RUNNER_TEMP/m3" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: no TeX Live here
+        run: |
+          for x in pdflatex pdftex kpsewhich xelatex; do
+            if command -v "$x"; then echo "::error::$x is installed: this leg needs a Mac without TeX Live"; exit 1; fi
+          done
+          if ls -d /usr/local/texlive /Library/TeX 2>/dev/null; then echo "::error::a TeX Live tree is present"; exit 1; fi
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize || true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unicode-m3-mac
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: build the Unicode host, fonts_line and dl3-client
+        run: |
+          set -euo pipefail
+          (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode --example fonts_line)
+          cargo build --release --locked -p flashtex-display-list --bin dl3-client
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: python and qpdf
+        run: |
+          brew install qpdf >/dev/null
+          python3 -m pip install -q fonttools pillow pyobjc-framework-Quartz
+      - uses: actions/download-artifact@v4
+        with:
+          name: m3-linux-export
+          path: ${{ runner.temp }}/linux-export
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: m3-linux-host
+          path: ${{ runner.temp }}/linux-host
+        continue-on-error: true
+      - name: assemble the corpus
+        run: |
+          python3 tools/unicode-m3/corpus.py assemble --out "$OUT/corpus" \
+            --fonts-line crates/flashtex-xetex/target/release/examples/fonts_line --cache "$RUNNER_TEMP/corpus-cache"
+      - name: "the corpus from the bundle alone (no TeX Live)"
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/cmp"
+          cp "$RUNNER_TEMP"/linux-host/texlive/pdf/*.pdf "$RUNNER_TEMP/cmp/" 2>/dev/null || true
+          cp "$RUNNER_TEMP"/linux-export/pdf/*.reference.pdf "$RUNNER_TEMP/cmp/" 2>/dev/null || true
+          python3 tools/unicode-m3/notex_corpus.py --mode notex \
+            --host crates/flashtex-xetex/target/release/flashtex-host-unicode --client target/release/dl3-client \
+            --cases-dir "$OUT/corpus" --out "$OUT/notex" --compare-with "$RUNNER_TEMP/cmp" \
+            --json "$OUT/notex.json" 2>&1 | tee "$OUT/notex.txt" || true
+      - name: "export: Core Graphics at 2x and 3x (the Linux PDFs)"
+        run: |
+          set -o pipefail
+          python3 tools/unicode-m3/visual.py --pdf-dir "$RUNNER_TEMP/linux-export/pdf" --scales 2 3 \
+            --json "$OUT/visual.json" 2>&1 | tee "$OUT/visual.txt" || true
+      - name: report
+        if: always()
+        run: python3 tools/unicode-m3/summarize.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m3-mac
+          path: |
+            ${{ runner.temp }}/m3/*.json
+            ${{ runner.temp }}/m3/*.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+  classic:
+    name: classic flashtex-host at ${{ matrix.at }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {at: "pre-U3 (06b8b6f86^1)", sha: d24387cfe7dc54f657a8f62c7bd5903647aad608}
+          - {at: "#1732 merge", sha: 06b8b6f8662980f2f727ce46d4fe913a7deb451d}
+          - {at: "08708c4e2^1", sha: 2b634dbf680d6fa904fb5ab44ca5457a293f15f1}
+          - {at: "#1734 merge", sha: 08708c4e2a8e185029dfc20794a7e02a7bf19b93}
+          - {at: "6b97bae22^1", sha: c9eeb2a664ff3379bb1897c1675db250dfdfef18}
+          - {at: "#1762 merge", sha: 6b97bae22671777df744289ee36a2699adda34a5}
+          - {at: "this commit", sha: ""}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: harness
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.sha || github.sha }}
+          path: tree
+      - uses: ./harness/.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_MEDIUM }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unicode-m3-classic
+          workspaces: tree -> target
+      - name: build flashtex-host (release)
+        working-directory: tree
+        run: cargo build --release --locked -p flashtex-engine --bin flashtex-host
+      - name: size, SHA-256 and start-up to HELLO
+        run: |
+          set -o pipefail
+          sudo apt-get install -y -qq valgrind >/dev/null 2>&1 || true
+          sudo sysctl -w kernel.perf_event_paranoid=1 || true
+          mkdir -p "$RUNNER_TEMP/m3"
+          tag="${{ matrix.sha || github.sha }}"
+          python3 harness/tools/unicode-m3/host_startup.py --host tree/target/release/flashtex-host --runs 7 \
+            --json "$RUNNER_TEMP/m3/classic-${tag:0:9}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m3-classic-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/m3/*.json
+          retention-days: 30

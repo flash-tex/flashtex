@@ -37,8 +37,12 @@ public final class DL3RenderFont: @unchecked Sendable {
     public let key: String
     /// Outline fonts; nil for Type 3.
     public let cgFont: CGFont?
-    /// code → glyph (0: none / .notdef).
+    /// code → glyph (0: none / .notdef). Empty for a `glyph_ids` font.
     public let glyphs: [CGGlyph]
+    /// `glyph_ids` (spec §11.1, the XeTeX and Typst hosts' native fonts): a
+    /// code is the glyph id itself, below this count; 0 for a font whose
+    /// codes go through `glyphs`.
+    public let glyphIdCount: Int
     /// Type 3: code → mask.
     public let type3: [Int: Type3Glyph]?
     /// Glyph space → text space beyond the program's own FontMatrix
@@ -50,8 +54,8 @@ public final class DL3RenderFont: @unchecked Sendable {
     /// font's glyphs (`DL3Renderer.rasterizeTile`).
     public let inkBox: CGRect?
 
-    init(key: String, cgFont: CGFont?, glyphs: [CGGlyph], type3: [Int: Type3Glyph]? = nil, fontTransform: CGAffineTransform) {
-        self.key = key; self.cgFont = cgFont; self.glyphs = glyphs; self.type3 = type3; self.fontTransform = fontTransform
+    init(key: String, cgFont: CGFont?, glyphs: [CGGlyph], glyphIdCount: Int = 0, type3: [Int: Type3Glyph]? = nil, fontTransform: CGAffineTransform) {
+        self.key = key; self.cgFont = cgFont; self.glyphs = glyphs; self.glyphIdCount = glyphIdCount; self.type3 = type3; self.fontTransform = fontTransform
         // Tile culling (DL3Tiles): an outline font's bounding box. A Type 3
         // font has none here, so its glyphs are never culled (and its pages
         // are cut from one whole-page raster, `tilesByTranslation`).
@@ -66,7 +70,23 @@ public final class DL3RenderFont: @unchecked Sendable {
     /// Whether `code` draws anything.
     public func draws(_ code: Int) -> Bool {
         if let type3 { return type3[code]?.mask != nil }
-        return code < glyphs.count && glyphs[code] != 0
+        // A glyph id is drawn whatever it is, 0 too: the PDF shows glyph 0
+        // (CID 0, the font's .notdef box) where the shaper found no glyph
+        // (XeTeX keeps those in a native word with inter-word space shaping:
+        // Latin words in an Arabic font were boxes in xelatex's PDF and ours,
+        // and blank in the preview).
+        if glyphIdCount > 0 { return code >= 0 && code < glyphIdCount }
+        return glyph(code) != 0
+    }
+
+    /// The outline glyph `code` draws (0: none / .notdef): the glyph id
+    /// itself for a `glyph_ids` font, else the code's entry in `glyphs`.
+    /// Every outline lookup goes through here: a `glyph_ids` code is not a
+    /// character code, and reading it through the cmap drew every letter of
+    /// a Unicode-mode page as another (`hello` as `?2HHQ`).
+    @inline(__always) public func glyph(_ code: Int) -> CGGlyph {
+        if glyphIdCount > 0 { return code >= 0 && code < glyphIdCount ? CGGlyph(code) : 0 }
+        return code >= 0 && code < glyphs.count ? glyphs[code] : 0
     }
 
     /// Loads `font`'s program, or says why it cannot be drawn from the display list.
@@ -78,10 +98,14 @@ public final class DL3RenderFont: @unchecked Sendable {
         case "type1", "truetype", "opentype": break
         default: return .failure(DL3Error("\(label): format \(font.format ?? "?") has no program to draw"))
         }
-        guard !font.program.isEmpty,
-              let provider = CGDataProvider(data: Data(font.program) as CFData),
-              let cg = CGFont(provider) else {
+        guard !font.program.isEmpty, let cg = outlineFont(font.program, face: font.format == "type1" ? 0 : font.faceIndex) else {
             return .failure(DL3Error("\(label): the program does not load"))
+        }
+        if font.glyphIds {
+            // Codes are glyph ids in the face (XeTeX's native fonts, Typst):
+            // drawn as they are, no encoding, no cmap.
+            return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: [], glyphIdCount: max(1, cg.numberOfGlyphs),
+                                          fontTransform: fontTransform(font, cg)))
         }
         var glyphs = [CGGlyph](repeating: 0, count: 256)
         if font.format == "type1" {
@@ -136,14 +160,31 @@ public final class DL3RenderFont: @unchecked Sendable {
                 for code in 0 ..< 256 { glyphs[code] = unicodeGlyph(code) }
             }
         }
-        var t = CGAffineTransform.identity
-        if let fm = font.fontMatrix {
-            // The program's FontMatrix is 1/unitsPerEm (what a size-1 font
-            // applies); `font_matrix` replaces it.
-            let upem = Double(cg.unitsPerEm)
-            t = CGAffineTransform(a: fm[0] * upem, b: fm[1] * upem, c: fm[2] * upem, d: fm[3] * upem, tx: fm[4] * upem, ty: fm[5] * upem)
+        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: fontTransform(font, cg)))
+    }
+
+    /// Glyph space → text space beyond the program's own 1/unitsPerEm.
+    static func fontTransform(_ font: DL3Font, _ cg: CGFont) -> CGAffineTransform {
+        guard let fm = font.fontMatrix else { return .identity }
+        // The program's FontMatrix is 1/unitsPerEm (what a size-1 font
+        // applies); `font_matrix` replaces it.
+        let upem = Double(cg.unitsPerEm)
+        return CGAffineTransform(a: fm[0] * upem, b: fm[1] * upem, c: fm[2] * upem, d: fm[3] * upem, tx: fm[4] * upem, ty: fm[5] * upem)
+    }
+
+    /// The outline program as Core Graphics loads it: face `face` of a
+    /// collection (`.ttc`/`.otc`, which `CGFont(CGDataProvider)` does not
+    /// open by face), else the program itself.
+    static func outlineFont(_ program: [UInt8], face: Int) -> CGFont? {
+        let data = Data(program) as CFData
+        let isCollection = program.count >= 4 && program[0] == 0x74 && program[1] == 0x74 && program[2] == 0x63 && program[3] == 0x66 // "ttcf"
+        if isCollection || face > 0 {
+            guard let descs = CTFontManagerCreateFontDescriptorsFromData(data) as? [CTFontDescriptor],
+                  face >= 0, face < descs.count else { return nil }
+            return CTFontCopyGraphicsFont(CTFontCreateWithFontDescriptor(descs[face], 1, nil), nil)
         }
-        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: t))
+        guard let provider = CGDataProvider(data: data) else { return nil }
+        return CGFont(provider)
     }
 
     static func loadType3(_ font: DL3Font, label: String) -> Result<DL3RenderFont, DL3Error> {
@@ -218,7 +259,20 @@ public final class DL3RenderImage: @unchecked Sendable {
                   let img = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCache: true] as CFDictionary) else {
                 return .failure(DL3Error("\(file): cannot decode"))
             }
-            return .success(DL3RenderImage(key: key, payload: .raster(deviceSamples(img)), cost: img.bytesPerRow * img.height))
+            var samples = info["color_space"].flatMap { pdfColored(img, $0) } ?? deviceSamples(img)
+            // A JPEG in the PDF is a DCTDecode stream, which Core Graphics
+            // reads through its JPEG data provider; drawn small, that one
+            // decodes at a reduced size (the DCT's own scaling) where
+            // ImageIO's samples are point-sampled (a frame drawn at 1 px/pt
+            // came out black in the preview, grey in the PDF). So the same
+            // provider here, in the space chosen above.
+            if type != "png", let provider = CGDataProvider(url: url as CFURL), let space = samples.colorSpace,
+               let jpeg = CGImage(jpegDataProviderSource: provider, decode: nil, shouldInterpolate: false, intent: samples.renderingIntent),
+               jpeg.width == samples.width, jpeg.height == samples.height,
+               jpeg.colorSpace?.numberOfComponents == space.numberOfComponents, let recolored = jpeg.copy(colorSpace: space) {
+                samples = recolored
+            }
+            return .success(DL3RenderImage(key: key, payload: .raster(samples), cost: img.bytesPerRow * img.height))
         case "pdf":
             guard let doc = DL3Renderer.openPDF(url), let page = DL3Renderer.page(of: doc, at: Int(info["page"]?.int ?? 1)) else {
                 return .failure(DL3Error("\(file): cannot open page \(info["page"]?.int ?? 1)"))
@@ -273,6 +327,56 @@ public final class DL3RenderImage: @unchecked Sendable {
     }
 }
 
+/// The decoded samples in the colour space the host's PDF gives them
+/// (IMAGE `color_space`, spec §5.2; Unicode mode writes dvipdfmx's): `icc`,
+/// the profile the file embeds (ImageIO tags the samples with it);
+/// `calgray`/`calrgb`, the PDF's CalGray/CalRGB with its numbers; an
+/// indexed image keeps its palette over that base. With the PDF's
+/// `/Intent`, not interpolated. Nil when the description is not one of
+/// these (the caller then takes the device space).
+func pdfColored(_ img: CGImage, _ cs: DL3JSON) -> CGImage? {
+    let nums = { (k: String) -> [CGFloat] in (cs[k]?.array ?? []).compactMap { $0.double }.map { CGFloat($0) } }
+    let indexed = img.colorSpace?.model == .indexed
+    var base: CGColorSpace?
+    switch cs["type"]?.string {
+    case "icc":
+        base = indexed ? img.colorSpace?.baseColorSpace : img.colorSpace
+        guard base?.model == .rgb || base?.model == .monochrome || base?.model == .cmyk else { return nil }
+    case "calgray":
+        let white = nums("white_point")
+        guard white.count == 3, let g = cs["gamma"]?.double else { return nil }
+        base = CGColorSpace(calibratedGrayWhitePoint: white, blackPoint: [0, 0, 0], gamma: CGFloat(g))
+    case "calrgb":
+        let white = nums("white_point"), m = nums("matrix")
+        guard white.count == 3, m.count == 9, let g = cs["gamma"]?.double else { return nil }
+        let gg = [CGFloat](repeating: CGFloat(g), count: 3)
+        base = CGColorSpace(calibratedRGBWhitePoint: white, blackPoint: [0, 0, 0], gamma: gg, matrix: m)
+    default: return nil
+    }
+    guard var space = base else { return nil }
+    if indexed {
+        let n = space.numberOfComponents
+        guard let src = img.colorSpace, src.baseColorSpace?.numberOfComponents == n,
+              let table = src.colorTable, table.count >= n, table.count % n == 0,
+              let ix = CGColorSpace(indexedBaseSpace: space, last: table.count / n - 1, colorTable: table) else { return nil }
+        space = ix
+    } else if img.colorSpace?.numberOfComponents != space.numberOfComponents {
+        return nil
+    }
+    let intent: CGColorRenderingIntent
+    switch cs["intent"]?.string {
+    case "Perceptual": intent = .perceptual
+    case "RelativeColorimetric": intent = .relativeColorimetric
+    case "Saturation": intent = .saturation
+    case "AbsoluteColorimetric": intent = .absoluteColorimetric
+    default: intent = .defaultIntent
+    }
+    guard let provider = img.dataProvider else { return nil }
+    return CGImage(width: img.width, height: img.height, bitsPerComponent: img.bitsPerComponent, bitsPerPixel: img.bitsPerPixel,
+                   bytesPerRow: img.bytesPerRow, space: space, bitmapInfo: img.bitmapInfo, provider: provider,
+                   decode: nil, shouldInterpolate: false, intent: intent)
+}
+
 /// The decoded samples in the PDF's device colour space, as pdfTeX embeds
 /// PNG/JPEG data (`/DeviceGray`, `/DeviceRGB`, `/DeviceCMYK`; no gamma, no
 /// profile), not interpolated (no `/Interpolate`).
@@ -294,15 +398,34 @@ func deviceSamples(_ img: CGImage) -> CGImage {
 /// A page (or form) with its resource ids resolved as they stood when it
 /// arrived (spec §5: a later rebinding never changes a page already held).
 public struct DL3PreparedPage: @unchecked Sendable {
-    public var page: DL3Page { didSet { formIDs = Self.formIDs(page) } }
+    public var page: DL3Page { didSet { (formIDs, glyphSpans) = Self.summary(page) } }
     /// The forms the page draws (`needsPDFFallback(forms:)` runs over every
     /// page at each DONE: it walked every item, ~107 ms on main for 592
     /// pages of text in a debug build).
     public private(set) var formIDs: [UInt32] = []
-    static func formIDs(_ page: DL3Page) -> [UInt32] {
+    /// The span ids the page's GLYPH items carry, sorted and unique: forward
+    /// search's page summary (the app's EngineV3GlyphIndexes). Made with the
+    /// page, where it is prepared (the reader thread): made on main, the
+    /// caret follow after a whole compile summarized every page before the
+    /// caret's, 100 ms for page 887 of 1,152.
+    public private(set) var glyphSpans: [UInt32] = []
+    static func formIDs(_ page: DL3Page) -> [UInt32] { summary(page).forms }
+    /// One pass over the items: the form ids, and the glyphs' spans.
+    static func summary(_ page: DL3Page) -> (forms: [UInt32], spans: [UInt32]) {
         var ids: [UInt32] = []
-        for it in page.items { if case .form(let id, _) = it, !ids.contains(id) { ids.append(id) } }
-        return ids
+        var set = Set<UInt32>()
+        var span: UInt32 = 0, added: UInt32? = nil
+        for it in page.items {
+            switch it {
+            case .span(let s): span = s
+            case .glyph:
+                if added != span { set.insert(span); added = span }
+            case .form(let id, _):
+                if !ids.contains(id) { ids.append(id) }
+            default: break
+            }
+        }
+        return (ids, set.sorted())
     }
     public var fonts: [UInt16: DL3RenderFont]
     public var images: [UInt32: DL3RenderImage]
@@ -312,7 +435,7 @@ public struct DL3PreparedPage: @unchecked Sendable {
 
     public init(page: DL3Page, fonts: [UInt16: DL3RenderFont], images: [UInt32: DL3RenderImage], problems: [String] = []) {
         self.page = page; self.fonts = fonts; self.images = images; self.problems = problems
-        formIDs = Self.formIDs(page)
+        (formIDs, glyphSpans) = Self.summary(page)
     }
 
     public var widthPt: Double { page.boxWidth }
@@ -348,8 +471,8 @@ public final class DL3ResourceCache: @unchecked Sendable {
     /// Image keys, least recently used first.
     private var imageOrder: [String] = []
     private var imageBytes = 0
-    public let imageLimit: Int
-    public let imageByteLimit: Int
+    public private(set) var imageLimit: Int
+    public private(set) var imageByteLimit: Int
     /// Programs by key, so `have_fonts` can name them (the host then sends an empty program).
     private var programs: Set<String> = []
 
@@ -361,6 +484,20 @@ public final class DL3ResourceCache: @unchecked Sendable {
     public var heldImages: (count: Int, bytes: Int) { lock.lock(); defer { lock.unlock() }; return (images.count, imageBytes) }
 
     public var heldFontKeys: [String] { lock.lock(); defer { lock.unlock() }; return programs.sorted() }
+
+    /// New limits for the decoded images (the app's performance mode):
+    /// images over them go now, least recently used first.
+    public func setImageLimits(count: Int, bytes: Int) {
+        lock.lock()
+        imageLimit = max(1, count); imageByteLimit = max(0, bytes)
+        var gone: [Result<DL3RenderImage, DL3Error>] = []
+        while !imageOrder.isEmpty, imageOrder.count > imageLimit || imageBytes > imageByteLimit {
+            let old = imageOrder.removeFirst()
+            if let g = images.removeValue(forKey: old) { imageBytes -= Self.cost(g); gone.append(g) }
+        }
+        lock.unlock()
+        _ = gone // (released after the lock)
+    }
 
     public func font(_ f: DL3Font) -> Result<DL3RenderFont, DL3Error> {
         let key = f.keyHex
@@ -401,6 +538,14 @@ public final class DL3ResourceCache: @unchecked Sendable {
         }
         lock.unlock()
         return r
+    }
+
+    /// Memory pressure: forgets every cached image. A page that holds one
+    /// keeps it (what is on screen stays); the rest are freed, and an id
+    /// bound again decodes its image again.
+    public func trimImages() {
+        lock.lock(); defer { lock.unlock() }
+        images = [:]; imageOrder = []; imageBytes = 0
     }
 
     private static func cost(_ r: Result<DL3RenderImage, DL3Error>) -> Int {
@@ -580,7 +725,7 @@ public enum DL3Renderer {
                 // Stream space (bp, y up): the PDF's own origin, else its sp rounding.
                 let ox: Double, oy: Double
                 if gi < origins.count { ox = origins[gi].x; oy = origins[gi].y } else { ox = Double(x) / K; oy = snap(H - Double(y) / K) }
-                guard gs.textRender != 3, let font = prepared.fonts[f], Int(code) < 256, font.draws(Int(code)) else { continue }
+                guard gs.textRender != 3, let font = prepared.fonts[f], font.draws(Int(code)) else { continue }
                 if let t = gs.textFill, !inText { ctx.setFillColor(t); inText = true }
                 if let t3 = font.type3?[Int(code)], let mask = t3.mask {
                     // Type 3 (writet3): the glyph procedure's `w 0 0 h llx lly cm`
@@ -598,7 +743,7 @@ public enum DL3Renderer {
                     continue
                 }
                 guard let cgFont = font.cgFont else { continue }
-                let g = font.glyphs[Int(code)]
+                let g = font.glyph(Int(code))
                 var tm = font.fontTransform.concatenating(glyphMatrix)
                 tm.tx = ox
                 tm.ty = oy

@@ -1,0 +1,190 @@
+# Unicode mode's start-up, profiled, and a change to it checked byte for
+# byte (lane M3-FAST; docs/evidence/unicode-m3-2026-10-11 §3). GitHub-hosted
+# ubuntu-latest, where `perf` cannot count: callgrind instead.
+#
+#   build     flashtex-xetex (the port, flashtex-host-unicode, fonts_line) and
+#             dl3-client at two commits: `head` (this one) and `base` (its
+#             merge base with main). Release, with line tables (debug info
+#             does not change the code generated) so profiles name functions.
+#   profile   tools/unicode-m3/profile_startup.py for each build: the engine's
+#             start-up, bench b1 and b2, and the host to its HELLO, with the
+#             cost attributed (format load, kpathsea, fonts, map files).
+#   identical tools/unicode-m3/identical.py: every case of the M3 corpus and
+#             the bench, by both builds, the engine's PDF, XDV and log and
+#             the host's PDF compared byte for byte. MacTeX/TeX Live is never
+#             in the product path; TeX Live here provides only the inputs.
+name: unicode-startup
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main, "gh-readonly-queue/**"]
+    paths:
+      - ".github/workflows/unicode-startup.yml"
+      - "tools/unicode-m3/profile_startup.py"
+      - "tools/unicode-m3/identical.py"
+      - "crates/flashtex-xetex/**"
+      - "crates/font-discovery/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unicode-startup-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+  RUST_BACKTRACE: "1"
+  # unicode-m3.yml's oracle tree (scheme-full TeX Live 2026)
+  TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+
+jobs:
+  build:
+    name: build ${{ matrix.which }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        which: [base, head]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: the commit
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.which }}" = base ]; then
+            git fetch -q origin main
+            sha="$(git merge-base HEAD origin/main)"
+            git checkout -q "$sha"
+          fi
+          git log --oneline -1 | tee "$RUNNER_TEMP/commit.txt"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unicode-startup-${{ matrix.which }}
+          workspaces: |
+            crates/flashtex-xetex -> target
+            . -> target
+      - name: regenerate the translation (head; its diff is kept)
+        if: matrix.which == 'head'
+        run: |
+          set -euo pipefail
+          scripts/xetex-regenerate.sh
+          git diff --stat -- crates/flashtex-xetex/src/generated crates/flashtex-xetex/xetex.pool
+          mkdir -p "$RUNNER_TEMP/bin"
+          git diff -- crates/flashtex-xetex/src/generated crates/flashtex-xetex/xetex.pool > "$RUNNER_TEMP/bin/regen.patch"
+      - name: build
+        run: |
+          set -euo pipefail
+          (cd crates/flashtex-xetex && cargo build --release --locked --bins --example fonts_line)
+          if [ "${{ matrix.which }}" = head ]; then
+            (cd crates/flashtex-xetex && cargo test --release --locked --lib 2>&1 | tail -25)
+          fi
+          cargo build --release --locked -p flashtex-display-list --bin dl3-client
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp crates/flashtex-xetex/target/release/{flashtex-xetex,flashtex-host-unicode} \
+             crates/flashtex-xetex/target/release/examples/fonts_line target/release/dl3-client \
+             "$RUNNER_TEMP/commit.txt" "$RUNNER_TEMP/bin/"
+          ls -l "$RUNNER_TEMP/bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: startup-bin-${{ matrix.which }}
+          path: ${{ runner.temp }}/bin
+          retention-days: 7
+
+  run:
+    name: ${{ matrix.part }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [profile, identical]
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        id: tl
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          name: startup-bin-base
+          path: ${{ runner.temp }}/base
+      - uses: actions/download-artifact@v4
+        with:
+          name: startup-bin-head
+          path: ${{ runner.temp }}/head
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: tools, fonts by name (as unicode-m3.yml)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP"/base/* "$RUNNER_TEMP"/head/*
+          cat "$RUNNER_TEMP"/base/commit.txt "$RUNNER_TEMP"/head/commit.txt
+          sudo apt-get update -qq && sudo apt-get install -y -qq fontconfig valgrind
+          tl="$(dirname "$(dirname "${{ steps.tl.outputs.bin }}")")"
+          cat > "$RUNNER_TEMP/fonts.conf" <<EOF
+          <?xml version="1.0"?>
+          <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+          <fontconfig>
+            <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+            <dir>$tl/texmf-dist/fonts/opentype</dir>
+            <dir>$tl/texmf-dist/fonts/truetype</dir>
+            <cachedir>$RUNNER_TEMP/fc-cache</cachedir>
+          </fontconfig>
+          EOF
+          {
+            echo "FONTCONFIG_FILE=$RUNNER_TEMP/fonts.conf"
+            echo "FLASHTEX_FONT_DIRS=$tl/texmf-dist/fonts/opentype:$tl/texmf-dist/fonts/truetype"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/out"
+      - name: profile both builds
+        if: matrix.part == 'profile'
+        run: |
+          set -o pipefail
+          for w in base head; do
+            FLASHTEX_CACHE_DIR="$RUNNER_TEMP/cache-$w" python3 tools/unicode-m3/profile_startup.py \
+              --engine "$RUNNER_TEMP/$w/flashtex-xetex" --host "$RUNNER_TEMP/$w/flashtex-host-unicode" \
+              --out "$RUNNER_TEMP/out/$w" 2>&1 | tee "$RUNNER_TEMP/out/profile-$w.txt"
+            { echo "### $w: $(cat "$RUNNER_TEMP/$w/commit.txt")"; cat "$RUNNER_TEMP/out/$w/summary.md"; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          rm -f "$RUNNER_TEMP"/out/*/*.cg.log
+      - name: assemble the corpus
+        if: matrix.part == 'identical'
+        run: |
+          set -euo pipefail
+          python3 tools/unicode-m3/corpus.py assemble --out "$RUNNER_TEMP/corpus" \
+            --fonts-line "$RUNNER_TEMP/head/fonts_line" --cache "$RUNNER_TEMP/corpus-cache"
+          mkdir -p "$RUNNER_TEMP/bench" && cp tools/unicode-m3/bench/*.tex "$RUNNER_TEMP/bench/"
+      - name: base and head, byte for byte
+        if: matrix.part == 'identical'
+        run: |
+          set -o pipefail
+          FLASHTEX_CACHE_DIR="$RUNNER_TEMP/cache-id" python3 tools/unicode-m3/identical.py \
+            --base "$RUNNER_TEMP/base/flashtex-xetex" --head "$RUNNER_TEMP/head/flashtex-xetex" \
+            --base-host "$RUNNER_TEMP/base/flashtex-host-unicode" --head-host "$RUNNER_TEMP/head/flashtex-host-unicode" \
+            --client "$RUNNER_TEMP/head/dl3-client" \
+            --cases-dir "$RUNNER_TEMP/bench" --cases-dir "$RUNNER_TEMP/corpus" --jobs 4 --loaded-state \
+            --json "$RUNNER_TEMP/out/identical.json" 2>&1 | tee "$RUNNER_TEMP/out/identical.txt"
+          tail -1 "$RUNNER_TEMP/out/identical.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: startup-${{ matrix.part }}
+          path: ${{ runner.temp }}/out
+          retention-days: 30

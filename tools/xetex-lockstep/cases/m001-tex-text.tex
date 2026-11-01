@@ -1,0 +1,10 @@
+% m001-tex-text: mapping=tex-text on a native font by file name: quotes, dashes, ?` !`, ,, << >>
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]:mapping=tex-text" \x
+\setbox0=\hbox{``quotes'' `single' -- en --- em ?` !` ,,low'' <<guillemets>> x--y---z}
+\setbox1=\hbox{\font\y="[lmroman10-regular.otf]" \y ``quotes'' `single' -- en --- em ?` !` ,,low'' <<guillemets>> x--y---z}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end
