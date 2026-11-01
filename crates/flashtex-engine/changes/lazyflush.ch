@@ -25,8 +25,10 @@
 %     ends in null, and the old sequence's head (|avail|) is now the top of
 %     the stack: the same sequence. (A null |avail| is not pushed: the old
 %     sequence is then the stack's, which follows p's anyway.) A list of
-%     one node (most are a backed-up token), or any list while the stack
-%     is full, is walked and linked as before: the same sequence.
+%     one node (most are a backed-up token) is freed by |free_avail|, which
+%     is what the walk does to it; a longer list while the stack is full,
+%     or while the switch is off, is walked and linked as before: the same
+%     sequence.
 %   - |free_avail|, |fast_get_avail| and |get_avail| (displaylist.ch's
 %     |dl_new_node| included) take or put one node at the head through
 %     |avail|; when |avail| is null, the head is the top segment's, which
@@ -74,7 +76,8 @@ begin if p<>null then
   end;
 @y
 begin if p<>null then
-  if lazy_flush and(seg_ptr<seg_size)and(link(p)<>null) then
+  if link(p)=null then free_avail(p) {a one-node list is its own last node}
+  else if seg_ptr<seg_limit then
     begin if avail<>null then
       begin seg_stack[seg_ptr]:=avail; incr(seg_ptr);
       end;
@@ -109,8 +112,10 @@ flashtex_merge_free; sort_avail; var_used:=0;
 @* \[55] Index.
 @y
 @ The free list's segments (see the top of changes/lazyflush.ch). A list
-of one node, and every list while |seg_size| segments are pending, is
-walked and linked as pdftex.web's |flush_list| does.
+of one node is freed with |free_avail|, as walking it would; every longer
+list is walked and linked as pdftex.web's |flush_list| does while
+|seg_limit| segments are pending, which is always when the switch is off
+(|seg_limit=0|), so the switch costs |flush_list| no test of its own.
 
 @d seg_size=16383 {the most free-list segments pending}
 
@@ -119,9 +124,11 @@ walked and linked as pdftex.web's |flush_list| does.
 @!seg_stack:array[0..seg_size] of pointer;
   {where the free list goes on after each pending segment}
 @!seg_ptr:integer; {the segments pending}
+@!seg_limit:integer; {|seg_size| with the switch on, 0 with it off}
 
 @ @<Set init...@>=
 lazy_flush:=flashtex_lazy_flush_enabled; seg_ptr:=0;
+if lazy_flush then seg_limit:=seg_size@+else seg_limit:=0;
 
 @ @<Declare the routines of pdf\TeX's C parts@>=
 function flashtex_lazy_flush_enabled:boolean; external;
