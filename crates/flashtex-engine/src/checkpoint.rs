@@ -101,8 +101,26 @@ pub fn shift_out_pos(x: u64, len_id: u64, d: i64) -> u64 {
 /// fancyvrb's `VerbatimOut`). Restoring `rec` then cannot give the state it
 /// recorded; `None`: no such file. One rule for the restart point's
 /// walk-back (`Globals::restorable`) and the restores' refusal.
-fn rewritten_since(rec: &ExtRecord) -> Option<String> {
-    system::rewritten_at(rec.opens)
+///
+/// Lane BEAMER: such a file closed at `rec`, whose instance there the run
+/// kept (`system::instances_at`: taken at its next `\openout`), is put back
+/// on disk by the restore, so `rec` is restorable after all: a deck's
+/// checkpoints between two fragile frames were all refused, and every edit
+/// past the first fragile frame restarted before it (the metropolis demo's
+/// last page: 30 pages re-typeset to reach it). `Ok`: what to put back.
+fn rewritten_since(rec: &ExtRecord) -> Result<system::PutBack, String> {
+    system::instances_at(rec.opens, &open_outputs(rec))
+}
+
+/// The files open for output at `rec`, by `system::out_key`.
+fn open_outputs(rec: &ExtRecord) -> Vec<String> {
+    rec.files
+        .iter()
+        .filter_map(|f| match &f.stream {
+            Stream::Out { path, .. } => Some(system::out_key(path)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// A restore of `rec` relies on what the output files hold: the first
@@ -429,7 +447,8 @@ pub struct Pending {
     records: Vec<(CheckpointId, ExtRecord)>,
     /// The old run's output opens (`system::opens_since`) from the
     /// target's count on.
-    opens_tail: (usize, Vec<String>),
+    /// (with the instances kept beside them, `system::instances_since`)
+    opens_tail: (usize, Vec<String>, Vec<Option<system::Instance>>),
     /// The read-set of the old run (at its latest state).
     rs_old: crate::readset::ReadSet,
 }
@@ -1002,6 +1021,7 @@ impl Globals {
         system::truncate_external_effects(rec.effects_len);
         system::set_tex_input_type_flag(rec.tex_input_type);
         system::truncate_opens(rec.opens);
+        system::forget_open_instances(&open_outputs(rec));
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         // (a read before the restore target asks for nothing: a run from
@@ -1029,7 +1049,7 @@ impl Globals {
             .iter()
             .rev()
             .find(|(i, _)| *i == id)
-            .is_some_and(|(_, r)| rewritten_since(r).is_none())
+            .is_some_and(|(_, r)| rewritten_since(r).is_ok())
     }
 
     /// Take a checkpoint now. The engine must be between commands (before
@@ -1156,11 +1176,9 @@ impl Globals {
     pub fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
         system::file_trace(|| format!("restore_discard {id}"));
         let rec = self.record_of(id)?;
-        if let Some(p) = rewritten_since(&rec) {
-            return Err(format!(
-                "{p} was opened for output again since checkpoint {id} (and before it)"
-            ));
-        }
+        let put = rewritten_since(&rec).map_err(|p| {
+            format!("{p} was opened for output again since checkpoint {id} (and before it)")
+        })?;
         if let Some(why) = changed_outside(&rec, &[]) {
             return Err(why);
         }
@@ -1170,7 +1188,8 @@ impl Globals {
         let keep: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
         self.layer().records.retain(|(i, _)| keep.contains(i));
-        self.restore_ext(&rec)
+        self.restore_ext(&rec)?;
+        system::put_back_instances(&put)
     }
 
     /// Restore checkpoint `id`, keeping the run it leaves (its later
@@ -1193,11 +1212,9 @@ impl Globals {
         }
         system::file_trace(|| format!("restore {id}"));
         let rec = self.record_of(id)?;
-        if let Some(p) = rewritten_since(&rec) {
-            return Err(format!(
-                "{p} was opened for output again since checkpoint {id} (and before it)"
-            ));
-        }
+        let put = rewritten_since(&rec).map_err(|p| {
+            format!("{p} was opened for output again since checkpoint {id} (and before it)")
+        })?;
         let mut read_back = system::opens_since(rec.opens);
         read_back.extend(system::outputs_since(rec.reads.2));
         if let Some(why) = changed_outside(&rec, &read_back) {
@@ -1279,7 +1296,7 @@ impl Globals {
                 .map(|t| t.path.clone())
                 .collect(),
         );
-        let opens_tail = (rec.opens, later);
+        let opens_tail = (rec.opens, later, system::instances_since(rec.opens));
         let t_tails = t0.elapsed();
         let term = system::terminal_bytes();
         let terminal_tail = (
@@ -1310,7 +1327,9 @@ impl Globals {
             rs_old,
             opens_tail,
         });
-        let r = self.restore_ext(&rec);
+        let r = self
+            .restore_ext(&rec)
+            .and_then(|()| system::put_back_instances(&put));
         {
             let us = |d: std::time::Duration| d.as_micros() as u64;
             let all = t0.elapsed();
@@ -1351,6 +1370,27 @@ impl Globals {
     /// writes once more), so its old content is gone, and the record of
     /// that open would go with the abandoned run's (#1348).
     pub fn reattach_blocked(&mut self) -> Option<String> {
+        self.reattach_blocked_()
+    }
+
+    /// Whether the old run (the branch the last `restore` detached) opened
+    /// `key` (a `system::out_key`) for output at an open position in
+    /// `from..to`, in its numbering (`ExtRecord::opens`,
+    /// `system::FileRead::opens`). `false` when no restore is pending or
+    /// the range starts before the restore target.
+    pub fn old_reopened(&self, key: &str, from: usize, to: usize) -> bool {
+        let Some(p) = self.layer_ref().and_then(|l| l.pending.as_ref()) else {
+            return false;
+        };
+        let (t0, v) = (p.opens_tail.0, &p.opens_tail.1);
+        if from < t0 {
+            return false;
+        }
+        let (a, b) = ((from - t0).min(v.len()), to.saturating_sub(t0).min(v.len()));
+        a < b && v[a..b].iter().any(|k| k == key)
+    }
+
+    fn reattach_blocked_(&mut self) -> Option<String> {
         let p = self.layer_ref()?.pending.as_ref()?;
         if let Some(why) = p
             .tails
@@ -1512,7 +1552,7 @@ impl Globals {
         crate::diag::truncate(notes_tail.0);
         crate::diag::append(&notes_tail.1, 0);
         system::truncate_opens(opens_tail.0);
-        system::append_opens(&opens_tail.1);
+        system::append_opens_kept(&opens_tail.1, &opens_tail.2);
         let r = self.restore_ext(&live);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
             let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
@@ -1928,8 +1968,13 @@ impl Globals {
         // The output opens: the new run's so far, then the old run's after
         // `id`.
         let old_after = old_opens_after(usize::MAX).to_vec();
+        let old_kept = opens_tail
+            .2
+            .get(at_id.opens.saturating_sub(opens_tail.0)..)
+            .unwrap_or(&[])
+            .to_vec();
         system::truncate_opens(now.opens);
-        system::append_opens(&old_after);
+        system::append_opens_kept(&old_after, &old_kept);
         system::truncate_terminal(now.terminal_len);
         let skip = at_id.terminal_len.saturating_sub(terminal_tail.0);
         system::append_terminal(terminal_tail.1.get(skip..).unwrap_or(&[]));

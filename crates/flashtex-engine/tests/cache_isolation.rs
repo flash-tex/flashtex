@@ -1,7 +1,7 @@
 //! Tests never use the user's real FlashTeX caches.
 //!
 //! Every engine binary a test starts (flashtex-host, flashtex-initex,
-//! flashtex-v3, the CLI) inherits the test's environment, and the repository's
+//! flashtex, the CLI) inherits the test's environment, and the repository's
 //! `.cargo/config.toml` gives every process cargo starts a format, bundle and
 //! package cache under `target/`. This test fails if that stops being so --
 //! the configuration removed, or a cache resolved under the real per-user

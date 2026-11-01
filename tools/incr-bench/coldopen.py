@@ -4,14 +4,17 @@ DESIGN.md §1.2 "Opening": the visible page <= 1 s after open, the rest streamin
 initial compile as fast as after it).
 
     coldopen.py ENGINE DOCDIR MAIN OUT.jsonl [--reps N] [--viewport P] [--edit-at-ms MS --edit-line N
-        [--edit-file F] [--edit-viewport]] [--keep-aux] [--keep-s0] [--host-arg ARG]... [--tag TAG]
+        [--edit-file F] [--edit-viewport]] [--keep-aux] [--keep-s0] [--wait-s1 S] [--host-arg ARG]... [--tag TAG]
 
 Each rep: a fresh copy of DOCDIR (its output directory empty unless --keep-aux, which keeps the
 previous rep's output as a reopen from the project's last copy would), a fresh host
 (`flashtex-host --socket`, a fresh S0 cache, warmed as the app's is: `listening` comes after the
 warm-up), then `dl3-coldopen` (one COMPILE, optionally a keystroke during it). One JSON line per rep
 in OUT.jsonl: dl3-coldopen's line plus the host's start-up time (`ready_ms`), its peak RSS, load1 and
-the tag; the host's stderr is appended to OUT.jsonl.host-stderr. The engine thread's instruction counts are in `host.stages` (Linux: perf_event_open; macOS:
+the tag; the host's stderr is appended to OUT.jsonl.host-stderr. With --wait-s1, each rep's host is
+left idle until it says it stored S1 at the viewport (or why not; `s1_save`), at most S seconds, so
+that the next rep (--keep-aux --keep-s0) reopens from it; `s1` is the open's S1 as DONE has it
+(the pages before it, why it was not used, where its fill converged). The engine thread's instruction counts are in `host.stages` (Linux: perf_event_open; macOS:
 the kernel's per-thread counters): compare engines by those on a loaded machine; wall times are
 references only on a quiet one.
 
@@ -52,6 +55,8 @@ def main():
     ap.add_argument('--keep-s0', action='store_true',
                     help="one S0 cache for every rep, as the app's persists across launches: with --keep-aux, "
                          "rep 0 is a cold open and the later reps reopen from the persisted S0")
+    ap.add_argument('--wait-s1', type=float, default=0,
+                    help="leave each rep's host idle until it stored S1 (at most this many seconds)")
     ap.add_argument('--external-tools')
     ap.add_argument('--host-arg', action='append', default=[])
     ap.add_argument('--tag', default='')
@@ -87,13 +92,17 @@ def main():
                 cmd += ['--external-tools', a.external_tools]
             l0 = load1()
             p = subprocess.run(cmd, capture_output=True, text=True)
+            end = time.time() + a.wait_s1
+            while a.wait_s1 and not h.s1 and time.time() < end:
+                time.sleep(0.1)
+            s1_save = list(h.s1)
             rss = h.stop()
             lines = [l for l in p.stdout.splitlines() if l.startswith('{')]
             if p.returncode != 0 or not lines:
                 print(f'rep {rep}: dl3-coldopen exit {p.returncode}: {p.stderr.strip()[-600:]}', file=sys.stderr)
                 sys.exit(1)
             r = json.loads(lines[-1])
-            r.update(rep=rep, tag=a.tag, ready_ms=round(h.ready_ms, 1), peak_rss=rss, load1=[l0, load1()],
+            r.update(rep=rep, tag=a.tag, ready_ms=round(h.ready_ms, 1), peak_rss=rss, load1=[l0, load1()], s1_save=s1_save,
                      keep_aux=bool(a.keep_aux and keep), keep_s0=bool(a.keep_s0 and rep))
             # the open's compiles (its tool follow-ups too): passes, their modes, instructions
             mine = [d for d in r['dones'] if d[0] == 1]
@@ -102,8 +111,9 @@ def main():
             r['instr_g_all'] = round(sum(d[5] or 0 for d in mine) / 1e6, 3)
             with open(a.out, 'a') as f:
                 f.write(json.dumps(r) + '\n')
-            print(f"rep {rep}: pages {r['pages']} first {r['first_page_ms'] or 0:.0f} all {r['all_seen_ms'] or 0:.0f} "
-                  f"done {r['done_ms']:.0f} ms, passes {r['passes_all']} {r['pass_modes_all']}, "
+            print(f"rep {rep}: pages {r['pages']} first {r['first_page_ms'] or 0:.0f} viewport {r.get('viewport_ms') or 0:.0f} "
+                  f"all {r['all_seen_ms'] or 0:.0f} "
+                  f"done {r['done_ms']:.0f} ms, passes {r['passes_all']} {r['pass_modes_all']}, s1 {r.get('s1')}, "
                   f"{r['instr_g_all']} G instr"
                   + (f", edit page {r.get('edited_page')} in {r.get('edited_page_ms')} ms (open at page "
                      f"{r.get('open_pages_then')}, pass {r.get('open_pass_then')})" if a.edit_at_ms is not None else ''),

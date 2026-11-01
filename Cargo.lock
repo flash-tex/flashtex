@@ -260,10 +260,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
-name = "flashtex-bibliography"
-version = "0.1.0"
-
-[[package]]
 name = "flashtex-bibtex"
 version = "0.1.0"
 
@@ -291,36 +287,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "flashtex-class-geometry"
-version = "0.1.0"
-
-[[package]]
-name = "flashtex-cli"
-version = "0.1.0"
-dependencies = [
- "flashtex-compiler",
- "flashtex-package-resolver",
- "flashtex-pdf",
- "flashtex-project-files",
- "flashtex-project-manifest",
- "flashtex-render-pipeline",
-]
-
-[[package]]
 name = "flashtex-collaboration-core"
 version = "0.1.0"
-
-[[package]]
-name = "flashtex-compiler"
-version = "0.1.0"
-dependencies = [
- "flashtex-bibliography",
- "flashtex-font-engine",
- "flashtex-paragraph-layout",
- "flashtex-tex-boxes",
- "flashtex-tex-expansion",
- "flashtex-tex-text-encoding",
-]
 
 [[package]]
 name = "flashtex-display-list"
@@ -382,27 +350,6 @@ name = "flashtex-font-discovery"
 version = "0.1.0"
 
 [[package]]
-name = "flashtex-font-engine"
-version = "0.1.0"
-dependencies = [
- "flashtex-math-layout",
- "flashtex-paragraph-layout",
- "flashtex-pdf",
-]
-
-[[package]]
-name = "flashtex-font-resources"
-version = "0.1.0"
-dependencies = [
- "flashtex-font-engine",
- "flashtex-project-files",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
-]
-
-[[package]]
 name = "flashtex-makeindex"
 version = "0.1.0"
 dependencies = [
@@ -447,29 +394,6 @@ name = "flashtex-pdf"
 version = "0.1.0"
 
 [[package]]
-name = "flashtex-perf-bench"
-version = "0.1.0"
-dependencies = [
- "flashtex-compiler",
- "flashtex-font-engine",
- "flashtex-render-pipeline",
-]
-
-[[package]]
-name = "flashtex-preview-controller"
-version = "0.1.0"
-dependencies = [
- "flashtex-document-runtime",
- "flashtex-edit-ledger",
- "flashtex-project-files",
- "flashtex-project-index",
- "getrandom 0.4.3",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "flashtex-project-files"
 version = "0.1.0"
 dependencies = [
@@ -489,25 +413,6 @@ name = "flashtex-project-manifest"
 version = "0.1.0"
 dependencies = [
  "toml",
-]
-
-[[package]]
-name = "flashtex-render-pipeline"
-version = "0.1.0"
-dependencies = [
- "flashtex-class-geometry",
- "flashtex-compiler",
- "flashtex-document-style",
- "flashtex-font-discovery",
- "flashtex-font-engine",
- "flashtex-font-resources",
- "flashtex-math-layout",
- "flashtex-microtype",
- "flashtex-paragraph-layout",
- "flashtex-pdf",
- "flashtex-project-files",
- "flashtex-tex-text-encoding",
- "flashtex-vector-graphics",
 ]
 
 [[package]]
@@ -533,17 +438,6 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
 ]
-
-[[package]]
-name = "flashtex-tex-text-encoding"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "flashtex-vector-graphics"
-version = "0.1.0"
 
 [[package]]
 name = "flate2"

@@ -7,14 +7,14 @@ TEXLIVE_DOCS, copied from the oracle's tree at run time):
 
 * **ref**: TeX Live's `latexmk -xelatex` (the oracle, TeX Live present):
   xelatex, then biber, bibtex or makeindex as latexmk decides.
-* **notex**: `flashtex-v3 build --mode unicode` (which starts
+* **notex**: `flashtex build --mode unicode` (which starts
   `flashtex-host-unicode` and speaks display-list-v3 to it) with TeX Live
   hidden as `scripts/notex-host-check.sh` hides it: an empty environment, a
   HOME and TMPDIR of our own, the system PATH only, `sandbox-exec` denying
   every TeX Live location, and the bundle from `flashtex-bundle.lock` with
-  the user's consent (`FLASHTEX_BUNDLE_ALLOW_FETCH`). Then `flashtex-v3 check
+  the user's consent (`FLASHTEX_BUNDLE_ALLOW_FETCH`). Then `flashtex check
   --json` in the same environment for TeX's diagnostics and the tools' skips.
-* **tl** (`--with-texlive`): the same `flashtex-v3 build` with TeX Live
+* **tl** (`--with-texlive`): the same `flashtex build` with TeX Live
   visible, which separates a bundle gap (tl works, notex does not) from an
   engine or host bug (neither works).
 
@@ -22,7 +22,7 @@ Each PDF is compared with the reference by `tools/xetex-pdfparity/compare.py`
 (structural; `--visual` adds Core Graphics rasters). The oracle is used only
 as the reference and never in the product path (DESIGN.md).
 
-    python3 tools/xetex-corpus/run.py --v3 target/release/flashtex-v3 \
+    python3 tools/xetex-corpus/run.py --v3 target/release/flashtex \
         --host-unicode crates/flashtex-xetex/target/release/flashtex-host-unicode \
         --out /tmp/xc [--only 'p0*'] [--with-texlive] [--jobs 4] [--json OUT]
 """

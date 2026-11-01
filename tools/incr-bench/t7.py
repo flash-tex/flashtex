@@ -317,6 +317,7 @@ class Host:
         self.sock = sock
         self.lines = queue.Queue()
         self.saved = 0
+        self.s1 = []
         self.startup = None
         t0 = time.perf_counter()
         self.p = subprocess.Popen([f'{eng}/flashtex-host', '--socket', sock, '--s0-cache', s0] + extra,
@@ -356,6 +357,9 @@ class Host:
             l = l.rstrip('\n')
             if '"saved_s0"' in l:
                 self.saved += 1
+            # (S1, lane COLD-OPEN: saved, or why not)
+            if '"saved_s1"' in l or '"no_s1"' in l:
+                self.s1.append(l[len('flashtex-host: '):])
             self.lines.put(l)
         self.lines.put(None)
 
@@ -568,6 +572,12 @@ def off_cpu(host):
     return max(0.0, fp - q - cpu)
 
 
+# A keystroke the typist (dl3-keys --interval-ms) sent more than this late after its due time:
+# the client's clock slipped (lane BEAMER, 2026-11-01: on the hosted M1 the typist woke 100 ms and
+# more late and sent keys in bursts, until it left macOS's background band).
+LATE_MS = 5
+
+
 def typing_row(d, name, ph):
     """A continuous-typing phase: each keystroke's time to the watched page from its own compile or a
     later one (what the user sees: dl3-keys --interval-ms), how many were not painted by their own
@@ -580,11 +590,14 @@ def typing_row(d, name, ph):
     n = len(ks) + unpainted - (1 if unpainted and not any(k.get('key') == 0 for k in ph['keys']) else 0)
     lat = [k['edited_page_ms'] for k in ks if k.get('edited_page_ms') is not None]
     own = sum(1 for k in ks if k.get('by') == first + k['key'])
+    # keystrokes the client sent late (dl3-keys' `sent_late_ms`): a burst of keys sent together
+    # supersedes all but its last, whatever the host does
+    late = sum(1 for k in ks if (k.get('sent_late_ms') or 0) > LATE_MS)
     painters = [by_id[k['by']] for k in ks if k.get('by') in by_id]
     queue = [x['stages']['queue'] for x in painters
              if isinstance((x.get('stages') or {}).get('queue'), (int, float))]
     return dict(doc=d['doc'], edit=name, metric='edited page (host share), typing', target=TARGET['edit'],
-                gated=True, n=n, missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own,
+                gated=True, n=n, missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own, sent_late=late,
                 queue=stats(queue), off_cpu=stats([x for x in map(off_cpu, painters) if x is not None]),
                 cancelled=sum(1 for x in dones if x.get('status') == 'cancelled'),
                 load=ph['load'], pages=d.get('pages'), rss=d.get('rss_peak'))
@@ -661,6 +674,9 @@ def verdict(rows, baseline):
             why.append(f"{name} {val:.1f} ms > {r['target']:.0f} ms")
         if r.get('not_own'):
             why.append(f"{r['not_own']} of {r['n']} keystrokes not painted by their own compile")
+        if r.get('sent_late'):
+            why.append(f"{r['sent_late']} of {r['n']} keystrokes sent over {LATE_MS} ms late by the client "
+                       "(its clock, not the host: a harness fault)")
         if r.get('stale_unmarked'):
             why.append(f"{r['stale_unmarked']} compiles refreshed later pages without marking them stale")
         if r.get('incomplete'):

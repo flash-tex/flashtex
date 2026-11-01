@@ -4888,6 +4888,124 @@ fn a_file_the_preamble_wrote_is_rewritten_after_a_host_restart() {
     }
 }
 
+/// Lane BEAMER (1): a temporary file written and read back again and again
+/// (beamer's `.vrb`, one instance per fragile frame). A checkpoint between
+/// two instances is restorable only with the first instance put back on
+/// disk: here the edit also adds an `\input` of the file before its second
+/// write, which reads the first instance from scratch. Without the
+/// put-back that read finds the second instance (the old run's last); with
+/// the checkpoints refused, every edit after the first instance restarted
+/// before it.
+#[test]
+fn a_restart_between_two_instances_of_a_rewritten_file_puts_the_first_back() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("instance-put-back");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |slot: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n\\begin{{document}}\n{}{}\
+             \\input{{\\jobname-tmp.tex}}\n\n\\clearpage\n{}\\clearpage\n{}{slot}\\clearpage\n\
+             {}{}\\input{{\\jobname-tmp.tex}}\n\n\\clearpage\n{}\\end{{document}}\n",
+            paras(0, 3, "alpha"),
+            write_tmp(0, "x"),
+            paras(3, 6, "alpha"),
+            paras(6, 9, word),
+            paras(9, 12, "alpha"),
+            write_tmp(1, "yy"),
+            paras(12, 15, "alpha"),
+        )
+    };
+    let base = doc("", "alpha");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("", "gamma"))],
+        "an edit between the instances",
+    );
+    let restart: usize = field(&r, "restart_pages").parse().unwrap();
+    assert!(restart >= 2, "restarted before the first instance: {r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "its revert");
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("\\input{\\jobname-tmp.tex}\n\n", "gamma"))],
+        "a read of the first instance added between them",
+    );
+    let restart: usize = field(&r, "restart_pages").parse().unwrap();
+    assert!(restart >= 2, "restarted before the first instance: {r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "its revert");
+}
+
+/// Lane BEAMER (2): beamer fragile frames, each writing `\jobname.vrb` and
+/// reading it back. An edit restarts at its own frame, not before the first
+/// fragile one, and one before later fragile frames converges: the old
+/// run's later reads of the `.vrb` follow its own writes after the
+/// convergence point (`reopened_after`). An edit inside a fragile frame's
+/// body changes what is written there; every result equals a run from
+/// scratch.
+#[test]
+fn beamer_fragile_frames_restart_near_and_converge() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("beamer-fragile-converge");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let frame = |i: usize, word: &str| {
+        format!(
+            "\\begin{{frame}}[fragile]{{Frame {i}}}\n  Text of frame {i}, the word {word}.\n\n  \
+             \\begin{{verbatim}}  code {i}\\end{{verbatim}}\n\\end{{frame}}\n"
+        )
+    };
+    let doc = |w: &[&str]| {
+        let mut s = String::from("\\documentclass{beamer}\n\\begin{document}\n");
+        for (i, word) in w.iter().enumerate() {
+            s += &frame(i, word);
+        }
+        s + "\\end{document}\n"
+    };
+    let base = ["alpha"; 8];
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(&base))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (at, word, what) in [
+        (6, "gamma", "an edit in a late fragile frame"),
+        (6, "alpha", "its revert"),
+        (1, "delta", "an edit in an early fragile frame"),
+        (1, "alpha", "its revert"),
+    ] {
+        let mut w = base;
+        w[at] = word;
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(&w))], what);
+        let restart: usize = field(&r, "restart_pages").parse().unwrap();
+        assert!(
+            restart + 1 >= at,
+            "{what}: restarted at page {restart}: {r}"
+        );
+        if at == 1 {
+            assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+        }
+    }
+}
+
 /// #1591: one file under two names (here `alias/chapx.tex`, through a link
 /// `alias` to the project's own directory), each opening
 /// leaving a group open to the end. The edit is one shift: counted once per

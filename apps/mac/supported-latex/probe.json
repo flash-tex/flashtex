@@ -36,6 +36,9 @@
    "Alph": {
     "d": "macro:#1->\\expandafter \\@Alph \\csname c@#1\\endcsname "
    },
+   "Arrowvert": {
+    "d": "\\protected macro:->\\delimiter \"026B33D "
+   },
    "AssignSocketPlug": {
     "d": "\\protected\\long macro:#1#2->\\socket_if_exist:nTF {#1}{\\socket_if_plug_exist:nnTF {#1}{#2}{\\__socket_debug_term:n {Replacing plug '\\str_use:c {l__socket_#1_plug_"
    },
@@ -398,6 +401,9 @@
    "DeclareUppercaseMapping": {
     "d": "\\protected macro:->\\__cmd_start:nNNnnn {omm}\\DeclareUppercaseMapping  \\DeclareUppercaseMapping code {\\__cmd_grab_D:w []\\__cmd_grab_m_2:w }{}{}"
    },
+   "Delta": {
+    "d": "\\mathchar\"7001"
+   },
    "Diamond": {
     "d": "macro:->\\not@base \\Diamond "
    },
@@ -412,6 +418,9 @@
    },
    "DocumentMetadata": {
     "d": "\\protected macro:->\\InputIfFileExists {documentmetadata-support.ltx}{\\let \\IfDocumentMetadataTF \\@firstoftwo \\let \\IfDocumentMetadataT \\@firstofone \\let \\IfDocu"
+   },
+   "Downarrow": {
+    "d": "\\protected macro:->\\delimiter \"322B37F "
    },
    "EditInstance": {
     "d": "\\protected\\long macro:#1#2#3->\\__template_edit_instance:nnn {#1}{#2}{#3}"
@@ -442,6 +451,9 @@
    },
    "FirstMark": {
     "d": "macro:->\\__cmd_start_expandable:nNNNNn {O{page}m}\\FirstMark  \\FirstMark  \\FirstMark code \\FirstMark defaults {\\__cmd_expandable_grab_D:w \\FirstMark (arg 1) []\\_"
+   },
+   "Gamma": {
+    "d": "\\mathchar\"7000"
    },
    "GenericError": {
     "d": "macro:->\\protect \\GenericError  ",
@@ -717,6 +729,9 @@
    "IfValueTF": {
     "d": "\\long macro:#1#2#3->\\tl_if_novalue:nTF {#1}{#3}{#2}"
    },
+   "Im": {
+    "d": "\\mathchar\"23D"
+   },
    "IncludeInRelease": {
     "d": "macro:#1->\\if@includeinrelease \\PackageError {latexrelease}{mis-matched IncludeInRelease}{There is an \\string \\EndIncludeRelease \\space missing}\\@includeinrelea"
    },
@@ -757,6 +772,9 @@
     "d": "macro:->\\protect \\LaTeXe  ",
     "s": "macro:->\\mbox {\\m@th \\if b\\expandafter \\@car \\f@series \\@nil \\boldmath \\fi \\LaTeX \\kern .15em2$_{\\textstyle \\varepsilon }$}"
    },
+   "Lambda": {
+    "d": "\\mathchar\"7003"
+   },
    "Large": {
     "d": "macro:->\\protect \\Large  ",
     "s": "macro:->\\@setfontsize \\Large \\@xivpt {18}"
@@ -766,6 +784,12 @@
    },
    "LastMark": {
     "d": "macro:->\\__cmd_start_expandable:nNNNNn {O{page}m}\\LastMark  \\LastMark  \\LastMark code \\LastMark defaults {\\__cmd_expandable_grab_D:w \\LastMark (arg 1) []\\__cmd_"
+   },
+   "Leftarrow": {
+    "d": "\\mathchar\"3228"
+   },
+   "Leftrightarrow": {
+    "d": "\\mathchar\"322C"
    },
    "LinkTargetOff": {
     "d": "\\protected macro:->\\__cmd_start_optimized: \\LinkTargetOff code "
@@ -790,6 +814,18 @@
    },
    "LogSocket": {
     "d": "\\protected\\long macro:#1->\\typeout {Socket #1:}\\socket_if_exist:nTF {#1}{\\typeout {\\@spaces number of inputs = \\int_use:c {c__socket_#1_args_int}}\\typeout {\\@sp"
+   },
+   "Longleftarrow": {
+    "d": "macro:->\\protect \\Longleftarrow  ",
+    "s": "macro:->\\Leftarrow \\joinrel \\Relbar "
+   },
+   "Longleftrightarrow": {
+    "d": "macro:->\\protect \\Longleftrightarrow  ",
+    "s": "macro:->\\Leftarrow \\joinrel \\Rightarrow "
+   },
+   "Longrightarrow": {
+    "d": "macro:->\\protect \\Longrightarrow  ",
+    "s": "macro:->\\Relbar \\joinrel \\Rightarrow "
    },
    "MakeLinkTarget": {
     "d": "\\protected macro:->\\__cmd_start:nNNnnn {sO{}m}\\MakeLinkTarget  \\MakeLinkTarget code {\\__cmd_grab_t:w *\\__cmd_grab_D:w []\\__cmd_grab_m_1:w }{{\\prg_do_nothing: \\N"
@@ -899,6 +935,9 @@
    "OE": {
     "d": "macro:->\\T1-cmd \\OE \\T1\\OE "
    },
+   "Omega": {
+    "d": "\\mathchar\"700A"
+   },
    "OmitIndent": {
     "d": "\\long macro:->\\box_gclear:N \\g_para_indent_box "
    },
@@ -932,6 +971,12 @@
    },
    "PassOptionsToPackage": {
     "d": "macro:->\\@pass@ptions \\@pkgextension "
+   },
+   "Phi": {
+    "d": "\\mathchar\"7008"
+   },
+   "Pi": {
+    "d": "\\mathchar\"7005"
    },
    "PopDefaultHookLabel": {
     "d": "\\protected macro:->\\__cmd_start_optimized: \\PopDefaultHookLabel code "
@@ -991,6 +1036,9 @@
    "ProvidesPackage": {
     "d": "macro:#1->\\xdef \\@gtempa {#1}\\@expandtwoargs \\@expl@str@if@eq@@nnTF {\\@gtempa }{\\@currpath \\@currname }{}{\\@latex@warning@no@line {You have requested \\@cls@pkg "
    },
+   "Psi": {
+    "d": "\\mathchar\"7009"
+   },
    "PushDefaultHookLabel": {
     "d": "\\protected macro:->\\__cmd_start_optimized: \\PushDefaultHookLabel code "
    },
@@ -1006,6 +1054,9 @@
    "RawShipout": {
     "d": "\\protected\\long macro:->\\tl_set:Ne \\l__shipout_group_level_tl {\\int_value:w \\tex_currentgrouplevel:D }\\tex_afterassignment:D \\__shipout_execute_test_level_raw: "
    },
+   "Re": {
+    "d": "\\mathchar\"23C"
+   },
    "ReadonlyShipoutCounter": {
     "d": "\\count190"
    },
@@ -1020,6 +1071,10 @@
    },
    "RefUndefinedWarn": {
     "d": "\\protected\\long macro:->\\exp_args:Nee \\property_ref_undefined_warn:nn "
+   },
+   "Relbar": {
+    "d": "macro:->\\protect \\Relbar  ",
+    "s": "macro:->\\mathrel {=}"
    },
    "RemoveFromHook": {
     "d": "\\protected macro:->\\__cmd_start:nNNnnn {mo}\\RemoveFromHook  \\RemoveFromHook code {\\__cmd_grab_m_1:w \\__cmd_grab_D:w []}{}{}"
@@ -1053,6 +1108,9 @@
    },
    "ReverseBoolean": {
     "d": "\\protected\\long macro:#1->\\bool_if:NTF #1{\\tl_set:Nn \\ProcessedArgument {\\c_false_bool }}{\\tl_set:Nn \\ProcessedArgument {\\c_true_bool }}"
+   },
+   "Rightarrow": {
+    "d": "\\mathchar\"3229"
    },
    "Roman": {
     "d": "macro:#1->\\expandafter \\@Roman \\csname c@#1\\endcsname "
@@ -1127,6 +1185,9 @@
    "ShowTemplateVariables": {
     "d": "\\protected\\long macro:#1#2->\\__template_show_vars:nn {#1}{#2}"
    },
+   "Sigma": {
+    "d": "\\mathchar\"7006"
+   },
    "SplitArgument": {
     "d": "\\protected\\long macro:#1#2#3->\\__cmd_split_list:nn {#2}{#3}\\exp_args:Nf \\__cmd_split_argument_aux:nnnn {\\tl_count:N \\ProcessedArgument }{#1}{#2}{#3}"
    },
@@ -1149,6 +1210,9 @@
    "TextSymbolUnavailable": {
     "d": "macro:#1->\\@latex@error {Command \\protect #1 unavailable in encoding \\cf@encoding }\\@eha "
    },
+   "Theta": {
+    "d": "\\mathchar\"7002"
+   },
    "TopMark": {
     "d": "macro:->\\__cmd_start_expandable:nNNNNn {O{page}m}\\TopMark  \\TopMark  \\TopMark code \\TopMark defaults {\\__cmd_expandable_grab_D:w \\TopMark (arg 1) []\\__cmd_expan"
    },
@@ -1160,6 +1224,15 @@
    },
    "UnusedTemplateKeys": {
     "d": "macro:->"
+   },
+   "Uparrow": {
+    "d": "\\protected macro:->\\delimiter \"322A37E "
+   },
+   "Updownarrow": {
+    "d": "\\protected macro:->\\delimiter \"326D377 "
+   },
+   "Upsilon": {
+    "d": "\\mathchar\"7007"
    },
    "UseExpandableTaggingSocket": {
     "d": "\\long macro:#1->\\int_case:nnF {\\int_use:c {c__socket_tagsupport/#1_args_int}}{0\\prg_do_nothing: 1\\use_none:n 2\\use_ii:nn }\\ERRORusetaggingsocket "
@@ -1208,6 +1281,12 @@
     "d": "macro:->\\protect \\UseTextSymbol  ",
     "s": "macro:#1#2->\\hmode@start@before@group {\\def \\@wrong@font@char {\\MessageBreak for \\noexpand \\symbol `\\string #2'}\\@use@text@encoding {#1}#2}"
    },
+   "Vert": {
+    "d": "\\protected macro:->\\delimiter \"026B30D "
+   },
+   "Xi": {
+    "d": "\\mathchar\"7004"
+   },
    "a": {
     "d": "macro:#1->\\expandafter \\@changed@cmd \\csname \\string #1\\endcsname \\relax "
    },
@@ -1231,6 +1310,10 @@
    },
    "active": {
     "d": "\\char\"D"
+   },
+   "acute": {
+    "d": "macro:->\\protect \\acute  ",
+    "s": "macro:->\\mathaccent \"7013\\relax "
    },
    "addcontentsline": {
     "d": "macro:#1#2#3->\\addtocontents {#1}{\\protect \\contentsline {#2}{#3}{\\thepage }{}\\protected@file@percent }"
@@ -1265,6 +1348,9 @@
    "aftergroup": {
     "d": "\\aftergroup"
    },
+   "aleph": {
+    "d": "\\mathchar\"240"
+   },
    "allocationnumber": {
     "d": "\\count21"
    },
@@ -1275,15 +1361,28 @@
    "alph": {
     "d": "macro:#1->\\expandafter \\@alph \\csname c@#1\\endcsname "
    },
+   "alpha": {
+    "d": "\\mathchar\"10B"
+   },
+   "amalg": {
+    "d": "\\mathchar\"2271"
+   },
    "and": {
     "d": "macro:->\\protect \\and  ",
     "s": "macro:->\\end {tabular}\\hskip 1em \\@plus .17fil\\begin {tabular}[t]{c}"
+   },
+   "angle": {
+    "d": "macro:->\\protect \\angle  ",
+    "s": "macro:->{\\vbox {\\ialign {$\\m@th \\scriptstyle ##$\\crcr \\not \\mathrel {\\mkern 14mu}\\crcr \\noalign {\\nointerlineskip } \\mkern 2.5mu\\leaders \\hrule \\@height .34pt\\h"
    },
    "appendix": {
     "d": "macro:->\\par \\setcounter {section}{0}\\setcounter {subsection}{0}\\gdef \\thesection {\\@Alph \\c@section }"
    },
    "appendixname": {
     "d": "macro:->Appendix"
+   },
+   "approx": {
+    "d": "\\mathchar\"3219"
    },
    "arabic": {
     "d": "macro:#1->\\expandafter \\@arabic \\csname c@#1\\endcsname "
@@ -1316,9 +1415,18 @@
    "arraystretch": {
     "d": "macro:->1"
    },
+   "arrowvert": {
+    "d": "\\protected macro:->\\delimiter \"026A33C "
+   },
    "asciispace": {
     "d": "macro:->\\protect \\asciispace  ",
     "s": "macro:->\\char 32 "
+   },
+   "ast": {
+    "d": "\\mathchar\"2203"
+   },
+   "asymp": {
+    "d": "\\mathchar\"3210"
    },
    "atopwithdelims": {
     "d": "\\atopwithdelims"
@@ -1329,6 +1437,13 @@
    },
    "b": {
     "d": "macro:->\\T1-cmd \\b \\T1\\b "
+   },
+   "backslash": {
+    "d": "\\protected macro:->\\delimiter \"026E30F "
+   },
+   "bar": {
+    "d": "macro:->\\protect \\bar  ",
+    "s": "macro:->\\mathaccent \"7016\\relax "
    },
    "baselineskip": {
     "d": "\\baselineskip"
@@ -1353,6 +1468,9 @@
    },
    "belowdisplayskip": {
     "d": "\\belowdisplayskip"
+   },
+   "beta": {
+    "d": "\\mathchar\"10C"
    },
    "bezier": {
     "d": "macro:->\\protect \\bezier  ",
@@ -1401,6 +1519,15 @@
     "d": "macro:->\\protect \\bigbreak  ",
     "s": "macro:->\\par \\ifdim \\lastskip <\\bigskipamount \\removelastskip \\penalty -200\\bigskip \\fi "
    },
+   "bigcap": {
+    "d": "\\mathchar\"1354"
+   },
+   "bigcirc": {
+    "d": "\\mathchar\"220D"
+   },
+   "bigcup": {
+    "d": "\\mathchar\"1353"
+   },
    "bigg": {
     "d": "macro:->\\protect \\bigg  ",
     "s": "\\long macro:#1->\\leavevmode@ifvmode {\\hbox {$\\left #1\\vbox to14.5\\p@ {}\\right .\\n@space $}}"
@@ -1425,6 +1552,15 @@
     "d": "macro:->\\protect \\bigm  ",
     "s": "macro:->\\mathrel \\big "
    },
+   "bigodot": {
+    "d": "\\mathchar\"134A"
+   },
+   "bigoplus": {
+    "d": "\\mathchar\"134C"
+   },
+   "bigotimes": {
+    "d": "\\mathchar\"134E"
+   },
    "bigr": {
     "d": "macro:->\\protect \\bigr  ",
     "s": "macro:->\\mathclose \\big "
@@ -1434,6 +1570,24 @@
    },
    "bigskipamount": {
     "d": "\\skip26"
+   },
+   "bigsqcup": {
+    "d": "\\mathchar\"1346"
+   },
+   "bigtriangledown": {
+    "d": "\\mathchar\"2235"
+   },
+   "bigtriangleup": {
+    "d": "\\mathchar\"2234"
+   },
+   "biguplus": {
+    "d": "\\mathchar\"1355"
+   },
+   "bigvee": {
+    "d": "\\mathchar\"1357"
+   },
+   "bigwedge": {
+    "d": "\\mathchar\"1356"
    },
    "binoppenalty": {
     "d": "\\binoppenalty"
@@ -1449,11 +1603,18 @@
    "bordermatrix": {
     "d": "macro:#1->\\begingroup \\m@th \\@tempdima 8.75\\p@ \\setbox \\z@ \\vbox {\\def \\cr {\\crcr \\noalign {\\kern 2\\p@ \\global \\let \\cr \\endline }}\\ialign {$##$\\hfil \\kern 2\\p@"
    },
+   "bot": {
+    "d": "\\mathchar\"23F"
+   },
    "botfigrule": {
     "d": "\\relax"
    },
    "bottomfraction": {
     "d": "macro:->.3"
+   },
+   "bowtie": {
+    "d": "macro:->\\protect \\bowtie  ",
+    "s": "macro:->\\mathrel \\triangleright \\joinrel \\mathrel \\triangleleft "
    },
    "box": {
     "d": "\\box"
@@ -1464,6 +1625,21 @@
    "brace": {
     "d": "macro:->\\atopwithdelims \\{\\}"
    },
+   "braceld": {
+    "d": "\\mathchar\"37A"
+   },
+   "bracelu": {
+    "d": "\\mathchar\"37C"
+   },
+   "bracerd": {
+    "d": "\\mathchar\"37B"
+   },
+   "braceru": {
+    "d": "\\mathchar\"37D"
+   },
+   "bracevert": {
+    "d": "\\protected macro:->\\delimiter \"033E33E "
+   },
    "brack": {
     "d": "macro:->\\atopwithdelims []"
    },
@@ -1471,11 +1647,18 @@
     "d": "macro:->\\protect \\break  ",
     "s": "macro:->\\penalty -\\@M "
    },
+   "breve": {
+    "d": "macro:->\\protect \\breve  ",
+    "s": "macro:->\\mathaccent \"7015\\relax "
+   },
    "brokenpenalty": {
     "d": "\\brokenpenalty"
    },
    "buildrel": {
     "d": "macro:#1\\over #2->\\mathrel {\\mathop {\\kern \\z@ #2}\\limits ^{#1}}"
+   },
+   "bullet": {
+    "d": "\\mathchar\"220F"
    },
    "c": {
     "d": "macro:->\\T1-cmd \\c \\T1\\c "
@@ -1483,6 +1666,9 @@
    "cal": {
     "d": "macro:->\\protect \\cal  ",
     "s": "macro:->\\@fontswitch \\relax \\mathcal "
+   },
+   "cap": {
+    "d": "\\mathchar\"225C"
    },
    "capitalacute": {
     "d": "macro:->\\?-cmd \\capitalacute \\?\\capitalacute "
@@ -1539,6 +1725,16 @@
    "catcode": {
     "d": "\\catcode"
    },
+   "cdot": {
+    "d": "\\mathchar\"2201"
+   },
+   "cdotp": {
+    "d": "\\mathchar\"6201"
+   },
+   "cdots": {
+    "d": "macro:->\\protect \\cdots  ",
+    "s": "macro:->\\mathinner {\\cdotp \\cdotp \\cdotp }"
+   },
    "center": {
     "d": "macro:->\\trivlist \\centering \\item \\relax "
    },
@@ -1556,8 +1752,18 @@
    "chardef": {
     "d": "\\chardef"
    },
+   "check": {
+    "d": "macro:->\\protect \\check  ",
+    "s": "macro:->\\mathaccent \"7014\\relax "
+   },
+   "chi": {
+    "d": "\\mathchar\"11F"
+   },
    "choose": {
     "d": "macro:->\\atopwithdelims ()"
+   },
+   "circ": {
+    "d": "\\mathchar\"220E"
    },
    "circle": {
     "d": "macro:->\\protect \\circle  ",
@@ -1595,6 +1801,12 @@
    "clubpenalty": {
     "d": "\\clubpenalty"
    },
+   "clubsuit": {
+    "d": "\\mathchar\"27C"
+   },
+   "colon": {
+    "d": "\\mathchar\"603A"
+   },
    "columnsep": {
     "d": "\\dimen126"
    },
@@ -1604,11 +1816,18 @@
    "columnwidth": {
     "d": "\\dimen125"
    },
+   "cong": {
+    "d": "macro:->\\protect \\cong  ",
+    "s": "macro:->\\mathrel {\\mathpalette \\@vereq \\sim }"
+   },
    "contentsline": {
     "d": "macro:#1#2#3#4->\\gdef \\@contentsline@destination {#4}\\csname l@#1\\endcsname {#2}{#3}"
    },
    "contentsname": {
     "d": "macro:->Contents"
+   },
+   "coprod": {
+    "d": "\\mathchar\"1360"
    },
    "copy": {
     "d": "\\copy"
@@ -1658,6 +1877,9 @@
    "csname": {
     "d": "\\csname"
    },
+   "cup": {
+    "d": "\\mathchar\"225B"
+   },
    "currentgrouplevel": {
     "d": "\\currentgrouplevel"
    },
@@ -1677,6 +1899,9 @@
    "dashbox": {
     "d": "macro:->\\protect \\dashbox  ",
     "s": "macro:#1(#2,#3)->\\leavevmode \\hb@xt@ \\z@ {\\baselineskip \\z@skip \\lineskip \\z@skip \\@defaultunitsset \\@dashdim {#2}\\unitlength \\@dashcnt \\@dashdim \\advance \\@das"
+   },
+   "dashv": {
+    "d": "\\mathchar\"3261"
    },
    "date": {
     "d": "macro:->\\protect \\date  ",
@@ -1706,6 +1931,14 @@
    },
    "ddagger": {
     "d": "\\mathchar\"227A"
+   },
+   "ddot": {
+    "d": "macro:->\\protect \\ddot  ",
+    "s": "macro:->\\mathaccent \"707F\\relax "
+   },
+   "ddots": {
+    "d": "macro:->\\protect \\ddots  ",
+    "s": "macro:->\\mathinner {\\mkern 1mu\\raise 7\\p@ \\vbox {\\kern 7\\p@ \\hbox {.}}\\mkern 2mu \\raise 4\\p@ \\hbox {.}\\mkern 2mu\\raise \\p@ \\hbox {.}\\mkern 1mu}"
    },
    "deadcycles": {
     "d": "\\deadcycles"
@@ -1741,6 +1974,9 @@
    "delimitershortfall": {
     "d": "\\delimitershortfall"
    },
+   "delta": {
+    "d": "\\mathchar\"10E"
+   },
    "descriptionlabel": {
     "d": "macro:#1->\\hspace \\labelsep \\normalfont \\bfseries #1"
    },
@@ -1753,6 +1989,12 @@
    },
    "dh": {
     "d": "macro:->\\T1-cmd \\dh \\T1\\dh "
+   },
+   "diamond": {
+    "d": "\\mathchar\"2205"
+   },
+   "diamondsuit": {
+    "d": "\\mathchar\"27D"
    },
    "dim": {
     "d": "macro:->\\protect \\dim  ",
@@ -1788,6 +2030,9 @@
    "displaywidth": {
     "d": "\\displaywidth"
    },
+   "div": {
+    "d": "\\mathchar\"2204"
+   },
    "divide": {
     "d": "\\divide"
    },
@@ -1809,6 +2054,14 @@
    "dospecials": {
     "d": "macro:->\\do \\ \\do \\\\\\do \\{\\do \\}\\do \\$\\do \\&\\do \\#\\do \\^\\do \\_\\do \\%\\do \\~\\do \\\t"
    },
+   "dot": {
+    "d": "macro:->\\protect \\dot  ",
+    "s": "macro:->\\mathaccent \"705F\\relax "
+   },
+   "doteq": {
+    "d": "macro:->\\protect \\doteq  ",
+    "s": "macro:->\\buildrel \\textstyle .\\over ="
+   },
    "dotfill": {
     "d": "macro:->\\protect \\dotfill  ",
     "s": "macro:->\\leavevmode \\cleaders \\hb@xt@ .44em{\\hss .\\hss }\\hfill \\kern \\z@ "
@@ -1822,6 +2075,13 @@
    },
    "doublerulesep": {
     "d": "\\dimen95"
+   },
+   "downarrow": {
+    "d": "\\protected macro:->\\delimiter \"3223379 "
+   },
+   "downbracefill": {
+    "d": "macro:->\\protect \\downbracefill  ",
+    "s": "macro:->$\\m@th \\setbox \\z@ \\hbox {$\\braceld $}\\braceld \\leaders \\vrule \\@height \\ht \\z@ \\@depth \\z@ \\hfill \\braceru \\bracelu \\leaders \\vrule \\@height \\ht \\z@ \\@"
    },
    "dp": {
     "d": "\\dp"
@@ -1840,6 +2100,9 @@
    },
    "eject": {
     "d": "macro:->\\par \\break "
+   },
+   "ell": {
+    "d": "\\mathchar\"160"
    },
    "else": {
     "d": "\\else"
@@ -1863,6 +2126,9 @@
    },
    "empty": {
     "d": "macro:->"
+   },
+   "emptyset": {
+    "d": "\\mathchar\"23B"
    },
    "emreset": {
     "d": "macro:->\\protect \\emreset  ",
@@ -1978,6 +2244,9 @@
    "enumerate": {
     "d": "macro:->\\ifnum \\@enumdepth >\\thr@@ \\@toodeep \\else \\advance \\@enumdepth \\@ne \\edef \\@enumctr {enum\\romannumeral \\the \\@enumdepth }\\expandafter \\list \\csname lab"
    },
+   "epsilon": {
+    "d": "\\mathchar\"10F"
+   },
    "eqnarray": {
     "d": "macro:->\\stepcounter {equation}\\def \\@currentlabel {\\p@equation \\theequation }\\def \\@currentcounter {equation}\\global \\@eqnswtrue \\m@th \\global \\@eqcnt \\z@ \\tab"
    },
@@ -1986,6 +2255,9 @@
    },
    "equation": {
     "d": "macro:->\\dollardollar@begin \\refstepcounter {equation}"
+   },
+   "equiv": {
+    "d": "\\mathchar\"3211"
    },
    "errhelp": {
     "d": "\\errhelp"
@@ -2001,6 +2273,9 @@
    },
    "escapechar": {
     "d": "\\escapechar"
+   },
+   "eta": {
+    "d": "\\mathchar\"111"
    },
    "evensidemargin": {
     "d": "\\dimen119"
@@ -2022,6 +2297,9 @@
    },
    "exhyphenpenalty": {
     "d": "\\exhyphenpenalty"
+   },
+   "exists": {
+    "d": "\\mathchar\"239"
    },
    "exp": {
     "d": "macro:->\\protect \\exp  ",
@@ -2075,6 +2353,9 @@
    },
    "finalhyphendemerits": {
     "d": "\\finalhyphendemerits"
+   },
+   "flat": {
+    "d": "\\mathchar\"15B"
    },
    "floatingpenalty": {
     "d": "\\floatingpenalty"
@@ -2172,6 +2453,9 @@
    "footskip": {
     "d": "\\dimen122"
    },
+   "forall": {
+    "d": "\\mathchar\"238"
+   },
    "fpeval": {
     "d": "\\long macro:->\\exp_after:w \\__fp_to_decimal_dispatch:w \\exp:w \\exp_end_continue_f:w \\__fp_parse:n "
    },
@@ -2191,6 +2475,9 @@
     "d": "macro:->\\protect \\frenchspacing  ",
     "s": "macro:->\\sfcode `\\.\\@m \\sfcode `\\?\\@m \\sfcode `\\!\\@m \\sfcode `\\:\\@m \\sfcode `\\;\\@m \\sfcode `\\,\\@m "
    },
+   "frown": {
+    "d": "\\mathchar\"315F"
+   },
    "fussy": {
     "d": "macro:->\\protect \\fussy  ",
     "s": "macro:->\\emergencystretch \\z@ \\tolerance 200\\hfuzz .1\\p@ \\vfuzz \\hfuzz "
@@ -2198,12 +2485,27 @@
    "futurelet": {
     "d": "\\futurelet"
    },
+   "gamma": {
+    "d": "\\mathchar\"10D"
+   },
    "gcd": {
     "d": "macro:->\\protect \\gcd  ",
     "s": "macro:->\\mathop {\\operator@font gcd}"
    },
    "gdef": {
     "d": "\\gdef"
+   },
+   "ge": {
+    "d": "\\mathchar\"3215"
+   },
+   "geq": {
+    "d": "\\mathchar\"3215"
+   },
+   "gets": {
+    "d": "\\mathchar\"3220"
+   },
+   "gg": {
+    "d": "\\mathchar\"321D"
    },
    "global": {
     "d": "\\global"
@@ -2221,14 +2523,26 @@
     "d": "macro:->\\protect \\goodbreak  ",
     "s": "macro:->\\par \\penalty -500 "
    },
+   "grave": {
+    "d": "macro:->\\protect \\grave  ",
+    "s": "macro:->\\mathaccent \"7012\\relax "
+   },
    "halign": {
     "d": "\\halign"
    },
    "hangindent": {
     "d": "\\hangindent"
    },
+   "hat": {
+    "d": "macro:->\\protect \\hat  ",
+    "s": "macro:->\\mathaccent \"705E\\relax "
+   },
    "hbadness": {
     "d": "\\hbadness"
+   },
+   "hbar": {
+    "d": "macro:->\\protect \\hbar  ",
+    "s": "macro:->{\\mathchar '26\\mkern -9muh}"
    },
    "hbox": {
     "d": "\\hbox"
@@ -2238,6 +2552,9 @@
    },
    "headsep": {
     "d": "\\dimen121"
+   },
+   "heartsuit": {
+    "d": "\\mathchar\"27E"
    },
    "hfil": {
     "d": "\\hfil"
@@ -2266,6 +2583,14 @@
    "hom": {
     "d": "macro:->\\protect \\hom  ",
     "s": "macro:->\\mathop {\\operator@font hom}\\nolimits "
+   },
+   "hookleftarrow": {
+    "d": "macro:->\\protect \\hookleftarrow  ",
+    "s": "macro:->\\leftarrow \\joinrel \\rhook "
+   },
+   "hookrightarrow": {
+    "d": "macro:->\\protect \\hookrightarrow  ",
+    "s": "macro:->\\lhook \\joinrel \\rightarrow "
    },
    "hphantom": {
     "d": "macro:->\\protect \\hphantom  ",
@@ -2331,6 +2656,10 @@
    "ifeof": {
     "d": "\\ifeof"
    },
+   "iff": {
+    "d": "macro:->\\protect \\iff  ",
+    "s": "macro:->\\;\\Longleftrightarrow \\;"
+   },
    "iffalse": {
     "d": "\\iffalse"
    },
@@ -2376,8 +2705,14 @@
    "ij": {
     "d": "macro:->\\T1-cmd \\ij \\T1\\ij "
    },
+   "imath": {
+    "d": "\\mathchar\"17B"
+   },
    "immediate": {
     "d": "\\immediate"
+   },
+   "in": {
+    "d": "\\mathchar\"3232"
    },
    "include": {
     "d": "macro:#1->\\relax \\ifnum \\@auxout =\\@partaux \\@latex@error {\\string \\include \\space cannot be nested}\\@eha \\else \\set@curr@file {#1}\\edef \\@curr@file {\\@strip@te"
@@ -2401,6 +2736,9 @@
     "d": "macro:->\\protect \\inf  ",
     "s": "macro:->\\mathop {\\operator@font inf}"
    },
+   "infty": {
+    "d": "\\mathchar\"231"
+   },
    "input": {
     "d": "macro:->\\@ifnextchar \\bgroup \\@iinput \\@@input "
    },
@@ -2412,6 +2750,10 @@
    },
    "insert": {
     "d": "\\insert"
+   },
+   "int": {
+    "d": "macro:->\\protect \\int  ",
+    "s": "macro:->\\intop \\nolimits "
    },
    "interdisplaylinepenalty": {
     "d": "\\count153"
@@ -2427,6 +2769,12 @@
    },
    "intextsep": {
     "d": "\\skip40"
+   },
+   "intop": {
+    "d": "\\mathchar\"1352"
+   },
+   "iota": {
+    "d": "\\mathchar\"113"
    },
    "it": {
     "d": "macro:->\\protect \\it  ",
@@ -2457,14 +2805,24 @@
    "j": {
     "d": "macro:->\\T1-cmd \\j \\T1\\j "
    },
+   "jmath": {
+    "d": "\\mathchar\"17C"
+   },
    "jobname": {
     "d": "\\jobname"
+   },
+   "joinrel": {
+    "d": "macro:->\\protect \\joinrel  ",
+    "s": "macro:->\\mathrel {\\mkern -3mu}"
    },
    "jot": {
     "d": "\\dimen60"
    },
    "k": {
     "d": "macro:->\\T1-cmd \\k \\T1\\k "
+   },
+   "kappa": {
+    "d": "\\mathchar\"114"
    },
    "ker": {
     "d": "macro:->\\protect \\ker  ",
@@ -2522,6 +2880,15 @@
    "labelwidth": {
     "d": "\\dimen65"
    },
+   "lambda": {
+    "d": "\\mathchar\"115"
+   },
+   "land": {
+    "d": "\\mathchar\"225E"
+   },
+   "langle": {
+    "d": "\\protected macro:->\\delimiter \"426830A "
+   },
    "language": {
     "d": "\\language"
    },
@@ -2550,8 +2917,17 @@
    "lccode": {
     "d": "\\lccode"
    },
+   "lceil": {
+    "d": "\\protected macro:->\\delimiter \"4264306 "
+   },
+   "ldotp": {
+    "d": "\\mathchar\"613A"
+   },
    "ldots": {
     "d": "macro:->\\protect \\dots  "
+   },
+   "le": {
+    "d": "\\mathchar\"3214"
    },
    "leaders": {
     "d": "\\leaders"
@@ -2565,8 +2941,21 @@
    "left": {
     "d": "\\left"
    },
+   "leftarrow": {
+    "d": "\\mathchar\"3220"
+   },
+   "leftarrowfill": {
+    "d": "macro:->\\protect \\leftarrowfill  ",
+    "s": "macro:->$\\m@th \\mathord \\leftarrow \\mkern -7mu\\cleaders \\hbox {$\\mkern -2mu\\smash -\\mkern -2mu$}\\hfill \\mkern -7mu\\smash -$"
+   },
    "lefteqn": {
     "d": "macro:#1->\\rlap {$\\displaystyle #1$}"
+   },
+   "leftharpoondown": {
+    "d": "\\mathchar\"3129"
+   },
+   "leftharpoonup": {
+    "d": "\\mathchar\"3128"
    },
    "leftline": {
     "d": "macro:->\\protect \\leftline  ",
@@ -2596,6 +2985,9 @@
    "leftmark": {
     "d": "\\long macro:->\\mark_use_last:nn {page}{2e-left}"
    },
+   "leftrightarrow": {
+    "d": "\\mathchar\"3224"
+   },
    "leftskip": {
     "d": "\\leftskip"
    },
@@ -2603,18 +2995,30 @@
     "d": "macro:->\\protect \\legacyoldstylenums  ",
     "s": "\\long macro:#1->\\begingroup \\spaceskip \\fontdimen \\tw@ \\font \\usefont {OML}{\\rmdefault }{\\f@series }{it}\\mathgroup \\symletters #1\\endgroup "
    },
+   "leq": {
+    "d": "\\mathchar\"3214"
+   },
    "leqno": {
     "d": "\\protected macro:->\\@kernel@leqno \\aftergroup \\ignorespaces "
    },
    "let": {
     "d": "\\let"
    },
+   "lfloor": {
+    "d": "\\protected macro:->\\delimiter \"4262304 "
+   },
    "lg": {
     "d": "macro:->\\protect \\lg  ",
     "s": "macro:->\\mathop {\\operator@font lg}\\nolimits "
    },
+   "lgroup": {
+    "d": "\\protected macro:->\\delimiter \"433A33A "
+   },
    "lhd": {
     "d": "macro:->\\not@base \\lhd "
+   },
+   "lhook": {
+    "d": "\\mathchar\"312C"
    },
    "lim": {
     "d": "macro:->\\protect \\lim  ",
@@ -2680,13 +3084,22 @@
    "listtablename": {
     "d": "macro:->List of Tables"
    },
+   "ll": {
+    "d": "\\mathchar\"321C"
+   },
    "llap": {
     "d": "macro:->\\protect \\llap  ",
     "s": "\\long macro:#1->\\hb@xt@ \\z@ {\\hss #1}"
    },
+   "lmoustache": {
+    "d": "\\protected macro:->\\delimiter \"437A340 "
+   },
    "ln": {
     "d": "macro:->\\protect \\ln  ",
     "s": "macro:->\\mathop {\\operator@font ln}\\nolimits "
+   },
+   "lnot": {
+    "d": "\\mathchar\"23A"
    },
    "log": {
     "d": "macro:->\\protect \\log  ",
@@ -2701,8 +3114,27 @@
    "long": {
     "d": "\\long"
    },
+   "longleftarrow": {
+    "d": "macro:->\\protect \\longleftarrow  ",
+    "s": "macro:->\\leftarrow \\joinrel \\relbar "
+   },
+   "longleftrightarrow": {
+    "d": "macro:->\\protect \\longleftrightarrow  ",
+    "s": "macro:->\\leftarrow \\joinrel \\rightarrow "
+   },
+   "longmapsto": {
+    "d": "macro:->\\protect \\longmapsto  ",
+    "s": "macro:->\\mapstochar \\longrightarrow "
+   },
+   "longrightarrow": {
+    "d": "macro:->\\protect \\longrightarrow  ",
+    "s": "macro:->\\relbar \\joinrel \\rightarrow "
+   },
    "loop": {
     "d": "\\long macro:#1\\repeat ->\\def \\iterate {#1\\relax \\expandafter \\iterate \\fi }\\iterate \\let \\iterate \\relax "
+   },
+   "lor": {
+    "d": "\\mathchar\"225F"
    },
    "lower": {
     "d": "\\lower"
@@ -2751,6 +3183,13 @@
    },
    "maketitle": {
     "d": "macro:->\\par \\begingroup \\renewcommand \\thefootnote {\\@fnsymbol \\c@footnote }\\def \\@makefnmark {\\rlap {\\@textsuperscript {\\normalfont \\@thefnmark }}}\\long \\def "
+   },
+   "mapsto": {
+    "d": "macro:->\\protect \\mapsto  ",
+    "s": "macro:->\\mapstochar \\rightarrow "
+   },
+   "mapstochar": {
+    "d": "\\mathchar\"3237"
    },
    "marginpar": {
     "d": "macro:->\\ifhmode \\@bsphack \\@floatpenalty -\\@Mii \\else \\@floatpenalty -\\@Miii \\fi \\ifinner \\@parmoderr \\@floatpenalty \\z@ \\else \\@next \\@currbox \\@freelist {}{}"
@@ -2823,6 +3262,9 @@
    "mathhexbox": {
     "d": "macro:#1#2#3->\\mbox {$\\m@th \\mathchar \"#1#2#3$}"
    },
+   "mathinner": {
+    "d": "\\mathinner"
+   },
    "mathit": {
     "d": "macro:->\\protect \\mathit  ",
     "s": "macro:->\\select@group \\mathit  \\M@OT1 \\OT1/cmr/m/it "
@@ -2852,6 +3294,10 @@
    "mathrel": {
     "d": "\\mathrel"
    },
+   "mathring": {
+    "d": "macro:->\\protect \\mathring  ",
+    "s": "macro:->\\mathaccent \"7017\\relax "
+   },
    "mathrm": {
     "d": "macro:->\\protect \\mathrm  ",
     "s": "macro:->\\relax \\ifmmode \\else \\non@alpherr \\mathrm  \\fi \\use@mathgroup \\M@OT1 \\symoperators "
@@ -2877,6 +3323,10 @@
    "mathtt": {
     "d": "macro:->\\protect \\mathtt  ",
     "s": "macro:->\\select@group \\mathtt  \\M@OT1 \\OT1/cmtt/m/n "
+   },
+   "mathunderscore": {
+    "d": "macro:->\\protect \\mathunderscore  ",
+    "s": "macro:->\\kern .06em\\vbox {\\hrule \\@width .3em}"
    },
    "mathversion": {
     "d": "macro:->\\protect \\mathversion  ",
@@ -2935,6 +3385,9 @@
    "mho": {
     "d": "macro:->\\not@base \\mho "
    },
+   "mid": {
+    "d": "\\mathchar\"326A"
+   },
    "min": {
     "d": "macro:->\\protect \\min  ",
     "s": "macro:->\\mathop {\\operator@font min}"
@@ -2949,14 +3402,24 @@
    "mkern": {
     "d": "\\mkern"
    },
+   "models": {
+    "d": "macro:->\\protect \\models  ",
+    "s": "macro:->\\mathrel {|}\\joinrel \\Relbar "
+   },
    "month": {
     "d": "\\month"
    },
    "moveright": {
     "d": "\\moveright"
    },
+   "mp": {
+    "d": "\\mathchar\"2207"
+   },
    "mskip": {
     "d": "\\mskip"
+   },
+   "mu": {
+    "d": "\\mathchar\"116"
    },
    "multicolumn": {
     "d": "\\long macro:#1#2#3->\\multispan {#1}\\begingroup \\@mkpream {#2}\\def \\@sharp {#3}\\set@typeset@protect \\let \\@startpbox \\@@startpbox \\let \\@endpbox \\@@endpbox \\@ars"
@@ -2977,8 +3440,24 @@
    "muskipdef": {
     "d": "\\muskipdef"
    },
+   "nabla": {
+    "d": "\\mathchar\"272"
+   },
    "narrower": {
     "d": "macro:->\\advance \\leftskip \\parindent \\advance \\rightskip \\parindent "
+   },
+   "natural": {
+    "d": "\\mathchar\"15C"
+   },
+   "ne": {
+    "d": "macro:->\\protect \\ne  ",
+    "s": "macro:->\\not ="
+   },
+   "nearrow": {
+    "d": "\\mathchar\"3225"
+   },
+   "neg": {
+    "d": "\\mathchar\"23A"
    },
    "negmedspace": {
     "d": "macro:->\\protect \\negmedspace  ",
@@ -2990,6 +3469,10 @@
    },
    "negthinspace": {
     "d": "macro:->\\x@protect \\!\\protect \\!  "
+   },
+   "neq": {
+    "d": "macro:->\\protect \\neq  ",
+    "s": "macro:->\\not ="
    },
    "newblock": {
     "d": "macro:->\\hskip .11em\\@plus .33em\\@minus .07em"
@@ -3078,6 +3561,9 @@
    },
    "ng": {
     "d": "macro:->\\T1-cmd \\ng \\T1\\ng "
+   },
+   "ni": {
+    "d": "\\mathchar\"3233"
    },
    "noalign": {
     "d": "\\noalign"
@@ -3172,6 +3658,16 @@
     "d": "macro:->\\protect \\normalsize  ",
     "s": "macro:->\\@setfontsize \\normalsize \\@xpt \\@xiipt \\abovedisplayskip 10\\p@ \\@plus 2\\p@ \\@minus 5\\p@ \\abovedisplayshortskip \\z@ \\@plus 3\\p@ \\belowdisplayshortskip 6"
    },
+   "not": {
+    "d": "\\mathchar\"3236"
+   },
+   "notin": {
+    "d": "macro:->\\protect \\notin  ",
+    "s": "macro:->\\mathrel {\\m@th \\mathpalette \\c@ncel \\in }"
+   },
+   "nu": {
+    "d": "\\mathchar\"117"
+   },
    "null": {
     "d": "macro:->\\hbox {}"
    },
@@ -3189,6 +3685,9 @@
    },
    "numexpr": {
     "d": "\\numexpr"
+   },
+   "nwarrow": {
+    "d": "\\mathchar\"322D"
    },
    "o": {
     "d": "macro:->\\T1-cmd \\o \\T1\\o "
@@ -3216,15 +3715,31 @@
    "oddsidemargin": {
     "d": "\\dimen118"
    },
+   "odot": {
+    "d": "\\mathchar\"220C"
+   },
    "oe": {
     "d": "macro:->\\T1-cmd \\oe \\T1\\oe "
    },
    "offinterlineskip": {
     "d": "macro:->\\baselineskip -\\@m \\p@ \\lineskip \\z@ \\lineskiplimit \\maxdimen "
    },
+   "oint": {
+    "d": "macro:->\\protect \\oint  ",
+    "s": "macro:->\\ointop \\nolimits "
+   },
+   "ointop": {
+    "d": "\\mathchar\"1348"
+   },
    "oldstylenums": {
     "d": "macro:->\\protect \\oldstylenums  ",
     "s": "\\long macro:#1->\\begingroup \\ifmmode \\mathgroup \\symletters #1\\else \\CheckEncodingSubset \\@use@text@encoding {TS1}\\tc@oldstylesubst 2{{#1}}\\fi \\endgroup "
+   },
+   "omega": {
+    "d": "\\mathchar\"121"
+   },
+   "ominus": {
+    "d": "\\mathchar\"2209"
    },
    "omit": {
     "d": "\\omit"
@@ -3244,8 +3759,17 @@
    "openup": {
     "d": "\\protected macro:->\\afterassignment \\@penup \\dimen@ "
    },
+   "oplus": {
+    "d": "\\mathchar\"2208"
+   },
    "or": {
     "d": "\\or"
+   },
+   "oslash": {
+    "d": "\\mathchar\"220B"
+   },
+   "otimes": {
+    "d": "\\mathchar\"220A"
    },
    "output": {
     "d": "\\output"
@@ -3260,8 +3784,23 @@
    "over": {
     "d": "\\over"
    },
+   "overbrace": {
+    "d": "macro:->\\protect \\overbrace  ",
+    "s": "\\long macro:#1->\\mathop {\\vbox {\\m@th \\ialign {##\\crcr \\noalign {\\kern 3\\p@ }\\downbracefill \\crcr \\noalign {\\kern 3\\p@ \\nointerlineskip }$\\hfil \\displaystyle {#"
+   },
    "overfullrule": {
     "d": "\\overfullrule"
+   },
+   "overleftarrow": {
+    "d": "macro:->\\protect \\overleftarrow  ",
+    "s": "\\long macro:#1->\\vbox {\\m@th \\ialign {##\\crcr \\leftarrowfill \\crcr \\noalign {\\kern -\\p@ \\nointerlineskip }$\\hfil \\displaystyle {#1}\\hfil $\\crcr }}"
+   },
+   "overrightarrow": {
+    "d": "macro:->\\protect \\overrightarrow  ",
+    "s": "\\long macro:#1->\\vbox {\\m@th \\ialign {##\\crcr \\rightarrowfill \\crcr \\noalign {\\kern -\\p@ \\nointerlineskip } $\\hfil \\displaystyle {#1}\\hfil $\\crcr }}"
+   },
+   "owns": {
+    "d": "\\mathchar\"3233"
    },
    "pagebreak": {
     "d": "macro:->\\protect \\pagebreak  ",
@@ -3297,6 +3836,9 @@
    "paragraphmark": {
     "d": "\\long macro:#1->"
    },
+   "parallel": {
+    "d": "\\mathchar\"326B"
+   },
    "parbox": {
     "d": "macro:->\\protect \\parbox  ",
     "s": "macro:->\\@ifnextchar [\\@iparbox {\\@iiiparbox c\\relax [s]}"
@@ -3318,6 +3860,9 @@
    },
    "part": {
     "d": "macro:->\\if@noskipsec \\leavevmode \\fi \\par \\addvspace {4ex}\\@afterindentfalse \\secdef \\@part \\@spart "
+   },
+   "partial": {
+    "d": "\\mathchar\"140"
    },
    "partname": {
     "d": "macro:->Part"
@@ -3352,13 +3897,25 @@
    "penalty": {
     "d": "\\penalty"
    },
+   "perp": {
+    "d": "\\mathchar\"323F"
+   },
    "phantom": {
     "d": "macro:->\\protect \\phantom  ",
     "s": "macro:->\\v@true \\h@true \\ph@nt "
    },
+   "phi": {
+    "d": "\\mathchar\"11E"
+   },
+   "pi": {
+    "d": "\\mathchar\"119"
+   },
    "picture": {
     "b": "\\long macro:[#1]#2->\\pictur@ #2",
     "d": "macro:->\\@protected@testopt \\picture \\\\picture {}"
+   },
+   "pm": {
+    "d": "\\mathchar\"2206"
    },
    "pmatrix": {
     "d": "macro:->\\protect \\pmatrix  ",
@@ -3379,6 +3936,12 @@
     "d": "macro:->\\protect \\pounds  ",
     "s": "macro:->\\ifmmode \\mathsterling \\else \\textsterling \\fi "
    },
+   "prec": {
+    "d": "\\mathchar\"321E"
+   },
+   "preceq": {
+    "d": "\\mathchar\"3216"
+   },
    "predisplaypenalty": {
     "d": "\\predisplaypenalty"
    },
@@ -3391,6 +3954,12 @@
    "prime": {
     "d": "\\mathchar\"230"
    },
+   "prod": {
+    "d": "\\mathchar\"1351"
+   },
+   "propto": {
+    "d": "\\mathchar\"322F"
+   },
    "protect": {
     "d": "\\relax"
    },
@@ -3399,6 +3968,9 @@
    },
    "providecommand": {
     "d": "macro:->\\@star@or@long \\provide@command "
+   },
+   "psi": {
+    "d": "\\mathchar\"120"
    },
    "pushtabs": {
     "d": "macro:->\\protect \\pushtabs  ",
@@ -3450,11 +4022,17 @@
     "d": "macro:->\\protect \\raisebox  ",
     "s": "\\long macro:#1->\\leavevmode \\@ifnextchar [{\\@rsbox {#1}}{\\@irsbox {#1}[]}"
    },
+   "rangle": {
+    "d": "\\protected macro:->\\delimiter \"526930B "
+   },
    "rbrace": {
     "d": "\\protected macro:->\\delimiter \"5267309 "
    },
    "rbrack": {
     "d": "macro:->]"
+   },
+   "rceil": {
+    "d": "\\protected macro:->\\delimiter \"5265307 "
    },
    "read": {
     "d": "\\read"
@@ -3470,6 +4048,10 @@
    },
    "relax": {
     "d": "\\relax"
+   },
+   "relbar": {
+    "d": "macro:->\\protect \\relbar  ",
+    "s": "macro:->\\mathrel {\\smash -}"
    },
    "relpenalty": {
     "d": "\\relpenalty"
@@ -3495,11 +4077,40 @@
    "reversemarginpar": {
     "d": "macro:->\\global \\@mparbottom \\z@ \\@reversemargintrue "
    },
+   "rfloor": {
+    "d": "\\protected macro:->\\delimiter \"5263305 "
+   },
+   "rgroup": {
+    "d": "\\protected macro:->\\delimiter \"533B33B "
+   },
    "rhd": {
     "d": "macro:->\\not@base \\rhd "
    },
+   "rho": {
+    "d": "\\mathchar\"11A"
+   },
+   "rhook": {
+    "d": "\\mathchar\"312D"
+   },
    "right": {
     "d": "\\right"
+   },
+   "rightarrow": {
+    "d": "\\mathchar\"3221"
+   },
+   "rightarrowfill": {
+    "d": "macro:->\\protect \\rightarrowfill  ",
+    "s": "macro:->$\\m@th \\smash -\\mkern -7mu\\cleaders \\hbox {$\\mkern -2mu\\smash -\\mkern -2mu$}\\hfill \\mkern -7mu\\mathord \\rightarrow $"
+   },
+   "rightharpoondown": {
+    "d": "\\mathchar\"312B"
+   },
+   "rightharpoonup": {
+    "d": "\\mathchar\"312A"
+   },
+   "rightleftharpoons": {
+    "d": "macro:->\\protect \\rightleftharpoons  ",
+    "s": "macro:->\\mathrel {\\mathpalette \\rlh@ {}}"
    },
    "rightline": {
     "d": "macro:->\\protect \\rightline  ",
@@ -3528,6 +4139,9 @@
    "rmfamily": {
     "d": "macro:->\\protect \\rmfamily  ",
     "s": "macro:->\\not@math@alphabet \\rmfamily \\mathrm \\prepare@family@series@update {rm}\\rmdefault \\UseHook {rmfamily}\\selectfont "
+   },
+   "rmoustache": {
+    "d": "\\protected macro:->\\delimiter \"537B341 "
    },
    "rmsubstdefault": {
     "d": "macro:->cmr"
@@ -3596,6 +4210,9 @@
     "d": "macro:->\\protect \\scshape  ",
     "s": "macro:->\\not@math@alphabet \\scshape \\relax \\fontshape \\scdefault \\selectfont "
    },
+   "searrow": {
+    "d": "\\mathchar\"3226"
+   },
    "sec": {
     "d": "macro:->\\protect \\sec  ",
     "s": "macro:->\\mathop {\\operator@font sec}\\nolimits "
@@ -3624,6 +4241,9 @@
    },
    "setlength": {
     "d": "macro:#1#2->#1 #2\\relax "
+   },
+   "setminus": {
+    "d": "\\mathchar\"226E"
    },
    "settodepth": {
     "d": "macro:->\\protect \\settodepth  ",
@@ -3657,6 +4277,9 @@
    "shapedefault": {
     "d": "macro:->n"
    },
+   "sharp": {
+    "d": "\\mathchar\"15D"
+   },
    "shipout": {
     "d": "\\protected\\long macro:->\\tl_set:Ne \\l__shipout_group_level_tl {\\int_value:w \\tex_currentgrouplevel:D }\\tex_afterassignment:D \\__shipout_execute_test_level: \\tex"
    },
@@ -3689,6 +4312,15 @@
    "showtokens": {
     "d": "\\showtokens"
    },
+   "sigma": {
+    "d": "\\mathchar\"11B"
+   },
+   "sim": {
+    "d": "\\mathchar\"3218"
+   },
+   "simeq": {
+    "d": "\\mathchar\"3227"
+   },
    "sin": {
     "d": "macro:->\\protect \\sin  ",
     "s": "macro:->\\mathop {\\operator@font sin}\\nolimits "
@@ -3696,6 +4328,10 @@
    "sinh": {
     "d": "macro:->\\protect \\sinh  ",
     "s": "macro:->\\mathop {\\operator@font sinh}\\nolimits "
+   },
+   "skew": {
+    "d": "macro:->\\protect \\skew  ",
+    "s": "\\long macro:#1#2#3->{\\muskip \\z@ #1mu\\divide \\muskip \\z@ \\tw@ \\mkern \\muskip \\z@ #2{\\mkern -\\muskip \\z@ {#3}\\mkern \\muskip \\z@ }\\mkern -\\muskip \\z@ }{}"
    },
    "skip": {
     "d": "\\skip"
@@ -3736,6 +4372,9 @@
     "d": "macro:->\\protect \\smallbreak  ",
     "s": "macro:->\\par \\ifdim \\lastskip <\\smallskipamount \\removelastskip \\penalty -50\\smallskip \\fi "
    },
+   "smallint": {
+    "d": "\\mathchar\"1273"
+   },
    "smallskip": {
     "d": "macro:->\\vspace \\smallskipamount "
    },
@@ -3745,6 +4384,9 @@
    "smash": {
     "d": "macro:->\\protect \\smash  ",
     "s": "macro:->\\relax \\ifmmode \\expandafter \\mathpalette \\expandafter \\mathsm@sh \\else \\expandafter \\makesm@sh \\fi "
+   },
+   "smile": {
+    "d": "\\mathchar\"315E"
    },
    "sp": {
     "d": "superscript character ^"
@@ -3758,6 +4400,9 @@
    "spaceskip": {
     "d": "\\spaceskip"
    },
+   "spadesuit": {
+    "d": "\\mathchar\"27F"
+   },
    "span": {
     "d": "\\span"
    },
@@ -3770,6 +4415,12 @@
    "splittopskip": {
     "d": "\\splittopskip"
    },
+   "sqcap": {
+    "d": "\\mathchar\"2275"
+   },
+   "sqcup": {
+    "d": "\\mathchar\"2274"
+   },
    "sqrt": {
     "d": "macro:->\\protect \\sqrt  ",
     "s": "macro:->\\@ifnextchar [\\@sqrt \\sqrtsign "
@@ -3780,8 +4431,14 @@
    "sqsubset": {
     "d": "macro:->\\not@base \\sqsubset "
    },
+   "sqsubseteq": {
+    "d": "\\mathchar\"3276"
+   },
    "sqsupset": {
     "d": "macro:->\\not@base \\sqsupset "
+   },
+   "sqsupseteq": {
+    "d": "\\mathchar\"3277"
    },
    "ss": {
     "d": "macro:->\\T1-cmd \\ss \\T1\\ss "
@@ -3796,6 +4453,9 @@
    "stackrel": {
     "d": "macro:->\\protect \\stackrel  ",
     "s": "\\long macro:#1#2->\\mathrel {\\mathop {#2}\\limits ^{#1}}"
+   },
+   "star": {
+    "d": "\\mathchar\"213F"
    },
    "stepcounter": {
     "d": "macro:#1->\\addtocounter {#1}\\@ne \\begingroup \\let \\@elt \\@stpelt \\csname cl@#1\\endcsname \\endgroup "
@@ -3837,6 +4497,12 @@
    "subsectionmark": {
     "d": "\\long macro:#1->"
    },
+   "subset": {
+    "d": "\\mathchar\"321A"
+   },
+   "subseteq": {
+    "d": "\\mathchar\"3212"
+   },
    "subsubitem": {
     "d": "macro:->\\@idxitem \\hspace *{30\\p@ }"
    },
@@ -3846,12 +4512,34 @@
    "subsubsectionmark": {
     "d": "\\long macro:#1->"
    },
+   "succ": {
+    "d": "\\mathchar\"321F"
+   },
+   "succeq": {
+    "d": "\\mathchar\"3217"
+   },
+   "sum": {
+    "d": "\\mathchar\"1350"
+   },
    "sup": {
     "d": "macro:->\\protect \\sup  ",
     "s": "macro:->\\mathop {\\operator@font sup}"
    },
    "suppressfloats": {
     "d": "macro:->\\@ifnextchar [\\@flstop {\\global \\@colnum \\z@ }"
+   },
+   "supset": {
+    "d": "\\mathchar\"321B"
+   },
+   "supseteq": {
+    "d": "\\mathchar\"3213"
+   },
+   "surd": {
+    "d": "macro:->\\protect \\surd  ",
+    "s": "macro:->{\\mathchar \"1270}"
+   },
+   "swarrow": {
+    "d": "\\mathchar\"322E"
    },
    "swdefault": {
     "d": "macro:->sw"
@@ -3866,6 +4554,9 @@
    },
    "symletters": {
     "d": "\\char\"1"
+   },
+   "symoperators": {
+    "d": "\\char\"0"
    },
    "t": {
     "d": "macro:->\\?-cmd \\t \\?\\t "
@@ -3901,6 +4592,9 @@
    "tanh": {
     "d": "macro:->\\protect \\tanh  ",
     "s": "macro:->\\mathop {\\operator@font tanh}\\nolimits "
+   },
+   "tau": {
+    "d": "\\mathchar\"11C"
    },
    "tencirc": {
     "d": "select font lcircle10"
@@ -4473,6 +5167,9 @@
    "thesubsubsection": {
     "d": "macro:->\\thesubsection .\\@arabic \\c@subsubsection "
    },
+   "theta": {
+    "d": "\\mathchar\"112"
+   },
    "thetable": {
     "d": "macro:->\\@arabic \\c@table "
    },
@@ -4502,8 +5199,15 @@
    "thispagestyle": {
     "d": "macro:#1->\\@ifundefined {ps@#1}\\undefinedpagestyle {\\global \\@specialpagetrue \\gdef \\@specialstyle {#1}}"
    },
+   "tilde": {
+    "d": "macro:->\\protect \\tilde  ",
+    "s": "macro:->\\mathaccent \"707E\\relax "
+   },
    "time": {
     "d": "\\time"
+   },
+   "times": {
+    "d": "\\mathchar\"2202"
    },
    "tiny": {
     "d": "macro:->\\protect \\tiny  ",
@@ -4520,6 +5224,9 @@
     "d": "macro:->\\protect \\tmspace  ",
     "s": "\\long macro:#1#2#3->\\ifmmode \\mskip #1#2\\else \\leavevmode@ifvmode \\kern #1#3\\fi \\relax "
    },
+   "to": {
+    "d": "\\mathchar\"3221"
+   },
    "today": {
     "d": "macro:->\\ifcase \\month \\or January\\or February\\or March\\or April\\or May\\or June\\or July\\or August\\or September\\or October\\or November\\or December\\fi \\space \\num"
    },
@@ -4531,6 +5238,9 @@
    },
    "tolerance": {
     "d": "\\tolerance"
+   },
+   "top": {
+    "d": "\\mathchar\"23E"
    },
    "topfigrule": {
     "d": "\\relax"
@@ -4601,6 +5311,15 @@
    "tracingstats": {
     "d": "\\tracingstats"
    },
+   "triangle": {
+    "d": "\\mathchar\"234"
+   },
+   "triangleleft": {
+    "d": "\\mathchar\"212F"
+   },
+   "triangleright": {
+    "d": "\\mathchar\"212E"
+   },
    "trivlist": {
     "d": "macro:->\\parsep \\parskip \\@nmbrlistfalse \\@trivlist \\labelwidth \\z@ \\leftmargin \\z@ \\itemindent \\z@ \\let \\@itemlabel \\@empty \\def \\makelabel ##1{##1}"
    },
@@ -4651,6 +5370,10 @@
     "d": "macro:->\\protect \\underbar  ",
     "s": "macro:#1->\\underline {\\sbox \\tw@ {#1}\\dp \\tw@ \\z@ \\box \\tw@ }"
    },
+   "underbrace": {
+    "d": "macro:->\\protect \\underbrace  ",
+    "s": "\\long macro:#1->\\mathop {\\vtop {\\m@th \\ialign {##\\crcr $\\hfil \\displaystyle {#1}\\hfil $\\crcr \\noalign {\\kern 3\\p@ \\nointerlineskip }\\upbracefill \\crcr \\noalign "
+   },
    "underline": {
     "d": "macro:->\\protect \\underline  ",
     "s": "\\long macro:#1->\\relax \\ifmmode \\@@underline {#1}\\else $\\@@underline {\\hbox {#1}}\\m@th $\\relax \\fi "
@@ -4691,12 +5414,28 @@
    "unvcopy": {
     "d": "\\unvcopy"
    },
+   "uparrow": {
+    "d": "\\protected macro:->\\delimiter \"3222378 "
+   },
+   "upbracefill": {
+    "d": "macro:->\\protect \\upbracefill  ",
+    "s": "macro:->$\\m@th \\setbox \\z@ \\hbox {$\\braceld $}\\bracelu \\leaders \\vrule \\@height \\ht \\z@ \\@depth \\z@ \\hfill \\bracerd \\braceld \\leaders \\vrule \\@height \\ht \\z@ \\@"
+   },
    "updefault": {
     "d": "macro:->up"
+   },
+   "updownarrow": {
+    "d": "\\protected macro:->\\delimiter \"326C33F "
+   },
+   "uplus": {
+    "d": "\\mathchar\"225D"
    },
    "upshape": {
     "d": "macro:->\\protect \\upshape  ",
     "s": "macro:->\\not@math@alphabet \\upshape \\relax \\fontshape \\updefault \\selectfont "
+   },
+   "upsilon": {
+    "d": "\\mathchar\"11D"
    },
    "usebox": {
     "d": "macro:->\\protect \\usebox  ",
@@ -4724,8 +5463,29 @@
    "value": {
     "d": "macro:#1->\\csname c@#1\\endcsname "
    },
+   "varbigtriangledown": {
+    "d": "\\mathchar\"2235"
+   },
+   "varbigtriangleup": {
+    "d": "\\mathchar\"2234"
+   },
    "varepsilon": {
     "d": "\\mathchar\"122"
+   },
+   "varphi": {
+    "d": "\\mathchar\"127"
+   },
+   "varpi": {
+    "d": "\\mathchar\"124"
+   },
+   "varrho": {
+    "d": "\\mathchar\"125"
+   },
+   "varsigma": {
+    "d": "\\mathchar\"126"
+   },
+   "vartheta": {
+    "d": "\\mathchar\"123"
    },
    "vbadness": {
     "d": "\\vbadness"
@@ -4736,9 +5496,23 @@
    "vcenter": {
     "d": "\\vcenter"
    },
+   "vdash": {
+    "d": "\\mathchar\"3260"
+   },
+   "vdots": {
+    "d": "macro:->\\protect \\vdots  ",
+    "s": "macro:->\\vbox {\\baselineskip 4\\p@ \\lineskiplimit \\z@ \\kern 6\\p@ \\hbox {.}\\hbox {.}\\hbox {.}}"
+   },
+   "vec": {
+    "d": "macro:->\\protect \\vec  ",
+    "s": "macro:->\\mathaccent \"017E\\relax "
+   },
    "vector": {
     "d": "macro:->\\protect \\vector  ",
     "s": "macro:(#1,#2)#3->\\@xarg #1\\relax \\@yarg #2\\relax \\@tempcnta \\ifnum \\@xarg <\\z@ -\\@xarg \\else \\@xarg \\fi \\ifnum \\@tempcnta <5\\relax \\@defaultunitsset \\@linelen {"
+   },
+   "vee": {
+    "d": "\\mathchar\"225F"
    },
    "verb": {
     "d": "macro:->\\relax \\ifmmode \\hbox \\else \\leavevmode \\null \\fi \\bgroup \\verb@eol@error \\let \\do \\@makeother \\dospecials \\verbatim@font \\@noligs \\language \\l@nohyphen"
@@ -4748,6 +5522,9 @@
    },
    "verbvisiblespace": {
     "d": "macro:->\\protect \\asciispace  "
+   },
+   "vert": {
+    "d": "\\protected macro:->\\delimiter \"026A30C "
    },
    "vfil": {
     "d": "\\vfil"
@@ -4793,11 +5570,28 @@
    "wd": {
     "d": "\\wd"
    },
+   "wedge": {
+    "d": "\\mathchar\"225E"
+   },
+   "widehat": {
+    "d": "macro:->\\protect \\widehat  ",
+    "s": "macro:->\\mathaccent \"0362\\relax "
+   },
+   "widetilde": {
+    "d": "macro:->\\protect \\widetilde  ",
+    "s": "macro:->\\mathaccent \"0365\\relax "
+   },
    "widowpenalty": {
     "d": "\\widowpenalty"
    },
    "wlog": {
     "d": "macro:->\\immediate \\write \\m@ne "
+   },
+   "wp": {
+    "d": "\\mathchar\"17D"
+   },
+   "wr": {
+    "d": "\\mathchar\"226F"
    },
    "write": {
     "d": "\\write"
@@ -4805,8 +5599,14 @@
    "xdef": {
     "d": "\\xdef"
    },
+   "xi": {
+    "d": "\\mathchar\"118"
+   },
    "year": {
     "d": "\\year"
+   },
+   "zeta": {
+    "d": "\\mathchar\"110"
    }
   },
   "environments": [

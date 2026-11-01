@@ -406,6 +406,28 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(p.discoverClosure().nodes.map(\.state).filter { $0 == .open }.count, 4, "three members plus the diamond")
     }
 
+    /// Once typing pauses, the chrome makes the include closure off the main
+    /// thread (it reads every unopened include from disk) and publishes the
+    /// same closure the main thread makes; until then the last one stays.
+    func testTheChromeMakesTheClosureOffTheMainThreadAfterTyping() async throws {
+        let project = try TempProject(main: "\\input{chapter}\n", chapter: "Chapter.\n", extra: ["appendix.tex": "Appendix.\n"])
+        defer { project.remove() }
+        let model = ShellModel()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        let chrome = model.chrome
+        // The model's own throttled refreshes (ShellModel.refreshChrome) keep the chrome.
+        try await waitUntil { chrome.closure.paths == ["chapter.tex"] }
+        let before = chrome.closuresMadeOffMain
+        model.updateActiveText("\\input{chapter}\n\\input{appendix}\n")
+        try await waitUntil { chrome.closure.paths == ["chapter.tex", "appendix.tex"] }
+        XCTAssertGreaterThan(chrome.closuresMadeOffMain, before, "made off the main thread")
+        XCTAssertEqual(chrome.closure, model.project.discoverClosure())
+        // A direct refresh (tests, `flushChrome`) still makes it here.
+        model.updateActiveText("\\input{chapter}\n")
+        model.flushChrome()
+        XCTAssertEqual(chrome.closure.paths, ["chapter.tex"])
+    }
+
     func testClosureDepthIsBounded() throws {
         var extra: [String: String] = [:]
         for i in 1...10 { extra["d\(i).tex"] = i < 10 ? "\\input{d\(i + 1)}\n" : "leaf\n" }

@@ -38,7 +38,7 @@ job), in `--state` (default `$FLASHTEX_NIGHTLY_HOME`, else
     baseline/<host label>-<utc>.json every baseline it replaced
 
 A run key is the SHA-256 of the engine binary, every harness module
-parity.py imports (tools/parity, tools/real-world-corpus, tools/visual-oracle),
+parity.py imports (all in tools/parity since S7),
 the contents of every file or directory named by --engine-env (the formats,
 the pool), the oracle's identity, the manifests and the settings. A job that
 stops (timeout, reboot) and is started again with the same inputs resumes at
@@ -95,7 +95,7 @@ BASELINE_SCHEMA = "flashtex-nightly-baseline/2"
 FINGERPRINT_KEYS = ("oracle_pdftex_version", "pdflatex", "shell_escape", "argv0", "pt", "levels", "pt1_sample",
                     "pt1_sample_seed", "pt1_max_log_mb")
 # the harness: every module parity.py imports lives in one of these
-HARNESS_DIRS = (HERE, os.path.join(REPO, "tools", "real-world-corpus"), os.path.join(REPO, "tools", "visual-oracle"))
+HARNESS_DIRS = (HERE,)
 # exclusions that mean "not measured" (the harness failed), unlike the
 # oracle's own exclusions (pdflatex fails, or never converges)
 UNMEASURED = ("fetch:", "harness error:")

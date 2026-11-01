@@ -1,5 +1,5 @@
 //! `flashtex-host-unicode` over its socket (spec §6), as the app and
-//! `flashtex-v3` use it: a xelatex document with fontspec and a cross
+//! the `flashtex` CLI use it: a xelatex document with fontspec and a cross
 //! reference compiles in two passes, its pages arrive as display lists
 //! with OpenType fonts, `DONE` names FlashTeX's PDF; an export compile; an
 //! edit applied before the next compile; cancels, never lost; no engine

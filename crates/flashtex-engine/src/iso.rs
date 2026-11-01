@@ -2027,6 +2027,10 @@ pub fn scalar_covered(n: &str) -> bool {
                 // by the cells leaked before the restart point
                 | "var_used"
                 | "dyn_used"
+                // a filter of the taints' token lists (src/lineshift.rs,
+                // `taint_state`), whose locations the walk relates; the
+                // taints are the host record's
+                | "ls_taint_bits"
         )
 }
 

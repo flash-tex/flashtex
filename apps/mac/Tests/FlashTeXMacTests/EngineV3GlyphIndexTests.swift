@@ -81,6 +81,18 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         XCTAssertEqual(EngineV3GlyphIndexes.glyphSpans(Self.page(0, spanBase: 1).page).count, (ix.glyphs.count + 39) / 40)
     }
 
+    /// The summary forward search reads is made with the prepared page (on
+    /// the reader thread), and is the page's own scan, also after the page
+    /// is replaced.
+    func testThePreparedPageCarriesItsGlyphSpans() {
+        var p = Self.page(0, spanBase: 1)
+        XCTAssertEqual(p.glyphSpans, EngineV3GlyphIndexes.glyphSpans(p.page))
+        XCTAssertFalse(p.glyphSpans.isEmpty)
+        p.page = Self.page(1, spanBase: 500).page
+        XCTAssertEqual(p.glyphSpans, EngineV3GlyphIndexes.glyphSpans(p.page))
+        XCTAssertEqual(p.glyphSpans.first, 500)
+    }
+
     // MARK: the bound
 
     /// Caret follow on the last page builds that page's index only, and a
