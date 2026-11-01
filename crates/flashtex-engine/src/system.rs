@@ -43,6 +43,10 @@ enum TextIn {
 pub trait OutSink: Write + Send {
     /// The position of the next byte written (`None`: a pipe).
     fn position(&mut self) -> Option<u64>;
+    /// The metadata of `path`, the file this sink writes ([`out_metadata`]).
+    fn metadata_of(&self, path: &str) -> std::io::Result<std::fs::Metadata> {
+        std::fs::metadata(path)
+    }
 }
 
 impl OutSink for File {
@@ -50,11 +54,30 @@ impl OutSink for File {
         use std::io::Seek;
         self.stream_position().ok()
     }
+    fn metadata_of(&self, path: &str) -> std::io::Result<std::fs::Metadata> {
+        out_metadata(self, path)
+    }
 }
 
 impl OutSink for std::process::ChildStdin {
     fn position(&mut self) -> Option<u64> {
         None
+    }
+}
+
+/// The metadata of output file `path` from `f`, the engine's descriptor of
+/// it, while that file still has a name (`os::still_linked`); else, as
+/// before, by path. A `stat` by path walks the path, and every write that
+/// reaches an output file asked for one (`note_foreign`), as did each file
+/// open for output at every checkpoint (`out_state`): 0.3 % of the engine
+/// thread on the first open of a 1,152-page book (lane COLD-FIRST-2). The
+/// two differ only when another program renamed the file away: the
+/// restore's own check by path (`checkpoint::changed_outside`) still finds
+/// that.
+fn out_metadata(f: &File, path: &str) -> std::io::Result<std::fs::Metadata> {
+    match f.metadata() {
+        Ok(m) if crate::os::still_linked(&m) => Ok(m),
+        _ => std::fs::metadata(path),
     }
 }
 
@@ -113,7 +136,8 @@ impl Write for Tracked {
 
 impl Tracked {
     fn write_timed(&mut self, b: &[u8]) -> std::io::Result<usize> {
-        note_foreign(&self.path);
+        let now = out_metadata(&self.f, &self.path).ok().map(|m| stamp_of(&m));
+        note_foreign(&self.path, now);
         let at = if self.logical {
             use std::io::Seek;
             let at = self.f.stream_position()?;
@@ -143,6 +167,9 @@ impl OutSink for Tracked {
     fn position(&mut self) -> Option<u64> {
         use std::io::Seek;
         self.f.stream_position().ok()
+    }
+    fn metadata_of(&self, path: &str) -> std::io::Result<std::fs::Metadata> {
+        out_metadata(&self.f, path)
     }
 }
 
@@ -4388,10 +4415,11 @@ pub fn stamp_output(path: &str) {
     FOREIGN.with(|f| f.borrow_mut().remove(&out_key(path)));
 }
 
-/// Before the engine writes more to `path` (`Tracked`): if another program
-/// changed it since the engine's last write, it stays marked.
-fn note_foreign(path: &str) {
-    if why_changed(path, false).is_some() {
+/// Before the engine writes more to `path` (`Tracked`), whose stamp is
+/// `now`: if another program changed it since the engine's last write, it
+/// stays marked.
+fn note_foreign(path: &str, now: Option<Stamp>) {
+    if why_changed_as(path, false, now).is_some() {
         FOREIGN.with(|f| f.borrow_mut().insert(out_key(path)));
     }
 }
@@ -5293,12 +5321,13 @@ fn out_state<W: Write>(
     w: &mut BufWriter<W>,
     path: &str,
     position: impl FnOnce(&mut W) -> Option<u64>,
+    metadata: impl FnOnce(&W) -> std::io::Result<std::fs::Metadata>,
 ) -> Result<(u64, u64), String> {
     w.flush().map_err(|e| format!("{path}: {e}"))?;
     let at = position(w.get_mut()).ok_or_else(|| format!("{path}: no position"))?;
     let len = match logical_len(path) {
         Some(n) => n,
-        None => std::fs::metadata(path)
+        None => metadata(w.get_ref())
             .map(|m| m.len())
             .map_err(|e| format!("{path}: {e}"))?,
     };
@@ -5398,7 +5427,7 @@ impl AlphaFile {
             Stream::Terminal
         } else if let Some(w) = self.output.as_mut() {
             let path = self.path.clone().ok_or("an output file without a name")?;
-            let (len, at) = out_state(w, &path, |s| s.position())?;
+            let (len, at) = out_state(w, &path, |s| s.position(), |s| s.metadata_of(&path))?;
             Stream::Out { path, len, at }
         } else {
             match self.input.as_mut() {
@@ -5492,10 +5521,15 @@ impl ByteFile {
     pub fn snapshot(&mut self) -> Result<FileSnap, String> {
         let stream = if let Some(w) = self.output.as_mut() {
             let path = self.path.clone().ok_or("an output file without a name")?;
-            let (len, at) = out_state(w, &path, |f| {
-                use std::io::Seek;
-                f.stream_position().ok()
-            })?;
+            let (len, at) = out_state(
+                w,
+                &path,
+                |f| {
+                    use std::io::Seek;
+                    f.stream_position().ok()
+                },
+                |f| f.metadata_of(&path),
+            )?;
             Stream::Out { path, len, at }
         } else if let Some(r) = self.input.as_mut() {
             let (path, offset) = in_offset(r, &self.path)?;
