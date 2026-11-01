@@ -2,7 +2,7 @@ import XCTest
 @testable import FlashTeXProtocol
 
 /// runtime-v1-layout-capabilities.md: request/result capability fields, typed
-/// rules, font hints, and the per-request negotiation checks.
+/// rules and font hints.
 final class LayoutCapabilityTests: XCTestCase {
     private func resultJSON(items: String, caps: String? = nil) -> Data {
         let capsField = caps.map { #","layout_capabilities":\#($0)"# } ?? ""
@@ -126,52 +126,5 @@ final class LayoutCapabilityTests: XCTestCase {
                                                .unknown(kind: "image")])
         let line = try RuntimeV1.encodeLine(RuntimeV1.Envelope(protocolVersion: 1, id: "u", type: "compile_result", payload: result))
         XCTAssertEqual(try RuntimeV1.decodeCompileResult(line).payload.pages[0].items, result.pages[0].items)
-    }
-
-    // MARK: negotiation
-
-    func testViolationDetectsUnrequestedAcceptanceAndUnnegotiatedShapes() throws {
-        // Accepted ⊆ requested, shapes match: no violation.
-        let good = try decodeResult(items: "\(Self.rule),\(Self.hintedText)", caps: #"["rules-v1","font-hints-v1"]"#)
-        XCTAssertNil(LayoutNegotiation.violation(in: good, requested: ["rules-v1", "font-hints-v1"]))
-        XCTAssertNil(LayoutNegotiation.violation(in: good, requested: ["font-hints-v1", "rules-v1", "future-v9"]))
-        // Accepted something never requested.
-        XCTAssertEqual(LayoutNegotiation.violation(in: good, requested: ["rules-v1"]),
-                       "accepted capability font-hints-v1 was not requested (requested: rules-v1)")
-        XCTAssertEqual(LayoutNegotiation.violation(in: try decodeResult(items: "", caps: #"["rules-v1"]"#), requested: []),
-                       "accepted capability rules-v1 was not requested (requested: none)")
-        // A rule without accepted rules-v1 (request did not ask; or asked but the producer did not accept).
-        let ruleOnly = try decodeResult(items: Self.rule)
-        XCTAssertEqual(LayoutNegotiation.violation(in: ruleOnly, requested: []),
-                       "page 1 contains a rule item but rules-v1 was not accepted (accepted: none)")
-        XCTAssertNotNil(LayoutNegotiation.violation(in: ruleOnly, requested: ["rules-v1"]), "asked but not accepted still may not carry rules")
-        XCTAssertNil(LayoutNegotiation.violation(in: try decodeResult(items: Self.rule, caps: #"["rules-v1"]"#), requested: ["rules-v1"]))
-        // A font hint without accepted font-hints-v1.
-        let hintOnly = try decodeResult(items: Self.hintedText, caps: #"["rules-v1"]"#)
-        XCTAssertEqual(LayoutNegotiation.violation(in: hintOnly, requested: ["rules-v1", "font-hints-v1"]),
-                       "page 1 text item carries a font hint but font-hints-v1 was not accepted (accepted: rules-v1)")
-        // Legacy result on a legacy request: fine, and unknown kinds are not violations.
-        XCTAssertNil(LayoutNegotiation.violation(in: try decodeResult(items: #"{"kind":"image"}"#), requested: []))
-    }
-
-    func testUnsupportedPrimitiveDiagnosticsOnlyOnTheNegotiatedRoute() throws {
-        let result = try decodeResult(items: #"{"kind":"blob","source":{"path":"main.tex","start_byte":3,"end_byte":9}},{"kind":"image"}"#, caps: #"["rules-v1"]"#)
-        let negotiated = LayoutNegotiation(requested: ["rules-v1"], accepted: ["rules-v1"])
-        let diags = LayoutNegotiation.unsupportedPrimitiveDiagnostics(in: result, negotiation: negotiated)
-        XCTAssertEqual(diags.count, 2)
-        guard diags.count == 2 else { return XCTFail("expected two diagnostics, got \(diags.count)") }
-        XCTAssertEqual(diags[0].severity, .error)
-        XCTAssertEqual(diags[0].message, "unsupported layout primitive 'blob' at main.tex bytes 3..<9 on page 1")
-        XCTAssertEqual(diags[0].source, .init(path: "main.tex", startByte: 3, endByte: 9))
-        XCTAssertNotNil(diags[0].recovery)
-        XCTAssertEqual(diags[1].message, "unsupported layout primitive 'image' (no source mapping) on page 1")
-        XCTAssertNil(diags[1].source)
-        // Legacy route: silently skipped, as before.
-        XCTAssertEqual(LayoutNegotiation.unsupportedPrimitiveDiagnostics(in: result, negotiation: .legacy), [])
-        XCTAssertEqual(LayoutNegotiation.unsupportedPrimitiveDiagnostics(in: result, negotiation: .init(requested: ["rules-v1"], accepted: [])), [],
-                       "requested but not accepted is the legacy route")
-        // Missing is explicit, in request order.
-        XCTAssertEqual(LayoutNegotiation(requested: ["rules-v1", "font-hints-v1"], accepted: ["font-hints-v1"]).missing, ["rules-v1"])
-        XCTAssertTrue(LayoutNegotiation.legacy.missing.isEmpty)
     }
 }

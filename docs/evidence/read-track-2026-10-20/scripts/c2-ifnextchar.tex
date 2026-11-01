@@ -1,0 +1,19 @@
+\documentclass{article}
+\makeatletter
+\def\para{The quick brown fox jumps over the lazy dog while the five boxing wizards jump
+quickly; pack my box with five dozen liquor jugs, and how vexingly quick daft zebras jump.
+The quick brown fox jumps over the lazy dog while the five boxing wizards jump
+quickly; pack my box with five dozen liquor jugs, and how vexingly quick daft zebras jump.
+The quick brown fox jumps over the lazy dog while the five boxing wizards jump
+quickly; pack my box with five dozen liquor jugs, and how vexingly quick daft zebras jump.\par}
+\def\tenparas{\para\para\para\para\para\para\para\para\para\para}
+\newcommand\tail[1][]{#1\tenparas\tenparas\tenparas\tenparas\tenparas\tenparas\tenparas\tenparas}
+\makeatother
+\begin{document}
+\section{One}
+The quick brown fox jumps over the lazy dog. EDITPOINT This paragraph is the
+one the latency harness edits.
+\tenparas\tenparas\tenparas\tenparas\tenparas\tenparas
+\section{Two}
+\tail
+\end{document}

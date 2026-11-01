@@ -1,0 +1,10 @@
+% m004-mapping-expands: unimath-bf: a mapping into the supplementary plane (surrogate pairs), a word longer than TECkit's first output buffer
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\font\m="[latinmodern-math.otf]:mapping=unimath-bf" \m
+\setbox0=\hbox{abc XYZ abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij}
+\setbox1=\hbox{\font\n="[latinmodern-math.otf]:mapping=unimath-it" \n mapped italic \char`h}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end

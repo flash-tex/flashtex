@@ -1,0 +1,30 @@
+# Known differences of fontmatch.py (the port's font lookup by name against
+# TeX Live 2026's xetex -no-pdf on macOS), measured on mac-m1max-a
+# (Darwin 25.3), 2026-10-06. Each is a Core Text behaviour the platform-free
+# model does not have (PLAN.md §3.1 and §5): reported, not fixed.
+#
+# One per line: KIND<TAB>NAME[<TAB>SIZE], KIND is `face` (a different face
+# or found by one side only) or `name` (a different name_of_file, \fontname).
+# A difference listed here prints as KNOWN and does not fail the run; a
+# difference not listed, or a listed one that no longer differs, does.
+
+# Variable fonts: Core Text enumerates fvar named instances as faces;
+# the catalog has one face per file index. STIXTwoText.ttf's instance
+# STIXTwoText_Bold is found by xetex, not by the port.
+face	STIX Two Text Bold
+name	STIX Two Text Bold
+# Core Text's names for an instance: "<family> <style>" of the default
+# instance where the port leaves the face's full name.
+name	STIX Two Text
+name	STIX Two Text/B
+name	STIX Two Text/I
+name	STIX Two Text/BI
+name	Inter
+
+# Two installed families named "SF Mono" (~/Library/Fonts/
+# SFMonoLigaturized-*.ttf and /Library/Fonts/SF-Mono-*.otf). XeTeX caches
+# NSFontManager's members of the family, one face per style
+# (SFMonoLigaturized-Regular for Regular), so SFMono-Regular never reaches
+# its maps; the port finds /Library/Fonts/SF-Mono-Regular.otf.
+face	SFMono-Regular
+name	SFMono-Regular

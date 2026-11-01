@@ -378,6 +378,12 @@ fn bundle_pack(args: &[String]) {
     for (rel, why) in sel.excluded.iter().filter(|(r, _)| read_rel.contains(r)) {
         println!("left out {rel}: {why}");
     }
+    // Each read file outside TEXMFROOT by name: besides the runs' own (a
+    // format cache's format and pool), a file from TEXMFHOME, TEXMFLOCAL
+    // or a user TEXMFVAR that shadowed TeX Live's, which the bundle lacks.
+    for p in &sel.outside {
+        println!("outside TeX Live: {}", p.display());
+    }
     println!(
         "size {} bytes, index {} bytes gzipped ({} raw)",
         bytes.len(),

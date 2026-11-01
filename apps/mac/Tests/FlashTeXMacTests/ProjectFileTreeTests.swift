@@ -199,7 +199,6 @@ final class ProjectFileTreeTests: XCTestCase {
     /// folders; `book/front-matter/titlepage.tex` is opened and active.
     private func bookProject() async throws -> (ShellModel, URL) {
         let m = ShellModel()
-        m.detachWorker()
         let root = tmp.appendingPathComponent("book project")
         let files = [
             "book/includes/_includes.tex": "\\newcommand{\\x}{x}\n",

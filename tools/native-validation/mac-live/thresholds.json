@@ -1,64 +1,14 @@
 {
-  "_comment": "Explicit acceptance thresholds for tools/native-validation/mac-live/run.sh. 'gates' fail the run; 'targets' are reported (met / not met) without failing it. Latencies are keystroke -> paint milliseconds from tools/typing-bench (nearest-rank percentiles over 200 typed characters).",
-  "typing_bench": {
-    "gates": {
-      "every_cell": {
-        "unpainted_max": 0,
-        "typing_budget_exhausted": false,
-        "typed_equals_script_keystrokes": true,
-        "paints_min": 1
-      },
-      "producers": {
-        "compiler": {
-          "_comment": "direct worker route (FLASHTEX_COMPILER); the shell's primary preview path, gated on latency",
-          "expected_producer": "flashtex-compiler",
-          "per_seed_p50_ms_max": {
-            "fixture": 40,
-            "demo": 60,
-            "body60k": 400
-          }
-        },
-        "controller": {
-          "_comment": "durable helper route (FLASHTEX_PREVIEW_CONTROLLER); correctness gates only, latency reported against the project target (route measured ~2x the direct worker by its owner)",
-          "expected_producer": "flashtex-preview-controller",
-          "per_seed_p50_ms_max": {}
-        },
-        "render": {
-          "_comment": "flashtex-render (crates/render-pipeline branch) as a second direct producer; correctness gates only, latency reported",
-          "expected_producer": "flashtex-render",
-          "per_seed_p50_ms_max": {}
-        },
-        "historical": {
-          "_comment": "helper route with FLASHTEX_COMPLETED_SNAPSHOTS=1; correctness gates only, latency reported and classified (historical vs current paints)",
-          "expected_producer": "flashtex-preview-controller",
-          "per_seed_p50_ms_max": {}
-        }
-      },
-      "required_cells": [
-        "fixture-30ms",
-        "fixture-0ms",
-        "demo-30ms",
-        "demo-0ms",
-        "body60k-30ms",
-        "body60k-0ms"
-      ],
-      "latency_gate_max_load_average_1min": 10,
-      "_load_comment": "p50 gates apply only to cells the bench did not mark load-affected (1-minute load before/after the cell <= its --load-limit 10); every cell first waits for a quiet machine (--quiet-load 8, --quiet-wait). Older summaries without per-cell load fall back to the pass-level rule."
-    },
-    "targets": {
-      "project_typing_to_visible_p50_ms": 200,
-      "project_typing_to_visible_p95_ms": 200
-    }
-  },
+  "_comment": "Explicit acceptance thresholds for tools/native-validation/mac-live/run.sh. 'gates' fail the run; 'informational' lines are reported without failing it. The old engine's typing bench, render-attach, exact-export, worker-relaunch, multi-file and historical sections left with that engine in retirement stage S6 (#1236).",
   "launch_check": {
     "gates": {
       "fail_lines_max": 0,
       "required_notes": [
-        "flashtex-compiler attached, pid=",
-        "log shows an 'attached:' status line",
-        "log shows 'revision 1: ok'",
-        "is still running after its compiler child was killed",
-        "log shows a 'worker exited (' status line",
+        "log shows the engine host starting",
+        "flashtex-host started, pid=",
+        "is still running after its engine host was killed",
+        "log shows the host's exit",
+        "log shows the host restarting",
         "flashtex-bridge attached, pid=",
         "log shows a bridge 'attached:' status line",
         "is still running after its bridge child was killed",
@@ -69,7 +19,7 @@
     },
     "informational": [
       "CGWindowListCopyWindowInfo confirms an on-screen window",
-      "worker auto-relaunch after kill (not implemented in the shell; recorded, not gated)"
+      "bridge auto-relaunch after kill (not implemented in the shell; recorded, not gated)"
     ]
   },
   "bundle": {
@@ -77,14 +27,12 @@
       "bundled_helper_sha256_equals_built_helper_sha256": true,
       "required_binaries": [
         "FlashTeX",
-        "flashtex-compiler",
-        "flashtex-pdf",
         "flashtex-bridge",
-        "flashtex-edit-ledger"
+        "flashtex-edit-ledger",
+        "flashtex-host"
       ],
       "optional_binaries": [
-        "flashtex-render",
-        "flashtex-pdf-exact"
+        "flashtex-project-files"
       ],
       "components_json_git_sha_equals_source_sha": true
     }
@@ -99,39 +47,7 @@
       "ledger_apply_receipt": true,
       "ledger_retry_returns_same_receipt": true,
       "ledger_document_survives_sigkill": true,
-      "compiler_status_in": [
-        "ok",
-        "recovered"
-      ],
-      "compiled_pages_min": 1,
-      "pdf_verify_exit_code": 0,
-      "pdf_page_count_equals_compiled_pages": true,
       "no_network_provider_call": true
-    }
-  },
-  "render_attach": {
-    "gates": {
-      "no_activate_env_required": true,
-      "required": [
-        "bundled flashtex-render present",
-        "preview face: latin-modern in FLASHTEX_LOG",
-        "status: attached:",
-        "revision 1: ok",
-        "flashtex-render child under the app pid",
-        "app alive after the wait"
-      ]
-    }
-  },
-  "exact_export": {
-    "gates": {
-      "tool_exit_code": 0,
-      "pdfkit_page_count_equals_fixture_pages": true,
-      "pdfkit_text_contains": [
-        "Office fixtures",
-        "office",
-        "bold",
-        "caf"
-      ]
     }
   },
   "open_window": {
@@ -145,37 +61,14 @@
       "no_activate": true
     }
   },
-  "worker_relaunch": {
-    "gates": {
-      "relaunches_within_5s": 3,
-      "then_limit_line": "worker relaunch limit reached",
-      "app_alive_throughout": true
-    }
-  },
-  "multifile": {
-    "gates": {
-      "opened_through_helper": true,
-      "typed_text_in_chapter_ledger_only": true,
-      "disk_untouched": true
-    }
-  },
   "app_tests": {
     "gates": {
       "exit_code": 0,
       "required_passed": [
-        "ProjectDocumentsTests/testHelperRouteOpensWithExactSnapshotAndDetaches",
-        "ProjectDocumentsTests/testHelperRouteSavesThroughExportAndFlushesOnSwitch",
         "ProjectDocumentsTests/testDirectModeSavesNonEntryDocumentsAndRefusesChangedDisk",
         "DocumentFilesTests/testHelperSaveRefusesExternalChangesUntilOverwriteOrReload",
-        "DocumentFilesTests/testReloadIsReviewedAndPinnedToTheReviewedSnapshot",
-        "DocumentFilesControllerTests/testControllerReloadIsReviewedPinnedAndImportedIntoTheDurableSource",
-        "ShellModelWorkerTests/testCrashedWorkerIsRelaunchedWithBoundedBackoff"
+        "DocumentFilesTests/testReloadIsReviewedAndPinnedToTheReviewedSnapshot"
       ]
-    }
-  },
-  "historical": {
-    "gates": {
-      "historical_frames_painted_min": 1
     }
   }
 }

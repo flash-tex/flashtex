@@ -497,6 +497,11 @@ enum MissingIncludeFix {
             guard file.hasSuffix(".tex"), file.count > 4 else { return nil }
             return String(file.dropLast(4))
         }
+        // `\include` of a missing file under the engine-v3 preview (`latex/no-file`): No file chap.tex.
+        if message.hasPrefix("No file "), message.hasSuffix(".tex."), message.count > "No file .tex.".count {
+            let name = String(message.dropFirst("No file ".count).dropLast(".tex.".count))
+            return name.contains(" ") ? nil : name
+        }
         guard message.hasPrefix(prefix) else { return nil }
         let rest = message.dropFirst(prefix.count)
         guard let end = rest.range(of: "' and '") else { return nil }

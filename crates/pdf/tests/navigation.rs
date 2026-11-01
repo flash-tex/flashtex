@@ -2,7 +2,8 @@
 //!
 //! `tests/fixtures/hyperref/*.json` are extracted from MacTeX pdflatex
 //! (pdfTeX 1.40.29, hyperref 7.01p) by
-//! `crates/compiler/scripts/hyperref_oracle.py` (oracle only; no TeX runs
+//! the retired old compiler's `scripts/hyperref_oracle.py` (oracle only; see
+//! git history at f16430793; no TeX runs
 //! here). Each test builds a [`Navigation`] from exactly what pdflatex wrote,
 //! renders it through the exact route, parses the result back with this
 //! crate's reader and requires the same annotations (rectangle decimals,

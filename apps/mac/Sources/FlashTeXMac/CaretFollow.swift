@@ -289,69 +289,10 @@ final class CaretFollowController {
 // MARK: - where the caret is, in the preview that is on screen
 
 extension ShellModel {
-    /// The caret's target in the preview currently showing: the v2 frame when
-    /// the v2 pane has one, else the v1 result. Nil — quietly — when the caret
-    /// maps to no preview item (a comment, the preamble, a region the producer
-    /// has not laid out yet, another document, a historical snapshot).
+    /// The caret's target in the engine's preview (EngineV3SourceMap.swift).
+    /// Nil — quietly — when the caret maps to no glyph (a comment, the
+    /// preamble, a region not typeset yet, another document).
     func caretPreviewTarget() -> CaretFollow.Target? {
-        guard historicalPreview == nil else { return nil } // never follow onto an older snapshot
-        if engineV3Enabled { return engineV3CaretTarget() } // EngineV3SourceMap.swift
-        guard let byte = caretByte else { return nil }
-        if previewV2, let frame = displayListV2?.frame {
-            return Self.caretTarget(byte: byte, path: activePath, in: frame)
-        }
-        guard let result else { return nil }
-        return caretTarget(byte: byte, in: result)
-    }
-
-    /// v2 (display-list-v2): the union of the caret highlights the pane draws
-    /// — the enclosing formula box for math, the exact caret bar or the whole
-    /// cluster for text (`MathCaretHighlight.swift`) — on the first page that
-    /// has one.
-    static func caretTarget(byte: Int, path: String, in frame: V2Frame) -> CaretFollow.Target? {
-        for page in frame.list.pages {
-            var rect: CGRect?
-            for highlight in V2Geometry.caretHighlights(containing: byte, path: path, in: page) {
-                switch highlight {
-                case .formula(let box):
-                    rect = union(rect, Self.points(box.bounds))
-                case .cluster(let match):
-                    if let caret = match.caret {
-                        rect = union(rect, CGRect(x: RenderingV2.points(caret.x), y: RenderingV2.points(caret.top),
-                                                  width: 1, height: RenderingV2.points(caret.height)))
-                    } else {
-                        for r in match.hitRects { rect = union(rect, Self.points(r)) }
-                    }
-                case .paragraph:
-                    break // never requested here; the band is not the caret
-                }
-            }
-            if let rect { return CaretFollow.Target(page: page.number, rect: rect) }
-        }
-        return nil
-    }
-
-    /// v1 (`compile_result`): the union of the items under the caret on the
-    /// first page that has one, at scale 1 — i.e. in page points.
-    func caretTarget(byte: Int, in result: RuntimeV1.CompileResult) -> CaretFollow.Target? {
-        let hits = caretIndex()?.itemsContaining(byte: byte)
-            ?? CaretSync.itemsContaining(byte: byte, path: activePath, in: result)
-        guard let number = hits.map(\.page).min(),
-              let page = result.pages.first(where: { $0.number == number }) else { return nil }
-        let wanted = Set(hits.filter { $0.page == number }.map(\.index))
-        let rules = result.layoutCapabilities?.contains(RuntimeV1.LayoutCapabilities.rulesV1) == true
-        var rect: CGRect?
-        for hit in PreviewHitRects.compute(page: page, scale: 1, rulesNegotiated: rules) where wanted.contains(hit.index) {
-            rect = union(rect, hit.rect)
-        }
-        guard let rect else { return nil }
-        return CaretFollow.Target(page: number, rect: rect)
-    }
-
-    private static func points(_ r: RenderingV2.Rect) -> CGRect {
-        CGRect(x: RenderingV2.points(r.x), y: RenderingV2.points(r.top),
-               width: RenderingV2.points(r.width), height: RenderingV2.points(r.height))
+        engineV3Enabled ? engineV3CaretTarget() : nil
     }
 }
-
-private func union(_ a: CGRect?, _ b: CGRect) -> CGRect { a.map { $0.union(b) } ?? b }

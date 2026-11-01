@@ -52,8 +52,13 @@ journal has been atomically replaced and fsynced before acknowledgement. Identic
 capture-ID retries return the existing record; a different payload using that ID
 returns `capture_id_conflict`. Durable receipt does not mean conversion or insertion.
 
-`capture_convert` payload is `{capture_id,supported_features:[]}`. The feature list
-comes from actual compiler capabilities, at most 64 entries of 128 bytes each.
+`capture_convert` payload is `{capture_id,supported_features:[],engine?}`. The
+bridge ignores the caller's `supported_features` text (#51/#23) and sends the
+provider its own list for `engine`, the engine that typesets the destination
+document: `previous` (the default when absent) is the old compiler's table,
+`new` (the pdfLaTeX-compatible engine) a short `POLICY:` list that ties packages
+to the document's own `\usepackage` lines (`features::supported_features_for`).
+An unknown `engine` is a request error.
 The bridge resolves the current anchor and assembles bounded context: selected
 source, nearby source, package/macro definition line excerpts, project/path and
 revision. Total source context is at most 16 KiB; selected text at most 8 KiB;

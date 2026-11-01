@@ -283,8 +283,9 @@ interaction:=cur_chr;
 @y
 interaction:=cur_chr;
 if interaction = batch_mode
-then kpse_set_make_tex_discard_errors(true)
-else kpse_set_make_tex_discard_errors(false);
+then kpse_make_tex_discard_errors := true
+else kpse_make_tex_discard_errors := false;
+kpse_set_make_tex_discard_errors(kpse_make_tex_discard_errors);
 @z
 
 @x pdftex.web l.32470 - tex.ch [49.1275]: texmf.cnf's |openin_any|
@@ -449,6 +450,9 @@ the program starts (system.rs).
 @!dump_line:boolean; {was a \.{\%\AM format} line seen?}
 @!eight_bit_p:boolean; {make all characters printable by default}
 @!translate_filename_p:boolean; {was a TCX file given?}
+@!kpse_make_tex_discard_errors:boolean; {kpathsea's flag, which tex.ch
+  [49.1265] sets in \.{\\batchmode}; kept here so that a checkpoint
+  carries it (system.rs sets it again after a restore)}
 
 @ The C code sets these before the program starts, so before |initialize|.
 
@@ -465,7 +469,7 @@ web2c_pdf_options(pdf_output_option, pdf_output_value,
   pdf_draftmode_option, pdf_draftmode_value)
 
 @ @<Set init...@>=
-halting_on_error_p:=false;
+halting_on_error_p:=false; kpse_make_tex_discard_errors:=false;
 
 @ The routines of system.rs this needs.
 

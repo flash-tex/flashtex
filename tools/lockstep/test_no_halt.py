@@ -85,7 +85,10 @@ class FakeCasesTest(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), \
                 contextlib.redirect_stderr(io.StringIO()):
-            rc = lockstep_run.main(list(argv))
+            # The candidate wraps this same pdftex, so the reference's version
+            # pin is beside the point here: any pdftex on PATH (the PC's
+            # TeX Live 2025, say) exercises no-halt.
+            rc = lockstep_run.main(list(argv) + ["--allow-any-reference"])
         return rc, out.getvalue()
 
     def wrapper(self, exit_code):

@@ -1,16 +1,23 @@
-//! `flashtex-v3`: the command line on the new engine (DESIGN.md §10, row D5).
+//! `flashtex`: the command line on the new engine (DESIGN.md §10, row D5).
 //!
 //! ```text
-//! flashtex-v3 build [<main.tex>|<dir>] [-o out.pdf] [--no-tools] [--host PATH]
-//! flashtex-v3 check [<main.tex>|<dir>] [--json] [--no-tools] [--host PATH]
-//! flashtex-v3 watch [<main.tex>|<dir>] [-o out.pdf] [--interval MS] [--no-tools] [--host PATH]
+//! flashtex build [<main.tex>|<dir>] [-o out.pdf] [--no-tools] [--host PATH] [--mode classic|unicode]
+//! flashtex check [<main.tex>|<dir>] [--json] [--no-tools] [--host PATH]
+//! flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--interval MS] [--no-tools] [--host PATH]
+//! flashtex licenses
+//! flashtex --version
 //! ```
 //!
-//! It is the successor of `flashtex build/check/watch` (crates/flashtex-cli,
-//! which links the old engine and is deleted with it, retirement plan S7,
-//! RQ6). It never links the engine: it starts `flashtex-host` as a separate
-//! process and speaks display-list-v3 over its socket, as the Mac app does
-//! (DESIGN.md §3).
+//! It replaced the old engine's `flashtex` CLI (crates/flashtex-cli, deleted
+//! with that engine in retirement stage S7) and was called `flashtex-v3`
+//! until then (RQ6). It never links the engine: it starts `flashtex-host` as
+//! a separate process and speaks display-list-v3 over its socket, as the
+//! Mac app does (DESIGN.md §3).
+//!
+//! - `licenses` prints the licences and the GPL source offer (`licenses.rs`):
+//!   this program is MIT; the engine hosts it runs are GPL-2.0-or-later, and
+//!   their source is public in the repository, as the app's About panel says.
+//! - `--version` prints `flashtex <version> (<revision>)` (`build.rs`).
 //!
 //! - `build` compiles as latexmk would: a resident compile that runs
 //!   bibtex, biber and makeindex when the document needs them (`--no-tools`:
@@ -28,16 +35,31 @@
 //!   the PDFs it writes are not sources), with one warm host for the whole
 //!   session; Ctrl-C stops.
 //!
-//! The host: `--host`, else `$FLASHTEX_HOST`, else `flashtex-host` beside
-//! this program, else on `PATH`. It needs a TeX Live (D12); the string pool
+//! Progress (`progress`): on a terminal, one status line on stderr while a
+//! build runs (pass, pages, the file TeX reads, time) and a summary; not on
+//! a terminal, nothing unless `--progress` (plain lines), so what scripts
+//! read is unchanged. `--no-progress`, `-q`/`--quiet` turn it off.
+//!
+//! The mode (`--mode classic|unicode`, `$FLASHTEX_MODE`, the manifest's
+//! `[project] mode`, a `% !TEX program = xelatex` line, else Classic;
+//! `mode.rs`) picks the host: `flashtex-host` with `pdflatex` for Classic,
+//! `flashtex-host-unicode` with `xelatex` for Unicode (owner, Q10).
+//! The host: `--host`, else `$FLASHTEX_HOST` (Unicode:
+//! `$FLASHTEX_HOST_UNICODE`), else the mode's host program beside this
+//! program, else on `PATH`. It needs a TeX Live (D12); the string pool
 //! is found as the app finds it (`$FLASHTEX_POOL`, beside the host). It is
 //! started with `--once`: if this program is killed before it connects, the
 //! host notices its parent is gone, removes its socket and exits; once
 //! connected, the connection's end ends it.
 
+mod licenses;
+mod mode;
+mod progress;
+
 use flashtex_display_list::client::{Client, CompileRequest, Event};
 use flashtex_display_list::diag::Diag;
 use flashtex_display_list::json::Json;
+use progress::Progress;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::{Duration, Instant, SystemTime};
@@ -51,35 +73,45 @@ fn main() -> ExitCode {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
+    if matches!(cmd.as_str(), "-V" | "--version" | "version") {
+        println!("{}", licenses::version_line());
+        return ExitCode::SUCCESS;
+    }
+    if matches!(cmd.as_str(), "licenses" | "--licenses" | "--source-offer") {
+        print!("{}", licenses::text());
+        return ExitCode::SUCCESS;
+    }
     let opts = match Opts::parse(&args[1..]) {
         Ok(o) => o,
         Err(e) => return usage(&e),
     };
     leftovers::on_signal_clean_up();
     leftovers::sweep();
+    let p = Progress::new(progress::Mode::detect(opts.progress, opts.quiet));
     let result = match cmd.as_str() {
-        "build" => Session::open(&opts, false).and_then(|mut s| s.build(&opts)),
-        "check" => Session::open(&opts, false).and_then(|mut s| s.check(&opts)),
-        "watch" => watch(&opts),
+        "build" => Session::open(&opts, false, &p).and_then(|mut s| s.build(&opts, &p)),
+        "check" => Session::open(&opts, false, &p).and_then(|mut s| s.check(&opts, &p)),
+        "watch" => watch(&opts, &p),
         other => {
             return usage(&format!(
-                "unknown command {other:?} (use build, check or watch)"
+                "unknown command {other:?} (use build, check, watch or licenses)"
             ))
         }
     };
     match result {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("flashtex-v3: {e}");
+            p.end();
+            eprintln!("flashtex: {e}");
             ExitCode::from(1)
         }
     }
 }
 
-const USAGE: &str = "usage: flashtex-v3 build|check|watch [<main.tex>|<dir>] [-o out.pdf] [--json] [--no-tools] [--interval MS] [--host PATH]";
+const USAGE: &str = "usage: flashtex build|check|watch [<main.tex>|<dir>] [-o out.pdf] [--json] [--no-tools] [--interval MS] [--host PATH] [--mode classic|unicode] [--progress|--no-progress] [-q|--quiet]\n       flashtex licenses   (the licences and the GPL source offer)\n       flashtex --version";
 
 fn usage(why: &str) -> ExitCode {
-    eprintln!("flashtex-v3: {why}\n{USAGE}");
+    eprintln!("flashtex: {why}\n{USAGE}");
     ExitCode::from(2)
 }
 
@@ -92,6 +124,13 @@ struct Opts {
     tools: bool,
     interval_ms: u64,
     host: Option<PathBuf>,
+    /// `--mode`.
+    mode: Option<String>,
+    /// `--progress` (Some(true)), `--no-progress` (Some(false)); none: on
+    /// when stderr is a terminal (`progress::Mode`).
+    progress: Option<bool>,
+    /// `--quiet`: no progress and no line for a successful build.
+    quiet: bool,
 }
 
 impl Opts {
@@ -107,6 +146,7 @@ impl Opts {
             match a[i].as_str() {
                 "-o" | "--output" => o.out = Some(v.ok_or("-o needs a file")?.into()),
                 "--host" => o.host = Some(v.ok_or("--host needs a path")?.into()),
+                "--mode" => o.mode = Some(v.ok_or("--mode needs classic or unicode")?.clone()),
                 "--interval" => {
                     o.interval_ms = v
                         .and_then(|s| s.parse().ok())
@@ -119,6 +159,16 @@ impl Opts {
                 }
                 "--no-tools" => {
                     o.tools = false;
+                    i += 1;
+                    continue;
+                }
+                "--progress" | "--no-progress" => {
+                    o.progress = Some(a[i] == "--progress");
+                    i += 1;
+                    continue;
+                }
+                "-q" | "--quiet" => {
+                    o.quiet = true;
                     i += 1;
                     continue;
                 }
@@ -208,6 +258,19 @@ impl Project {
             .to_string()
     }
 
+    /// The progress cache file for this main file (`progress::cache_file`).
+    fn cache_file(&self) -> Option<PathBuf> {
+        progress::cache_file(&self.root.join(&self.main))
+    }
+
+    /// The last build's page count, when progress is shown.
+    fn expected_pages(&self, p: &Progress) -> Option<usize> {
+        if !p.on() {
+            return None;
+        }
+        self.cache_file().and_then(|f| progress::read_expected(&f))
+    }
+
     /// Where `build` writes the PDF.
     fn target(&self, out: Option<&Path>) -> PathBuf {
         out.map(Path::to_path_buf)
@@ -235,7 +298,7 @@ impl WorkDir {
         let tmp = simplified(std::env::temp_dir());
         for n in 0..100u32 {
             let d = tmp.join(format!(
-                "flashtex-v3-{}-{}-{n}",
+                "flashtex-build-{}-{}-{n}",
                 std::process::id(),
                 nanos()
             ));
@@ -270,37 +333,38 @@ struct Host {
 }
 
 impl Host {
-    fn exe_name() -> String {
-        format!("flashtex-host{}", std::env::consts::EXE_SUFFIX)
+    fn exe_name(m: mode::Mode) -> String {
+        format!("{}{}", m.host(), std::env::consts::EXE_SUFFIX)
     }
 
-    fn locate(explicit: Option<&Path>) -> Result<PathBuf, String> {
+    fn locate(explicit: Option<&Path>, m: mode::Mode) -> Result<PathBuf, String> {
         if let Some(p) = explicit {
             return Ok(p.into());
         }
-        if let Ok(p) = std::env::var("FLASHTEX_HOST") {
+        if let Ok(p) = std::env::var(m.host_env()) {
             if !p.is_empty() {
                 return Ok(p.into());
             }
         }
         if let Some(beside) = std::env::current_exe()
             .ok()
-            .and_then(|e| e.parent().map(|d| d.join(Self::exe_name())))
+            .and_then(|e| e.parent().map(|d| d.join(Self::exe_name(m))))
         {
             if beside.is_file() {
                 return Ok(beside);
             }
         }
         for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
-            let p = dir.join(Self::exe_name());
+            let p = dir.join(Self::exe_name(m));
             if p.is_file() {
                 return Ok(p);
             }
         }
-        Err(
-            "flashtex-host not found (--host PATH, $FLASHTEX_HOST, beside flashtex-v3, or on PATH)"
-                .into(),
-        )
+        Err(format!(
+            "{} not found (--host PATH, ${}, beside flashtex, or on PATH)",
+            m.host(),
+            m.host_env()
+        ))
     }
 
     /// The engine's string pool, as the app finds it: beside the host (a
@@ -356,24 +420,30 @@ impl Host {
     }
 
     /// Connects once the host listens (it prepares the format first).
-    fn connect(&mut self) -> Result<Client, String> {
+    /// `progress`: accept the `progress-v1` heartbeat (spec §6.8).
+    fn connect(&mut self, progress: bool) -> Result<Client, String> {
         let t0 = Instant::now();
         loop {
             if let Some(status) = self.child.try_wait().map_err(|e| e.to_string())? {
                 return Err(format!(
-                    "flashtex-host exited before it listened ({status})"
+                    "the engine host exited before it listened ({status})"
                 ));
             }
             if self.socket.exists() {
-                if let Ok(c) = Client::connect_accepting(
-                    &self.socket,
-                    &[flashtex_display_list::diag::CAPABILITY],
-                ) {
+                let caps: &[&str] = if progress {
+                    &[
+                        flashtex_display_list::diag::CAPABILITY,
+                        flashtex_display_list::PROGRESS_CAPABILITY,
+                    ]
+                } else {
+                    &[flashtex_display_list::diag::CAPABILITY]
+                };
+                if let Ok(c) = Client::connect_accepting(&self.socket, caps) {
                     return Ok(c);
                 }
             }
             if t0.elapsed() > Duration::from_secs(600) {
-                return Err("flashtex-host did not listen within 10 minutes".into());
+                return Err("the engine host did not listen within 10 minutes".into());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -539,15 +609,21 @@ mod leftovers {
     #[cfg(not(any(unix, windows)))]
     pub fn unblock_signals_in_child(_cmd: &mut std::process::Command) {}
 
-    /// The pid in a leftover's name: `flashtex-v3-<pid>-…` (a work
-    /// directory) or `ftx-v3-<pid>-….sock` (a host socket).
+    /// The pid in a leftover's name: `flashtex-build-<pid>-…` (a work
+    /// directory), `flashtex-v3-<pid>-…` (a work directory of this program
+    /// before it was renamed `flashtex`, retirement plan S7, RQ6) or
+    /// `ftx-v3-<pid>-….sock` (a host socket).
     #[cfg_attr(not(unix), allow(dead_code))]
     pub fn owner(name: &str) -> Option<u32> {
         let rest = name
-            .strip_prefix("flashtex-v3-")
+            .strip_prefix("flashtex-build-")
+            .or_else(|| name.strip_prefix("flashtex-v3-"))
             .or_else(|| name.strip_prefix("ftx-v3-"))?;
         let (pid, more) = rest.split_once('-')?;
-        if more.is_empty() || name.starts_with("flashtex-v3-test-") {
+        if more.is_empty()
+            || name.starts_with("flashtex-build-test-")
+            || name.starts_with("flashtex-v3-test-")
+        {
             return None;
         }
         pid.parse().ok()
@@ -612,6 +688,8 @@ const HOST_LOST: &str = "lost the host: ";
 struct Outcome {
     status: String,
     pdf: Option<PathBuf>,
+    /// `DONE.pages`.
+    pages: Option<usize>,
     diags: Vec<Diag>,
     /// Plain `DIAGNOSTIC`s (a host without `diag-v1`).
     plain: Vec<Json>,
@@ -623,7 +701,8 @@ struct Outcome {
 
 /// Sends `req` and reads to its `DONE`; with external tools, on to the
 /// cycle's `settled` (the follow-up compiles report under the same id).
-fn compile(c: &mut Client, req: &CompileRequest) -> Result<Outcome, String> {
+/// `p` is told what the messages say (it shows them only when it is on).
+fn compile(c: &mut Client, req: &CompileRequest, p: &Progress) -> Result<Outcome, String> {
     c.compile(req).map_err(|e| format!("{HOST_LOST}{e}"))?;
     let mut out = Outcome::default();
     let tools = req.external_tools.as_deref() == Some("auto");
@@ -634,8 +713,10 @@ fn compile(c: &mut Client, req: &CompileRequest) -> Result<Outcome, String> {
         };
         match ev {
             Event::Started(j) if j.int_field("id") == Some(req.id) => {
+                let follow_up = j.str_field("cause") == Some("tools");
+                p.started(j.str_field("mode").unwrap_or("resident"), follow_up);
                 // A follow-up compile with what the tools made: its rows replace the last ones.
-                if j.str_field("cause") == Some("tools") {
+                if follow_up {
                     out.diags.clear();
                     out.plain.clear();
                     done = false;
@@ -643,12 +724,31 @@ fn compile(c: &mut Client, req: &CompileRequest) -> Result<Outcome, String> {
             }
             Event::Diag(d) if d.id == req.id => out.diags.push(d),
             Event::Diagnostic(j) if j.int_field("id") == Some(req.id) => out.plain.push(j),
+            Event::Other(flashtex_display_list::kind::PROGRESS, body) if p.on() => {
+                let j = std::str::from_utf8(&body)
+                    .ok()
+                    .and_then(|t| Json::parse(t).ok());
+                if let Some(j) = j.filter(|j| j.int_field("id") == Some(req.id)) {
+                    p.heartbeat(
+                        j.int_field("pass").unwrap_or(1).max(1) as usize,
+                        j.int_field("page").unwrap_or(0).max(0) as usize,
+                        j.str_field("file"),
+                    );
+                }
+            }
+            Event::Page(_) if req.export => p.export_page(),
             Event::Done(j) if j.int_field("id") == Some(req.id) => {
                 done = true;
+                p.done(j.int_field("pages").map(|n| n.max(0) as usize));
                 out.status = j.str_field("status").unwrap_or("?").into();
                 out.pdf = j.str_field("pdf").map(PathBuf::from);
+                out.pages = j.int_field("pages").map(|n| n.max(0) as usize);
             }
             Event::Tool(j) if j.int_field("id") == Some(req.id) => match j.str_field("event") {
+                Some("run") => p.tool(
+                    j.str_field("tool").unwrap_or("tool"),
+                    j.str_field("file").unwrap_or(""),
+                ),
                 Some("skip") => out.tool_notes.push(format!(
                     "{} not run: {}",
                     j.str_field("tool").unwrap_or("tool"),
@@ -724,6 +824,8 @@ fn is_error(d: &Diag) -> bool {
 /// one for a whole `watch` session.
 struct Session {
     project: Project,
+    /// The mode, and so the host and the format.
+    mode: mode::Resolved,
     work: WorkDir,
     client: Client,
     next_id: i64,
@@ -732,14 +834,36 @@ struct Session {
 }
 
 impl Session {
-    fn open(o: &Opts, warm: bool) -> Result<Session, String> {
+    fn open(o: &Opts, warm: bool, p: &Progress) -> Result<Session, String> {
         let project = Project::resolve(o.target.as_deref())?;
-        let work = WorkDir::new()?;
-        let exe = Host::locate(o.host.as_deref())?;
-        let mut host = Host::start(&exe, warm)?;
-        let client = host.connect()?;
+        let mode = mode::resolve(
+            o.mode.as_deref(),
+            std::env::var("FLASHTEX_MODE").ok(),
+            &project.root,
+            &project.main,
+        )?;
+        // A mode other than the default is said, with what chose it; what
+        // could not be followed always is.
+        if mode.source != "default" && !o.quiet && !o.json {
+            eprintln!("flashtex: {} mode ({})", mode.mode.name(), mode.source);
+        }
+        for w in &mode.warnings {
+            eprintln!("flashtex: warning: {w}");
+        }
+        p.begin(&project.main, &project.root, project.expected_pages(p));
+        let started = (|| {
+            let work = WorkDir::new()?;
+            let exe = Host::locate(o.host.as_deref(), mode.mode)?;
+            let mut host = Host::start(&exe, warm)?;
+            let client = host.connect(p.on())?;
+            Ok::<_, String>((work, host, client))
+        })();
+        let (work, host, client) = started.inspect_err(|_| {
+            p.end();
+        })?;
         Ok(Session {
             project,
+            mode,
             work,
             client,
             next_id: 1,
@@ -753,6 +877,7 @@ impl Session {
         self.next_id += 1;
         r.output_dir = Some(self.work.0.to_string_lossy().into_owned());
         r.jobname = Some(p.jobname());
+        r.format = self.mode.format.to_string();
         r.export = export;
         if !export {
             r.external_tools = Some(if tools { "auto" } else { "off" }.into());
@@ -761,22 +886,41 @@ impl Session {
     }
 
     /// `build`: the resident compile (with the tools), then the export.
-    fn build(&mut self, o: &Opts) -> Result<ExitCode, String> {
+    /// The progress line goes whatever the result.
+    fn build(&mut self, o: &Opts, p: &Progress) -> Result<ExitCode, String> {
+        let r = self.build_with(o, p);
+        p.end();
+        r
+    }
+
+    fn build_with(&mut self, o: &Opts, p: &Progress) -> Result<ExitCode, String> {
         let t0 = Instant::now();
+        // A watch session's later builds (`open` began the first).
+        p.begin_if_idle(
+            &self.project.main,
+            &self.project.root,
+            self.project.expected_pages(p),
+        );
         let req = self.request(o.tools, false);
-        let first = compile(&mut self.client, &req)?;
+        let first = compile(&mut self.client, &req, p)?;
         for n in &first.tool_failures {
-            eprintln!("flashtex-v3: {n}");
+            p.eprintln(&format!("flashtex: {n}"));
         }
         for n in &first.tool_notes {
-            eprintln!("flashtex-v3: warning: {n}");
+            p.eprintln(&format!("flashtex: warning: {n}"));
         }
         let errors: Vec<&Diag> = first.diags.iter().filter(|d| is_error(d)).collect();
         for d in &errors {
-            eprintln!("{}", line_of(d, &self.project.root));
+            p.eprintln(&line_of(d, &self.project.root));
         }
+        let warnings = first
+            .diags
+            .iter()
+            .filter(|d| d.severity.is_some_and(|s| s.as_str() == "warning"))
+            .count();
         let req = self.request(false, true);
-        let export = compile(&mut self.client, &req)?;
+        let export = compile(&mut self.client, &req, p)?;
+        let (passes, elapsed) = p.end();
         let target = self.project.target(o.out.as_deref());
         // `ok`, or `error`: TeX reported errors and wrote its PDF anyway, as
         // pdflatex in nonstop mode does. `failed` (no output) and
@@ -786,18 +930,41 @@ impl Session {
             Some(pdf) => {
                 std::fs::copy(&pdf, &target).map_err(|e| format!("{}: {e}", target.display()))?;
                 if self.rerun_warned() {
-                    eprintln!("flashtex-v3: warning: LaTeX asks for another run (\"Rerun\" in the log); cross-references may be off");
+                    eprintln!("flashtex: warning: LaTeX asks for another run (\"Rerun\" in the log); cross-references may be off");
                 }
-                eprintln!(
-                    "flashtex-v3: wrote {} ({} ms){}",
-                    target.display(),
-                    t0.elapsed().as_millis(),
-                    if errors.is_empty() {
-                        String::new()
-                    } else {
-                        format!(", {} error(s)", errors.len())
+                if let (true, Some(n)) = (p.on(), export.pages.filter(|&n| n > 0)) {
+                    if let Some(f) = self.project.cache_file() {
+                        progress::write_expected(&f, n);
                     }
-                );
+                }
+                if p.mode() == progress::Mode::Live {
+                    let shown = if target.parent() == Some(self.project.root.as_path()) {
+                        target.file_name().map(|n| n.to_string_lossy().into_owned())
+                    } else {
+                        None
+                    }
+                    .unwrap_or_else(|| target.display().to_string());
+                    p.finished(&progress::summary(
+                        &shown,
+                        export.pages,
+                        passes,
+                        elapsed,
+                        warnings,
+                        errors.len(),
+                        &format!("flashtex check {}", self.project.main),
+                    ));
+                } else if !o.quiet || p.on() {
+                    eprintln!(
+                        "flashtex: wrote {} ({} ms){}",
+                        target.display(),
+                        t0.elapsed().as_millis(),
+                        if errors.is_empty() {
+                            String::new()
+                        } else {
+                            format!(", {} error(s)", errors.len())
+                        }
+                    );
+                }
                 Ok(if errors.is_empty() && first.tool_failures.is_empty() {
                     ExitCode::SUCCESS
                 } else {
@@ -806,7 +973,7 @@ impl Session {
             }
             None => {
                 eprintln!(
-                    "flashtex-v3: no PDF ({}){}",
+                    "flashtex: no PDF ({}){}",
                     export.status,
                     if errors.is_empty() {
                         ""
@@ -826,9 +993,11 @@ impl Session {
     }
 
     /// `check`: one resident compile, its diagnostics and tool failures printed.
-    fn check(&mut self, o: &Opts) -> Result<ExitCode, String> {
+    fn check(&mut self, o: &Opts, p: &Progress) -> Result<ExitCode, String> {
         let req = self.request(o.tools, false);
-        let out = compile(&mut self.client, &req)?;
+        let out = compile(&mut self.client, &req, p);
+        p.end();
+        let out = out?;
         let mut errors = 0;
         for d in out
             .diags
@@ -878,8 +1047,8 @@ impl Session {
                 println!("warning: {t}");
             }
         }
-        if !o.json {
-            eprintln!("flashtex-v3: {} · {errors} error(s)", out.status);
+        if !o.json && !o.quiet {
+            eprintln!("flashtex: {} · {errors} error(s)", out.status);
         }
         Ok(if errors > 0 || out.status == "failed" {
             ExitCode::from(1)
@@ -891,8 +1060,8 @@ impl Session {
 
 /// `watch`: one warm host for the session; build, then build again when a
 /// source changes.
-fn watch(o: &Opts) -> Result<ExitCode, String> {
-    let first = Session::open(o, true)?;
+fn watch(o: &Opts, p: &Progress) -> Result<ExitCode, String> {
+    let first = Session::open(o, true, p)?;
     let root = first.project.root.clone();
     let ignore: Vec<PathBuf> = vec![
         first.project.target(o.out.as_deref()),
@@ -904,8 +1073,8 @@ fn watch(o: &Opts) -> Result<ExitCode, String> {
         || {
             build_restarting(
                 &mut slot,
-                || Session::open(o, true),
-                |s| s.build(o).map(|_| ()),
+                || Session::open(o, true, p),
+                |s| s.build(o, p).map(|_| ()),
             )
         },
         Duration::from_millis(o.interval_ms.max(50)),
@@ -928,7 +1097,7 @@ fn build_restarting<S>(
             match open() {
                 Ok(s) => *slot = Some(s),
                 Err(e) => {
-                    eprintln!("flashtex-v3: {e}");
+                    eprintln!("flashtex: {e}");
                     return;
                 }
             }
@@ -937,14 +1106,14 @@ fn build_restarting<S>(
         match build(s) {
             Ok(()) => return,
             Err(e) if e.starts_with(HOST_LOST) => {
-                eprintln!("flashtex-v3: {e}");
+                eprintln!("flashtex: {e}");
                 *slot = None; // its host and work directory go
                 if attempt == 0 {
-                    eprintln!("flashtex-v3: starting the host again");
+                    eprintln!("flashtex: starting the host again");
                 }
             }
             Err(e) => {
-                eprintln!("flashtex-v3: {e}");
+                eprintln!("flashtex: {e}");
                 return;
             }
         }
@@ -1064,7 +1233,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "flashtex-v3-test-{name}-{}-{}",
+            "flashtex-build-test-{name}-{}-{}",
             std::process::id(),
             nanos()
         ));
@@ -1214,11 +1383,14 @@ mod tests {
                 }
             }
         });
+        // The debounce is far above the writes' 5 ms gaps: at 60 ms a loaded
+        // CI runner held the editing thread past it, so the save settled
+        // twice and built three times (#1888's `quick` run).
         let n = watch_loop(
             || stamp(&root, std::slice::from_ref(&pdf)),
             || std::fs::write(&pdf, "%PDF").unwrap(),
             Duration::from_millis(20),
-            Duration::from_millis(60),
+            Duration::from_millis(300),
             Some(40),
         );
         edit.join().unwrap();
@@ -1337,19 +1509,25 @@ mod tests {
     #[test]
     fn leftovers_are_named_by_their_pid() {
         assert_eq!(
-            leftovers::owner("flashtex-v3-4242-1791035688712577000-0"),
+            leftovers::owner("flashtex-build-4242-1791035688712577000-0"),
             Some(4242)
+        );
+        assert_eq!(
+            leftovers::owner("flashtex-v3-4242-1791035688712577000-0"),
+            Some(4242),
+            "a work directory from before the rename"
         );
         assert_eq!(
             leftovers::owner("ftx-v3-4242-1791035688712577000.sock"),
             Some(4242)
         );
         assert_eq!(
-            leftovers::owner("flashtex-v3-test-watch-1-2"),
+            leftovers::owner("flashtex-build-test-watch-1-2"),
             None,
             "the tests' scratch directories"
         );
-        assert_eq!(leftovers::owner("flashtex-v3-"), None);
+        assert_eq!(leftovers::owner("flashtex-v3-test-watch-1-2"), None);
+        assert_eq!(leftovers::owner("flashtex-build-"), None);
         assert_eq!(leftovers::owner("flashtex-host-lifetime-fmt"), None);
     }
 }

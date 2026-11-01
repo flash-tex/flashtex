@@ -53,10 +53,8 @@ final class DiagnosticsPanelTests: XCTestCase {
     func model() -> ShellModel {
         let m = ShellModel()
         m.replaceProject(entryText: Self.text)
-        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .recovered, pages: [],
-                                           diagnostics: diagnostics(), pdfPath: nil)
-        m.resultID = "r1"
-        m.setCompiledDocuments(["main.tex": Self.text])
+        m.engineV3Diagnostics = diagnostics()
+        m.setEngineV3CompiledDocuments(["main.tex": Self.text])
         return m
     }
 
@@ -266,15 +264,13 @@ final class DiagnosticsPanelTests: XCTestCase {
             .init(severity: .error, message: "unknown command \\alpah",
                   source: .init(path: "main.tex", startByte: 18, endByte: 24), recovery: nil, code: "unknown_command"),
         ]
-        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .recovered,
-                                           pages: [], diagnostics: diags, pdfPath: nil)
-        m.resultID = "r-order"
-        m.setCompiledDocuments(["main.tex": m.activeText])
+        m.engineV3Diagnostics = diags
+        m.setEngineV3CompiledDocuments(["main.tex": m.activeText])
         let panel = DiagnosticsPanelState()
         m.stepOccurrence(forward: true, panel: panel)
         XCTAssertEqual(panel.selection, EditorDiagnostics.groups(of: diags, documentOrder: ["main.tex"])[0].id)
         XCTAssertEqual(m.selection?.nsRange, NSRange(location: 18, length: 6), "lands on \\alpah, not the gap at byte 0")
-        XCTAssertEqual(m.currentDiagnosticID, "r-order#2@main.tex:18..<24")
+        XCTAssertEqual(m.currentDiagnosticID, "-#2@main.tex:18..<24")
     }
 
     func testSummaryNamesPerBucketCounts() {
@@ -320,7 +316,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(pb.string(forType: .string), "-:0: warning: Overfull line")
         XCTAssertEqual(m.navigationNote, "Copied 1 diagnostic line as text.")
         // Nothing to copy leaves the pasteboard alone.
-        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .ok, pages: [], diagnostics: [], pdfPath: nil)
+        m.engineV3Diagnostics = []
         XCTAssertEqual(m.copyDiagnosticsAsText(panel: nil, pasteboard: pb), "")
         XCTAssertEqual(pb.string(forType: .string), "-:0: warning: Overfull line")
         XCTAssertEqual(m.navigationNote, "No diagnostics to copy.")
@@ -361,7 +357,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(panel.currentOccurrence(of: g), 0)
         XCTAssertEqual(m.selection?.nsRange, NSRange(location: 9, length: 3))
         XCTAssertEqual(m.navigationNote?.hasPrefix("1 of 3: main.tex line 2 — \\in is not supported in math mode"), true, m.navigationNote ?? "nil")
-        XCTAssertEqual(m.currentDiagnosticID, "r1#1@main.tex:9..<12", "⌘⇧] continues from this occurrence")
+        XCTAssertEqual(m.currentDiagnosticID, "-#1@main.tex:9..<12", "⌘⇧] continues from this occurrence")
         m.stepOccurrence(forward: true, panel: panel)
         XCTAssertEqual(panel.currentOccurrence(of: g), 1)
         XCTAssertEqual(m.selection?.nsRange, NSRange(location: 29, length: 3))
@@ -379,7 +375,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(fresh.currentOccurrence(of: g), 2)
         // With ⌘⇧] having reached the \mathbb warning, the step stays in its (single) group.
         let single = DiagnosticsPanelState()
-        m.currentDiagnosticID = "r1#2@main.tex:39..<49"
+        m.currentDiagnosticID = "-#2@main.tex:39..<49"
         m.stepOccurrence(forward: true, panel: single)
         XCTAssertEqual(single.selection, groups.first { $0.message.contains("mathbb") }?.id)
         XCTAssertEqual(m.navigationNote?.hasPrefix("Only one place: "), true, m.navigationNote ?? "nil")
@@ -399,7 +395,7 @@ final class DiagnosticsPanelTests: XCTestCase {
         XCTAssertEqual(ShellModel.diagnosticIndex(ofIdentityKey: "r1#12@main.tex:1..<2"), 12)
         XCTAssertNil(ShellModel.diagnosticIndex(ofIdentityKey: "garbage"))
         // Without diagnostics the step explains.
-        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .ok, pages: [], diagnostics: [], pdfPath: nil)
+        m.engineV3Diagnostics = []
         m.stepOccurrence(forward: true, panel: ret)
         XCTAssertEqual(m.navigationNote, "No diagnostics to step through.")
     }
@@ -426,7 +422,7 @@ final class DiagnosticsPanelTests: XCTestCase {
             VStack(spacing: 0) {
                 SourceEditorView(
                     text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
-                    selection: model.selection, pendingEdit: model.pendingEdit, marks: model.editorMarks, result: model.result,
+                    selection: model.selection, pendingEdit: model.pendingEdit, marks: model.editorMarks,
                     onCaretChange: { model.caretUTF16 = $0 },
                     onSelectionChange: { model.caretLengthUTF16 = $0.length },
                     onEditApplied: { edit, text in model.editApplied(edit, newText: text) })

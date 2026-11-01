@@ -1,0 +1,22 @@
+[package]
+name = "flashtex-makeindex"
+version = "0.1.0"
+edition = "2021"
+# A port of TeX Live 2026's makeindex (texk/makeindexk, version 2.18), so it
+# is a "modified version" under the MakeIndex Distribution Notice and carries
+# that notice (LICENSE in this directory), not MIT and not GPL. DESIGN.md §3:
+# only the GPL engine (crates/flashtex-engine) links it; no MIT crate may
+# depend on it (scripts/check-license-boundary.sh, check F).
+license-file = "LICENSE"
+description = "makeindex 2.18 (TeX Live 2026), ported to Rust to run in-process."
+publish = false
+
+[lib]
+name = "flashtex_makeindex"
+path = "src/lib.rs"
+
+# Only for the locale-dependent calls makeindex makes through the C library
+# (isupper/tolower/toupper in the LC_CTYPE locale new_entry selects, strcoll
+# for -L/-T): the C library's own tables, so the result is the platform's.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

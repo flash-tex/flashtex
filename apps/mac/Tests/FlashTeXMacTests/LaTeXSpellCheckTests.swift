@@ -85,7 +85,7 @@ final class LaTeXSpellCheckTests: XCTestCase {
         var model: ShellModel
         var body: some View {
             SourceEditorView(text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
-                             selection: model.selection, pendingEdit: model.pendingEdit, result: model.result)
+                             selection: model.selection, pendingEdit: model.pendingEdit)
         }
     }
 

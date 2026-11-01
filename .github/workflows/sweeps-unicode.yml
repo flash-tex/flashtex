@@ -1,0 +1,409 @@
+# Unicode mode's soundness sweep (lane XETEX-INCR; the M3 gate's criterion 4,
+# docs/evidence/unicode-m3-2026-10-11 §4) on GitHub-hosted runners: the
+# counterpart for flashtex-host-unicode of sweeps.yml's gates for Classic.
+#
+#   gh workflow run sweeps-unicode.yml -f ref=<branch|sha|refs/pull/N/head> \
+#     [-f shards=6] [-f keys=2] [-f trials=3] [-f kinds=replace,insert,delete,sentence] [-f args=...]
+#
+# Or add the `run-sweeps` label to a pull request (its head, once the PR's
+# branch has this file), as for sweeps.yml.
+#
+#   build   flashtex-host-unicode and fonts_line at `ref`, release
+#   sweep   one ubuntu-latest job per shard, with the pinned scheme-full TeX
+#           Live 2026 (nightly.yml's and unicode-m3.yml's oracle tree, never
+#           in the product path): `ref`'s tools/incr-bench/unicode_sweep.py
+#           over its Unicode documents (tools/incr-bench/unicode-corpus, the
+#           PDF parity cases, the lockstep LaTeX cases) and the M3 corpus
+#           (tools/unicode-m3/corpus.py assemble, the [fonts] fixtures
+#           included). Every compile of the measured host (in process, its
+#           incremental engine) is compared with a from-scratch compile by a
+#           second host whose runs are processes of their own: every output
+#           file byte for byte and every display-list frame (unicode.py
+#           --verify).
+#   summary one table; red if any compile differs or any document's run fails.
+#
+# Fork safety: no secrets; read-only `contents`; checkouts without persisted
+# credentials.
+name: sweeps-unicode
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "branch, tag, SHA or refs/pull/N/head to test"
+        required: true
+        default: main
+      shards:
+        description: "jobs the documents are dealt to"
+        required: false
+        default: "6"
+      keys:
+        description: "keystrokes per document (unicode.py --keys)"
+        required: false
+        default: "2"
+      trials:
+        description: "random edits per document, each with its revert (unicode.py --trials)"
+        required: false
+        default: "3"
+      kinds:
+        description: "edit kinds (tools/incr-bench/edits.py)"
+        required: false
+        default: "replace,insert,delete,sentence"
+      args:
+        description: "further unicode_sweep.py arguments (e.g. --interleave, --only u0)"
+        required: false
+        default: ""
+      jobs:
+        description: "which jobs: all, or a comma-separated list of sweep, latency, reopen"
+        required: false
+        default: all
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sweeps-unicode-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+  # unicode-m3.yml's oracle tree: texlive/texlive:latest (scheme-full, TeX
+  # Live 2026) of 2026-10-04.
+  TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+
+jobs:
+  build:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-sweeps'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      sha: ${{ steps.ref.outputs.sha }}
+      shards: ${{ steps.ref.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref }}
+          persist-credentials: false
+      - name: the ref and the shards
+        id: ref
+        env:
+          N: ${{ github.event_name == 'pull_request' && '6' || inputs.shards }}
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "shards=$(python3 -c 'import json,sys; n=int(sys.argv[1]); print(json.dumps(["%d/%d" % (k, n) for k in range(1, n + 1)]))' "$N")" >> "$GITHUB_OUTPUT"
+          git log -1 --format='%H %s'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sweeps-unicode
+          workspaces: crates/flashtex-xetex -> target
+      - name: flashtex-host-unicode, fonts_line
+        run: |
+          set -euo pipefail
+          (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode --example fonts_line)
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp crates/flashtex-xetex/target/release/flashtex-host-unicode \
+             crates/flashtex-xetex/target/release/examples/fonts_line "$RUNNER_TEMP/bin/"
+          ls -l "$RUNNER_TEMP/bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sweeps-unicode-bin
+          path: ${{ runner.temp }}/bin
+          retention-days: 3
+
+  sweep:
+    if: github.event_name == 'pull_request' || inputs.jobs == 'all' || contains(inputs.jobs, 'sweep')
+    name: sweep ${{ matrix.shard }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.build.outputs.shards) }}
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        id: tl
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          name: sweeps-unicode-bin
+          path: ${{ runner.temp }}/bin
+      # TeX Live's documentation sources the corpus reads (pinned by SHA-256 in
+      # corpus.json, which corpus.py checks), kept: a CTAN mirror failing a
+      # download failed a shard (run 38239149124).
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/corpus-cache
+          key: unicode-m3-corpus-${{ hashFiles('tools/unicode-m3/corpus.json') }}
+      - name: fonts by name (as unicode-m3.yml), the M3 corpus
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP"/bin/*
+          tl="$(dirname "$(dirname "${{ steps.tl.outputs.bin }}")")"
+          {
+            echo "FLASHTEX_FONT_DIRS=$tl/texmf-dist/fonts/opentype:$tl/texmf-dist/fonts/truetype"
+            echo "FLASHTEX_CACHE_DIR=$RUNNER_TEMP/flashtex-cache"
+          } >> "$GITHUB_ENV"
+          for attempt in 1 2 3; do
+            rm -rf "$RUNNER_TEMP/m3"
+            python3 tools/unicode-m3/corpus.py assemble --out "$RUNNER_TEMP/m3" \
+              --fonts-line "$RUNNER_TEMP/bin/fonts_line" --cache "$RUNNER_TEMP/corpus-cache" && break
+            [[ $attempt == 3 ]] && exit 1
+            sleep 30
+          done
+          find "$RUNNER_TEMP/m3" -mindepth 1 -maxdepth 1 -type d | wc -l
+      - name: sweep ${{ matrix.shard }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          KEYS: ${{ github.event_name == 'pull_request' && '2' || inputs.keys }}
+          TRIALS: ${{ github.event_name == 'pull_request' && '3' || inputs.trials }}
+          KINDS: ${{ github.event_name == 'pull_request' && 'replace,insert,delete,sentence' || inputs.kinds }}
+          ARGS: ${{ github.event_name == 'pull_request' && '' || inputs.args }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          echo "$(nproc) cpus; $(free -g | awk '/Mem:/ {print $2}') GB"
+          # shellcheck disable=SC2086
+          python3 tools/incr-bench/unicode_sweep.py "$RUNNER_TEMP/bin/flashtex-host-unicode" -j 2 \
+            --keys "$KEYS" --trials "$TRIALS" --kinds "$KINDS" --cases-dir "$RUNNER_TEMP/m3" --shard "$SHARD" \
+            --out "$RUNNER_TEMP/out/compiles.jsonl" $ARGS 2>&1 | tee "$RUNNER_TEMP/out/sweep.txt"
+      - name: a mismatch's files
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out/mm"
+          for d in /tmp/fxu-*/mm; do [[ -d "$d" ]] && cp -r "$d" "$RUNNER_TEMP/out/mm/$(basename "$(dirname "$d")")"; done
+          find "$RUNNER_TEMP/out/mm" -type f | head -50 || true
+      - name: result name
+        if: always()
+        id: name
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: echo "id=${SHARD//\//-of-}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sweeps-unicode-${{ steps.name.outputs.id }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The M3 latency rows' instruction counts (§1.2: edit, reopen), which do not
+  # depend on the runner's load: unicode.py --callgrind on the M3 bench
+  # documents, to the edited page (callgrind dumps after every page the
+  # engine writes, `flashtex_page_sent`) and to DONE. Informational: it
+  # never makes the run red.
+  latency:
+    if: github.event_name == 'pull_request' || inputs.jobs == 'all' || contains(inputs.jobs, 'latency')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    continue-on-error: true
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        id: tl
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          name: sweeps-unicode-bin
+          path: ${{ runner.temp }}/bin
+      - name: valgrind; callgrind_control may attach (vgdb)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP"/bin/*
+          sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+          tl="$(dirname "$(dirname "${{ steps.tl.outputs.bin }}")")"
+          {
+            echo "FLASHTEX_FONT_DIRS=$tl/texmf-dist/fonts/opentype:$tl/texmf-dist/fonts/truetype"
+            echo "FLASHTEX_CACHE_DIR=$RUNNER_TEMP/flashtex-cache"
+          } >> "$GITHUB_ENV"
+      - name: edit and reopen, instructions (callgrind)
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/lat"
+          for doc in tools/unicode-m3/bench/*.tex; do
+            name=$(basename "$doc" .tex)
+            # EDITPOINT: M3's edit row (tools/unicode-m3/latency.py types
+            # after it); end: before \end{document}
+            for at in EDITPOINT end; do
+              # (unicode.py exits 1 only for a mismatch, which needs --verify)
+              python3 tools/incr-bench/unicode.py "$RUNNER_TEMP/bin/flashtex-host-unicode" "$doc" --doc "$name" \
+                --keys 3 --at "$at" --reopen --callgrind "$RUNNER_TEMP/cg" \
+                --host-env "FLASHTEX_S0_CACHE=$RUNNER_TEMP/s0-$name-$at" \
+                --out "$RUNNER_TEMP/lat/$name-$at.jsonl" > /dev/null 2> "$RUNNER_TEMP/lat/$name-$at.err" \
+                || { echo "::warning::$name ($at): unicode.py failed"; tail -5 "$RUNNER_TEMP/lat/$name-$at.err"; }
+            done
+          done
+          # the first keystroke right after a cold compile, as a user types
+          # it: no wait for the S0 save the cold compile asked for
+          mkdir -p "$RUNNER_TEMP/lat/after-cold"
+          for doc in tools/unicode-m3/bench/*.tex; do
+            name=$(basename "$doc" .tex)
+            rm -f /tmp/fxu-*.err
+            python3 tools/incr-bench/unicode.py "$RUNNER_TEMP/bin/flashtex-host-unicode" "$doc" --doc "$name" \
+              --keys 1 --at EDITPOINT --callgrind "$RUNNER_TEMP/cg" --no-s0-wait \
+              --host-env "FLASHTEX_S0_CACHE=$RUNNER_TEMP/s0-after-cold-$name" \
+              --out "$RUNNER_TEMP/lat/after-cold/$name.jsonl" > /dev/null 2> "$RUNNER_TEMP/lat/after-cold/$name.err" \
+              || { echo "::warning::$name (after cold): unicode.py failed"; tail -5 "$RUNNER_TEMP/lat/after-cold/$name.err"; }
+            # (the host's own notes: the S0 save's parts and when it was made)
+            cat /tmp/fxu-*-m.err > "$RUNNER_TEMP/lat/after-cold/$name.host.txt" 2>/dev/null || true
+          done
+          python3 - "$RUNNER_TEMP/lat/after-cold" <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json, os, sys
+          print('### The first keystroke right after a cold compile (no wait for the S0 save; callgrind, M)\n')
+          print('| document | to the edited page | to DONE | starts |')
+          print('|---|---:|---:|---|')
+          for f in sorted(glob.glob(os.path.join(sys.argv[1], '*.jsonl'))):
+              rows = [json.loads(l) for l in open(f)]
+              k = next((r for r in rows if r['tag'] == 'key1'), {})
+              print(f"| {os.path.basename(f)[:-6]} | {k.get('edited_instructions_m')} | {k.get('instructions_m')} | {(k.get('starts') or ['?'])[0]} |")
+          EOF
+          python3 - "$RUNNER_TEMP/lat" <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json, os, statistics, sys
+          print('### Unicode edit and reopen, instructions (callgrind, M)\n')
+          print('To the edited page: the engine has written its frame (callgrind dumps at every page).\n')
+          print('| document | edit at | cold | keystrokes to the edited page | median | to DONE, median | reopen to its first page | reopen to DONE | starts |')
+          print('|---|---|---:|---|---:|---:|---:|---:|---|')
+          for f in sorted(glob.glob(os.path.join(sys.argv[1], '*.jsonl'))):
+              rows = [json.loads(l) for l in open(f)]
+              by = {r['tag']: r for r in rows}
+              keys = [r for r in rows if r['tag'].startswith('key')]
+              done = [r['instructions_m'] for r in keys if r.get('instructions_m') is not None]
+              edited = [r['edited_instructions_m'] for r in keys if r.get('edited_instructions_m') is not None]
+              name, at = os.path.basename(f)[:-6].rsplit('-', 1)
+              cold = by.get('cold', {}).get('instructions_m')
+              reo = by.get('reopen', {})
+              starts = ' '.join(str((r.get('starts') or ['?'])[0]) for r in keys) + ' / reopen ' + str((reo.get('starts') or ['?'])[0])
+              med = statistics.median(done) if done else None
+              emed = statistics.median(edited) if edited else None
+              print(f'| {name} | {at} | {cold} | {", ".join(map(str, edited))} | {emed} | {med} | '
+                    f'{reo.get("first_instructions_m")} | {reo.get("instructions_m")} | {starts} |')
+          EOF
+          # b4's restarts and convergence tests, with the host's notes
+          # (FLASHTEX_UNICODE_CONV_DEBUG; not under callgrind: the notes
+          # cost instructions of their own)
+          for at in EDITPOINT end; do
+            rm -f /tmp/fxu-*.err
+            python3 tools/incr-bench/unicode.py "$RUNNER_TEMP/bin/flashtex-host-unicode" tools/unicode-m3/bench/b4-fontspec-pages.tex \
+              --doc b4-fontspec-pages --keys 3 --at "$at" --trials 4 --kinds replace,insert,sentence \
+              --host-env FLASHTEX_UNICODE_CONV_DEBUG=1 --out "$RUNNER_TEMP/lat/diag-b4-$at.jsonl.txt" > /dev/null 2>&1 || true
+            cat /tmp/fxu-*-m.err > "$RUNNER_TEMP/lat/diag-b4-$at.host.txt" 2>/dev/null || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sweeps-unicode-latency
+          path: ${{ runner.temp }}/lat
+          retention-days: 30
+
+  # The persisted S0 (--s0-cache, #1805): tools/incr-bench/unicode_reopen.py's
+  # scenarios (unchanged, body edit, preamble edit, font file replaced while
+  # the document is closed), each reopen in a new host compared with a
+  # from-scratch compile. Red on any mismatch or a wrong start.
+  reopen:
+    if: github.event_name == 'pull_request' || inputs.jobs == 'all' || contains(inputs.jobs, 'reopen')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        id: tl
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          name: sweeps-unicode-bin
+          path: ${{ runner.temp }}/bin
+      - name: reopen scenarios
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP"/bin/*
+          tl="$(dirname "$(dirname "${{ steps.tl.outputs.bin }}")")"
+          export FLASHTEX_FONT_DIRS="$tl/texmf-dist/fonts/opentype:$tl/texmf-dist/fonts/truetype"
+          export FLASHTEX_CACHE_DIR="$RUNNER_TEMP/flashtex-cache"
+          mkdir -p "$RUNNER_TEMP/reopen"
+          if [[ ! -f tools/incr-bench/unicode_reopen.py ]]; then
+            echo "no unicode_reopen.py at this ref" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          python3 tools/incr-bench/unicode_reopen.py "$RUNNER_TEMP/bin/flashtex-host-unicode" \
+            tools/incr-bench/unicode-corpus/*.tex tools/xetex-pdfparity/cases/*.tex \
+            tools/xetex-lockstep/latex-cases/*.tex tools/unicode-m3/cases/*.tex tools/unicode-m3/bench/*.tex \
+            --trials 1 --out "$RUNNER_TEMP/reopen/reopen.jsonl" 2>&1 | tee "$RUNNER_TEMP/reopen/reopen.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sweeps-unicode-reopen
+          path: ${{ runner.temp }}/reopen
+          retention-days: 14
+
+  summary:
+    needs: [build, sweep, reopen]
+    if: always() && needs.build.result == 'success' && needs.sweep.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sweeps-unicode-*-of-*
+          path: results
+      - name: one table
+        env:
+          SHA: ${{ needs.build.outputs.sha }}
+          SHARDS: ${{ needs.build.outputs.shards }}
+          REOPEN: ${{ needs.reopen.result }}
+        run: |
+          set -euo pipefail
+          n=$(python3 -c 'import json,os; print(len(json.loads(os.environ["SHARDS"])))')
+          docs=$(cat results/*/sweep.txt 2>/dev/null | grep -cv -E '^(TOTAL|    )' || true)
+          compiles=$(cat results/*/compiles.jsonl 2>/dev/null | grep -c '"tag"' || true)
+          bad=$(cat results/*/sweep.txt 2>/dev/null | sed -n 's/^TOTAL: \([0-9]*\) bad$/\1/p' | awk '{s+=$1} END {print s+0}')
+          totals=$(cat results/*/sweep.txt 2>/dev/null | grep -c '^TOTAL:' || true)
+          {
+            echo "### Unicode soundness sweep"
+            echo
+            echo "- ref: \`$SHA\`"
+            echo "- shards reporting: $totals of $n; documents: $docs; compiles verified against a from-scratch compile: $compiles"
+            echo "- **bad: $bad**"
+            echo
+            echo '```'
+            cat results/*/sweep.txt 2>/dev/null | grep -v '^TOTAL:' || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "- reopen scenarios: ${REOPEN}" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$totals" == "$n" && "$bad" == 0 && ( "$REOPEN" == success || "$REOPEN" == skipped ) ]]

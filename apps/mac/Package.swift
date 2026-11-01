@@ -85,9 +85,9 @@ let package = Package(
         ),
         .executableTarget(
             name: "FlashTeXMac",
-            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore", "FlashTeXDisplayListV3", "FlashTeXPreviewV3"],
-            // The compiler's command inventory (crates/compiler/supported/
-            // supported-latex.json), synced by scripts/sync-supported-latex.sh;
+            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore", "FlashTeXDisplayListV3", "FlashTeXPreviewV3", "FlashTeXCollabCore", "FlashTeXCollabSession"],
+            // The generated completion vocabulary (supported-latex/
+            // supported-latex.json), installed by scripts/gen-supported-latex.py;
             // Completion.Vocabulary is decoded from it. make-app.sh copies it
             // into Contents/Resources.
             resources: [
@@ -119,7 +119,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FlashTeXMacTests",
-            dependencies: ["FlashTeXMac", "FlashTeXEditorCore", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
+            dependencies: ["FlashTeXMac", "FlashTeXEditorCore", "FlashTeXCollabCore", "FlashTeXCollabSession", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
         ),
         // One test per UI surface, rendering it to `Tests/DesignSnapshots/
         // __Snapshots__/`. Kept apart from FlashTeXMacTests so a design pass

@@ -138,8 +138,8 @@ final class DocumentDeallocationTests: XCTestCase {
         guard s.phase == .ready else { throw Timeout(description: "host failed") }
     }
 
-    /// Open, edit and close a document window three times with the old
-    /// engine's preview: every window, view and model goes away.
+    /// Open, edit and close a document window three times with the engine
+    /// session off: every window, view and model goes away.
     func testClosedDocumentWindowsDeallocate() throws {
         var env = EnvironmentOverride()
         env.set("FLASHTEX_HOST", "none") // no host: this test is about the window path alone

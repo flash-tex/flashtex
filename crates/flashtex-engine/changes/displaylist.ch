@@ -30,6 +30,13 @@
 %   in macro-heavy documents (docs/evidence/cold-speed-2026-10-04/). The side
 %   table's entry of such a location is set again when it is next allocated
 %   as a node.
+% * |dl_list_token_begin| and |dl_token_end| around the allocation of
+%   |store_new_token| and |fast_store_new_token|, which make a token of a
+%   token list (the characters of \.{\\csname} and \.{\\ifcsname}, the
+%   result of \.{\\the}, \.{\\number} and their kin, |scan_keyword|'s
+%   backup list): never a node either. They were 85\% of the allocations
+%   noted in a cold open of a 1,152-page book (lane COLD-FIRST). Such an
+%   allocation still looks for newer work for the host, as a node's does.
 % * |dl_node(p)| as |pdf_hlist_out| and |pdf_vlist_out| output node |p|: the
 %   writer notes where the page stream is at that moment, so that what is
 %   drawn from there on is attributed to |p|.
@@ -76,6 +83,24 @@ if cur_tok<right_brace_limit then
 @y
 dl_token_begin; p:=get_avail; dl_token_end; info(p):=cur_tok;
 if cur_tok<right_brace_limit then
+@z
+
+@x pdftex.web l.9100 - a token stored in a token list is not a node to note
+@d store_new_token(#)==begin q:=get_avail; link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
+@d fast_store_new_token(#)==begin fast_get_avail(q); link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
+@y
+@d store_new_token(#)==begin dl_list_token_begin; q:=get_avail; dl_token_end;
+  link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
+@d fast_store_new_token(#)==begin dl_list_token_begin; fast_get_avail(q);
+  dl_token_end; link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
 @z
 
 @x pdftex.web l.11836 - the condition stack's node is not a node to note
@@ -133,6 +158,7 @@ procedure dl_node(@!p:pointer); external;
 procedure dl_hyph_begin(@!p:pointer); external;
 procedure dl_hyph_end; external;
 procedure dl_token_begin; external;
+procedure dl_list_token_begin; external;
 procedure dl_token_end; external;
 
 @ The side table: the source position of the node at each |mem| location,
