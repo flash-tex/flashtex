@@ -3350,6 +3350,98 @@ fn a_file_written_and_read_back_converges_after_a_stopped_run() {
     }
 }
 
+/// *Infinite Descent* ×2's hints (`hints_doc`, the book twice): the first
+/// copy writes `\jobname.hnt` through its body, closes it and reads it at
+/// its end; the second copy writes to the closed stream (the log) and reads
+/// the same file again at its end. `hint` is in the hint written at
+/// paragraph 40 (the first copy), `word` in paragraph 75 (the second).
+fn hints_x2_doc(hint: &str, word: &str) -> String {
+    let mut s = String::from(
+        "\\documentclass{article}\n\\newwrite\\hnt\n\
+         \\AtBeginDocument{\\immediate\\openout\\hnt=\\jobname.hnt}\n\\begin{document}\n",
+    );
+    let read = "\\immediate\\closeout\\hnt\n\\clearpage\\input{\\jobname.hnt}\n\\clearpage\n\n";
+    for i in 0..150 {
+        if i == 60 || i == 140 {
+            s.push_str(read);
+        }
+        s.push_str(&para(i, if i == 75 { word } else { "lorem" }));
+        if i % 20 == 0 {
+            let h = if i == 40 { hint } else { "lorem" };
+            s.push_str(&format!("\\immediate\\write\\hnt{{Hint {i}: {h}.}}\n"));
+        }
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// BARRIER-DENSITY: the old run's later read of a file both runs wrote and
+/// closed, open in neither at the convergence point, was a barrier (test
+/// (b'): "a file the runs write"), though the file held the same bytes in
+/// both: on *Infinite Descent* ×2 every keystroke in the second copy kept
+/// the old run's pages only up to the second copy's read of the hints, and
+/// re-typeset the ~48 pages from there. Now the read is compared by the
+/// hash of what the old run found there (`FileRead::seen`) with the file
+/// now: (i) an edit in the second copy converges and keeps the old run's
+/// pages to the end. (ii) An edit of a hint the first copy writes changes
+/// the file: the run converges after the first copy's read and keeps the
+/// old run's pages only up to the second copy's, which it typesets again.
+/// Every compile equals scratch runs.
+#[test]
+fn a_file_read_again_after_its_close_converges() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("hints-x2");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = hints_x2_doc("lorem", "lorem");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (i) the same letters: the fonts' used characters stay the same
+    for (word, what) in [
+        ("lorme", "(i) an edit in the second copy"),
+        ("lorem", "(i) its revert"),
+    ] {
+        let doc = hints_x2_doc("lorem", word);
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        let rerun: usize = field(&r, "rerun_pages").parse().unwrap();
+        assert!(
+            conv + 2 < pages && field(&r, "rerun_from") == "null" && rerun * 4 < pages,
+            "{what}: re-typeset from the read of the unchanged hints again: {r}"
+        );
+    }
+    // (ii) the hints change: what the second copy reads differs
+    for (hint, what) in [
+        ("lorme", "(ii) an edit of a hint"),
+        ("lorem", "(ii) its revert"),
+    ] {
+        let doc = hints_x2_doc(hint, "lorem");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], what);
+        // (it converges after the first copy's read, which it typeset
+        // again, and before the second's)
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        let kept: usize = field(&r, "rerun_from").parse().unwrap_or_else(|_| {
+            panic!("{what}: kept the old run's read of the changed hints: {r}")
+        });
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        assert!(conv < kept && kept < pages, "{what}: {r}");
+    }
+}
+
 /// PREAMBLE-FAST: an edit in the preamble after its packages restarts at a
 /// checkpoint between the preamble's lines (`Point::PreambleLine`) instead
 /// of from the format, takes S₀ again, and equals a scratch run: a letter in

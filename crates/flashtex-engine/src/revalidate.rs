@@ -291,6 +291,7 @@ mod tests {
                 content: None,
                 closed_at: None,
                 written_before: false,
+                seen: None,
                 stamp: None,
                 size: None,
             });
