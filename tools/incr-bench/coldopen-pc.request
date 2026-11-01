@@ -1,0 +1,7 @@
+# lane COLD-FIRST-2 r3: where the host's instructions a pass go beyond pdflatex's, on the three cuts (combined2)
+REFS='agent/kabir-claude-coldfirst2/combined2'
+REPS='1'
+PERF='1'
+CLI_VARIANTS='plain intr-off:FLASHTEX_INTRINSICS=off diag:FLASHTEX_DIAGNOSTICS=1 dl:FLASHTEX_DISPLAY_LIST=@DL bm:FLASHTEX_BOXMEMO=on all:FLASHTEX_DIAGNOSTICS=1,FLASHTEX_DISPLAY_LIST=@DL,FLASHTEX_BOXMEMO=on'
+CLI_PERF='1'
+HOST_VARIANTS='nodiag:FLASHTEX_NO_DIAGNOSTICS=1 nobm:FLASHTEX_BOXMEMO=off nointr:FLASHTEX_INTRINSICS=off nol5:FLASHTEX_NO_L5=1 nodormant:FLASHTEX_DORMANT=off'
