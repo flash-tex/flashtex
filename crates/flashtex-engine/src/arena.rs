@@ -420,18 +420,68 @@ impl Delta {
 /// (`S(m) = dead(m) & (changed in the interval before m | S(m-1))`), kept as
 /// the checkpoints are taken in order, and reset by anything else (a
 /// restore, a jump): then the next interval leaves nothing out.
+///
+/// The sets are sparse (`Bits`): their cost goes with the words a page
+/// changes, not with the size of `mem`.
 #[derive(Default)]
 struct DeadWords {
     /// Byte offset and words of the region (none: off).
     region: Option<(usize, usize)>,
     /// `S` at checkpoint `id`: the words its log may leave out.
-    drop: Option<(CheckpointId, Vec<u64>)>,
+    drop: Option<(CheckpointId, Bits)>,
     /// The region's words the last seal found changed (before leaving any
     /// out), and the checkpoint of that log.
-    written: Vec<u64>,
+    written: Bits,
     written_id: Option<CheckpointId>,
     /// Words left out, over the space's life (`mem_stats`).
     dropped: u64,
+}
+
+/// A set of word indices: `(k, bits)` for the words `64 k + b`, `k`
+/// ascending, `bits` never zero (`DeadWords`).
+type Bits = Vec<(u32, u64)>;
+
+/// Add word `q` to `s`, whose largest word is at most `q`.
+#[inline]
+fn bits_push(s: &mut Bits, q: usize) {
+    let (k, b) = ((q >> 6) as u32, 1u64 << (q & 63));
+    match s.last_mut() {
+        Some((lk, x)) if *lk == k => *x |= b,
+        _ => s.push((k, b)),
+    }
+}
+
+/// Whether word `q` is in `s`; `at` is a cursor into `s` that only moves
+/// forward, for `q` asked in ascending order.
+#[inline]
+fn bits_has(s: &Bits, at: &mut usize, q: usize) -> bool {
+    let k = (q >> 6) as u32;
+    while *at < s.len() && s[*at].0 < k {
+        *at += 1;
+    }
+    *at < s.len() && s[*at].0 == k && s[*at].1 >> (q & 63) & 1 == 1
+}
+
+/// The words of 64-word block `k` in `ranges` (sorted, disjoint `[lo, hi)`
+/// word ranges); `at` is a cursor into `ranges` for `k` ascending.
+#[inline]
+fn ranges_block(ranges: &[(usize, usize)], at: &mut usize, k: usize) -> u64 {
+    let (lo, hi) = (k << 6, (k << 6) + 64);
+    while *at < ranges.len() && ranges[*at].1 <= lo {
+        *at += 1;
+    }
+    let mut x = 0u64;
+    let mut j = *at;
+    while j < ranges.len() && ranges[j].0 < hi {
+        let (a, b) = (ranges[j].0.max(lo) - lo, ranges[j].1.min(hi) - lo);
+        x |= if b - a == 64 {
+            u64::MAX
+        } else {
+            ((1u64 << (b - a)) - 1) << a
+        };
+        j += 1;
+    }
+    x
 }
 
 /// A hint to bring the chunk at address `a` into the cache (a no-op where
@@ -990,10 +1040,10 @@ impl Core {
             (Some((id, _)), Some(me)) if id == me => self.dead.drop.take(),
             _ => None,
         };
-        if let Some((_, words)) = region {
+        if region.is_some() {
             self.dead.written.clear();
-            self.dead.written.resize(words.div_ceil(64), 0);
         }
+        let mut drop_at = 0;
         let mut dropped = 0u64;
         for (k, &(c, p)) in entries.iter().enumerate() {
             prefetch(k + 2);
@@ -1036,11 +1086,12 @@ impl Core {
                             if at < off || at >= off + words * 8 {
                                 continue;
                             }
+                            // (ascending: the entries are sorted)
                             let q = (at - off) / 8;
-                            self.dead.written[q >> 6] |= 1 << (q & 63);
+                            bits_push(&mut self.dead.written, q);
                             if drop
                                 .as_ref()
-                                .is_some_and(|(_, d)| d[q >> 6] >> (q & 63) & 1 == 1)
+                                .is_some_and(|(_, d)| bits_has(d, &mut drop_at, q))
                             {
                                 *m &= !(1u64 << b);
                                 dropped += 1;
@@ -2450,8 +2501,6 @@ impl Arena {
         unsafe { std::slice::from_raw_parts(self.live().chunk_ptr(c), CHUNK_WORDS) }
     }
 
-    /// A hash of the whole space: every chunk that is not all zero, with its
-    /// index. Equal spaces hash equal whatever their write histories.
     /// Leave dead words of the `words` words at byte `off` (TeX's `mem`)
     /// out of the logs (`DeadWords`); `None`: off.
     pub fn set_dead_region(&mut self, region: Option<(usize, usize)>) {
@@ -2462,27 +2511,50 @@ impl Arena {
     }
 
     /// After checkpoint `id` (just taken, the space's state): `dead`, the
-    /// region's words dead now (`dead(id)`), gives the words its log may
-    /// leave out, if the log before was sealed in order (else none).
-    pub fn dead_step(&mut self, id: CheckpointId, mut dead: Vec<u64>) {
+    /// region's words dead now (`dead(id)`, sorted disjoint `[lo, hi)` word
+    /// ranges), gives the words its log may leave out, if the log before
+    /// was sealed in order (else none).
+    pub fn dead_step(&mut self, id: CheckpointId, dead: &[(usize, usize)]) {
         let d = &mut self.core_mut().dead;
         if d.region.is_none() {
             return;
         }
         // (the log sealed just now was the one `drop` was for: in order)
-        let prev = match (&d.drop, d.written_id) {
-            (Some((pid, s)), Some(w)) if *pid == w => Some(s),
-            _ => None,
-        };
-        match prev {
-            Some(s) => {
-                for (k, x) in dead.iter_mut().enumerate() {
-                    *x &= d.written.get(k).copied().unwrap_or(0) | s.get(k).copied().unwrap_or(0);
+        let mut s = Bits::new();
+        if let (Some((pid, prev)), Some(w)) = (&d.drop, d.written_id) {
+            if *pid == w {
+                // S = dead & (written | S_prev), over the blocks of either
+                let (a, b) = (&d.written, prev);
+                let (mut i, mut j, mut r) = (0, 0, 0);
+                while i < a.len() || j < b.len() {
+                    let (k, x) = match (a.get(i), b.get(j)) {
+                        (Some(&(ka, xa)), Some(&(kb, xb))) if ka == kb => {
+                            i += 1;
+                            j += 1;
+                            (ka, xa | xb)
+                        }
+                        (Some(&(ka, xa)), Some(&(kb, _))) if ka < kb => {
+                            i += 1;
+                            (ka, xa)
+                        }
+                        (Some(&(ka, xa)), None) => {
+                            i += 1;
+                            (ka, xa)
+                        }
+                        (_, Some(&(kb, xb))) => {
+                            j += 1;
+                            (kb, xb)
+                        }
+                        (None, None) => unreachable!(),
+                    };
+                    let x = x & ranges_block(dead, &mut r, k as usize);
+                    if x != 0 {
+                        s.push((k, x));
+                    }
                 }
             }
-            None => dead.iter_mut().for_each(|x| *x = 0),
         }
-        d.drop = Some((id, dead));
+        d.drop = Some((id, s));
     }
 
     /// Whether `set_dead_region(Some(r))` is in force.
@@ -2495,10 +2567,17 @@ impl Arena {
         self.core().dead.dropped
     }
 
-    /// [`hash_nonzero`] with the words of `dead` (of the `words` words at
-    /// byte `off`) taken as zero: a restored state's dead words may hold
-    /// other values than when it was recorded (`DeadWords`).
-    pub fn hash_nonzero_except(&self, off: usize, words: usize, dead: &[u64]) -> [u64; 2] {
+    /// [`hash_nonzero`] with the words of `dead` (sorted disjoint `[lo, hi)`
+    /// ranges of the `words` words at byte `off`) taken as zero: a restored
+    /// state's dead words may hold other values than when it was recorded
+    /// (`DeadWords`).
+    pub fn hash_nonzero_except(
+        &self,
+        off: usize,
+        words: usize,
+        dead: &[(usize, usize)],
+    ) -> [u64; 2] {
+        let mut r = 0;
         let mut acc: Vec<u8> = Vec::with_capacity(4096);
         let mut buf = [0u64; CHUNK_WORDS];
         for c in 0..self.chunks() {
@@ -2512,7 +2591,7 @@ impl Arena {
                     let at = first + k * 8;
                     if at >= off && at < off + words * 8 {
                         let q = (at - off) / 8;
-                        if dead.get(q >> 6).is_some_and(|x| x >> (q & 63) & 1 == 1) {
+                        if ranges_block(dead, &mut r, q >> 6) >> (q & 63) & 1 == 1 {
                             *w = 0;
                         }
                     }
@@ -2531,6 +2610,8 @@ impl Arena {
         crate::persist::hash128(&acc)
     }
 
+    /// A hash of the whole space: every chunk that is not all zero, with its
+    /// index. Equal spaces hash equal whatever their write histories.
     pub fn hash_nonzero(&self) -> [u64; 2] {
         let mut acc: Vec<u8> = Vec::with_capacity(4096);
         for c in 0..self.chunks() {
@@ -4928,6 +5009,43 @@ mod tests {
     /// there; the dead ones may differ. Words die and come back to life
     /// without being written (a freed node's insides, a block taken from the
     /// free ring), as in TeX's `mem`.
+    /// `ranges_block` against the words one by one, cursor and all.
+    #[test]
+    fn ranges_block_is_the_ranges_words() {
+        let ranges = [
+            (0, 1),
+            (3, 64),
+            (64, 70),
+            (127, 300),
+            (320, 321),
+            (383, 384),
+        ];
+        let mut at = 0;
+        for k in 0..8 {
+            let want = (0..64).fold(0u64, |x, b| {
+                let q = k * 64 + b;
+                x | ((ranges.iter().any(|&(lo, hi)| lo <= q && q < hi) as u64) << b)
+            });
+            assert_eq!(ranges_block(&ranges, &mut at, k), want, "block {k}");
+        }
+        let mut s = Bits::new();
+        for q in [1, 2, 63, 64, 200, 201, 4000] {
+            bits_push(&mut s, q);
+        }
+        assert_eq!(
+            s,
+            vec![
+                (0, 1 << 1 | 1 << 2 | 1 << 63),
+                (1, 1),
+                (3, 1 << 8 | 1 << 9),
+                (62, 1 << 32)
+            ]
+        );
+        let mut at = 0;
+        let has: Vec<usize> = (0..4100).filter(|&q| bits_has(&s, &mut at, q)).collect();
+        assert_eq!(has, vec![1, 2, 63, 64, 200, 201, 4000]);
+    }
+
     #[test]
     fn dead_words_left_out_restore_every_live_word() {
         let (mut a, mut arr) = space(64 * CHUNK_WORDS);
@@ -4946,13 +5064,15 @@ mod tests {
         let mut states: Vec<(Vec<u64>, Vec<bool>)> = vec![];
         for _ in 0..40 {
             let id = a.checkpoint();
-            let mut bits = vec![0u64; n.div_ceil(64)];
+            let mut ranges: Vec<(usize, usize)> = vec![];
             for (q, &d) in dead.iter().enumerate() {
-                if d {
-                    bits[q >> 6] |= 1 << (q & 63);
+                match ranges.last_mut() {
+                    Some((_, hi)) if d && *hi == q => *hi += 1,
+                    _ if d => ranges.push((q, q + 1)),
+                    _ => {}
                 }
             }
-            a.dead_step(id, bits);
+            a.dead_step(id, &ranges);
             ids.push(id);
             states.push((arr.to_vec(), dead.clone()));
             // writes (to live and dead words alike: a dead word written is

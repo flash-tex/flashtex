@@ -960,7 +960,7 @@ impl Globals {
         // restored state's are not the recorded ones, and nothing reads them)
         match self.dead_region() {
             Some((off, words)) => {
-                let dead = self.mem_dead_bits();
+                let dead = self.mem_dead_ranges();
                 self.arena.hash_nonzero_except(off, words, &dead)
             }
             None => self.arena.hash_nonzero(),
@@ -995,23 +995,9 @@ impl Globals {
     /// maker, and a block joined to the ring or the free zones gets its
     /// header words written. The one-word `avail` stack's cells are not
     /// counted (their `link` is the stack). A ring that cannot be read
-    /// counts none of its blocks.
-    fn mem_dead_bits(&self) -> Vec<u64> {
+    /// counts none of its blocks. As sorted, disjoint `[lo, hi)` ranges.
+    fn mem_dead_ranges(&self) -> Vec<(usize, usize)> {
         let n = crate::generated::consts::mem_max as usize + 1;
-        let mut bits = vec![0u64; n.div_ceil(64)];
-        let set = |bits: &mut Vec<u64>, lo: usize, hi: usize| {
-            let hi = hi.min(n);
-            let mut q = lo;
-            while q < hi {
-                if q & 63 == 0 && q + 64 <= hi {
-                    bits[q >> 6] = u64::MAX;
-                    q += 64;
-                } else {
-                    bits[q >> 6] |= 1 << (q & 63);
-                    q += 1;
-                }
-            }
-        };
         let rh = |w: u64| (w & 0xFFFF_FFFF) as u32 as i32;
         let lh = |w: u64| (w >> 32) as u32 as i32;
         let (rover, lo_max, hi_min, mem_end) =
@@ -1041,18 +1027,24 @@ impl Globals {
                 }
             }
         }
-        if ok {
-            for (lo, hi) in blocks {
-                set(&mut bits, lo, hi);
+        if !ok {
+            blocks.clear();
+        }
+        blocks.push(((lo_max + 1).max(0) as usize, hi_min.max(0) as usize));
+        blocks.push(((mem_end + 1).max(0) as usize, n));
+        let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(blocks.len());
+        blocks.sort_unstable();
+        for (lo, hi) in blocks {
+            let hi = hi.min(n);
+            if lo >= hi {
+                continue;
+            }
+            match ranges.last_mut() {
+                Some((_, h)) if *h >= lo => *h = (*h).max(hi),
+                _ => ranges.push((lo, hi)),
             }
         }
-        set(
-            &mut bits,
-            (lo_max + 1).max(0) as usize,
-            hi_min.max(0) as usize,
-        );
-        set(&mut bits, (mem_end + 1).max(0) as usize, n);
-        bits
+        ranges
     }
 
     /// The host state now.
@@ -1172,8 +1164,8 @@ impl Globals {
         let dead_region = self.dead_region();
         let id = self.arena.checkpoint();
         if dead_region.is_some() {
-            let dead = self.mem_dead_bits();
-            self.arena.dead_step(id, dead);
+            let dead = self.mem_dead_ranges();
+            self.arena.dead_step(id, &dead);
         }
         let l = self.layer();
         l.stats.seal_s += t.elapsed().as_secs_f64();
