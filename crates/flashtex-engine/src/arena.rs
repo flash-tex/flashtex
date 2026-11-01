@@ -3145,7 +3145,7 @@ impl Arena {
         let core = self.core();
         let mut counts = vec![0usize; self.regions.len()];
         for log in &core.logs {
-            for d in &log.deltas {
+            for d in log.deltas.iter() {
                 let at = (d.c as usize) << CHUNK_SHIFT;
                 let r = match self.regions.binary_search_by(|r| r.off.cmp(&at)) {
                     Ok(i) => i,
@@ -3177,7 +3177,7 @@ impl Arena {
             return None;
         }
         let (mut all, mut inr, mut dd) = (0, 0, 0);
-        for d in &core.logs[n - 2].deltas {
+        for d in core.logs[n - 2].deltas.iter() {
             let base = (d.c as usize) << CHUNK_SHIFT;
             for (mi, &m) in d.mask.iter().enumerate() {
                 let mut m = m;
