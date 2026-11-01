@@ -1348,7 +1348,15 @@ jobs:
   # ===========================================================================
   ci-required:
     name: CI required
-    if: always()
+    # Not `always()`: a job-level always() runs even in a CANCELLED run, so
+    # every pull_request run that a newer push superseded (cancel-in-progress)
+    # stayed queued until a hosted runner was free to run this job, and an
+    # API cancel of a queued run did nothing until then (lane GATES,
+    # 2026-11-01: 100+ cancelled runs stayed queued; only force-cancel
+    # cleared them). A cancelled run reports nothing: the newer run, or the
+    # merge queue's next group, carries the check. A run whose jobs failed or
+    # timed out is not cancelled, so this still runs and fails there.
+    if: ${{ !cancelled() }}
     needs:
       - plan
       - build
