@@ -195,6 +195,70 @@ fn xprn_decides_when_a_character_is_printed() {
     }
 }
 
+/// The same through a format, where it shows: the format is made with
+/// TeX Live's TCX file (as pdflatex.fmt is), so INITEX's `xprn` and the
+/// run's differ under `-8bit`. pdfTeX's format holds pdftex.web's `^^A`
+/// strings and prints `^^A` as the byte 1; the engine's held the byte and,
+/// with `-8bit`, printed `^^A` (#2039).
+#[test]
+fn a_format_s_strings_do_not_decide_what_8bit_prints() {
+    let Some(texbin) = find_texlive_bin() else {
+        common::no_texlive();
+        return;
+    };
+    let base = common::fresh_dir("flashtex-texch-run-xprn-fmt");
+    let fmt = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\catcode`\\^^A=12 \\catcode`\\^^e9=12 \
+               \\catcode`\\^^7f=12 \\dump\n";
+    let doc = "\\scrollmode\\message{[^^A][^^e9][^^7f]}\\errmessage{x^^Ay}\
+               \\immediate\\write16{[^^A]}\\end\n";
+    let mut out = vec![];
+    for (ours, sub) in [(true, "ours"), (false, "tex")] {
+        let d = base.join(sub);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("f.tex"), fmt).unwrap();
+        std::fs::write(d.join("t.tex"), doc).unwrap();
+        let bin = if ours {
+            let b = d.join("pdftex");
+            common::link_engine(Path::new(env!("CARGO_BIN_EXE_flashtex-initex")), &b);
+            b
+        } else {
+            texbin.join("pdftex")
+        };
+        let pass = |args: &[&str]| {
+            let mut c = Command::new(&bin);
+            c.args(args)
+                .current_dir(&d)
+                .env("SOURCE_DATE_EPOCH", "0")
+                .env("FORCE_SOURCE_DATE", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if ours {
+                c.env("FLASHTEX_FORMATS", &d).env(
+                    "FLASHTEX_POOL",
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+                );
+            }
+            c.output().unwrap()
+        };
+        let made = pass(&["-ini", "-translate-file=cp227.tcx", "f.tex"]);
+        assert!(d.join("f.fmt").is_file(), "{sub}: no format: {made:?}");
+        let run = pass(&["-fmt=f", "-8bit", "t.tex"]);
+        let log = std::fs::read(d.join("t.log")).unwrap();
+        out.push((
+            run.status.code(),
+            after_banner(&String::from_utf8_lossy(&run.stdout)),
+            after_banner(&String::from_utf8_lossy(&log)),
+        ));
+    }
+    let (x, y) = (&out[0], &out[1]);
+    assert!(y.2.contains("[\u{1}]"), "pdftex printed no byte 1:\n{}", y.2);
+    assert_eq!(x.2, y.2, "the log differs from pdftex's");
+    assert_eq!(x.1, y.1, "the terminal output differs from pdftex's");
+    assert_eq!(x.0, y.0, "the exit status differs from pdftex's");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn a_line_longer_than_the_buffer_stops_the_run() {
     // `first` is past the terminal line `t.tex`; the lengths straddle the
