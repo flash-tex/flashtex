@@ -1,0 +1,4 @@
+# lane COLD-FIRST-2: main 3f835f488 against the diag table with its block out of line, the timed hold, and all three cuts (perf of the first)
+REFS='agent/kabir-claude-coldfirst2/combined2 3f835f488514786f1a46c4a5a62563cb05a0ddae agent/kabir-claude-coldfirst2/diag-defs agent/kabir-claude-coldfirst2/timed-hold'
+REPS='2'
+PERF='1'
