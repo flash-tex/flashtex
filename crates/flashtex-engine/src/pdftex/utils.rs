@@ -16,7 +16,8 @@ pub struct State {
     source_date_epoch: bool,
     /// `start_time_str`: the creation date in PDF form.
     start_time_str: Vec<u8>,
-    job_id: Option<String>,
+    /// `job_id_string`, as bytes.
+    job_id: Option<Vec<u8>>,
     colstacks: Vec<ColStack>,
     /// `page_mode`: shipping a page (not a form).
     page_mode: bool,
@@ -592,17 +593,29 @@ impl Globals {
         }
     }
 
-    /// `setjobid` (utils.c), without the web2c and kpathsea version strings.
+    /// `setjobid` (utils.c): `"%.4d/%.2d/%.2d %.2d:%.2d %s %s %s%s %s"` of
+    /// the date, the job name, the format identifier, `ptexbanner`, web2c's
+    /// version string (which starts with a space) and kpathsea's, as bytes
+    /// (a job name need not be UTF-8). `\pdfuniqueresname`'s prefix is its
+    /// CRC-32, so every part of it shows in the PDF.
     pub fn set_job_id(&mut self, y: i32, m: i32, d: i32, t: i32) {
-        let name = String::from_utf8_lossy(&self.str_bytes(self.job_name)).into_owned();
-        let fmt = String::from_utf8_lossy(&self.str_bytes(self.format_ident)).into_owned();
+        let mut id = format!("{y:04}/{m:02}/{d:02} {:02}:{:02} ", t / 60, t % 60).into_bytes();
+        id.extend(self.str_bytes(self.job_name));
+        id.push(b' ');
+        id.extend(self.str_bytes(self.format_ident));
+        id.push(b' ');
+        id.extend(
+            format!(
+                "{}{} {}",
+                crate::system::BANNER,
+                crate::system::WEB2C_VERSION,
+                crate::resolver::kpathsea_version()
+            )
+            .bytes(),
+        );
         with_state(|s| {
             if s.utils.job_id.is_none() {
-                s.utils.job_id = Some(format!(
-                    "{y:04}/{m:02}/{d:02} {:02}:{:02} {name} {fmt}",
-                    t / 60,
-                    t % 60
-                ));
+                s.utils.job_id = Some(id);
             }
         });
     }
@@ -612,7 +625,7 @@ impl Globals {
     pub fn get_resname_prefix(&mut self) -> i32 {
         const NAME: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
         let id = with_state(|s| s.utils.job_id.clone()).unwrap_or_default();
-        let mut crc = crc32(id.as_bytes()) as u64;
+        let mut crc = crc32(&id) as u64;
         let mut prefix = Vec::new();
         for _ in 0..6 {
             prefix.push(NAME[(crc % NAME.len() as u64) as usize]);
