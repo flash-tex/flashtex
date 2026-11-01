@@ -264,6 +264,34 @@ final class EngineV3AppParityTests: XCTestCase {
         XCTAssertEqual(leftoverTemps(), [])
     }
 
+    // MARK: corrupt page numbers from the host
+
+    /// Page numbers from a corrupt or buggy host stay bounded: a PAGES
+    /// range up to Int64.max, a PAGE at index 2^32 - 16 and a negative DONE
+    /// count neither spin the main thread for billions of steps nor trap a
+    /// later `0 ..< pageCount` walk.
+    func testCorruptPageNumbersFromTheHostStayBounded() throws {
+        let model = v3Model()
+        defer { model.engineV3Enabled = false }
+        let s = model.engineV3
+        let started = Date()
+        s.handle(.pages(.object(["stale": .array([.array([.int(0), .int(50_000_000)])])])))
+        s.handle(.pages(.object(["current": .array([.array([.int(0), .int(.max)])])])))
+        XCTAssertEqual(s.staleCount, 0)
+        s.handle(.pages(.object(["stale": .array([.array([.int(-5), .int(3)])])])))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1, "PAGES ranges are clamped, not walked to 50 M")
+        XCTAssertLessThanOrEqual(s.staleCount, 4)
+
+        var huge = DL3Page(kind: .page, index: 0xFFFF_FFF0)
+        huge.box = [0, 0, 612, 792]
+        s.handle(.page(DL3PreparedPage(page: huge, fonts: [:], images: [:]), compileID: 1, timing: .init(), image: nil))
+        XCTAssertLessThanOrEqual(s.pageCount, 100_000, "a page beyond any document is ignored")
+
+        s.handle(.done(.object(["status": .string("ok"), "pages": .int(-3)]), compileID: 1))
+        XCTAssertGreaterThanOrEqual(s.pageCount, 0)
+        XCTAssertEqual(s.pageCount, 0)
+    }
+
     // MARK: B3 box warnings
 
     /// STARTED, the host's DIAG for an overfull box (as `host/diag.rs` builds
