@@ -151,14 +151,14 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=
     entry = doc["entry"]
     stem = os.path.splitext(os.path.basename(entry))[0]
     pdf, logp = os.path.join(workdir, stem + ".pdf"), os.path.join(workdir, stem + ".log")
-    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", pcapture.first_line(entry)]
+    args = pcapture.interaction_args() + [f"-jobname={stem}", pcapture.first_line(entry)]
     meta = {"ok": False, "passes": 0, "traced": bool(trace)}
     t0 = time.time()
     previous = None
     for _ in range(PASSES):
         code, timed_out = pcapture.run_engine(engine, FMT, args, workdir, extra_env, timeout=PASS_TIMEOUT)
         meta["passes"] += 1
-        if timed_out or code != 0 or not os.path.isfile(pdf):
+        if timed_out or not pcapture.compiled_exit(code) or not os.path.isfile(pdf):
             txt = pharness.read_text(logp) if os.path.isfile(logp) else ""
             m = re.search(r"^(! .*)$", txt, re.M)
             meta["exit"] = code
@@ -225,10 +225,13 @@ ORACLE_CACHE_V = 6
 
 
 def oracle_key(doc, version, trace, tree_hash, v=ORACLE_CACHE_V):
-    return sha(json.dumps({"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
-                           "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
-                           "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
-                           "seed": pcapture.SEED, "v": v}, sort_keys=True))
+    k = {"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
+         "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
+         "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
+         "seed": pcapture.SEED, "v": v}
+    if not pcapture.HALT_ON_ERROR:  # only then, so every halting entry keeps its key
+        k["halt_on_error"] = False
+    return sha(json.dumps(k, sort_keys=True))
 
 
 # The oracle work directories (`work-<pid>`) this process is using. Every exit

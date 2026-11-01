@@ -318,7 +318,7 @@ def oracle_reference(doc, texbin, cache, log):
     if exe is None:
         return None, {"ok": False, "why": f"no pdflatex in {texbin}"}
     stem = os.path.splitext(doc["entry"])[0]
-    argv = [exe, "-interaction=nonstopmode", "-halt-on-error", f"-jobname={os.path.basename(stem)}",
+    argv = [exe] + ptiers.pcapture.interaction_args() + [f"-jobname={os.path.basename(stem)}",
             ptiers.pcapture.first_line(doc["entry"])]  # the pinned seed (capture.SEED), as every pass
     key = hashlib.sha256(json.dumps({"tree": tree_hash(doc["dir"]), "entry": doc["entry"], "pdflatex": version,
                                      "argv": argv[1:], "passes": ORACLE_PASSES, "v": 1}).encode()).hexdigest()
@@ -344,7 +344,7 @@ def oracle_reference(doc, texbin, cache, log):
     for _ in range(ORACLE_PASSES):
         code, _, _, _, timed_out = harness.run(argv, env=env, timeout=ORACLE_TIMEOUT, cwd=work)
         meta["passes"] += 1
-        if timed_out or code != 0 or not os.path.isfile(produced):
+        if timed_out or not ptiers.pcapture.compiled_exit(code) or not os.path.isfile(produced):
             txt = harness.read_text(logpath) if os.path.isfile(logpath) else ""
             m = re.search(r"^(! .*)$", txt, re.M)
             meta["why"] = (f"pdflatex exit {code}" + (" (timeout)" if timed_out else "")
@@ -1627,7 +1627,7 @@ def parse_pt1_sample(values):
     return out
 
 
-def set_shell_escape(flag, max_log=None, pt1_timeout=None, kpsewhich=None, worker=True):
+def set_shell_escape(flag, max_log=None, pt1_timeout=None, kpsewhich=None, worker=True, halt_on_error=True):
     """The one \\write18 setting, the traced-log budget (bytes; 0: none) and
     the traced pass's time limit (s) and the oracle's kpsewhich
     (`capture.KPSEWHICH`), in this process and (as the pool's
@@ -1635,6 +1635,7 @@ def set_shell_escape(flag, max_log=None, pt1_timeout=None, kpsewhich=None, worke
     `default` means no flag: each engine's own default mode. A worker also
     gets the SIGTERM handler that cleans up (`Terminated`)."""
     ptiers.pcapture.SHELL_ESCAPE = None if flag == "default" else flag
+    ptiers.pcapture.HALT_ON_ERROR = halt_on_error
     if max_log is not None:
         ptiers.pcapture.MAX_LOG_BYTES = max_log
     if pt1_timeout is not None:
@@ -1673,6 +1674,9 @@ def main(argv=None):
     ap.add_argument("--engine-env", action="append", default=[], metavar="KEY=VALUE",
                     help="environment for a TeX --engine only, never the oracle (e.g. FLASHTEX_FORMATS=<dir with "
                          "pdflatex.fmt>); repeatable")
+    ap.add_argument("--no-halt-on-error", action="store_true",
+                    help="run both engines without -halt-on-error, so a document with recoverable errors is "
+                         "measured (exit 1 with a PDF compiles) instead of excluded; its own cache keys")
     ap.add_argument("--shell-escape-flag", default="default",
                     choices=["default", "-shell-restricted", "-no-shell-escape", "-shell-escape"],
                     help="the one \\write18 setting both engines run with; default: no flag, each engine's "
@@ -1748,7 +1752,8 @@ def main(argv=None):
             return 2
     max_log = int(args.pt1_max_log_mb * (1 << 20))
     kpse = ptiers.pcapture.kpsewhich_beside(oracle_pdftex) if oracle_pdftex else None
-    set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, kpse, worker=False)
+    set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, kpse, worker=False,
+                     halt_on_error=not args.no_halt_on_error)
     _main_pid[:] = [os.getpid()]
     signal.signal(signal.SIGTERM, _main_sigterm)
     swept = ptiers.sweep_stale_work(args.cache)
@@ -1794,7 +1799,8 @@ def main(argv=None):
         ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
         log(f"[{done[0]}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
 
-    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, max_log, args.pt1_timeout, kpse),
+    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, max_log, args.pt1_timeout, kpse, True,
+                                                             not args.no_halt_on_error),
                     log=log)
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = harness.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()

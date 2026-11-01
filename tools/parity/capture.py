@@ -84,6 +84,25 @@ import threading
 # which l3kernel's \sys_if_shell reads). `parity.py --shell-escape-flag`
 # overrides it with -shell-restricted, -no-shell-escape or -shell-escape.
 SHELL_ESCAPE = None
+# `-halt-on-error` for BOTH engines (the default). `parity.py --no-halt-on-error`
+# clears it, so a document with recoverable errors (about a quarter of arXiv's
+# e-prints: pdflatex stops at the first `! ` line, yet arXiv and every editor run
+# them in nonstopmode to the end) is measured instead of excluded. Both engines
+# then run on past each error, an exit of 1 with a PDF counts as compiled, and
+# every cache key says so. P-T1 compares the error messages and the recovery
+# like any other line.
+HALT_ON_ERROR = True
+
+
+def interaction_args():
+    """The interaction flags of every pass of every engine."""
+    return ["-interaction=nonstopmode"] + (["-halt-on-error"] if HALT_ON_ERROR else [])
+
+
+def compiled_exit(code):
+    """Whether a pass's exit status is a compile: 0, or with HALT_ON_ERROR off
+    also 1 (pdfTeX's exit after `error_message_issued`), when a PDF was written."""
+    return code == 0 or (not HALT_ON_ERROR and code == 1)
 PROGRAM = "pdftex"  # the name every engine runs under (see engine_link)
 BIN_ROOT = os.path.join(tempfile.gettempdir(), "flashtex-parity-bin")
 
@@ -694,7 +713,7 @@ def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     tex = os.path.relpath(os.path.abspath(tex_path), os.path.abspath(workdir))
     stem = os.path.splitext(os.path.basename(tex))[0]
     logp, pdf = os.path.join(workdir, stem + ".log"), os.path.join(workdir, stem + ".pdf")
-    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", first_line(tex, trace=True)]
+    args = interaction_args() + [f"-jobname={stem}", first_line(tex, trace=True)]
     timeout = timeout or TIMEOUT
     raw = None
     if stream:
