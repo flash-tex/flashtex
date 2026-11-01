@@ -207,9 +207,11 @@ public final class CaptureQueue: @unchecked Sendable {
         let attempt: Int
         if case .disconnected(_, let n) = r.status { attempt = n + 1 } else { attempt = 1 }
         update(id) { $0.status = .sending(attempt: attempt) }
-        await flush()
         do {
             guard let session = link.session, let pair = link.pair else { throw NearbyError.closed("not connected to a Mac") }
+            // On disk before the bytes leave: a capture the Mac may hold is
+            // always one a relaunch lists.
+            await flush()
             if let bound = r.pairId, bound != pair.pairId {
                 throw NearbyError.invalidInput("this capture was first sent to \(r.macFingerprint.map { "the Mac \($0)" } ?? "another Mac") (pair \(bound)); the current link is \(pair.macName) (pair \(pair.pairId)) — discard it and draft a new capture for this Mac")
             }
