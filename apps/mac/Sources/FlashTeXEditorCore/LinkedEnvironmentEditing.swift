@@ -169,6 +169,44 @@ public enum LinkedEnvironmentEditing {
     /// True when `caret` sits in (or at the end of) the `{name}` of `\begin` /
     /// `\end` on its line. O(line), no document pair scan: ordinary typing
     /// next to `\end{document}` must not pay the lexical scan.
+    /// False only when the name around `caret` cannot have a partner: it is
+    /// braced on the caret's line (`{name}`, no other brace inside) and
+    /// `{name}` occurs nowhere else in `text`. A partner `\begin{name}` or
+    /// `\end{name}` would contain that literal, so `linkedNames` would answer
+    /// nil anyway; this answers it with a literal search instead of the
+    /// whole-buffer lex. Typing a new environment's name (`\begin{itemi…`,
+    /// no `\end` yet) is the case it is for: every keystroke used to lex the
+    /// buffer to find no pair. A name never spans lines, so a caret with no
+    /// `{` before it or no `}` after it on its line is on no name; a brace
+    /// inside the group (`{a{b}c}`) leaves it unsure: true.
+    public static func mayLink(at caret: Int, in text: NSString) -> Bool {
+        let n = text.length
+        guard caret >= 0, caret <= n else { return true }
+        var open = caret - 1
+        while open >= 0 {
+            let c = text.character(at: open)
+            if c == 0x7B { break }
+            if c == 0x0A { return false }
+            if c == 0x7D { return true }
+            open -= 1
+        }
+        guard open >= 0 else { return false }
+        var close = caret
+        while close < n {
+            let c = text.character(at: close)
+            if c == 0x7D { break }
+            if c == 0x0A { return false }
+            if c == 0x7B { return true }
+            close += 1
+        }
+        guard close < n else { return false } // unclosed on its line: not a use
+        let braced = text.substring(with: NSRange(location: open, length: close + 1 - open))
+        let before = text.range(of: braced, options: .literal, range: NSRange(location: 0, length: open))
+        if before.location != NSNotFound { return true }
+        let after = text.range(of: braced, options: .literal, range: NSRange(location: close + 1, length: n - close - 1))
+        return after.location != NSNotFound
+    }
+
     public static func isOnEnvironmentName(in text: NSString, at caret: Int) -> Bool {
         guard text.length > 0 else { return false }
         let i = min(max(0, caret), text.length)

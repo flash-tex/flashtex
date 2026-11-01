@@ -86,6 +86,58 @@ final class LinkedRenameLargeDocumentTests: XCTestCase {
         XCTAssertLessThan(rest, 30, "a keystroke inside a linked name must not rescan the whole buffer")
     }
 
+    /// Typing a new environment's name (no `\end` for it yet) never lexes
+    /// the buffer: no braced twin of the name exists, so nothing can link.
+    func testTypingANewEnvironmentNameDoesNotScan() async throws {
+        let text = Self.book(bytes: 3_000_000)
+        let ns = text as NSString
+        let probe = Probe(text: text)
+        HostedWindowSupport.prepare()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
+        var hosting: NSHostingView<Host>? = NSHostingView(rootView: Host(probe: probe))
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.contentView = nil; hosting = nil }
+        var found: NSTextView?
+        try await waitFor(10) { found = TypingBenchDriver.findTextView(in: [window.contentView!]); return found != nil }
+        let tv = try XCTUnwrap(found)
+        let co = try XCTUnwrap(tv.delegate as? SourceEditorView.Coordinator)
+        try await waitFor(10) { tv.textStorage?.length == ns.length && co.syntax.highlighter.length == ns.length }
+        let at = ns.range(of: "The quick", range: NSRange(location: ns.length / 2, length: ns.length / 2)).location
+        tv.setSelectedRange(NSRange(location: at, length: 0))
+        let scans = co.linkedPairScans
+        var costs: [Double] = []
+        for ch in "\\begin{" { tv.insertText(String(ch), replacementRange: tv.selectedRange()) }
+        if tv.textStorage!.mutableString.character(at: tv.selectedRange().location) != 0x7D { // the `}` auto-closed, or type it
+            tv.insertText("}", replacementRange: tv.selectedRange())
+            tv.setSelectedRange(NSRange(location: tv.selectedRange().location - 1, length: 0))
+        }
+        for ch in "itemize" {
+            let c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            tv.insertText(String(ch), replacementRange: tv.selectedRange())
+            costs.append(Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c0) / 1e6)
+        }
+        XCTAssertTrue(tv.string.contains("\\begin{itemize}The quick"))
+        // `{i}`… `{itemiz}` have no twin; `{itemize}` does (the book's own
+        // lists), so the last keystroke's pre-edit name `itemiz` still does not.
+        XCTAssertEqual(co.linkedPairScans - scans, 0, "no pair scan while typing a new name")
+        print(String(format: "new environment name on %d K UTF-16: worst keystroke %.2f ms main-thread CPU", ns.length / 1000, costs.max() ?? 0))
+        XCTAssertLessThan(costs.max() ?? 0, 30)
+    }
+
+    func testMayLinkIsANecessaryCondition() {
+        let t = "\\begin{a}\n\\end{a}\n\\begin{bc}\n\\begin{}\n\\end{}\n" as NSString
+        XCTAssertTrue(LinkedEnvironmentEditing.mayLink(at: 8, in: t), "{a} has a twin")
+        let bc = t.range(of: "{bc}").location
+        XCTAssertFalse(LinkedEnvironmentEditing.mayLink(at: bc + 2, in: t), "{bc} has none")
+        XCTAssertNil(LinkedEnvironmentEditing.linkedNames(at: bc + 2, in: t))
+        XCTAssertTrue(LinkedEnvironmentEditing.mayLink(at: t.range(of: "{}").location + 1, in: t), "an emptied name with an emptied twin")
+        XCTAssertNotNil(LinkedEnvironmentEditing.linkedNames(at: t.range(of: "{}").location + 1, in: t))
+        XCTAssertFalse(LinkedEnvironmentEditing.mayLink(at: 8, in: "\\begin{ab\n\\end{ab}" as NSString), "unclosed on its line: no use")
+        XCTAssertFalse(LinkedEnvironmentEditing.mayLink(at: 3, in: "\\begin{ab}" as NSString), "not inside braces")
+        XCTAssertTrue(LinkedEnvironmentEditing.mayLink(at: 12, in: "\\begin{a{b}c}" as NSString), "a brace inside: unsure")
+    }
+
     /// An edit elsewhere ends the carried session: the next rename keystroke
     /// scans again and still finds the right partner.
     func testAnEditOutsideTheNameRescans() async throws {

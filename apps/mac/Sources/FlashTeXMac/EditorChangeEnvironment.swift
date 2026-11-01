@@ -275,7 +275,15 @@ extension SourceEditorView.Coordinator {
             linkedSession = carried
             return
         }
-        if continuing == nil { linkedPairScans += 1 }
+        if continuing == nil {
+            // A name with no braced twin anywhere (a new environment being
+            // typed) cannot link: a literal search, not the lex.
+            if let storage = tv.textStorage, !LinkedEnvironmentEditing.mayLink(at: range.location, in: storage.string as NSString) {
+                linkedSession = nil
+                return
+            }
+            linkedPairScans += 1
+        }
         let text = SourceEditorView.nativeText(of: tv) as NSString
         linkedSession = EditorChangeEnvironment.linkedSession(for: range, in: text, continuing: continuing)
     }
