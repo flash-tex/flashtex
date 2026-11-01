@@ -4932,6 +4932,20 @@ pub fn note_size_read(path: &str) {
     })
 }
 
+/// Whole reads of `path` the run's journal holds (`note_whole_read`'s
+/// entries; 0 when it keeps none). The journal is cut back with every
+/// restore, so the count is the run's own at this point.
+pub fn whole_reads_of(path: &str) -> usize {
+    READS.with(|r| {
+        r.borrow().as_ref().map_or(0, |log| {
+            log.files
+                .iter()
+                .filter(|f| f.path == path && f.closed_at == Some(u64::MAX))
+                .count()
+        })
+    })
+}
+
 /// `\pdffilemoddate` of `path` (texmfmp.c's `getfilemoddate`): a read of
 /// the whole file (its content changing changes nothing, but a run from the
 /// start reads the time again), and of its modification time in seconds,

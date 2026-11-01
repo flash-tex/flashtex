@@ -291,6 +291,8 @@ pub struct Report {
     /// READ-REVALIDATE (`crate::revalidate`): a later restart point was
     /// tried; whether it held.
     pub revalidated: Option<bool>,
+    /// ... and it compared at a `Point::FileRead`, not at a page's end.
+    pub revalidated_at_read: bool,
     /// Review of #1724 (`Session::arm_window`): the reads at `\document`'s
     /// start had changed and were compared at the anchor; whether that held.
     pub arm_revalidated: Option<bool>,
@@ -403,7 +405,7 @@ pub struct Report {
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_midline\":{},\"revalidated\":{},\"arm_revalidated\":{},\"preamble_patched\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"dormant\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{},\"dead_cells\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_midline\":{},\"revalidated\":{},\"revalidated_at_read\":{},\"arm_revalidated\":{},\"preamble_patched\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"dormant\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{},\"dead_cells\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -419,6 +421,7 @@ impl Report {
             self.revalidated
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "null".into()),
+            self.revalidated_at_read,
             self.arm_revalidated
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "null".into()),
@@ -1758,6 +1761,49 @@ fn same_words(
         return Err("the display list's side table changed (no structural comparison)".into());
     }
     let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
+    // Nothing to explain but the side table: when every chunk of it either
+    // run wrote holds the same words in both states, every node's source
+    // position is the old run's, which is all the structural comparison
+    // would check (its walk of the live structures took 15 ms with nothing
+    // to explain at a READ-REVALIDATE read point on Infinite Descent x2;
+    // lane LATE-EDIT).
+    if left.is_empty() && side_any && relabel && dormant < 0 {
+        if stop() {
+            return Err(PREEMPTED.into());
+        }
+        let cs: Vec<u32> = side_written
+            .iter()
+            .enumerate()
+            .flat_map(|(i, &w)| {
+                (0..64)
+                    .filter(move |b| w >> b & 1 != 0)
+                    .map(move |b| (i * 64 + b) as u32)
+            })
+            .collect();
+        let mut never = || false;
+        if let Some(old) = g.pending_old_chunks(old, &cs, &mut never)? {
+            let live = g.arena.bytes();
+            let same = cs.iter().all(|&c| {
+                let at = (c as usize) << crate::arena::CHUNK_SHIFT;
+                old.get(&c).is_some_and(|o| {
+                    o.iter().enumerate().all(|(k, &w)| {
+                        let p = at + k * 8;
+                        live.get(p..p + 8)
+                            .is_some_and(|b| u64::from_le_bytes(b.try_into().unwrap()) == w)
+                    })
+                })
+            });
+            if same {
+                if debug {
+                    eprintln!(
+                        "[incr] the side table's {} written chunks are the same: no structural comparison",
+                        cs.len()
+                    );
+                }
+                return Ok(0);
+            }
+        }
+    }
     if (!left.is_empty() || side_any) && relabel {
         // Nodes allocated in other places: compare the structures.
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
@@ -3192,6 +3238,36 @@ impl Observer for Obs {
                     }
                 }
             }
+            // READ-REVALIDATE at a `Point::FileRead` (`Session::revalidation`):
+            // the one after as many reads as the old run's `P1` had made
+            if why == Point::FileRead && self.probe.as_ref().is_some_and(|p| p.at.is_some()) {
+                if let Some(pr) = self.probe.take() {
+                    let r = g.record_of(id).and_then(|rec| {
+                        let at = pr.at.unwrap_or(0);
+                        if rec.reads.0 < at {
+                            return Ok(None);
+                        }
+                        if rec.reads.0 > at {
+                            return Err("past the old run's read point".to_string());
+                        }
+                        self.probe_test(g, &rec, &pr).map(|()| Some(pr.p2))
+                    });
+                    match r {
+                        Ok(None) => self.probe = Some(pr),
+                        r => {
+                            let r = r.map(|p2| p2.unwrap_or(pr.p2));
+                            if self.debug {
+                                eprintln!("[incr] revalidation at the read point {id}: {r:?}");
+                            }
+                            let ok = r.is_ok();
+                            self.probe_result = Some(r);
+                            if ok {
+                                return Action::Stop;
+                            }
+                        }
+                    }
+                }
+            }
             // (a comparison at the anchor: `Session::arm_window`)
             if self.probe.as_ref().is_some_and(|p| p.anchor == Some(why)) {
                 if let Some(pr) = self.probe.take() {
@@ -3209,7 +3285,8 @@ impl Observer for Obs {
                     }
                 }
             }
-            if why == Point::Segment && (std::mem::take(&mut self.held_stop) || self.preempt_now(g))
+            if matches!(why, Point::Segment | Point::FileRead)
+                && (std::mem::take(&mut self.held_stop) || self.preempt_now(g))
             {
                 return Action::Stop;
             }
@@ -3268,7 +3345,9 @@ impl Observer for Obs {
             if j < pr.page {
                 self.probe = Some(pr);
             } else {
-                let r = if j == pr.page {
+                let r = if pr.at.is_some() {
+                    Err("past the old run's read point".into())
+                } else if j == pr.page {
                     self.probe_test(g, &rec, &pr).map(|()| pr.p2)
                 } else {
                     Err("past the page".into())
@@ -5802,33 +5881,39 @@ impl Session {
         }
         let debug = self.opts.debug;
         let base = *self.ck_pages.get(&p0)?;
-        let (page, p1) = self
+        let page_p1 = self
             .pages
             .iter()
             .enumerate()
             .skip(base)
             .take(crate::revalidate::MAX_PAGES)
-            .find_map(|(i, p)| p.ckpt.map(|c| (i + 1, c)))?;
+            .find_map(|(i, p)| p.ckpt.map(|c| (i + 1, c)));
         let j = self.journal.as_ref()?;
         let g = self.g.as_mut()?;
         let ids = g.checkpoints();
-        let (i0, i1) = (
-            ids.iter().position(|&i| i == p0)?,
-            ids.iter().position(|&i| i == p1)?,
-        );
-        if i1 <= i0 {
-            return None;
+        let i0 = ids.iter().position(|&i| i == p0)?;
+        let i_page = page_p1.and_then(|(_, c)| ids.iter().position(|&i| i == c));
+        // The candidates for `P1`, the earliest first: the old run's
+        // `Point::FileRead` checkpoints before the page's end (the first
+        // `build_page` after a whole read of one of the user's files: both
+        // runs reach it alike, and a run restarted at `P0` gets there long
+        // before the page's end; lane LATE-EDIT), then that page's own.
+        let read_points: std::collections::HashSet<CheckpointId> = g
+            .layer()
+            .taken
+            .iter()
+            .filter(|(_, why)| *why == Point::FileRead)
+            .map(|(id, _)| *id)
+            .collect();
+        let until = i_page.unwrap_or_else(|| ids.len().min(i0 + 1));
+        let mut candidates: Vec<(CheckpointId, bool)> = ids[(i0 + 1).min(until)..until]
+            .iter()
+            .filter(|id| read_points.contains(id))
+            .map(|&id| (id, true))
+            .collect();
+        if let Some((_, c)) = page_p1 {
+            candidates.push((c, false));
         }
-        let (r0, r1) = (g.record_of(p0).ok()?, g.record_of(p1).ok()?);
-        // (a lookup in the window whose answer changed: whether another
-        // follows it is unknown)
-        if bad_lookup.is_some_and(|b| b < r1.reads.1) {
-            return None;
-        }
-        let mut windows = prior.to_vec();
-        windows.push((r0.reads.0, r1.reads.0));
-        let w = crate::revalidate::window_journal(j, &windows);
-        let first_read = first_reads(&w, changed);
         let now: HashMap<String, std::sync::Arc<Vec<u8>>> = edits
             .iter()
             .filter_map(|e| {
@@ -5839,41 +5924,74 @@ impl Session {
                 Some((e.path.clone(), f.content.clone()?))
             })
             .collect();
-        let mut good = |id: CheckpointId| -> bool {
-            g.record_of(id).is_ok_and(|r| {
-                consumed_nothing_changed(&w, &first_read, &r, edits, changed, bad_lookup)
-                    && crate::revalidate::streams_before_edits(&r, edits, |p| now.get(p).cloned())
-            })
-        };
-        if !good(p1) {
-            return None;
-        }
-        let (mut a, mut b) = (i1, ids.len());
-        while b - a > 1 {
-            let m = (a + b) / 2;
-            if good(ids[m]) {
-                a = m;
-            } else {
-                b = m;
+        let r0 = g.record_of(p0).ok()?;
+        let mut chosen = None;
+        for (p1, at_read) in candidates {
+            let i1 = ids.iter().position(|&i| i == p1)?;
+            if i1 <= i0 {
+                continue;
             }
+            let r1 = g.record_of(p1).ok()?;
+            // (a lookup in the window whose answer changed: whether another
+            // follows it is unknown)
+            if bad_lookup.is_some_and(|b| b < r1.reads.1) {
+                return None;
+            }
+            let mut windows = prior.to_vec();
+            windows.push((r0.reads.0, r1.reads.0));
+            let w = crate::revalidate::window_journal(j, &windows);
+            let first_read = first_reads(&w, changed);
+            let mut good = |id: CheckpointId| -> bool {
+                g.record_of(id).is_ok_and(|r| {
+                    consumed_nothing_changed(&w, &first_read, &r, edits, changed, bad_lookup)
+                        && crate::revalidate::streams_before_edits(&r, edits, |p| {
+                            now.get(p).cloned()
+                        })
+                })
+            };
+            // (a read point before the window's read of the changed file:
+            // the next one)
+            if !good(p1) {
+                continue;
+            }
+            let (mut a, mut b) = (i1, ids.len());
+            while b - a > 1 {
+                let m = (a + b) / 2;
+                if good(ids[m]) {
+                    a = m;
+                } else {
+                    b = m;
+                }
+            }
+            while a > i1 && !g.restorable(ids[a]) {
+                a -= 1;
+            }
+            let p2 = ids[a];
+            let gain = self.ck_pages.get(&p2).copied().unwrap_or(0);
+            let page = if at_read {
+                self.ck_pages.get(&p1).copied().unwrap_or(base)
+            } else {
+                page_p1.map_or(base, |(n, _)| n)
+            };
+            if debug {
+                eprintln!(
+                    "[incr] revalidation window: restart {p0} (page {base}), compare at {p1} ({} {page}), then {p2} (page {gain})",
+                    if at_read { "a read point after page" } else { "page" }
+                );
+            }
+            // (nothing to gain: P2 no later than the comparison)
+            if a <= i1 || (!at_read && gain <= page) {
+                continue;
+            }
+            chosen = Some((p1, r1, windows, page, p2, at_read));
+            break;
         }
-        while a > i1 && !g.restorable(ids[a]) {
-            a -= 1;
-        }
-        let p2 = ids[a];
-        let gain = self.ck_pages.get(&p2).copied().unwrap_or(0);
-        if debug {
-            eprintln!(
-                "[incr] revalidation window: restart {p0} (page {base}), compare at {p1} (page {page}), then {p2} (page {gain})"
-            );
-        }
-        if gain <= page {
-            return None;
-        }
+        let (p1, r1, windows, page, p2, at_read) = chosen?;
         Some(crate::revalidate::Probe {
             windows,
             bad_lookup,
             page,
+            at: at_read.then_some(r1.reads.0),
             anchor: None,
             then_patch: None,
             then_probe: None,
@@ -5978,6 +6096,7 @@ impl Session {
                 windows: vec![],
                 bad_lookup,
                 page: 0,
+                at: None,
                 anchor: Some(anchor),
                 then_patch: None,
                 then_probe: None,
@@ -6560,6 +6679,7 @@ impl Session {
         let pre_again = pre_patching.then(|| (obs.edits.clone(), obs.changed.clone()));
         obs.probe = probe.map(Box::new);
         let probing = obs.probe.is_some();
+        let probe_at_read = obs.probe.as_ref().is_some_and(|p| p.at.is_some());
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
@@ -6676,6 +6796,7 @@ impl Session {
                         );
                         return rep.map(|mut rep| {
                             rep.revalidated = Some(true);
+                            rep.revalidated_at_read = probe_at_read;
                             rep
                         });
                     }
@@ -7529,6 +7650,7 @@ fn pre_patch_arm(
             windows: vec![],
             bad_lookup: None,
             page: 0,
+            at: None,
             anchor: None,
             then_patch: None,
             then_probe: None,
@@ -7732,11 +7854,14 @@ fn thin(
     // the cursor is, and they have no pages before them, so the distance
     // rules below would drop them. They are few: one after each line that
     // loads a file (`Layer::preamble_file_closed`) or takes a millisecond.
+    // So are the body's read points (`Point::FileRead`, one after each
+    // `\input` LaTeX takes the size of): READ-REVALIDATE compares there
+    // with a run restarted before the read, at an edit anywhere in the file.
     let preamble: std::collections::HashSet<CheckpointId> = g
         .layer()
         .taken
         .iter()
-        .filter(|(_, why)| *why == Point::PreambleLine)
+        .filter(|(_, why)| matches!(why, Point::PreambleLine | Point::FileRead))
         .map(|(id, _)| *id)
         .collect();
     // Within the budget too, only page checkpoints stay more than `dense`

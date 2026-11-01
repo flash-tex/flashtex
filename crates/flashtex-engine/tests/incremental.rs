@@ -5739,22 +5739,27 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             + &(0..40).map(|i| para(c, i)).collect::<String>()
     };
     // (case, what goes before `\include{ch3}`, after the last chapter, at
-    // the start of the third, whether the comparison holds)
+    // the start of the third, whether the comparison holds: `None`, either.
+    // A read at the chapter's start is a second window: the first, from
+    // before `\include`, can hold at the read point after `\include`'s
+    // read when a checkpoint lies between the two reads -- the segment
+    // checkpoints' timing decides -- and the second, from there, fails at
+    // the chapter's own read; lane LATE-EDIT)
     let cases = [
-        ("only \\include's lookup", "", "", "", true),
+        ("only \\include's lookup", "", "", "", Some(true)),
         (
             "compared",
             "\\ifnum\\pdffilesize{ch3.tex}>0 \\relax\\fi\n",
             "",
             "",
-            true,
+            Some(true),
         ),
         (
             "typeset on a page of its own",
             "The third chapter has \\pdffilesize{ch3.tex} bytes.\\clearpage\n",
             "",
             "",
-            false,
+            Some(false),
         ),
         (
             // (the state at the next page is the same: only the page shipped
@@ -5763,7 +5768,7 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "",
             "",
             "This chapter has \\pdffilesize{ch3.tex} bytes.\n\n",
-            false,
+            None,
         ),
         (
             // (the state is the same: only the log and the terminal differ)
@@ -5771,7 +5776,7 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "",
             "",
             "\\typeout{The size of chapter 3: \\pdffilesize{ch3.tex}}\n",
-            false,
+            None,
         ),
         (
             // (review of #1736: a file written and closed in the window, read
@@ -5781,7 +5786,7 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "Size file: \\input{sz.txt}\n",
             "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
              \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
-            false,
+            None,
         ),
         (
             "written to a file, its digest typeset",
@@ -5789,21 +5794,21 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             "Digest \\pdfmdfivesum file {sz.txt}.\n",
             "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
              \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
-            false,
+            None,
         ),
         (
             "kept",
             "\\edef\\chsz{\\pdffilesize{ch3.tex}}\n",
             "Stored size \\chsz.\n",
             "",
-            false,
+            Some(false),
         ),
         (
             "a date kept",
             "\\edef\\chmd{\\pdffilemoddate{ch3.tex}}\n",
             "Stored date \\chmd.\n",
             "",
-            false,
+            Some(false),
         ),
     ];
     for (i, (case, before, after, head, held)) in cases.iter().enumerate() {
@@ -5863,10 +5868,19 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
             // (where it does not hold: tried and failed, or no window)
             eprintln!("{what}: revalidated {}", field(&r, "revalidated"));
-            if *held {
-                assert_eq!(field(&r, "revalidated"), "true", "{what}: {r}");
-            } else {
-                assert_ne!(field(&r, "revalidated"), "true", "{what}: {r}");
+            match held {
+                Some(true) => {
+                    assert_eq!(field(&r, "revalidated"), "true", "{what}: {r}");
+                    // (compared at the read point after `\include`'s read,
+                    // not at the end of the chapter's first page; a file
+                    // read whole twice has one, after the first read, which
+                    // the window to it does not cover: "compared")
+                    if i == 0 {
+                        assert_eq!(field(&r, "revalidated_at_read"), "true", "{what}: {r}");
+                    }
+                }
+                Some(false) => assert_ne!(field(&r, "revalidated"), "true", "{what}: {r}"),
+                None => {}
             }
         }
         step(&[("ch3.tex", &chapter(3))], &format!("{case}: revert"));

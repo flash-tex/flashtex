@@ -56,6 +56,11 @@ pub struct Probe {
     pub windows: Vec<(usize, usize)>,
     pub bad_lookup: Option<usize>,
     pub page: usize,
+    /// The comparison at a `Point::FileRead` instead of `page`'s end
+    /// (lane LATE-EDIT): the reads the old run had made at `P1` (its
+    /// record's `reads.0`); the new run's read point after as many is the
+    /// same place. `page` is then the pages before it.
+    pub at: Option<usize>,
     /// A comparison at the anchor instead of a page (`incr::Session::arm_window`):
     /// the kind of checkpoint the anchor is, and what the compile does when
     /// it holds -- restart at `p2` with this `.aux` patch and revalidation.
