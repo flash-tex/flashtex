@@ -209,6 +209,14 @@ final class EngineV3Session {
     @ObservationIgnored private var pageSizes: [Int: CGSize] = [:]
     @ObservationIgnored private(set) var stale: Set<Int> = []
     @ObservationIgnored private(set) var forms: [UInt32: DL3PreparedPage] = [:]
+    /// The forms of a page kept from before a `STARTED` with `keep: false`
+    /// (another job, a restarted host): form ids restart with the resource
+    /// ids, and a FORM may follow its page (spec §5), so a page cannot
+    /// resolve its forms when it arrives as it does its fonts and images. A
+    /// kept page draws the forms of its own run until its run's page arrives.
+    @ObservationIgnored private var heldForms: [Int: [UInt32: DL3PreparedPage]] = [:]
+    /// The forms page `i` draws with.
+    func forms(forPage i: Int) -> [UInt32: DL3PreparedPage] { heldForms[i] ?? forms }
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
@@ -228,7 +236,7 @@ final class EngineV3Session {
     @ObservationIgnored private(set) var lastEventNs: UInt64 = 0
     /// Pages drawn from the compile's PDF because the host flagged them
     /// INCOMPLETE or they draw an INCOMPLETE form (0-based).
-    var incompletePages: [Int] { pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key).sorted() }
+    var incompletePages: [Int] { pages.filter { $0.value.needsPDFFallback(forms: forms(forPage: $0.key)) }.map(\.key).sorted() }
     /// The project's last rendered pages from disk, shown until the compile
     /// replaces them (EngineV3Snapshot.swift).
     @ObservationIgnored var snapshot: (EngineV3Snapshot, URL)?
@@ -1853,12 +1861,18 @@ final class EngineV3Session {
                 // resources when it arrived), stale until they are sent again,
                 // and so do the stored pages of an instant reopen.
                 markStale(Set(pages.keys))
+                // Form ids restart too: each kept page keeps the forms it was made with.
+                if !forms.isEmpty {
+                    for (i, p) in pages where !p.formIDs.isEmpty && heldForms[i] == nil { heldForms[i] = forms }
+                    forms = [:]
+                }
             }
         case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
+            heldForms[index] = nil
             if p.needsPDFFallback || !p.formIDs.isEmpty { fallbackCandidates.insert(index) } else { fallbackCandidates.remove(index) }
             pageSizes[index] = CGSize(width: p.widthPt, height: p.heightPt)
             glyphIndexes.invalidate(index)
@@ -2443,7 +2457,7 @@ final class EngineV3Session {
     /// No pages (a stop, another project): none of them, nor their glyph
     /// indexes, may answer a lookup.
     private func dropPages() {
-        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; fallbackCandidates = []
+        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; heldForms = [:]; pdfFallback = [:]; pageCount = 0; fallbackCandidates = []
         glyphIndexes.removeAll()
     }
 
@@ -2473,7 +2487,7 @@ final class EngineV3Session {
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
-            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil; fallbackCandidates.remove(i) }
+            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; heldForms[i] = nil; stale.remove(i); pdfFallback[i] = nil; fallbackCandidates.remove(i) }
             glyphIndexes.removePages(from: n)
         }
         if n != pageCount { pageCount = n; layoutRevision &+= 1 }
@@ -2483,7 +2497,7 @@ final class EngineV3Session {
     private func loadFallbacks(pdf: String?) {
         let start = DispatchTime.now().uptimeNanoseconds
         defer { lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
-        let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms) == true }.sorted()
+        let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms(forPage: $0)) == true }.sorted()
         guard !need.isEmpty, let pdf, let doc = DL3Renderer.openPDF(URL(fileURLWithPath: pdf)) else { return }
         pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
         for i in need { if let p = DL3Renderer.page(of: doc, at: i + 1) { pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
