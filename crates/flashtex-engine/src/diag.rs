@@ -284,10 +284,24 @@ impl Defs {
         Some(&b[p & (DEFS_BLOCK - 1)]).filter(|d| d.file != u32::MAX)
     }
 
+    #[inline]
     fn insert(&mut self, p: i32, d: Def) {
         let Ok(p) = usize::try_from(p) else {
             return;
         };
+        match self.blocks.get_mut(p >> DEFS_BLOCK_BITS) {
+            Some(Some(b)) => b[p & (DEFS_BLOCK - 1)] = d,
+            _ => self.insert_in_new_block(p, d),
+        }
+    }
+
+    /// `insert` into a block not made yet. Out of line, so that the 6 KB
+    /// block built in its frame stays out of every other insert's (with it
+    /// inline, `Defs::insert` was a call of its own and 0.7 % of the
+    /// instructions on the PC).
+    #[cold]
+    #[inline(never)]
+    fn insert_in_new_block(&mut self, p: usize, d: Def) {
         let i = p >> DEFS_BLOCK_BITS;
         if i >= self.blocks.len() {
             self.blocks.resize_with(i + 1, || None);
