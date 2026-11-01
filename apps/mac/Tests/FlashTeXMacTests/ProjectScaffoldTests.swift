@@ -105,6 +105,45 @@ final class ProjectScaffoldTests: XCTestCase {
         XCTAssertEqual(asked, ["main.tex", "chapters/introduction.tex", "chapters/background.tex"])
     }
 
+    /// New Project into the open project's own folder and name: the open
+    /// main.tex is never replaced under unsaved edits (refused before any
+    /// file is written), and a clean one's text is kept as a snapshot,
+    /// offered once the new main.tex is open. Before, the template was
+    /// written first and the old text was gone (clean), or the files were
+    /// written and the open refused afterwards (dirty).
+    func testNewProjectOverTheOpenProjectKeepsItsText() throws {
+        let m = model()
+        let state = m.scaffold
+        state.folder = tmp
+        state.projectName = "thesis"
+        state.template = .blankArticle
+        state.confirmOverwrite = { _ in XCTFail("no conflict expected"); return false }
+        let main = tmp.appendingPathComponent("thesis/main.tex")
+        XCTAssertEqual(state.createProject(), .opened(main))
+        m.updateActiveText("My thesis.\n")
+        XCTAssertTrue(m.saveTex())
+        XCTAssertEqual(try String(contentsOf: main, encoding: .utf8), "My thesis.\n")
+
+        // Dirty: refused, nothing written, not even asked.
+        m.updateActiveText("My thesis, unsaved.\n")
+        state.confirmOverwrite = { _ in XCTFail("refused before asking"); return true }
+        XCTAssertEqual(state.createProject(), .refused("open with unsaved edits"))
+        XCTAssertEqual(try String(contentsOf: main, encoding: .utf8), "My thesis.\n", "nothing written")
+        XCTAssertEqual(m.activeText, "My thesis, unsaved.\n")
+
+        // Clean: replaced after the prompt, its text kept and offered.
+        m.updateActiveText("My thesis.\n")
+        XCTAssertFalse(m.isDirty)
+        var asked: [String] = []
+        state.confirmOverwrite = { asked = $0; return true }
+        XCTAssertEqual(state.createProject(), .opened(main))
+        XCTAssertEqual(asked, ["main.tex"])
+        XCTAssertNotEqual(try String(contentsOf: main, encoding: .utf8), "My thesis.\n", "the template replaced it")
+        XCTAssertEqual(m.dirtySnapshots.read(for: main)?.text, "My thesis.\n", "the old text is kept")
+        XCTAssertEqual(m.files.offeredSnapshots.map(\.text), ["My thesis.\n"], "and offered")
+        m.dirtySnapshots.remove(for: main)
+    }
+
     // MARK: new file names
 
     func testNewFilePathIsRootedAndGetsTheTexExtension() {
