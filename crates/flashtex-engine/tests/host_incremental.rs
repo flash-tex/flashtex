@@ -1716,6 +1716,10 @@ struct Forms {
     sent: HashMap<u32, [u8; 32]>,
     /// Page index -> the forms its items draw (the last version sent).
     drawn: BTreeMap<u32, Vec<u32>>,
+    /// Font ids sent, and the forms that arrived drawing a glyph of a font
+    /// not sent before them (spec §5: every resource first).
+    fonts: HashMap<u16, [u8; 32]>,
+    unfonted: Vec<(u32, u16)>,
 }
 
 impl Forms {
@@ -1734,8 +1738,18 @@ impl Forms {
             Event::Started(j) if j.get("keep").and_then(Json::as_bool) != Some(true) => {
                 *self = Forms::default()
             }
+            Event::Font(f) => {
+                self.fonts.insert(f.id, f.key);
+            }
             Event::Form(f) => {
                 self.sent.insert(f.index, f.hash);
+                for it in &f.items {
+                    if let Item::Glyph { font, .. } = it {
+                        if !self.fonts.contains_key(font) {
+                            self.unfonted.push((f.index, *font));
+                        }
+                    }
+                }
             }
             Event::Page(p) => {
                 self.drawn.insert(p.index, ids(p));
@@ -1762,6 +1776,11 @@ impl Forms {
             }
         }
         assert!(drawn > 0, "{what}: no page draws a form");
+        assert!(
+            self.unfonted.is_empty(),
+            "{what}: (form, font) drawn before the font was sent: {:?}",
+            self.unfonted
+        );
     }
 }
 
@@ -1876,6 +1895,87 @@ fn a_page_shipped_after_a_superseded_preamble_gets_its_forms() {
         exercised > 0,
         "no attempt superseded the first compile before its last page: the case was not exercised"
     );
+}
+
+/// A persisted S₀ carries the forms its preamble wrote. pdfTeX writes an
+/// `\immediate\pdfxform` at once (pgf's shadings and fadings: a beamer
+/// theme, `\usetikzlibrary{fadings}`), so a host that opens the document
+/// from a stored S₀, whose run starts after the preamble, never writes them;
+/// its pages draw them all the same. It must send each before DONE (spec
+/// §5), with the fonts its glyphs use, equal to a from-scratch compile's.
+#[test]
+fn a_reopen_from_a_persisted_s0_sends_the_preambles_forms() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s0forms");
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    // A rule, and a word in a font the body does not use, with its source
+    // span (the preamble's line, named afresh by the new process).
+    let mut doc = String::from(
+        "\\documentclass{article}\n\
+         \\setbox0=\\hbox{\\vrule width 40pt height 12pt depth 3pt}\n\
+         \\immediate\\pdfxform0\n\
+         \\edef\\rulemark{\\noexpand\\pdfrefxform\\the\\pdflastxform\\relax}\n\
+         \\setbox0=\\hbox{\\normalfont\\bfseries Logo}\n\
+         \\immediate\\pdfxform0\n\
+         \\edef\\logo{\\noexpand\\pdfrefxform\\the\\pdflastxform\\relax}\n\
+         \\begin{document}\n",
+    );
+    for i in 0..3 {
+        doc.push_str(&format!(
+            "Page {i}: \\rulemark\\ \\logo\\par\n{}\n\\newpage\n",
+            "Some words of the page, enough for a line or two. ".repeat(8)
+        ));
+    }
+    doc.push_str("\\end{document}\n");
+    std::fs::write(proj.join("main.tex"), &doc).unwrap();
+    let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    let stored = || {
+        std::fs::read_dir(&cache).is_ok_and(|d| {
+            d.flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == "s0"))
+        })
+    };
+    let mut cold = Forms::default();
+    {
+        let host = start_host_env("s0fa", &cache_env);
+        let mut c = Client::connect(&host.1).unwrap();
+        for id in 1..=4 {
+            let d = compile_forms(&mut c, &mut cold, &req(id, &proj, &out, "main.tex"));
+            assert_eq!(d.str_field("status"), Some("ok"), "{d}");
+            if d.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        // (the writer thread writes S₀ after DONE; a host that ends does
+        // not wait for it)
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !stored() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = c.bye();
+    }
+    assert!(stored(), "no S0 was stored");
+    cold.check(3, &cold, "the first host");
+    assert_eq!(cold.sent.len(), 2, "the preamble's two forms");
+    let host = start_host_env("s0fb", &cache_env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut forms = Forms::default();
+    let d = compile_forms(&mut c, &mut forms, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(d.str_field("status"), Some("ok"), "{d}");
+    assert_eq!(
+        d.str_field("mode"),
+        Some("open"),
+        "opened from the stored S0: {d}"
+    );
+    assert_eq!(d.int_field("pages"), Some(3), "{d}");
+    forms.check(3, &cold, "opened from the stored S0");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 /// Racy signatures (git's racy-clean rule; review of #1549): a source
