@@ -74,6 +74,47 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertTrue(model.completions.allSatisfy { $0.text.hasPrefix("\\be") }, "\(model.completions.map(\.text))")
     }
 
+    // MARK: Tab before the next pass lands
+
+    /// Tab right after a keystroke, while that keystroke's pass is still
+    /// debouncing: the list showing is the previous pass's, whose byte range
+    /// ends before the character just typed. Before the fix it was applied
+    /// at that old range, leaving the typed `t` after the insertion
+    /// (`\subsection{…}t`).
+    func testTabBeforeTheNextPassLandsReplacesTheWholeCurrentPrefix() async throws {
+        try open("\\documentclass{article}\n")
+        let base = model.document!.text
+        var text = base + "\\subsec"
+        model.textChanged(text, caret: (text as NSString).length)
+        await model.settleCompletions()
+        let shown = try XCTUnwrap(model.completions.first)
+        XCTAssertEqual(shown.text, "\\subsection")
+        model.completionDelay = 30 // the pass for the next keystroke has not landed when Tab arrives
+        text += "t"
+        model.textChanged(text, caret: (text as NSString).length)
+        XCTAssertEqual(model.completions.first, shown, "the previous pass is still showing")
+        XCTAssertTrue(model.handle(.acceptOrNextStop))
+        XCTAssertEqual(model.document?.text, base + shown.insertion)
+    }
+
+    /// The same Tab after a keystroke that ended the word: the showing list
+    /// no longer applies, so it is not applied (before the fix: `\subsec `
+    /// became `\subsection{…} `).
+    func testTabAfterTheWordEndedDoesNotApplyTheOldList() async throws {
+        try open("\\documentclass{article}\n")
+        let base = model.document!.text
+        var text = base + "\\subsec"
+        model.textChanged(text, caret: (text as NSString).length)
+        await model.settleCompletions()
+        XCTAssertEqual(model.completions.first?.text, "\\subsection")
+        model.completionDelay = 30
+        text += " "
+        model.textChanged(text, caret: (text as NSString).length)
+        XCTAssertFalse(model.handle(.acceptOrNextStop), "Tab is the editor's again")
+        XCTAssertEqual(model.document?.text, base + "\\subsec ")
+        XCTAssertTrue(model.completions.isEmpty, "the stale list is dropped")
+    }
+
     // MARK: contexts
 
     func testVocabularyIsBundledAndDecodes() {
