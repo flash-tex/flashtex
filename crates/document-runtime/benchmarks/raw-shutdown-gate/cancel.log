@@ -1,9 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
-     Running unittests src/lib.rs (crates/document-runtime/target/debug/deps/flashtex_document_runtime-152b1eeeef1fde5a)
-
-running 1 test
-{"cancel_ms":0.008142,"cancelled_preview_suppressed":true,"drain_after_release_ms":80.32984499999999,"drop_after_drain_ms":0.90624,"entered_serde_before_cancel":true,"framed_bytes":8388608,"process_peak":"VmHWM:\t   20240 kB","scope":"one test process; owner cancellation does not interrupt serde; no native responsiveness guarantee"}
-test decode_cancellation_probe::cancellation_during_entered_serde_invalidates_source_ownership ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.12s
-
