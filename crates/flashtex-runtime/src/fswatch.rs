@@ -734,19 +734,42 @@ mod tests {
         std::env::set_var("FLASHTEX_RACY_MS", "0");
         enable();
         assert!(enabled());
-        let served = || counts()[0];
+        // (whether a check, its queue drained, serves `path` without a
+        // `stat`: this thread's answer, not the process-wide counts, which
+        // the crate's other tests move as well)
+        let vouched = |path: &str| {
+            W.lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|w| w.kept(path).is_some_and(|e| e.sig.is_some()))
+        };
         {
             let _c = check();
             assert!(sig(&p).is_some());
             assert!(sig(&missing).is_none());
         }
-        let n = served();
-        {
-            let _c = check();
+        // An entry made or removed in a directory on the way -- the
+        // temporary directory, where the crate's other tests and other
+        // processes make files -- unvouches both, as it should; a check with
+        // no event since the last serves both. (Bounded: also past the
+        // racy window, should another test have fixed it at 2 s first.)
+        let start = std::time::Instant::now();
+        loop {
+            let c = check();
+            if vouched(&p) && vouched(&missing) {
+                assert_eq!(sig(&p).map(|s| s.len), Some(3));
+                assert!(sig(&missing).is_none());
+                break;
+            }
             assert_eq!(sig(&p).map(|s| s.len), Some(3));
             assert!(sig(&missing).is_none());
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "both served from the watches"
+            );
+            drop(c);
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(served(), n + 2, "both served from the watches");
         std::fs::write(&f, b"three").unwrap();
         {
             let _c = check();
@@ -773,12 +796,11 @@ mod tests {
             let _c = check();
             sig(&p);
         }
-        let n = served();
         {
             let _c = check();
-            sig(&p);
+            assert!(!vouched(&p), "an excluded path is never served");
+            assert_eq!(sig(&p).map(|s| s.len), Some(1));
         }
-        assert_eq!(served(), n, "an excluded path is never served");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
