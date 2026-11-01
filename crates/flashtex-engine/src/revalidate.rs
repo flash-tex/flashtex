@@ -294,6 +294,7 @@ mod tests {
                 seen: None,
                 stamp: None,
                 size: None,
+                opens: 0,
             });
         }
         let w = window_journal(&j, &[(1, 2), (2, 3)]);

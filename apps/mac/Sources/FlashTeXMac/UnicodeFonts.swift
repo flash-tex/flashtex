@@ -445,17 +445,35 @@ enum UnicodeFonts {
 
     /// Whether a diagnostic of the new engine says the document needs XeTeX or LuaTeX.
     static func need(message: String, detail: String? = nil, frames: [String] = []) -> UnicodeFontsNeed? {
-        let text = message + "\n" + (detail ?? "")
-        if reportSignatures.contains(where: { text.contains($0) }) || frames.contains("\\IFTEX@Require") {
-            let short = message.trimmingCharacters(in: .whitespacesAndNewlines)
-            return UnicodeFontsNeed(kind: .engineReport(short.count > 90 ? String(short.prefix(90)) + "…" : short), file: nil)
-        }
-        return nil
+        reports(message, detail) || frames.contains(requireFrame) ? report(message) : nil
     }
 
     static func need(in d: DL3Diag) -> UnicodeFontsNeed? {
-        need(message: d.message, detail: d.detail, frames: d.trace.compactMap(\.name))
+        reports(d.message, d.detail) || d.trace.contains(where: { $0.name == requireFrame }) ? report(d.message) : nil
     }
+
+    private static let requireFrame = "\\IFTEX@Require"
+
+    private static func report(_ message: String) -> UnicodeFontsNeed {
+        let short = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return UnicodeFontsNeed(kind: .engineReport(short.count > 90 ? String(short.prefix(90)) + "…" : short), file: nil)
+    }
+
+    /// Whether the message or the detail holds a signature (no signature
+    /// spans their line break). A byte search (`memmem`): a failed compile's
+    /// DONE runs this over every DIAG on the main thread, and Foundation's
+    /// `contains` over a long book's thousands of warnings was 20 ms of it.
+    private static func reports(_ message: String, _ detail: String?) -> Bool {
+        func has(_ text: String) -> Bool {
+            var t = text
+            return t.withUTF8 { b in
+                guard let base = b.baseAddress else { return false }
+                return signatureBytes.contains { sig in sig.withUnsafeBufferPointer { memmem(base, b.count, $0.baseAddress, sig.count) != nil } }
+            }
+        }
+        return has(message) || (detail.map(has) ?? false)
+    }
+    private static let signatureBytes: [[UInt8]] = reportSignatures.map { Array($0.utf8) }
 }
 
 // MARK: - project files

@@ -188,9 +188,17 @@ class Host:
         self.send(K_HELLO, {"protocol": "display-list-v3", "version": [3, 2], "client": "xtools"})
         k, self.hello = self.recv()
         assert k == "hello", (k, self.hello)
+        self.init_client_state()
+
+    def init_client_state(self):
+        """What the client side of the connection holds (a test builds a
+        Host without a process and calls this)."""
         self.pages = {}  # index -> page_digest, as an incremental client holds them
         self.fonts, self.images, self.forms = {}, {}, {}
+        # index -> (PAGE body, fonts, images): the page with the bindings in
+        # force when it arrived, which is what the client resolves it with
         self.bodies = {}
+        # form id -> (FORM body, fonts, images), the same for each form
         self.form_bodies = {}
         self.font_info = {}
         self.image_log = []
@@ -260,7 +268,7 @@ class Host:
             elif k == "form":
                 fid = struct.unpack_from("<I", b, 0)[0]
                 self.forms[fid] = bytes.fromhex(page_digest(b, self.fonts, self.images, self.forms))
-                self.form_bodies[fid] = b
+                self.form_bodies[fid] = (b, dict(self.fonts), dict(self.images))
             elif k == "started":
                 self.resolve_forms()
                 if not b.get("keep"):
@@ -275,12 +283,15 @@ class Host:
                     if m not in self.images:
                         self.violate(f"page {idx} draws image {m}, never sent")
                 self.pages[idx] = page_digest(b, self.fonts, self.images, self.forms)
-                self.bodies[idx] = (b, dict(self.fonts))
+                self.bodies[idx] = (b, dict(self.fonts), dict(self.images))
                 self.pending = (idx, b, dict(self.fonts), dict(self.images))
             elif k == "pages":
                 if b.get("complete"):
                     for i in [i for i in self.pages if i >= b["count"]]:
                         del self.pages[i]
+                    # and the DONE that follows must not resolve it back in
+                    if self.pending and self.pending[0] >= b["count"]:
+                        self.pending = None
             elif k == "done":
                 self.resolve_forms()
                 ev["dones"].append(b)
@@ -312,21 +323,32 @@ class Host:
             self.pending = None
 
     def held_pages(self):
-        """The pages the client holds, each digested with the fonts, images
-        and forms it holds now: what it would draw. (`self.pages` digests a
-        page when it arrives, with the forms held then; a form the engine
-        writes after the page, spec §6.4, replaces the one the page was
-        digested with, so that digest can be stale although what the client
-        draws is right.) Forms are digested bottom-up with the same final
-        resources; nesting deeper than 16 levels stays unresolved."""
+        """The pages the client holds, digested as it would draw them. A
+        client resolves a page's font and image ids when the page arrives,
+        and a later rebinding never changes a page it holds (spec §5), so
+        each page is digested with the fonts and images in force when it
+        arrived, and each form with those in force when the form arrived.
+        A wrong binding corrected later therefore still shows up as a
+        mismatch on the pages sent while it was wrong.
+
+        Only form ids are resolved at the end: a form may come after the
+        page that draws it (spec §5, §6.4), and the client draws the one it
+        holds now. (`self.pages` digests a page when it arrives, with the
+        forms held then, so it can be stale for that reason alone.) Forms
+        are digested bottom-up; nesting deeper than 16 levels stays
+        unresolved."""
         forms = {}
         for _ in range(16):
-            new = {f: bytes.fromhex(page_digest(b, self.fonts, self.images, forms))
-                   for f, b in self.form_bodies.items()}
+            new = {f: bytes.fromhex(page_digest(b, fonts, images, forms))
+                   for f, (b, fonts, images) in self.form_bodies.items()}
             if new == forms:
                 break
             forms = new
-        return {i: page_digest(self.bodies[i][0], self.fonts, self.images, forms) for i in self.pages}
+        out = {}
+        for i in self.pages:
+            b, fonts, images = self.bodies[i]
+            out[i] = page_digest(b, fonts, images, forms)
+        return out
 
     def export(self, req, deadline=900):
         self.send(K_COMPILE, dict(req, export=True))
@@ -684,7 +706,7 @@ def sound_one_(a, name, src, main, kinds):
                 ev = h.cycle(req)
                 t_settled = now() - t0
                 cand_pages = h.held_pages()
-                cand_bodies = {i: b for i, (b, _) in h.bodies.items()}
+                cand_bodies = {i: b for i, (b, *_) in h.bodies.items()}
                 cand_files = files_of(out_of(a, cd))
                 rid += 1
                 ex = export_copy(h, a, cd, main, rid, work)
@@ -703,7 +725,7 @@ def sound_one_(a, name, src, main, kinds):
                 try:
                     h2, ev2, ex2, _ = host_run(a, fd, main, fd + "-host")
                     fresh_pages = h2.held_pages()
-                    fresh_bodies = {i: b for i, (b, _) in h2.bodies.items()}
+                    fresh_bodies = {i: b for i, (b, *_) in h2.bodies.items()}
                     h2_fonts, h2_fonts_info = dict(h2.fonts), dict(h2.font_info)
                     h2_images = dict(h2.images)
                     h2_forms = dict(h2.forms)

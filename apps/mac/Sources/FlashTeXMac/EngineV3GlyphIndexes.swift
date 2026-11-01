@@ -79,7 +79,7 @@ struct EngineV3GlyphIndexes {
 
     /// Records page `i`'s span summary; whether it can show any of `wanted`.
     mutating func summarize(_ i: Int, of page: DL3PreparedPage, _ wanted: Set<UInt32>) -> Bool {
-        let have = Self.glyphSpans(page.page)
+        let have = page.glyphSpans // made with the page, off main (DL3PreparedPage)
         spans[i] = have
         for s in wanted where Self.contains(have, s) { return true }
         return false

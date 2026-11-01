@@ -1147,6 +1147,7 @@ impl Obs {
                     let p = f.path.as_str();
                     !p.is_empty()
                         && written(p)
+                        && !reopened_after(g, &o, f)
                         && !*same
                             .entry(system::out_key(p))
                             .or_insert_with(|| written_same(g, &o, new, p))
@@ -2235,6 +2236,28 @@ fn being_written(live: &ReadLog, old: &ReadLog) -> Vec<String> {
     v.sort();
     v.dedup();
     v
+}
+
+/// Lane BEAMER: `f`, a later read by the old run of a file the runs
+/// write, opened it after the old run opened it for output again, after the
+/// convergence point `o` (where it was open neither for input nor for
+/// output): what `f` read, the old run wrote from its state at `o`, equal to
+/// the new run's, and from input the test checks unchanged; and the jump
+/// puts the old run's bytes of such a file back whole (`redo_to`). Beamer's
+/// `.vrb`, which each fragile frame writes and then `\input`s: counted a
+/// read of a file the runs write (DESIGN.md §5.3's barrier), it kept every
+/// convergence's old pages only up to the next fragile frame, and an edit
+/// before a deck's fragile frames re-typeset all of them.
+fn reopened_after(g: &Globals, o: &ExtRecord, f: &system::FileRead) -> bool {
+    if f.closed_at.is_some() {
+        return false;
+    }
+    let k = system::out_key(&f.path);
+    let open = o.files.iter().any(|s| match &s.stream {
+        Stream::In { path, .. } | Stream::Out { path, .. } => system::out_key(path) == k,
+        _ => false,
+    });
+    !open && g.old_reopened(&k, o.opens, f.opens)
 }
 
 /// Whether output file `p`, which the old run reads after its checkpoint
@@ -3866,6 +3889,7 @@ impl Session {
                 seen: None,
                 stamp: None,
                 size: None,
+                opens: 0,
             });
             j.mark_seen(path);
         }
@@ -3889,6 +3913,7 @@ impl Session {
                     seen: None,
                     stamp: None,
                     size: None,
+                    opens: 0,
                 });
                 j.mark_seen(path);
                 open.push(path.clone());
@@ -3917,6 +3942,7 @@ impl Session {
                 seen: None,
                 stamp: *stamp,
                 size: *size,
+                opens: 0,
             });
             j.mark_seen(path);
         }
@@ -5706,13 +5732,33 @@ impl Session {
         // signature: each of its entries took a `stat`, lane T7-FULL10)
         let mut sig_of: HashMap<String, Option<StatSig>> = HashMap::new();
         let fixed = self.fixed_inputs.clone();
+        // Lane BEAMER: a file every read of which the run had opened for
+        // output before (beamer's `.vrb`, written and `\input` by each
+        // fragile frame) holds what the run itself put there, not an input
+        // the edit changed: a run from a restart point writes it again
+        // before it reads it, or finds it as the restart point had it (a
+        // checkpoint between two of its instances is restorable only with
+        // the instance put back, `checkpoint::rewritten_since`). Its later
+        // reads still bound a convergence (the test's `written_read`). One
+        // another program changed is changed (`consumed_nothing_changed`).
+        // Counted changed, it made every checkpoint after the first fragile
+        // frame consumed a changed file: each edit restarted there.
+        let mut own: HashMap<&str, bool> = HashMap::new();
+        for f in j.files.iter() {
+            *own.entry(f.path.as_str()).or_insert(true) &= f.written_before;
+        }
+        let own: std::collections::HashSet<String> = own
+            .into_iter()
+            .filter(|&(p, all)| all && system::outside_change(p).is_none())
+            .map(|(p, _)| p.to_string())
+            .collect();
         for (i, f) in j.files_mut().iter_mut().enumerate() {
             // S₀'s key checked the files read before it, except those still
             // open there (only their prefix is keyed).
             if i < key_files && !key_open.contains(&f.path) {
                 continue;
             }
-            if fixed.contains(&f.path) {
+            if fixed.contains(&f.path) || own.contains(&f.path) {
                 continue;
             }
             if crate::fswatch::sig(&f.path).as_ref() == Some(&f.stat) {

@@ -118,6 +118,16 @@ class TypingTests(unittest.TestCase):
         self.assertIn('1 of 4 without the watched page', why)
         self.assertIn('2 of 4 keystrokes not painted by their own compile', why)
 
+    def test_keystrokes_the_client_sent_late(self):
+        # keystrokes 1 and 2 sent together with 3 (the typist's clock slipped): a harness fault
+        ph = self.phase([10, 13, 13, 13])
+        for k, late in zip(ph['keys'], [0.0, 100.2, 50.1, 0.1]):
+            k['sent_late_ms'] = late
+        r = t7.typing_row(dict(doc='d', pages=5), 'typing@100ms', ph)
+        self.assertEqual((r['not_own'], r['sent_late']), (2, 2))
+        why = '; '.join(t7.verdict([r], None))
+        self.assertIn('2 of 3 keystrokes sent over 5 ms late by the client', why)
+
 
 class ReferenceTests(unittest.TestCase):
     def state(self, **kw):
