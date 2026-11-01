@@ -108,7 +108,7 @@ pub fn shift_out_pos(x: u64, len_id: u64, d: i64) -> u64 {
 /// checkpoints between two fragile frames were all refused, and every edit
 /// past the first fragile frame restarted before it (the metropolis demo's
 /// last page: 30 pages re-typeset to reach it). `Ok`: what to put back.
-fn rewritten_since(rec: &ExtRecord) -> Result<Vec<(String, std::sync::Arc<Vec<u8>>)>, String> {
+fn rewritten_since(rec: &ExtRecord) -> Result<system::PutBack, String> {
     system::instances_at(rec.opens, &open_outputs(rec))
 }
 
@@ -437,7 +437,7 @@ pub struct Pending {
     /// The old run's output opens (`system::opens_since`) from the
     /// target's count on.
     /// (with the instances kept beside them, `system::instances_since`)
-    opens_tail: (usize, Vec<String>, Vec<Option<std::sync::Arc<Vec<u8>>>>),
+    opens_tail: (usize, Vec<String>, Vec<Option<system::Instance>>),
     /// The read-set of the old run (at its latest state).
     rs_old: crate::readset::ReadSet,
 }

@@ -3790,13 +3790,21 @@ thread_local! {
     static REWRITTEN: std::cell::RefCell<(u64, Vec<RewrittenRange>)> =
         const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
     /// `instances_at`'s index of `OPENS` at generation `.0` (`reopened_files`).
-    static REOPENED: std::cell::RefCell<(u64, Vec<(String, Vec<usize>)>)> =
+    static REOPENED: std::cell::RefCell<Reopened> =
         const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
     /// Output files whose content, when an `\openout` is about to truncate
     /// one, is kept first (`guard_outputs`): the checkpoint layer holds
     /// only the part beyond a checkpoint's length of each.
     static GUARD: std::cell::RefCell<Vec<(String, Option<Vec<u8>>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// What one instance of a rewritten output file held (`INSTANCES`).
+pub type Instance = std::sync::Arc<Vec<u8>>;
+/// The instances a restore puts back, by file (`instances_at`).
+pub type PutBack = Vec<(String, Instance)>;
+/// `instances_at`'s index: each file opened more than once, with its open
+/// positions, at a generation of `OPENS`.
+type Reopened = (u64, Vec<(String, Vec<usize>)>);
 
 /// How many files have been opened for output so far (`OPENS`).
 pub fn opens_len() -> usize {
@@ -3975,10 +3983,7 @@ pub fn forget_open_instances(open_out: &[String]) {
 /// (lane BEAMER: beamer's `.vrb` between two fragile frames). `Err(name)`:
 /// one such file cannot be put back: open for output there (`open_out`, by
 /// `out_key`) or its instance not kept.
-pub fn instances_at(
-    n: usize,
-    open_out: &[String],
-) -> Result<Vec<(String, std::sync::Arc<Vec<u8>>)>, String> {
+pub fn instances_at(n: usize, open_out: &[String]) -> Result<PutBack, String> {
     if rewritten_at(n).is_none() {
         return Ok(vec![]);
     }
@@ -3990,7 +3995,7 @@ pub fn instances_at(
         }
         INSTANCES.with(|v| {
             let v = v.borrow();
-            let mut out: Vec<(String, std::sync::Arc<Vec<u8>>)> = vec![];
+            let mut out: PutBack = vec![];
             for (k, at) in &r.1 {
                 // (its last open before `n`, and one from `n` on)
                 let j = at.partition_point(|&p| p < n);
@@ -4033,7 +4038,7 @@ fn reopened_files() -> Vec<(String, Vec<usize>)> {
 
 /// Put back the instances `instances_at` gave (a restore): each file then
 /// holds what it held at the restore target, the engine's own bytes.
-pub fn put_back_instances(v: &[(String, std::sync::Arc<Vec<u8>>)]) -> Result<(), String> {
+pub fn put_back_instances(v: &[(String, Instance)]) -> Result<(), String> {
     for (path, data) in v {
         file_trace(|| format!("put back instance {path} ({} bytes)", data.len()));
         std::fs::write(path, data.as_slice()).map_err(|e| format!("{path}: {e}"))?;
