@@ -1014,10 +1014,14 @@ impl Engine {
         let reopen = doc.compiles == 0 && s0_path.as_ref().is_some_and(|p| p.is_file());
         // A stored S₁ (lane COLD-OPEN): the pages a reopen from it ships
         // first are from S₁'s on, and the document had its run's count.
-        let s1_head = s1_path
+        // (read once: the open checks and loads this one)
+        let mut s1_file = s1_path
             .as_ref()
             .filter(|p| reopen && p.is_file())
-            .and_then(|p| super::s1::File::read(&p.to_string_lossy()).ok())
+            .map(|p| super::s1::File::read(&p.to_string_lossy()));
+        let s1_head = s1_file
+            .as_ref()
+            .and_then(|f| f.as_ref().ok())
             .map(|f| f.head.total as usize);
         started(
             "resident",
@@ -1171,13 +1175,9 @@ impl Engine {
         let busy_run = crate::busy::enter(crate::busy::Part::Typeset);
         let mut open_error = None;
         let first = if reopen {
-            let s1 = s1_path
-                .as_ref()
-                .filter(|p| p.is_file())
-                .map(|p| p.to_string_lossy().into_owned());
             match doc.session.open_s1(
                 &s0_path.as_ref().unwrap().to_string_lossy(),
-                s1.as_deref(),
+                s1_file.take(),
                 stop_at,
             ) {
                 Ok(r) => Ok(r),

@@ -3783,11 +3783,11 @@ impl Session {
     /// holds and is before the viewport `stop_at`: the run goes on from S₁,
     /// and the pages before it are filled from S₀ once the compile's passes
     /// are done (`s1_fill`). Without S₁ (`Report::s1_error` says why), as
-    /// `open_s0`.
+    /// `open_s0`. `s1` is the stored file as `host::s1::File::read` read it.
     pub fn open_s1(
         &mut self,
         path: &str,
-        s1: Option<&str>,
+        s1: Option<Result<host::s1::File, String>>,
         stop_at: Option<usize>,
     ) -> Result<Report, String> {
         let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
@@ -3821,14 +3821,14 @@ impl Session {
         let ms = |t: Instant| (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
         let mut g = g;
         let s1 = match s1 {
-            Some(p) => {
+            Some(f) => {
                 // (its reads as the run read them: before anything is
                 // written, `host::s1::File::journal_reads`)
                 let f = g.record_of(s0.id).and_then(|r0| {
                     let t = Instant::now();
-                    let f = host::s1::File::read(p)?;
+                    let f = f?;
                     f.check(&s0.key, &r0, clock, &first_line, stop_at)?;
-                    s1_ms.push(("read", ms(t)));
+                    s1_ms.push(("check", ms(t)));
                     let t = Instant::now();
                     let reads = f.journal_reads()?;
                     s1_ms.push(("reads", ms(t)));
