@@ -285,8 +285,8 @@ which is what testing that exact tree requires. A failed or capped file list
 counts as touching everything.
 
 Nothing else runs in the queue: no Mac, no iPad, no Rust workspace, no
-standalone crates, no macOS leg of anything, and the old engine's parity
-fixtures (a macOS job) never.
+standalone crates, no macOS leg of anything, and the parity fixtures on macOS
+(the new engine against `baseline-fixtures.json`) never.
 
 ### The pull-request set
 
@@ -296,7 +296,7 @@ Unchanged for reviewers, with one exception:
 |---|---|
 | everything in the gate's table above | always (engine parity on GitHub-hosted Ubuntu, sharded the same way, when the change touches engine-affecting paths) |
 | `mac app (swift build + test)`, `iPad companion (…)` | only when the change touches `apps/` (`apple` in `plan`) |
-| `old engine: parity fixtures (GitHub-hosted macOS)` | only when the change touches `apps/` **and** a path those fixtures depend on |
+| `parity fixtures (self-hosted macOS)` / `parity fixtures (GitHub-hosted macOS)` (the new engine against `baseline-fixtures.json`; until S7 this was the old engine's job) | only when the change touches `apps/` **and** a path those fixtures depend on (`parity_fixtures` in `plan`) |
 
 The exception: **hosted macOS jobs run on a pull request only when it touches
 `apps/`** (the Mac app, the iPad companion and their fonts). One hosted macOS job
