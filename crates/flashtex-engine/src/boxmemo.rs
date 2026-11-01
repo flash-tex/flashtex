@@ -500,6 +500,8 @@ struct Entry {
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
+    /// Foreign box registers a span copied, by contents (§15.6).
+    kc: Vec<(i32, crate::boxfrag::Frag, Positions)>,
     holes: Vec<(i32, Vec<i32>)>,
     /// A draw call's output: the nodes it appended to the current list,
     /// and the list's `aux` after them.
@@ -712,6 +714,8 @@ struct Rec {
     /// it (`flashtex_bm_box_use`): (register, box).
     pending_box: Option<(i32, i32)>,
     kb: Vec<(i32, Vec<i32>)>,
+    /// Foreign box registers a span copied (`\copy`), by contents (§15.6).
+    kc: Vec<(i32, crate::boxfrag::Frag, Positions)>,
     /// (register, box node, key) of each box moved out of a foreign register
     holes: Vec<(i32, i32, Vec<i32>)>,
     ops: Vec<Op>,
@@ -2710,6 +2714,13 @@ impl Globals {
                         .chain(&e.holes)
                         .all(|(n, v)| self.bm_box_key(self.bm_box_value(*n)) == *v)
                     && e.k3.iter().all(|(p, m)| self.bm_meaning_is(*p, m))
+                    && e.kc.iter().all(|(n, f, pos)| {
+                        let b = self.bm_box_value(*n);
+                        b != 0
+                            && self.bm_box_contents(b).is_some_and(|(g, ps)| {
+                                crate::boxfrag::frag_diff(f, &g).is_none() && ps == *pos
+                            })
+                    })
                     && e.obj_refs
                         .iter()
                         .all(|r| self.bm_obj_is(r.t, r.n) && self.bm_obj_dims(r.n) == r.dims)
@@ -2905,6 +2916,7 @@ impl Globals {
             gboxes: vec![],
             pending_box: None,
             kb: vec![],
+            kc: vec![],
             holes: vec![],
             ops: vec![],
             created: vec![],
@@ -3010,6 +3022,7 @@ impl Globals {
                     absent: rec.absent,
                     kr: rec.kr,
                     kb: rec.kb,
+                    kc: rec.kc,
                     holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                     frag: None,
                     aux: 0,
@@ -3470,6 +3483,25 @@ impl Globals {
         if m != n {
             return self.bm_abort("BoxContent");
         }
+        if k == 4 {
+            // `\copy` of a box the call did not make: a span keys the box
+            // by its contents (amsmath's `\Mathstrut@` copies
+            // `\Mathstrutbox@` into every pgfplots label, §15.6)
+            if !self.bm_with_rec(|r| r.span.is_some()).unwrap_or(false) {
+                return self.bm_abort("BoxContent");
+            }
+            let known = self
+                .bm_with_rec(|r| r.kc.iter().any(|(x, _, _)| *x == n))
+                .unwrap_or(false);
+            if known {
+                return;
+            }
+            let Some(key) = self.bm_box_contents(p) else {
+                return self.bm_abort("BoxContent");
+            };
+            self.bm_with_rec(|r| r.kc.push((n, key.0, key.1)));
+            return;
+        }
         let key = self.bm_box_key(p);
         self.bm_with_rec(|r| {
             if k == 3 {
@@ -3491,6 +3523,34 @@ impl Globals {
         }
         let m = |o: i32| self.mem[(p + o) as usize].int();
         vec![self.mem[p as usize].hh().b0(), m(1), m(2), m(3), m(4)]
+    }
+
+    /// Box `p` (a register's) by value, with its nodes' source positions:
+    /// what a `\copy` of it reads (§15.6).
+    fn bm_box_contents(&self, p: i32) -> Option<(crate::boxfrag::Frag, Positions)> {
+        let f = self.frag_take(p, self.bm_link(p), &[], &[]).ok()?;
+        let pos = if crate::displaylist::enabled() {
+            let mut at = vec![];
+            self.bm_nodes_one(p, &mut at);
+            at.iter().map(|&q| self.dl_side_pos(q)).collect()
+        } else {
+            vec![]
+        };
+        Some((f, pos))
+    }
+
+    /// Node `p` and what it holds, in `bm_nodes`'s order.
+    fn bm_nodes_one(&self, p: i32, out: &mut Vec<i32>) {
+        let next = self.bm_link(p);
+        // (`bm_nodes` on a list of `p` alone)
+        let mut v = vec![];
+        self.bm_nodes(p, &[], &mut v);
+        let stop = if next == 0 {
+            v.len()
+        } else {
+            v.iter().position(|&q| q == next).unwrap_or(v.len())
+        };
+        out.extend_from_slice(&v[..stop]);
     }
 
     /// `change_box(null)`: box register `n` becomes void at its level
@@ -4151,6 +4211,7 @@ impl Globals {
                 absent: rec.absent,
                 kr: rec.kr,
                 kb: rec.kb,
+                kc: rec.kc,
                 holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                 frag,
                 aux,

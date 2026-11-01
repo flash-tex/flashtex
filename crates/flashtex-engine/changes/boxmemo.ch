@@ -281,6 +281,14 @@ box_code: begin scan_register_num; fetch_box(cur_box);
   if bm_rec_on then flashtex_bm_box_use(cur_val,3);
 @z
 
+@x pdftex.web l.29738 - ... and a box a recording copies
+copy_code: begin scan_register_num; fetch_box(q); cur_box:=copy_node_list(q);
+@y
+copy_code: begin scan_register_num; fetch_box(q);
+  if bm_rec_on then flashtex_bm_box_use(cur_val,4);
+  cur_box:=copy_node_list(q);
+@z
+
 @x pdftex.web l.29936 - a span's recording notes the paragraph it begins, before and after the page builder runs
 if every_par<>null then begin_token_list(every_par,every_par_text);
 if nest_ptr=1 then build_page; {put |par_skip| glue on current page}

@@ -8569,6 +8569,9 @@ impl Globals {
                                 }
                             }
                         }
+                        if self.bm_rec_on {
+                            self.flashtex_bm_box_use(self.cur_val, 4i32);
+                        }
                         self.cur_box = self.copy_node_list(q);
                     }
                 }
