@@ -184,15 +184,6 @@ pub enum Point {
     /// newest one before the edited line instead of from the format
     /// (PREAMBLE-FAST; `incr::Session::preamble_restart`).
     PreambleLine,
-    /// The first `big_switch` after a read of a whole user file in the
-    /// document (`\pdffilesize`, `\pdffilemoddate`, `\pdfmdfivesum file`,
-    /// `\pdffiledump`; `Globals::note_whole_read_point`): expl3's
-    /// `\file_full_name:n` takes the size of every file LaTeX `\input`s, and
-    /// READ-REVALIDATE compares here instead of at the next page (a page
-    /// typeset twice per keystroke, INFDESC-883). Taken at the same command
-    /// in every run: it takes the place of a timed, segment or preemption
-    /// request, which only time decides, and gives way to any other.
-    WholeRead,
 }
 
 /// What an [`Observer`] asks of the run after a checkpoint.
@@ -257,8 +248,6 @@ const REQ_S0_WAIT: i32 = 11;
 /// Newer work may wait ([`PREEMPT_HINT`] moved): at this `big_switch`, a
 /// segment checkpoint if the observer stops the run here (`stops_now`).
 const REQ_PREEMPT: i32 = 12;
-/// A whole user file was read (`Point::WholeRead`).
-const REQ_WHOLE_READ: i32 = 13;
 
 /// Bumped by the host's server thread whenever newer work for the engine
 /// arrives (a `COMPILE` queued, a `CANCEL`): lane T7-LAST12. A run looks at
@@ -2248,7 +2237,6 @@ impl Globals {
                 self.hook_checkpoint(Point::Aux)
             }
             REQ_AUX_DONE => self.hook_checkpoint(Point::AuxDone),
-            REQ_WHOLE_READ => self.hook_checkpoint(Point::WholeRead),
             REQ_PREAMBLE_LINE => {
                 if !self.in_preamble() {
                     self.layer().preamble_line_pending = false;
@@ -2540,29 +2528,6 @@ impl Globals {
 
     /// No request is waiting but `REQ_S0_WAIT`, which any other one may
     /// take the place of.
-    /// A C part read the whole of `path` (`crate::system::note_whole_read`):
-    /// in a run that takes checkpoints, after `\document`, outside the
-    /// output routine, ask for `Point::WholeRead` at the next `big_switch`
-    /// when `path` is the user's -- in place of a request that only time
-    /// decides (timed, segment, preemption), so that every run takes it at
-    /// the same command; with any other pending, none (that other request
-    /// is the same in every run).
-    pub fn note_whole_read_point(&mut self, path: &str) {
-        if self.ckpt_on_shipout != REQ_SHIPOUT
-            || self.output_active
-            || !crate::system::is_user_file(path)
-            || self.layer().s0.is_none()
-        {
-            return;
-        }
-        if matches!(
-            self.ckpt_request,
-            0 | REQ_S0_WAIT | REQ_TIMED | REQ_SEGMENT | REQ_PREEMPT | REQ_WHOLE_READ
-        ) {
-            self.ckpt_request = REQ_WHOLE_READ;
-        }
-    }
-
     fn request_free(&self) -> bool {
         self.ckpt_request == 0 || self.ckpt_request == REQ_S0_WAIT
     }

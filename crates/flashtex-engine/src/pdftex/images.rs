@@ -380,6 +380,22 @@ impl Globals {
         })
     }
 
+    /// Not pdfTeX's: finish an image table that a persisted S₁ brought
+    /// (`host::s1`) without reading an image again: only a table that needs
+    /// no reader ([`State::settled`]: every image written, no included PDF
+    /// open), which the images it wrote, in the PDF's part S₁ verified, are
+    /// all of. `Err` says why not.
+    pub fn verify_persisted_images_settled(&mut self) -> Result<(), String> {
+        self.with_images(|_, st| {
+            if st.pending.is_none() {
+                return Ok(());
+            }
+            st.settled()?;
+            st.pending = None;
+            Ok(())
+        })
+    }
+
     fn verify_images(&mut self, st: &mut State, pending: &Pending) -> Result<(), String> {
         fn enc_of<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
             let mut w = vec![];
@@ -912,9 +928,37 @@ impl State {
     /// The same image table (`CState::same_as`), for two copies that are
     /// not the same one: an image read, written or deleted after the
     /// restart point makes a convergence test fail (a missed convergence,
-    /// never a wrong one), since the open handles have no value to compare.
-    pub fn same_as(&self, _o: &State) -> bool {
-        false
+    /// never a wrong one), since the open handles have no value to compare
+    /// -- but for two tables that hold none ([`State::settled`]), equal in
+    /// every field the codec carries (lane COLD-OPEN: a persisted S₁'s
+    /// table and the fill's from S₀, `host::s1`).
+    pub fn same_as(&self, o: &State) -> bool {
+        fn enc_of(x: &State) -> Vec<u8> {
+            let mut w = vec![];
+            crate::persist::Codec::enc(x, &mut w);
+            w
+        }
+        self.settled().is_ok() && o.settled().is_ok() && enc_of(self) == enc_of(o)
+    }
+
+    /// Whether the table holds nothing but what its codec carries: every
+    /// image written (a written image is only referred to again, by its
+    /// object number and the entry's fields: `writeimage` runs once), no
+    /// included PDF document open, no JBIG2 file's pages pending. `Err`
+    /// names the first that is not. Such a table needs no reader again,
+    /// and two with the same encoding go on alike.
+    pub fn settled(&self) -> Result<(), String> {
+        if let Some((i, e)) = self.images.iter().enumerate().find(|(_, e)| !e.written) {
+            let shown = String::from_utf8_lossy(e.file.as_deref().unwrap_or_default()).into_owned();
+            return Err(format!("image {i} ({shown}) is read and not written"));
+        }
+        if self.epdf.any_open() {
+            return Err("an included PDF document is open".into());
+        }
+        if !self.jbig2.is_empty() {
+            return Err("a JBIG2 file's pages are pending".into());
+        }
+        Ok(())
     }
 }
 
@@ -961,8 +1005,16 @@ impl crate::persist::Codec for State {
                     j.color_space.enc(w);
                     j.bits_per_component.enc(w);
                     j.length.enc(w);
-                    j.file.tell().enc(w);
-                    j.file.feof().enc(w);
+                    // (a written image's reader is never read again,
+                    // `State::settled`: its position is not state, and a
+                    // decoded table has none)
+                    if e.written {
+                        0i64.enc(w);
+                        false.enc(w);
+                    } else {
+                        j.file.tell().enc(w);
+                        j.file.feof().enc(w);
+                    }
                 }
                 ImageData::Jbig2(j) => {
                     4u8.enc(w);
@@ -1147,6 +1199,34 @@ mod tests {
         st.images[1].hash = None;
         assert!(st.check_files().unwrap_err().contains("no content hash"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Lane COLD-OPEN (`host::s1`): two copies of a table are the same only
+    /// when neither needs a reader again (every image written, no included
+    /// PDF open, no JBIG2 file pending) and every field the codec carries
+    /// is equal; a table with an image read and not written is never the
+    /// same as another copy, as before.
+    #[test]
+    fn settled_tables_compare_by_content() {
+        let mut a = table(b"./a.pdf", [1, 2]);
+        // (the JBIG2 entry's reader state is the table's, a PDF document
+        // would be open: a written table without them)
+        a.images.remove(2);
+        a.images[0].data = ImageData::None;
+        assert!(a.settled().is_err(), "unwritten images are not settled");
+        assert!(!a.same_as(&a.clone()));
+        for e in a.images.iter_mut() {
+            e.written = true;
+        }
+        a.settled().unwrap();
+        let b = State::dec(&mut Reader::new(&enc_of(&a))).unwrap();
+        assert!(a.same_as(&b) && b.same_as(&a));
+        let mut c = State::dec(&mut Reader::new(&enc_of(&a))).unwrap();
+        c.images[1].width += 1;
+        assert!(!a.same_as(&c));
+        let mut d = State::dec(&mut Reader::new(&enc_of(&a))).unwrap();
+        d.images[1].written = false;
+        assert!(!a.same_as(&d) && !d.same_as(&a));
     }
 
     /// A failure inside a probe returns to it; outside one, `probing` is
