@@ -94,8 +94,12 @@ enum EngineV3DiagPresent {
             "latex/there-were-multiply-defined-labels": ["latex/multiply-defined-label"],
             "latex-font/some-font-shapes-were-not-available-defaults-substituted": ["latex-font/font-shape-undefined"],
         ]
+        // Same severity, code, message and place: a struct key, not a joined
+        // string (one allocation per diagnostic: most of a DONE's recount
+        // for a long book's warnings).
+        struct Key: Hashable { var severity: String?, code: String, message: String, file: String?, line: Int?, col: Int? }
         var into: [Int: Int] = [:]
-        var seen: [String: Int] = [:]
+        var seen: [Key: Int] = [:]
         var firstStop: Int?
         for (i, d) in diags.enumerated() {
             if let kinds = summaries[d.code], let t = diags.indices.first(where: { kinds.contains(diags[$0].code) }) {
@@ -110,7 +114,8 @@ enum EngineV3DiagPresent {
                 if let f = firstStop { into[i] = f; continue }
                 firstStop = i
             }
-            let key = [d.severity ?? "", d.code, d.message, d.file ?? "", d.line.map(String.init) ?? "", d.col.map(String.init) ?? ""].joined(separator: "\u{1}")
+            let key = Key(severity: d.severity ?? "", code: d.code, message: d.message, file: d.file ?? "",
+                          line: d.line, col: d.col)
             if let f = seen[key] { into[i] = f } else { seen[key] = i }
         }
         return into

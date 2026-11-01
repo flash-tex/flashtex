@@ -200,6 +200,10 @@ final class EngineV3Session {
     private(set) var mainFile = ""
 
     @ObservationIgnored private(set) var pages: [Int: DL3PreparedPage] = [:]
+    /// Pages that may need the PDF fallback: inexact themselves, or drawing
+    /// a form (which may be). `loadFallbacks` checks only these at each DONE
+    /// instead of every page (1,152 of them: 13 ms of main per DONE).
+    @ObservationIgnored private var fallbackCandidates = Set<Int>()
     /// Each page's size (bp), kept with `pages`: the layout reads every page's
     /// size, and a `DL3PreparedPage` copy out of `pages` retains a dozen arrays.
     @ObservationIgnored private var pageSizes: [Int: CGSize] = [:]
@@ -1855,6 +1859,7 @@ final class EngineV3Session {
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
+            if p.needsPDFFallback || !p.formIDs.isEmpty { fallbackCandidates.insert(index) } else { fallbackCandidates.remove(index) }
             pageSizes[index] = CGSize(width: p.widthPt, height: p.heightPt)
             glyphIndexes.invalidate(index)
             pageInstalls &+= 1
@@ -1930,7 +1935,7 @@ final class EngineV3Session {
             }
             if status != "cancelled" {
                 let made = j["pages"]?.int.map(Int.init)
-                recount()
+                MainThreadProbe.time("v3.done.recount") { recount() }
                 if compileFatal, let n = made, n < pageCount {
                     // TeX stopped (EngineV3ErrorPolicy): the pages it made
                     // before the stop are current, the last good ones after
@@ -1959,8 +1964,8 @@ final class EngineV3Session {
                 // xeCJK, \RequireXeTeX): unless its mode is set, the document moves to
                 // Unicode mode, visibly (UnicodeFonts.swift; the preamble scan missed it).
                 if status != "ok", let model,
-                   let need = diags.lazy.compactMap(UnicodeFonts.need(in:)).first
-                       ?? diagnostics.lazy.compactMap({ UnicodeFonts.need(message: $0["message"]?.string ?? "", detail: $0["detail"]?.string) }).first {
+                   let need = MainThreadProbe.time("v3.done.unicode", { diags.lazy.compactMap(UnicodeFonts.need(in:)).first
+                       ?? diagnostics.lazy.compactMap({ UnicodeFonts.need(message: $0["message"]?.string ?? "", detail: $0["detail"]?.string) }).first }) {
                     model.engineV3NeedsUnicodeFonts(need)
                 }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
@@ -1984,9 +1989,9 @@ final class EngineV3Session {
                     let tex = EngineV3ProblemsPipeline.TeXInput(
                         diags: diags, diagnostics: diags.isEmpty ? diagnostics : [], texts: texts, documents: model.documentTexts,
                         roots: Self.copyRoots(project?.root), mode: errorMode, engine: engineName)
-                    publishProblems(model: model, tex: tex, announce: true, scanPackages: compileID >= lastSentID)
+                    MainThreadProbe.time("v3.done.problems") { publishProblems(model: model, tex: tex, announce: true, scanPackages: compileID >= lastSentID) }
                 }
-                loadFallbacks(pdf: j["pdf"]?.string)
+                MainThreadProbe.time("v3.done.fallbacks") { loadFallbacks(pdf: j["pdf"]?.string) }
             }
             for k in compiledTexts.keys where k <= compileID { compiledTexts[k] = nil }
             for k in caretWindows.keys where k <= compileID { caretWindows[k] = nil }
@@ -2438,7 +2443,7 @@ final class EngineV3Session {
     /// No pages (a stop, another project): none of them, nor their glyph
     /// indexes, may answer a lookup.
     private func dropPages() {
-        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0
+        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; fallbackCandidates = []
         glyphIndexes.removeAll()
     }
 
@@ -2468,7 +2473,7 @@ final class EngineV3Session {
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
-            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil }
+            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil; fallbackCandidates.remove(i) }
             glyphIndexes.removePages(from: n)
         }
         if n != pageCount { pageCount = n; layoutRevision &+= 1 }
@@ -2478,7 +2483,7 @@ final class EngineV3Session {
     private func loadFallbacks(pdf: String?) {
         let start = DispatchTime.now().uptimeNanoseconds
         defer { lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
-        let need = pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key)
+        let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms) == true }.sorted()
         guard !need.isEmpty, let pdf, let doc = DL3Renderer.openPDF(URL(fileURLWithPath: pdf)) else { return }
         pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
         for i in need { if let p = DL3Renderer.page(of: doc, at: i + 1) { pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
