@@ -192,6 +192,33 @@
 % block where one has length len, newest first, so the strings compared
 % with str_eq_str are the loop's, in its order. Neither writes anything.
 % len=0 is still answered here (""); s, the loop's variable, goes.
+%
+% [10] push_input (section 321): the record stacked a field at a time.
+%
+% input_stack[input_ptr]:=cur_input copies the whole record, which the
+% compiler does with two 16-byte loads. push_input usually follows a store
+% of one of cur_input's fields (loc, after a token is read), and a load
+% that spans a store still in flight waits for it to reach the cache: perf
+% annotate put a quarter of get_next_slow's samples on that load on the
+% NixOS PC (lane THROUGHPUT). flashtex_stack_cur_input (src/stackrec.rs)
+% stores the same record into the same element, reading cur_input one
+% field at a time (volatile reads, so that they stay separate), each load
+% the size of the store that last wrote it.
+
+@x [22] m.321 l.8205 - push_input: the record stacked a field at a time [10]
+  input_stack[input_ptr]:=cur_input; {stack the record}
+@y
+  flashtex_stack_cur_input; {stack the record, a field at a time}
+@z
+
+@x [22] m.323 l.8222 - push_input: the record stacked a field at a time [10]
+@p procedure begin_token_list(@!p:pointer;@!t:quarterword);
+@y
+@p procedure flashtex_stack_cur_input; external;
+  {|input_stack[input_ptr]:=cur_input|, a field at a time [10]}
+@#
+procedure begin_token_list(@!p:pointer;@!t:quarterword);
+@z
 
 @x [24] m.363 l.8501 - get_next: the external-file part out of line.
 @p procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
