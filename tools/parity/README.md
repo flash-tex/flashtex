@@ -477,9 +477,10 @@ DESIGN §12 P5's gate is "new engine ≥ old on every tier; arXiv L1 ≥ 90%;
 retirement complete". `scoreboard.py` puts every tier in one table, new
 engine against v1, from what the existing harnesses already wrote. It
 measures nothing itself, so there is no second harness. **Since S7** v1 (the old
-engine) is deleted and nothing measures it: the parity tiers' old cells read
-"missing", the rows v1 could not run stay "old n/a", and T4's old column stays
-the committed one-off baseline (below):
+engine) is deleted and nothing builds, runs or downloads it: the parity
+tiers' old column is the committed one-off baseline of v1's last board run,
+T4's the decision-1 one-off (both below), and the rows v1 could not run stay
+"old n/a":
 
 | tier | harness | metric per engine |
 |---|---|---|
@@ -489,8 +490,9 @@ the committed one-off baseline (below):
 | package-smoke | `tools/package-smoke/run.py` (transcript) | documents equal to pdfTeX |
 | fonts | `tools/font-census/census.py` (`census.json`) | fonts identical to pdfTeX |
 
-Each row gets a verdict. **ahead**, **equal**, **ahead (old n/a)** and, for
-T4, **ahead (v1 one-off)** and **equal (v1 one-off)** are green. The others are:
+Each row gets a verdict. **ahead**, **equal**, **ahead (old n/a)** and, against
+a one-off v1 baseline (T3 and T4), **ahead (v1 one-off)** and **equal (v1
+one-off)** are green. The others are:
 - **behind**;
 - **below target**: arXiv L1 < 90%, or an unexpected T2 failure;
 - **below bar (old n/a)**: see below;
@@ -708,19 +710,49 @@ PROVISIONAL file, one that does not yet record the ID-list hash and the
 oracle, marks its cells partial: the row can be green, the board cannot. A v1
 T4 run (`--nightly old=...`), if one is ever given, takes precedence.
 
+**T3 v1 (SCOREBOARD-POST).** Retirement stage S7 (#1888) deleted v1, so no
+board can measure the parity tiers' old column again. The Commander ruled on
+2026-11-01 (lane SCOREBOARD-POST) that, as for T4, a one-off measurement
+stands in: v1's last complete run on the board, the `parity-old/` of
+p5-scoreboard run
+[41203982275](https://github.com/flash-tex/flashtex/actions/runs/41203982275)
+(scheduled, 2026-10-31, main `5a42ab270`, the NixOS PC, oracle texlive.tlpdb
+`909745461c89`; that board was all green). `make_t3_v1_baseline.py` copied it
+verbatim into `baselines/t3-v1-oneoff.json`, with the run, artifact and file
+sha256s, the v1 binary's sha256 and the oracle record:
+- fixtures 88, arXiv 127, templates 17, packages 88 measured documents, each
+  with its id, level and P-T2; the documents the oracle excluded, with the
+  reason;
+- v1 at P-T2 0 on every tier; L0/L1/L2/L3 84/84/74/64 of 88 (fixtures),
+  2/1/0/0 of 127 (arXiv), 2/2/0/0 of 17 (templates), 11/9/6/3 of 88
+  (packages); P-T1 is n/a (the CLI writes no trace).
+
+`scoreboard.py` reads it by default (`--t3-v1-baseline FILE`, or `none`)
+for a parity tier that has no v1 run on the board. When it is read, every
+count is re-derived from the records and must agree, and each tier's
+`id_list_sha256` must match. The old cell shows **v1 one-off (last v1 run,
+p5-scoreboard 41203982275, 2026-10-31)**. Its rate is compared with the new run
+restricted to the baseline's IDs, from the new run's `documents.json`, so a
+manifest change cannot move the comparison. A baseline ID the new run lacks
+makes the cells partial. A missing or malformed file, a tier it does not
+cover, or a new run without `documents.json` leaves the old column
+**missing**, never green. Another oracle than the board's is stated in the
+cell as **CROSS-ORACLE**, as for T4. It is never re-measured: v1 no longer
+exists.
+
 T4's P-T1 is defined on its fixed 5% sample. A document outside it is listed
 as "outside the --pt1-sample (by rule)", not as skipped. `nightly.py` counts
 these in `P-T1_outside_sample`; in an older summary without that count,
 every P-T1 not evaluated is still a skip.
 
-`scoreboard-run.sh` runs everything but T4 end to end: it builds both
-engines and the new engine's formats, then runs each harness for each
-engine and aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
+`scoreboard-run.sh` runs everything but T4 end to end: it builds the new
+engine and its formats (v1 is deleted), then runs each harness on it and
+aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
 on its one official host, the NixOS PC. A heavy Mac runs it only when a
 dispatch names it (`-f route=mac`): that board is unofficial, so it files no
 issue, does not gate, and adds `reports/<date>-mac.*` to the summary branch
 without replacing `SUMMARY.md`. The T4 rows come from the route's own T4: the
-`corpus-t4` and `corpus-t4-v1` artifacts uploaded in the last 36 h on the PC,
+`corpus-t4` artifact uploaded in the last 36 h on the PC,
 `corpus-t4-mac` from the last 7 days on the Mac. The whole board is measured
 at the commit that T4 summary records.
 
@@ -799,8 +831,8 @@ The workflow keeps write tokens away from third-party TeX sources:
 ```sh
 tools/parity/scoreboard-run.sh --out /tmp/p5 --jobs 2            # every tier but T4
 tools/parity/scoreboard-run.sh --out /tmp/p5 --limit 12 --sample-note "local sample"
-python3 tools/parity/scoreboard.py --parity new=<dir> --parity old=<dir> \
-    --nightly new=<dir> --nightly old=<dir> --latex-suites new=<file> \
+python3 tools/parity/scoreboard.py --parity new=<dir> \
+    --nightly new=<dir> --latex-suites new=<file> \
     --latex-suites-reference <file> --package-smoke new=<file> --fonts new=<dir> \
     --out <dir> [--summary FILE] [--issues dry-run|apply] [--require-green]
 ```
