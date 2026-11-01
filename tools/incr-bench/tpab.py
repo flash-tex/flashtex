@@ -40,6 +40,8 @@ IB = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 LINUX = platform.system() == 'Linux'
 LIMIT = int(os.environ.get('TPAB_LIMIT', '900'))
 SEED = r'\pdfsetrandomseed 1\relax'
+# more perf stat events, counted per run (runs.jsonl's ev)
+EXTRA = ''.join(','+e for e in os.environ.get('TPAB_EVENTS', '').split(',') if e)
 
 ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
 ap.add_argument('--engines', required=True)
@@ -123,7 +125,7 @@ def compile_once(eng, d, main, pre=()):
     if pre:
         cmd = list(pre) + cmd
     elif PERF:
-        cmd = ['perf', 'stat', '-x,', '-o', stat, '-e', 'instructions:u,cycles:u', '--'] + cmd
+        cmd = ['perf', 'stat', '-x,', '-o', stat, '-e', 'instructions:u,cycles:u' + EXTRA, '--'] + cmd
     l1 = load1()
     t0 = time.monotonic()
     p = subprocess.Popen(cmd, cwd=d, env=env_for(eng), stdin=subprocess.DEVNULL,
@@ -141,6 +143,8 @@ def compile_once(eng, d, main, pre=()):
                     r['instr'] = int(f[0])
                 elif f[2].startswith('cycles'):
                     r['cycles'] = int(f[0])
+                else:
+                    r.setdefault('ev', {})[f[2]] = int(f[0])
         os.unlink(stat)
     r['pdf'] = h(os.path.join(d, stem + '.pdf'))
     r['log'] = h(os.path.join(d, stem + '.log'))
@@ -228,7 +232,7 @@ if a.annotate and PERF:
     copy_tree(seed, d)
     data = f'{WORK}/perf-ann.data'
     compile_once(engines[0], d, main,
-                 pre=('perf', 'record', '-q', '-e', 'instructions:u', '-c', '20000', '-o', data, '--'))
+                 pre=('perf', 'record', '-q', '-e', os.environ.get('TPAB_ANNOTATE_EVENT', 'instructions:u'), '-c', '20000', '-o', data, '--'))
     for sym in [x for x in syms.split(',') if x]:
         full = sym if '::' in sym else f'<flashtex_engine::generated::globals::Globals>::{sym}'
         rep = subprocess.run(['perf', 'annotate', '-i', data, '--stdio', '-M', 'intel', full],

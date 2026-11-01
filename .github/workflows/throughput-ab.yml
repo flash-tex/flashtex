@@ -37,7 +37,7 @@ jobs:
           set -euo pipefail
           f=tools/incr-bench/tpab.request
           [ -f "$f" ] || { echo "::error::no $f"; exit 1; }
-          grep -E '^(REFS|TPAB_DOCS|TPAB_REPS|TPAB_PERF|TPAB_ANNOTATE)=' "$f" \
+          grep -E '^(REFS|TPAB_DOCS|TPAB_REPS|TPAB_PERF|TPAB_ANNOTATE|TPAB_ANNOTATE_EVENT|TPAB_EVENTS)=' "$f" \
             | sed -E "s/^([A-Z0-9_]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
           cat "$f"
       - name: perf, pdftex, the build directories
