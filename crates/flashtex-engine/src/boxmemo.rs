@@ -1319,7 +1319,11 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
         if e == usize::MAX {
             return None;
         }
-        let mut last: Vec<(i32, Op)> = vec![];
+        // (in the order of each location's last assignment: a location's
+        // earlier one is left as `None`, found by `at`; a pgfplots group
+        // makes 10^5 assignments to a few thousand locations)
+        let mut last: Vec<Option<Op>> = vec![];
+        let mut at: HashMap<i32, usize> = HashMap::new();
         // (a value from the state is the group's entry state's when nothing
         // in the group assigned what it reads before it: it is then made
         // where the group was, before what the group assigns after it)
@@ -1334,9 +1338,11 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
             } => *a > 0 && !touched.contains(a),
             _ => true,
         };
-        let put = |p: i32, o: &Op, last: &mut Vec<(i32, Op)>| {
-            last.retain(|(q, _)| *q != p);
-            last.push((p, o.clone()));
+        let put = |p: i32, o: &Op, last: &mut Vec<Option<Op>>, at: &mut HashMap<i32, usize>| {
+            if let Some(i) = at.insert(p, last.len()) {
+                last[i] = None;
+            }
+            last.push(Some(o.clone()));
         };
         // (a span's, §15.5: `cur` holds what each control sequence the
         // group assigned holds now, as a value; a `\let` from one of them
@@ -1399,12 +1405,12 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
                                 if assigns_box(*n) {
                                     return None;
                                 }
-                                last.push((i32::MIN, o.clone()));
+                                last.push(Some(o.clone()));
                                 continue;
                             }
                             _ => unreachable!(),
                         };
-                        put(p, &o, &mut last);
+                        put(p, &o, &mut last, &mut at);
                     }
                     // (a location the inner group assigned only locally
                     // holds again what it held before it)
@@ -1429,7 +1435,7 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
                     };
                     let r = resolve(o, &touched, &cur);
                     if *kind > 1 {
-                        put(*p, r.as_ref()?, &mut last);
+                        put(*p, r.as_ref()?, &mut last, &mut at);
                     }
                     match r {
                         Some(r) if sparse => {
@@ -1446,7 +1452,7 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
                         if !by_value(v) {
                             return None;
                         }
-                        put(sa_loc(*t, *n), &ops[i], &mut last);
+                        put(sa_loc(*t, *n), &ops[i], &mut last, &mut at);
                     }
                     touched.insert(sa_loc(*t, *n));
                 }
@@ -1459,13 +1465,13 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
                     if assigns_box(*n) {
                         return None;
                     }
-                    last.push((i32::MIN, ops[i].clone()));
+                    last.push(Some(ops[i].clone()));
                 }
                 Op::NewCs { .. } | Op::End => return None,
             }
             i += 1;
         }
-        Some((last.into_iter().map(|(_, o)| o).collect(), touched))
+        Some((last.into_iter().flatten().collect(), touched))
     }
     // `kept`: inside a group replayed as recorded, the locations a value
     // from the state reads anywhere in it (`None` at the call's level).
@@ -4423,7 +4429,16 @@ impl Globals {
         let line = self.line;
         let line_read = rec.line_read && span.is_none();
         let fast = if span.is_some() {
-            compress_groups_with(&new_cs_first(&rec.ops), true)
+            let t0 = std::time::Instant::now();
+            let f = compress_groups_with(&new_cs_first(&rec.ops), true);
+            if debug() {
+                eprintln!(
+                    "boxmemo: span log of {} operations compressed in {:?}",
+                    rec.ops.len(),
+                    t0.elapsed()
+                );
+            }
+            f
         } else {
             compress_groups(&rec.ops)
         };
