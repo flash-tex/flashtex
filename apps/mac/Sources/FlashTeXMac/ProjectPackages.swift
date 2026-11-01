@@ -748,7 +748,7 @@ final class ProjectPackagesState {
             let pinned = uncached.map { "\($0) \(pins[$0] ?? "")" }.joined(separator: ", ")
             model.navigationNote = "\(ProjectManifest.fileName) pins \(pinned), which the package cache does not have: TeX Live's copy is used until it is fetched."
             let fetching = manifestFetch != "never" && manifestSource != "none"
-            let wanted = uncached.filter { delivered[$0] == nil && !declined.contains($0) && !inFlight.contains($0) }
+            let wanted = uncached.filter { self.delivered[$0] == nil && !self.declined.contains($0) && !self.inFlight.contains($0) }
             if fetching, manifestFetch == "always" { await resolve(wanted, consent: true) }
             else if fetching { offerByName(wanted) }
         }
