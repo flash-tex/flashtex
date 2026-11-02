@@ -28,7 +28,7 @@ FLASHTEX_BOXMEMO=off: the oracle) until a run changes no file other than the PDF
 accounting is reported, not counted.
 
 Documents: a name under $INCR_BENCH_DIR/docs (mkdocs.py: plain-10, full-100, beamer-5, ...), or
-rw:NAME, fixtures/real-world/NAME of --fixtures (the tree under test). BOX-MEMO runs in the mode
+rw:NAME, fixtures/real-world/NAME of --fixtures (the tree under test), or xdoc:NAME, one SYNTH writes. BOX-MEMO runs in the mode
 FLASHTEX_BOXMEMO says (the host's default when unset); in verify mode with
 FLASHTEX_BOXMEMO_VERIFY_FAIL=1 a difference ends the host, which is an error here.
 
@@ -66,6 +66,25 @@ SKIP_LINE = re.compile(r'\\(label|ref|eqref|cref|Cref|cite|index|begin|end|input
                        r'url|href|item|section|subsection|chapter|part|caption|def|newcommand|renewcommand|'
                        r'usepackage|includegraphics|draw|node|path|foreach|hypersetup|bookmark|frametitle|'
                        r'only|uncover|pause|onslide|visible|alt|temporal)\b|[#&@~<>]|\\\\')
+
+
+def fonts_doc(first, second):
+    """xdoc:fonts-*: two fonts loaded in the order given, so that one font number is another face
+    in each of the pair, and a page head (`\\@oddhead`, a call BOX-MEMO offers by default) that
+    measures text in the second and draws a rule that wide: a replay of the other document's entry
+    keyed by the font's number alone draws the other face's width (#2091's first item)."""
+    para = ('The measured head above each page is drawn from the width of text set in the font '
+            'loaded second, which this document and its pair load in the other order. ')
+    body = '\n\n'.join(para * 3 for _ in range(18))
+    return (f'\\documentclass{{article}}\n\\font\\fa={first}\\relax\n\\font\\fb={second}\\relax\n'
+            '\\makeatletter\n'
+            '\\def\\@oddhead{\\begingroup\\setbox0\\hbox{\\fb Measured head}\\vrule width\\wd0 height 2pt\\endgroup\\hfil}\n'
+            '\\makeatother\n\\begin{document}\n' + body + '\n\\end{document}\n').encode()
+
+
+# documents xdoc.py writes itself (xdoc:NAME): cmss12 and cmbx12 are not in the LaTeX format, so
+# each document's \font gives them the next numbers, in its own order
+SYNTH = {'fonts-ab': lambda: fonts_doc('cmss12', 'cmbx12'), 'fonts-ba': lambda: fonts_doc('cmbx12', 'cmss12')}
 
 
 class Conn:
@@ -172,12 +191,18 @@ def main():
 
     docs = []
     for name in [x for x in a.docs.split(',') if x]:
-        src = (os.path.join(a.fixtures, 'real-world', name[3:]) if name.startswith('rw:')
-               else os.path.join(BASE, 'docs', name))
-        if not os.path.isfile(os.path.join(src, 'main.tex')):
-            sys.exit(f'xdoc: no {src}/main.tex')
         root = os.path.join(W, re.sub(r'[^A-Za-z0-9_-]', '_', name))
-        shutil.copytree(src, root, ignore=shutil.ignore_patterns('reference.*', 't7.json', 'doc.json', '.git'))
+        if name.startswith('xdoc:'):
+            if name[5:] not in SYNTH:
+                sys.exit(f'xdoc: no document {name} (have {", ".join(SYNTH)})')
+            os.makedirs(root)
+            open(os.path.join(root, 'main.tex'), 'wb').write(SYNTH[name[5:]]())
+        else:
+            src = (os.path.join(a.fixtures, 'real-world', name[3:]) if name.startswith('rw:')
+                   else os.path.join(BASE, 'docs', name))
+            if not os.path.isfile(os.path.join(src, 'main.tex')):
+                sys.exit(f'xdoc: no {src}/main.tex')
+            shutil.copytree(src, root, ignore=shutil.ignore_patterns('reference.*', 't7.json', 'doc.json', '.git'))
         text = open(os.path.join(root, 'main.tex'), 'rb').read()
         cands = sites(text)
         if not cands:

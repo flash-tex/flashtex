@@ -30,7 +30,7 @@
 #              package): 8 edits + reverts, fixtures + full-100 + full-100t + refs-30; then 6 interleaved
 #   sound-first soundness: 10 interleaved edits that interrupt a first compile (no .aux: the compiles'
 #              files removed first) in its first pass (lane COLD-OPEN)
-#   sound-xdoc one socket host (one BOX-MEMO store) serves 11 documents in turn, twice round: an open
+#   sound-xdoc one socket host (one BOX-MEMO store) serves 13 documents in turn, twice round: an open
 #              and 2 edits + reverts a visit, every compile against from-scratch runs (xdoc.py)
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
 #              1,072-page book.tex (copied to $B/src-book/book.tex beforehand)
@@ -235,7 +235,7 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       echo "soundness first exit $?" >> $R/soundness-first.txt ;;
     sound-xdoc)
       # (sweeps.py's XDOC, in the same order)
-      XDOC=plain-10,full-10,full-100,beamer-5,beamer-30,rw:beamer-madrid,rw:beamer-overlays,rw:beamer-blocks-columns
+      XDOC=xdoc:fonts-ab,xdoc:fonts-ba,plain-10,full-10,full-100,beamer-5,beamer-30,rw:beamer-madrid,rw:beamer-overlays,rw:beamer-blocks-columns
       XDOC=$XDOC,rw:framed-tikz-theorems,rw:tikzcd-shaded-notes,rw:siunitx-tables
       PYTHONHASHSEED=0 timeout 36000 python3 $S/xdoc.py gates --docs $XDOC --rounds 2 --edits 2 --fixtures $W/fixtures \
         --out $R/xdoc.jsonl > $R/xdoc.txt 2>&1

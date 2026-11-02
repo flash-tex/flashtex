@@ -821,8 +821,15 @@ hold. Each has a test that failed before the fix: BOX-MEMO on gave another log o
 **One store, many documents.** The host keeps one store for every document it serves (35 % of the
 T7 set's hits, 788 of 2,263, took another document's entry; measured on the NixOS PC 2026-11-01,
 `xdoc_hits`). Items 1 and 2 broke only there. The sweep `sound-xdoc` (`tools/incr-bench/xdoc.py`)
-checks this case. One host serves eleven documents in turn, twice round: a T7 subset, the beamer
-decks, and the framed, TikZ and siunitx fixtures. Each visit is an open and two edits with their
-reverts, and every compile's files are compared byte for byte with from-scratch runs with BOX-MEMO
-off. In verify mode a hit is a checked call, and `xdoc_hits` counts those made against another
-document's entry.
+checks this case. One host serves thirteen documents in turn, twice round: a T7 subset, the beamer
+decks, the framed, TikZ and siunitx fixtures, and a synthetic pair. Each visit is an open and two
+edits with their reverts, and every compile's files are compared byte for byte with from-scratch
+runs with BOX-MEMO off. In verify mode a hit is a checked call, and `xdoc_hits` counts those made
+against another document's entry.
+
+The real documents alone do not reach item 1. A host whose font key was the font's number passed
+them, 110 compiles of 110. The pair (`xdoc:fonts-ab`, `xdoc:fonts-ba`) loads cmss12 and cmbx12 in
+the two orders, so one font number is another face in each. Its page head measures text in the
+second font and draws a rule that wide. Against that keyed-by-number host the gate fails: in verify
+mode the host ends at the first check of the other document's entry, and with BOX-MEMO on 10 of 20
+compiles give another PDF than scratch. With item 1's fix it passes, 20 of 20.
