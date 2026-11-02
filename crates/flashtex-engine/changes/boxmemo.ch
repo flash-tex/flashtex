@@ -18,6 +18,11 @@
 %   |eq_define| & co., exactly what |main_control| executing the body would
 %   leave -- or starts a recording, or does nothing.
 %
+% * |get_next|, once it has popped a used-up token list: a recording whose
+%   last level that was, popped by |big_switch|'s own |get_x_token| (no
+%   |expand| in progress and no macro's parameters being scanned), ends
+%   there (|flashtex_bm_popped|), before the token after the call is read.
+%
 % * |bm_rec_on|: the recording's observers. The control sequences read
 %   (|get_next|, |\csname|, |\ifcsname|), the assignments and groups
 %   (|eq_define|, |eq_word_define|, |geq_define|, |geq_word_define|, e-TeX's
@@ -27,7 +32,7 @@
 %   outside its model. A control sequence |get_next| delivers to a caller
 %   that looks only at the token (|intr_weak|, |matching|, |skipping|) is
 %   keyed by whether it is \.{\\outer}, a \.\# or an alignment tab, or an
-%   \.{\\if} or \.{\\fi} (BOX-MEMO.md \S15).
+%   \.{\\if} or \.{\\fi} (BOX-MEMO.md \S16).
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
@@ -124,6 +129,14 @@ if c<0 then get_next_slow
 else begin if intr_rec_on then flashtex_intr_next;
   if bm_rec_on then flashtex_bm_next;
   end;
+@z
+
+@x pdftex.web l.8764 - a recording ends where |big_switch|'s |get_x_token| leaves its last level
+  end_token_list; goto restart; {resume previous level}
+@y
+  end_token_list;
+  if bm_rec_on then flashtex_bm_popped;
+  goto restart; {resume previous level}
 @z
 
 @x pdftex.web l.8961 (after changes/intrinsics.ch) - every expansion a recording makes is checked
@@ -467,6 +480,7 @@ procedure flashtex_bm_unsave; external;
 procedure flashtex_bm_def(@!p:pointer;@!t:quarterword;@!e:integer;@!k:integer); external;
 procedure flashtex_bm_sa_def(@!p:pointer;@!e:integer;@!k:integer); external;
 procedure flashtex_bm_next; external;
+procedure flashtex_bm_popped; external;
 procedure flashtex_bm_expand; external;
 procedure flashtex_bm_read(@!p:pointer); external;
 procedure flashtex_bm_id(@!j:integer;@!l:integer;@!p:pointer); external;

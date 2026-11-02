@@ -162,7 +162,7 @@ pub struct Stats {
     pub seen_cleared: u64,
     /// Control sequences recordings assigned before reading their meaning
     /// (not in K3), and those read only as tokens (K3 keeps
-    /// [`Meaning::Token`]), BOX-MEMO.md §15.
+    /// [`Meaning::Token`]), BOX-MEMO.md §16.
     pub k3_written_first: u64,
     pub k3_tokens: u64,
     pub abandoned: BTreeMap<String, u64>,
@@ -337,7 +337,7 @@ enum Meaning {
     /// expanded (`scan_toks`), a macro's argument (`macro_call`, scanner
     /// status `matching`), a conditional's skipped text (`pass_text`,
     /// `skipping`). There its meaning matters only in being one of
-    /// [`token_matters`]'s or not (BOX-MEMO.md §15).
+    /// [`token_matters`]'s or not (BOX-MEMO.md §16).
     Token,
 }
 
@@ -644,7 +644,7 @@ struct Fast {
     /// The control sequences the recording assigned before it read their
     /// meaning ([`SEEN_WRITTEN`]), with what each held then, `(p, eq_type,
     /// equiv)`. A read that finds it there again (an `\endgroup` brought it
-    /// back) is a first read (BOX-MEMO.md §15). A call assigns a few: a
+    /// back) is a first read (BOX-MEMO.md §16). A call assigns a few: a
     /// list searched from its end costs less than a hash.
     pre: Vec<(i32, i32, i32)>,
     /// How many control sequences the recording assigned before it read
@@ -2801,7 +2801,7 @@ impl Globals {
     /// as a token (`token`, [`Meaning::Token`]). Its meaning is an input,
     /// part of K3, at the first such read before any assignment to `p`,
     /// and at the first after an `\endgroup` brought back what `p` held
-    /// before the call (BOX-MEMO.md §15).
+    /// before the call (BOX-MEMO.md §16).
     fn bm_note_cs(&mut self, p: i32, token: bool) {
         if !Self::bm_is_cs(p) {
             return;
@@ -2853,7 +2853,7 @@ impl Globals {
     /// The recording assigns control sequence `p` (`flashtex_bm_def`, before
     /// the change). If nothing read its meaning yet, what it holds is not an
     /// input: the replay's `eq_define` & co. treat whatever is there as the
-    /// normal path did (BOX-MEMO.md §15).
+    /// normal path did (BOX-MEMO.md §16).
     ///
     /// `fin`: the assignment is global or at the call's own level. Then
     /// what `p` held before the call never comes back inside it (no group
@@ -2884,6 +2884,39 @@ impl Globals {
                 f.pre.push((p, w.b0(), w.rh()));
             }
         });
+    }
+
+    /// `get_next` popped a used-up token list, during a recording. When it
+    /// was the last of the call's levels and `big_switch`'s own
+    /// `get_x_token` popped it -- `bm_at_switch`, no `expand` in progress,
+    /// no macro's parameters being scanned -- the call is over: the token
+    /// `get_next` reads next is the first after it, which the next command
+    /// reads as it would after a replay. The recording ends here, before
+    /// that token is read (`bm_finish`'s checks as at `big_switch`).
+    ///
+    /// Without this, a body whose last tokens only expand (LaTeX's `\end`:
+    /// `\if@endpe ... \fi`, the `env/.../after` hook, `\if@ignore ...
+    /// \fi` after its last `\endgroup`) was used up inside that
+    /// `get_x_token`, not at `big_switch`, and the read of the next token
+    /// abandoned it (`Level`): every frame on Infinite Descent (ntheorem's
+    /// `*@framecommand`, a TikZ picture ending in `\end{tikzpicture}`),
+    /// about a third of an edited page's instructions there (lane
+    /// EDITED-PAGE). A read past the call anywhere else -- a primitive's
+    /// look-ahead, a macro's parameters, an expansion's scan -- still
+    /// abandons it (`flashtex_bm_next`).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_popped(&mut self) {
+        let Some(base) = self.bm_with_rec(|r| r.base) else {
+            return;
+        };
+        if self.input_ptr < base
+            && self.bm_at_switch
+            && self.expand_depth_count == 0
+            && self.scanner_status == k::normal
+        {
+            self.bm_finish(None);
+        }
     }
 
     /// The end of `get_next`, during a recording.
@@ -3160,7 +3193,7 @@ impl Globals {
         // the replay's own `eq_define` & co. treat whatever is there as the
         // normal path did. A control sequence's is kept aside, and a later
         // read that finds it again (brought back by an `\endgroup`) keys it
-        // then (`bm_note_cs`, BOX-MEMO.md §15). For a register: a global
+        // then (`bm_note_cs`, BOX-MEMO.md §16). For a register: a global
         // assignment makes later reads the call's own; a local one is
         // undone when its group ends, and a later read then sees the old
         // value, so that value is keyed now.
