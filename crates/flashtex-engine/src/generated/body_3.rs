@@ -2344,6 +2344,7 @@ impl Globals {
         let mut t: halfword = 0; // §521
         let mut q: halfword = 0; // §521
         let mut c: i32 = 0; // §521
+        let mut wn: bool = false; // §521
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -2353,13 +2354,14 @@ impl Globals {
             self.scanner_status = skipping;
             l = 0i32;
             self.skip_line = self.line;
+            wn = self.write_noexpanding;
             while true {
                 {
                     'l_continue_b: loop {
                         if (self.cur_input.state_field == token_list) {
                             if (self.cur_input.loc_field != null) {
                                 if (!self.intr_rec_on) {
-                                    if (!self.write_noexpanding) {
+                                    if (!wn) {
                                         {
                                             t = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
                                             if (t >= cs_token_flag) {

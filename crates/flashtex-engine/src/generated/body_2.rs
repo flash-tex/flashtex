@@ -3274,6 +3274,7 @@ impl Globals {
         let mut fq: halfword = 0; // §416
         let mut fc: i32 = 0; // §416
         let mut in_place: bool = false; // §416
+        let mut wn: bool = false; // §416
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -3504,6 +3505,7 @@ impl Globals {
                                         {
                                             'l_done1_f: {
                                                 unbalance = 1i32;
+                                                wn = self.write_noexpanding;
                                                 while true {
                                                     {
                                                         {
@@ -3530,7 +3532,7 @@ impl Globals {
                                                         if (self.cur_input.state_field == token_list) {
                                                             if (self.cur_input.loc_field != null) {
                                                                 if (!self.intr_rec_on) {
-                                                                    if (!self.write_noexpanding) {
+                                                                    if (!wn) {
                                                                         {
                                                                             ft = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
                                                                             if (ft >= cs_token_flag) {

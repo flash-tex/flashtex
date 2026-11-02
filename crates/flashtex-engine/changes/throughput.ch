@@ -57,7 +57,13 @@
 % of a token list that \mubyte marked becomes \relax with chr 256 in
 % get_next's token-list part. Then no token is taken by [3]'s fast path or
 % read in place by [4]-[7]: every token goes to get_next_slow (or get_next,
-% get_token), as before these changes. The local |p| of that test is
+% get_token), as before these changes. [4] and [6] read |write_noexpanding|
+% once, into a local, before their loops: only write_out assigns it
+% (enctex2.ch [53.1370]), and nothing pass_text or a group's get_token runs
+% ships a page or writes (get_next expands nothing; its errors and the
+% terminal only print). Measured on the PC (perf, instructions:u, the cold
+% open of Infinite Descent x2): with the test in the loops pass_text was
+% 10.2 G and macro_call 7.7 G above the engine without encTeX. The local |p| of that test is
 % get_next_slow's; enctex2.ch's other new locals (|i|, |j|, |mubyte_incs|,
 % |p|, [24.341]) are get_next_file's, where enctex2.ch's file part uses
 % them.
@@ -335,6 +341,7 @@ label exit, continue, done, done1, found, found1;
 @!fq:pointer; {the control sequence of |ft|}
 @!fc:integer; {its command code}
 @!in_place:boolean; {the last token was read in place}
+@!wn:boolean; {|write_noexpanding|, which a group's tokens cannot change}
 @z
 
 @x [25] m.392 l.9402 - macro_call: a delimited argument's tokens, read in place [5]
@@ -404,12 +411,12 @@ loop@+  begin fast_store_new_token(cur_tok); get_token;
 done1: rbrace_ptr:=p; store_new_token(cur_tok);
 end
 @y
-begin unbalance:=1;
+begin unbalance:=1; wn:=write_noexpanding;
 @^inner loop@>
 loop@+  begin fast_store_new_token(cur_tok);
   in_place:=false;
   if state=token_list then if loc<>null then if not intr_rec_on then
-    if not write_noexpanding then
+    if not wn then
     begin ft:=info(loc);
     if ft>=cs_token_flag then
       begin if ft<>par_token then
@@ -517,11 +524,12 @@ var l:integer; {level of $\.{\\if}\ldots\.{\\fi}$ nesting}
 @!t:halfword; {a token}
 @!q:pointer; {the control sequence of |t|}
 @!c:integer; {its command code}
+@!wn:boolean; {|write_noexpanding|, which skipping cannot change}
 begin save_scanner_status:=scanner_status; scanner_status:=skipping; l:=0;
-skip_line:=line;
+skip_line:=line; wn:=write_noexpanding;
 loop@+  begin continue:
   if state=token_list then if loc<>null then if not intr_rec_on then
-    if not write_noexpanding then
+    if not wn then
     begin t:=info(loc);
     if t>=cs_token_flag then
       begin q:=t-cs_token_flag; c:=eq_type(q);
