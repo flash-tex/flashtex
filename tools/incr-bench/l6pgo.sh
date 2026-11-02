@@ -36,7 +36,21 @@ echo "== the default release build ($(git rev-parse --short HEAD))"
 cargo build --release --locked -q -p flashtex-engine
 mk def target/release
 echo "== the profile-guided build (scripts/build-engine-dist.sh)"
-scripts/build-engine-dist.sh --out "$WORK/dist" || {
+# The instrumented initex stopped at once in LLVM's value profiling
+# (`__llvm_profile_instrument_target`, EXC_BAD_ACCESS at 0x200000000; run 41346722990). L6PGO_GEN
+# adds rustc flags to the instrumented build only, in a copy of the script beside it (its root is
+# its directory's parent); the default turns value profiling off, which keeps the branch and block
+# counts PGO uses and drops only indirect-call promotion. L6PGO_GEN= runs the script as it is.
+GEN=${L6PGO_GEN--Cllvm-args=-disable-vp=true}
+BED=scripts/build-engine-dist.sh
+if [ -n "$GEN" ]; then
+  BED=scripts/.l6pgo-build-engine-dist.sh
+  sed "s|-Cprofile-generate=\$RAW|-Cprofile-generate=\$RAW $GEN|" scripts/build-engine-dist.sh > "$BED"
+  chmod +x "$BED"
+  grep -q -- "$GEN" "$BED" || { echo "l6pgo.sh: L6PGO_GEN not applied" >&2; exit 1; }
+  echo "instrumented build: RUSTFLAGS += $GEN"
+fi
+"$BED" --out "$WORK/dist" || {
   tail -n 30 target/pgo-train/fmt/pdflatex.log 2>/dev/null || true
   cp target/pgo-train/fmt/pdflatex.log "$WORK/r/pgo-format.log" 2>/dev/null || true
   # where the instrumented engine stops (it segfaulted at once on GitHub's M1 VMs, with an 8 MB
