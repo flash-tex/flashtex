@@ -824,8 +824,17 @@ impl Engine {
     /// compile keeps what it typeset. Never a compile of its own: no reply,
     /// and the pages it ships go to the cache only, as they were.
     fn viewport(&mut self, conn: Arc<server::Conn>, page: usize) {
+        let debug = std::env::var_os("FLASHTEX_INCR_DEBUG").is_some()
+            || std::env::var_os("FLASHTEX_VIEWPORT_DEBUG").is_some();
         let Some(d) = self.doc.as_mut() else { return };
         if d.session.is_paused() || conn.queued.load(Ordering::SeqCst) > 0 {
+            if debug {
+                eprintln!(
+                    "[host] VIEWPORT {page}: not now (paused {}, queued {})",
+                    d.session.is_paused(),
+                    conn.queued.load(Ordering::SeqCst)
+                );
+            }
             return;
         }
         let c = conn.clone();
@@ -839,7 +848,7 @@ impl Engine {
             d.session.redensify(page)
         };
         d.session.set_preempt(None);
-        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+        if debug {
             eprintln!(
                 "[host] VIEWPORT {page}: {:?}, {:.1} ms",
                 r.as_ref().map(|r| r

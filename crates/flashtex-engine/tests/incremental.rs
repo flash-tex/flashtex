@@ -1977,6 +1977,84 @@ fn newer_work_far_from_the_cursor_stops_at_a_held_segment() {
     check_against(&e, &dir, &reference, &r2, "after a stop at a held segment");
 }
 
+/// VIEWPORT (lane MEMORY, `Session::redensify`): far from the cursor,
+/// retention keeps one page checkpoint in `far` and no segment ones, so a
+/// key there restarts pages back. After the client shows that page, an
+/// idle run with nothing changed takes the checkpoints around it again: the
+/// key restarts on its own page, and the output is a scratch run's. One
+/// paragraph a page (`\newpage`), so paragraph `k` is page `k`.
+#[test]
+fn a_viewport_far_away_takes_its_checkpoints_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let body = |edits: &[(usize, &str)]| {
+        let mut d = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..120 {
+            let w = edits.iter().find(|x| x.0 == i).map_or("delta", |x| x.1);
+            d.push_str(&para(i, w));
+            d.push_str("\\newpage\n");
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let dir = e.dir.join("viewport-far");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), body(&[])).unwrap();
+    let env = [
+        ("FLASHTEX_FAR", "8"),
+        ("FLASHTEX_DENSE", "2"),
+        ("FLASHTEX_SEGMENT_S", "0.000001"),
+    ];
+    let mut h = Host::start_env(&e, &dir, &env);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "pages"), "120", "{r}");
+    // the cursor near the start
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &body(&[(1, "alpha")]))],
+        "near",
+    );
+    let restart = |r: &str| field(r, "restart_pages").parse::<usize>().unwrap();
+    // without VIEWPORT, a key 61 pages on restarts at a kept page pages back
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &body(&[(1, "alpha"), (61, "beta")]))],
+        "far, no viewport",
+    );
+    let c0 = restart(&r);
+    assert!(c0 + 2 < 61, "the far pages were not thinned: {r}");
+    // a page whose page checkpoint before it is kept (one in 8, aligned as
+    // `c0`'s), and the one before that not: a key there restarts a page
+    // before it, at a page retention dropped
+    let k = c0 + 32;
+    // nothing to do near the cursor (there now)
+    let c = field(&r, "cursor").to_string();
+    assert_eq!(h.cmd(&format!("redensify {c}")).trim(), "null");
+    let r = h.cmd(&format!("redensify {k}"));
+    assert_ne!(r.trim(), "null", "far from the cursor");
+    assert!(restart(&r) + 2 <= k, "{r}");
+    // after it, the key on page k restarts at most a page before it (as
+    // near the cursor: TeX has read on past the page before when it ships)
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[(
+            "doc.tex",
+            &body(&[(1, "alpha"), (61, "beta"), (k, "gamma")]),
+        )],
+        "far, after a viewport",
+    );
+    assert!(restart(&r) + 1 >= k, "restarted pages back from {k}: {r}");
+}
+
 /// `k` in lower-case roman numerals (control sequence names of letters).
 fn roman(mut k: usize) -> String {
     let mut s = String::new();
