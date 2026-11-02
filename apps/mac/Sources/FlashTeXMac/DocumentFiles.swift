@@ -695,6 +695,10 @@ extension ShellModel {
         panel.canChooseDirectories = true // a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
         panel.message = "Open a LaTeX source file as the entry document, or a project folder (its flashtex.toml names the entry)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        // In the app: the document's own window if it is open, else this
+        // window if it holds nothing yet, else a new window; this project
+        // is never replaced, so there is nothing to save first (ProjectWindows.swift).
+        if let windows { windows.open(url, from: self); return }
         guard hasUnsavedDocuments else { openTex(at: url); return }
         let alert = NSAlert()
         alert.messageText = "Save changes to \(unsavedDocumentsDescription) before opening \(url.lastPathComponent)?"
@@ -709,6 +713,17 @@ extension ShellModel {
         case .alertSecondButtonReturn: openTex(at: url, dirty: .discard)
         default: break
         }
+    }
+
+    /// Opens `url` for the user (File › Open, New Project): through the
+    /// window list when the model has one (`ProjectWindows.open`: never
+    /// twice, a new window unless this one holds nothing), else in place
+    /// with `dirty`. The outcome and the model now showing the file.
+    func openForUser(_ url: URL, dirty: DirtyDisposition = .none) -> (outcome: OpenOutcome, model: ShellModel) {
+        guard let windows else { return (openTex(at: url, dirty: dirty), self) }
+        let (result, model) = windows.open(url, from: self)
+        if case .failed(let outcome) = result { return (outcome, self) }
+        return (.opened, model ?? self)
     }
 
     /// What a caller authorized for the unsaved buffer before opening another file.

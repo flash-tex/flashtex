@@ -73,6 +73,25 @@ if [[ -z "$TIER" ]]; then
   exit 2
 fi
 
+# The engines' tests expect TeX Live 2026, the oracle's release (DESIGN §8; CI's
+# images and MacTeX 2026). A PATH whose kpsewhich belongs to another release (the
+# NixOS PC's Nix profile has TeX Live 2025) fails 17 of flashtex-xetex's host
+# tests on main (A9; REAL-DOC-GATE, 2026-10-24: they pass with TeX Live 2026
+# first on PATH). So when the TeX Live on PATH is not 2026 and a TeX Live 2026
+# is installed in one of the usual places, it goes first for this run.
+tl_release() { # the release year of the TeX Live whose kpsewhich is first on PATH
+  kpsewhich -var-value TEXMFDIST 2>/dev/null | grep -oE 'texlive[-/]20[0-9]{2}' | grep -oE '20[0-9]{2}' | head -1
+}
+if command -v kpsewhich >/dev/null 2>&1 && [[ "$(tl_release)" != 2026 ]]; then
+  for tl_bin in "$HOME"/texlive/2026/bin/* /usr/local/texlive/2026/bin/* /opt/texlive/2026/bin/*; do
+    if [[ -x "$tl_bin/kpsewhich" ]]; then
+      echo "gate.sh: TeX Live $(tl_release || true) is first on PATH; using TeX Live 2026 ($tl_bin)"
+      export PATH="$tl_bin:$PATH"
+      break
+    fi
+  done
+fi
+
 # ---------------------------------------------------------------------------
 # Step bookkeeping
 # ---------------------------------------------------------------------------
@@ -146,9 +165,16 @@ export FLASHTEX_LM_DIR="${FLASHTEX_LM_DIR:-$ROOT/apps/mac/Fonts}"
 # cargo and rustup keep their real homes.
 REAL_CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 REAL_RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+# The gate's temporary directory, without a trailing slash. macOS's TMPDIR ends in
+# one, so "$TMPDIR/x" has a `//`, and in a path kpathsea reads `//` as "every
+# subdirectory": with HOME=$TMPDIR/flashtex-gate-home-*, TEXMFHOME's lookup walked
+# all of $TMPDIR for over an hour. flashtex-xetex's hosts then never listened, and
+# 19 of its host tests failed after 600 s each (REAL-DOC-GATE, 2026-10-24).
+GATE_TMP="${TMPDIR:-/tmp}"
+GATE_TMP="${GATE_TMP%/}"
 cargo_test() { # cargo_test <cargo test args...>
   local home rc=0 leaked
-  home="$(mktemp -d "${TMPDIR:-/tmp}/flashtex-gate-home-XXXXXX")"
+  home="$(mktemp -d "$GATE_TMP/flashtex-gate-home-XXXXXX")"
   HOME="$home" XDG_CACHE_HOME="$home/.cache" \
     CARGO_HOME="$REAL_CARGO_HOME" RUSTUP_HOME="$REAL_RUSTUP_HOME" \
     cargo test "$@" || rc=$?
@@ -273,7 +299,7 @@ PY
 
 CRATE_TABLE=""
 if (( BASE_OK )); then
-  CHANGED_LIST="$(mktemp "${TMPDIR:-/tmp}/flashtex-gate-changed-XXXXXX")"
+  CHANGED_LIST="$(mktemp "$GATE_TMP/flashtex-gate-changed-XXXXXX")"
   trap 'rm -f "$CHANGED_LIST"' EXIT
   printf '%s\n' "$CHANGED_FILES" > "$CHANGED_LIST"
   CRATE_TABLE="$(crate_table "$CHANGED_LIST")"
@@ -460,12 +486,30 @@ gate_clippy() {
   return $rc
 }
 
+# Test threads for a workspace whose tests each start an engine host, or ""
+# for cargo's default (one a core). flashtex-xetex's tests/host.rs has 21
+# tests, each a debug flashtex-host-unicode that makes its format ready before
+# it listens; started all at once under load (gate.sh at nice 19 with a
+# runner's jobs on a Mac) 7 of 21 failed after 600 s with "the host did not
+# listen", and with --test-threads=3 all 21 passed in 76 s (lane
+# FSWATCH-FLAKE, #1912). A third of the cores, 2 to 8; RUST_TEST_THREADS,
+# when set, wins.
+host_test_threads() { # host_test_threads <workspace dir>
+  [[ "$1" == crates/flashtex-xetex ]] || return 0
+  local n
+  n="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 6)"
+  n=$(( n / 3 ))
+  (( n < 2 )) && n=2
+  (( n > 8 )) && n=8
+  echo "${RUST_TEST_THREADS:-$n}"
+}
+
 gate_tests_touched() {
   if [[ -z "${CHANGED_CRATES// /}" ]]; then
     echo "no crates changed against $BASE"
     return 0
   fi
-  local rc=0 pkg ws ok el t0 what
+  local rc=0 pkg ws ok el t0 what th
   while IFS=$'\t' read -r pkg ws _ed; do
     [[ -n "$pkg" ]] || continue
     t0=$SECONDS; ok=0
@@ -483,7 +527,9 @@ gate_tests_touched() {
       if [[ "$ws" == "." ]]; then
         cargo_test -p "$pkg" --locked --no-fail-fast && ok=1 || ok=0
       else
-        ( cd "$ws" && cargo_test --locked --no-fail-fast ) && ok=1 || ok=0
+        th="$(host_test_threads "$ws")"
+        [[ -n "$th" ]] && what="$what (test threads: $th)"
+        ( cd "$ws" && { [[ -z "$th" ]] || export RUST_TEST_THREADS="$th"; } && cargo_test --locked --no-fail-fast ) && ok=1 || ok=0
       fi
     fi
     el=$(( SECONDS - t0 ))
@@ -509,9 +555,9 @@ gate_tests_touched() {
 # formats, scripts/engine-parity.sh build; needs TeX Live 2026 first on PATH).
 gate_parity_fixtures() {
   local work out ew
-  work="${TMPDIR:-/tmp}/flashtex-gate-parity-work"
-  out="${TMPDIR:-/tmp}/flashtex-gate-parity"
-  ew="${TMPDIR:-/tmp}/flashtex-gate-engine"
+  work="$GATE_TMP/flashtex-gate-parity-work"
+  out="$GATE_TMP/flashtex-gate-parity"
+  ew="$GATE_TMP/flashtex-gate-engine"
   scripts/engine-parity.sh --work "$ew" build
   rm -rf "$work" "$out"
   # ${a[@]+"${a[@]}"}: expanding an EMPTY array under `set -u` is an error on
@@ -552,18 +598,20 @@ workspace_profile() { # workspace_profile <debug|release>
 # target/, excluded from the root workspace), so this is the only place `full`
 # builds it. (Until S7 this also ran the old pipeline and its CLI.)
 standalone_profile() { # standalone_profile <debug|release>
-  local profile="$1" flag=() c rc=0
+  local profile="$1" flag=() c rc=0 th
   [[ "$profile" == release ]] && flag=(--release)
   for c in flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
-    ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
+    th="$(host_test_threads "crates/$c")"
+    ( cd "crates/$c" && cargo build --locked "${flag[@]}" \
+        && { [[ -z "$th" ]] || export RUST_TEST_THREADS="$th"; } && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
   done
   return $rc
 }
 
 gate_mac_app() {
   local helpers
-  helpers="${TMPDIR:-/tmp}/flashtex-gate-helpers.env"
+  helpers="$GATE_TMP/flashtex-gate-helpers.env"
   scripts/ci/build-helpers.sh > "$helpers"
   set -a; # shellcheck disable=SC1090
   source "$helpers"; set +a
