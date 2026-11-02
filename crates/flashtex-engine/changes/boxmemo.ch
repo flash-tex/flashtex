@@ -25,7 +25,10 @@
 %   registers fetched,
 %   the commands, expansions and internal quantities, conditionals popped,
 %   and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
-%   outside its model.
+%   outside its model. A control sequence |get_next| delivers to a caller
+%   that looks only at the token (|intr_weak|, |matching|, |skipping|) is
+%   keyed by whether it is \.{\\outer}, a \.\# or an alignment tab, or an
+%   \.{\\if} or \.{\\fi} (BOX-MEMO.md \S15).
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
