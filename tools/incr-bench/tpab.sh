@@ -1,69 +1,57 @@
 #!/usr/bin/env bash
-# tpab.sh WORK REF...: build each ref (release, a worktree each) and run tpab.py over them, with
-# TeX Live's pdftex beside them (lane THROUGHPUT; adapted from lane L6's l6ab.sh;
-# .github/workflows/throughput-ab.yml runs it on the NixOS runner). Measurement only.
-#
-#   WORK   a scratch directory: the worktrees, the engines, the documents, the results (WORK/r)
-#   REF    git refs to build and compare; the first is the baseline of every delta
-#
-# From the environment (all optional):
-#   TPAB_DOCS      tpab.py --docs (default: arxiv13, the 13 e-prints of arxiv-2025-01 shard 0/12)
-#   TPAB_REPS      measured compiles per cell (default 3)
-#   TPAB_PERF      1: also a perf record of the first ref per document (and of pdftex)
-#   TPAB_CACHE     where the arXiv sources are kept (default ~/.cache/flashtex-agents/throughput)
-#   CARGO_TARGET_DIR_BASE  one target directory per ref slot: BASE-0, BASE-1, ...
-# Every build and compile runs under nice.
+# tpab.sh WORK REF0 REF1: measurement only (lane BEAMER-FRAME, not THROUGHPUT's A/B): beamer
+# keystrokes' instructions, REF0 against REF1, with BOX-MEMO on, on the PC (t7.py letter@SITE, 12
+# keys), engines interleaved per site; then REF1 with FLASHTEX_BOXMEMO=verify and its stats (each
+# replay checked against the normal path). REFs are measure commits with #1889's T7 harness and
+# realdocs.json listing long-deck and three real-world beamer fixtures.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK=${1:?WORK}
 shift
-[ $# -ge 1 ] || { echo "tpab.sh: no ref" >&2; exit 2; }
 mkdir -p "$WORK/r" "$WORK/tmp"
 WORK=$(cd "$WORK" && pwd)
 export INCR_BENCH_DIR="$WORK/ib" TMPDIR="$WORK/tmp"
 mkdir -p "$INCR_BENCH_DIR"
-CACHE=${TPAB_CACHE:-$HOME/.cache/flashtex-agents/throughput}
-mkdir -p "$CACHE/parity"
 TBASE=${CARGO_TARGET_DIR_BASE:-$WORK/target}
-# TPAB_ANNOTATE: line tables for perf annotate (the perf profile's setting; same codegen)
-if [ -n "${TPAB_ANNOTATE:-}" ]; then
-  export CARGO_PROFILE_RELEASE_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_STRIP=none
-  TBASE=$TBASE-lines
-fi
-
-names=()
 i=0
-for spec in "$@"; do
-  # REF or REF@FEATURE,FEATURE (flashtex-engine's benchmarking features, e.g. unchecked-reads)
-  ref=${spec%%@*}
-  feat=""
-  [ "$spec" != "$ref" ] && feat=${spec#*@}
-  n="e$i-$(echo "$spec" | tr -c 'A-Za-z0-9._\n-' '_' | tail -c 40)"
-  names+=("$n")
+for REF in "$@"; do
   src="$WORK/src-$i"
   git -C "$ROOT" worktree remove --force "$src" 2>/dev/null || true
-  git -C "$ROOT" worktree add --detach "$src" "$ref" >/dev/null
-  echo "build $spec = $(git -C "$src" rev-parse --short HEAD) ($(git -C "$src" log -1 --format=%s | head -c 90))"
-  fargs=()
-  [ -n "$feat" ] && fargs=(--features "$(echo "$feat" | sed -E 's/(^|,)/ flashtex-engine\//g')")
-  (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" nice -n 5 cargo build --release --locked -q \
-     -p flashtex-engine -p flashtex-display-list "${fargs[@]}")
-  (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" bash tools/incr-bench/mkeng.sh "$n" >/dev/null)
-  git -C "$ROOT" worktree remove --force "$src"
+  git -C "$ROOT" worktree add --detach "$src" "$REF" >/dev/null
+  echo "e$i: $REF = $(git -C "$src" rev-parse --short HEAD)" | tee -a "$WORK/r/engines.txt"
+  (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" nice -n 5 cargo build --release --locked -q -p flashtex-engine -p flashtex-display-list)
+  (cd "$src" && CARGO_TARGET_DIR="$TBASE-$i" bash tools/incr-bench/mkeng.sh "e$i" >/dev/null)
   i=$((i + 1))
 done
-
-DOCS=${TPAB_DOCS:-arxiv13}
-case ",$DOCS," in
-  *,arxiv13,*|*,ax:*)
-    python3 "$ROOT/tools/parity/corpus.py" --cache "$CACHE/parity" --delay 3 fetch \
-      --manifest "$ROOT/tools/parity/corpus/arxiv-2025-01.json" --shard 0/12 | tail -2 ;;
-esac
-case ",$DOCS," in *,plain-*|*,full-*) python3 "$ROOT/tools/incr-bench/mkdocs.py" >/dev/null ;; esac
-
-args=(--engines "$(IFS=,; echo "${names[*]}")" --docs "$DOCS" --reps "${TPAB_REPS:-3}" --out "$WORK/r"
-      --arxiv-cache "$CACHE/parity")
-[ "${TPAB_PERF:-0}" = 1 ] && args+=(--perf-record)
-[ -n "${TPAB_ANNOTATE:-}" ] && args+=(--annotate "$TPAB_ANNOTATE")
-for n in "${names[@]}"; do echo "$n: $(cat "$INCR_BENCH_DIR/$n/HEAD")"; done | tee "$WORK/r/engines.txt"
-nice -n 5 python3 "$ROOT/tools/incr-bench/tpab.py" "${args[@]}"
+cd "$WORK/src-0"
+python3 tools/incr-bench/mkreal.py long-deck beamer-madrid beamer-visuals beamer-blocks-columns
+SITES=${COV_SITES:-beamer-visuals:start long-deck:middle beamer-madrid:start}
+ENGS=$(seq -f "e%g" 0 $((i - 1)) | tr "\n" " ")
+for t in $SITES; do
+  doc=${t%%:*}; site=${t#*:}
+  for e in $ENGS; do
+    echo "== $doc $site $e"
+    FLASHTEX_BOXMEMO=on python3 tools/incr-bench/t7.py --engine $e --docs "$doc" --phases letter@site --sites "$site" --keys 12 \
+      --preamble 0 --reopen 0 --max-load 999 --out "$WORK/r/$doc-$site-$e" >/dev/null 2>&1 || echo "  exit $?"
+  done
+done
+# BOX-MEMO's misses by name at the target site (FLASHTEX_BOXMEMO_DEBUG=1): the host's stderr, its
+# miss and key lines with values folded, counted
+for e in ${COV_DEBUG:-e2}; do
+  echo "== beamer-visuals start $e debug"
+  FLASHTEX_BOXMEMO=on FLASHTEX_BOXMEMO_DEBUG=1 python3 tools/incr-bench/t7.py --engine $e --docs beamer-visuals \
+    --phases letter@site --sites start --keys 6 --preamble 0 --reopen 0 --max-load 999 \
+    --out "$WORK/r/vis-debug-$e" >/dev/null 2>&1 || echo "  exit $?"
+  cat "$WORK"/r/vis-debug-$e/raw/*.host-stderr 2>/dev/null | grep '^boxmemo' \
+    | sed -E 's/was \[[-0-9, ]*\] now \[[-0-9, ]*\]/V/g; s/=\[[-0-9, ]*\]/=V/g; s/ in [0-9]+ns//; s/[0-9]+ bytes//' \
+    | sort | uniq -c | sort -rn > "$WORK/r/vis-debug-$e.counts" || true
+  # (the edit windows only: from each "window open" to its "window closed")
+  cat "$WORK"/r/vis-debug-$e/raw/*.host-stderr 2>/dev/null | grep '^boxmemo' \
+    | awk '/^boxmemo: window open/{w=1} w{print} /^boxmemo: window closed/{w=0}' \
+    | sed -E 's/was \[[-0-9, ]*\] now \[[-0-9, ]*\]/V/g; s/=\[[-0-9, ]*\]/=V/g; s/ in [0-9.]+(ns|µs)//; s/, [0-9]+ bytes//; s/[0-9]+ meanings/N meanings/' \
+    > "$WORK/r/vis-debug-$e.window" || true
+  rm -f "$WORK"/r/vis-debug-$e/raw/*.host-stderr
+done
+cd "$WORK"
+for j in $(seq 0 $((i - 1))); do git -C "$ROOT" worktree remove --force "$WORK/src-$j" || true; done
+echo "done" > "$WORK/r/summary.md"
