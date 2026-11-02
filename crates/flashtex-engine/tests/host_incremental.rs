@@ -156,6 +156,10 @@ struct Outcome {
     progress: usize,
     /// The `file`s the `PROGRESS` heartbeats named, in order.
     progress_files: Vec<String>,
+    /// `SPAN_SHIFT` messages (`span-shift-v1`, spec §5.3.1), and the spans
+    /// `SOURCES` declared (new or moved).
+    span_shifts: usize,
+    declared: usize,
 }
 
 fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -167,6 +171,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut first_page = None;
     let mut progress = 0;
     let mut progress_files = vec![];
+    let (mut span_shifts, mut declared) = (0, 0);
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -184,6 +189,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
                 view.fonts.insert(f.id, f.key);
             }
             Event::Sources(s) => {
+                declared += s.spans.len();
                 for (i, p) in s.files {
                     view.files.insert(i, p);
                 }
@@ -216,6 +222,14 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
             Event::Image(j) => view.images.push(j),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
+            Event::Other(k, body) if k == flashtex_display_list::kind::SPAN_SHIFT => {
+                span_shifts += 1;
+                let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
+                let sh = flashtex_display_list::resource::SpanShifts::from_json(&j).unwrap();
+                for at in view.spans.values_mut() {
+                    *at = sh.apply(*at);
+                }
+            }
             Event::Other(k, body) if k == flashtex_display_list::kind::PROGRESS => {
                 progress += 1;
                 let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
@@ -237,6 +251,8 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         first_page,
         progress,
         progress_files,
+        span_shifts,
+        declared,
     }
 }
 
@@ -1110,6 +1126,97 @@ fn the_progress_heartbeat_changes_no_page() {
     let _ = c.bye();
     let _ = plain.bye();
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// `span-shift-v1` (spec §5.3.1): a comment line inserted near the top of a
+/// 40-page article moves every later span. A client that accepts it gets
+/// one `SPAN_SHIFT` and holds the very spans a client sent every moved span
+/// in `SOURCES` holds (another host, the same edits), and its pages resolve
+/// as a from-scratch compile's.
+#[test]
+fn a_span_shift_client_holds_the_spans_a_full_resend_gives() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let text = article(40);
+    let at = text
+        .find("\\begin{document}")
+        .map(|i| i + "\\begin{document}\n".len())
+        .unwrap();
+    let mut views = vec![];
+    for (tag, accept) in [
+        ("full", &[][..]),
+        (
+            "shifted",
+            &[flashtex_display_list::SPAN_SHIFT_CAPABILITY][..],
+        ),
+    ] {
+        let host = start_host(&format!("span-shift-{tag}"));
+        let base = common::fresh_dir(&format!("flashtex-host-span-shift-{tag}"));
+        let (proj, out) = (base.join("proj"), base.join("out"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(proj.join("main.tex"), &text).unwrap();
+        let mut c = Client::connect_accepting(&host.1, accept).unwrap();
+        let mut view = View::default();
+        compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+        let held = view.spans.len();
+        let mut r2 = req(2, &proj, &out, "main.tex");
+        r2.edits.push(Edit {
+            path: "main.tex".into(),
+            offset: at as u64,
+            delete: 0,
+            insert: "% a comment line near the top\n".into(),
+        });
+        let o = compile(&mut c, &mut view, &r2);
+        assert_eq!(
+            o.done.str_field("mode"),
+            Some("incremental"),
+            "{tag}: {}",
+            o.done
+        );
+        if accept.is_empty() {
+            assert_eq!(o.span_shifts, 0, "no SPAN_SHIFT without span-shift-v1");
+            assert!(
+                o.declared * 2 > held,
+                "{tag}: every later span re-declared ({} of {held})",
+                o.declared
+            );
+        } else {
+            assert_eq!(o.span_shifts, 1, "{tag}: one shift");
+            assert!(
+                o.declared * 20 < held,
+                "{tag}: {} of {held} spans re-declared",
+                o.declared
+            );
+        }
+        let mut now = text.clone();
+        now.insert_str(at, "% a comment line near the top\n");
+        std::fs::write(proj.join("main.tex"), &now).unwrap();
+        let (p2, o2) = snapshot(&base, &proj, &out, "scratch");
+        compare_with_scratch(&host.1, &view, &proj, &out, &p2, &o2, "main.tex", tag);
+        let rel: BTreeMap<u32, (String, u32)> = view
+            .spans
+            .iter()
+            .map(|(&s, &(f, l))| {
+                let p = view.files.get(&f).cloned().unwrap_or_default();
+                // (by name: each host has its own project directory)
+                let p = Path::new(&p)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or(p);
+                (s, (p, l))
+            })
+            .collect();
+        views.push(rel);
+        let _ = c.bye();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+    assert_eq!(
+        views[0], views[1],
+        "the shifted client's spans are the full re-send's"
+    );
 }
 
 /// Performance modes over the socket (`profile-v1`, spec §6.9): the client

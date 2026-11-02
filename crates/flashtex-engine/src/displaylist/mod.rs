@@ -49,7 +49,7 @@ use flashtex_display_list::frame::write_frame;
 use flashtex_display_list::json::{s as js, Json};
 use flashtex_display_list::kind;
 use flashtex_display_list::page::{flags, Dest, Link, LinkKind, Page, StreamKind, NO_COLUMN};
-use flashtex_display_list::resource::{Font, Sources};
+use flashtex_display_list::resource::{Font, Sources, SpanShifts};
 use flashtex_display_list::sha256::{hex, sha256, Sha256};
 use interp::Marker;
 use std::cell::RefCell;
@@ -171,6 +171,13 @@ struct State {
     /// Spans of lines an edit replaced (`move_lines`): kept, never reused.
     /// A bit per span id.
     retired: Vec<u64>,
+    /// Every `move_lines` as a shift `(file, old_end, new_end - old_end)`:
+    /// the spans of the file from `old_end` on moved by that many lines.
+    /// `span_shifts[0]` is shift number `span_shift_base`; a reader that
+    /// accepts `span-shift-v1` is sent those after the last it was sent
+    /// (`Peer::moved`), not every moved span.
+    span_shifts: Vec<(u32, u32, i64)>,
+    span_shift_base: u64,
     // Resources by key: descriptions that do not depend on engine state.
     fonts: HashMap<[u8; 32], FontRes>,
     images: HashMap<[u8; 32], Json>,
@@ -208,6 +215,8 @@ impl State {
             spans: Vec::new(),
             span_ids: SpanIndex::default(),
             retired: Vec::new(),
+            span_shifts: Vec::new(),
+            span_shift_base: 0,
             fonts: HashMap::new(),
             images: HashMap::new(),
             programs: HashMap::new(),
@@ -512,6 +521,9 @@ impl Sink for StreamSink {
 /// what the reader lacks before it: a `FONT` for an id it has not seen (or
 /// that stood for another font), an `IMAGE` likewise, a `SOURCES` for new
 /// files and spans (or spans that moved).
+/// The shifts `State::span_shifts` keeps for readers behind.
+const SPAN_SHIFT_LOG: usize = 4096;
+
 #[derive(Default)]
 pub struct Peer {
     /// Font keys whose programs the reader holds (`have_fonts`).
@@ -524,6 +536,12 @@ pub struct Peer {
     images: HashMap<u32, [u8; 32]>,
     spans: HashMap<u32, (u32, u32)>,
     files: HashSet<u32>,
+    /// The reader accepts `span-shift-v1` (spec §5.3.1): [`Peer::moved`]
+    /// sends it the shifts since the last, and re-declares only the spans
+    /// they do not place.
+    pub span_shift: bool,
+    /// The number of `State::span_shifts` this reader's spans account for.
+    shift_seq: u64,
 }
 
 impl Peer {
@@ -533,6 +551,7 @@ impl Peer {
         self.images.clear();
         self.spans.clear();
         self.files.clear();
+        self.shift_seq = with(|st| st.span_shift_base + st.span_shifts.len() as u64).unwrap_or(0);
     }
 
     /// Send `e`, preceded by the resources and sources the reader lacks.
@@ -599,6 +618,66 @@ impl Peer {
             }
         });
         (!src.files.is_empty() || !src.spans.is_empty()).then(|| src.to_json_string().into_bytes())
+    }
+
+    /// The frames that tell the reader where the spans it knows went since
+    /// the last time ([`move_lines`]): for a reader that accepts
+    /// `span-shift-v1`, a `SPAN_SHIFT` with the shifts since then and a
+    /// `SOURCES` re-declaring only the spans the shifts do not place (a
+    /// span that moved some other way, or was sent where it already was);
+    /// else [`Peer::moved_spans`]. Applying them gives the reader exactly
+    /// the spans a `SOURCES` of every moved span would.
+    pub fn moved(&mut self) -> Vec<(u8, Vec<u8>)> {
+        if !self.span_shift {
+            return self
+                .moved_spans()
+                .map(|b| vec![(kind::SOURCES, b)])
+                .unwrap_or_default();
+        }
+        let mut out = Vec::new();
+        with(|st| {
+            let end = st.span_shift_base + st.span_shifts.len() as u64;
+            // The reader's shifts, on files it holds spans of; none when
+            // it is too far behind (then every moved span is re-declared).
+            let shifts = SpanShifts {
+                shifts: if self.shift_seq >= st.span_shift_base {
+                    st.span_shifts[(self.shift_seq - st.span_shift_base) as usize..]
+                        .iter()
+                        .copied()
+                        .filter(|(f, _, _)| self.files.contains(f))
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            };
+            self.shift_seq = end;
+            let mut src = Sources::default();
+            for (s, at) in self.spans.iter_mut() {
+                let Some(&now) = st.spans.get(*s as usize - 1) else {
+                    *at = shifts.apply(*at); // (as the reader will have it)
+                    continue;
+                };
+                if shifts.apply(*at) != now {
+                    src.spans.push((*s, now.0, now.1));
+                }
+                *at = now;
+            }
+            src.spans.sort_unstable_by_key(|x| x.0);
+            for &(_, file, _) in &src.spans {
+                if self.files.insert(file) {
+                    if let Some(p) = st.file_paths.get(file as usize - 1) {
+                        src.files.push((file, p.clone()));
+                    }
+                }
+            }
+            if !shifts.shifts.is_empty() {
+                out.push((kind::SPAN_SHIFT, shifts.to_json().to_string().into_bytes()));
+            }
+            if !src.files.is_empty() || !src.spans.is_empty() {
+                out.push((kind::SOURCES, src.to_json_string().into_bytes()));
+            }
+        });
+        out
     }
 
     /// A `SOURCES` body re-declaring the spans the reader knows that have
@@ -990,6 +1069,15 @@ impl State {
     /// spans that are not retired take their new lines in span order.
     fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
         let delta = new_end as i64 - old_end as i64;
+        if delta != 0 {
+            self.span_shifts.push((f, old_end, delta));
+            if self.span_shifts.len() > SPAN_SHIFT_LOG {
+                // (a reader this far behind is sent every moved span instead)
+                let drop = self.span_shifts.len() - SPAN_SHIFT_LOG / 2;
+                self.span_shifts.drain(..drop);
+                self.span_shift_base += drop as u64;
+            }
+        }
         self.span_ids.clear_from(f, from);
         for i in 0..self.spans.len() {
             let (file, line) = self.spans[i];
@@ -2862,6 +2950,126 @@ mod tests {
         assert_eq!(src.spans, vec![(c, 1, 17)]);
         assert!(src.files.is_empty(), "the reader has the file already");
         assert!(peer.moved_spans().is_none());
+        DL.with(|d| *d.borrow_mut() = None);
+    }
+
+    /// `span-shift-v1` (spec §5.3.1): a reader sent `SPAN_SHIFT`s ends with
+    /// exactly the spans one sent every moved span in `SOURCES` holds, over
+    /// random edits (insertions, deletions, several per compile, two files)
+    /// and new spans between them; and a line inserted near the top of a
+    /// long file is one shift, not every later span.
+    #[test]
+    fn a_span_shift_reader_holds_what_a_full_resend_gives() {
+        type Map = HashMap<u32, (u32, u32)>;
+        fn take(map: &mut Map, frames: &[(u8, Vec<u8>)]) {
+            for (k, body) in frames {
+                let j = Json::parse(std::str::from_utf8(body).unwrap()).unwrap();
+                match *k {
+                    kind::SOURCES => {
+                        for (s, f, l) in Sources::from_json(&j).unwrap().spans {
+                            map.insert(s, (f, l));
+                        }
+                    }
+                    kind::SPAN_SHIFT => {
+                        let sh = SpanShifts::from_json(&j).unwrap();
+                        for at in map.values_mut() {
+                            *at = sh.apply(*at);
+                        }
+                    }
+                    other => panic!("unexpected kind {other:#x}"),
+                }
+            }
+        }
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let paths = ["/p/main.tex", "/p/ch1.tex"];
+        let ids: Vec<u32> =
+            with(|st| paths.iter().map(|p| st.file_id(p.as_bytes())).collect()).unwrap();
+        let (mut full, mut shifted) = (
+            Peer::default(),
+            Peer {
+                span_shift: true,
+                ..Peer::default()
+            },
+        );
+        full.reset();
+        shifted.reset();
+        let (mut a, mut b): (Map, Map) = (HashMap::new(), HashMap::new());
+        let (mut shift_frames, mut full_spans) = (0, 0);
+        for _ in 0..300 {
+            // a compile's pages: new spans, sent where they are
+            let spans: Vec<u32> = with(|st| {
+                (0..8)
+                    .map(|_| st.span_id(ids[rnd(2) as usize], 1 + rnd(80)))
+                    .collect()
+            })
+            .unwrap();
+            for (peer, map) in [(&mut full, &mut a), (&mut shifted, &mut b)] {
+                if let Some(src) = peer.sources_for(&spans) {
+                    take(map, &[(kind::SOURCES, src)]);
+                }
+            }
+            // edits, then the next compile says where the spans went
+            for _ in 0..1 + rnd(3) {
+                let from = 1 + rnd(80);
+                let old_end = from + rnd(4);
+                let new_end = from + rnd(6);
+                move_lines(paths[rnd(2) as usize], from, old_end, new_end);
+            }
+            let (fa, fb) = (full.moved(), shifted.moved());
+            assert!(fa.iter().all(|(k, _)| *k == kind::SOURCES));
+            shift_frames += fb.iter().filter(|(k, _)| *k == kind::SPAN_SHIFT).count();
+            full_spans += fa.len();
+            take(&mut a, &fa);
+            take(&mut b, &fb);
+            assert_eq!(a, b, "the shifted reader's spans are the full re-send's");
+            for (s, at) in &a {
+                assert_eq!(
+                    span_location(*s),
+                    Some(*at),
+                    "and they are where the host has them"
+                );
+            }
+        }
+        assert!(shift_frames > 0 && full_spans > 0);
+        // A long file, a line inserted near its top: one shift, no span re-declared.
+        let long: Vec<u32> =
+            with(|st| (1..=20_000).map(|l| st.span_id(ids[0], 1000 + l)).collect()).unwrap();
+        for (peer, map) in [(&mut full, &mut a), (&mut shifted, &mut b)] {
+            if let Some(src) = peer.sources_for(&long) {
+                take(map, &[(kind::SOURCES, src)]);
+            }
+            let _ = peer.moved();
+        }
+        move_lines(paths[0], 1001, 1001, 1002);
+        let (fa, fb) = (full.moved(), shifted.moved());
+        let declared = |frames: &[(u8, Vec<u8>)]| -> usize {
+            frames
+                .iter()
+                .filter(|(k, _)| *k == kind::SOURCES)
+                .map(|(_, b)| {
+                    Sources::from_json(&Json::parse(std::str::from_utf8(b).unwrap()).unwrap())
+                        .unwrap()
+                        .spans
+                        .len()
+                })
+                .sum()
+        };
+        assert!(
+            declared(&fa) >= 20_000,
+            "the full re-send declares every later span"
+        );
+        assert_eq!(declared(&fb), 0, "the shift places them all");
+        assert_eq!(fb.iter().filter(|(k, _)| *k == kind::SPAN_SHIFT).count(), 1);
+        take(&mut a, &fa);
+        take(&mut b, &fb);
+        assert_eq!(a, b);
         DL.with(|d| *d.borrow_mut() = None);
     }
 

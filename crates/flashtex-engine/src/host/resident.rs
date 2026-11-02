@@ -1040,6 +1040,7 @@ impl Engine {
         ps.peer.font_formats = Some(displaylist::parse_font_formats(
             &server::font_formats(&req).join(","),
         ));
+        ps.peer.span_shift = conn.span_shift;
         // (a save of this S₀ still being written by this process: wait for it)
         // (`FLASHTEX_S1=off`: a reopen never uses a stored S₁, which is
         // still saved)
@@ -1073,8 +1074,9 @@ impl Engine {
             vec![("incremental".to_string(), Json::Bool(incremental))],
         );
         if keep {
-            if let Some(src) = ps.peer.moved_spans() {
-                server::send(&out, kind::SOURCES, &src);
+            // Where the spans the client holds went (SPAN_SHIFT and/or SOURCES).
+            for (k, body) in ps.peer.moved() {
+                server::send(&out, k, &body);
             }
         }
         let old_count = self.live.borrow().pages.len().max(s1_head.unwrap_or(0));
