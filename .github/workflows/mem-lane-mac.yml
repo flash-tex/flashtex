@@ -14,7 +14,7 @@ env:
   BASE_REF: c5763d9b800b625e6cf8d2452b2878b25e6bf615
   ROUNDS: "2"
   DOCS: full-1000
-  CFGS: main vp300 vp0
+  CFGS: main vp300 vp0 vp80
   VP_FAR: "1"
   KEYS: "6"
   INCR_BENCH_DIR: /tmp/ib

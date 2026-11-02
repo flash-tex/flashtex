@@ -37,6 +37,7 @@ run() {  # run CFG ROUND DOC
     far2) far=2 ;;
     vp300) far=${VP_FAR:-4}; jm=300 ;;
     vp0) far=${VP_FAR:-4}; jm=0 ;;
+    vp80) far=${VP_FAR:-4}; jm=80 ;;
   esac
   case $d in
     full-1000) extra=(--pages 0,300,600) ;;
