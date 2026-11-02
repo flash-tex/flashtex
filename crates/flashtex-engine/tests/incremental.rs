@@ -4894,6 +4894,86 @@ fn an_abandoned_run_that_rewrote_a_closed_file_leaves_it_as_the_old_run() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "its revert");
 }
 
+/// #2148 (sweep `sound-vol`, vol-closed `0:revert-after-interrupt`): a
+/// temporary file written, closed and read back, then written again. An
+/// edit after the read restarts at the page before it, between the first
+/// write and the read, and takes checkpoints up to the edit (segment ones,
+/// which the complete run did not take that far from the cursor): two in
+/// the read, at its paragraphs' ends. It is preempted after the second
+/// write. Its revert restarts at the newest of those, so the paused run is
+/// settled (`settle_paused`), recording the file it truncated with what the
+/// last complete run left there (`Baseline`: the second instance). The
+/// restore put the first instance back (`system::instances_at`), and then
+/// the baseline was written over it: the rest of the read found the second
+/// instance's bytes. A file the run wrote and closed before the restart
+/// point holds its own instance there, not what the last complete run left.
+#[test]
+fn a_settled_run_s_rewrite_does_not_replace_the_instance_a_restore_puts_back() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("settled-rewrite-instance");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // one line each, the second longer than the first
+    let write = |text: &str| {
+        format!(
+            "\\immediate\\openout\\tmp=\\jobname-tmp.tex\n\\immediate\\write\\tmp{{{text}}}\n\
+             \\immediate\\closeout\\tmp\n\n"
+        )
+    };
+    let doc = |word: &str| {
+        let mut s = String::from("\\documentclass{article}\n\\newwrite\\tmp\n\\begin{document}\n");
+        for p in 0..4 {
+            s += &paras(2 * p, 2 * p + 2, "alpha");
+            if p == 3 {
+                s += &write("Instance 0 says x.\\par Its second paragraph.\\par");
+            }
+            s += "\\clearpage\n";
+        }
+        s += "\\input{\\jobname-tmp.tex}\n";
+        s += &paras(8, 9, word);
+        s += &write(
+            "Instance 1 says yy, at more length than the first instance, so that a read \
+             from the first one's end finds more of it.\\par",
+        );
+        s += "\\clearpage\n\\input{\\jobname-tmp.tex}\n";
+        s += &paras(9, 11, "alpha");
+        s += "\\clearpage\n";
+        s += &paras(11, 13, "alpha");
+        s += "\\end{document}\n";
+        s
+    };
+    let base = doc("alpha");
+    // a segment checkpoint at every paragraph's end where one is taken:
+    // none this far from the cursor in a run from scratch
+    let pin = [
+        ("FLASHTEX_SEGMENT_S", "0.000001"),
+        ("FLASHTEX_TIMED_S", "0"),
+        ("FLASHTEX_DENSE", "1"),
+    ];
+    let mut h = Host::start_env(&e, &dir, &pin);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), doc("gamma")).unwrap();
+    let r = h.cmd("compile-interrupt 1 1");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    assert_eq!(field(&r, "restart_pages"), "4", "the edit's restart: {r}");
+    std::fs::write(dir.join("doc.tex"), &base).unwrap();
+    std::fs::write(reference.join("doc.tex"), &base).unwrap();
+    let r = h.cmd("compile");
+    // (at a checkpoint of the paused run, which only a settled one keeps)
+    assert_eq!(field(&r, "restart_mid_page"), "true", "the revert's restart: {r}");
+    check_against(&e, &dir, &reference, &r, "the revert");
+}
+
 /// #1348 (2): a temporary file the preamble writes and the body reads, then
 /// writes again and reads, in a host that opened the document from a
 /// stored S₀ (a host restart). The opens before S₀ were not stored, so
