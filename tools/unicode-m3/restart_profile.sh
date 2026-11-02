@@ -49,7 +49,7 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
     envs=(FLASHTEX_POOL="$INCR_BENCH_DIR/cur/pdftex.pool" FLASHTEX_FORMATS="$INCR_BENCH_DIR/fmt-cur")
   else
     exe="$UH"
-    envs=(FLASHTEX_UNICODE_STAGES=1)
+    envs=(FLASHTEX_UNICODE_STAGES=1 FLASHTEX_FSWATCH_DEBUG=1)
   fi
   rm -f "$sock"
   env "${envs[@]}" nice -n 5 "$exe" --socket "$sock" --s0-cache "$d/s0" > "$d/host.out" 2> "$d/host.err" &
@@ -80,6 +80,9 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
       | grep -v '^#' | grep -v '^$' | sort -t% -k1 -rn | head -90
   } > "$WORK/r/perf-$variant-$at.txt" || true
   grep -v '^\[stage\] page' "$d/host.err" | tail -200 > "$WORK/r/host-err-$variant-$at.txt" || true
+  { echo "fswatch lines by kind:"; grep '^\[fswatch\]' "$d/host.err" | sed -E 's/^\[fswatch\] (stat|key dir)[^:]*(: ([a-z ]+))?.*/\1 \3/' | sort | uniq -c | sort -rn | head; \
+    echo "most stat'ed:"; grep '^\[fswatch\] stat ' "$d/host.err" | sed -E 's/: [a-z ]+$//' | sort | uniq -c | sort -rn | head -25; } \
+    > "$WORK/r/fswatch-$variant-$at.txt" 2>/dev/null || true
   cat "$WORK/r/perf-$variant-$at.txt" | head -45
   rm -rf "$d"
 }

@@ -975,7 +975,9 @@ impl Engine {
             self.pages.clear();
             return (no_s0, None);
         };
-        let why = match s0.key.check_refresh(self.clock, first_line) {
+        let key_check = s0.key.check_refresh(self.clock, first_line);
+        crate::out::stage("key_check");
+        let why = match key_check {
             Err(why) => Some(why),
             Ok(()) if s0.dl_on != dl_on => {
                 Some("the display list's source map is made in one run, not the other".into())
@@ -989,7 +991,7 @@ impl Engine {
                 },
             },
         };
-        crate::out::stage("check_refresh");
+        crate::out::stage("font_dirs");
         if let Some(w) = why {
             self.s0 = None;
             self.pages.clear();
