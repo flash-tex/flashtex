@@ -359,8 +359,13 @@ final class PadModel: ObservableObject {
     }
 
     func send(_ id: String) async {
+        // Claimed and flipped to `sending` before the first suspension, and
+        // published at once: the row stops offering Send / Retry, and a second
+        // tap that still reaches here is refused by the claim (one delivery).
+        let claim = queue.beginSend(id)
         captures = queue.records
-        await queue.send(id)
+        guard let claim else { return }
+        await queue.send(claim)
         captures = queue.records
         destination = link.destination
         if queue.shouldPoll(id) { pollOutcome(id) }
