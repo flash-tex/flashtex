@@ -1906,15 +1906,15 @@ final class EngineV3Session {
         case .diag(let d):
             diags.append(d)
             if EngineV3ErrorPolicy.isFatal(d) { compileFatal = true }
-            // (an error can change how the ones before it read: recount; O(errors²) at worst)
-            if d.severity == "error" { recount() } else if d.severity == "warning" { warningCount += 1 }
+            // (an error can change how the ones before it read: recount, bounded: `recountSoon`)
+            if d.severity == "error" { recountSoon() } else if d.severity == "warning" { warningCount += 1 }
         case .diagnostic(let j) where j["source"]?.string != nil:
             toolDiagnostics.append(j) // bibtex/biber/makeindex (3.2), published at the tool's done
         case .diagnostic(let j):
             diagnostics.append(j)
             if j["severity"]?.string == "error" {
                 if EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? "") { compileFatal = true }
-                recount()
+                recountSoon()
             } else { warningCount += 1 }
         case .exportDone(let j):
             exportDone(j)
@@ -2390,10 +2390,55 @@ final class EngineV3Session {
         return .init(error: error, fatal: error && EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? ""), line: j["line"]?.int.map(Int.init))
     }
 
+    /// `recount` after an error arrived mid-run. A recount walks every
+    /// diagnostic so far, so one per error was O(errors × diagnostics) on
+    /// main over a run (a book's thousands of recovered errors: pdfTeX's
+    /// 100-error stop is per paragraph). A short list (`recountAtOnce`) is
+    /// recounted at once; a longer one at most so often that recounting
+    /// takes about a ninth of main's time (`recountSpacing` times its last
+    /// duration apart), the rest coalesced into one later recount. DONE
+    /// always recounts, so its counts are exact.
+    private func recountSoon() {
+        let n = diags.isEmpty ? diagnostics.count : diags.count
+        let now = MonotonicClock.nowNs()
+        if n <= Self.recountAtOnce || now &- lastRecountEndNs >= lastRecountNs &* Self.recountSpacing {
+            recount()
+            return
+        }
+        recountOwed = true
+        guard !recountScheduled else { return }
+        recountScheduled = true
+        let wait = lastRecountNs &* Self.recountSpacing &- (now &- lastRecountEndNs)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(min(wait, 500_000_000)))) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.recountScheduled = false
+                if self.recountOwed { self.recount() }
+            }
+        }
+    }
+
+    static let recountAtOnce = 256
+    static let recountSpacing: UInt64 = 8
+    @ObservationIgnored private var recountOwed = false
+    @ObservationIgnored private var recountScheduled = false
+    @ObservationIgnored private var lastRecountNs: UInt64 = 0
+    @ObservationIgnored private var lastRecountEndNs: UInt64 = 0
+    /// Diagnostics the counts have walked (tests: the cost of a run's DIAGs).
+    @ObservationIgnored private(set) var recountVisits = 0
+
     /// The pane's counts and first error from the compile's diagnostics so
     /// far, under `errorMode`: an error TeX recovered from counts as a
     /// warning under best effort, and is not the pane's first error.
     private func recount() {
+        let startNs = MonotonicClock.nowNs()
+        defer {
+            let end = MonotonicClock.nowNs()
+            lastRecountNs = end &- startNs
+            lastRecountEndNs = end
+            recountOwed = false
+        }
+        recountVisits &+= diags.isEmpty ? diagnostics.count : diags.count
         var e = 0, w = 0
         var first: String?
         if !diags.isEmpty {
