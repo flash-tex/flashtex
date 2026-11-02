@@ -21,7 +21,8 @@
 % * |bm_rec_on|: the recording's observers. The control sequences read
 %   (|get_next|, |\csname|, |\ifcsname|), the assignments and groups
 %   (|eq_define|, |eq_word_define|, |geq_define|, |geq_word_define|, e-TeX's
-%   |sa_def| family, |new_save_level|, |unsave|), the box registers fetched,
+%   |sa_def| family, |new_save_level|, |unsave|, |save_for_after|), the box
+%   registers fetched,
 %   the commands, expansions and internal quantities, conditionals popped,
 %   and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
 %   outside its model. A control sequence |get_next| delivers to a caller
@@ -89,6 +90,17 @@ begin if intr_rec_on then flashtex_intr_def(p,0,w,3);
 @y
 begin if intr_rec_on then flashtex_intr_def(p,0,w,3);
 if bm_rec_on then flashtex_bm_def(p,0,w,3);
+@z
+
+@x pdftex.web l.7236 - an \.{\\aftergroup} token saved at a recorded call's own level is part of it
+begin if cur_level>level_one then
+  begin check_full_save_stack;
+  save_type(save_ptr):=insert_token; save_level(save_ptr):=level_zero;
+@y
+begin if bm_rec_on then flashtex_bm_after(t);
+if cur_level>level_one then
+  begin check_full_save_stack;
+  save_type(save_ptr):=insert_token; save_level(save_ptr):=level_zero;
 @z
 
 @x pdftex.web l.7257 (after changes/intrinsics.ch) - a recorded run closes a group
@@ -464,6 +476,7 @@ procedure flashtex_bm_freed(@!p:pointer); external;
 procedure flashtex_bm_call(@!n:integer;@!s:integer;@!w:pointer); external;
 procedure flashtex_bm_group(@!c:group_code); external;
 procedure flashtex_bm_unsave; external;
+procedure flashtex_bm_after(@!t:halfword); external;
 procedure flashtex_bm_def(@!p:pointer;@!t:quarterword;@!e:integer;@!k:integer); external;
 procedure flashtex_bm_sa_def(@!p:pointer;@!e:integer;@!k:integer); external;
 procedure flashtex_bm_next; external;

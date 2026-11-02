@@ -24,7 +24,8 @@
 //!
 //! `FLASHTEX_BOXMEMO=on|verify|off` (default off while the design is under
 //! review); `FLASHTEX_BOXMEMO_NAMES=a,b` (default `fb@sizeofframe`);
-//! `FLASHTEX_BOXMEMO_STATS=FILE`; `FLASHTEX_BOXMEMO_DEBUG=1`.
+//! `FLASHTEX_BOXMEMO_STATS=FILE`; `FLASHTEX_BOXMEMO_DEBUG=1`;
+//! `FLASHTEX_BOXMEMO_DUMP=1` (each recording's replayed operations, on stderr).
 //! In `verify` a call the guard admits is expanded normally under a fresh
 //! recording, and its assignments, groups and `last_badness` are compared
 //! with the replay's (`verify_differences`); `FLASHTEX_BOXMEMO_VERIFY_FAIL=1`
@@ -127,6 +128,14 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // instructions a call): recorded anywhere and taken from the intrinsics
     // (`RECORD_ANYWHERE`, §12.2)
     "pdfstringdefPreHook",
+    // (lane BEAMER-FRAME) xkeyval's `\setkeys` after its options are read:
+    // `\beamercolorbox` calls it three times for its defaults and options,
+    // which was 46 % of metropolis's Blocks frame (BOX-MEMO.md §15)
+    "XKV@setkeys",
+    // beamer's `\usebeamercolor` after its optional argument: eight
+    // `\colorlet`s and a `\color`, whose `\aftergroup\reset@color` and
+    // trailing `\ignorespaces` a recording now takes (§15.2, §15.3)
+    "\\beamer@usebeamercolor",
 ];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
@@ -232,6 +241,8 @@ enum Op {
         p: i32,
         name: Vec<i32>,
     },
+    /// `save_for_after(t)` at the call's own level (`\\aftergroup`, §15.3).
+    AfterGroup(i32),
 }
 
 thread_local! {
@@ -1160,7 +1171,7 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
                 }
                 Op::Sa { kind, .. } if *kind > 1 => return None,
                 Op::Sa { .. } => {}
-                Op::NewCs { .. } | Op::End => return None,
+                Op::NewCs { .. } | Op::End | Op::AfterGroup(_) => return None,
             }
             i += 1;
         }
@@ -1217,6 +1228,139 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
     out
 }
 
+/// A value made fresh for its assignment: a pointer no location holds yet,
+/// so `eq_define` never finds it already there (e-TeX's "reassigning"
+/// compares `equiv` with it), and its word does not depend on the state.
+fn fresh(v: &Val) -> bool {
+    matches!(
+        v,
+        Val::FreshList(_) | Val::FreshGlue(_) | Val::FreshShape(_)
+    )
+}
+
+/// [`compress_groups`]' operations with each run of local assignments of
+/// fresh values to one location at one level made as one: the first of
+/// them, with the value of the last (BOX-MEMO.md §15); and each global
+/// assignment that a later global assignment of the same kind to the same
+/// location overwrites, nothing between them reading or assigning the
+/// location or beginning or ending a group, left out (§15.7). xkeyval's
+/// `\setkeys` defines its scratch macros (`\XKV@tempa`, `\XKV@resa`, the
+/// key's name and family, ...) again for every key, at the level it was
+/// called at: 24 k operations a key on metropolis's Blocks frame, of which
+/// a few hundred values survive. LaTeX's `\reserved@a` and `\reserved@b`,
+/// defined again and again inside the groups a headline keeps, were 1,700
+/// of the 3,000 operations of long-deck's `\@oddhead`; pgf's protocol,
+/// `\xdef`'d again for every path command, 60 of a `\pgfusepath`'s.
+///
+/// Local runs. The first `eq_define` of such a run decides the location's
+/// save-stack entry: `eq_save` when the location was last assigned at
+/// another level, else `eq_destroy` of its value (tex.web §277; a fresh
+/// value is never "reassigning"). Every later one finds the location at
+/// the run's level and `eq_destroy`s the run's previous value. So the run
+/// leaves the save entry of its first assignment, where it was made among
+/// the others, and the value of its last; the values in between are made
+/// and freed again, which changes only the free lists and the usage
+/// statistics, as §11.2's elision does. A run is at one depth of the
+/// call's groups (the level its assignments are made at) and ends (the
+/// next assignment starts another) at anything else that touches or reads
+/// the location: an assignment of another kind or of a value from the
+/// state, a value from the state that reads it (`\let` of it, a glue it
+/// holds), an assignment of it in a group inside, a control sequence
+/// entered there, and the `End` of its group (at the call's own level, of
+/// the caller's group: it ends every run there).
+///
+/// Global ones. `geq_define` and `geq_word_define` `eq_destroy` the value
+/// they find and put theirs at level one, touching no save entry (tex.web
+/// §279; e-TeX's "reassigning" is the same in effect: the value already
+/// there stays, with one reference fewer). So of two in a row to one
+/// location the second leaves its value at level one whether the first
+/// was made or not, and the first's value is made and freed again. Between
+/// them nothing may read the location (the second's value is still read
+/// where it is), assign it otherwise (a local assignment's save entry
+/// depends on the level the first left), enter a control sequence there,
+/// or begin or end a group (an `unsave` decides by the level).
+fn compress_call_level(ops: Vec<Op>) -> Vec<Op> {
+    fn reads(v: &Val) -> Option<i32> {
+        match v {
+            Val::LetCs(q) => Some(*q),
+            Val::GlueFrom(a, _) if *a > 0 => Some(*a),
+            _ => None,
+        }
+    }
+    type Runs = HashMap<i32, usize, IntHash>;
+    fn end_runs(open: &mut [Runs], p: i32) {
+        for m in open.iter_mut() {
+            m.remove(&p);
+        }
+    }
+    let mut out: Vec<Option<Op>> = Vec::with_capacity(ops.len());
+    // (each location's local run at each depth of the call's groups: the
+    // index in `out` of its first assignment)
+    let mut open: Vec<Runs> = vec![Runs::default()];
+    // (each location's last global assignment since the last group
+    // boundary, while nothing has touched the location since: its index)
+    let mut globals = Runs::default();
+    for o in ops {
+        match &o {
+            Op::Begin(_) => {
+                open.push(Runs::default());
+                globals.clear();
+            }
+            Op::End => {
+                if open.len() == 1 {
+                    // the caller's group ends: the call's level is another
+                    open[0].clear();
+                } else {
+                    open.pop();
+                }
+                globals.clear();
+            }
+            Op::Def { p, v, kind, .. } => {
+                if let Some(q) = reads(v) {
+                    end_runs(&mut open, q);
+                    globals.remove(&q);
+                }
+                let d = open.len() - 1;
+                if *kind <= 1 && fresh(v) {
+                    globals.remove(p);
+                    if let Some(&j) = open[d].get(p) {
+                        if matches!(&out[j], Some(Op::Def { kind: k0, .. }) if *k0 == *kind) {
+                            out[j] = Some(o);
+                            continue;
+                        }
+                    }
+                    end_runs(&mut open[..d], *p);
+                    open[d].insert(*p, out.len());
+                } else if *kind >= 2 {
+                    end_runs(&mut open, *p);
+                    if let Some(j) = globals.remove(p) {
+                        if matches!(&out[j], Some(Op::Def { kind: k0, .. }) if *k0 == *kind) {
+                            out[j] = None;
+                        }
+                    }
+                    globals.insert(*p, out.len());
+                } else {
+                    end_runs(&mut open, *p);
+                    globals.remove(p);
+                }
+            }
+            Op::Sa { v, .. } => {
+                if let Some(q) = reads(v) {
+                    end_runs(&mut open, q);
+                    globals.remove(&q);
+                }
+            }
+            Op::NewCs { p, .. } => {
+                end_runs(&mut open, *p);
+                globals.remove(p);
+            }
+            Op::AfterGroup(_) => {}
+        }
+        out.push(Some(o));
+    }
+    out.into_iter().flatten().collect()
+}
+
 /// Leave the used-up token lists at the top of the input stack, as the
 /// next `get_next` would.
 fn pop_used_up(g: &mut Globals) {
@@ -1258,10 +1402,24 @@ type IntHash = std::hash::BuildHasherDefault<crate::iso::FastHasher>;
 /// tokens are still that body and the walk is not made again. Emptied at
 /// every restore of the word space (`after_restore`), at a format load, and
 /// when another engine on this thread notes one (`owner`).
+/// One location's entry: its type, its list, the kept body.
+#[derive(Default, Clone)]
+struct Slot {
+    t: i32,
+    e: i32,
+    body: Option<std::rc::Rc<[i32]>>,
+    /// (in `Seen::used`)
+    listed: bool,
+}
+
 #[derive(Default)]
 struct Seen {
     owner: usize,
-    at: HashMap<i32, (i32, i32, std::rc::Rc<[i32]>), IntHash>,
+    /// The entries, by location (`eqtb` and the hash's extra locations: a
+    /// look-up is an index, not a hash; BOX-MEMO.md §15.4).
+    at: Vec<Slot>,
+    /// The locations that have an entry (what `clear` empties).
+    used: Vec<i32>,
     /// The locations whose entry names list `e`.
     by_list: HashMap<i32, Vec<i32>, IntHash>,
     /// The lists some entry names, a bit each by `mem` index: the free
@@ -1280,7 +1438,10 @@ impl Seen {
                 *w = 0;
             }
         }
-        self.at.clear();
+        for &p in &self.used {
+            self.at[p as usize] = Slot::default();
+        }
+        self.used.clear();
         self.by_list.clear();
     }
 
@@ -1292,7 +1453,9 @@ impl Seen {
 
     /// `p`'s entry, which names list `e`, goes.
     fn forget_at(&mut self, p: i32, e: i32) {
-        self.at.remove(&p);
+        if let Some(slot) = self.at.get_mut(p as usize) {
+            slot.body = None;
+        }
         if let Some(l) = self.by_list.get_mut(&e) {
             l.retain(|&q| q != p);
             if l.is_empty() {
@@ -1302,6 +1465,51 @@ impl Seen {
                 }
             }
         }
+    }
+
+    /// Whether `p` holding `t` and `e` was found equal to `toks` since.
+    #[inline]
+    fn is(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
+        let ok = self.at.get(p as usize).is_some_and(|s| {
+            s.e == e
+                && s.t == t
+                && s.body
+                    .as_ref()
+                    .is_some_and(|b| std::rc::Rc::ptr_eq(b, toks))
+        });
+        if ok {
+            self.hits += 1;
+        }
+        ok
+    }
+
+    /// `p` holding `t` and `e` was just found equal to `toks` (`mem_len`:
+    /// the size of `mem`, for the bits).
+    fn note(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>, mem_len: usize) {
+        let i = p as usize;
+        if self.at.len() <= i {
+            self.at.resize(i + 1, Slot::default());
+        }
+        if self.at[i].body.is_some() {
+            let e0 = self.at[i].e;
+            self.forget_at(p, e0);
+        }
+        if !self.at[i].listed {
+            self.used.push(p);
+        }
+        let w = e as usize / 64;
+        if self.bits.len() <= w {
+            let n = (w + 1).max(mem_len / 64 + 1);
+            self.bits.resize(n, 0);
+        }
+        self.bits[w] |= 1u64 << (e as usize % 64);
+        self.by_list.entry(e).or_default().push(p);
+        self.at[i] = Slot {
+            t,
+            e,
+            body: Some(toks.clone()),
+            listed: true,
+        };
     }
 }
 
@@ -1315,47 +1523,16 @@ fn owner_of(g: &Globals) -> usize {
     g as *const Globals as usize
 }
 
-/// Whether `p` holding `t` and `e` was found equal to `toks` since.
-fn seen_is(g: &Globals, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
-    if !SEEN_ANY.with(|a| a.get()) {
-        return false;
-    }
-    SEEN.with(|s| {
-        let mut s = s.borrow_mut();
-        if s.owner != owner_of(g) {
-            return false;
-        }
-        let ok =
-            s.at.get(&p)
-                .is_some_and(|(t0, e0, b)| *t0 == t && *e0 == e && std::rc::Rc::ptr_eq(b, toks));
-        if ok {
-            s.hits += 1;
-        }
-        ok
-    })
-}
-
-/// `p` holding `t` and `e` was just found equal to `toks`.
-fn seen_note(g: &Globals, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) {
+/// `f` with the entries, emptied first when another engine noted them.
+fn with_seen<R>(g: &Globals, f: impl FnOnce(&mut Seen) -> R) -> R {
     SEEN.with(|s| {
         let mut s = s.borrow_mut();
         if s.owner != owner_of(g) {
             s.clear();
             s.owner = owner_of(g);
         }
-        if let Some(&(_, e0, _)) = s.at.get(&p) {
-            s.forget_at(p, e0);
-        }
-        let w = e as usize / 64;
-        if s.bits.len() <= w {
-            let n = (w + 1).max(g.mem.len() / 64 + 1);
-            s.bits.resize(n, 0);
-        }
-        s.bits[w] |= 1u64 << (e as usize % 64);
-        s.by_list.entry(e).or_default().push(p);
-        s.at.insert(p, (t, e, toks.clone()));
-    });
-    SEEN_ANY.with(|a| a.set(true));
+        f(&mut s)
+    })
 }
 
 /// Every entry goes (a restore, a format load).
@@ -1796,6 +1973,86 @@ impl Globals {
         v
     }
 
+    /// Whether [`bm_push_list`](Self::bm_push_list) of `e` would make
+    /// `want`, compared in place (an offer's KR check makes nothing).
+    fn bm_list_is(&self, e: i32, want: &[i32]) -> bool {
+        if e == 0 {
+            return want == [-1];
+        }
+        let mut p = self.bm_link(e);
+        match want.split_first() {
+            // (more than `bm_tokens` keeps)
+            Some((&-2, [])) => {
+                let mut n = 0usize;
+                while p != 0 {
+                    n += 1;
+                    if n > MAX_LIST + 1 {
+                        return true;
+                    }
+                    p = self.bm_link(p);
+                }
+                false
+            }
+            Some((&n, toks)) if n >= 0 && toks.len() == n as usize => {
+                for &x in toks {
+                    if p == 0 || self.bm_info(p) != x {
+                        return false;
+                    }
+                    p = self.bm_link(p);
+                }
+                p == 0
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `glue` (a specification) is kept as `want`: `[-1, e]` for a
+    /// static one, else its fields (as [`bm_reg_value`](Self::bm_reg_value)).
+    fn bm_glue_is(&self, q: i32, want: &[i32]) -> bool {
+        if q <= LO_MEM_STAT_MAX {
+            want == [-1, q]
+        } else {
+            want == self.bm_glue_fields(q)
+        }
+    }
+
+    /// `bm_reg_value(r) == want`, without making the value.
+    fn bm_reg_is(&self, r: RegId, want: &[i32]) -> bool {
+        match r {
+            RegId::Eqtb(p) => {
+                let w = self.bm_eq(p);
+                if (k::skip_base..k::mu_skip_base + 256).contains(&p) {
+                    self.bm_glue_is(w.hh().rh(), want)
+                } else if (TOKS_BASE..TOKS_BASE + 256).contains(&p) {
+                    self.bm_list_is(w.hh().rh(), want)
+                } else {
+                    want == [w.int()]
+                }
+            }
+            RegId::Sa(t, n) => {
+                let e = self.bm_sa_find(t, n);
+                match t {
+                    INT_VAL | DIMEN_VAL => {
+                        want == [if e == 0 {
+                            0
+                        } else {
+                            self.mem[(e + 2) as usize].int()
+                        }]
+                    }
+                    GLUE_VAL | MU_VAL => self.bm_glue_is(
+                        if e == 0 {
+                            k::zero_glue
+                        } else {
+                            self.bm_link(e + 1)
+                        },
+                        want,
+                    ),
+                    _ => self.bm_list_is(if e == 0 { 0 } else { self.bm_link(e + 1) }, want),
+                }
+            }
+        }
+    }
+
     /// The sparse array element of type `t` and number `n`, or 0, found as
     /// `find_sa_element(t,n,false)` finds it, without changing anything.
     fn bm_sa_find(&self, t: i32, n: i32) -> i32 {
@@ -1951,6 +2208,18 @@ impl Globals {
     /// Whether the meaning of `p` is `m` ([`bm_meaning`](Self::bm_meaning)
     /// compared in place, without copying a macro's tokens).
     fn bm_meaning_is(&self, p: i32, m: &Meaning) -> bool {
+        with_seen(self, |s| self.bm_meaning_is_in(s, p, m))
+    }
+
+    /// K3: every kept meaning holds now (one borrow of the entries for all).
+    fn bm_k3_holds(&self, k3: &[(i32, Meaning)]) -> bool {
+        with_seen(self, |s| {
+            k3.iter().all(|(p, m)| self.bm_meaning_is_in(s, *p, m))
+        })
+    }
+
+    /// [`bm_meaning_is`](Self::bm_meaning_is) with the entries borrowed.
+    fn bm_meaning_is_in(&self, seen: &mut Seen, p: i32, m: &Meaning) -> bool {
         if let Meaning::Token = m {
             return !token_matters(self.bm_eq(p).hh().b0());
         }
@@ -1984,10 +2253,10 @@ impl Globals {
             if *mt != t {
                 return false;
             }
-            if seen_is(self, p, t, e, toks) {
+            if seen.is(p, t, e, toks) {
                 return true;
             }
-            SEEN.with(|s| s.borrow_mut().walks += 1);
+            seen.walks += 1;
             let mut q = self.bm_link(e);
             for &x in toks.iter() {
                 if q == 0 || self.bm_info(q) != x {
@@ -1996,7 +2265,8 @@ impl Globals {
                 q = self.bm_link(q);
             }
             if q == 0 {
-                seen_note(self, p, t, e, toks);
+                seen.note(p, t, e, toks, self.mem.len());
+                SEEN_ANY.with(|a| a.set(true));
             }
             return q == 0;
         }
@@ -2558,12 +2828,16 @@ impl Globals {
                     None => true,
                     Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
                 }) && e.voids.iter().all(|&n| self.bm_box_value(n) == 0)
-                    && e.kr.iter().all(|(r, v)| self.bm_reg_value(*r) == *v)
+                    && e.kr.iter().all(|(r, v)| {
+                        let ok = self.bm_reg_is(*r, v);
+                        debug_assert_eq!(ok, self.bm_reg_value(*r) == *v);
+                        ok
+                    })
                     && e.kb
                         .iter()
                         .chain(&e.holes)
                         .all(|(n, v)| self.bm_box_key(self.bm_box_value(*n)) == *v)
-                    && e.k3.iter().all(|(p, m)| self.bm_meaning_is(*p, m))
+                    && self.bm_k3_holds(&e.k3)
                     && e.obj_refs
                         .iter()
                         .all(|r| self.bm_obj_is(r.t, r.n) && self.bm_obj_dims(r.n) == r.dims)
@@ -3045,6 +3319,21 @@ impl Globals {
         self.bm_with_rec(|r| r.ops.push(Op::End));
     }
 
+    /// `save_for_after(t)` (`\\aftergroup`), during a recording: a token
+    /// saved at the call's own level outlives the call (it is inserted when
+    /// the caller's group ends: xcolor's `\\set@color` saves
+    /// `\\reset@color`), an effect the replay's `save_for_after` makes
+    /// again, in its place among the save-stack entries (§15.3). One saved
+    /// in a group of the call is inserted at that group's end, inside it.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_after(&mut self, t: i32) {
+        let level = self.bm_with_rec(|r| r.start.cur_level).unwrap_or(0);
+        if self.cur_level == level {
+            self.bm_with_rec(|r| r.ops.push(Op::AfterGroup(t)));
+        }
+    }
+
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_pop_cond(&mut self) {
@@ -3496,6 +3785,18 @@ impl Globals {
         // trailer), and a replay runs it again
         if c == k::ignore_spaces && chr == 0 {
             let base = self.bm_with_rec(|r| r.base).unwrap_or(i32::MAX);
+            // (the body's last tokens may be `\\fi`s, which `\\ignorespaces`
+            // expands before it reads past the body: xcolor's `\\color` ends
+            // in `\\ignorespaces`, and beamer's `\\usebeamercolor` calls it in
+            // a conditional, `\\else\\color{#1}\\fi`. They are expanded here, as
+            // its `get_x_token` would, and then the recording ends: §15.2)
+            if base != i32::MAX && !self.bm_exhausted(base) && self.bm_only_fis_left(base) {
+                // (`main_control` then goes on with the `\\ignorespaces`)
+                self.bm_expand_fis(base);
+                if !self.bm_rec_on {
+                    return;
+                }
+            }
             if base != i32::MAX && self.bm_exhausted(base) {
                 let tok = self.cur_tok;
                 return self.bm_finish(Some(tok));
@@ -3562,15 +3863,16 @@ impl Globals {
 
     /// The save-stack entries a call left at its own level: only those of
     /// local assignments (`eq_save`'s `restore_old_value` and
-    /// `restore_zero`, e-TeX's `restore_sa`), not an `\\aftergroup` token
-    /// or a group boundary. Walked down from the top as `unsave` pops them.
+    /// `restore_zero`, e-TeX's `restore_sa`) and `\\aftergroup` tokens
+    /// (`insert_token`, each an `Op::AfterGroup`), not a group boundary. Walked down from the top as `unsave` pops them.
     fn bm_saves_only(&self, lo: i32, hi: i32) -> bool {
         let mut k = hi - 1;
         while k >= lo {
             let w = self.save_stack[k as usize].hh();
             match w.b0() {
                 t if t == k::restore_old_value => k -= 2,
-                t if t == k::restore_zero || t == k::restore_sa => k -= 1,
+                // (and `\\aftergroup` tokens, `Op::AfterGroup`)
+                t if t == k::restore_zero || t == k::restore_sa || t == k::insert_token => k -= 1,
                 _ => return false,
             }
         }
@@ -3593,6 +3895,37 @@ impl Globals {
         })
     }
 
+    /// Whether every token left in the input levels from the body's on is a
+    /// control sequence that means `\\fi` now (a primitive's location, or a
+    /// `\\let` of it), and no level is a file or an alignment template.
+    fn bm_only_fis_left(&self, base: i32) -> bool {
+        (base..=self.input_ptr).all(|j| {
+            let l = if j == self.input_ptr {
+                self.cur_input
+            } else {
+                self.input_stack[j as usize]
+            };
+            if l.state_field != TOKEN_LIST || l.index_field == V_TEMPLATE {
+                return false;
+            }
+            let mut q = l.loc_field;
+            let mut n = 0;
+            while q != 0 {
+                let t = self.bm_info(q);
+                if t < k::cs_token_flag || n > 64 {
+                    return false;
+                }
+                let w = self.bm_eq(t - k::cs_token_flag).hh();
+                if w.b0() != k::fi_or_else || w.rh() != k::fi_code {
+                    return false;
+                }
+                q = self.bm_link(q);
+                n += 1;
+            }
+            true
+        })
+    }
+
     /// `big_switch`, during a recording: finish it when the body is done.
     #[cold]
     #[inline(never)]
@@ -3601,10 +3934,40 @@ impl Globals {
             self.bm_rec_on = false;
             return;
         };
+        // (the body's last tokens may be `\\fi`s, which `big_switch`'s
+        // `get_x_token` expands and then reads past the body: beamer's
+        // `\\usebeamercolor` without its optional argument ends in its own
+        // `\\fi`. They are expanded here, as that `get_x_token` would, and
+        // the recording ends: §15.2)
+        if !self.bm_exhausted(base) && self.bm_only_fis_left(base) {
+            self.bm_expand_fis(base);
+            if !self.bm_rec_on {
+                return;
+            }
+        }
         if !self.bm_exhausted(base) {
             return;
         }
         self.bm_finish(None);
+    }
+
+    /// Expand the `\\fi`s left in the input levels from the body's on
+    /// ([`bm_only_fis_left`](Self::bm_only_fis_left)), each a `get_next`
+    /// and an `expand` as `get_x_token` makes them, with the recording's
+    /// observers on; `cur_tok` & co. are left as they were.
+    fn bm_expand_fis(&mut self, base: i32) {
+        let now = (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs);
+        while self.bm_rec_on && !self.bm_exhausted(base) {
+            self.get_next();
+            if self.cur_cmd != k::fi_or_else {
+                // (not reached: `bm_only_fis_left`) the token goes back
+                self.back_input();
+                self.bm_abort("Trailer");
+                break;
+            }
+            self.expand();
+        }
+        (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs) = now;
     }
 
     /// The recording is done: its body is used up, and `trailer` is the
@@ -3768,6 +4131,41 @@ impl Globals {
         } else {
             None
         };
+        if std::env::var_os("FLASHTEX_BOXMEMO_DUMP").is_some() {
+            let fast = compress_call_level(compress_groups(&rec.ops));
+            let mut d = String::new();
+            for o in &fast {
+                let line = match o {
+                    Op::Begin(c) => format!("begin {c}"),
+                    Op::End => "end".into(),
+                    Op::Def { p, t, v, kind } => {
+                        let loc = if (k::hash_base..k::glue_base).contains(p) || *p > k::eqtb_size {
+                            self.cs_name_string(*p)
+                        } else {
+                            self.bm_loc_name(*p)
+                        };
+                        let val = match v {
+                            Val::FreshList(l) => format!("list {}", l.len()),
+                            Val::LetCs(s) => format!("let {}", self.cs_name_string(*s)),
+                            other => format!("{:?}", other).chars().take(40).collect(),
+                        };
+                        format!("def{kind} {loc} t{t} {val}")
+                    }
+                    Op::Sa { t, n, kind, .. } => format!("sa{kind} {t}/{n}"),
+                    Op::NewCs { name, .. } => format!("newcs {}", name.len()),
+                    Op::AfterGroup(t) => format!("aftergroup {t}"),
+                };
+                d.push_str("  ");
+                d.push_str(&line);
+                d.push('\n');
+            }
+            eprintln!(
+                "boxmemo dump \\{}: {} ops -> {}\n{d}",
+                self.cs_name_string(rec.cs),
+                rec.ops.len(),
+                fast.len()
+            );
+        }
         ST.with(|s| {
             let mut s = s.borrow_mut();
             s.clock += 1;
@@ -3841,7 +4239,7 @@ impl Globals {
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
-                fast: compress_groups(&rec.ops),
+                fast: compress_call_level(compress_groups(&rec.ops)),
                 new_cs: rec
                     .ops
                     .iter()
@@ -4229,6 +4627,7 @@ impl Globals {
                     }
                 }
                 Op::NewCs { p, name } => self.bm_make_cs(*p, name),
+                Op::AfterGroup(t) => self.save_for_after(*t),
             }
         }
         if let Some(b) = last_badness {
@@ -4370,6 +4769,187 @@ mod tests {
             compress_groups(&ops),
             vec![def(1, 10, 1), def(3, 31, 3), def(4, 40, 3), def(6, 60, 1)]
         );
+    }
+
+    #[test]
+    fn meanings_found_equal_are_kept_by_location_until_their_list_goes() {
+        let body: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
+        let other: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
+        let mut s = Seen::default();
+        assert!(!s.is(70000, 111, 500, &body));
+        s.note(70000, 111, 500, &body, 1 << 12);
+        s.note(600, 111, 500, &body, 1 << 12);
+        assert!(s.is(70000, 111, 500, &body) && s.is(600, 111, 500, &body));
+        // another type, list or body (the same tokens, another kept body)
+        assert!(!s.is(70000, 112, 500, &body) && !s.is(70000, 111, 501, &body));
+        assert!(!s.is(70000, 111, 500, &other));
+        // the list freed: both entries naming it go
+        assert!(s.has_bit(500));
+        for q in s.by_list.get(&500).cloned().unwrap_or_default() {
+            s.forget_at(q, 500);
+        }
+        assert!(!s.has_bit(500) && !s.is(70000, 111, 500, &body) && !s.is(600, 111, 500, &body));
+        // a location noted again, then everything cleared
+        s.note(600, 111, 502, &body, 1 << 12);
+        s.note(600, 111, 503, &body, 1 << 12);
+        assert!(!s.has_bit(502) && s.has_bit(503) && s.is(600, 111, 503, &body));
+        assert_eq!(s.used, vec![70000, 600]);
+        s.clear();
+        assert!(!s.is(600, 111, 503, &body) && !s.has_bit(503) && s.used.is_empty());
+        s.note(600, 111, 503, &body, 1 << 12);
+        assert_eq!(s.used, vec![600]);
+    }
+
+    fn list(p: i32, tok: i32) -> Op {
+        Op::Def {
+            p,
+            t: 111,
+            v: Val::FreshList(vec![tok]),
+            kind: 0,
+        }
+    }
+
+    #[test]
+    fn a_run_of_fresh_local_values_is_its_first_assignment_with_its_last_value() {
+        // \def\a{1}\def\b{1}\def\a{2}\def\a{3}: \a's entry where its first
+        // assignment made it, with its last value
+        let ops = vec![list(1, 1), list(2, 1), list(1, 2), list(1, 3)];
+        assert_eq!(compress_call_level(ops), vec![list(1, 3), list(2, 1)]);
+        // a \let of \a reads the value it has there: the run ends before it
+        let let_a = Op::Def {
+            p: 5,
+            t: 0,
+            v: Val::LetCs(1),
+            kind: 0,
+        };
+        let ops = vec![
+            list(1, 1),
+            list(1, 2),
+            let_a.clone(),
+            list(1, 3),
+            list(1, 4),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![list(1, 2), let_a.clone(), list(1, 4)]
+        );
+        // a word (it may be the value already there: "reassigning", no save
+        // entry), a global assignment, a kept group that assigns it, a
+        // control sequence entered there: each ends the run
+        let word = def(1, 7, 1);
+        let global = Op::Def {
+            p: 1,
+            t: 111,
+            v: Val::FreshList(vec![9]),
+            kind: 2,
+        };
+        let ops = vec![
+            list(1, 1),
+            list(1, 2),
+            global.clone(),
+            list(1, 3),
+            Op::Begin(1),
+            list(1, 4),
+            Op::End,
+            list(1, 5),
+            list(1, 6),
+            Op::NewCs {
+                p: 1,
+                name: vec![1, 2],
+            },
+            list(1, 7),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![
+                list(1, 2),
+                global,
+                list(1, 3),
+                Op::Begin(1),
+                list(1, 4),
+                Op::End,
+                list(1, 6),
+                Op::NewCs {
+                    p: 1,
+                    name: vec![1, 2]
+                },
+                list(1, 7),
+            ]
+        );
+        let ops = vec![def(3, 1, 1), def(3, 2, 1), word.clone(), word.clone()];
+        assert_eq!(compress_call_level(ops.clone()), ops);
+        // a group that leaves \a alone does not end its run; the caller's
+        // group ending ends every run
+        let ops = vec![
+            list(1, 1),
+            Op::Begin(1),
+            list(2, 1),
+            Op::End,
+            list(1, 2),
+            Op::End,
+            list(1, 3),
+            list(1, 4),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![
+                list(1, 2),
+                Op::Begin(1),
+                list(2, 1),
+                Op::End,
+                Op::End,
+                list(1, 4),
+            ]
+        );
+    }
+
+    fn glist(p: i32, tok: i32) -> Op {
+        Op::Def {
+            p,
+            t: 111,
+            v: Val::FreshList(vec![tok]),
+            kind: 2,
+        }
+    }
+
+    #[test]
+    fn runs_inside_a_group_and_overwritten_global_assignments_are_left_out() {
+        // \begingroup\def\a{1}\def\b{1}\def\a{2}\endgroup: the run inside
+        // the group is one assignment, at the group's level
+        let ops = vec![Op::Begin(1), list(1, 1), list(2, 1), list(1, 2), Op::End];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![Op::Begin(1), list(1, 2), list(2, 1), Op::End]
+        );
+        // \xdef\p{1}\def\b{1}\xdef\p{2}: the first \xdef is overwritten
+        let ops = vec![glist(1, 1), list(2, 1), glist(1, 2)];
+        assert_eq!(compress_call_level(ops), vec![list(2, 1), glist(1, 2)]);
+        // a \global\let of \p between reads the first value; a local
+        // assignment between, or a group boundary, keeps it too
+        let let_p = Op::Def {
+            p: 5,
+            t: 0,
+            v: Val::LetCs(1),
+            kind: 2,
+        };
+        for between in [let_p, list(1, 7), Op::Begin(1), Op::End] {
+            let ops = vec![glist(1, 1), between.clone(), glist(1, 2)];
+            assert_eq!(compress_call_level(ops.clone()), ops, "{between:?}");
+        }
+        // a word assigned globally twice: the first left out; a global
+        // assignment of another kind to the location is not overwritten by it
+        let gword = |w| Op::Def {
+            p: 3,
+            t: 0,
+            v: Val::Word(w),
+            kind: 3,
+        };
+        assert_eq!(
+            compress_call_level(vec![gword(1), gword(2)]),
+            vec![gword(2)]
+        );
+        let ops = vec![glist(3, 1), gword(2)];
+        assert_eq!(compress_call_level(ops.clone()), ops);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # BOX-MEMO: guarded replay of macro calls that typeset only what they throw away
 
 Lane **P6-INFDESC-PAGE** (Commander, 2026-10-06: "attributes Infinite Descent's 800 M-instruction
-page and builds picture/box memoisation"). Status: **revision 2 (T7-BEAMER, 2026-10-20): on in the engine host** (§11): it records in an
+page and builds picture/box memoisation"). Status: **revision 2 (T7-BEAMER, 2026-10-20): on in the engine host** (§11; revision 6, BEAMER-FRAME, is §15): it records in an
 edit's window and replays; the command-line engine keeps it off unless `FLASHTEX_BOXMEMO=on`.
 Revision 1 (the framed.sty prototype, off by default) is §2-§10.
 
@@ -847,3 +847,147 @@ the loops stay as they are.
 - a `\def` in a group of the call's own and a read after its `\endgroup`, which is keyed;
 - an argument (`get_next`, `matching`) that becomes `\outer`, which is a miss; while it only
   changes meaning, it hits.
+## 15. Revision 6: xkeyval's `\setkeys`, `\usebeamercolor`, and cheaper replays (lane BEAMER-FRAME, 2026-11-01)
+
+After #1907 the metropolis demo deck (T7's real document `beamer-metropolis`, PR #1889) still spent
+about 275 M instructions typesetting its Blocks frame, the letter@middle site, per keystroke
+(`typeset_instr_k`, from the engine's resumption to the edited page's shipout). A sampling profile
+of those windows alone (samply on the host, its samples cut to the `FLASHTEX_PERF_MARKS` intervals)
+and the macro profile showed where:
+
+- **xkeyval's `\setkeys`.** `\beamercolorbox` (metropolis's block titles and bodies, the frame
+  title) calls it twice for its defaults and options, and `\usebeamercolor` & co. more: 39 calls a
+  frame, 46 % of the window. Nothing offered it.
+- **BOX-MEMO's own hits**, once it was offered: 30 % of the window. The replays made every
+  operation of `\setkeys`' log (24 k a keystroke) and the offers' K3 checks went through a hash
+  map per meaning.
+- **`\usebeamercolor`** (eight `\colorlet`s and a `\color`) was refused: `\color` ends in
+  `\ignorespaces` after the call's own `\fi`, and saves `\aftergroup\reset@color` at the call's
+  level.
+
+### 15.1 A run of fresh local values at the call's level is made as one
+
+A replay at the call's own level made every assignment the call made. xkeyval defines its scratch
+macros (`\XKV@tempa`, `\XKV@resa`, the key's name and family, ...) again for every key it sets.
+`compress_call_level` (after §12.5's `compress_groups`) makes each run of local assignments of
+*fresh* values (a token list, a glue specification or a `\parshape` made for the assignment) to one
+location as its first assignment, with the value of the last. The first `eq_define` of the run
+decides the location's save-stack entry (`eq_save` when it was last assigned at another level, else
+`eq_destroy`); a fresh value is never e-TeX's "reassigning", so every later one finds the location at
+the call's level and only destroys the run's previous value. The run thus leaves the save entry of
+its first assignment, in its place among the others, and the value of its last; the values between
+are made and freed again, which changes only the free lists and the usage statistics, as §11.2's
+elision does. A run ends at anything else that touches or reads the location: an assignment of a
+word or of a value from the state (either may be "reassigning"), a global one, a `\let` of it or a
+glue it holds, a kept group that assigns it, a control sequence entered there, and an `End` or
+`Begin` of the caller's group. Unit test: `a_run_of_fresh_local_values_is_its_first_assignment_with_its_last_value`.
+
+### 15.2 `\fi`s before a trailing `\ignorespaces`
+
+§11's trailer ends a recording at an `\ignorespaces` that would read past the body. When the
+body's only tokens left are control sequences meaning `\fi` (`\else\color{#1}\fi`), the hook
+expands them first, as `\ignorespaces`' own `get_x_token` would (each a `get_next` and an `expand`,
+in the same order, with the recording's observers on), and then ends the recording; `main_control`
+goes on with the `\ignorespaces`. The same holds at `big_switch`, whose `get_x_token` would expand
+a body's last `\fi`s and read past it (`\usebeamercolor` without its optional argument): they are
+expanded there and the recording ends. Anything else left is the normal path, as before.
+
+### 15.3 `\aftergroup` at the call's level
+
+`save_for_after` reports to the recording (`flashtex_bm_after`, changes/boxmemo.ch). A token saved
+at the call's own level outlives the call (xcolor's `\set@color` saves `\reset@color`): it is
+`Op::AfterGroup(t)`, made again by the replay's `save_for_after` in its place among the save-stack
+entries, which `bm_saves_only` now accepts (`insert_token`). One saved in a group of the call is
+inserted at that group's end, inside the call, as before.
+
+### 15.4 Offers
+
+- K3 takes the entries of §12.4 once per variant, not once per meaning, and finds a location's
+  entry by index (`Seen::at`, a slot per location) instead of a hash map. Unit test:
+  `meanings_found_equal_are_kept_by_location_until_their_list_goes`.
+- KR is compared in place (`bm_reg_is`, a `\toks` register's tokens walked against the kept ones),
+  not by making each register's value. Debug builds check it against the old comparison.
+
+### 15.5 Names
+
+`XKV@setkeys` and `\beamer@usebeamercolor` (the macro `\usebeamercolor` calls after its optional
+argument) join `DEFAULT_NAMES`. Tried on the Blocks frame and left out (no gain, or refused):
+`\ifbeamercolorempty` and `hook_use:n` (their last tokens read past the body), `beamer@masterdecode`
+(a box register set at the call's level), `XC@mcolor`, `XC@display`, `colorlet`, `XC@colorlet`,
+`pgfsys@transformcm`, `color@b@x`, `beamer@decodefind`, `IfHookEmptyTF`, `selectfont`,
+`beamer@spacingcover`, `beamer@parsedactionenv`, `beamer@smuggle`, `pgf@sys@bp`, `beamer@colclose`,
+`metropolis@block` (`\prevdepth`); `pgfkeys@@set` and `beamer@setbeamercolor` gain under 2 %.
+Recording after the edited page as well (the pages re-typeset until convergence) was tried and
+left out: the next keystroke's window cost more (49 → 65 M at the start site) and its recordings
+did not settle.
+
+### 15.6 Measured
+
+M5 Pro, T7 `beamer-metropolis` (PR #1889's harness on a measure-only checkout), the engine thread's
+instructions, p50 of 19 measured keys. Instruction counts do not move with load; the machine ran at
+load 50-170 throughout, so every wall time here is non-reference.
+
+| site | main `df75c3a20` typeset / to the edited page | this revision | thread CPU to the edited page |
+|---|---:|---:|---:|
+| letter@middle (the Blocks frame) | 274.6 M / 287.3 M | **109.7 M / 122.4 M** (−57 %) | 27.5 ms (load 50) → 16.3 ms (load 105) |
+| letter@start (the first fragile frame) | 68.0 M / 81.3 M | **48.3 M / 61.8 M** (−24 %) | 10.7 → 10.3 ms |
+
+The steps, letter@middle, typesetting p50 of 5 keys: main 274.4 M; `XKV@setkeys` offered 147.9 M;
+§15.1 128.1 M; KR in place 124.3 M; §15.2, §15.3 and `\beamer@usebeamercolor` 113.8 M; §15.4's
+slots 110.0 M. Re-typeset pages and convergence are unchanged (2 and 5 pages; 19/19).
+
+**Correctness.** `cargo test` `--lib boxmemo` and `tests/boxmemo.rs` (debug and release, which runs
+off, on and verify and compares the logs and PDFs), `tests/incremental.rs` (87),
+`tests/host_incremental.rs`, `tests/intrinsics.rs`, `tests/checkpoint.rs`. The command line in
+verify mode (the whole engine state compared after every replay) on the metropolis deck: 4,390
+replays, 0 differences, the PDF and log byte-identical with BOX-MEMO off, on and verify; on 41
+copies of its Blocks frame: 15,310 replays, 0 differences. `soundness.py`, 20 trials (40 compiles)
+each, every compile byte-identical to a run from scratch: beamer-fragile, -overlays, -default,
+-visuals, -blocks-columns, -madrid and metropolis 0 bad (converged 19, 25, 20, 15, 1, 34, 21, as on
+main), metropolis interleaved 43 compiles, 32 checked, 11 interrupted, 0 bad.
+
+### 15.7 Runs inside kept groups, and overwritten global assignments
+
+§15.1 folded runs at the call's own level only. On long-deck (T7's `long-deck`, the BOX-MEMO
+coverage ranking of the edited page's window: checkpoints about 9 %, BOX-MEMO's own replays 9 %)
+the most-replayed calls were the headline and footline: `\@oddhead` replayed 3,034 operations, of
+which 1,940 made fresh token lists, most of them LaTeX's `\reserved@a` and `\reserved@b` defined
+again and again inside the groups the headline keeps; pgf's protocol (`\pgf@sys@...`) is `\xdef`'d
+again for every path command.
+
+`compress_call_level` now keeps one run map per depth of the call's groups (a `Begin` opens one, an
+`End` closes it; the `End` of the caller's group clears the call's level), so a run of fresh local
+values to one location in a kept group is made as one, by §15.1's argument at that group's level. An
+assignment of the location in a deeper group ends the runs outside it. A global assignment
+(`geq_define`, `geq_word_define`) that a later global one of the same kind to the same location
+overwrites is left out when nothing between them reads or assigns the location, enters a control
+sequence there, or begins or ends a group: `geq_define` destroys the value it finds and puts its own
+at level one with no save entry (tex.web §279; e-TeX's "reassigning" is the same in effect), so the
+second leaves the same location whether or not the first was made, and the first's value would only
+be made and freed. Unit test: `runs_inside_a_group_and_overwritten_global_assignments_are_left_out`.
+`FLASHTEX_BOXMEMO_DUMP=1` prints each recording's replayed operations.
+
+Operations a replay makes, before / after (the command line on long-deck): `\@oddhead` 3,034 → 1,262
+(fresh lists 1,940 → 297), `\@oddfoot` 792 → 350, `\beamer@typesetheadorfoot` 732 → 319,
+`\pgfusepath` 64 → 41.
+
+**Measured** (the PC, push-triggered `throughput-ab.yml` run 41371502334, T7 harness of #1889 on
+measure-only checkouts of `5a43b98f1` and `80c156610`, engines interleaved per site, edited-page
+instructions p50 over 11 keys; instruction counts, not wall times):
+
+| site | before | after | |
+|---|---:|---:|---:|
+| long-deck@middle | 42.4 M | 38.7 M | −8.7 % |
+| long-deck@start | 43.3 M | 39.6 M | −8.5 % |
+| beamer-madrid@middle | 67.7 M | 63.0 M | −6.9 % |
+| beamer-madrid@start | 37.5 M | 33.9 M | −9.6 % |
+| beamer-blocks-columns@end | 59.2 M | 56.6 M | −4.4 % |
+| beamer-visuals@start | 176.2 M | 172.9 M | −1.9 % |
+
+Re-typeset pages and BOX-MEMO's offers and hits are unchanged at every site.
+
+**Correctness.** Verify mode in the host (the same run): 18,079 replays, 0 log differences. The
+command line in verify mode, where every replay (of the folded operations) is followed by the whole
+engine state compared with the normal path's (`bm_verify_full`): long-deck 13,322, beamer-madrid 343,
+beamer-visuals 675, beamer-blocks-columns 25 replays, 0 differences; each PDF byte-identical with
+BOX-MEMO off, on and verify.

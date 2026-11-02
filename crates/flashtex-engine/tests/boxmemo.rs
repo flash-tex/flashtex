@@ -477,3 +477,32 @@ fn a_register_a_group_end_brings_back_is_keyed() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+#[test]
+fn call_level_runs_aftergroup_and_fis_before_a_trailing_ignorespaces() {
+    // BOX-MEMO.md §15: a call that defines one macro again and again at the
+    // level it is called at (the run is replayed as one assignment), `\let`s
+    // from it in between (which ends the run), saves an `\aftergroup` token
+    // at that level, and ends in `\ignorespaces` before its own `\fi`. With
+    // `\tracingrestores` on, the caller's group end shows every save-stack
+    // entry the call left, in order, and the saved token runs after it.
+    let call = "{\\measure{q} \\message{[in \\meaning\\tmp|\\meaning\\y|\\the\\count1]}}\n";
+    let s = check(
+        "calllevel",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+             \\tracingrestores=1 \\tracingonline=0\n\
+             \\def\\tmp{old}\\def\\other{old}\\let\\y\\relax\n\
+             \\def\\measure#1{\\def\\tmp{a}\\def\\tmp{#1}\\def\\other{b}\\def\\tmp{#1#1}\\let\\y\\tmp\
+             \\def\\tmp{c}\\def\\tmp{#1c}\\count1=5 \\count1=6 \\aftergroup\\done\\ifnum1=1 \\ignorespaces\\fi}\n\
+             \\def\\done{\\message{[after \\meaning\\tmp|\\meaning\\y|\\meaning\\other|\\the\\count1]}}\n",
+            call,
+            call,
+            call,
+            call,
+            "\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
