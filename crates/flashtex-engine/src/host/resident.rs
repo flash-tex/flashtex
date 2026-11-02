@@ -2126,8 +2126,24 @@ fn give_back_free_memory() {
 /// signature is still the one the host left, its bytes come from there
 /// instead of a read, and an edit rewrites the file from the edit on
 /// (truncated or extended to the new length) rather than all of it.
+#[cfg(not(unix))]
+fn apply_changes(_: &Path, req: &Json, _: &mut Written) -> Result<(), String> {
+    if ["buffers", "edits"].iter().any(|k| {
+        req.get(k)
+            .and_then(Json::as_array)
+            .is_some_and(|a| !a.is_empty())
+    }) {
+        Err("rooted file operations are unavailable on this platform".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
 fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), String> {
     use crate::system::StatSig;
+    use server::rooted as sys;
+    use std::io::Read;
     let any = |k: &str| {
         req.get(k)
             .and_then(Json::as_array)
@@ -2136,32 +2152,46 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     if !any("buffers") && !any("edits") {
         return Ok(());
     }
-    // (symlinks resolved: a link in the project may lead out of it)
-    let croot = root
-        .canonicalize()
-        .map_err(|e| format!("root {}: {e}", root.display()))?;
+    // (the root itself may be a link, `~/thesis -> Dropbox`: followed once
+    // and pinned; every component below it is walked no-follow)
+    let root_fd = sys::open_root(root).map_err(|e| format!("root {}: {e}", root.display()))?;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
         if !server::inside(rel) {
             return Err(format!("{p}: a path inside root"));
         }
-        server::resolved_inside(&croot, root, rel)?;
         Ok(root.join(rel))
     };
-    let sig = |path: &Path| StatSig::of(&path.to_string_lossy());
+    let sig = |f: &std::fs::File| -> Option<StatSig> {
+        use std::os::unix::fs::MetadataExt;
+        let m = f.metadata().ok()?;
+        let ctime_ns = m.ctime() as i128 * 1_000_000_000 + m.ctime_nsec() as i128;
+        Some(StatSig::of_metadata(
+            &m,
+            ctime_ns,
+            flashtex_runtime::statsig::racy_ns(),
+        ))
+    };
     // The file's bytes now: the host's copy while the file is as it left
     // it, else read. (The copy may be shared with `Doc::texts`.)
     let current = |path: &Path, written: &mut Written| -> std::io::Result<Arc<Vec<u8>>> {
+        let rel = path.strip_prefix(root).expect("target is under root");
+        let mut f = server::open_confined(&root_fd, rel, sys::O_RDONLY)?;
+        if !f.metadata()?.is_file() {
+            return Err(std::io::Error::other("not a regular file"));
+        }
         if let Some((s, d)) = written.remove(path) {
             // (the host's own last write, still in place: exact fields,
             // racy or not -- the file is the host's copy of the editor's
             // text, which nothing else writes, and a racy test here would
             // read the typed file back at every keystroke)
-            if sig(path).is_some_and(|n| n.same_fields(&s)) {
+            if sig(&f).is_some_and(|n| n.same_fields(&s)) {
                 return Ok(d);
             }
         }
-        std::fs::read(path).map(Arc::new)
+        let mut data = Vec::new();
+        f.read_to_end(&mut data)?;
+        Ok(Arc::new(data))
     };
     // Write `data` to `path`, whose bytes before `from` are already these
     // and whose length is `old` (when known). The length is set only where
@@ -2181,24 +2211,18 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 steps[i] += t.elapsed().as_micros() as u64;
                 *t = Instant::now();
             };
-            let existed = std::fs::symlink_metadata(path).is_ok();
-            let r = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(path)
-                .and_then(|f| {
-                    // (a link swapped in since `target`'s check: the file
-                    // opened is checked where it is, before a byte is
-                    // written, and one this open made is removed again)
-                    if let Some(at) = server::opened_outside(&f, &croot) {
-                        if !existed {
-                            let _ = std::fs::remove_file(&at);
-                        }
-                        return Err(std::io::Error::other(format!(
-                            "leads outside root, to {}",
-                            at.display()
-                        )));
+            let rel = path.strip_prefix(root).expect("target is under root");
+            #[cfg(test)]
+            BEFORE_WRITE_OPEN.with(|hook| {
+                let call = hook.borrow_mut().take();
+                if let Some(call) = call {
+                    call();
+                }
+            });
+            let r =
+                server::open_confined(&root_fd, rel, sys::O_WRONLY | sys::O_CREAT).and_then(|f| {
+                    if !f.metadata()?.is_file() {
+                        return Err(std::io::Error::other("not a regular file"));
                     }
                     lap(0, &mut t);
                     let n = data.len() as u64;
@@ -2220,12 +2244,14 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                         }
                     };
                     lap(1, &mut t);
+                    r?;
+                    let s = sig(&f);
                     drop(f);
                     lap(3, &mut t);
-                    r
+                    Ok(s)
                 });
-            r.map_err(|e| format!("{}: {e}", path.display()))?;
-            let held = sig(path).map(|s| (s, Arc::new(data)));
+            let s = r.map_err(|e| format!("{}: {e}", path.display()))?;
+            let held = s.map(|s| (s, Arc::new(data)));
             lap(4, &mut t);
             APPLY_STEPS.with(|a| {
                 let mut v = a.get();
@@ -2246,7 +2272,9 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let path = target(p)?;
         match current(&path, written) {
             Ok(d) if d.as_slice() == text.as_bytes() => {
-                if let Some(s) = sig(&path) {
+                let f = server::open_confined(&root_fd, Path::new(p), sys::O_RDONLY)
+                    .map_err(|e| format!("{p}: {e}"))?;
+                if let Some(s) = sig(&f) {
                     written.insert(path, (s, d));
                 }
             }
@@ -2267,7 +2295,9 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let old = d.len();
         if d[at..at + del] == *ins.as_bytes() {
             // nothing changes (the file is left alone, as before)
-            if let Some(s) = sig(&path) {
+            let f = server::open_confined(&root_fd, Path::new(p), sys::O_RDONLY)
+                .map_err(|e| format!("{p}: {e}"))?;
+            if let Some(s) = sig(&f) {
                 written.insert(path, (s, d));
             }
             continue;
@@ -2313,6 +2343,11 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         });
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+thread_local! {
+    static BEFORE_WRITE_OPEN: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
 }
 
 /// Where `apply_changes` cuts a file that gets shorter: a multiple of
@@ -2738,6 +2773,7 @@ mod tests {
     /// Edits that shrink, grow and keep a file, near and across the cut's
     /// 16 KB boundaries (`CUT_ALIGN`), leave it holding exactly the edited
     /// text, and the host's copy (`written`) the same bytes.
+    #[cfg(unix)]
     #[test]
     fn edits_leave_the_file_as_the_text() {
         use flashtex_display_list::json::{obj, s as js, Json};
@@ -2786,6 +2822,106 @@ mod tests {
             let (_, held) = written.get(&dir.join("m.tex")).expect("the host's copy");
             assert_eq!(held.as_slice(), text.as_slice(), "edit {k}");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn swapped_directory_leaves_outside_file_intact() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("ftx-buffer-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(away.join("file.tex"), "outside").unwrap();
+        super::BEFORE_WRITE_OPEN.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new({
+                let (root, away) = (root.clone(), away.clone());
+                move || {
+                    std::fs::rename(root.join("dir"), root.join("old-dir")).unwrap();
+                    symlink(&away, root.join("dir")).unwrap();
+                }
+            }));
+        });
+        let req = obj([(
+            "buffers",
+            Json::Arr(vec![obj([
+                ("path", js("dir/file.tex")),
+                ("text", js("buffer")),
+            ])]),
+        )]);
+        assert!(super::apply_changes(&root, &req, &mut super::Written::new()).is_err());
+        assert_eq!(std::fs::read(away.join("file.tex")).unwrap(), b"outside");
+        assert!(!root.join("old-dir/file.tex").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A project opened through a link (`~/thesis -> Dropbox/thesis`) takes
+    /// buffers and edits; a link *below* the root is still refused.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn root_reached_through_symlink_accepts_edits() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("ftx-root-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (real, link, away) = (base.join("real"), base.join("thesis"), base.join("away"));
+        std::fs::create_dir_all(real.join("sub")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(real.join("main.tex"), "hello").unwrap();
+        std::fs::write(away.join("x.tex"), "outside").unwrap();
+        symlink(&real, &link).unwrap();
+        symlink(&away, real.join("out")).unwrap();
+        let mut written = super::Written::new();
+        let req = obj([
+            (
+                "buffers",
+                Json::Arr(vec![obj([
+                    ("path", js("sub/a.tex")),
+                    ("text", js("new file")),
+                ])]),
+            ),
+            (
+                "edits",
+                Json::Arr(vec![obj([
+                    ("path", js("main.tex")),
+                    ("offset", Json::Int(5)),
+                    ("delete", Json::Int(0)),
+                    ("insert", js(" world")),
+                ])]),
+            ),
+        ]);
+        super::apply_changes(&link, &req, &mut written).unwrap();
+        assert_eq!(std::fs::read(real.join("main.tex")).unwrap(), b"hello world");
+        assert_eq!(std::fs::read(real.join("sub/a.tex")).unwrap(), b"new file");
+        let below = obj([(
+            "buffers",
+            Json::Arr(vec![obj([("path", js("out/x.tex")), ("text", js("in"))])]),
+        )]);
+        assert!(super::apply_changes(&link, &below, &mut written).is_err());
+        assert_eq!(std::fs::read(away.join("x.tex")).unwrap(), b"outside");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Hosts without a rooted walk must refuse edits instead of relying on
+    /// an unavailable post-open path lookup.
+    #[cfg(not(unix))]
+    #[test]
+    fn edits_fail_closed_without_rooted_operations() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        let dir = std::env::temp_dir().join(format!("ftx-no-rooted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("main.tex");
+        std::fs::write(&path, "before").unwrap();
+        let req = obj([(
+            "buffers",
+            Json::Arr(vec![obj([("path", js("main.tex")), ("text", js("after"))])]),
+        )]);
+        assert!(super::apply_changes(&dir, &req, &mut super::Written::new()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"before");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
