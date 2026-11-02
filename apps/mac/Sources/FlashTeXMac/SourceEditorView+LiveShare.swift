@@ -250,6 +250,7 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         storage.endEditing()
         if diverged { resyncFromCRDT(tv, storage: storage) }
         linkedSession = nil // the captured \begin/\end spans no longer describe the buffer
+        carriedLinkedSession = nil
         if let selection, selection.upperBound <= storage.length {
             tv.setSelectedRange(NSRange(location: selection.lowerBound, length: selection.count))
         }
