@@ -10,7 +10,12 @@ import sys
 
 runs = []
 cur = None
+parts = []
 for line in open(sys.argv[1], errors='replace'):
+    if line.startswith('[parts] resume '):
+        w = line.split()
+        parts.append({w[i]: float(w[i + 1]) for i in range(2, len(w) - 1, 2)})
+        continue
     if not line.startswith('[stage] '):
         continue
     w = line.split()
@@ -50,3 +55,7 @@ for n in names:
 print(f"  resumed pages      {med([r['pages_before_main'] for r in ks]):.0f}")
 print(f"  first typeset page at {med([r['first_typeset'][0] for r in ks]):.3f} ms "
       f"(+{med([r['first_typeset'][1] for r in ks]):.3f} after the last stage)")
+if parts:
+    ps = [p for p in parts if p.get('spans', 0) + p.get('frames', 0) > 0]
+    print('  resume parts (median over %d): ' % len(ps)
+          + ', '.join('%s %.3f' % (k, statistics.median([p[k] for p in ps])) for k in ps[0]) if ps else '')

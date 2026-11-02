@@ -989,6 +989,7 @@ impl Engine {
                 },
             },
         };
+        crate::out::stage("check_refresh");
         if let Some(w) = why {
             self.s0 = None;
             self.pages.clear();
@@ -1178,6 +1179,7 @@ impl Engine {
         // is a change from them the next run sees).
         // no kept state for this command: the document's S₀ from its file
         let mut opened_note = None;
+        crate::out::stage("begin_misc");
         if let Some(p) = &spec.s0_file {
             let kept = self.g.is_some()
                 && (self.point.as_ref().is_some_and(|p| p.key == key)
@@ -1189,7 +1191,9 @@ impl Engine {
                 });
             }
         }
+        crate::out::stage("s0_file");
         let texts_then = self.keep_pages.then(|| self.texts_now());
+        crate::out::stage("texts_now");
         let (mut start, mut s0_note) = self.start_for(&key, &line, dl_on, texts_then.as_ref());
         if s0_note.is_none() {
             s0_note = opened_note;

@@ -190,6 +190,7 @@ impl Output {
                 .map_err(|e| format!("{}: {e}", self.pdf_name))?;
             self.pdf = Some(f);
         }
+        crate::out::stage("resume_doc_clone");
         let pages = self.doc.pages.clone();
         for b in &pages {
             // with the source map's files and spans (the engine's map is
@@ -581,6 +582,7 @@ fn send_page(
     b: &Built,
     sources: impl FnOnce(&[u32], &mut HashSet<u32>, &mut HashSet<u32>) -> Option<Vec<u8>>,
 ) {
+    let t_sp = std::time::Instant::now();
     let Some(dl) = out.dl.as_mut() else {
         return;
     };
@@ -600,7 +602,9 @@ fn send_page(
         .collect();
     spans.sort_unstable();
     spans.dedup();
+    let t_src = std::time::Instant::now();
     let src = sources(&spans, &mut dl.spans, &mut dl.files);
+    let t_rest = std::time::Instant::now();
     let mut ok = true;
     let mut send = |k: u8, body: &[u8], w: &mut Box<dyn Write + Send>| {
         if ok && write_frame(w, k, body).is_err() {
@@ -633,9 +637,19 @@ fn send_page(
     {
         send(kind::PAGE, body, &mut dl.w);
     }
+    let t_flush = std::time::Instant::now();
     if !ok || dl.w.flush().is_err() {
         out.dl = None;
     }
+    let t_end = std::time::Instant::now();
+    PAGE_ACC.with(|a| {
+        let mut v = a.get();
+        v[0] += (t_src - t_sp).as_secs_f64() * 1e3;
+        v[1] += (t_rest - t_src).as_secs_f64() * 1e3;
+        v[2] += (t_flush - t_rest).as_secs_f64() * 1e3;
+        v[3] += (t_end - t_flush).as_secs_f64() * 1e3;
+        a.set(v);
+    });
     flashtex_page_sent();
 }
 
@@ -698,9 +712,23 @@ pub fn stage_start(t: std::time::Instant) {
         eprintln!("[stage] begin");
     }
 }
+thread_local! {
+    /// SCRATCH: send_page's ms since the last stage: spans, sources, the
+    /// resources and frames written, the flush.
+    static PAGE_ACC: std::cell::Cell<[f64; 4]> = const { std::cell::Cell::new([0.0; 4]) };
+}
 pub fn stage(name: &str) {
     if !stages_on() {
         return;
+    }
+    if name == "resume" {
+        let v = PAGE_ACC.with(|a| a.replace([0.0; 4]));
+        eprintln!(
+            "[parts] resume spans {:.3} sources {:.3} frames {:.3} flush {:.3}",
+            v[0], v[1], v[2], v[3]
+        );
+    } else if name == "setup" {
+        PAGE_ACC.with(|a| a.set([0.0; 4]));
     }
     thread_local! {
         static PHASE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };

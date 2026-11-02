@@ -47,7 +47,7 @@ jobs:
         run: |
           set -o pipefail
           chmod +x tools/unicode-m3/restart_profile.sh
-          tools/unicode-m3/restart_profile.sh "$RUNNER_TEMP/uprof" 60 2>&1 | tee "$RUNNER_TEMP/uprof.log"
+          GAP=0 tools/unicode-m3/restart_profile.sh "$RUNNER_TEMP/uprof" 60 2>&1 | tee "$RUNNER_TEMP/uprof.log"
       - name: keep the results
         if: always()
         uses: actions/upload-artifact@v4
