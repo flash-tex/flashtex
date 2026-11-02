@@ -114,50 +114,118 @@ public struct PadUnsavedDraft: Codable, Equatable, Sendable {
     }
 }
 
-/// `Application Support/FlashTeXPad/unsaved-draft.json`: one draft (the
-/// iPad edits one document at a time). Writes and removals run on a serial
-/// queue, in call order, never on the caller's thread.
-public final class PadDraftStore: @unchecked Sendable { // `_lastError` under `lock`; the file only from `queue`
-    public let url: URL
-    private let queue = DispatchQueue(label: "flashtex.pad.unsaved-draft", qos: .utility)
+
+extension PadUnsavedDraft.Source {
+    /// One draft per source: the file's path (bookmarks change; the path names
+    /// the file), or the bundled demo.
+    public var key: String {
+        switch self {
+        case .file(let path, _): return "file:" + URL(fileURLWithPath: path).standardizedFileURL.path
+        case .bundledSample: return "bundled:demo.tex"
+        }
+    }
+}
+
+/// Unsaved-text drafts under `Application Support/FlashTeXPad/drafts/`, one
+/// per source, so editing one file never replaces or removes another's:
+///
+/// - `current/<key>.json`: this run's draft of each edited document, written
+///   shortly after an edit and removed once that text is saved;
+/// - `offered/<key>-<uuid>.json`: drafts a run left behind (moved there at
+///   launch by `takeOffered`) or a save that could not complete after the
+///   document was closed (`offer`). They stay until the person restores or
+///   discards them, whatever this run edits and saves.
+///
+/// Writes and removals run on a serial queue in call order, never on the
+/// caller's thread.
+public final class PadDraftStore: @unchecked Sendable { // `_lastError` under `lock`; files only from `queue`
+    public struct Offered: Identifiable, Equatable, Sendable {
+        public let id: String
+        public let draft: PadUnsavedDraft
+    }
+
+    public let directory: URL
+    private var current: URL { directory.appendingPathComponent("current", isDirectory: true) }
+    private var offeredDir: URL { directory.appendingPathComponent("offered", isDirectory: true) }
+    private let queue = DispatchQueue(label: "flashtex.pad.unsaved-drafts", qos: .utility)
     private let lock = NSLock()
     private var _lastError: String?
 
-    public static func defaultURL() -> URL {
-        CaptureStore.defaultDirectory().appendingPathComponent("unsaved-draft.json")
+    public static func defaultDirectory() -> URL {
+        CaptureStore.defaultDirectory().appendingPathComponent("drafts", isDirectory: true)
     }
 
-    public init(url: URL = PadDraftStore.defaultURL()) { self.url = url }
+    public init(directory: URL = PadDraftStore.defaultDirectory()) { self.directory = directory }
 
     public var lastError: String? { lock.withLock { _lastError } }
 
-    /// The draft last written, if any (synchronous: launch).
-    public func load() -> PadUnsavedDraft? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        return try? dec.decode(PadUnsavedDraft.self, from: data)
+    static func fileName(_ source: PadUnsavedDraft.Source) -> String {
+        String(PadDocumentFile.sha256(Data(source.key.utf8)).prefix(32)) + ".json"
     }
 
+    /// This run's draft for `draft.source` (replaces only that source's).
     public func save(_ draft: PadUnsavedDraft) {
-        queue.async { [self] in
-            do {
-                let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
-                let data = try enc.encode(draft)
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try data.write(to: url, options: .atomic)
-                lock.withLock { _lastError = nil }
-            } catch {
-                lock.withLock { _lastError = "\(error)" }
+        queue.async { [self] in write(draft, to: current.appendingPathComponent(Self.fileName(draft.source))) }
+    }
+
+    /// Removes this run's draft for `source` (its text was saved). Offered
+    /// drafts are never touched here.
+    public func clear(_ source: PadUnsavedDraft.Source) {
+        queue.async { [self] in try? FileManager.default.removeItem(at: current.appendingPathComponent(Self.fileName(source))) }
+    }
+
+    /// Keeps `draft` as an offered one (until restored or discarded).
+    public func offer(_ draft: PadUnsavedDraft) -> Offered {
+        let id = String(Self.fileName(draft.source).dropLast(5)) + "-" + UUID().uuidString.lowercased()
+        queue.async { [self] in write(draft, to: offeredDir.appendingPathComponent(id + ".json")) }
+        return Offered(id: id, draft: draft)
+    }
+
+    /// Launch: every draft an earlier run left in `current/` becomes an
+    /// offered one, and all offered drafts are returned, newest first.
+    public func takeOffered() -> [Offered] {
+        queue.sync {
+            let fm = FileManager.default
+            try? fm.createDirectory(at: offeredDir, withIntermediateDirectories: true)
+            for name in (try? fm.contentsOfDirectory(atPath: current.path)) ?? [] where name.hasSuffix(".json") {
+                let id = String(name.dropLast(5)) + "-" + UUID().uuidString.lowercased()
+                try? fm.moveItem(at: current.appendingPathComponent(name), to: offeredDir.appendingPathComponent(id + ".json"))
             }
+            let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+            var out: [Offered] = []
+            for name in (try? fm.contentsOfDirectory(atPath: offeredDir.path)) ?? [] where name.hasSuffix(".json") {
+                guard let data = try? Data(contentsOf: offeredDir.appendingPathComponent(name)),
+                      let draft = try? dec.decode(PadUnsavedDraft.self, from: data) else { continue }
+                out.append(Offered(id: String(name.dropLast(5)), draft: draft))
+            }
+            return out.sorted { $0.draft.savedAt > $1.draft.savedAt }
         }
     }
 
-    public func clear() {
-        queue.async { [self] in try? FileManager.default.removeItem(at: url) }
+    /// The person restored or discarded an offered draft.
+    public func removeOffered(_ id: String) {
+        queue.async { [self] in try? FileManager.default.removeItem(at: offeredDir.appendingPathComponent(id + ".json")) }
+    }
+
+    /// Everything, for `-flashtexpad-fresh`.
+    public func wipe() {
+        queue.async { [self] in try? FileManager.default.removeItem(at: directory) }
     }
 
     /// Resolves once every write and removal asked for so far is done.
     public func flush() async {
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in queue.async { done.resume() } }
+    }
+
+    private func write(_ draft: PadUnsavedDraft, to url: URL) {
+        do {
+            let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+            let data = try enc.encode(draft)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            lock.withLock { _lastError = nil }
+        } catch {
+            lock.withLock { _lastError = "\(error)" }
+        }
     }
 }

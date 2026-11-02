@@ -51,19 +51,29 @@ final class PadDocumentFileTests: XCTestCase {
         XCTAssertEqual(PadDocumentFile.save("x", to: file, expectedSha256: nil), .saved(sha256: PadDocumentFile.sha256(Data("x".utf8))))
     }
 
-    func testDraftStoreKeepsTheLastWriteAndClears() async throws {
-        let store = PadDraftStore(url: dir.appendingPathComponent("drafts/unsaved-draft.json"))
-        XCTAssertNil(store.load())
-        let a = PadUnsavedDraft(source: .file(path: file.path, bookmark: nil), title: "main.tex", text: "one", diskSha256: "abc", savedAt: Date(timeIntervalSince1970: 1))
-        var b = a; b.text = "two"
-        store.save(a); store.save(b)
+    func testDraftsAreKeptPerSourceAndOfferedUntilResolved() async throws {
+        let store = PadDraftStore(directory: dir.appendingPathComponent("drafts"))
+        XCTAssertTrue(store.takeOffered().isEmpty)
+        let aSource = PadUnsavedDraft.Source.file(path: file.path, bookmark: nil)
+        let a = PadUnsavedDraft(source: aSource, title: "main.tex", text: "a1", diskSha256: "abc", savedAt: Date(timeIntervalSince1970: 1))
+        var a2 = a; a2.text = "a2"
+        let b = PadUnsavedDraft(source: .file(path: dir.appendingPathComponent("b.tex").path, bookmark: nil), title: "b.tex", text: "b",
+                                diskSha256: nil, savedAt: Date(timeIntervalSince1970: 2))
+        store.save(a); store.save(a2); store.save(b)
+        store.clear(b.source) // b was saved: only its draft goes
         await store.flush()
-        XCTAssertEqual(store.load(), b, "writes land in call order")
-        store.clear()
+        // Next launch: this run's drafts become offered ones.
+        let offered = store.takeOffered()
+        XCTAssertEqual(offered.map(\.draft), [a2], "one per source, the last write; another source's save removed only its own")
+        // Editing and saving `a` again in this run never touches the offered copy.
+        store.save(a); store.clear(aSource)
         await store.flush()
-        XCTAssertNil(store.load())
-        store.save(PadUnsavedDraft(source: .bundledSample, title: "demo.tex", text: "demo", diskSha256: nil))
+        XCTAssertEqual(store.takeOffered().map(\.draft), [a2])
+        store.removeOffered(offered[0].id)
         await store.flush()
-        XCTAssertEqual(store.load()?.source, .bundledSample)
+        XCTAssertTrue(store.takeOffered().isEmpty)
+        let kept = store.offer(b)
+        await store.flush()
+        XCTAssertEqual(store.takeOffered(), [kept])
     }
 }

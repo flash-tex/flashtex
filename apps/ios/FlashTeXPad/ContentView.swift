@@ -136,15 +136,15 @@ struct EditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let draft = model.recoverableDraft {
+            ForEach(model.recoverableDrafts) { offered in
                 HStack {
-                    Label("Unsaved edits to \(draft.title) from \(draft.savedAt.formatted(date: .abbreviated, time: .shortened)) were kept.",
+                    Label("Unsaved edits to \(offered.draft.title) from \(offered.draft.savedAt.formatted(date: .abbreviated, time: .shortened)) were kept.",
                           systemImage: "clock.arrow.circlepath")
                         .font(.footnote)
                     Spacer()
-                    Button("Restore") { model.restoreDraft() }.buttonStyle(.borderedProminent).controlSize(.small)
+                    Button("Restore") { model.restoreDraft(offered) }.buttonStyle(.borderedProminent).controlSize(.small)
                         .accessibilityIdentifier("editor.restoreDraft")
-                    Button("Discard", role: .destructive) { model.discardDraft() }.buttonStyle(.bordered).controlSize(.small)
+                    Button("Discard", role: .destructive) { model.discardDraft(offered) }.buttonStyle(.bordered).controlSize(.small)
                         .accessibilityIdentifier("editor.discardDraft")
                 }
                 .padding(.horizontal).padding(.vertical, 6).background(.yellow.opacity(0.15))
@@ -163,7 +163,7 @@ struct EditorPanel: View {
                             .accessibilityHint("Saves this text over the file's current version")
                             .accessibilityIdentifier("editor.keepMine")
                         if disk != nil {
-                            Button("Use the file's version") { model.reloadFromDisk() }.buttonStyle(.bordered).controlSize(.small)
+                            Button("Use the file's version") { Task { await model.reloadFromDisk() } }.buttonStyle(.bordered).controlSize(.small)
                                 .accessibilityHint("Replaces this text, and its unsaved edits, with the file's current text")
                                 .accessibilityIdentifier("editor.useDisk")
                         }

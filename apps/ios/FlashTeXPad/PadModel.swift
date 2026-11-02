@@ -120,7 +120,7 @@ final class PadModel: ObservableObject {
         let store: CaptureStore? = captureStore ?? (production ? CaptureStore() : nil)
         if fresh { store?.wipe() }
         self.draftStore = draftStore ?? (production ? PadDraftStore() : nil)
-        if fresh { self.draftStore?.clear() } else { recoverableDraft = self.draftStore?.load() }
+        if fresh { self.draftStore?.wipe() } else { recoverableDrafts = self.draftStore?.takeOffered() ?? [] }
         self.link = link
         self.queue = CaptureQueue(link: link, store: store)
         self.captures = queue.records
@@ -179,12 +179,27 @@ final class PadModel: ObservableObject {
     private var saveAgain = false
     private var draftTask: Task<Void, Never>?
     private var resignObserver: NSObjectProtocol?
-    /// Bumped by every `setDocument`: a save result names the buffer it was for.
-    private var documentGeneration = 0
-    /// Unsaved text from the last run (a crash, a kill while suspended, a
-    /// failed save), offered in the editor until restored or discarded.
-    @Published var recoverableDraft: PadUnsavedDraft?
+    /// Bumped by every `setDocument`: the editor reloads on it (every opened
+    /// document starts at revision 1, so a revision alone cannot tell two
+    /// files apart), an edit from a stale editor is refused, and a save
+    /// result names the buffer it was for.
+    private(set) var documentGeneration = 0
+    /// Unsaved text kept from a closed buffer or an earlier run (a crash, a
+    /// kill while suspended, a save that could not complete), offered in the
+    /// editor until restored or discarded — one per draft, whatever else is
+    /// edited meanwhile.
+    @Published var recoverableDrafts: [PadDraftStore.Offered] = []
     let draftStore: PadDraftStore?
+
+    /// A buffer that was closed (another document opened) with text its file
+    /// may not hold yet, by the generation it had: the save that was running
+    /// or started for it finishes the job, or its text is offered as a draft.
+    private struct ClosedBuffer {
+        let url: URL
+        let scopes: [URL]
+        let draft: PadUnsavedDraft
+    }
+    private var closedBuffers: [Int: ClosedBuffer] = [:]
 
     /// Bookkeeping after an edit (keystroke cost: two debounced tasks, no I/O).
     private func documentEdited() {
@@ -225,25 +240,29 @@ final class PadModel: ObservableObject {
             let result = await Task.detached(priority: .utility) {
                 PadDocumentFile.save(text, to: url, expectedSha256: expected, scopes: scopes)
             }.value
-            self?.finishSave(result, generation: generation, revision: revision)
+            self?.finishSave(result, generation: generation, revision: revision, text: text)
         }
     }
 
-    private func finishSave(_ result: PadDocumentFile.SaveResult, generation: Int, revision: Int) {
+    private func finishSave(_ result: PadDocumentFile.SaveResult, generation: Int, revision: Int, text: String) {
         saveTask = nil
         let again = saveAgain
         saveAgain = false
-        // Another document was opened meanwhile (even the same file again):
-        // the old buffer's file is saved, or not; nothing here describes the
-        // new buffer, whose own save checks the file's hash afresh.
-        guard generation == documentGeneration, let current = document else { return }
+        guard generation == documentGeneration, let current = document else {
+            // The buffer was closed meanwhile (another document, or the same
+            // file opened again). Its save finishes its own job; then the
+            // current buffer's save that waited for this one runs.
+            if let closed = closedBuffers.removeValue(forKey: generation) { settle(closed, after: result, savedText: text) }
+            if again { saveNow() }
+            return
+        }
         switch result {
         case .saved(let sha):
             diskSha256 = sha
             if current.revision == revision {
                 saveState = .saved
                 draftTask?.cancel()
-                draftStore?.clear()
+                if let source = draftSource() { draftStore?.clear(source) }
             } else {
                 saveState = .unsaved
                 saveNow()
@@ -256,6 +275,73 @@ final class PadModel: ObservableObject {
             scheduleDraft(after: 0)
         }
         if again, saveState == .unsaved { saveNow() }
+    }
+
+    /// A closed buffer's save came back. Saved with its last text: its draft
+    /// goes. Saved with older text (edits made while that save ran): its last
+    /// text is saved over the version just written. A conflict or failure:
+    /// its text is offered as a draft at once, never dropped.
+    private func settle(_ closed: ClosedBuffer, after result: PadDocumentFile.SaveResult, savedText: String) {
+        switch result {
+        case .saved where closed.draft.text.sameBytes(as: savedText):
+            draftStore?.clear(closed.draft.source)
+        case .saved(let sha):
+            let text = closed.draft.text
+            Task { [weak self] in
+                let next = await Task.detached(priority: .utility) {
+                    PadDocumentFile.save(text, to: closed.url, expectedSha256: sha, scopes: closed.scopes)
+                }.value
+                self?.settle(closed, after: next, savedText: text)
+            }
+        case .conflict:
+            offerClosed(closed, why: "the file changed outside FlashTeXPad")
+        case .failed(let why):
+            offerClosed(closed, why: why)
+        }
+    }
+
+    private func offerClosed(_ closed: ClosedBuffer, why: String) {
+        guard let draftStore else {
+            editorStatus = "“\(closed.draft.title)” was not saved (\(why))."
+            return
+        }
+        recoverableDrafts.insert(draftStore.offer(closed.draft), at: 0)
+        draftStore.clear(closed.draft.source)
+        editorStatus = "“\(closed.draft.title)” was not saved (\(why)); its edits are kept — Restore them from the editor."
+    }
+
+    /// Before another document replaces the buffer: unsaved text goes to its
+    /// draft now and to its file (the save, if one is due, carries on after
+    /// the switch); text that cannot be saved (a conflict, a failure) is
+    /// offered as a draft at once.
+    private func closeBuffer() {
+        guard let d = document else { return }
+        let dirty: Bool
+        switch saveState {
+        case .unsaved, .saving, .failed, .conflict: dirty = true
+        case .saved: dirty = false
+        case .none: dirty = documentURL == nil && d.revision > 1 // an edited bundled demo
+        }
+        autosaveTask?.cancel()
+        draftTask?.cancel()
+        guard dirty, let source = draftSource() else { return }
+        let draft = PadUnsavedDraft(source: source, title: documentTitle, text: d.text, diskSha256: diskSha256)
+        draftStore?.save(draft)
+        guard let url = documentURL else { return } // the bundled demo: the draft is its copy
+        let closed = ClosedBuffer(url: url, scopes: saveScopes(), draft: draft)
+        switch saveState {
+        case .unsaved:
+            closedBuffers[documentGeneration] = closed
+            saveNow()
+        case .saving:
+            closedBuffers[documentGeneration] = closed // the running save settles it
+        case .conflict:
+            offerClosed(closed, why: "the file changed outside FlashTeXPad")
+        case .failed(let why):
+            offerClosed(closed, why: why)
+        case .saved, .none:
+            break
+        }
     }
 
     /// The scopes that cover the file: a granted folder, the file itself.
@@ -272,17 +358,27 @@ final class PadModel: ObservableObject {
         saveNow()
     }
 
-    /// Conflict: take the file's text, dropping this buffer's edits.
-    func reloadFromDisk() {
-        guard case .conflict(let disk?) = saveState, var d = document else { return }
-        d.text = disk.text
-        d.revision += 1
-        document = d
-        diskSha256 = disk.sha256
-        saveState = .saved
-        draftTask?.cancel()
-        draftStore?.clear()
-        refreshCompletions()
+    /// Conflict: take the file's text, dropping this buffer's edits. The file
+    /// is read again now (off the main actor): it may have changed since the
+    /// conflict was found.
+    func reloadFromDisk() async {
+        guard case .conflict = saveState, let url = documentURL else { return }
+        let generation = documentGeneration, scopes = saveScopes()
+        let read = await Task.detached(priority: .userInitiated) { Result { try PadDocumentFile.read(url, scopes: scopes) } }.value
+        guard generation == documentGeneration, case .conflict = saveState, var d = document else { return }
+        switch read {
+        case .success(let disk):
+            d.text = disk.text
+            d.revision += 1
+            document = d
+            diskSha256 = disk.sha256
+            saveState = .saved
+            draftTask?.cancel()
+            if let source = draftSource() { draftStore?.clear(source) }
+            refreshCompletions()
+        case .failure:
+            saveState = .conflict(disk: nil)
+        }
     }
 
     /// Waits for the pending autosave and any save in flight (tests).
@@ -302,10 +398,10 @@ final class PadModel: ObservableObject {
     private func scheduleDraft(after delay: TimeInterval) {
         guard let draftStore, let d = document, let source = draftSource() else { return }
         draftTask?.cancel()
-        let title = documentTitle, sha = diskSha256
+        let title = documentTitle, sha = diskSha256, generation = documentGeneration
         draftTask = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
-            guard !Task.isCancelled, let self, self.document?.revision == d.revision else { return }
+            guard !Task.isCancelled, let self, self.documentGeneration == generation, self.document?.revision == d.revision else { return }
             draftStore.save(PadUnsavedDraft(source: source, title: title, text: d.text, diskSha256: sha))
         }
     }
@@ -325,12 +421,14 @@ final class PadModel: ObservableObject {
         case .saved: unsaved = false
         case .none: unsaved = documentURL == nil && current.revision > 1 // an edited bundled demo
         }
-        guard unsaved else { return }
-        draftTask?.cancel()
-        if let draftStore, let d = document, let source = draftSource() {
-            draftStore.save(PadUnsavedDraft(source: source, title: documentTitle, text: d.text, diskSha256: diskSha256))
+        guard unsaved || !closedBuffers.isEmpty else { return }
+        if unsaved {
+            draftTask?.cancel()
+            if let draftStore, let source = draftSource() {
+                draftStore.save(PadUnsavedDraft(source: source, title: documentTitle, text: current.text, diskSha256: diskSha256))
+            }
+            saveNow()
         }
-        saveNow()
         let app = UIApplication.shared
         let grant = BackgroundGrant()
         grant.id = app.beginBackgroundTask(withName: "flashtex.pad.save") { grant.end(app) }
@@ -351,12 +449,13 @@ final class PadModel: ObservableObject {
         }
     }
 
-    /// The offered draft back in the editor: its file reopened (bookmark,
+    /// An offered draft back in the editor: its file reopened (bookmark,
     /// else its path) and its text applied as unsaved edits against the
     /// version they were made from — a file changed since is a conflict.
-    func restoreDraft() {
-        guard let draft = recoverableDraft else { return }
-        recoverableDraft = nil
+    /// The offered copy goes once its text is in the buffer (whose own
+    /// draft then protects it).
+    func restoreDraft(_ offered: PadDraftStore.Offered) {
+        let draft = offered.draft
         switch draft.source {
         case .bundledSample:
             openBundledSample()
@@ -366,12 +465,12 @@ final class PadModel: ObservableObject {
             open(url: url, title: draft.title)
             guard openError == nil, documentURL != nil else {
                 openError = "Could not reopen \(draft.title) to restore its unsaved text: \(openError ?? "no access") — the draft is kept."
-                recoverableDraft = draft
                 return
             }
         }
-        guard var d = document else { return }
-        guard !d.text.sameBytes(as: draft.text) else { draftStore?.clear(); return } // already what the file holds
+        recoverableDrafts.removeAll { $0.id == offered.id }
+        draftStore?.removeOffered(offered.id)
+        guard var d = document, !d.text.sameBytes(as: draft.text) else { return } // already what the file holds
         d.text = draft.text
         d.revision += 1
         document = d
@@ -383,10 +482,10 @@ final class PadModel: ObservableObject {
         refreshCompletions()
     }
 
-    /// The offered draft dropped.
-    func discardDraft() {
-        recoverableDraft = nil
-        draftStore?.clear()
+    /// An offered draft dropped.
+    func discardDraft(_ offered: PadDraftStore.Offered) {
+        recoverableDrafts.removeAll { $0.id == offered.id }
+        draftStore?.removeOffered(offered.id)
     }
 
     // MARK: captures
@@ -756,11 +855,9 @@ final class PadModel: ObservableObject {
     }
 
     private func setDocument(_ doc: PadDocument, title: String) {
-        // The previous buffer's pending edits go to its file first (the save
-        // captures its URL and text; its result no longer touches this state).
-        if case .unsaved = saveState { saveNow() }
-        autosaveTask?.cancel()
-        draftTask?.cancel()
+        // The previous buffer's unsaved text goes to its draft and its file
+        // first, or is offered as a draft when it cannot be saved.
+        closeBuffer()
         documentGeneration += 1
         saveState = .none
         diskSha256 = nil
@@ -785,8 +882,11 @@ final class PadModel: ObservableObject {
     /// pass is scheduled off the main actor. Returns the new revision (the
     /// editor records it so it does not reload its own edit).
     @discardableResult
-    func textChanged(_ text: String, caret: Int? = nil, mathMode: Bool? = nil) -> Int {
+    func textChanged(_ text: String, caret: Int? = nil, mathMode: Bool? = nil, generation: Int? = nil) -> Int {
         guard var d = document else { return 0 }
+        // An editor still showing a document that was replaced must never
+        // write its text into the new one (it reloads on the generation).
+        if let generation, generation != documentGeneration { return d.revision }
         if let caret { caretUTF16 = caret }
         caretMathMode = mathMode
         guard !d.text.sameBytes(as: text) else { return d.revision }
