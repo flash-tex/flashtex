@@ -1410,8 +1410,11 @@ fn an_export_leaves_the_next_keystroke_incremental() {
     let got = run("resident", &[]);
     // (the compile before the export went on from a page: the premise)
     assert!(got[1].0.starts_with("page"), "{:?}", got[1].0);
+    // (from a page: the export wrote the `.aux` again with the same bytes,
+    // which leaves the page checkpoints after its opening standing,
+    // `flashtex_engine::system`'s `rewritten_alike`)
     assert!(
-        got[3].0.starts_with("s0") || got[3].0.starts_with("page"),
+        got[3].0.starts_with("page"),
         "the keystroke after the export: {:?}",
         got[3].0
     );
