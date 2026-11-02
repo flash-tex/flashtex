@@ -551,12 +551,17 @@ impl Globals {
                 if flashtex_engine::pdftex::utils::parse_source_date_epoch(v.as_encoded_bytes())
                     .is_none()
                 {
-                    eprintln!(
-                        "{}: fatal: invalid epoch-seconds-timezone value for environment \
-                         variable $SOURCE_DATE_EPOCH: {}.",
-                        flashtex_engine::system::invocation_name(),
-                        v.to_string_lossy()
+                    // As bytes: a non-UTF-8 value reaches stderr unchanged.
+                    use std::io::Write;
+                    let mut m = Vec::with_capacity(128);
+                    m.extend_from_slice(flashtex_engine::system::invocation_name().as_bytes());
+                    m.extend_from_slice(
+                        b": fatal: invalid epoch-seconds-timezone value for environment \
+                          variable $SOURCE_DATE_EPOCH: ",
                     );
+                    m.extend_from_slice(v.as_encoded_bytes());
+                    m.extend_from_slice(b".\n");
+                    let _ = std::io::stderr().write_all(&m);
                     crate::system::exit_process(self, 1);
                 }
             }
@@ -605,11 +610,16 @@ impl Globals {
             .as_deref()
             .filter(|v| !forced && !v.is_empty() && *v != "0")
         {
-            eprintln!(
-                "warning: invalid value (expected 0 or 1) for environment variable \
-                 $FORCE_SOURCE_DATE: {}.",
-                v.to_string_lossy()
+            // As bytes: a non-UTF-8 value reaches stderr unchanged.
+            use std::io::Write;
+            let mut m = Vec::with_capacity(128);
+            m.extend_from_slice(
+                b"warning: invalid value (expected 0 or 1) for environment variable \
+                  $FORCE_SOURCE_DATE: ",
             );
+            m.extend_from_slice(v.as_encoded_bytes());
+            m.extend_from_slice(b".\n");
+            let _ = std::io::stderr().write_all(&m);
         }
         let tm = if forced {
             flashtex_engine::os::broken_down(self.start_time(), true)
