@@ -938,3 +938,49 @@ copies of its Blocks frame: 15,310 replays, 0 differences. `soundness.py`, 20 tr
 each, every compile byte-identical to a run from scratch: beamer-fragile, -overlays, -default,
 -visuals, -blocks-columns, -madrid and metropolis 0 bad (converged 19, 25, 20, 15, 1, 34, 21, as on
 main), metropolis interleaved 43 compiles, 32 checked, 11 interrupted, 0 bad.
+
+### 16.7 Runs inside kept groups, and overwritten global assignments
+
+§16.1 folded runs at the call's own level only. On long-deck (T7's `long-deck`, the BOX-MEMO
+coverage ranking of the edited page's window: checkpoints about 9 %, BOX-MEMO's own replays 9 %)
+the most-replayed calls were the headline and footline: `\@oddhead` replayed 3,034 operations, of
+which 1,940 made fresh token lists, most of them LaTeX's `\reserved@a` and `\reserved@b` defined
+again and again inside the groups the headline keeps; pgf's protocol (`\pgf@sys@...`) is `\xdef`'d
+again for every path command.
+
+`compress_call_level` now keeps one run map per depth of the call's groups (a `Begin` opens one, an
+`End` closes it; the `End` of the caller's group clears the call's level), so a run of fresh local
+values to one location in a kept group is made as one, by §16.1's argument at that group's level. An
+assignment of the location in a deeper group ends the runs outside it. A global assignment
+(`geq_define`, `geq_word_define`) that a later global one of the same kind to the same location
+overwrites is left out when nothing between them reads or assigns the location, enters a control
+sequence there, or begins or ends a group: `geq_define` destroys the value it finds and puts its own
+at level one with no save entry (tex.web §279; e-TeX's "reassigning" is the same in effect), so the
+second leaves the same location whether or not the first was made, and the first's value would only
+be made and freed. Unit test: `runs_inside_a_group_and_overwritten_global_assignments_are_left_out`.
+`FLASHTEX_BOXMEMO_DUMP=1` prints each recording's replayed operations.
+
+Operations a replay makes, before / after (the command line on long-deck): `\@oddhead` 3,034 → 1,262
+(fresh lists 1,940 → 297), `\@oddfoot` 792 → 350, `\beamer@typesetheadorfoot` 732 → 319,
+`\pgfusepath` 64 → 41.
+
+**Measured** (the PC, push-triggered `throughput-ab.yml` run 41371502334, T7 harness of #1889 on
+measure-only checkouts of `5a43b98f1` and `80c156610`, engines interleaved per site, edited-page
+instructions p50 over 11 keys; instruction counts, not wall times):
+
+| site | before | after | |
+|---|---:|---:|---:|
+| long-deck@middle | 42.4 M | 38.7 M | −8.7 % |
+| long-deck@start | 43.3 M | 39.6 M | −8.5 % |
+| beamer-madrid@middle | 67.7 M | 63.0 M | −6.9 % |
+| beamer-madrid@start | 37.5 M | 33.9 M | −9.6 % |
+| beamer-blocks-columns@end | 59.2 M | 56.6 M | −4.4 % |
+| beamer-visuals@start | 176.2 M | 172.9 M | −1.9 % |
+
+Re-typeset pages and BOX-MEMO's offers and hits are unchanged at every site.
+
+**Correctness.** Verify mode in the host (the same run): 18,079 replays, 0 log differences. The
+command line in verify mode, where every replay (of the folded operations) is followed by the whole
+engine state compared with the normal path's (`bm_verify_full`): long-deck 13,322, beamer-madrid 343,
+beamer-visuals 675, beamer-blocks-columns 25 replays, 0 differences; each PDF byte-identical with
+BOX-MEMO off, on and verify.

@@ -24,7 +24,8 @@
 //!
 //! `FLASHTEX_BOXMEMO=on|verify|off` (default off while the design is under
 //! review); `FLASHTEX_BOXMEMO_NAMES=a,b` (default `fb@sizeofframe`);
-//! `FLASHTEX_BOXMEMO_STATS=FILE`; `FLASHTEX_BOXMEMO_DEBUG=1`.
+//! `FLASHTEX_BOXMEMO_STATS=FILE`; `FLASHTEX_BOXMEMO_DEBUG=1`;
+//! `FLASHTEX_BOXMEMO_DUMP=1` (each recording's replayed operations, on stderr).
 //! In `verify` a call the guard admits is expanded normally under a fresh
 //! recording, and its assignments, groups and `last_badness` are compared
 //! with the replay's (`verify_differences`); `FLASHTEX_BOXMEMO_VERIFY_FAIL=1`
@@ -1195,27 +1196,46 @@ fn fresh(v: &Val) -> bool {
 }
 
 /// [`compress_groups`]' operations with each run of local assignments of
-/// fresh values to one location at the call's own level made as one: the
-/// first of them, with the value of the last (BOX-MEMO.md §16). xkeyval's
+/// fresh values to one location at one level made as one: the first of
+/// them, with the value of the last (BOX-MEMO.md §16); and each global
+/// assignment that a later global assignment of the same kind to the same
+/// location overwrites, nothing between them reading or assigning the
+/// location or beginning or ending a group, left out (§16.7). xkeyval's
 /// `\setkeys` defines its scratch macros (`\XKV@tempa`, `\XKV@resa`, the
 /// key's name and family, ...) again for every key, at the level it was
 /// called at: 24 k operations a key on metropolis's Blocks frame, of which
-/// a few hundred values survive.
+/// a few hundred values survive. LaTeX's `\reserved@a` and `\reserved@b`,
+/// defined again and again inside the groups a headline keeps, were 1,700
+/// of the 3,000 operations of long-deck's `\@oddhead`; pgf's protocol,
+/// `\xdef`'d again for every path command, 60 of a `\pgfusepath`'s.
 ///
-/// The first `eq_define` of such a run decides the location's save-stack
-/// entry: `eq_save` when the location was last assigned at another level,
-/// else `eq_destroy` of its value (tex.web §277; a fresh value is never
-/// "reassigning"). Every later one finds the location at the call's level
-/// and `eq_destroy`s the run's previous value. So the run leaves the save
-/// entry of its first assignment, where it was made among the others, and
-/// the value of its last; the values in between are made and freed again,
-/// which changes only the free lists and the usage statistics, as §11.2's
-/// elision does. A run ends (the next assignment starts another) at
-/// anything else that touches or reads the location: an assignment of
-/// another kind or of a value from the state, a value from the state that
-/// reads it (`\let` of it, a glue it holds), a kept group that assigns it,
-/// a control sequence entered there, and, for every location, an `End` or
-/// `Begin` of the caller's group (the call's level changes).
+/// Local runs. The first `eq_define` of such a run decides the location's
+/// save-stack entry: `eq_save` when the location was last assigned at
+/// another level, else `eq_destroy` of its value (tex.web §277; a fresh
+/// value is never "reassigning"). Every later one finds the location at
+/// the run's level and `eq_destroy`s the run's previous value. So the run
+/// leaves the save entry of its first assignment, where it was made among
+/// the others, and the value of its last; the values in between are made
+/// and freed again, which changes only the free lists and the usage
+/// statistics, as §11.2's elision does. A run is at one depth of the
+/// call's groups (the level its assignments are made at) and ends (the
+/// next assignment starts another) at anything else that touches or reads
+/// the location: an assignment of another kind or of a value from the
+/// state, a value from the state that reads it (`\let` of it, a glue it
+/// holds), an assignment of it in a group inside, a control sequence
+/// entered there, and the `End` of its group (at the call's own level, of
+/// the caller's group: it ends every run there).
+///
+/// Global ones. `geq_define` and `geq_word_define` `eq_destroy` the value
+/// they find and put theirs at level one, touching no save entry (tex.web
+/// §279; e-TeX's "reassigning" is the same in effect: the value already
+/// there stays, with one reference fewer). So of two in a row to one
+/// location the second leaves its value at level one whether the first
+/// was made or not, and the first's value is made and freed again. Between
+/// them nothing may read the location (the second's value is still read
+/// where it is), assign it otherwise (a local assignment's save entry
+/// depends on the level the first left), enter a control sequence there,
+/// or begin or end a group (an `unsave` decides by the level).
 fn compress_call_level(ops: Vec<Op>) -> Vec<Op> {
     fn reads(v: &Val) -> Option<i32> {
         match v {
@@ -1224,53 +1244,78 @@ fn compress_call_level(ops: Vec<Op>) -> Vec<Op> {
             _ => None,
         }
     }
-    let mut out: Vec<Op> = Vec::with_capacity(ops.len());
-    // (each location's run at the call's level: the index of its first
-    // assignment in `out`)
-    let mut open: HashMap<i32, usize, IntHash> = HashMap::default();
-    let mut depth = 0i32;
+    type Runs = HashMap<i32, usize, IntHash>;
+    fn end_runs(open: &mut [Runs], p: i32) {
+        for m in open.iter_mut() {
+            m.remove(&p);
+        }
+    }
+    let mut out: Vec<Option<Op>> = Vec::with_capacity(ops.len());
+    // (each location's local run at each depth of the call's groups: the
+    // index in `out` of its first assignment)
+    let mut open: Vec<Runs> = vec![Runs::default()];
+    // (each location's last global assignment since the last group
+    // boundary, while nothing has touched the location since: its index)
+    let mut globals = Runs::default();
     for o in ops {
         match &o {
-            // (inside a group, every assignment is at another level: it
-            // ends the location's run, below)
-            Op::Begin(_) => depth += 1,
+            Op::Begin(_) => {
+                open.push(Runs::default());
+                globals.clear();
+            }
             Op::End => {
-                if depth == 0 {
+                if open.len() == 1 {
                     // the caller's group ends: the call's level is another
-                    open.clear();
+                    open[0].clear();
                 } else {
-                    depth -= 1;
+                    open.pop();
                 }
+                globals.clear();
             }
             Op::Def { p, v, kind, .. } => {
                 if let Some(q) = reads(v) {
-                    open.remove(&q);
+                    end_runs(&mut open, q);
+                    globals.remove(&q);
                 }
-                if depth == 0 && *kind <= 1 && fresh(v) {
-                    if let Some(&j) = open.get(p) {
-                        if matches!(&out[j], Op::Def { kind: k0, .. } if *k0 == *kind) {
-                            out[j] = o;
+                let d = open.len() - 1;
+                if *kind <= 1 && fresh(v) {
+                    globals.remove(p);
+                    if let Some(&j) = open[d].get(p) {
+                        if matches!(&out[j], Some(Op::Def { kind: k0, .. }) if *k0 == *kind) {
+                            out[j] = Some(o);
                             continue;
                         }
                     }
-                    open.insert(*p, out.len());
+                    end_runs(&mut open[..d], *p);
+                    open[d].insert(*p, out.len());
+                } else if *kind >= 2 {
+                    end_runs(&mut open, *p);
+                    if let Some(j) = globals.remove(p) {
+                        if matches!(&out[j], Some(Op::Def { kind: k0, .. }) if *k0 == *kind) {
+                            out[j] = None;
+                        }
+                    }
+                    globals.insert(*p, out.len());
                 } else {
-                    open.remove(p);
+                    end_runs(&mut open, *p);
+                    globals.remove(p);
                 }
             }
             Op::Sa { v, .. } => {
                 if let Some(q) = reads(v) {
-                    open.remove(&q);
+                    end_runs(&mut open, q);
+                    globals.remove(&q);
                 }
             }
             Op::NewCs { p, .. } => {
-                open.remove(p);
+                end_runs(&mut open, *p);
+                globals.remove(p);
             }
             Op::AfterGroup(_) => {}
         }
-        out.push(o);
+        out.push(Some(o));
     }
-    out
+    out.into_iter().flatten().collect()
 }
 
 /// Leave the used-up token lists at the top of the input stack, as the
@@ -4020,6 +4065,41 @@ impl Globals {
         } else {
             None
         };
+        if std::env::var_os("FLASHTEX_BOXMEMO_DUMP").is_some() {
+            let fast = compress_call_level(compress_groups(&rec.ops));
+            let mut d = String::new();
+            for o in &fast {
+                let line = match o {
+                    Op::Begin(c) => format!("begin {c}"),
+                    Op::End => "end".into(),
+                    Op::Def { p, t, v, kind } => {
+                        let loc = if (k::hash_base..k::glue_base).contains(p) || *p > k::eqtb_size {
+                            self.cs_name_string(*p)
+                        } else {
+                            self.bm_loc_name(*p)
+                        };
+                        let val = match v {
+                            Val::FreshList(l) => format!("list {}", l.len()),
+                            Val::LetCs(s) => format!("let {}", self.cs_name_string(*s)),
+                            other => format!("{:?}", other).chars().take(40).collect(),
+                        };
+                        format!("def{kind} {loc} t{t} {val}")
+                    }
+                    Op::Sa { t, n, kind, .. } => format!("sa{kind} {t}/{n}"),
+                    Op::NewCs { name, .. } => format!("newcs {}", name.len()),
+                    Op::AfterGroup(t) => format!("aftergroup {t}"),
+                };
+                d.push_str("  ");
+                d.push_str(&line);
+                d.push('\n');
+            }
+            eprintln!(
+                "boxmemo dump \\{}: {} ops -> {}\n{d}",
+                self.cs_name_string(rec.cs),
+                rec.ops.len(),
+                fast.len()
+            );
+        }
         ST.with(|s| {
             let mut s = s.borrow_mut();
             s.clock += 1;
@@ -4755,6 +4835,55 @@ mod tests {
                 list(1, 4),
             ]
         );
+    }
+
+    fn glist(p: i32, tok: i32) -> Op {
+        Op::Def {
+            p,
+            t: 111,
+            v: Val::FreshList(vec![tok]),
+            kind: 2,
+        }
+    }
+
+    #[test]
+    fn runs_inside_a_group_and_overwritten_global_assignments_are_left_out() {
+        // \begingroup\def\a{1}\def\b{1}\def\a{2}\endgroup: the run inside
+        // the group is one assignment, at the group's level
+        let ops = vec![Op::Begin(1), list(1, 1), list(2, 1), list(1, 2), Op::End];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![Op::Begin(1), list(1, 2), list(2, 1), Op::End]
+        );
+        // \xdef\p{1}\def\b{1}\xdef\p{2}: the first \xdef is overwritten
+        let ops = vec![glist(1, 1), list(2, 1), glist(1, 2)];
+        assert_eq!(compress_call_level(ops), vec![list(2, 1), glist(1, 2)]);
+        // a \global\let of \p between reads the first value; a local
+        // assignment between, or a group boundary, keeps it too
+        let let_p = Op::Def {
+            p: 5,
+            t: 0,
+            v: Val::LetCs(1),
+            kind: 2,
+        };
+        for between in [let_p, list(1, 7), Op::Begin(1), Op::End] {
+            let ops = vec![glist(1, 1), between.clone(), glist(1, 2)];
+            assert_eq!(compress_call_level(ops.clone()), ops, "{between:?}");
+        }
+        // a word assigned globally twice: the first left out; a global
+        // assignment of another kind to the location is not overwritten by it
+        let gword = |w| Op::Def {
+            p: 3,
+            t: 0,
+            v: Val::Word(w),
+            kind: 3,
+        };
+        assert_eq!(
+            compress_call_level(vec![gword(1), gword(2)]),
+            vec![gword(2)]
+        );
+        let ops = vec![glist(3, 1), gword(2)];
+        assert_eq!(compress_call_level(ops.clone()), ops);
     }
 
     #[test]
