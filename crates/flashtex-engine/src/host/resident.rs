@@ -692,6 +692,28 @@ impl Engine {
                 Req::Warm(done) => {
                     let _ = done.send(self.warm());
                 }
+                Req::ExportSeed { job, base, done } => {
+                    // The copy runs here so no resident compile can rewrite
+                    // an `.aux` between the paused check and seeding.
+                    let paused_here = self.doc.as_ref().is_some_and(|d| {
+                        d.session.is_paused()
+                            && match (d.job.out_dir.canonicalize(), job.out_dir.canonicalize()) {
+                                (Ok(a), Ok(b)) => a.starts_with(&b) || b.starts_with(&a),
+                                _ => true,
+                            }
+                    });
+                    let result = if paused_here {
+                        Err("the resident compile is paused; finish it before export".into())
+                    } else {
+                        let what = if job.out_is_root() {
+                            super::export_dir::Seed::Job(&job.jobname)
+                        } else {
+                            super::export_dir::Seed::All
+                        };
+                        super::export_dir::prepare(&base, &job.out_dir, what)
+                    };
+                    let _ = done.send(result);
+                }
                 Req::Closed(id) => {
                     self.peers.remove(&id);
                 }
