@@ -1,2 +1,4 @@
-REFS='main'
-TPAB_CLEANUP='1'
+REFS='agent/kabir-claude-l6/cov-6777eff07 agent/kabir-claude-l6/cov-fbc0cce50 agent/kabir-claude-l6/cov-6777eff07-dbg agent/kabir-claude-l6/cov-fbc0cce50-dbg'
+TPAB_DOCS='none'
+TPAB_REPS='1'
+TPAB_PERF='0'
