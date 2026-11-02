@@ -2604,6 +2604,9 @@ impl Globals {
     pub fn out_what(&mut self, mut p: halfword) {
         let mut j: small_number = 0; // §1436
         let mut old_setting: i32 = 0; // §1436
+        if self.intr_verify_on {
+            self.flashtex_intr_op(7i32, 0i32, 0i32, 0i32);
+        }
         match self.mem[crate::ix::U((p) as usize)].hh().b1() {
             open_node | write_node | close_node => {
                 // §1437

@@ -53,6 +53,7 @@ pub mod generated;
 pub mod host;
 pub mod iso;
 pub mod intrinsics;
+mod intrinsics_verify;
 pub mod native;
 pub mod out;
 pub mod pic;

@@ -2424,6 +2424,9 @@ impl Globals {
     pub fn alter_box_dimen(&mut self) {
         let mut c: small_number = 0; // §1301
         let mut b: halfword = 0; // §1301
+        if self.intr_verify_on {
+            self.flashtex_intr_op(6i32, 0i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_register_num();
         if (self.cur_val < 256i32) {
@@ -5921,6 +5924,9 @@ impl Globals {
                 self.flashtex_poll();
                 if (self.ckpt_request != 0i32) {
                     self.flashtex_checkpoint_hook();
+                }
+                if self.intr_verify_on {
+                    self.flashtex_intr_switch();
                 }
                 self.intr_at_switch = self.intr_verify_on;
                 self.get_x_token();
