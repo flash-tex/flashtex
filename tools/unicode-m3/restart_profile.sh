@@ -32,7 +32,12 @@ export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
 echo "Unicode host $(git -C "$ROOT" rev-parse --short HEAD); $(nproc) cpus; load1 $(cut -d' ' -f1 /proc/loadavg)"
 
 nice -n 5 python3 "$ROOT/tools/unicode-m3/mode_gap.py" --classic "$INCR_BENCH_DIR/cur" --unicode-host "$UH" \
-  --keys 20 --at 0.5,0.98 --out "$WORK/gap" --json "$WORK/r/gap.json" 2>&1 | tee "$WORK/r/gap.txt"
+  --keys 20 --at 0.5,0.98 --variants classic,classic-nohook,unicode,unicode-nohook,unicode-fontspec \
+  --out "$WORK/gap" --json "$WORK/r/gap.json" 2>&1 | tee "$WORK/r/gap.txt"
+# Classic without its replays (intrinsics.rs, boxmemo.rs): what they save it a page
+FLASHTEX_INTRINSICS=off FLASHTEX_BOXMEMO=off nice -n 5 python3 "$ROOT/tools/unicode-m3/mode_gap.py" \
+  --classic "$INCR_BENCH_DIR/cur" --unicode-host "$UH" --keys 20 --at 0.5,0.98 --variants classic,classic-nohook \
+  --out "$WORK/gap-off" --json "$WORK/r/gap-off.json" 2>&1 | tee "$WORK/r/gap-off.txt"
 
 prof() {
   local variant=$1 at=$2 d="$WORK/p-$1-$2" sock="$TMPDIR/p-$$.sock" exe envs=()

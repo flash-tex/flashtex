@@ -56,6 +56,10 @@ EXTRA = {
     "unicode": "",
     "unicode-fontspec": ("\\usepackage{fontspec}\n\\setmainfont{TeX Gyre Pagella}\n"
                          "\\usepackage{unicode-math}\n\\setmathfont{TeX Gyre Pagella Math}\n"),
+    # SCRATCH (profile-pc): hyperref's \pdfstringdefPreHook (siunitx's ~250 units) emptied, to
+    # measure what it costs a page (Classic replays it: intrinsics.rs)
+    "classic-nohook": "\\AddToHook{begindocument/end}{\\let\\pdfstringdefPreHook\\relax}\n",
+    "unicode-nohook": "\\AddToHook{begindocument/end}{\\let\\pdfstringdefPreHook\\relax}\n",
 }
 
 
