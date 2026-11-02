@@ -2060,7 +2060,7 @@ fn a_replayed_call_enters_its_new_control_sequences_again() {
     }
     // offers, hits, recordings, control sequences entered
     assert!(
-        last.len() == 4 && last[1] > 0 && last[3] > 0,
+        last.len() >= 4 && last[1] > 0 && last[3] > 0,
         "no replay entered a control sequence: {last:?}"
     );
     let _ = c.bye();

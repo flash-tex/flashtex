@@ -851,6 +851,14 @@ impl Engine {
     /// Make `job` the resident document.
     fn open(&mut self, job: Job) -> Result<(), String> {
         self.doc = None;
+        // (BOX-MEMO tells its entries apart by the document that recorded them)
+        crate::boxmemo::set_document(&format!(
+            "{}\0{}\0{}\0{}",
+            job.root.display(),
+            job.main,
+            job.jobname,
+            job.out_dir.display()
+        ));
         std::env::set_current_dir(&job.root).map_err(|e| format!("{}: {e}", job.root.display()))?;
         // (the document's own directories, which the host and the run write
         // at every compile, are stat'ed at every check: `fswatch`)
@@ -1462,7 +1470,8 @@ impl Engine {
             ));
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             // BOX-MEMO's counts over the session: offers, hits, recordings
-            // committed, control sequences a replay entered (`boxmemo`)
+            // committed, control sequences a replay entered, hits of another
+            // document's entries (`boxmemo`)
             st.push((
                 "boxmemo".to_string(),
                 Json::Arr(
