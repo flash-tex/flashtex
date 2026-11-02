@@ -56,72 +56,61 @@ use std::time::Instant;
 
 /// A page (or form) the writer produced, as the cache keeps it.
 struct Cached {
-    /// Its `body` is empty while `packed` holds it.
     e: Emitted,
     /// Bumped every time the index is produced again.
     version: u64,
-    /// Low Memory (`Profile::lean`): the body gzip-packed (`Packer`), and
-    /// its length unpacked.
-    packed: Option<(Vec<u8>, usize)>,
 }
 
 impl Cached {
     fn new(e: Emitted, version: u64) -> Cached {
-        Cached {
-            e,
-            version,
-            packed: None,
-        }
+        Cached { e, version }
     }
 
-    /// The page as emitted (unpacked if packed): identical bytes.
-    fn emitted(&self) -> std::borrow::Cow<'_, Emitted> {
-        match &self.packed {
-            None => std::borrow::Cow::Borrowed(&self.e),
-            Some((z, len)) => {
-                let mut e = self.e.clone();
-                e.body = Arc::new(Packer::unpack(z, *len));
-                std::borrow::Cow::Owned(e)
-            }
-        }
+    /// Whether its body is `e`'s, byte for byte (the same body, as a memo
+    /// hit re-emits it, or equal bytes: `displaylist::Body::same`).
+    fn same_body(&self, e: &Emitted) -> bool {
+        Arc::ptr_eq(&self.e.body, &e.body) || self.e.body.same(&e.body)
     }
 
     /// Bytes the cache holds for it.
     fn bytes(&self) -> usize {
-        self.e.body.len() + self.packed.as_ref().map_or(0, |(z, _)| z.len())
+        self.e.body.heap_bytes()
     }
 }
 
-/// Low Memory's page-cache packer (`Profile::lean`): a worker thread gzips
-/// cached pages' display lists, so the engine thread never waits for it; the
-/// engine thread swaps a packed body in (`Live::take_packed`) while the
-/// page's version is still the one packed. A delivery of a packed page
+/// The page-cache packer (`Profile::pack_pages`): a worker thread gzips
+/// cached pages' bodies in place (`displaylist::Body::set_packed`), so the
+/// engine thread never waits for it. The display-list writer's memo holds
+/// the same body, so packing it frees the bytes for both (lane MEMORY: the
+/// cache used to pack a body of its own and drop its reference, which freed
+/// nothing while the memo kept the bytes). A delivery of a packed page
 /// unpacks it, so a client receives exactly the bytes emitted.
 struct Packer {
-    jobs: mpsc::Sender<(usize, u64, Arc<Vec<u8>>)>,
-    done: Arc<Mutex<Vec<PackedPage>>>,
+    jobs: mpsc::Sender<Arc<displaylist::Body>>,
 }
-
-/// A page the packer finished: (index, version, gzip of its body).
-type PackedPage = (usize, u64, Vec<u8>);
 
 impl Packer {
     fn start() -> Option<Packer> {
         #[cfg(feature = "distribution")]
         {
-            let (jobs, rx) = mpsc::channel::<(usize, u64, Arc<Vec<u8>>)>();
-            let done = Arc::new(Mutex::new(Vec::new()));
-            let d2 = done.clone();
+            let (jobs, rx) = mpsc::channel::<Arc<displaylist::Body>>();
             std::thread::Builder::new()
                 .name("page-packer".into())
                 .spawn(move || {
-                    for (i, v, body) in rx {
-                        let z = crate::bundle::gz::gzip(&body, 1);
-                        d2.lock().unwrap_or_else(|p| p.into_inner()).push((i, v, z));
+                    for body in rx {
+                        // (a body nobody else holds any more is gone with this job)
+                        if Arc::strong_count(&body) == 1 {
+                            continue;
+                        }
+                        let Some(b) = body.plain() else { continue };
+                        let z = crate::bundle::gz::gzip(&b, 1);
+                        let sha = displaylist::body_digest(&b);
+                        drop(b);
+                        body.set_packed(z, sha);
                     }
                 })
                 .ok()?;
-            Some(Packer { jobs, done })
+            Some(Packer { jobs })
         }
         #[cfg(not(feature = "distribution"))]
         {
@@ -129,15 +118,10 @@ impl Packer {
         }
     }
 
-    fn unpack(z: &[u8], len: usize) -> Vec<u8> {
-        #[cfg(feature = "distribution")]
-        {
-            crate::bundle::gz::gunzip(z, len).expect("a page the host packed itself unpacks")
-        }
-        #[cfg(not(feature = "distribution"))]
-        {
-            let _ = (z, len);
-            unreachable!("pages are packed only with the distribution feature")
+    /// Pack `body` soon, unless it is packed.
+    fn pack(&self, body: &Arc<displaylist::Body>) {
+        if !body.is_packed() {
+            let _ = self.jobs.send(body.clone());
         }
     }
 }
@@ -314,7 +298,7 @@ struct Live {
     forms: HashMap<u32, Cached>,
     next_version: u64,
     target: Option<Target>,
-    /// Pack the cached pages (Low Memory, `Profile::lean`); `None`: kept as
+    /// Pack the cached pages (`Profile::pack_pages`); `None`: kept as
     /// emitted.
     packer: Option<Packer>,
 }
@@ -347,26 +331,8 @@ impl Live {
             self.packer = Packer::start();
         }
         if let Some(p) = &self.packer {
-            for (i, c) in self.pages.iter().enumerate() {
-                if let Some(c) = c.as_ref().filter(|c| c.packed.is_none()) {
-                    let _ = p.jobs.send((i, c.version, c.e.body.clone()));
-                }
-            }
-        }
-    }
-
-    /// Swap in the bodies the packer finished, where the page is still the
-    /// version it packed.
-    fn take_packed(&mut self) {
-        let Some(p) = &self.packer else { return };
-        let done = std::mem::take(&mut *p.done.lock().unwrap_or_else(|p| p.into_inner()));
-        for (i, v, z) in done {
-            if let Some(Some(c)) = self.pages.get_mut(i) {
-                if c.version == v && c.packed.is_none() {
-                    let len = c.e.body.len();
-                    c.e.body = Arc::new(Vec::new());
-                    c.packed = Some((z, len));
-                }
+            for c in self.pages.iter().flatten() {
+                p.pack(&c.e.body);
             }
         }
     }
@@ -380,7 +346,7 @@ impl Live {
             return;
         };
         if t.ps.held.get(&j) != Some(&c.version) {
-            if !t.send(&c.emitted()) {
+            if !t.send(&c.e) {
                 return;
             }
             t.ps.held.insert(j, c.version);
@@ -461,12 +427,11 @@ impl Live {
             .get(i)
             .and_then(|c| c.as_ref())
             .is_none_or(|c| c.e.hash != e.hash);
-        self.take_packed();
         let version = match &self.pages[i] {
             Some(c)
                 if delivered
                     && c.e.hash == e.hash
-                    && c.emitted().body == e.body
+                    && c.same_body(&e)
                     && c.e.fonts == e.fonts
                     && c.e.images == e.images
                     && c.e.forms == e.forms
@@ -477,7 +442,7 @@ impl Live {
             _ => version,
         };
         if let Some(p) = &self.packer {
-            let _ = p.jobs.send((i, version, e.body.clone()));
+            p.pack(&e.body);
         }
         self.pages[i] = Some(Cached::new(e, version));
         let Some(mut t) = self.target.take() else {
@@ -626,7 +591,7 @@ type Text = (Arc<Vec<u8>>, Option<crate::system::StatSig>, Option<Ends>);
 impl Engine {
     pub fn new(cfg: Arc<Config>, tx: mpsc::Sender<Req>) -> Engine {
         let live = Rc::new(RefCell::new(Live::new()));
-        live.borrow_mut().set_packing(cfg.profile.lean);
+        live.borrow_mut().set_packing(cfg.profile.pack_pages);
         Engine {
             profile: cfg.profile.clone(),
             cfg,
@@ -829,9 +794,10 @@ impl Engine {
         }
         let shrinks = p.budget < self.profile.budget
             || p.dense < self.profile.dense
-            || (p.lean && !self.profile.lean);
+            || (p.lean && !self.profile.lean)
+            || (p.pack_pages && !self.profile.pack_pages);
         self.profile = p;
-        self.live.borrow_mut().set_packing(self.profile.lean);
+        self.live.borrow_mut().set_packing(self.profile.pack_pages);
         if let Some(d) = self.doc.as_mut() {
             d.session.apply_profile(&self.profile);
         }
@@ -841,9 +807,8 @@ impl Engine {
     }
 
     /// The idle trim (`Profile::trim_after_ms`): the old run's cached
-    /// chunks go (and, when lean, the restores' spare tail buffers), the
-    /// packed pages are swapped in, and the heap's free pages go back to the
-    /// system.
+    /// chunks go (and, when lean, the restores' spare tail buffers), and
+    /// the heap's free pages go back to the system.
     fn trim(&mut self) {
         if let Some(d) = self.doc.as_mut() {
             if self.profile.lean {
@@ -852,7 +817,6 @@ impl Engine {
                 d.session.trim_caches();
             }
         }
-        self.live.borrow_mut().take_packed();
         give_back_free_memory();
     }
 
@@ -923,8 +887,6 @@ impl Engine {
     fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant, cause: Option<&'static str>) {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
         crate::os::perf_mark_as('a');
-        // (Low Memory: the pages packed since the last compile)
-        self.live.borrow_mut().take_packed();
         // what the engine thread did while this request waited (LIVE-30MS)
         let queue_by = crate::busy::since(t0);
         let queue_counts = crate::busy::counts_since(t0);
