@@ -630,6 +630,40 @@ fn send_page(
 #[inline(never)]
 pub extern "C" fn flashtex_page_sent() {
     std::hint::black_box(());
+    stage("page");
+}
+
+// SCRATCH (profile-pc only): `FLASHTEX_UNICODE_STAGES=1` prints a run's
+// stages, each with the ms since the run began and since the last stage.
+thread_local! {
+    static STAGES: std::cell::Cell<Option<(std::time::Instant, std::time::Instant)>> =
+        const { std::cell::Cell::new(None) };
+}
+static STAGES_ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+fn stages_on() -> bool {
+    *STAGES_ON.get_or_init(|| std::env::var_os("FLASHTEX_UNICODE_STAGES").is_some())
+}
+pub fn stage_start(t: std::time::Instant) {
+    if stages_on() {
+        STAGES.with(|c| c.set(Some((t, t))));
+        eprintln!("[stage] begin");
+    }
+}
+pub fn stage(name: &str) {
+    if !stages_on() {
+        return;
+    }
+    STAGES.with(|c| {
+        if let Some((t0, last)) = c.get() {
+            let now = std::time::Instant::now();
+            eprintln!(
+                "[stage] {name} {:.3} +{:.3}",
+                (now - t0).as_secs_f64() * 1e3,
+                (now - last).as_secs_f64() * 1e3
+            );
+            c.set(Some((t0, now)));
+        }
+    });
 }
 
 fn send_resources(

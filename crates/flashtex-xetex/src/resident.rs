@@ -1197,6 +1197,7 @@ impl Engine {
             format_dir: spec.format_dir.clone(),
         };
         let t_check = std::time::Instant::now();
+        crate::out::stage_start(t_check);
         let dl_on = spec.dl.is_some() && env_on("FLASHTEX_SOURCE_MAP");
         // The user's files as they are before the run reads any: where the
         // edit is looked for now, and the next run's (read once, before
@@ -1229,6 +1230,7 @@ impl Engine {
             std::thread::sleep(std::time::Duration::from_millis(ms));
         }
         let check_ms = t_check.elapsed().as_secs_f64() * 1e3;
+        crate::out::stage("start_for");
         let mut rewrite_failed = None;
         if start.in_body() {
             // the files the run wrote and closed before S₀, as it left them
@@ -1280,6 +1282,7 @@ impl Engine {
                 }
             }
         }
+        crate::out::stage("guard");
         let before = (self.journal.clone(), self.opens.clone());
         let mut conv: Option<crate::conv::Old> = None;
         // the convergence measurement: the edits and what changed
@@ -1309,6 +1312,7 @@ impl Engine {
                 }
             }
         }
+        crate::out::stage("conv_prep");
         // Put the kept state back: from a page, else S₀, else the format
         // point, else the start (a restore that fails -- a file it reopens
         // gone -- falls back to the next).
@@ -1380,6 +1384,7 @@ impl Engine {
                             let doc_pages =
                                 old_out.map(|o| o.doc.pages.clone()).unwrap_or_default();
                             let doc_keys = old_out.map(|o| crate::out::doc::DocKeys::of(&o.doc));
+                            crate::out::stage("conv_old");
                             match g.restore_branch(id) {
                                 Err(e) => Err(e),
                                 Ok(branch) => {
@@ -1417,6 +1422,7 @@ impl Engine {
                                         tests: vec![],
                                         dormant: None,
                                     });
+                                    crate::out::stage("restore_branch");
                                     g.term_out = AlphaFile::captured_terminal();
                                     g.restore_record(rec, base)
                                 }
@@ -1459,6 +1465,7 @@ impl Engine {
         // edit is looked for)
         // (a cancelled run puts back the last complete run's: its page
         // checkpoints stand, and an edit saved since is a change to them)
+        crate::out::stage("restore");
         let texts_before = texts_then.map(|t| std::mem::replace(&mut self.texts, t));
         let want_s0 = self.keep_s0 && self.keep_point && !start.in_body();
         let want_pages = self.keep_pages && self.keep_s0 && self.keep_point;
@@ -1528,6 +1535,7 @@ impl Engine {
             o.compress = !spec.preview;
             Box::new(o)
         });
+        crate::out::stage("setup");
         let mut resumed = Ok(());
         if let (Start::Page(i), Some(o)) = (start, out.as_mut()) {
             // the pages before the restart point, sent again from the
@@ -1536,6 +1544,7 @@ impl Engine {
                 resumed = o.resume(snap, self.g.as_ref().expect("restored"));
             }
         }
+        crate::out::stage("resume");
         let g = self.g.as_mut().expect("made above");
         if !start.in_body() {
             g.term_out = AlphaFile::captured_terminal();
@@ -1578,6 +1587,7 @@ impl Engine {
         }
         // (the result's type is spelled out: a closure ending in `!` is
         // otherwise inferred as returning `()` by the toolchain CI pins)
+        crate::out::stage("pre_main");
         let ran: std::thread::Result<std::convert::Infallible> = match resumed {
             Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 match start {
@@ -1623,6 +1633,7 @@ impl Engine {
                 }
             }
         }
+        crate::out::stage("main_end");
         rep.terminal = g.term_out.take_captured();
         let mut final_pages = None;
         if let Some(o) = g.host.out.take() {
