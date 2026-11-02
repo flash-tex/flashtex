@@ -649,7 +649,21 @@ impl Engine {
         // up to ~0.1 s on 1,000 pages and cannot be interrupted, so it never
         // runs while keystrokes are coming (review of #1300).
         let mut trim_due = false;
+        // A VIEWPORT's re-densify waits `viewport_grace()` with nothing
+        // coming first: the key that follows a jump at once cancels it before
+        // it starts. Measured (hosted M1, full-1000, lane MEMORY): a key sent
+        // with the VIEWPORT waited 15-24 ms for the re-densify's restore and
+        // start, which cannot stop, then 2-17 ms to abandon it.
+        let mut pending_vp: Option<(Arc<server::Conn>, usize, Instant)> = None;
+        let grace = viewport_grace();
         loop {
+            if let Some((_, _, at)) = &pending_vp {
+                if at.elapsed() >= grace {
+                    let (conn, page, _) = pending_vp.take().unwrap();
+                    self.viewport(conn, page);
+                    continue;
+                }
+            }
             let pause = self.cfg.keep_warm_pause;
             let trim_after = self
                 .profile
@@ -683,6 +697,15 @@ impl Engine {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
+                // (a VIEWPORT waiting out its grace: above, at the timeout)
+                _ if pending_vp.is_some() => {
+                    let at = pending_vp.as_ref().map(|v| v.2).unwrap();
+                    match rx.recv_timeout(grace.saturating_sub(at.elapsed())) {
+                        Ok(r) => r,
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
                 // (merged: the profile's idle trim, and #1551's save of an
                 // S₀ a preamble restart took; a profile without the trim
                 // still saves that S₀ after the old 2 s idle wait)
@@ -741,6 +764,8 @@ impl Engine {
                     }
                 }
                 Req::Compile { conn, req, t0 } => {
+                    // (newer work: a waiting VIEWPORT's re-densify is off)
+                    pending_vp = None;
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
                     let c = conn.clone();
                     self.compile(conn, req, t0, None);
@@ -763,7 +788,7 @@ impl Engine {
                     id,
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
-                Req::Viewport { conn, page } => self.viewport(conn, page),
+                Req::Viewport { conn, page } => pending_vp = Some((conn, page, Instant::now())),
             }
             if compiled && self.profile.keep_warm_ms > 0 {
                 hot_until = Some(
@@ -2760,6 +2785,17 @@ fn reading(g: &crate::generated::Globals) -> Option<String> {
     }
     let name = g.full_source_filename_stack[level as usize];
     (name > 0).then(|| String::from_utf8_lossy(&g.str_bytes(name)).into_owned())
+}
+
+/// How long a VIEWPORT's re-densify waits with nothing coming before it
+/// starts (50 ms; FLASHTEX_VIEWPORT_GRACE_MS for measurement): a key the
+/// client sends right after a jump finds the engine idle.
+fn viewport_grace() -> std::time::Duration {
+    let ms = std::env::var("FLASHTEX_VIEWPORT_GRACE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    std::time::Duration::from_millis(ms)
 }
 
 #[cfg(test)]
