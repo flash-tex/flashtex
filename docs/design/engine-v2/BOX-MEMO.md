@@ -769,7 +769,7 @@ comes before the assignment, so the old `\reserved@a` was keyed.
   - `macro_call` matching an argument (`scanner_status = matching`);
   - `pass_text` skipping (`skipping`).
 - **An assignment** (`eq_define` & co.) to a control sequence whose meaning nothing read yet keeps
-  the old `(eq_type, equiv)` aside (`Rec::pre`), out of the key.
+  the old `(eq_type, equiv)` aside (`Fast::pre`), out of the key.
 - **After an assignment**, a read keys the meaning only if it is that kept value again.
 
 **Why the replay needs no check for what an assignment overwrote.** The argument goes access by

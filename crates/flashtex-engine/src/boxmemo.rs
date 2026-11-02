@@ -594,11 +594,6 @@ struct Rec {
     /// Registers the call assigned globally: read after that, they hold
     /// what the call put there.
     gwritten: HashSet<RegId>,
-    /// Control sequences the call assigned before it read their meaning
-    /// ([`SEEN_WRITTEN`]): what each held then, `(eq_type, equiv)`. A read
-    /// that finds it there again (an `\endgroup` brought it back) is a
-    /// first read (BOX-MEMO.md §15).
-    pre: HashMap<i32, (i32, i32)>,
     line_read: bool,
     boxes: HashSet<i32>,
     /// Box registers assigned globally: each must be void when the call
@@ -646,6 +641,12 @@ struct Fast {
     base: i32,
     stamp: u32,
     seen: Vec<u32>,
+    /// The control sequences the recording assigned before it read their
+    /// meaning ([`SEEN_WRITTEN`]), with what each held then, `(p, eq_type,
+    /// equiv)`. A read that finds it there again (an `\endgroup` brought it
+    /// back) is a first read (BOX-MEMO.md §15). A call assigns a few: a
+    /// list searched from its end costs less than a hash.
+    pre: Vec<(i32, i32, i32)>,
 }
 
 /// `p`'s meaning is in K3 in full (or it is the macro itself).
@@ -653,7 +654,7 @@ const SEEN_READ: u32 = 0;
 /// `p` was read only as a token: K3 has [`Meaning::Token`].
 const SEEN_TOKEN: u32 = 1;
 /// `p` was assigned before anything read its meaning: what it held is in
-/// `Rec::pre`, and not in the key.
+/// `Fast::pre`, and not in the key.
 const SEEN_WRITTEN: u32 = 2;
 
 /// A key by location (`bm_key_by_loc`): each location and its values.
@@ -2635,7 +2636,6 @@ impl Globals {
             voids: vec![],
             kr: vec![],
             gwritten: HashSet::new(),
-            pre: HashMap::new(),
             line_read: false,
             boxes: HashSet::new(),
             gboxes: vec![],
@@ -2660,6 +2660,7 @@ impl Globals {
             }
             let st = f.stamp;
             f.seen[cs as usize] = st + SEEN_READ;
+            f.pre.clear();
         });
         ST.with(|s| {
             let mut s = s.borrow_mut();
@@ -2784,16 +2785,6 @@ impl Globals {
         ST.with(|s| s.borrow_mut().rec.as_mut().map(f))
     }
 
-    /// What the recording has done with control sequence `p` so far: one of
-    /// the `SEEN_*`, or `None`.
-    fn bm_seen(p: i32) -> Option<u32> {
-        FAST.with(|f| {
-            let f = f.borrow();
-            let d = f.seen[p as usize].wrapping_sub(f.stamp);
-            (d <= SEEN_WRITTEN).then_some(d)
-        })
-    }
-
     fn bm_set_seen(p: i32, state: u32) {
         FAST.with(|f| {
             let mut f = f.borrow_mut();
@@ -2811,25 +2802,29 @@ impl Globals {
         if !Self::bm_is_cs(p) {
             return;
         }
-        match Self::bm_seen(p) {
-            Some(SEEN_READ) => return,
-            Some(SEEN_TOKEN) if token => return,
-            Some(SEEN_WRITTEN) => {
+        let w = self.bm_eq(p).hh();
+        let (t, e) = (w.b0(), w.rh());
+        let first = FAST.with(|f| {
+            let f = f.borrow();
+            match f.seen[p as usize].wrapping_sub(f.stamp) {
+                SEEN_READ => false,
+                SEEN_TOKEN => !token,
                 // the call's own value, unless it is the one from before
-                let w = self.bm_eq(p).hh();
-                let back = self
-                    .bm_with_rec(|r| r.pre.get(&p) == Some(&(w.b0(), w.rh())))
-                    .unwrap_or(false);
-                if !back {
-                    return;
-                }
+                SEEN_WRITTEN => f
+                    .pre
+                    .iter()
+                    .rev()
+                    .find(|x| x.0 == p)
+                    .is_some_and(|x| x.1 == t && x.2 == e),
+                _ => true,
             }
-            _ => {}
+        });
+        if !first {
+            return;
         }
-        if token && !token_matters(self.bm_eq(p).hh().b0()) {
+        if token && !token_matters(t) {
             Self::bm_set_seen(p, SEEN_TOKEN);
             self.bm_with_rec(|r| r.k3.push((p, Meaning::Token)));
-            ST.with(|s| s.borrow_mut().stats.k3_tokens += 1);
             return;
         }
         match self.bm_meaning(p) {
@@ -2848,15 +2843,16 @@ impl Globals {
     /// input: the replay's `eq_define` & co. treat whatever is there as the
     /// normal path did (BOX-MEMO.md §15).
     fn bm_note_cs_write(&mut self, p: i32) {
-        match Self::bm_seen(p) {
-            Some(SEEN_READ) | Some(SEEN_WRITTEN) => {}
-            _ => {
-                let w = self.bm_eq(p).hh();
-                Self::bm_set_seen(p, SEEN_WRITTEN);
-                self.bm_with_rec(|r| r.pre.insert(p, (w.b0(), w.rh())));
-                ST.with(|s| s.borrow_mut().stats.k3_written_first += 1);
+        let w = self.bm_eq(p).hh();
+        FAST.with(|f| {
+            let mut f = f.borrow_mut();
+            let st = f.stamp;
+            let d = f.seen[p as usize].wrapping_sub(st);
+            if d != SEEN_READ && d != SEEN_WRITTEN {
+                f.seen[p as usize] = st + SEEN_WRITTEN;
+                f.pre.push((p, w.b0(), w.rh()));
             }
-        }
+        });
     }
 
     /// The end of `get_next`, during a recording.
@@ -3784,8 +3780,15 @@ impl Globals {
                     bytes
                 );
             }
+            let tokens = entry
+                .k3
+                .iter()
+                .filter(|(_, m)| matches!(m, Meaning::Token))
+                .count() as u64;
             insert_entry(&mut s, rec.cs, entry);
             s.stats.committed += 1;
+            s.stats.k3_tokens += tokens;
+            s.stats.k3_written_first += FAST.with(|f| f.borrow().pre.len()) as u64;
         });
         write_stats(false);
     }
