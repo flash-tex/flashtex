@@ -2396,9 +2396,11 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
 
     /// The guarded intrinsics' recordings (`crate::intrinsics`): every word
     /// of `intr_data` they can read again (`intrinsics::live_words`), the
-    /// `mem` pointers among them -- a watch record's wanted macro meaning,
-    /// the pinned token lists, a `\def`'s template -- followed like
-    /// `eqtb`'s, everything else compared exactly. The rest of `intr_data`
+    /// `mem` pointers among them (a watch record's wanted non-macro
+    /// meaning, a `K_DEF` value) followed like `eqtb`'s, everything else
+    /// compared exactly, including the token store that holds copies of the
+    /// lists a recording read or defined (#2039: no recording holds a node
+    /// of `mem`). The rest of `intr_data`
     /// is dead (nothing reads it before writing it). `intr_state` is
     /// compared word for word outside the walk (`incr::dead_word` knows
     /// its scratch), and so are `intr_watch`, `intr_cand` and `intr_seen`,
@@ -2447,7 +2449,6 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
                     self.eq("intrinsics eq_type", t, an(self, ty));
                     self.equiv(t, ao(self, i), an(self, i));
                 }
-                LiveWord::Tok(i) => self.ptr(K::Tok, ao(self, i), an(self, i)),
             }
             if self.err.is_some() {
                 return;
