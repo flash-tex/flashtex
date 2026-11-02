@@ -3104,7 +3104,7 @@ impl Globals {
                                                         in_place = false;
                                                         if (self.cur_input.state_field == token_list) {
                                                             if (self.cur_input.loc_field != null) {
-                                                                if (!self.intr_rec_on) {
+                                                                if (!(self.intr_rec_on || self.bm_rec_on)) {
                                                                     {
                                                                         ft = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
                                                                         if (ft >= cs_token_flag) {
@@ -3292,7 +3292,7 @@ impl Globals {
                                 m = (m).wrapping_add(1i32);
                                 if ((__av_mem[crate::ix::U((r) as usize)].hh().lh() > end_match_token) || (__av_mem[crate::ix::U((r) as usize)].hh().lh() < match_token)) {
                                     {
-                                        if (!self.intr_rec_on) {
+                                        if (!(self.intr_rec_on || self.bm_rec_on)) {
                                             {
                                                 d = __av_mem[crate::ix::U((r) as usize)].hh().lh();
                                                 while true {
