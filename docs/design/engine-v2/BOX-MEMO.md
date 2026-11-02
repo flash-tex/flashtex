@@ -817,6 +817,21 @@ The fix and its cost are in the next PR (lane L6, `agent/kabir-claude-l6/bm-inpl
 PR, `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on while
 the loops stay as they are.
 
+**An assignment at the call's own level, or a global one, is final** (lane BEAMER-FRAME). What
+the control sequence held before the call cannot come back inside the call after it: no group of
+the call saved it, `unsave` at the end of the call's own groups restores the call's values, and
+it keeps a global one (tex.web §282–283). So no later read keys it, and the value kept aside is
+dropped. Comparing `(eq_type, equiv)` with the kept value was not enough. `\@ifnextchar`
+defines `\reserved@b` at the call's level, and `eq_define` frees the old token list:
+`flush_list` puts its head first on the free list (§123). The next `\def` of it in the same call
+(`\usebeamercolor` calls `\@ifnextchar` again) then makes its list from those nodes, at the old
+address. A read afterwards found "the old value back" and keyed the call's own meaning, which
+missed at every later offer. On the frame-typeset stack (#1992, which offers
+`\beamer@usebeamercolor`), this made beamer-visuals' edit windows re-record and abandon
+`\usebeamercolor` every keystroke, and the calls inside it were not offered: 792 → 696 offers
+and 668 → 571 hits a window, 172.9 → 246.2 M a keystroke (PC runs 41377417237, 41378361514). Test:
+`a_meaning_defined_twice_at_the_call_level_is_not_keyed` (0 hits before the change, 3 after).
+
 **Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
 - a `\def` of `\reserved@a` first, which hits whatever the document left there;
 - a target passed as an argument (`\tl_set:Nn`'s shape), which hits;

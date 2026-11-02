@@ -428,3 +428,24 @@ fn an_argument_that_turns_outer_is_a_miss() {
     assert!(stat(&s, "hits") >= 2, "{s}");
     assert!(stat(&s, "k3_tokens") >= 1, "{s}");
 }
+
+#[test]
+fn a_meaning_defined_twice_at_the_call_level_is_not_keyed() {
+    // `\@ifnextchar`'s shape, twice in one call: the first `\def` frees
+    // what `\reserved@a` held (the free list then begins with its nodes),
+    // and the second's token list is made of them, at the old address. A
+    // read after that finds the call's own meaning, not the old one come
+    // back: no `\endgroup` of the call could bring it back
+    let s = check(
+        "write-twice",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\reserved@a{#1}\\def\\reserved@a{#1}\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\def\\reserved@a{zzz}\\measure{1pt}\\show\\def\\reserved@a{2pt}\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
