@@ -1065,6 +1065,17 @@ impl Globals {
             .is_some_and(|(_, r)| rewritten_since(r).is_ok())
     }
 
+    /// Why [`restorable`](Self::restorable) says no (`None`: it does not):
+    /// the file reopened since whose instance there is not kept.
+    pub fn unrestorable_why(&mut self, id: CheckpointId) -> Option<String> {
+        match self.layer().records.iter().rev().find(|(i, _)| *i == id) {
+            None => Some("no record".into()),
+            Some((_, r)) => rewritten_since(r).err().map(|k| {
+                format!("{k} was opened for output again since, its instance there not kept")
+            }),
+        }
+    }
+
     /// Take a checkpoint now. The engine must be between commands (before
     /// or after a run, or inside `flashtex_checkpoint_hook`).
     pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {

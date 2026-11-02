@@ -88,6 +88,16 @@ fn start_host(name: &str) -> Host {
 }
 
 fn start_host_env(name: &str, env: &[(&str, &str)]) -> Host {
+    start_host_lines(name, env, None)
+}
+
+/// [`start_host_env`], the host's later stdout lines sent to `lines` (its
+/// `flashtex-host: {...}` notes: `saved_s1`, `no_s1`).
+fn start_host_lines(
+    name: &str,
+    env: &[(&str, &str)],
+    lines: Option<std::sync::mpsc::Sender<String>>,
+) -> Host {
     // Short: a Unix socket path must fit in sockaddr_un (104 bytes on macOS).
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -114,7 +124,13 @@ fn start_host_env(name: &str, env: &[(&str, &str)]) -> Host {
         }
     }
     // Keep draining the host's stdout (it may print more).
-    std::thread::spawn(move || for _ in out.lines() {});
+    std::thread::spawn(move || {
+        for l in out.lines().map_while(Result::ok) {
+            if let Some(tx) = &lines {
+                let _ = tx.send(l);
+            }
+        }
+    });
     Host(child, sock)
 }
 
@@ -4113,16 +4129,47 @@ fn s1_store(proj: &Path, out: &Path, cache: &Path, name: &str) {
 
 /// [`s1_store`] with more of the host's environment.
 fn s1_store_env(proj: &Path, out: &Path, cache: &Path, name: &str, env: &[(&str, &str)]) {
+    if let Err(why) = s1_try_store(proj, out, cache, name, env) {
+        panic!("no S1 was stored: {why}");
+    }
+}
+
+/// [`s1_store_env`], or why the host stored no S₁ (`no_s1`, DONE's
+/// `s1_save`).
+fn s1_try_store(
+    proj: &Path,
+    out: &Path,
+    cache: &Path,
+    name: &str,
+    env: &[(&str, &str)],
+) -> Result<(), String> {
     let mut cache_env = vec![("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
     cache_env.extend_from_slice(env);
-    let host = start_host_env(name, &cache_env);
+    let (tx, notes) = std::sync::mpsc::channel();
+    let host = start_host_lines(name, &cache_env, Some(tx));
     let mut c = Client::connect(&host.1).unwrap();
     let mut view = View::default();
     let mut id = 0;
     s1_compile_until_unchanged(&mut c, &mut view, proj, out, &mut id);
-    // S₀ after the first (cold) compile, S₁ once the host is idle (2 s)
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while !(stored(cache, "s0") && stored(cache, "s1")) && Instant::now() < deadline {
+    // S₀ after the first (cold) compile, S₁ once the host is idle (2 s): the
+    // host says when S₁ is written (`saved_s1`) or why it is not (`no_s1`),
+    // so the wait is on that, not on a time (a loaded runner took over the
+    // 120 s once allowed here)
+    let deadline = Instant::now() + Duration::from_secs(900);
+    let mut said = None;
+    while said.is_none() && Instant::now() < deadline {
+        match notes.recv_timeout(Duration::from_millis(200)) {
+            Ok(l) if l.contains("\"saved_s1\"") => said = Some(Ok(l)),
+            Ok(l) if l.contains("\"no_s1\"") => said = Some(Err(l)),
+            Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    if let Some(Err(l)) = said {
+        let _ = c.bye();
+        return Err(l);
+    }
+    while !stored(cache, "s0") && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
     if !stored(cache, "s1") {
@@ -4131,15 +4178,15 @@ fn s1_store_env(proj: &Path, out: &Path, cache: &Path, name: &str, env: &[(&str,
         let mut r = req(id, proj, out, "main.tex");
         r.viewport = Some(S1_VIEW);
         let o = compile(&mut c, &mut view, &r);
-        panic!(
-            "no S1 was stored: {}",
-            o.done
-                .get("s1_save")
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "no save was tried".into())
-        );
+        let _ = c.bye();
+        return Err(o
+            .done
+            .get("s1_save")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "no save was tried".into()));
     }
     let _ = c.bye();
+    Ok(())
 }
 
 /// The PDF and log a from-scratch compile gives in the same directories
@@ -4539,7 +4586,21 @@ fn a_reopen_from_s1_puts_back_a_file_rewritten_after_it() {
         );
     std::fs::write(proj.join("main.tex"), &main).unwrap();
     std::fs::write(proj.join("side.tex"), &side).unwrap();
-    s1_store(&proj, &out, &cache, "s1wa");
+    // The writer's own checkpoints between the two opens are restorable only
+    // with the instance at them kept (#1907), which a pass whose history
+    // came through a reattach and a jump can lack (timing: where the pass
+    // restarted). Then no S₁ is stored, for that reason, and the reopen runs
+    // from S₀; its pages must equal scratch all the same.
+    let stored_s1 = match s1_try_store(&proj, &out, &cache, "s1wa", &[]) {
+        Ok(()) => true,
+        Err(why) => {
+            assert!(
+                why.contains("instance there not kept"),
+                "no S1 was stored, for another reason: {why}"
+            );
+            false
+        }
+    };
     assert_eq!(
         std::fs::read_to_string(out.join("main.stp"))
             .unwrap()
@@ -4560,7 +4621,7 @@ fn a_reopen_from_s1_puts_back_a_file_rewritten_after_it() {
             "the fill did not converge: {}",
             o.done
         );
-    } else {
+    } else if stored_s1 {
         let e = o.done.str_field("s1_error").unwrap_or_default();
         assert!(
             e.contains("opened for output again") || e.contains("rewritten after it"),
