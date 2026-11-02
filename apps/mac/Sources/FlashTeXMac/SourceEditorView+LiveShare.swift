@@ -206,6 +206,8 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         return r.location..<(r.location + r.length)
     }
 
+    var collabText: String { textView?.textStorage?.string ?? "" }
+
     /// Remote changes (or this participant's undo) as minimal storage edits
     /// in one editing group: never `tv.string = …`, never on the text view's
     /// undo stack. The side state `shouldChangeTextIn` keeps aligned with
