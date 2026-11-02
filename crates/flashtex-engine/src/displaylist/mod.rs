@@ -44,6 +44,7 @@ pub mod interp;
 
 use crate::generated::Globals;
 use crate::resolver::Format;
+use crate::system::StatSig;
 use fixed::{Fx, Mat};
 use flashtex_display_list::frame::write_frame;
 use flashtex_display_list::json::{s as js, Json};
@@ -153,10 +154,23 @@ enum FontKind {
 
 /// A font file's program, as last read.
 struct Program {
-    len: u64,
-    mtime: Option<std::time::SystemTime>,
+    /// The file's signature, taken before it was read.
+    sig: StatSig,
     data: Arc<Vec<u8>>,
     sha: [u8; 32],
+}
+
+/// A mapped font's key as `dl_font_key` made it, kept across restores and
+/// compiles (`State::font_memo`): the key follows from the font's map
+/// entry, its kind, and the font file the entry names as the lookup found
+/// it and the file then held.
+struct FontMemo {
+    key: [u8; 32],
+    /// The font file's lookup (name, format), what it found, and that
+    /// file's signature taken before its program was read.
+    file: Option<(String, Format, Option<String>, Option<StatSig>)>,
+    /// The compile the key holds in (`State::compile`).
+    compile: u64,
 }
 
 struct State {
@@ -185,6 +199,13 @@ struct State {
     /// Type 3 (PK) fonts' advances: numerators and their denominator.
     advances: HashMap<u32, Advances>,
     font_kinds: HashMap<u32, FontKind>,
+    /// Mapped fonts' keys by their map entry (`font_ident`): they outlive
+    /// restores, and hold in a compile only where `compile_scope` vouched
+    /// for what they were made from, or the compile made them.
+    font_memo: HashMap<Vec<u8>, FontMemo>,
+    /// The compile now (`compile_scope`): every compile, its end, and every
+    /// new job counts one.
+    compile: u64,
     capture: Option<Capture>,
     cwd: Option<std::path::PathBuf>,
     /// The last page or form emitted at each index, with what it was made
@@ -214,6 +235,8 @@ impl State {
             widths: HashMap::new(),
             advances: HashMap::new(),
             font_kinds: HashMap::new(),
+            font_memo: HashMap::new(),
+            compile: 0,
             capture: None,
             cwd: std::env::current_dir().ok(),
             memo: HashMap::new(),
@@ -835,6 +858,112 @@ pub fn engine_reset() {
         return;
     }
     forget_engine_state();
+    // (a new job: what the font keys were made from is vouched for again)
+    with(|st| st.compile += 1);
+}
+
+/// The most mapped fonts' keys kept across restores (`State::font_memo`).
+const FONT_MEMO_MAX: usize = 4096;
+
+/// A compile (`incr::Session::compile`) until the guard is dropped. Made
+/// inside the check the compile starts with (`fswatch::check`): the mapped
+/// fonts' keys kept from before hold in this compile where what they were
+/// made from is as it was -- the font file's lookup finds the same file
+/// (by its proof, `lookupproof`, else made again, as the journal's check
+/// makes the run's lookups) and the file has the signature it had before
+/// its program was read (as the watches vouch for it). Anything else is
+/// made again. Restores within the compile keep them: the compile is taken
+/// as of its check, as the journal's check takes the engine's own reads.
+/// Work between compiles makes its keys again.
+pub fn compile_scope() -> CompileScope {
+    if !enabled() {
+        return CompileScope;
+    }
+    let Some(mut memo) = with(|st| {
+        st.compile += 1;
+        std::mem::take(&mut st.font_memo)
+    }) else {
+        return CompileScope;
+    };
+    if memo.len() > FONT_MEMO_MAX {
+        memo.clear();
+    }
+    let mut verify = crate::lookupproof::Verifier::new();
+    memo.retain(|_, m| {
+        let Some((name, format, found, sig)) = &m.file else {
+            return true;
+        };
+        let l = crate::system::Lookup {
+            name: name.clone(),
+            format: *format,
+            must_exist: None,
+            found: None,
+        };
+        if verify.lookup_again_deps(&l).0 != *found {
+            return false;
+        }
+        // (a racy or missing signature equals nothing)
+        found
+            .as_deref()
+            .is_none_or(|p| sig.is_some() && crate::fswatch::sig(p) == *sig)
+    });
+    with(|st| {
+        for m in memo.values_mut() {
+            m.compile = st.compile;
+        }
+        st.font_memo = memo;
+    });
+    CompileScope
+}
+
+/// [`compile_scope`]'s guard: the compile's end.
+pub struct CompileScope;
+
+impl Drop for CompileScope {
+    fn drop(&mut self) {
+        if enabled() {
+            with(|st| st.compile += 1);
+        }
+    }
+}
+
+/// The parts of a mapped font's map entry (`None`: no entry) that its key
+/// and its description are made from, as the key of `State::font_memo`.
+fn font_ident(fm: Option<&crate::pdftex::mapfile::FmEntry>) -> Vec<u8> {
+    let mut v = Vec::with_capacity(64);
+    let Some(fm) = fm else {
+        return v;
+    };
+    v.push(1);
+    let mut bytes = |b: Option<&[u8]>| match b {
+        None => v.push(0),
+        Some(b) => {
+            v.push(1);
+            v.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            v.extend_from_slice(b);
+        }
+    };
+    bytes(Some(&fm.tfm_name));
+    bytes(fm.ps_name.as_deref());
+    bytes(fm.encname.as_deref());
+    bytes(fm.ff_name.as_deref());
+    match &fm.subfont {
+        None => v.push(0),
+        Some(c) => {
+            v.push(1);
+            v.extend_from_slice(&(c.len() as u32).to_le_bytes());
+            for x in c {
+                v.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+    }
+    for x in [fm.fd_flags, fm.slant, fm.extend] {
+        v.extend_from_slice(&x.to_le_bytes());
+    }
+    v.extend_from_slice(&fm.typ.to_le_bytes());
+    v.extend_from_slice(&fm.pid.to_le_bytes());
+    v.extend_from_slice(&fm.eid.to_le_bytes());
+    v
 }
 
 fn forget_engine_state() {
@@ -1785,16 +1914,6 @@ impl Globals {
             return k;
         }
         let fi = f as i32;
-        let tex_name = if fi <= self.font_ptr {
-            self.str_bytes(self.font_name[fi as usize])
-        } else {
-            Vec::new()
-        };
-        let tex_size = if fi <= self.font_ptr {
-            self.font_size[fi as usize]
-        } else {
-            0
-        };
         let ptr = if fi <= self.font_ptr {
             self.pdf_font_map[fi as usize]
         } else {
@@ -1820,6 +1939,33 @@ impl Globals {
         } else {
             FontKind::Mapped
         };
+        // (a mapped font's key, as its map entry, the lookup of its file and
+        // the file make it: `compile_scope`)
+        let ident = (kind == FontKind::Mapped).then(|| font_ident(fm.as_ref()));
+        if let Some(id) = &ident {
+            let kept = with(|st| {
+                st.font_memo
+                    .get(id)
+                    .filter(|m| m.compile == st.compile && st.fonts.contains_key(&m.key))
+                    .map(|m| m.key)
+            })
+            .flatten();
+            if let Some(key) = kept {
+                with(|st| st.font_keys.insert(f, key));
+                return key;
+            }
+        }
+        let mut file_dep = None;
+        let tex_name = if fi <= self.font_ptr {
+            self.str_bytes(self.font_name[fi as usize])
+        } else {
+            Vec::new()
+        };
+        let tex_size = if fi <= self.font_ptr {
+            self.font_size[fi as usize]
+        } else {
+            0
+        };
         if let Some(fm) = fm.as_ref().filter(|_| kind == FontKind::Mapped) {
             slant = fm.slant;
             extend = fm.extend;
@@ -1836,14 +1982,18 @@ impl Globals {
             if let (Some((ff_format, name)), true) = (file_format, fm.is_included()) {
                 if let Some(ff) = &fm.ff_name {
                     let ff = String::from_utf8_lossy(ff).into_owned();
-                    if let Some(path) = find_quietly(&ff, ff_format) {
-                        if let Some((data, sha)) = read_program(&path) {
+                    let found = find_quietly(&ff, ff_format);
+                    let mut sig = None;
+                    if let Some(path) = &found {
+                        if let Some((data, sha, s)) = read_program(path) {
                             program = data;
                             program_sha = sha;
                             format = name;
-                            file = Some(path);
+                            file = Some(path.clone());
+                            sig = Some(s);
                         }
                     }
+                    file_dep = Some((ff, ff_format, found, sig));
                 }
             }
             if fm.is_truetype() && format == "none" {
@@ -1983,7 +2133,20 @@ impl Globals {
                 )
             });
         }
-        with(|st| st.font_keys.insert(f, key));
+        with(|st| {
+            st.font_keys.insert(f, key);
+            if let Some(id) = ident {
+                let compile = st.compile;
+                st.font_memo.insert(
+                    id,
+                    FontMemo {
+                        key,
+                        file: file_dep,
+                        compile,
+                    },
+                );
+            }
+        });
         key
     }
 
@@ -2034,7 +2197,7 @@ impl Globals {
             })
             .and_then(|g| {
                 let path = g.path.to_string_lossy().into_owned();
-                let (data, _) = read_program(&path)?;
+                let (data, _, _) = read_program(&path)?;
                 crate::pdftex::writet3::type3_bitmap_program(data.as_ref().clone())
                     .map(|p| (path, p))
             });
@@ -2168,19 +2331,20 @@ fn find_quietly(name: &str, format: Format) -> Option<String> {
     })
 }
 
-/// A font program and its SHA-256, read once per change of the file.
-fn read_program(path: &str) -> Option<(Arc<Vec<u8>>, [u8; 32])> {
-    let m = std::fs::metadata(path).ok()?;
-    let (len, mtime) = (m.len(), m.modified().ok());
+/// A font program, its SHA-256 and the file's signature taken before it
+/// was read: read once per change of the file (a racy signature equals
+/// nothing: the file is read again).
+fn read_program(path: &str) -> Option<(Arc<Vec<u8>>, [u8; 32], StatSig)> {
+    let sig = StatSig::of(path)?;
     if let Some(hit) = with(|st| {
         st.programs
             .get(path)
-            .filter(|p| p.len == len && p.mtime == mtime)
+            .filter(|p| p.sig == sig)
             .map(|p| (p.data.clone(), p.sha))
     })
     .flatten()
     {
-        return Some(hit);
+        return Some((hit.0, hit.1, sig));
     }
     let data = Arc::new(std::fs::read(path).ok()?);
     let sha = sha256(&data);
@@ -2188,14 +2352,13 @@ fn read_program(path: &str) -> Option<(Arc<Vec<u8>>, [u8; 32])> {
         st.programs.insert(
             path.to_string(),
             Program {
-                len,
-                mtime,
+                sig,
                 data: data.clone(),
                 sha,
             },
         )
     });
-    Some((data, sha))
+    Some((data, sha, sig))
 }
 
 /// The `/FontMatrix` pdfTeX writes into the embedded font when the map

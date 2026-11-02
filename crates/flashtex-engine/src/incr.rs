@@ -4778,10 +4778,13 @@ impl Session {
         let t0 = Instant::now();
         // the disk as it is now for this compile's lookups and checks (its
         // directories outside the document as the watches vouch for them)
-        {
+        // (and the display list's font keys kept from before, as they vouch
+        // for what those were made from, for this compile only)
+        let _fonts = {
             let _check = crate::fswatch::check();
             system::refresh_disk_dirs();
-        }
+            crate::displaylist::compile_scope()
+        };
         let i0 = crate::os::thread_counts();
         let f0 = crate::os::events();
         let mut paused_how = "";
