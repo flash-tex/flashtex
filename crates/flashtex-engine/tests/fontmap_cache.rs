@@ -128,8 +128,11 @@ fn a_cached_parse_writes_what_a_parse_writes() {
             "a parse that warned was stored: {say}"
         );
         let (_, log) = outputs(&job);
+        // (TeX breaks the log's lines at `max_print_line`: the warning names
+        // the engine's path, and on a CI runner, whose paths are long, it
+        // read `duplicates ign` / `ored`)
         assert!(
-            log.contains("duplicates ignored"),
+            log.replace('\n', "").contains("duplicates ignored"),
             "no duplicate warning in the log:\n{log}"
         );
     }
