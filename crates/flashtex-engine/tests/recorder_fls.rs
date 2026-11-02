@@ -1,13 +1,16 @@
-//! `-recorder`'s `.fls` against TeX Live's own `pdftex`: a file found in
-//! the current directory is listed as `nameoffile + 1` after
-//! lib/openclose.c's `open_input`, without the `./` kpathsea puts in front
-//! of it unless the name asked for had one too (`INPUT sub.tex` for
-//! `\input sub`, `INPUT ./sub.tex` for `\input ./sub`), the format too.
-//!
-//! Compared: the lines after `PWD`, but for kpathsea's own `texmf.cnf`
-//! reads (this engine's resolver is not kpathsea). The documents ship no
-//! page and read no image, font or map file, whose lines pdfTeX's C parts
-//! add (writeimg.c, writet1.c, mapfile.c) and this engine does not yet.
+//! `-recorder`'s `.fls` against TeX Live's own `pdftex`, every line after
+//! `PWD`, in order:
+//! - kpathsea's own reads: the `texmf.cnf` files when it starts, every
+//!   `texfonts.map` at the first TFM lookup;
+//! - a file lib/openclose.c's `open_input` opened (`\input`, `\openin`,
+//!   the format, TFM, map and encoding files), as `nameoffile + 1`: without
+//!   the `./` kpathsea puts in front of a file in the current directory
+//!   unless the name asked for had one (`INPUT sub.tex` for `\input sub`,
+//!   `INPUT ./sub.tex` for `\input ./sub`);
+//! - the C parts' own lines, the path as the lookup returned it
+//!   (`./sub.tex`): `\pdffilesize`, `\pdffilemoddate`, `\pdffiledump`,
+//!   `\pdfmdfivesum file` (texmfmp.c), `\pdfximage` (writeimg.c), a Type 1
+//!   font file (writet1.c).
 #![cfg(all(unix, feature = "kpathsea"))]
 
 mod common;
@@ -45,6 +48,22 @@ const CASES: &[(&str, &[&str], &str)] = &[
         &["-output-directory=od"],
         "\\input sub2.tex \\input sub \\bye\n",
     ),
+    // (a file that is not there is not listed; \pdffiledump of 0 bytes
+    // looks nothing up)
+    (
+        "queries",
+        &[],
+        "\\message{\\pdffilesize{sub.tex}\\pdffilesize{./sub}\\pdfmdfivesum file{sub.tex}\
+         \\pdffiledump length 4{sub.tex}\\pdffiledump length 0{dir/sub.tex}\
+         \\pdffilemoddate{dir/sub.tex}\\pdffilesize{nothere.tex}}\\bye\n",
+    ),
+    (
+        "page",
+        &[],
+        "\\pdfoutput=1 \\font\\big=cmss12 \\big \\pdfximage{img.png}\
+         \\pdfximage page 2{img.pdf}\\pdfrefximage\\pdflastximage\\ A\\par\\vfill\\eject\
+         \\pdfximage{img.png}\\pdfrefximage\\pdflastximage\\ $x$\\bye\n",
+    ),
 ];
 
 fn run(bin: &Path, dir: &Path, args: &[&str], ours: bool) {
@@ -70,7 +89,7 @@ fn fls(dir: &Path, name: &str) -> Vec<String> {
     std::fs::read_to_string(dir.join(name).with_extension("fls"))
         .unwrap_or_default()
         .lines()
-        .filter(|l| !l.starts_with("PWD ") && !l.ends_with("/texmf.cnf"))
+        .filter(|l| !l.starts_with("PWD "))
         .map(str::to_string)
         .collect()
 }
@@ -91,6 +110,9 @@ fn recorder_names_match_tex_live() {
         std::fs::write(d.join("sub.tex"), "\\message{sub}\n").unwrap();
         std::fs::write(d.join("dir/sub.tex"), "\\message{dir/sub}\n").unwrap();
         std::fs::write(d.join("od/sub2.tex"), "\\message{od/sub2}\n").unwrap();
+        let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
+        std::fs::copy(images.join("png-rgb8.png"), d.join("img.png")).unwrap();
+        std::fs::copy(images.join("pdf-hand.pdf"), d.join("img.pdf")).unwrap();
         for (name, _, body) in CASES {
             std::fs::write(d.join(format!("{name}.tex")), body).unwrap();
         }

@@ -5538,9 +5538,10 @@ fn a_stored_s0_with_images_reopens() {
 }
 
 /// Lane REVIEW-PDF: `-recorder` lists a file found in the current
-/// directory as pdfTeX does (`INPUT defs.tex`, not `./defs.tex`:
-/// `system::record_file_as`), while the incremental journal keeps the path
-/// found. So a host with `-recorder` makes the same restarts as one
+/// directory as pdfTeX does (`INPUT defs.tex` for `\input`, not
+/// `./defs.tex`: `system::record_file_as`; `INPUT ./defs.tex` for the
+/// `\pdffilesize` of LaTeX's `\IfFileExists`), while the incremental
+/// journal keeps the path found. So a host with `-recorder` makes the same restarts as one
 /// without, for a body edit (S₀ kept), an edit of a file the preamble read
 /// (S₀'s key fails) and of one the body read, and stores and reopens the
 /// same S₀; every compile equals scratch runs.
@@ -5618,8 +5619,10 @@ fn the_recorder_leaves_the_journal_keys_alone() {
         if recorder {
             let fls = std::fs::read_to_string(dir.join("doc.fls")).unwrap_or_default();
             assert!(
+                // (`\input`'s `open_input` spelling, and LaTeX's
+                // `\IfFileExists`, whose `\pdffilesize` lists the lookup's)
                 fls.lines().any(|l| l == "INPUT defs.tex")
-                    && !fls.lines().any(|l| l.starts_with("INPUT ./")),
+                    && fls.lines().any(|l| l == "INPUT ./defs.tex"),
                 "doc.fls does not list the files as pdfTeX does:\n{fls}"
             );
         }

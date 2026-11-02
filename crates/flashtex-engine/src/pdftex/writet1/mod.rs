@@ -129,6 +129,7 @@ impl Globals {
             self.set_cur_file_name_str(Some(&ff_name));
             self.pdftex_fail("cannot open Type 1 font file for reading");
         };
+        crate::system::recorder_record_input(&path);
         set_cur_file_name(Some(path.as_bytes()));
         // t1_init_params
         let (open, close): (&[u8], &[u8]) = if fm.is_subsetted() {
