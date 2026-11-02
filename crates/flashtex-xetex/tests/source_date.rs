@@ -16,12 +16,53 @@
 //! `\year` and `\time` as `\message` shows them are compared. Skips where
 //! there is no TeX Live.
 
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 /// What a run shows: exit status, stderr, and the `[...]` the document
 /// printed on the terminal.
 type Seen = (Option<i32>, String, Vec<String>);
+
+/// What a run shows with stderr as bytes: a lossy conversion would hide a
+/// `U+FFFD` where the raw bytes belong.
+type SeenBytes = (Option<i32>, Vec<u8>, Vec<String>);
+
+/// Whether `haystack` contains `needle` as bytes.
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && needle.len() <= haystack.len()
+        && haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// The first offset of `needle` in `haystack`, if any.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
+}
+
+/// Stderr with only the `<argv[0]>` prefix normalised away: every line up to
+/// `": fatal: "` becomes `"<prog>"`, everything from there on is compared
+/// byte for byte.
+fn normalise_prog(err: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(err.len());
+    for (i, line) in err.split(|&b| b == b'\n').enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+        }
+        match find(line, b": fatal: ") {
+            Some(j) => {
+                out.extend_from_slice(b"<prog>");
+                out.extend_from_slice(&line[j..]);
+            }
+            None => out.extend_from_slice(line),
+        }
+    }
+    out
+}
 
 struct Engines {
     base: PathBuf,
@@ -52,13 +93,14 @@ impl Engines {
     }
 
     /// Runs `args` in both engines' directories with the environment `env`
-    /// (`None` removes the variable), after writing `files`.
-    fn both(
+    /// (`None` removes the variable), after writing `files`. The values are
+    /// `OsStr` so they may be non-UTF-8, and stderr is kept as bytes.
+    fn both_os(
         &self,
         files: &[(&str, &str)],
         args: &[&str],
-        env: &[(&str, Option<&str>)],
-    ) -> (Seen, Seen) {
+        env: &[(&str, Option<&OsStr>)],
+    ) -> (SeenBytes, SeenBytes) {
         let run = |ours: bool| {
             let d = self.base.join(if ours { "ours" } else { "tex" });
             for (n, t) in files {
@@ -87,13 +129,26 @@ impl Engines {
                 .skip(1)
                 .filter_map(|s| s.split_once(']').map(|(a, _)| a.to_string()))
                 .collect();
-            (
-                o.status.code(),
-                String::from_utf8_lossy(&o.stderr).into_owned(),
-                shown,
-            )
+            (o.status.code(), o.stderr, shown)
         };
         (run(true), run(false))
+    }
+
+    /// Runs `args` in both engines' directories with the environment `env`
+    /// (`None` removes the variable), after writing `files`.
+    fn both(
+        &self,
+        files: &[(&str, &str)],
+        args: &[&str],
+        env: &[(&str, Option<&str>)],
+    ) -> (Seen, Seen) {
+        let env_os: Vec<(&str, Option<&OsStr>)> =
+            env.iter().map(|&(k, v)| (k, v.map(OsStr::new))).collect();
+        let (x, y) = self.both_os(files, args, &env_os);
+        let lossy = |(code, err, shown): SeenBytes| {
+            (code, String::from_utf8_lossy(&err).into_owned(), shown)
+        };
+        (lossy(x), lossy(y))
     }
 }
 
@@ -144,8 +199,7 @@ fn an_invalid_source_date_epoch_is_fatal() {
     let Some(e) = Engines::new("epoch") else {
         return;
     };
-    let time =
-        "\\catcode`\\{=1 \\catcode`\\}=2 \\message{[\\the\\year.\\the\\month.\\the\\day.\\the\\time]}\\end\n";
+    let time = "\\catcode`\\{=1 \\catcode`\\}=2 \\message{[\\the\\year.\\the\\month.\\the\\day.\\the\\time]}\\end\n";
     let values = [
         "abc",
         "7 ",
@@ -201,5 +255,100 @@ fn an_invalid_source_date_epoch_is_fatal() {
         &[("SOURCE_DATE_EPOCH", Some("abc"))],
     );
     assert_eq!(y.0, Some(1), "xetex accepted SOURCE_DATE_EPOCH=abc: {y:?}");
+    let _ = std::fs::remove_dir_all(&e.base);
+}
+
+/// A non-UTF-8 `SOURCE_DATE_EPOCH` is fatal, and the raw bytes reach stderr
+/// unchanged (no `U+FFFD`): the expected line is TeX Live xetex's own, with
+/// only the `<argv[0]>` prefix normalised away.
+#[test]
+fn non_utf8_source_date_epoch_is_fatal_with_raw_bytes() {
+    let Some(e) = Engines::new("epoch-bytes") else {
+        return;
+    };
+    let bad = OsStr::from_bytes(b"\xff\xfe");
+    for force in [None, Some(OsStr::new("1"))] {
+        let env = [
+            ("SOURCE_DATE_EPOCH", Some(bad)),
+            ("FORCE_SOURCE_DATE", force),
+        ];
+        let (x, y) = e.both_os(
+            &[("d.tex", YEAR)],
+            &["-ini", "-no-pdf", "-interaction=nonstopmode", "d.tex"],
+            &env,
+        );
+        assert_eq!(
+            y.0,
+            Some(1),
+            "xetex accepted SOURCE_DATE_EPOCH=\\xff\\xfe: {y:?}"
+        );
+        assert!(
+            contains(&y.1, b"\xff\xfe"),
+            "xetex stderr lacks the raw bytes: {y:?}"
+        );
+        assert!(
+            !contains(&y.1, "�".as_bytes()),
+            "xetex stderr has U+FFFD: {y:?}"
+        );
+        assert_eq!(
+            x.0,
+            Some(1),
+            "ours accepted SOURCE_DATE_EPOCH=\\xff\\xfe: {x:?}"
+        );
+        assert!(
+            contains(&x.1, b"\xff\xfe"),
+            "ours stderr lacks the raw bytes: {x:?}"
+        );
+        assert!(
+            !contains(&x.1, "�".as_bytes()),
+            "ours stderr has U+FFFD: {x:?}"
+        );
+        assert_eq!(
+            normalise_prog(&x.1),
+            normalise_prog(&y.1),
+            "SOURCE_DATE_EPOCH=\\xff\\xfe FORCE_SOURCE_DATE={force:?}: diagnostic differs from xetex"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&e.base);
+}
+
+/// A non-UTF-8 `FORCE_SOURCE_DATE` is warned about with the raw byte on
+/// stderr (no `U+FFFD`): the warning names no program, so stderr must equal
+/// TeX Live xetex's byte for byte.
+#[test]
+fn non_utf8_force_source_date_warns_with_raw_bytes() {
+    let Some(e) = Engines::new("force-bytes") else {
+        return;
+    };
+    let env = [
+        ("SOURCE_DATE_EPOCH", Some(OsStr::new("0"))),
+        ("FORCE_SOURCE_DATE", Some(OsStr::from_bytes(b"\xff"))),
+    ];
+    let (x, y) = e.both_os(
+        &[("d.tex", YEAR)],
+        &["-ini", "-no-pdf", "-interaction=nonstopmode", "d.tex"],
+        &env,
+    );
+    assert!(
+        contains(&y.1, b"expected 0 or 1"),
+        "xetex did not warn: {y:?}"
+    );
+    assert!(
+        contains(&y.1, b"\xff"),
+        "xetex stderr lacks the raw byte: {y:?}"
+    );
+    assert!(
+        !contains(&y.1, "�".as_bytes()),
+        "xetex stderr has U+FFFD: {y:?}"
+    );
+    assert!(
+        contains(&x.1, b"\xff"),
+        "ours stderr lacks the raw byte: {x:?}"
+    );
+    assert!(
+        !contains(&x.1, "�".as_bytes()),
+        "ours stderr has U+FFFD: {x:?}"
+    );
+    assert_eq!(x, y, "FORCE_SOURCE_DATE=\\xff (INITEX)");
     let _ = std::fs::remove_dir_all(&e.base);
 }
