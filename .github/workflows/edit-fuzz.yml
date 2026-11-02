@@ -1,0 +1,95 @@
+# The incremental host's random edit sequences, long mode (lane TEST-GAPS):
+# tests/host_incremental.rs `random_edit_sequences_equal_scratch_compiles`
+# with many seeds over the fixtures. Every step's pages, forms and log are
+# compared with a scratch compile's; a mismatch is shrunk and the failure
+# names the seed and the shortest failing sequence. Report-only.
+#
+# Manual runs: GitHub-hosted (default) or the NixOS PC (`runner: pc`, its
+# flashtex.slice caps). Nightly only once the repository variable
+# FLASHTEX_EDIT_FUZZ_NIGHTLY is "1" (CI has room), each night starting
+# at another seed.
+name: edit fuzz (incremental host)
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: first seed
+        required: false
+        default: "1"
+      seeds:
+        description: how many seeds
+        required: false
+        default: "20"
+      steps:
+        description: steps per document and seed
+        required: false
+        default: "50"
+      docs:
+        description: fixture names, comma-separated, or "all"
+        required: false
+        default: all
+      runner:
+        description: "hosted (GitHub-hosted ubuntu) or pc (the NixOS PC)"
+        required: false
+        default: hosted
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edit-fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    if: github.event_name != 'schedule' || vars.FLASHTEX_EDIT_FUZZ_NIGHTLY == '1'
+    runs-on: ${{ inputs.runner == 'pc' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
+    timeout-minutes: 300
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+      SOURCE_DATE_EPOCH: "0"
+      FORCE_SOURCE_DATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      # (the PC's runners have TeX Live 2026 first on PATH already)
+      - if: inputs.runner != 'pc'
+        uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          extra: |
+            sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
+            translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
+            framed 55e43198fa63236b7f97cfa6b70d141dc0be1976dc385cac3d6cad3f1610ff25
+            ntheorem 030413280971d17decff54f02ac44749010eb127fa684033e811417e391eb84d
+            tikz-cd e225b02dcc2a334508529e27a7d7b3f283939b57507019ab6bcf99ff453ac2cb
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: edit-fuzz
+      - name: random edit sequences
+        env:
+          # nightly: 20 seeds from the day of the year times 20
+          FLASHTEX_FUZZ_SEED: ${{ inputs.seed || '' }}
+          FLASHTEX_FUZZ_SEEDS: ${{ inputs.seeds || '20' }}
+          FLASHTEX_FUZZ_STEPS: ${{ inputs.steps || '50' }}
+          FLASHTEX_FUZZ_DOCS: ${{ inputs.docs || 'all' }}
+        run: |
+          if [ -z "$FLASHTEX_FUZZ_SEED" ]; then
+            FLASHTEX_FUZZ_SEED=$(( 10#$(date -u +%j) * 20 ))
+            export FLASHTEX_FUZZ_SEED
+          fi
+          echo "seeds $FLASHTEX_FUZZ_SEED.. ($FLASHTEX_FUZZ_SEEDS), $FLASHTEX_FUZZ_STEPS steps, docs $FLASHTEX_FUZZ_DOCS"
+          cargo test --release --locked -p flashtex-engine --test host_incremental -- \
+            --exact random_edit_sequences_equal_scratch_compiles --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/edit-fuzz.txt"
+          exit "${PIPESTATUS[0]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: edit-fuzz
+          path: ${{ runner.temp }}/edit-fuzz.txt
+          retention-days: 30
