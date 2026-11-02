@@ -2789,6 +2789,75 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Lane TEST-GAPS: the directory-to-link swap raced for real (no seam):
+    /// a thread swaps a project directory for a link out of the project and
+    /// back as fast as it can, while buffers are written into it, new files
+    /// whose names exist outside. The files outside are never written or
+    /// removed, and none is created there.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_directory_swapped_for_a_link_while_buffers_are_written_leaves_the_outside_alone() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let base = std::env::temp_dir().join(format!("ftx-swap-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        const N: usize = 3000;
+        for i in 0..N {
+            std::fs::write(away.join(format!("f{i}.tex")), "outside").unwrap();
+        }
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let swapper = std::thread::spawn({
+            let (root, away, stop) = (root.clone(), away.clone(), stop.clone());
+            move || {
+                let (dir, real) = (root.join("dir"), root.join("real"));
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = std::fs::rename(&dir, &real);
+                    let _ = std::os::unix::fs::symlink(&away, &dir);
+                    std::thread::yield_now();
+                    let _ = std::fs::remove_file(&dir);
+                    let _ = std::fs::rename(&real, &dir);
+                    std::thread::yield_now();
+                }
+            }
+        });
+        let mut written = super::Written::new();
+        let t = std::time::Instant::now();
+        let mut ok = 0;
+        for i in 0..N {
+            if t.elapsed() > std::time::Duration::from_secs(20) {
+                break;
+            }
+            let req = obj([(
+                "buffers",
+                Json::Arr(vec![obj([
+                    ("path", js(format!("dir/f{i}.tex").as_str())),
+                    ("text", js("buffer")),
+                ])]),
+            )]);
+            if super::apply_changes(&root, &req, &mut written).is_ok() {
+                ok += 1;
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        swapper.join().unwrap();
+        let mut bad = vec![];
+        for i in 0..N {
+            let f = away.join(format!("f{i}.tex"));
+            match std::fs::read(&f) {
+                Ok(b) if b == b"outside" => {}
+                Ok(_) => bad.push(format!("f{i}.tex written")),
+                Err(_) => bad.push(format!("f{i}.tex removed")),
+            }
+        }
+        let outside = std::fs::read_dir(&away).unwrap().count();
+        let _ = std::fs::remove_dir_all(&base);
+        eprintln!("swap race: {ok} buffers written inside, {} outside files harmed", bad.len());
+        assert!(bad.is_empty() && outside == N, "{outside} files outside: {bad:?}");
+    }
+
     /// The line-by-line definition `line_change` computes.
     fn line_change_by_lines(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
         let a: Vec<&[u8]> = old.split(|&c| c == b'\n').collect();
