@@ -5012,6 +5012,74 @@ fn a_restart_between_two_instances_of_a_rewritten_file_puts_the_first_back() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "its revert");
 }
 
+/// Lane BEAMER (3, #2006): a convergence jump after the new run opened the
+/// rewritten file again. The new run's instance from that open is kept only
+/// when the file is opened next, and that next open is the old run's, after
+/// the convergence point: the jump appends it to the opens already done, so
+/// no open was left to keep the instance, and every checkpoint between the
+/// new run's open and the old run's next one was unrestorable (the second
+/// edit restarted before the first instance's page). The jump now keeps it
+/// from the file as the new run left it.
+#[test]
+fn an_instance_the_new_run_opened_before_a_jump_is_kept() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("instance-jump");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = "\\input{\\jobname-tmp.tex}\n\n";
+    let doc = |w1: &str, w2: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n\\begin{{document}}\n\
+             {}{}{input}\\clearpage\n{}\\clearpage\n{}{}{input}\\clearpage\n{}\\clearpage\n\
+             {}\\clearpage\n{}{}{input}\\clearpage\n{}\\end{{document}}\n",
+            paras(0, 3, "alpha"),
+            write_tmp(0, "x"),
+            paras(3, 6, w1),
+            paras(6, 9, "alpha"),
+            write_tmp(1, "yy"),
+            paras(9, 12, "alpha"),
+            paras(12, 15, w2),
+            paras(15, 18, "alpha"),
+            write_tmp(2, "zzz"),
+            paras(18, 21, "alpha"),
+        )
+    };
+    let base = doc("alpha", "alpha");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // page 2: the new run writes the second instance (page 3) and converges
+    // before the third (page 6)
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("gamma", "alpha"))],
+        "an edit before the second instance",
+    );
+    assert_ne!(field(&r, "converged_at"), "null", "did not converge: {r}");
+    let c: usize = field(&r, "converged_at").parse().unwrap();
+    assert!(c < 6, "converged after the third instance: {r}");
+    // page 5, between the jump's second and third instances
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("gamma", "delta"))],
+        "an edit between the second and third instances",
+    );
+    let restart: usize = field(&r, "restart_pages").parse().unwrap();
+    assert!(restart >= 4, "restarted before the second instance: {r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "the revert");
+}
+
 /// Lane BEAMER (2): beamer fragile frames, each writing `\jobname.vrb` and
 /// reading it back. An edit restarts at its own frame, not before the first
 /// fragile one, and one before later fragile frames converges: the old
