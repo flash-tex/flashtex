@@ -59,6 +59,11 @@ pub struct Job {
     pub external_tools: Option<String>,
     pub buffers: Vec<(String, String)>,
     pub edits: Vec<(String, u64, u64, String)>,
+    /// 3.1 `incremental`: the client keeps this connection's pages and
+    /// resource ids across compiles of the document ([`Held`]).
+    pub incremental: bool,
+    /// 3.1 `viewport`: the page (0-based) the client shows.
+    pub viewport: Option<u32>,
     /// TeX code run before the main file on the first line (`[fonts]`,
     /// `fonts.rs`); empty: the main file's name alone.
     pub preamble: String,
@@ -162,6 +167,14 @@ impl Job {
             external_tools: j.str_field("external_tools").map(String::from),
             buffers,
             edits,
+            incremental: j
+                .get("incremental")
+                .and_then(Json::as_bool)
+                .unwrap_or(false),
+            viewport: j
+                .int_field("viewport")
+                .filter(|&v| (0..=u32::MAX as i64).contains(&v))
+                .map(|v| v as u32),
             preamble: String::new(),
             s0_file: None,
         })
@@ -241,6 +254,121 @@ pub struct Accept {
     pub line_state: bool,
     /// `diag-v1` (spec §6.7): `DIAG`s in place of `DIAGNOSTIC`s.
     pub diag: bool,
+}
+
+/// What an incremental client (spec §6.3, 3.1 `incremental`) holds from
+/// this connection's compiles of its document: each page's and form's frame
+/// as it was last sent (a digest of its bytes), and the fonts whose
+/// programs it was sent. With `keep` (`STARTED`), a page or form whose
+/// frame is the one the client holds is not sent again, and a font program
+/// it was sent goes without its program (spec §5.1, as `have_fonts`); the
+/// fonts, images and source spans themselves are sent as the engine sends
+/// them, so every id a page uses is bound as it was when the page was sent
+/// (spec §5: a later `FONT` rebinds an id, never a page the client holds).
+/// The engine's frames are the same bytes for the same page (they are made
+/// once a page and sent again from its cache, `out::frame`), so a page
+/// before the restart point or after convergence is not sent again. A run in
+/// this process compares them itself, before it writes them
+/// (`out::FrameDigests`, shared); a child's run, here, as they arrive.
+#[derive(Debug, Default)]
+pub struct Held {
+    /// The document the client's pages are of: `None` before the first
+    /// incremental compile (and after a non-incremental one).
+    doc: Option<String>,
+    /// The page and form frames the client holds (digests).
+    frames: crate::out::HeldFrames,
+    /// Font keys whose program the client was sent on this connection.
+    programs: HashSet<[u8; 32]>,
+    /// This compile's: whether the client keeps what it holds.
+    keep: bool,
+    /// This compile's: `PAGES` sent after its first page sent
+    /// (`first_sent`) and at the viewport (`at_viewport`).
+    first_sent: bool,
+    at_viewport: bool,
+}
+
+impl Held {
+    /// A compile starts: whether the client keeps its pages and resource
+    /// ids (`STARTED.keep`). A client that is not incremental, another
+    /// document or an export drops them.
+    pub fn begin(&mut self, job: &Job) -> bool {
+        let doc = Self::doc_of(job);
+        let keep = self.keeps(job);
+        if !keep {
+            *self = Held::default();
+            if job.incremental && !job.export {
+                self.doc = Some(doc);
+            }
+        }
+        self.keep = keep;
+        self.first_sent = false;
+        self.at_viewport = false;
+        keep
+    }
+
+    fn doc_of(job: &Job) -> String {
+        format!(
+            "{}\0{}\0{}\0{}\0{}",
+            job.root.display(),
+            job.main,
+            job.output_dir.display(),
+            job.jobname,
+            job.format
+        )
+    }
+
+    /// Whether the client keeps what it holds for `job` (without starting
+    /// it: a compile that ends before it runs leaves the client's pages).
+    pub fn keeps(&self, job: &Job) -> bool {
+        job.incremental && !job.export && self.doc.as_deref() == Some(Self::doc_of(job).as_str())
+    }
+
+    fn tracking(&self) -> bool {
+        self.doc.is_some()
+    }
+
+    /// `PAGES` (spec §6.4): pages `..=upto` are current; the client's
+    /// later pages, if any, are stale until this compile sends or keeps
+    /// them. `complete`: the compile's `count` pages are all current.
+    fn pages_frame(&mut self, id: i64, upto: usize, complete: Option<usize>, out: &Out) {
+        let range = |a: usize, b: usize| Json::Arr(vec![Json::Int(a as i64), Json::Int(b as i64)]);
+        let mut f = self.frames.lock().unwrap();
+        let (count, current, stale) = match complete {
+            Some(n) => {
+                f.pages.truncate(n);
+                let cur = if n > 0 { vec![range(0, n - 1)] } else { vec![] };
+                (n, cur, vec![])
+            }
+            None => {
+                let n = f.pages.len().max(upto + 1);
+                let stale = if n > upto + 1 {
+                    vec![range(upto + 1, n - 1)]
+                } else {
+                    vec![]
+                };
+                (n, vec![range(0, upto)], stale)
+            }
+        };
+        drop(f);
+        send_json(
+            out,
+            kind::PAGES,
+            &obj([
+                ("id", Json::Int(id)),
+                ("count", Json::Int(count as i64)),
+                ("complete", Json::Bool(complete.is_some())),
+                ("current", Json::Arr(current)),
+                ("stale", Json::Arr(stale)),
+            ]),
+        );
+    }
+
+    /// The compile ended with `n` pages (not cancelled): all current.
+    pub fn finish(&mut self, id: i64, n: usize, out: &Out) {
+        if self.tracking() {
+            self.pages_frame(id, 0, Some(n), out);
+        }
+    }
 }
 
 /// One run of the engine: what it sent and how it ended.
@@ -429,6 +557,7 @@ pub fn run_once(
     children: &Children,
     spares: &mut Spares,
     inproc: Option<&super::inproc::Shared>,
+    held: &mut Held,
 ) -> Result<RunResult, String> {
     std::fs::create_dir_all(&job.output_dir)
         .map_err(|e| format!("{}: {e}", job.output_dir.display()))?;
@@ -442,6 +571,7 @@ pub fn run_once(
             running,
             t0,
             spares.retention(),
+            held,
         );
     }
     // an export is a run of its own: it neither takes nor ends the spare
@@ -540,7 +670,7 @@ pub fn run_once(
         };
         if let Some(s) = stream {
             s.set_nonblocking(false).ok();
-            forward(s, job, accept, out, &mut res, t0);
+            forward(s, job, accept, out, &mut res, t0, held, false);
         }
     }
     let _ = std::fs::remove_file(&sock);
@@ -572,6 +702,7 @@ fn run_in_process(
     running: &Arc<Mutex<Running>>,
     t0: Instant,
     retention: crate::ckpt::Retention,
+    held: &mut Held,
 ) -> Result<RunResult, String> {
     let stop = super::inproc::cancel_flag();
     {
@@ -610,11 +741,15 @@ fn run_in_process(
         preview: !job.export,
         // (an export is a run of its own: no persisted S₀)
         s0_file: (!job.export).then(|| job.s0_file.clone()).flatten(),
+        held: (held.tracking() && !job.export).then(|| {
+            held.frames.lock().unwrap().seen = 0;
+            held.frames.clone()
+        }),
     };
     let mut res = RunResult::default();
     let ran = sh.run(spec, || {
         if let Some(r) = r {
-            forward(r, job, accept, out, &mut res, t0);
+            forward(r, job, accept, out, &mut res, t0, held, true);
         }
     });
     {
@@ -623,6 +758,10 @@ fn run_in_process(
         res.cancelled = r.cancelled;
     }
     let (rep, ()) = ran?;
+    if held.tracking() && !job.export {
+        // (the pages it held were not sent: the run's count is the engine's)
+        res.pages = held.frames.lock().unwrap().seen;
+    }
     res.cancelled |= rep.cancelled;
     res.exit_code = rep.exit_code;
     res.stderr = rep.reports.join("\n");
@@ -643,6 +782,7 @@ fn run_in_process(
 /// does not take go without their program (spec §5.1); 3.3 items the client
 /// did not accept are left out of the page, which is then incomplete
 /// (spec §11.7).
+#[allow(clippy::too_many_arguments)]
 fn forward(
     s: std::os::unix::net::UnixStream,
     job: &Job,
@@ -650,17 +790,30 @@ fn forward(
     out: &Out,
     res: &mut RunResult,
     t0: Instant,
+    held: &mut Held,
+    in_process: bool,
 ) {
     let mut r = BufReader::new(s);
     let mut font_keys: HashMap<u16, [u8; 32]> = HashMap::new();
     let mut image_keys: HashMap<u32, [u8; 32]> = HashMap::new();
+    let tracking = held.tracking();
+    // (a run in this process compared its frames with the client's itself)
+    let compare = tracking && !in_process;
     while let Ok(Some((k, body))) = frame::read_frame(&mut r) {
+        // (the frame as the engine made it: a run in this process compares
+        // that)
+        let raw_digest =
+            (compare && matches!(k, kind::PAGE | kind::FORM)).then(|| crate::out::digest(&body));
         let body = match k {
             kind::FONT => match Font::decode(&body) {
                 Ok(mut f) => {
                     font_keys.insert(f.id, f.key);
-                    if job.have_fonts.contains(&f.key) {
+                    if job.have_fonts.contains(&f.key)
+                        || (tracking && held.programs.contains(&f.key))
+                    {
                         f.program.clear();
+                    } else if tracking && !f.program.is_empty() {
+                        held.programs.insert(f.key);
                     }
                     f.encode()
                 }
@@ -686,14 +839,42 @@ fn forward(
             }
             _ => body,
         };
-        if k == kind::PAGE {
-            res.pages += 1;
-            if res.first_page_ms.is_none() {
-                res.first_page_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
+        // (the frame's first field: the page's index, the form's id)
+        let index = body
+            .get(..4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+        let mut held_already = false;
+        if let (Some(d), Some(i)) = (raw_digest, index) {
+            {
+                let mut f = held.frames.lock().unwrap();
+                held_already = if k == kind::PAGE {
+                    f.page(i, d)
+                } else {
+                    f.form(i as u32, d)
+                };
             }
         }
-        if !send(out, k, &body) {
-            break;
+        if k == kind::PAGE {
+            res.pages += 1;
+        }
+        if !held_already {
+            if k == kind::PAGE && res.first_page_ms.is_none() {
+                res.first_page_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
+            }
+            if !send(out, k, &body) {
+                break;
+            }
+        }
+        if tracking && k == kind::PAGE {
+            let i = index.unwrap_or(0);
+            // `PAGES` after the first page sent, and at the viewport
+            if !held_already && !held.first_sent {
+                held.first_sent = true;
+                held.pages_frame(job.id, i, None, out);
+            } else if job.viewport == Some(i as u32) && !held.at_viewport {
+                held.at_viewport = true;
+                held.pages_frame(job.id, i, None, out);
+            }
         }
     }
 }
@@ -898,6 +1079,7 @@ pub fn compile(
     children: &Children,
     spares: &mut Spares,
     inproc: Option<&super::inproc::Shared>,
+    held: &mut Held,
 ) -> Outcome {
     let mut passes = 0;
     let mut last;
@@ -908,6 +1090,7 @@ pub fn compile(
         passes += 1;
         last = match run_once(
             exe, format_dir, job, accept, out, running, t0, sock_dir, children, spares, inproc,
+            held,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -971,6 +1154,11 @@ pub fn compile(
         if after == before || passes >= MAX_PASSES || halted {
             break;
         }
+    }
+    if !last.cancelled && !job.export && last.exit_code.is_some() {
+        // (the last pass sent every page of the document, the ones before
+        // its restart point from the cache)
+        held.finish(job.id, last.pages as usize, out);
     }
     let log = std::fs::read_to_string(job.output_dir.join(format!("{}.log", job.jobname)))
         .unwrap_or_default();
@@ -1137,5 +1325,38 @@ Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4
         );
         let bad = Json::parse(r#"{"id": 1, "root": "/p", "main": "../x.tex"}"#).unwrap();
         assert!(Job::parse(&bad, Path::new("/t")).is_err());
+    }
+
+    #[test]
+    fn an_incremental_client_keeps_its_pages_for_the_same_document_only() {
+        let job = |s: &str| Job::parse(&Json::parse(s).unwrap(), Path::new("/tmp/x")).unwrap();
+        let inc = job(
+            r#"{"id": 1, "root": "/p", "main": "main.tex", "incremental": true, "viewport": 4}"#,
+        );
+        assert!(inc.incremental);
+        assert_eq!(inc.viewport, Some(4));
+        let mut h = Held::default();
+        assert!(!h.begin(&inc), "nothing is held before the first compile");
+        h.frames.lock().unwrap().pages = vec![7, 8];
+        assert!(h.begin(&inc), "the same document keeps");
+        assert_eq!(h.frames.lock().unwrap().pages, [7, 8]);
+        let other = job(r#"{"id": 2, "root": "/p", "main": "other.tex", "incremental": true}"#);
+        assert!(!h.keeps(&other));
+        assert!(!h.begin(&other), "another document drops the pages");
+        assert!(h.frames.lock().unwrap().pages.is_empty());
+        let plain = job(r#"{"id": 3, "root": "/p", "main": "other.tex"}"#);
+        assert!(!h.begin(&plain));
+        assert!(
+            !h.tracking(),
+            "a client that is not incremental is not tracked"
+        );
+        let export = job(
+            r#"{"id": 4, "root": "/p", "main": "other.tex", "incremental": true, "export": true}"#,
+        );
+        assert!(!h.begin(&export));
+        assert!(!h.tracking());
+        let digest = crate::out::digest;
+        assert_ne!(digest(b"abcdefgh1"), digest(b"abcdefgh2"));
+        assert_ne!(digest(b""), 0);
     }
 }

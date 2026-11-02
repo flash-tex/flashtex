@@ -50,7 +50,7 @@ use flashtex_display_list::frame::write_frame;
 use flashtex_display_list::kind;
 use flashtex_display_list::page::Item;
 use flashtex_display_list::resource::Font;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 /// `n / d` rounded to nearest, halves away from zero (d > 0).
@@ -79,6 +79,9 @@ pub struct Output {
 /// Where display-list frames go, and what has been sent there.
 struct DlSink {
     w: Box<dyn Write + Send>,
+    /// What the client holds (an incremental client of the Unicode host,
+    /// `host::compile::Held`): a page or form frame it holds is not sent.
+    held: Option<HeldFrames>,
     fonts: HashSet<u16>,
     images: HashSet<u32>,
     forms: usize,
@@ -104,6 +107,7 @@ impl Output {
             Some(Ok(ep)) => match ep.open_writer() {
                 Ok(w) => Some(DlSink {
                     w,
+                    held: None,
                     fonts: HashSet::new(),
                     images: HashSet::new(),
                     forms: 0,
@@ -137,9 +141,11 @@ impl Output {
         w: Option<Box<dyn Write + Send>>,
         formats: Option<HashSet<String>>,
         cache: Option<std::sync::Arc<fonts::FontCache>>,
+        held: Option<HeldFrames>,
     ) -> Output {
         let dl = w.map(|w| DlSink {
             w,
+            held,
             fonts: HashSet::new(),
             images: HashSet::new(),
             forms: 0,
@@ -609,12 +615,24 @@ fn send_page(
         let form = &doc.forms[dl.forms];
         dl.forms += 1;
         send_resources(dl, doc, form, &mut send);
-        let body = encode(doc, form);
-        send(kind::FORM, &body, &mut dl.w);
+        let body = frame(doc, form);
+        if !dl
+            .held
+            .as_ref()
+            .is_some_and(|h| h.lock().unwrap().holds_form(form, body))
+        {
+            send(kind::FORM, body, &mut dl.w);
+        }
     }
     send_resources(dl, doc, b, &mut send);
-    let body = encode(doc, b);
-    send(kind::PAGE, &body, &mut dl.w);
+    let body = frame(doc, b);
+    if !dl
+        .held
+        .as_ref()
+        .is_some_and(|h| h.lock().unwrap().holds_page(b, body))
+    {
+        send(kind::PAGE, body, &mut dl.w);
+    }
     if !ok || dl.w.flush().is_err() {
         out.dl = None;
     }
@@ -673,18 +691,82 @@ fn send_resources(
     }
 }
 
+/// What an incremental client of the Unicode host holds of a connection's
+/// frames (`host::compile::Held`, which shares it with the runs it starts in
+/// its own process): the digest ([`digest`]) of the last `PAGE` frame it was
+/// sent at each index and `FORM` frame for each id. A run that has it sends
+/// a page or form only when its frame is not the one the client holds (and
+/// records what it sends), so a page before the restart point or after
+/// convergence, sent again from the cache, costs nothing.
+#[derive(Debug, Default)]
+pub struct FrameDigests {
+    /// Per page index: the digest of the frame the client holds, 0 for none.
+    pub pages: Vec<u64>,
+    /// Per form id: the digest of the frame the client holds.
+    pub forms: HashMap<u32, u64>,
+    /// The pages the run passed to the display list (sent or held): the
+    /// document's, at the end of a run.
+    pub seen: u32,
+}
+
+pub type HeldFrames = std::sync::Arc<std::sync::Mutex<FrameDigests>>;
+
+impl FrameDigests {
+    /// Whether the client holds `frame` as the page at its index; records
+    /// it as held either way (it is sent when not).
+    pub fn page(&mut self, index: usize, d: u64) -> bool {
+        self.seen += 1;
+        if self.pages.len() <= index {
+            self.pages.resize(index + 1, 0);
+        }
+        std::mem::replace(&mut self.pages[index], d) == d
+    }
+
+    pub fn form(&mut self, id: u32, d: u64) -> bool {
+        self.forms.insert(id, d) == Some(d)
+    }
+
+    fn holds_page(&mut self, b: &Built, frame: &[u8]) -> bool {
+        self.page(b.dl.index as usize, *b.digest.get_or_init(|| digest(frame)))
+    }
+
+    fn holds_form(&mut self, b: &Built, frame: &[u8]) -> bool {
+        self.form(b.dl.index, *b.digest.get_or_init(|| digest(frame)))
+    }
+}
+
+/// A frame's digest: 64 bits of a multiply-rotate hash over its words and
+/// its length (a page is some 100 KB, hashed at memory speed; made once a
+/// page, `Built::digest`).
+pub fn digest(b: &[u8]) -> u64 {
+    const K: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut h = (b.len() as u64).wrapping_mul(K) ^ 0x5851_F42D_4C95_7F2D;
+    let (words, rest) = b.as_chunks::<8>();
+    for c in words {
+        h = (h ^ u64::from_le_bytes(*c)).wrapping_mul(K).rotate_left(29);
+    }
+    let mut last = [0u8; 8];
+    last[..rest.len()].copy_from_slice(rest);
+    h = (h ^ u64::from_le_bytes(last)).wrapping_mul(K);
+    // (a digest is never 0, which is "none")
+    (h ^ (h >> 31)).max(1)
+}
+
 /// A built page's or form's `PAGE`/`FORM` body, with its content hash
-/// (made once a page: `Built::frame`).
+/// (made once a page: `Built::frame`), without a copy.
+fn frame<'a>(doc: &Doc, b: &'a Built) -> &'a [u8] {
+    b.frame.get_or_init(|| {
+        let mut page = b.dl.clone();
+        // The rules as FlashTeX's PDF draws them (spec §4.4).
+        page.rule_geometry = pdf::rule_geometry(&page);
+        let font_key = |id: u16| doc.fonts.resource(id).map_or([0; 32], |r| r.key);
+        let image_key = |id: u32| doc.images.get(id).map_or([0; 32], |i| i.key);
+        page.hash = page.content_hash(&font_key, &image_key);
+        page.encode()
+    })
+}
+
+/// A built page's or form's `PAGE`/`FORM` body ([`frame`]), copied.
 pub fn encode(doc: &Doc, b: &Built) -> Vec<u8> {
-    b.frame
-        .get_or_init(|| {
-            let mut page = b.dl.clone();
-            // The rules as FlashTeX's PDF draws them (spec §4.4).
-            page.rule_geometry = pdf::rule_geometry(&page);
-            let font_key = |id: u16| doc.fonts.resource(id).map_or([0; 32], |r| r.key);
-            let image_key = |id: u32| doc.images.get(id).map_or([0; 32], |i| i.key);
-            page.hash = page.content_hash(&font_key, &image_key);
-            page.encode()
-        })
-        .clone()
+    frame(doc, b).to_vec()
 }

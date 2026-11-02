@@ -49,7 +49,7 @@ pub mod proc;
 pub mod spare;
 pub mod tools;
 
-use compile::{send_json, Accept, Job, Out, Running};
+use compile::{send_json, Accept, Held, Job, Out, Running};
 use flashtex_display_list::frame::read_frame;
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR};
@@ -477,6 +477,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
         "export",
         "external-tools",
         "halt-on-error",
+        "incremental",
         "buffers",
         "edits",
         flashtex_display_list::PROFILE_CAPABILITY,
@@ -625,6 +626,8 @@ fn compile_thread(
     mut spares: spare::Spares,
 ) {
     let mut memory = tools::Memory::default();
+    // what an incremental client holds of this connection's compiles
+    let mut held = Held::default();
     loop {
         let (job, t0, seq) = match rx.recv_timeout(spares.ttl()) {
             Ok(Msg::Compile(job, t0, seq)) => (*job, t0, seq),
@@ -660,7 +663,14 @@ fn compile_thread(
         };
         if superseded {
             let _ = job.apply_files();
-            done(out, &job, &compile::Outcome::none("cancelled"), t0, None);
+            done(
+                out,
+                &job,
+                &compile::Outcome::none("cancelled"),
+                t0,
+                None,
+                held.keeps(&job),
+            );
             continue;
         }
         run_job(
@@ -673,6 +683,7 @@ fn compile_thread(
             t0,
             &mut memory,
             &mut spares,
+            &mut held,
         );
         running.lock().unwrap().job = None;
     }
@@ -689,6 +700,7 @@ fn run_job(
     t0: Instant,
     memory: &mut tools::Memory,
     spares: &mut spare::Spares,
+    held: &mut Held,
 ) {
     if let Err(e) = job.apply_files() {
         send_json(
@@ -700,7 +712,14 @@ fn run_job(
                 ("message", js(e)),
             ]),
         );
-        done(out, job, &compile::Outcome::none("failed"), t0, None);
+        done(
+            out,
+            job,
+            &compile::Outcome::none("failed"),
+            t0,
+            None,
+            held.keeps(job),
+        );
         return;
     }
     let fmt_dir = match host.format_dir(&job.format) {
@@ -715,7 +734,14 @@ fn run_job(
                     ("message", js(e)),
                 ]),
             );
-            done(out, job, &compile::Outcome::none("failed"), t0, None);
+            done(
+                out,
+                job,
+                &compile::Outcome::none("failed"),
+                t0,
+                None,
+                held.keeps(job),
+            );
             return;
         }
     };
@@ -760,7 +786,8 @@ fn run_job(
     let mut rounds = 0;
     let mut ran_any = false;
     loop {
-        started(out, job, &host.exe);
+        let keep = held.begin(job);
+        started(out, job, &host.exe, keep);
         for (sev, m) in notes.drain(..) {
             send_json(
                 out,
@@ -785,8 +812,9 @@ fn run_job(
             &host.children,
             spares,
             host.engine.as_ref(),
+            held,
         );
-        done(out, job, &o, t0, cause);
+        done(out, job, &o, t0, cause, keep);
         if job.export || o.status == "cancelled" || o.status == "failed" {
             break;
         }
@@ -825,7 +853,7 @@ fn run_job(
     }
 }
 
-fn started(out: &Out, job: &Job, exe: &Path) {
+fn started(out: &Out, job: &Job, exe: &Path, keep: bool) {
     let mut argv = job.argv();
     argv[0] = exe.to_string_lossy().into_owned();
     send_json(
@@ -840,13 +868,13 @@ fn started(out: &Out, job: &Job, exe: &Path) {
                 js(job.output_dir.to_string_lossy().into_owned()),
             ),
             ("mode", js(if job.export { "export" } else { "resident" })),
-            ("keep", Json::Bool(false)),
-            ("incremental", Json::Bool(false)),
+            ("keep", Json::Bool(keep)),
+            ("incremental", Json::Bool(job.incremental && !job.export)),
         ]),
     );
 }
 
-fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&str>) {
+fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&str>, keep: bool) {
     let (status, exit_code, pages, diagnostics, passes, first_page_ms) = (
         o.status,
         o.exit_code,
@@ -899,7 +927,7 @@ fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&
         ),
         ("passes".to_string(), Json::Int(passes as i64)),
         ("typeset_pages".to_string(), Json::Int(pages as i64)),
-        ("keep".to_string(), Json::Bool(false)),
+        ("keep".to_string(), Json::Bool(keep)),
     ];
     if let Some(c) = cause {
         f.push(("cause".into(), js(c)));
