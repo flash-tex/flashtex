@@ -677,6 +677,17 @@ pub fn abs(name: &str, at: Option<std::time::Instant>) {
     };
     eprintln!("[abs] {name} {ms:.3}");
 }
+/// SCRATCH: CLOCK_MONOTONIC in ns (perf record --clockid monotonic's clock).
+fn mono_ns() -> i64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+    }
+    ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64
+}
 pub fn stage_start(t: std::time::Instant) {
     abs("engine_run", Some(t));
     if stages_on() {
@@ -694,10 +705,12 @@ pub fn stage(name: &str) {
     PHASE.with(|p| match (name, p.get()) {
         ("pre_main", _) => {
             abs("pre_main", None);
+            eprintln!("[win] begin {}", mono_ns());
             p.set(1);
         }
         ("page", 1) => {
             abs("engine_first_typeset", None);
+            eprintln!("[win] end {}", mono_ns());
             p.set(2);
         }
         ("main_end", _) => {

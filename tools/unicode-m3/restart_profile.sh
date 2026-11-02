@@ -58,7 +58,7 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
     --keys "$KEYS" --gap-ms 20 --at "$at" > "$out" 2> "$d/keys.err" &
   local kp=$!
   for _ in $(seq 1 3000); do [ "$(grep -c '"key"' "$out" 2>/dev/null)" -ge 2 ] && break; sleep 0.05; done
-  "${PERF_CMD[@]}" record -e cycles:u -F 4999 -p "$hp" -o "$d/perf.data" > "$d/perf.log" 2>&1 &
+  "${PERF_CMD[@]}" record --clockid monotonic -e cycles:u -F 9999 -p "$hp" -o "$d/perf.data" > "$d/perf.log" 2>&1 &
   local pp=$!
   wait "$kp" || true
   kill -INT "$pp" 2>/dev/null || true
@@ -67,7 +67,9 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
   wait "$hp" 2>/dev/null || true
   {
     echo "== $variant at $at: $(grep summary "$WORK/r/keys-$variant-$at.jsonl" | cut -c1-400)"
-    if [[ $variant != classic* ]]; then python3 "$ROOT/tools/unicode-m3/stages_summary.py" "$d/host.err"; python3 "$ROOT/tools/unicode-m3/abs_summary.py" "$d/host.err"; fi
+    if [[ $variant != classic* ]]; then python3 "$ROOT/tools/unicode-m3/stages_summary.py" "$d/host.err"; python3 "$ROOT/tools/unicode-m3/abs_summary.py" "$d/host.err"; \
+      "${PERF_CMD[@]}" script -i "$d/perf.data" -F comm,time,ip,sym --ns 2>/dev/null > "$d/script.txt"; \
+      python3 "$ROOT/tools/unicode-m3/win_profile.py" "$d/host.err" "$d/script.txt"; fi
     "${PERF_CMD[@]}" report -i "$d/perf.data" --no-children --sort dso,symbol --stdio 2>/dev/null \
       | grep -v '^#' | grep -v '^$' | sort -t% -k1 -rn | head -90
   } > "$WORK/r/perf-$variant-$at.txt" || true
