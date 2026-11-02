@@ -662,11 +662,21 @@ final class PadModel: ObservableObject {
     /// Applies a completion: through the live editor when there is one
     /// (undoable, snippet stops), else at its byte range in the document
     /// (the same offset discipline as an edit).
-    func accept(_ s: LocalCompletion.Suggestion) {
-        guard var d = document, let r = d.text.rangeOfUTF8(start: s.replaceStart, end: s.replaceEnd) else { return }
+    /// The list showing may be one keystroke behind the text (its pass is
+    /// still debouncing): the suggestion is re-anchored to the word under the
+    /// caret now, and a list that no longer applies is dropped instead of
+    /// being applied at its old range. Returns whether it was applied.
+    @discardableResult
+    func accept(_ s: LocalCompletion.Suggestion) -> Bool {
+        guard var d = document, let caretByte = LaTeXEditing.utf8Offset(of: caretUTF16, in: d.text),
+              let s = LocalCompletion.reanchored(s, in: d.text, caretByte: caretByte),
+              let r = d.text.rangeOfUTF8(start: s.replaceStart, end: s.replaceEnd) else {
+            completions = [] // the pending pass, if any, still lands
+            return false
+        }
         if let editor {
             editor.accept(s, replacing: NSRange(r, in: d.text))
-            return
+            return true
         }
         let insertion = s.insertion
         d.text.replaceSubrange(r, with: insertion)
@@ -675,6 +685,7 @@ final class PadModel: ObservableObject {
         let start = NSRange(d.text.startIndex..<r.lowerBound, in: d.text).length
         caretUTF16 = start + (s.snippet?.caretUTF16 ?? (insertion as NSString).length)
         refreshCompletions()
+        return true
     }
 
     /// Editor key commands the model answers. Returns true when Tab accepted
@@ -687,8 +698,7 @@ final class PadModel: ObservableObject {
         case .toggleDiagnostics: diagnosticsPanelVisible.toggle()
         case .acceptOrNextStop:
             guard let first = completions.first else { return false }
-            accept(first)
-            return true
+            return accept(first)
         default: break
         }
         return false
