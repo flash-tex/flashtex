@@ -456,6 +456,15 @@ public struct DL3PreparedPage: @unchecked Sendable {
     /// The page as a viewer shows it: turned by its `/Rotate` (spec §4.7).
     public var widthPt: Double { page.quarterTurns % 2 == 0 ? page.boxWidth : page.boxHeight }
     public var heightPt: Double { page.quarterTurns % 2 == 0 ? page.boxHeight : page.boxWidth }
+    /// From the page's own points (bp from its unturned top-left, y down:
+    /// links, glyph cells, sources) to the shown page's (`DL3Renderer.shownTurn`).
+    public var shownTurn: CGAffineTransform {
+        DL3Renderer.shownTurn(width: page.boxWidth, height: page.boxHeight, quarterTurns: page.quarterTurns)
+    }
+    /// The page point (bp, unturned, y down) shown at `p` (bp from the shown page's top-left, y down).
+    public func pagePoint(shown p: CGPoint) -> CGPoint { p.applying(shownTurn.inverted()) }
+    /// Where a page rectangle (bp, unturned, y down) is shown on the page.
+    public func shownRect(_ r: CGRect) -> CGRect { r.isNull ? r : r.applying(shownTurn) }
     /// Needs the exported PDF to be pixel-exact: the engine could not
     /// express something (INCOMPLETE), or a resource did not resolve.
     public var needsPDFFallback: Bool { page.incomplete || !problems.isEmpty }
@@ -1022,6 +1031,18 @@ public enum DL3Renderer {
         case 3: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: h, ty: 0)
         default: .identity
         }
+    }
+
+    /// `turn` in the preview's page coordinates (bp from the top-left
+    /// corner, y down), which links, glyph cells and sources use: from the
+    /// unturned page (`width × height`) to the shown one. The image, a
+    /// click (its inverse) and a highlight all go through `turn`, so they
+    /// cannot disagree.
+    public static func shownTurn(width w: Double, height h: Double, quarterTurns q: Int) -> CGAffineTransform {
+        let sideways = (((q % 4) + 4) % 4) % 2 == 1
+        let upFromDown = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: h)
+        let downFromUp = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: sideways ? w : h)
+        return upFromDown.concatenating(turn(width: w, height: h, quarterTurns: q)).concatenating(downFromUp)
     }
 
     /// A PDF page's `/Rotate` in quarter turns clockwise.

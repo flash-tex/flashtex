@@ -489,9 +489,8 @@ final class EngineV3PagesView: NSView {
     /// flashes it when `explicit` (forward search, a link's destination).
     func reveal(_ target: CaretFollow.Target, explicit: Bool) {
         guard target.page >= 0, target.page < frames.count, let scroll = enclosingScrollView else { return }
-        let f = frames[target.page]
-        let rect = CGRect(x: f.minX + target.rect.minX * scale, y: f.minY + target.rect.minY * scale,
-                          width: max(target.rect.width * scale, 2), height: max(target.rect.height * scale, 2))
+        var rect = viewRect(page: target.page, target.rect)
+        rect.size = CGSize(width: max(rect.width, 2), height: max(rect.height, 2))
         let visible = scroll.contentView.bounds
         let inset = min(CaretFollow.visibleMargin, max(0, visible.height / 2 - 1))
         // Zoomed in, a page is wider than the pane: the target must be in
@@ -556,8 +555,7 @@ final class EngineV3PagesView: NSView {
         }
         let p = convert(event.locationInWindow, from: nil)
         guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return super.mouseDown(with: event) }
-        let f = frames[i]
-        let pagePoint = CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)
+        let pagePoint = self.pagePoint(i, view: p)
         // A hyperref link takes the click (as on the v2 pane); elsewhere it reverse-searches.
         if let link = session.pages[i].flatMap({ EngineV3Links.hit($0.page, at: pagePoint) }) {
             activate(link)
@@ -568,7 +566,7 @@ final class EngineV3PagesView: NSView {
             return
         }
         if let g = session.sourceIndex(page: i)?.hit(pagePoint) {
-            flash(CGRect(x: f.minX + g.cell.minX * scale, y: f.minY + g.cell.minY * scale, width: g.cell.width * scale, height: g.cell.height * scale))
+            flash(viewRect(page: i, g.cell))
         }
         session.model?.navigateEngineV3(path: src.path, line: src.line, col: src.col)
     }
@@ -588,14 +586,30 @@ final class EngineV3PagesView: NSView {
     /// The link under a point of this view (document coordinates).
     func link(at p: CGPoint) -> DL3Link? {
         guard let session, let i = frames.firstIndex(where: { $0.contains(p) }), let page = session.pages[i] else { return nil }
-        let f = frames[i]
-        return EngineV3Links.hit(page.page, at: CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale))
+        return EngineV3Links.hit(page.page, at: pagePoint(i, view: p))
     }
 
     /// A point of this view at page point `pagePoint` of page `i` (tests, VoiceOver).
     func viewPoint(page i: Int, _ pagePoint: CGPoint) -> CGPoint? {
         guard i >= 0, i < frames.count else { return nil }
-        return CGPoint(x: frames[i].minX + pagePoint.x * scale, y: frames[i].minY + pagePoint.y * scale)
+        let shown = session?.pages[i].map { pagePoint.applying($0.shownTurn) } ?? pagePoint
+        return CGPoint(x: frames[i].minX + shown.x * scale, y: frames[i].minY + shown.y * scale)
+    }
+
+    /// The page point (bp from the unturned page's top-left, y down: links,
+    /// glyph cells, sources) under view point `p` on page `i`, back through
+    /// the page's `/Rotate` (`DL3PreparedPage.shownTurn`, as its image is drawn).
+    func pagePoint(_ i: Int, view p: CGPoint) -> CGPoint {
+        let f = frames[i]
+        let shown = CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)
+        return session?.pages[i]?.pagePoint(shown: shown) ?? shown
+    }
+
+    /// Where page rectangle `r` (page points, unturned, y down) of page `i` is in this view.
+    func viewRect(page i: Int, _ r: CGRect) -> CGRect {
+        let f = frames[i]
+        let s = session?.pages[i]?.shownRect(r) ?? r
+        return CGRect(x: f.minX + s.minX * scale, y: f.minY + s.minY * scale, width: s.width * scale, height: s.height * scale)
     }
 
     private var linkTracking: NSTrackingArea?
@@ -631,8 +645,7 @@ final class EngineV3PagesView: NSView {
     /// "main.tex, line 3, column 7" for the glyph under a point of this view, or nil.
     func sourceTooltip(at p: CGPoint) -> String? {
         guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return nil }
-        let f = frames[i]
-        guard let src = session.source(page: i, at: CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)) else { return nil }
+        guard let src = session.source(page: i, at: pagePoint(i, view: p)) else { return nil }
         return "\(src.path), line \(src.line)" + (src.col.map { ", column \($0 + 1)" } ?? "") + " (click to go there)"
     }
 
@@ -1000,7 +1013,7 @@ final class EngineV3PagesView: NSView {
         if pdf != nil {
             // Its raster is light in both appearances: identified without it
             // (but with the font smoothing it was drawn with).
-            source.pdfIdentity = [0xFF] + prepared.page.hash + (session.smoothFonts ? [1] : [])
+            source.pdfIdentity = [0xFF] + prepared.page.shownHash + (session.smoothFonts ? [1] : [])
         }
         v.tiles.pinching = pinching
         v.tiles.show(source, visible: v.visibleRect, compileID: compileID)
@@ -1041,8 +1054,8 @@ final class EngineV3PagesView: NSView {
     private func currentHash(_ i: Int) -> [UInt8]? {
         guard let session else { return nil }
         let smooth = session.smoothFonts
-        if session.pdfFallback[i] != nil { return [0xFF] + Self.contentKey(session.pages[i]?.page.hash ?? [], pageAppearance, smoothFonts: smooth) }
-        return session.pages[i].map { Self.contentKey($0.page.hash, pageAppearance, smoothFonts: smooth) }
+        if session.pdfFallback[i] != nil { return [0xFF] + Self.contentKey(session.pages[i]?.page.shownHash ?? [], pageAppearance, smoothFonts: smooth) }
+        return session.pages[i].map { Self.contentKey($0.page.shownHash, pageAppearance, smoothFonts: smooth) }
     }
 
     /// What a page bitmap shows: the page's content hash, the appearance and
