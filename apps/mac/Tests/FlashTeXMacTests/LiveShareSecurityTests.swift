@@ -284,6 +284,12 @@ final class LiveShareSecurityTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: outside.appendingPathComponent("x.tex"), encoding: .utf8), "outside\n")
         XCTAssertNotNil(try LiveShareController.writeConfined(Data("two\n".utf8), root: root, path: "new/dir/two.tex"))
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("new/dir/two.tex"), encoding: .utf8), "two\n")
+        let control = root.appendingPathComponent("new/dir/control.tex")
+        let controlFD = open(control.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        XCTAssertGreaterThanOrEqual(controlFD, 0)
+        close(controlFD)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("new/dir/two.tex").path)[.posixPermissions] as? Int,
+                       try FileManager.default.attributesOfItem(atPath: control.path)[.posixPermissions] as? Int)
         // Replacing keeps the file's extended attributes (a quarantine mark).
         let one = root.appendingPathComponent("chapters/one.tex")
         try "old\n".write(to: one, atomically: true, encoding: .utf8)
@@ -293,6 +299,46 @@ final class LiveShareSecurityTests: XCTestCase {
         XCTAssertEqual(getxattr(one.path, "com.example.mark", nil, 0, 0, 0), 1)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("chapters").path), ["one.tex"],
                        "no temporary file left behind")
+    }
+
+    func testConfinedWritePreservesPrivateFileMode() throws {
+        let root = temp.appendingPathComponent("project")
+        let file = root.appendingPathComponent("chapters/private.tex")
+        try "old\n".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(chmod(file.path, 0o600), 0)
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("new\n".utf8), root: root, path: "chapters/private.tex"))
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new\n")
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int, 0o600)
+    }
+
+    func testConfinedWriteGivesReplacementAFreshModificationTime() throws {
+        let root = temp.appendingPathComponent("project")
+        let file = root.appendingPathComponent("chapters/one.tex")
+        try "old\n".write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000_000_000)], ofItemAtPath: file.path)
+        let writeStarted = Date()
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("new\n".utf8), root: root, path: "chapters/one.tex"))
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new\n")
+        let mtime = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+        XCTAssertGreaterThanOrEqual(mtime, writeStarted)
+    }
+
+    func testConfinedWriteKeepsOpenedRootAfterPathIsSwapped() throws {
+        let root = temp.appendingPathComponent("project")
+        let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+        let moved = temp.appendingPathComponent("moved-project")
+        let outside = temp.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside.appendingPathComponent("chapters"), withIntermediateDirectories: true)
+        let outsideFile = outside.appendingPathComponent("chapters/one.tex")
+        try "outside\n".write(to: outsideFile, atomically: true, encoding: .utf8)
+        try FileManager.default.moveItem(at: root, to: moved)
+        try FileManager.default.createSymbolicLink(at: root, withDestinationURL: outside)
+
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("new\n".utf8), root: root, path: "chapters/one.tex", rootFD: fd))
+        XCTAssertEqual(try String(contentsOf: moved.appendingPathComponent("chapters/one.tex"), encoding: .utf8), "new\n")
+        XCTAssertEqual(try String(contentsOf: outsideFile, encoding: .utf8), "outside\n")
     }
 
     /// The host process for session compiles: reads and writes confined, no
