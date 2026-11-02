@@ -164,19 +164,32 @@ impl Shared {
                 let waiting = || queued.load(Ordering::Acquire) > 0;
                 let idle = save_when_idle();
                 // (a panic in a save, whose engine is then in no known
-                // state, ends the host: `fatal`)
-                let save =
-                    |engine: &mut Engine, stop: &dyn Fn() -> bool| match std::panic::catch_unwind(
-                        AssertUnwindSafe(|| {
-                            test_panic("save");
-                            engine.save_pending(stop)
-                        }),
-                    ) {
-                        Ok(Ok(Some(n))) if debug() => eprintln!("flashtex-host-unicode: {n}"),
-                        Ok(Ok(_)) => {}
-                        Ok(Err(e)) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
-                        Err(p) => fatal(&p),
-                    };
+                // state, ends the engine thread: a waiting or next compile
+                // takes the path where it has ended, a failed DONE, and the
+                // host exits after it, `FATAL_EXIT`; `true` to leave the loop)
+                let save = |engine: &mut Engine, stop: &dyn Fn() -> bool| -> bool {
+                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        test_panic("save");
+                        engine.save_pending(stop)
+                    })) {
+                        Ok(Ok(Some(n))) if debug() => {
+                            eprintln!("flashtex-host-unicode: {n}");
+                            false
+                        }
+                        Ok(Ok(_)) => false,
+                        Ok(Err(e)) => {
+                            eprintln!("flashtex-host-unicode: saving S0: {e}");
+                            false
+                        }
+                        Err(p) => {
+                            eprintln!(
+                                "flashtex-host-unicode: the engine thread panicked: {}",
+                                panic_message(&p)
+                            );
+                            true
+                        }
+                    }
+                };
                 loop {
                     // an asked-for save of S₀ is made when no request comes
                     // for a while, and stops for one that comes meanwhile
@@ -184,7 +197,9 @@ impl Shared {
                         match rx.recv_timeout(idle) {
                             Ok(r) => r,
                             Err(mpsc::RecvTimeoutError::Timeout) => {
-                                save(&mut engine, &waiting);
+                                if save(&mut engine, &waiting) {
+                                    break;
+                                }
                                 continue;
                             }
                             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -238,13 +253,21 @@ impl Shared {
                                 }
                                 Ok(Ok(_)) => {}
                                 Ok(Err(e)) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
-                                Err(p) => fatal(&p),
+                                Err(p) => {
+                                    eprintln!(
+                                        "flashtex-host-unicode: the engine thread panicked: {}",
+                                        panic_message(&p)
+                                    );
+                                    break;
+                                }
                             }
                         }
                         Req::Flush(done) => {
                             // (the host ends: the asked-for save is made
                             // now, whole)
-                            save(&mut engine, &|| false);
+                            if save(&mut engine, &|| false) {
+                                break;
+                            }
                             engine.flush_writes();
                             let _ = done.send(());
                         }
@@ -317,16 +340,6 @@ fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
         .cloned()
         .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
         .unwrap_or_else(|| "a panic".into())
-}
-
-/// The engine thread panicked outside a run (an S₀ save): no compile waits
-/// for a report, so the host ends here (its children with it, `proc.rs`).
-fn fatal(p: &Box<dyn std::any::Any + Send>) -> ! {
-    eprintln!(
-        "flashtex-host-unicode: the engine thread panicked: {}; exiting",
-        panic_message(p)
-    );
-    std::process::exit(FATAL_EXIT)
 }
 
 /// Debug builds only (the tests' builds): `FLASHTEX_UNICODE_TEST_PANIC=WHAT:N`

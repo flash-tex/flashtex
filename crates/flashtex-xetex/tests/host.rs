@@ -304,9 +304,12 @@ fn exit_within(child: &mut Child, secs: u64) -> Option<std::process::ExitStatus>
 /// A host whose engine thread dies (a panic outside the engine's own run,
 /// injected by the debug builds' `FLASHTEX_UNICODE_TEST_PANIC`) exits with
 /// `inproc::FATAL_EXIT` (70), so that the app's restart starts a new one:
-/// at a run, after that compile's `DONE` (`failed`, with the reason); at
-/// an idle save of S₀, at once. Before, the host stayed up with no engine
-/// thread and failed every later compile ("the engine thread has ended").
+/// at a run, after that compile's `DONE` (`failed`, with the reason). (A
+/// panic in an idle save of S₀ ends the engine thread the same way: the
+/// next compile gets its `DONE` and the host then exits, see
+/// `a_save_panic_still_answers_an_accepted_compile`.) Before, the host
+/// stayed up with no engine thread and failed every later compile ("the
+/// engine thread has ended").
 #[test]
 fn a_host_whose_engine_thread_dies_exits() {
     if !cfg!(debug_assertions) {
@@ -321,7 +324,7 @@ fn a_host_whose_engine_thread_dies_exits() {
     let _ = std::fs::remove_dir_all(&dir);
     // (the first compile is two runs, the second pass for its `.aux`; the
     // third run is the second compile's)
-    for what in ["run:3", "save:1"] {
+    for what in ["run:3"] {
         let sub = dir.join(what.replace(':', "-"));
         let (proj, out) = project(&sub, DOC);
         let cache = sub.join("s0");
@@ -355,6 +358,73 @@ fn a_host_whose_engine_thread_dies_exits() {
             "{what}: the host did not exit as fatal: {err}"
         );
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A save panic must not lose an accepted compile: the second compile,
+/// sent after the idle save of S₀ panicked (the engine thread has ended),
+/// still gets its `STARTED` and its `DONE` (`failed`, the engine thread
+/// died), and only then does the host exit with `inproc::FATAL_EXIT` (70).
+/// Before, the save panic called `fatal()` and the host exited at once,
+/// so the accepted compile never got a `DONE`.
+#[test]
+fn a_save_panic_still_answers_an_accepted_compile() {
+    if !cfg!(debug_assertions) {
+        eprintln!("skipped: the panic hook is in debug builds only");
+        return;
+    }
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-savepanic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (proj, out) = project(&dir, DOC);
+    let cache = dir.join("s0");
+    let err_path = dir.join("host.err");
+    let mut h = start_with(
+        &dir,
+        &[
+            ("FLASHTEX_UNICODE_TEST_PANIC", "save:1"),
+            ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ],
+        &err_path,
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    c.compile(&request(1, &proj, &out)).unwrap();
+    let (_, done) = events(&mut c, 1);
+    assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    // the idle save panics (the engine thread ends): wait for its message,
+    // not for the host's exit (after the fix it stays up for the compile)
+    let t = Instant::now();
+    loop {
+        let err = std::fs::read_to_string(&err_path).unwrap_or_default();
+        if err.contains("panicked") {
+            assert!(err.contains("save:1"), "the save hook panicked: {err}");
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(120),
+            "no save panic happened: {err}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // sent after the panic: accepted, then failed, then the host exits
+    c.compile(&request(2, &proj, &out))
+        .expect("the host took the second compile");
+    let (ev, done) = events(&mut c, 2);
+    assert!(
+        matches!(ev.first(), Some(Event::Started(_))),
+        "the second compile was accepted: {ev:?} {done:?}"
+    );
+    assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
+    let status = exit_within(&mut h.child, 120);
+    let err = std::fs::read_to_string(&err_path).unwrap_or_default();
+    assert_eq!(
+        status.and_then(|s| s.code()),
+        Some(70),
+        "the host did not exit as fatal: {err}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
