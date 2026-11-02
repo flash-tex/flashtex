@@ -745,3 +745,75 @@ Measured (NixOS PC, T7 beamer-30, two rounds of 19 keys, instructions to the edi
 key 1 143 M → 93 M (the steady keys 92 M); the open's preamble row (a run from the format) 24.5 G →
 24.1 G instructions for the whole compile, 5.29 G → 5.24 G to its first page, wall unchanged.
 Evidence: `docs/evidence/t7-margin-2026-10-21/`.
+
+## Review 2026-11-01: five state reads no key held (lane REVIEW-BOXMEMO)
+
+An adversarial pass over the state a recorded call can read found five reads that §3's key did not
+hold. Each has a test that failed before the fix: BOX-MEMO on gave another log or page than off.
+
+1. **Which font a number holds.** K5's version named the changes to the fonts' parameters, not the
+   fonts. A font is known by its number (`cur_font`, a font identifier's `set_font`, a char node),
+   and after a restore that loads fonts in another order, or in another document that the host
+   serves from the same format, the same number is another font under the same version. (The host
+   keeps one store for every document on its engine thread, and `format_version` gives every load
+   of a format the same first version.) Now the fonts made since the version was last named
+   (`font_ptr` past its count) join it before each offer (`bm_sync_fonts`). Each is named by what
+   it is (`bm_font_identity`):
+   - its names, sizes and TFM checksum, and its pdfTeX kind and expansion;
+   - its arrays' places and its block of `font_info`;
+   - an expanded font by its base and ratio.
+
+   The change is interned like §11.5's (`next_font_version`), so the same loads from the same
+   version reach the same version. Most of LaTeX's font loads already changed the version, through
+   the `\hyphenchar` or `\skewchar` that `\DeclareFontFamily` sets (belief: not measured, so the
+   hit rate after the change is not measured either). Test: `tests/host_incremental.rs`
+   `a_replay_in_another_document_names_its_fonts_by_what_they_are`.
+2. **The job name.** `\jobname` was allowed as a run's constant, unkeyed. In the host the store is
+   shared by documents of other names. Now it is keyed when a recording expands it (`Entry::job`).
+   Test: `a_replay_in_another_document_keys_the_job_name`.
+3. **A font identifier's name.** `\string` of `\the\font` prints `font_id_text(f)`. `\font` of a
+   font already loaded loads nothing and renames it there, writing `font_id_text` and
+   `eqtb[font_id_base+f]` itself, not through `eq_define`.
+   - Read: the identifier's name is keyed when a recording prints it (item 5's hook).
+   - Written: a recording that runs `\font`, `\letterspacefont` or `\pdfcopyfont` is abandoned. Each
+     either loads a font (`Fonts`, as before) or renames one.
+
+   Tests: `tests/boxmemo.rs` `a_font_identifiers_name_is_part_of_the_key`,
+   `a_call_that_renames_a_font_is_never_replayed`.
+4. **e-TeX's discarded items.** `\pagediscards` and `\splitdiscards` move `disc_ptr[c]` into the
+   current list and forget it. §4.2's end check saw them change, but a call recorded while there
+   were none read their absence unkeyed. After a `\vsplit` saved a glue, it replayed an empty box
+   and left the glue saved. Now whether there are any is keyed (`Entry::discs`), and taking some
+   refuses the call. Test: `discarded_items_a_call_takes_are_part_of_the_key`.
+
+5. **A printed name** (#2091 left it as an open belief; reproduced here). The key compares tokens by
+   their location in the hash, but a name entered after a restore point takes the location its hash
+   and the order of entry give it (tex.web §259-260, web2c's `hash_extra`). So after the restore,
+   another new name can be at the same location with the same meaning. `\qqXa` and `\qqaO` hash
+   alike (1629 for `hash_prime` 8501). Renaming a call's argument from one to the other replayed
+   `\string` of the old name.
+   - Fix: `print_cs` and `sprint_cs` (`changes/boxmemo.ch`) report every name a recording prints
+     (`\string`, `\meaning`, `\detokenize`, `\pdfstrcmp`'s operands). Its characters join the key
+     (`Entry::names`), compared in place.
+   - Left out: names the format entered (`text(p)` below `init_str_ptr`), which are the same in every
+     run from the format; the frozen primitives' names; the call's own new names (`Op::NewCs`).
+   - Item 3's identifier names come through the same hook.
+   - Test: `tests/host_incremental.rs` `a_replay_keys_the_names_it_prints`.
+
+**Checked and held.** Each item below is held, or refused, by the code named:
+- `eqtb`'s regions 3 to 6: K2, and KR for the registers.
+- The meanings read: K3 and `Meaning::Name`. Box registers: K7, `kb` and the holes; the group hole
+  is #1927's and #2014's fix. Sparse registers: KR.
+- `\fontdimen`, `\hyphenchar` and the font codes: K5. Hyphenation exceptions: their version.
+- The free lists, `rover` and the `cur_*` scratch: §7's scratch list, or written before they are read.
+- The input stack: `Level` and `File`. `\endlinechar` and `\everyeof` act only on file levels.
+- `interaction` (K6), the error counts and `\deadcycles` (§4.2's frame); `\interactionmode` refused.
+- The marks: `\topmark` and its kind refused, and `cur_mark` and the sparse marks in the frame.
+- The page builder, `insert_penalties` and `output_active`: the frame and §4.1.
+- `\lastskip` and kin: of the call's own lists only.
+- The protrusion and expansion scalars: #1927's scratch.
+- Refused: `\pdflastxpos` and kin, `\pdfrandomseed`, the random and time primitives, `\badness`.
+  `\inputlineno` is keyed by `line`.
+- `\openin`, `\read` and `\ifeof`, `\input`, `\scantokens` and `\endinput`, `\immediate`, every
+  PDF object but a link, `\message`, and an `\openout` whatsit in a fragment (`WhatsitKind`).
+- The string pool and the hash: §4.2's counters and `NewCs`.
