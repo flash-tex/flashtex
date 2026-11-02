@@ -720,7 +720,10 @@ impl Globals {
                 let num = self.add_other(cx, r);
                 self.pdf_printf(format!("{num} 0 R").as_bytes());
             }
-            _ => self.fail_type("PDF inclusion: type <", obj),
+            _ => {
+                let t = String::from_utf8_lossy(&obj.type_name()).into_owned();
+                self.pdftex_fail(&format!("PDF inclusion: type <{t}> cannot be copied"))
+            }
         }
     }
 
