@@ -1658,6 +1658,164 @@ fn a_converged_run_writes_what_a_run_of_its_own_writes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The pages and their content hashes an incremental client holds after a
+/// compile, as the host's frames make them (spec §6.3, §6.4): `STARTED`
+/// `keep: false` drops them, each `PAGE` replaces its index, the last
+/// `PAGES` (complete) drops those at or past its count.
+struct HeldPages {
+    pages: Vec<Option<[u8; 32]>>,
+}
+
+impl HeldPages {
+    /// Apply one compile's events: (its `STARTED.keep`, `PAGE`s sent, the
+    /// index of the first `PAGE`).
+    fn apply(&mut self, ev: &[Event], done: &Json) -> (bool, usize, Option<u32>) {
+        let mut keep = None;
+        let mut sent = 0;
+        let mut first = None;
+        let mut complete = None;
+        for e in ev {
+            match e {
+                Event::Started(j) => {
+                    let k = j.get("keep").and_then(Json::as_bool).unwrap_or(false);
+                    if !k {
+                        self.pages.clear();
+                    }
+                    keep.get_or_insert(k);
+                }
+                Event::Page(p) => {
+                    let i = p.index as usize;
+                    if self.pages.len() <= i {
+                        self.pages.resize(i + 1, None);
+                    }
+                    self.pages[i] = Some(p.hash);
+                    sent += 1;
+                    first.get_or_insert(p.index);
+                }
+                Event::Pages(j) if j.get("complete").and_then(Json::as_bool) == Some(true) => {
+                    complete = j.int_field("count");
+                }
+                _ => {}
+            }
+        }
+        let n = complete.expect("no complete PAGES before DONE") as usize;
+        assert_eq!(Some(n as i64), done.int_field("pages"), "{done:?}");
+        self.pages.truncate(n);
+        (keep.expect("no STARTED"), sent, first)
+    }
+}
+
+/// Protocol 3.1 for the Unicode host (docs/design/xetex/INCREMENTAL.md
+/// step 6): a client that asks `"incremental": true` keeps its pages across
+/// compiles; the host sends only the pages whose frames changed (an
+/// unchanged compile none, an edit the pages from it on that differ) and
+/// says with `PAGES` which are current. After every compile the client's
+/// pages are those of a compile from scratch of the same text by a client
+/// that is not incremental (their content hashes: what each page draws,
+/// with its fonts' and images' keys).
+#[test]
+fn an_incremental_client_is_sent_only_the_pages_that_changed() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-keep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=16 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..3 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+        body.push_str(&format!(
+            "See~\\ref{{p{}}} on page~\\pageref{{p{}}}.\n\n",
+            17 - i,
+            17 - i
+        ));
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let at = doc.find("\\section{Part 12}").unwrap();
+    let at = at + doc[at..].find("Words and more").unwrap() + "Words and".len();
+    let edited = format!("{} many{}", &doc[..at], &doc[at..]);
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let env = [("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+    let h = start_with(&sub, &env, &sub.join("host.err"));
+    let mut c = Client::connect(&h.sock).unwrap();
+    let mut held = HeldPages { pages: vec![] };
+    let mut results = vec![];
+    for (id, text) in [(1, &doc), (2, &doc), (3, &edited), (4, &doc)] {
+        let mut r = request(id, &proj, &out);
+        r.incremental = true;
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        let (ev, done) = events(&mut c, id);
+        assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+        let (keep, sent, first) = held.apply(&ev, &done);
+        results.push((keep, sent, first, held.pages.clone(), text.to_string()));
+    }
+    c.bye().unwrap();
+    drop(h);
+    let n = results[0].3.len();
+    assert!(n >= 6, "{n} pages");
+    assert!(!results[0].0, "the first compile keeps nothing");
+    assert!(results[0].1 >= n, "the first compile sends every page");
+    for (k, (keep, sent, first, _, _)) in results.iter().enumerate().skip(1) {
+        assert!(keep, "compile {} keeps the client's pages", k + 1);
+        if k == 1 {
+            assert_eq!(*sent, 0, "an unchanged compile sends no page");
+        } else {
+            assert!(
+                *sent < n / 2 && first.is_some_and(|f| f as usize >= n / 2),
+                "compile {}: {sent} of {n} pages sent, the first {first:?}",
+                k + 1
+            );
+        }
+    }
+    // the client's pages after each compile: a compile from scratch's
+    for (k, (_, _, _, pages, text)) in results.iter().enumerate() {
+        let fresh = sub.join(format!("fresh{k}"));
+        let (proj2, out2) = project(&fresh, text);
+        let h = start_with(
+            &fresh,
+            &[
+                ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+                ("FLASHTEX_UNICODE_INPROCESS", "0"),
+            ],
+            &fresh.join("host.err"),
+        );
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut want = HeldPages { pages: vec![] };
+        // (twice: the reference's .aux settles as the measured run's did)
+        for id in [1, 2] {
+            let r = request(id, &proj2, &out2);
+            c.compile(&r).unwrap();
+            let (ev, done) = events(&mut c, id);
+            want.pages.clear();
+            for e in &ev {
+                if let Event::Page(p) = e {
+                    let i = p.index as usize;
+                    if want.pages.len() <= i {
+                        want.pages.resize(i + 1, None);
+                    }
+                    want.pages[i] = Some(p.hash);
+                }
+            }
+            want.pages
+                .truncate(done.int_field("pages").unwrap() as usize);
+        }
+        c.bye().unwrap();
+        drop(h);
+        assert_eq!(pages, &want.pages, "compile {}: the client's pages", k + 1);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// READ-TRACK (`crate::dormant`, docs/design/engine-v2/READ-TRACK.md): a
 /// command with an optional argument, alone on its line, peeks at the next
 /// line and then typesets pages. Keystrokes at the start of that line after
