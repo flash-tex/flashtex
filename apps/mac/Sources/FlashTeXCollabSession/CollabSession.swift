@@ -97,6 +97,7 @@ public final class CollabSession {
     public var onRejected: ([CollabProject.ReceiveError]) -> Void = { _ in }
 
     var transmit: (Outbound) -> Void = { _ in }
+    var onReleased: (FileID, [TextOp], [CollabProject.ReceiveError]) -> Void = { _, _, _ in }
     private var bindings: [FileID: CollabTextBinding] = [:]
     private var presences: [UInt64: Presence] = [:]
     private var outbound: [Section] = []
@@ -186,6 +187,12 @@ public final class CollabSession {
         return b
     }
 
+    func isHolding(_ file: FileID) -> Bool { bindings[file]?.mustHold == true }
+
+    func releaseReady() {
+        for binding in bindings.values where !binding.held.isEmpty && !binding.mustHold { binding.release() }
+    }
+
     // MARK: Outbound
 
     func enqueue(_ section: Section) {
@@ -220,7 +227,7 @@ public final class CollabSession {
     func integrate(_ sections: [Section]) -> [CollabProject.ReceiveError] {
         // A composition that ended without the host saying so (cancelled
         // with Esc): what waited for it goes first, in arrival order.
-        for b in bindings.values where !b.held.isEmpty && !b.mustHold { b.release() }
+        releaseReady()
         var now: [Section] = []
         for s in sections {
             if case let .text(f, ops) = s, let b = bindings[f], b.mustHold {
@@ -441,7 +448,8 @@ public final class CollabTextBinding {
         guard !held.isEmpty, host?.collabIsComposing != true else { return }
         let ops = held
         held = []
-        _ = session.apply([.text(file, ops)])
+        let errors = session.apply([.text(file, ops)])
+        session.onReleased(file, ops, errors)
     }
 
     // MARK: Local edits
@@ -450,22 +458,13 @@ public final class CollabTextBinding {
     /// replaced by `text`. Adjacent typing coalesces into one undo step.
     public func localReplace(_ range: Range<Int>, with text: String) {
         guard session.canEdit else { return }
+        guard range.lowerBound >= 0, range.upperBound <= document.utf16Count else {
+            scheduleResync()
+            return
+        }
         let ops: [TextOp]
         do { ops = try document.replace(utf16Range: range, with: text) } catch {
-            if let host {
-                let original = (document.text as NSString).substring(with: NSRange(location: range.lowerBound, length: range.count))
-                // The editor calls here from didProcessEditing; wait until that pass ends.
-                DispatchQueue.main.async { [weak self, weak host] in
-                    MainActor.assumeIsolated {
-                        guard let self, let host, self.host === host else { return }
-                        let current = host.collabText as NSString
-                        let editedRange = NSRange(location: range.lowerBound, length: text.utf16.count)
-                        guard NSMaxRange(editedRange) <= current.length,
-                              current.substring(with: editedRange) == text else { return }
-                        host.collabApply([TextChange(location: range.lowerBound, length: editedRange.length, text: original)], selection: range)
-                    }
-                }
-            }
+            scheduleResync()
             return
         }
         guard !ops.isEmpty else { return }
@@ -480,6 +479,26 @@ public final class CollabTextBinding {
         undoManager.record(ops)
         typingEnd = range.lowerBound + text.utf16.count
         session.enqueue(.text(file, ops))
+    }
+
+    private func scheduleResync() {
+        guard let host else { return }
+        // The editor finishes its optimistic edit before this block runs.
+        DispatchQueue.main.async { [weak self, weak host] in
+            MainActor.assumeIsolated {
+                guard let self, let host, self.host === host else { return }
+                let current = Array(host.collabText.utf16), accepted = Array(self.document.text.utf16)
+                var p = 0
+                while p < current.count, p < accepted.count, current[p] == accepted[p] { p += 1 }
+                var s = 0
+                while s < current.count - p, s < accepted.count - p,
+                      current[current.count - 1 - s] == accepted[accepted.count - 1 - s] { s += 1 }
+                guard p < current.count - s || p < accepted.count - s else { return }
+                let replacement = String(utf16CodeUnits: Array(accepted[p..<(accepted.count - s)]), count: accepted.count - s - p)
+                let caret = p + replacement.utf16.count
+                host.collabApply([TextChange(location: p, length: current.count - p - s, text: replacement)], selection: caret..<caret)
+            }
+        }
     }
 
     /// Replaces the CRDT text with `text` by its smallest differing span (a

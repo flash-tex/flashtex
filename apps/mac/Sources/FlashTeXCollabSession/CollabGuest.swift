@@ -150,6 +150,9 @@ public final class CollabGuest {
                 let s = CollabSession(role: .guest, replica: id, name: displayName, colourIndex: ack.colourIndex)
                 s.canEdit = ack.role == "edit"
                 s.transmit = { [weak self] out in self?.transmit(out) }
+                s.onReleased = { [weak self] _, _, errors in
+                    if errors.contains(where: \.isProjectFull) { self?.endForProjectFull() }
+                }
                 session = s
                 s.startTimers()
             }
@@ -195,20 +198,27 @@ public final class CollabGuest {
 
     private func receive(_ sections: [Section], on c: CollabConnection) {
         guard let s = session else { return }
+        s.releaseReady()
+        guard !leaving else { return }
         let errors = s.integrate(sections)
         // A remote operation the caps refused (§2.4a): this copy no longer
         // holds what the hub does, and no resync can bring it back under the
         // cap, so the session ends here instead of going on diverged.
         if errors.contains(where: \.isProjectFull) {
-            leaving = true
-            state = .ended(CollabSession.projectFullMessage)
-            c.close(reason: "project_full")
-            s.stopTimers()
+            endForProjectFull()
             return
         }
         if errors.contains(where: { if case .pendingFull = $0 { return true } else { return false } }) {
             c.send(.syncRequest(s.project.stateVectors))
         }
+    }
+
+    private func endForProjectFull() {
+        guard !leaving else { return }
+        leaving = true
+        state = .ended(CollabSession.projectFullMessage)
+        connection?.close(reason: "project_full")
+        session?.stopTimers()
     }
 
     private func transmit(_ out: CollabSession.Outbound) {
