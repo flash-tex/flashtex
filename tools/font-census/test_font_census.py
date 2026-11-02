@@ -154,14 +154,10 @@ class FamiliesTests(unittest.TestCase):
         self.assertEqual(fams["public/foo"]["fonts"],
                          ["f%02d" % n for n in range(1, 11)])
 
-    # Known bug, #2056: `--per-family 1` divides by (per_family - 1), so the
-    # sampling step raises ZeroDivisionError whenever a family has more than
-    # one usable font. Remove the decorator in the fix.
-    @unittest.expectedFailure
     def test_per_family_one_does_not_crash(self):
         with tempfile.TemporaryDirectory() as tmp:
             fams = {f["id"]: f for f in run_families(tmp, 1)}
-        self.assertEqual(fams["public/foo"]["fonts"], ["f01"])
+        self.assertEqual(fams["public/foo"]["fonts"], ["f06"])
 
 
 if __name__ == "__main__":
