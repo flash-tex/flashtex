@@ -540,8 +540,27 @@ impl Globals {
 
     // ---- texmfmp.c: time, files, MD5 --------------------------------------
 
-    /// `initstarttime` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock.
+    /// `initstarttime` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock. An
+    /// invalid `SOURCE_DATE_EPOCH` (one `strtoull` does not read whole,
+    /// `flashtex_engine::pdftex::utils::parse_source_date_epoch`) is
+    /// kpathsea's `FATAL1`, as in pdfTeX: `<argv[0]>: fatal: ...` on stderr
+    /// and exit status 1.
     pub fn init_start_time(&mut self) {
+        if self.host.start.is_none() {
+            if let Some(v) = std::env::var_os("SOURCE_DATE_EPOCH") {
+                if flashtex_engine::pdftex::utils::parse_source_date_epoch(v.as_encoded_bytes())
+                    .is_none()
+                {
+                    eprintln!(
+                        "{}: fatal: invalid epoch-seconds-timezone value for environment \
+                         variable $SOURCE_DATE_EPOCH: {}.",
+                        flashtex_engine::system::invocation_name(),
+                        v.to_string_lossy()
+                    );
+                    crate::system::exit_process(self, 1);
+                }
+            }
+        }
         let _ = self.start_time();
     }
 
@@ -578,7 +597,20 @@ impl Globals {
                 crate::host::spare::wait(self, fd);
             }
         }
-        let forced = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
+        // Any other value than empty, `0` or `1` is warned about, at each
+        // call (kpathsea's `WARNING1`, no program name), as texmfmp.c does.
+        let fsd = std::env::var_os("FORCE_SOURCE_DATE");
+        let forced = fsd.as_deref().is_some_and(|v| v == "1");
+        if let Some(v) = fsd
+            .as_deref()
+            .filter(|v| !forced && !v.is_empty() && *v != "0")
+        {
+            eprintln!(
+                "warning: invalid value (expected 0 or 1) for environment variable \
+                 $FORCE_SOURCE_DATE: {}.",
+                v.to_string_lossy()
+            );
+        }
         let tm = if forced {
             flashtex_engine::os::broken_down(self.start_time(), true)
         } else {
@@ -729,9 +761,15 @@ impl Globals {
         if let Some((t, _)) = self.host.start.as_ref() {
             return *t;
         }
-        let (t, sde) = match std::env::var("SOURCE_DATE_EPOCH") {
-            Ok(v) => (v.trim().parse::<i64>().unwrap_or(0), true),
-            Err(_) => (self.clock_secs(), false),
+        // (as `strtoull` reads it; an invalid value has stopped the run,
+        // `init_start_time`)
+        let (t, sde) = match std::env::var_os("SOURCE_DATE_EPOCH") {
+            Some(v) => (
+                flashtex_engine::pdftex::utils::parse_source_date_epoch(v.as_encoded_bytes())
+                    .unwrap_or(0),
+                true,
+            ),
+            None => (self.clock_secs(), false),
         };
         let s = flashtex_engine::pdftex::utils::make_pdf_time(t, sde);
         self.host.start = Some((t, s));
