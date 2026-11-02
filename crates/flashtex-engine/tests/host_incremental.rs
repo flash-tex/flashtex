@@ -4036,6 +4036,71 @@ fn a_reopen_from_s1_puts_back_a_file_rewritten_after_it() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Review of #1899 (lane REVIEW): S₁ holds the chunks that differ from the
+/// S₀ file it was written over, and named that S₀ only by its key; an S₀
+/// file written again with the same key and other bytes (a preamble edit
+/// and its revert retake S₀, PREAMBLE-FAST) took the old S₁ over another
+/// base. S₁ now names the S₀ file's content too (the hash in its header,
+/// `host::data_hash`): with the stored S₀ file's hash another (as a
+/// same-key rewrite gives), the reopen refuses S₁ (`s1_error`) and runs
+/// from S₀, and the PDF and the log equal a scratch compile's.
+#[test]
+fn a_reopen_refuses_s1_over_another_s0_file() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1other");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    s1_store(&proj, &out, &cache, "s1oa");
+    // (the S₀ file's content hash is the last 16 bytes of its header)
+    let s0 = std::fs::read_dir(&cache)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.extension().is_some_and(|x| x == "s0"))
+        .unwrap();
+    let mut b = std::fs::read(&s0).unwrap();
+    let hlen = u64::from_le_bytes(b[..8].try_into().unwrap()) as usize;
+    b[8 + hlen - 16] ^= 1;
+    std::fs::write(&s0, &b).unwrap();
+    let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    let host = start_host_env("s1ob", &cache_env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let o = s1_compile_until_unchanged(&mut c, &mut view, &proj, &out, &mut id);
+    assert_eq!(
+        o.done.int_field("s1_pages"),
+        None,
+        "S1 was used: {}",
+        o.done
+    );
+    assert!(
+        o.done
+            .str_field("s1_error")
+            .is_some_and(|e| e.contains("another S0 file")),
+        "S1 refused for another reason: {}",
+        o.done
+    );
+    let (pdf, log) = (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    );
+    let _ = c.bye();
+    drop(host);
+    let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+    assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
+    assert!(log == log0, "the log differs from a scratch compile's");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Lane COLD-OPEN: while a session reopened from S₁ has not filled the
 /// pages before it (`FLASHTEX_S1_FILL=off` here: never), its history before
 /// S₁ is not the process's. An edit after S₁ runs incrementally from a

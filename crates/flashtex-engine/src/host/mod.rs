@@ -1062,6 +1062,9 @@ impl S0Image {
         let mut pages: Vec<u32> = present.iter().map(|&c| c / per).collect();
         pages.dedup();
         pages.enc(&mut head);
+        // What the file holds, by hash (`data_hash`): an S1 written over
+        // this file names it so (`s1::Head::s0_data`; lane REVIEW).
+        data_hash(&present, &data).enc(&mut head);
         let data_off = (8 + head.len()).next_multiple_of(S0_PAGE) as u64;
         use std::io::Write;
         // (a name of this writer's own, the process's and the time's: a
@@ -1136,6 +1139,19 @@ impl S0Image {
     }
 }
 
+/// The hash of an S₀ (or S₁) file's chunks: the list of those present and
+/// every chunk's bytes as the image holds them. Two files with one key and
+/// other bytes (a same-key S₀ written again: a preamble edit and its
+/// revert, PREAMBLE-FAST's retake) have other hashes.
+pub(crate) fn data_hash(present: &[u32], data: &[u8]) -> [u64; 2] {
+    let mut b = vec![];
+    present.to_vec().enc(&mut b);
+    let h = crate::persist::hash128(data);
+    b.extend_from_slice(&h[0].to_le_bytes());
+    b.extend_from_slice(&h[1].to_le_bytes());
+    crate::persist::hash128(&b)
+}
+
 /// Open the S₀ file at `path` into a new engine. `prepare` runs once the
 /// header is read, with S₀'s key: it sets the process up for the job (the
 /// first time, kpathsea's start-up) and checks the key; its time is the
@@ -1172,6 +1188,7 @@ pub fn read_s0(
         let scalar_bytes = u64::dec(&mut r)? as usize;
         let present = Vec::<u32>::dec(&mut r)?;
         let pages = Vec::<u32>::dec(&mut r)?;
+        <[u64; 2]>::dec(&mut r)?;
         let data_off = (8 + hlen).next_multiple_of(S0_PAGE);
         let per = S0_PAGE / CHUNK_BYTES;
         if bytes.len() < data_off + pages.len() * S0_PAGE {
@@ -1267,7 +1284,7 @@ pub fn read_s0(
 // page-aligned, `S0_PAGE`; v6: the key's stat signatures hold the change
 // time, `StatSig::ctime_ns`; v7: the records hold READ-TRACK's counts,
 // `crate::dormant::Dorm`)
-const MAGIC: &[u8] = b"flashtex S0 v7";
+const MAGIC: &[u8] = b"flashtex S0 v8";
 
 /// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
 /// every supported system's page size divides (4 KB elsewhere).

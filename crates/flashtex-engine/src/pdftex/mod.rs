@@ -101,6 +101,57 @@ thread_local! {
     static PREVIEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LAST_BYTE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static MATRIX_USES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static GARBAGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static UNSET_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static GARBAGE_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this run's memory may hold, in words pdfTeX leaves unset, values
+/// a run from scratch would not (lane REVIEW): a comparison that let the
+/// variable-size memory differ (dead words, free cells, nodes at other
+/// addresses, a destination's unset words: `crate::incr`) kept the old
+/// run's, or a BOX-MEMO replay left out its call's scratch nodes. Of such
+/// words pdfTeX reads only a destination's, under a `\pdfsetmatrix`
+/// (`note_unset_read`). Part of every checkpoint's host record.
+pub fn garbage() -> bool {
+    GARBAGE.with(|c| c.get())
+}
+
+pub fn set_garbage(on: bool) {
+    GARBAGE.with(|c| c.set(on));
+}
+
+/// How many times this run has read a destination's unset words (a
+/// `\pdfdest` other than `fitr` shipped under a `\pdfsetmatrix`:
+/// `do_dest`'s `set_rect_dimens`). Part of every checkpoint's host record:
+/// the comparisons' evidence that the old run's pages they keep read none.
+pub fn unset_reads() -> u64 {
+    UNSET_READS.with(|c| c.get())
+}
+
+pub fn set_unset_reads(n: u64) {
+    UNSET_READS.with(|c| c.set(n));
+}
+
+/// `do_dest` reads a destination's unset words: counted, and when the
+/// memory may differ from a scratch run's there (`garbage`), what it read
+/// may too: the compile is redone from scratch (`take_garbage_read`).
+pub fn note_unset_read() {
+    UNSET_READS.with(|c| c.set(c.get() + 1));
+    if garbage() {
+        GARBAGE_READ.with(|c| c.set(true));
+    }
+}
+
+/// Whether a read `note_unset_read` flagged is pending (`take_garbage_read`
+/// has not taken it).
+pub fn garbage_read_pending() -> bool {
+    GARBAGE_READ.with(|c| c.get())
+}
+
+/// Whether a read `note_unset_read` flagged happened since the last call.
+pub fn take_garbage_read() -> bool {
+    GARBAGE_READ.with(|c| c.replace(false))
 }
 
 /// How many times this run has found a `\pdfsetmatrix` in effect
