@@ -222,17 +222,66 @@ fn now_secs() -> i64 {
     }
 }
 
+/// `SOURCE_DATE_EPOCH` as the C library's `strtoull(v, &end, 10)` reads it,
+/// or `None` where texmfmp.c's `init_start_time` finds it invalid
+/// (`*end != '\0' || errno != 0`). Leading white space and a sign are
+/// allowed; a negative value wraps, as `strtoull`'s result does when it is
+/// assigned to a `time_t`; a value above `ULLONG_MAX` is `ERANGE`. The empty
+/// string is `EINVAL` on macOS (no conversion) and the epoch elsewhere.
+pub fn parse_source_date_epoch(v: &[u8]) -> Option<i64> {
+    let mut i = 0;
+    while i < v.len() && matches!(v[i], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+        i += 1;
+    }
+    let neg = match v.get(i) {
+        Some(b'-') => {
+            i += 1;
+            true
+        }
+        Some(b'+') => {
+            i += 1;
+            false
+        }
+        _ => false,
+    };
+    let digits = &v[i..];
+    let n = digits.iter().take_while(|c| c.is_ascii_digit()).count();
+    if n == 0 {
+        // No conversion: `end` is `v` itself.
+        return (v.is_empty() && !cfg!(target_os = "macos")).then_some(0);
+    }
+    if n != digits.len() {
+        return None;
+    }
+    let mut x: u64 = 0;
+    for &c in digits {
+        x = x.checked_mul(10)?.checked_add(u64::from(c - b'0'))?;
+    }
+    let x = if neg { x.wrapping_neg() } else { x };
+    let t = x as i64;
+    // texmfmp.c clamps under MSVC to 3000-12-31 23:59:59.
+    #[cfg(target_env = "msvc")]
+    let t = if x > 32_535_291_599 {
+        32_535_291_599
+    } else {
+        t
+    };
+    Some(t)
+}
+
 /// `init_start_time` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock.
+/// [`Globals::init_start_time`] has already stopped the run if the value is
+/// invalid.
 fn start_time(st: &mut State) -> i64 {
     if let Some(t) = st.start_time {
         return t;
     }
-    let t = match std::env::var("SOURCE_DATE_EPOCH") {
-        Ok(v) => {
+    let t = match std::env::var_os("SOURCE_DATE_EPOCH") {
+        Some(v) => {
             st.source_date_epoch = true;
-            v.trim().parse::<i64>().unwrap_or(0)
+            parse_source_date_epoch(v.as_encoded_bytes()).unwrap_or(0)
         }
-        Err(_) => now_secs(),
+        None => now_secs(),
     };
     st.start_time = Some(t);
     st.start_time_str = make_pdf_time(t, st.source_date_epoch);
@@ -272,8 +321,24 @@ impl Globals {
         r as i32
     }
 
-    /// `init_start_time` (texmfmp.c).
+    /// `init_start_time` (texmfmp.c). An invalid `SOURCE_DATE_EPOCH` is
+    /// kpathsea's `FATAL1`: `<argv[0]>: fatal: ...` on stderr and exit
+    /// status 1.
     pub fn init_start_time(&mut self) {
+        let unset = with_state(|s| s.utils.start_time.is_none());
+        if unset {
+            if let Some(v) = std::env::var_os("SOURCE_DATE_EPOCH") {
+                if parse_source_date_epoch(v.as_encoded_bytes()).is_none() {
+                    eprintln!(
+                        "{}: fatal: invalid epoch-seconds-timezone value for environment \
+                         variable $SOURCE_DATE_EPOCH: {}.",
+                        crate::system::invocation_name(),
+                        v.to_string_lossy()
+                    );
+                    crate::system::exit_process(self, 1);
+                }
+            }
+        }
         with_state(|s| {
             start_time(&mut s.utils);
         });
@@ -304,8 +369,21 @@ impl Globals {
     /// `get_date_and_time` (texmfmp.c), tex.ch's `date_and_time`: the
     /// time in UTC of `SOURCE_DATE_EPOCH` (or of now) if
     /// `FORCE_SOURCE_DATE=1`, else the local time now.
+    /// Any other value than empty, `0` or `1` is warned about, once for
+    /// each call (kpathsea's `WARNING1`, no program name), as texmfmp.c does.
     pub fn date_and_time(&mut self, t: &mut i32, d: &mut i32, m: &mut i32, y: &mut i32) {
-        let forced = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
+        let fsd = std::env::var_os("FORCE_SOURCE_DATE");
+        let forced = fsd.as_deref().is_some_and(|v| v == "1");
+        if let Some(v) = fsd
+            .as_deref()
+            .filter(|v| !forced && !v.is_empty() && *v != "0")
+        {
+            eprintln!(
+                "warning: invalid value (expected 0 or 1) for environment variable \
+                 $FORCE_SOURCE_DATE: {}.",
+                v.to_string_lossy()
+            );
+        }
         let tm = if forced {
             let st = with_state(|s| start_time(&mut s.utils));
             broken_down(st, true)
