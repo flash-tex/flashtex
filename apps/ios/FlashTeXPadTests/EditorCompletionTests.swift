@@ -458,6 +458,111 @@ final class AutosaveTests: XCTestCase {
         XCTAssertEqual(try onDisk(), base + "A\n")
     }
 
+    /// A file provider holding `url` (a coordinated write) until the
+    /// returned semaphore is signalled: saves and reads of `url` wait.
+    private func holdFile(_ url: URL) -> DispatchSemaphore {
+        let hold = DispatchSemaphore(value: 0)
+        let holding = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            var err: NSError?
+            NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: [], error: &err) { _ in
+                holding.signal()
+                hold.wait()
+            }
+        }
+        holding.wait()
+        return hold
+    }
+
+    /// #2023 re-review 1: A's save is slow; B and then C are edited and
+    /// closed while it runs. Their saves only waited behind A's, and when A's
+    /// finished only the open buffer's save ran: B and C never reached
+    /// their files (their text lived only in drafts).
+    func testEveryBufferClosedDuringASlowSaveIsSaved() async throws {
+        let b = try second()
+        let c = dir.appendingPathComponent("third.tex"), d = dir.appendingPathComponent("fourth.tex")
+        try Data("C\n".utf8).write(to: c)
+        try Data("D\n".utf8).write(to: d)
+        let m = model()
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "A\n")
+        let hold = holdFile(file)
+        m.saveNow() // A's save now waits on the coordinator
+        m.open(url: b)
+        m.textChanged("B\nedited\n")
+        m.open(url: c) // B's save waits behind A's
+        m.textChanged("C\nedited\n")
+        m.open(url: d) // and C's
+        hold.signal()
+        await m.settleSave()
+        XCTAssertEqual(try String(contentsOf: b, encoding: .utf8), "B\nedited\n")
+        XCTAssertEqual(try String(contentsOf: c, encoding: .utf8), "C\nedited\n")
+        XCTAssertEqual(try onDisk(), base + "A\n")
+        XCTAssertEqual(try String(contentsOf: d, encoding: .utf8), "D\n")
+    }
+
+    /// #2023 re-review 2: A is closed while its save waits, opened again and
+    /// edited. The closed buffer's save then settled (saved, or a conflict
+    /// offered) and cleared A's draft, which by then held the newer edits.
+    func testAClosedBuffersSaveKeepsTheReopenedFilesNewerDraft() async throws {
+        let b = try second()
+        let c = dir.appendingPathComponent("third.tex")
+        try Data("C\n".utf8).write(to: c)
+        for changedOnTheMac in [false, true] {
+            try Data(base.utf8).write(to: file)
+            try Data("B\n".utf8).write(to: b)
+            let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts-\(changedOnTheMac)"))
+            let m = model(drafts: drafts)
+            m.autosaveDelay = 3600
+            m.open(url: b)
+            m.textChanged("B\nedited\n")
+            let holdB = holdFile(b)
+            m.saveNow() // B's save waits on the coordinator
+            m.open(url: file)
+            m.textChanged(base + "first\n")
+            m.open(url: c) // A closed: its save waits behind B's
+            m.open(url: file) // A again
+            let holdA = holdFile(file)
+            holdB.signal() // B is saved, then A's closed save starts and waits on holdA
+            let end = Date().addingTimeInterval(5)
+            while (try? String(contentsOf: b, encoding: .utf8)) != "B\nedited\n", Date() < end { try await Task.sleep(nanoseconds: 20_000_000) }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            m.textChanged(base + "first\nsecond\n") // the reopened A is edited
+            await m.settleDraft()
+            if changedOnTheMac { try Data("changed on the Mac\n".utf8).write(to: file) }
+            holdA.signal() // A's closed save settles (its autosave is not due: no settleSave)
+            let settled = Date().addingTimeInterval(5)
+            while changedOnTheMac ? m.recoverableDrafts.isEmpty : (try? onDisk()) != base + "first\n", Date() < settled {
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            await drafts.flush()
+            let again = model(drafts: drafts) // killed now: relaunch
+            XCTAssertTrue(again.recoverableDrafts.contains { $0.draft.text == base + "first\nsecond\n" },
+                          "changedOnTheMac \(changedOnTheMac): \(again.recoverableDrafts.map(\.draft.text))")
+        }
+    }
+
+    /// #2023 re-review 3: restoring an offered draft removed it before the
+    /// restored buffer's own draft was written (after the draft delay): a
+    /// kill in between lost the text.
+    func testARestoredDraftIsNeverOnlyInMemory() async throws {
+        let drafts = PadDraftStore(directory: dir.appendingPathComponent("support/drafts"))
+        let m = model(drafts: drafts)
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "not saved yet\n")
+        await m.settleDraft()
+        let again = model(drafts: drafts) // relaunch
+        again.autosaveDelay = 3600
+        again.draftDelay = 3600
+        again.restoreDraft(try XCTUnwrap(again.recoverableDrafts.first))
+        await drafts.flush()
+        let third = model(drafts: drafts) // killed right after Restore
+        XCTAssertEqual(third.recoverableDrafts.map(\.draft.text), [base + "not saved yet\n"])
+    }
+
     /// Finding 4: after a relaunch offers A's draft, editing and saving B
     /// replaced and then deleted the single draft file: A's text was gone.
     func testEditingAnotherFileKeepsTheOfferedDraft() async throws {

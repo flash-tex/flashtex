@@ -254,6 +254,7 @@ final class PadModel: ObservableObject {
             // current buffer's save that waited for this one runs.
             if let closed = closedBuffers.removeValue(forKey: generation) { settle(closed, after: result, savedText: text) }
             if again { saveNow() }
+            saveWaitingClosedBuffer()
             return
         }
         switch result {
@@ -275,6 +276,22 @@ final class PadModel: ObservableObject {
             scheduleDraft(after: 0)
         }
         if again, saveState == .unsaved { saveNow() }
+        saveWaitingClosedBuffer()
+    }
+
+    /// A closed buffer whose save waited behind another one (a slow file)
+    /// is saved once no save runs, oldest first and one at a time; its
+    /// `finishSave` settles it and saves the next.
+    private func saveWaitingClosedBuffer() {
+        guard saveTask == nil, let next = closedBuffers.min(by: { $0.key < $1.key }) else { return }
+        let generation = next.key, closed = next.value
+        let text = closed.draft.text, expected = closed.draft.diskSha256
+        saveTask = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                PadDocumentFile.save(text, to: closed.url, expectedSha256: expected, scopes: closed.scopes)
+            }.value
+            self?.finishSave(result, generation: generation, revision: 0, text: text)
+        }
     }
 
     /// A closed buffer's save came back. Saved with its last text: its draft
@@ -284,7 +301,7 @@ final class PadModel: ObservableObject {
     private func settle(_ closed: ClosedBuffer, after result: PadDocumentFile.SaveResult, savedText: String) {
         switch result {
         case .saved where closed.draft.text.sameBytes(as: savedText):
-            draftStore?.clear(closed.draft.source)
+            if !holdsNewerEdits(than: closed) { draftStore?.clear(closed.draft.source) }
         case .saved(let sha):
             let text = closed.draft.text
             Task { [weak self] in
@@ -306,8 +323,18 @@ final class PadModel: ObservableObject {
             return
         }
         recoverableDrafts.insert(draftStore.offer(closed.draft), at: 0)
-        draftStore.clear(closed.draft.source)
+        if !holdsNewerEdits(than: closed) { draftStore.clear(closed.draft.source) }
         editorStatus = "“\(closed.draft.title)” was not saved (\(why)); its edits are kept — Restore them from the editor."
+    }
+
+    /// Whether the open buffer is the closed one's file, opened again and
+    /// edited since: that file's draft is then this buffer's, not the closed one's.
+    private func holdsNewerEdits(than closed: ClosedBuffer) -> Bool {
+        guard draftSource()?.key == closed.draft.source.key, let d = document, !d.text.sameBytes(as: closed.draft.text) else { return false }
+        switch saveState {
+        case .unsaved, .saving, .failed, .conflict: return true
+        case .saved, .none: return false
+        }
     }
 
     /// Before another document replaces the buffer: unsaved text goes to its
@@ -469,8 +496,10 @@ final class PadModel: ObservableObject {
             }
         }
         recoverableDrafts.removeAll { $0.id == offered.id }
-        draftStore?.removeOffered(offered.id)
-        guard var d = document, !d.text.sameBytes(as: draft.text) else { return } // already what the file holds
+        guard var d = document, !d.text.sameBytes(as: draft.text) else { // already what the file holds
+            draftStore?.removeOffered(offered.id)
+            return
+        }
         d.text = draft.text
         d.revision += 1
         document = d
@@ -479,6 +508,13 @@ final class PadModel: ObservableObject {
             saveState = .unsaved
         }
         documentEdited()
+        // The buffer's own draft is written before the offered copy goes
+        // (the store keeps call order), so a kill between them loses nothing.
+        if let source = draftSource() {
+            draftTask?.cancel()
+            draftStore?.save(PadUnsavedDraft(source: source, title: documentTitle, text: draft.text, diskSha256: diskSha256))
+        }
+        draftStore?.removeOffered(offered.id)
         refreshCompletions()
     }
 
