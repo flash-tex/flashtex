@@ -536,11 +536,11 @@ gate_parity_selftest() {
 workspace_profile() { # workspace_profile <debug|release>
   local profile="$1" flag=()
   [[ "$profile" == release ]] && flag=(--release)
-  cargo build --workspace --all-targets --locked "${flag[@]}"
+  cargo build --workspace --all-targets --locked ${flag[@]+"${flag[@]}"}
   local excludes=()
   local p
   for p in $TEST_EXCLUDE; do excludes+=(--exclude "$p"); done
-  cargo_test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
+  cargo_test --workspace --locked --no-fail-fast ${flag[@]+"${flag[@]}"} ${excludes[@]+"${excludes[@]}"}
 }
 
 # The standalone crates, built and tested in their own directories, as ci.yml's
@@ -552,7 +552,7 @@ standalone_profile() { # standalone_profile <debug|release>
   [[ "$profile" == release ]] && flag=(--release)
   for c in flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
-    ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
+    ( cd "crates/$c" && cargo build --locked ${flag[@]+"${flag[@]}"} && cargo_test --locked --no-fail-fast ${flag[@]+"${flag[@]}"} ) || rc=1
   done
   return $rc
 }
