@@ -1658,6 +1658,102 @@ fn a_converged_run_writes_what_a_run_of_its_own_writes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The convergence jump with unicode-math (changes/checkpoint.ch, "Dead
+/// native characters"): every script in an OpenType math font leaves a
+/// native character node xetex.web never frees, at a place that moves with
+/// an edit; the test reads those nodes as garbage, so a restarted run still
+/// converges a few pages on, and its PDF, `.aux` and log are a run of its
+/// own's. (Before, every test failed on `mem[..] differs outside what the
+/// walk compared` and the rest of the document was typeset again.)
+#[test]
+fn a_unicode_math_document_converges_past_its_dead_script_glyphs() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-umath-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, with $x_i^2+\\sum_{k=1}^n a_k$ \
+                and $\\hat{y}_j$ in them, again and again, until the paragraph is long \
+                enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=24 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..4 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+        body.push_str(&format!("See~\\ref{{p{}}}.\n\n", 25 - i));
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{unicode-math}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    // A word inserted in the middle of the document, as in a keystroke: the
+    // later allocations of the paragraph move, and with them where its
+    // scripts' dead glyph nodes lie.
+    let at = doc.find("\\section{Part 12}").unwrap();
+    let at = at + doc[at..].find("Words and more").unwrap() + "Words and".len();
+    let edited = format!("{} many{}", &doc[..at], &doc[at..]);
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let err = sub.join("host.err");
+    let o = Path::new(&out);
+    let outputs = || {
+        (
+            std::fs::read(o.join("main.pdf")).unwrap(),
+            std::fs::read_to_string(o.join("main.aux")).unwrap(),
+            std::fs::read_to_string(o.join("main.log")).unwrap(),
+        )
+    };
+    let compile = |c: &mut Client, id: i64, text: &str| {
+        let mut r = request(id, &proj, &out);
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        events(c, id).1
+    };
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_CONV_DEBUG", "1"),
+        ],
+        &err,
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    compile(&mut c, 1, &doc);
+    compile(&mut c, 2, &doc);
+    let done = compile(&mut c, 3, &edited);
+    let got = outputs();
+    c.bye().unwrap();
+    drop(h);
+    let log = std::fs::read_to_string(&err).unwrap();
+    assert!(log.contains("[conv] jumped"), "no jump: {log}");
+    assert!(!log.contains("UNSOUND"), "{log}");
+    assert!(
+        !log.contains("differs outside what the walk compared"),
+        "{log}"
+    );
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_INPROCESS", "0"),
+        ],
+        &sub.join("host2.err"),
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    // (twice: the reference's .aux settles as the measured run's did)
+    compile(&mut c, 1, &edited);
+    compile(&mut c, 2, &edited);
+    let want = outputs();
+    c.bye().unwrap();
+    drop(h);
+    assert!(got.0 == want.0, "the PDFs differ ({done:?})");
+    assert_eq!(got.1, want.1);
+    assert_eq!(got.2, want.2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// READ-TRACK (`crate::dormant`, docs/design/engine-v2/READ-TRACK.md): a
 /// command with an optional argument, alone on its line, peeks at the next
 /// line and then typesets pages. Keystrokes at the start of that line after
