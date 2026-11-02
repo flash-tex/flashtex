@@ -1140,6 +1140,11 @@ pub struct RunOptions {
     pub translate_filename: Option<String>,
     pub default_translate_filename: Option<String>,
     pub eight_bit: bool,
+    /// `-mltex` (texmfmp.c's `mltexp`, also set by the program name
+    /// `mltex`).
+    pub mltex: bool,
+    /// `-enc` (texmfmp.c's `enctexp`).
+    pub enctex: bool,
     pub shell: Shell,
     pub recorder: bool,
     /// `-output-format`: `\pdfoutput` 0 (dvi) or 2 (pdf).
@@ -1171,6 +1176,8 @@ impl RunOptions {
             translate_filename: None,
             default_translate_filename: None,
             eight_bit: false,
+            mltex: false,
+            enctex: false,
             shell: Shell::Unset,
             recorder: false,
             output_format: None,
@@ -1204,6 +1211,8 @@ pub struct Run {
     pub output_directory: Option<String>,
     pub translate_filename: Option<String>,
     pub eight_bit: bool,
+    pub mltex: bool,
+    pub enctex: bool,
     pub shell_enabled: bool,
     pub restricted_shell: bool,
     /// texmf.cnf's `shell_escape_commands`, for restricted shell escape.
@@ -1235,6 +1244,8 @@ impl Default for Run {
             output_directory: None,
             translate_filename: None,
             eight_bit: false,
+            mltex: false,
+            enctex: false,
             shell_enabled: false,
             restricted_shell: false,
             shell_commands: vec![],
@@ -1476,8 +1487,19 @@ pub fn configure(mut o: RunOptions) {
             program_name.clone()
         }
     });
-    if !ini && o.etex {
-        eprintln!("-etex only works with -ini");
+    // texmfmp.c: kpathsea's program name `mltex` means `-mltex`; and its
+    // sanity check (the flags stay set: only INITEX defines the primitives).
+    let program_is_mltex = program_name.eq_ignore_ascii_case("mltex");
+    if !ini {
+        if o.mltex || program_is_mltex {
+            eprintln!("-mltex only works with -ini");
+        }
+        if o.enctex {
+            eprintln!("-enc only works with -ini");
+        }
+        if o.etex {
+            eprintln!("-etex only works with -ini");
+        }
     }
     // The trip test's tex.web build is always INITEX, as tex.web itself is.
     if cfg!(feature = "tex82") && o.dump_name.is_none() {
@@ -1544,6 +1566,8 @@ pub fn configure(mut o: RunOptions) {
         output_directory: o.output_directory.clone(),
         translate_filename: o.translate_filename.clone(),
         eight_bit: o.eight_bit,
+        mltex: o.mltex || program_is_mltex,
+        enctex: o.enctex,
         shell_enabled,
         restricted_shell,
         shell_commands,
@@ -1665,6 +1689,7 @@ Usage: pdftex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
 
 -cnf-line=STRING        parse STRING as a configuration file line
 -draftmode              switch on draft mode (generates no output PDF)
+-enc                    enable encTeX extensions such as \\mubyte
 -etex                   enable e-TeX extensions
 [-no]-file-line-error   disable/enable file:line:error style messages
 -fmt=FMTNAME            use FMTNAME instead of program name or a %& line
@@ -1674,6 +1699,7 @@ Usage: pdftex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
 -interaction=STRING     set interaction mode (STRING=batchmode/nonstopmode/
                           scrollmode/errorstopmode)
 -jobname=STRING         set the job name to STRING
+-mltex                  enable MLTeX extensions such as \\charsubdef
 -output-comment=STRING  use STRING for DVI file comment instead of date
                           (no effect for PDF)
 -output-directory=DIR   use existing DIR as the directory to write files in
@@ -1688,8 +1714,8 @@ Usage: pdftex [OPTION]... [TEXNAME[.tex]] [COMMANDS]
 -help                   display this help and exit
 -version                output version information and exit
 
-Not implemented by this engine yet: -enc, -ipc, -ipc-start, -kpathsea-debug,
--mktex, -no-mktex, -mltex, -src-specials, -synctex.
+Not implemented by this engine yet: -ipc, -ipc-start, -kpathsea-debug,
+-mktex, -no-mktex, -src-specials, -synctex.
 ";
 
 /// `-version` (printversion.c's layout): pdfTeX's version, and what this
@@ -3236,6 +3262,14 @@ impl Globals {
     pub fn web2c_translate_filename_p(&mut self) -> bool {
         run().translate_filename.is_some()
     }
+    /// texmfmp.c's `mltexp`: `-mltex`.
+    pub fn web2c_mltex_p(&mut self) -> bool {
+        run().mltex
+    }
+    /// texmfmp.c's `enctexp`: `-enc`.
+    pub fn web2c_enctex_p(&mut self) -> bool {
+        run().enctex
+    }
     pub fn web2c_shellenabledp(&mut self) -> bool {
         run().shell_enabled
     }
@@ -3378,7 +3412,7 @@ impl Globals {
             } else {
                 (first, 1)
             };
-            self.xprn[second as usize] = printable != 0;
+            self.xprn[second as usize] = printable as u8 as i32; // C: an `unsigned char`
         }
     }
 

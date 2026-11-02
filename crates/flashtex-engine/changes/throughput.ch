@@ -52,6 +52,16 @@
 % get_next_slow on the unchanged state, which then does exactly what the
 % routine did. So the two compute the same in every case.
 %
+% encTeX (enctex2.ch [24.357]): while |write_noexpanding| is true (a \write
+% expanded with \mubyteout above 2, only with `-enc'), a control sequence
+% of a token list that \mubyte marked becomes \relax with chr 256 in
+% get_next's token-list part. Then no token is taken by [3]'s fast path or
+% read in place by [4]-[7]: every token goes to get_next_slow (or get_next,
+% get_token), as before these changes. The local |p| of that test is
+% get_next_slow's; enctex2.ch's other new locals (|i|, |j|, |mubyte_incs|,
+% |p|, [24.341]) are get_next_file's, where enctex2.ch's file part uses
+% them.
+%
 % [4] pass_text (section 494): skipped tokens of a token list, read in place.
 %
 % pass_text skips the text of a false conditional: for each token it calls
@@ -193,7 +203,7 @@
 % with str_eq_str are the loop's, in its order. Neither writes anything.
 % len=0 is still answered here (""); s, the loop's variable, goes.
 
-@x [24] m.363 l.8501 - get_next: the external-file part out of line.
+@x [24] m.363 l.8501, enctex2.ch [24.341] - get_next: the external-file part out of line.
 @p procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
 label restart, {go here to get the next input token}
   switch, {go here to eat the next character from a file}
@@ -203,6 +213,9 @@ label restart, {go here to get the next input token}
   exit; {go here when the next input token has been got}
 var k:0..buf_size; {an index into |buffer|}
 @!t:halfword; {a token}
+@!i,@!j: 0..buf_size; {more indexes for encTeX}
+@!mubyte_incs: boolean; {control sequence is converted by mubyte}
+@!p:pointer;  {for encTeX test if noexpanding}
 @!cat:0..max_char_code; {|cat_code(cur_chr)|, usually}
 @!c,@!cc:ASCII_code; {constituents of a possible expanded code}
 @!d:2..3; {number of excess characters in an expanded code}
@@ -221,6 +234,9 @@ label restart, {go here to get the next input token}
   found, {go here when a control sequence has been found}
   exit; {go here when the next input token has been got}
 var k:0..buf_size; {an index into |buffer|}
+@!i,@!j: 0..buf_size; {more indexes for encTeX}
+@!mubyte_incs: boolean; {control sequence is converted by mubyte}
+@!p:pointer;  {for encTeX test if noexpanding}
 @!cat:0..max_char_code; {|cat_code(cur_chr)|, usually}
 @!c,@!cc:ASCII_code; {constituents of a possible expanded code}
 @!d:2..3; {number of excess characters in an expanded code}
@@ -234,6 +250,7 @@ procedure get_next_slow; {|get_next| where its fast path [3] does not apply}
 label restart, {go here to get the next input token}
   exit; {go here when the next input token has been got}
 var @!t:halfword; {a token}
+@!p:pointer;  {for encTeX test if noexpanding}
 begin restart: cur_cs:=0;
 if state<>token_list then
   case get_next_file of
@@ -263,7 +280,8 @@ if state=token_list then if loc<>null then
   begin t:=info(loc); n:=link(loc);
   if t>=cs_token_flag then
     begin q:=t-cs_token_flag; c:=eq_type(q); e:=equiv(q);
-    if (c>=outer_call)or((c<=car_ret)and(c>=tab_mark)and(align_state=0)) then
+    if (c>=outer_call)or((c<=car_ret)and(c>=tab_mark)and(align_state=0))
+      or write_noexpanding then
       c:=-1
     else  begin cur_cs:=q; loc:=n; cur_cmd:=c; cur_chr:=e;
       if rs_on then if not rs_seen[q] then flashtex_cs_read(q);
@@ -318,7 +336,7 @@ if info(r)<match_token then goto continue;
 @y
 incr(m);
 if (info(r)>end_match_token)or(info(r)<match_token) then
-  begin if not intr_rec_on then
+  begin if not intr_rec_on then if not write_noexpanding then
     begin d:=info(r);
     loop@+  begin if state<>token_list then goto continue;
       if loc=null then goto continue;
@@ -375,6 +393,7 @@ begin unbalance:=1;
 loop@+  begin fast_store_new_token(cur_tok);
   in_place:=false;
   if state=token_list then if loc<>null then if not intr_rec_on then
+    if not write_noexpanding then
     begin ft:=info(loc);
     if ft>=cs_token_flag then
       begin if ft<>par_token then
@@ -431,7 +450,7 @@ label found,continue,done,done1,done2,done3,found1;
   else begin intr_weak:=true; get_token; intr_weak:=false;
     end;
 @y
-  else begin if not intr_rec_on then
+  else begin if not intr_rec_on then if not write_noexpanding then
       loop@+  begin if state<>token_list then goto done3;
         if loc=null then goto done3;
         tt:=info(loc);
@@ -486,6 +505,7 @@ begin save_scanner_status:=scanner_status; scanner_status:=skipping; l:=0;
 skip_line:=line;
 loop@+  begin continue:
   if state=token_list then if loc<>null then if not intr_rec_on then
+    if not write_noexpanding then
     begin t:=info(loc);
     if t>=cs_token_flag then
       begin q:=t-cs_token_flag; c:=eq_type(q);

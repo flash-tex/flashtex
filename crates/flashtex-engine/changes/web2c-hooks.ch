@@ -11,9 +11,8 @@
 %
 %   * the block of web2c's integer parameters (tex.ch [17.236]-[17.240]),
 %     which begins with ML\TeX's three (\charsubdefmin, \charsubdefmax,
-%     \tracingcharsubdef). ML\TeX itself is not re-specified: |mltex_p| is
-%     always false, so those three are never primitives, exactly as in
-%     TeX Live without `-mltex';
+%     \tracingcharsubdef), primitives only with `-mltex' (|mltex_p|).
+%     ML\TeX\ itself is in changes/tex-mltex.ch, applied after this file;
 %   * tex.ch's first line of |par_loc|'s undumping ([50.1314]).
 %
 % tex.ch's start_input text, which tracingstacklevels.ch also matches, is in
@@ -85,21 +84,4 @@ char_sub_def_min:=256; char_sub_def_max:=-1;
 undump(hash_base)(frozen_control_sequence)(par_loc);
 @y
 undump(hash_base)(hash_top)(par_loc);
-@z
-
-@x pdftex.web l.40320 - new sections at the end of part 54
-@* \[55] Index.
-@y
-@ tex.ch's ML\TeX\ switches (its part \.{[54/ML\TeX]}). ML\TeX\ is not
-re-specified, so both stay false.
-
-@<Glob...@>=
-@!mltex_p: boolean; {was \.{-mltex} given? (never, here)}
-@!mltex_enabled_p:boolean;  {enable character substitution}
-
-@ @<Set init...@>=
-mltex_p:=false;
-mltex_enabled_p:=false;
-
-@* \[55] Index.
 @z
