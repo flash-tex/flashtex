@@ -247,6 +247,60 @@ final class EngineV3Session {
     static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility, autoreleaseFrequency: .workItem)
     /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
     @ObservationIgnored var sourceMap = DL3SourceMap()
+
+    /// A change to `sourceMap`, as the host's frames make them.
+    enum SourceMapChange { case apply(DL3Sources), shift(DL3SpanShifts), reset }
+    /// The changes since a compaction's snapshot, while it runs (nil: none runs).
+    @ObservationIgnored private var sourceMapJournal: [SourceMapChange]?
+    /// Shifts pending, or spans declared since the base, past which the map is compacted.
+    static let sourceMapCompactShifts = 16, sourceMapCompactOverlay = 4096
+    static let sourceMapQueue = DispatchQueue(label: "flashtex.engine-v3.source-map", qos: .utility)
+
+    /// Applies a change to `sourceMap` (each O(the frame), never O(spans)) and,
+    /// when shifts or newly declared spans have piled up, folds them into the
+    /// map on `sourceMapQueue` (`DL3SourceMap.compacted`): the result is
+    /// installed on main with the changes made meanwhile applied again, and
+    /// the old map is released off main. A reset meanwhile drops the result.
+    func changeSourceMap(_ c: SourceMapChange) {
+        switch c {
+        case .apply(let s): sourceMap.apply(s)
+        case .shift(let s): sourceMap.shift(s)
+        case .reset: sourceMap.reset()
+        }
+        if sourceMapJournal != nil { sourceMapJournal!.append(c); return }
+        compactSourceMapIfDue()
+    }
+
+    private func compactSourceMapIfDue() {
+        guard sourceMapJournal == nil,
+              sourceMap.shifts.count >= Self.sourceMapCompactShifts || sourceMap.overlayCount >= Self.sourceMapCompactOverlay else { return }
+        sourceMapJournal = []
+        let snapshot = sourceMap, ref = EngineV3WeakRef(self)
+        Self.sourceMapQueue.async {
+            let compacted = snapshot.compacted()
+            EngineV3Session.onMain {
+                guard let self = ref.value, let journal = self.sourceMapJournal else { return }
+                self.sourceMapJournal = nil
+                defer { self.compactSourceMapIfDue() } // (what piled up meanwhile)
+                if journal.contains(where: { if case .reset = $0 { true } else { false } }) { return }
+                var m = compacted
+                for c in journal {
+                    switch c {
+                    case .apply(let s): m.apply(s)
+                    case .shift(let s): m.shift(s)
+                    case .reset: break
+                    }
+                }
+                let old = self.sourceMap
+                self.sourceMap = m
+                self.sourceMapCompactions &+= 1
+                Self.sourceMapQueue.async { withExtendedLifetime(old) {} } // its tables are freed there
+            }
+        }
+    }
+
+    /// Compactions installed (tests).
+    @ObservationIgnored private(set) var sourceMapCompactions = 0
     /// Per-page glyph indexes for forward/reverse search, built on first
     /// use, bounded (EngineV3GlyphIndexes.swift).
     @ObservationIgnored var glyphIndexes = EngineV3GlyphIndexes()
@@ -767,7 +821,7 @@ final class EngineV3Session {
         let profile = PerformanceMode.current.hostProfile // Settings > Performance (spec §6.9)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability, DL3.spanShiftCapability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 let delivery = EngineV3Delivery(ref)
                 c.start(onTimedEvent: { ev, timing in
@@ -1848,7 +1902,7 @@ final class EngineV3Session {
             compileFatal = false
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
-                sourceMap.reset() // span ids restart with the resource ids
+                changeSourceMap(.reset) // span ids restart with the resource ids
                 // Ids restart; the pages on screen stay (each resolved its own
                 // resources when it arrived), stale until they are sent again,
                 // and so do the stored pages of an instant reopen.
@@ -1886,7 +1940,9 @@ final class EngineV3Session {
             if changed, !onScreen { latency.offscreen(compile: compileID) }
             if logDone { log("PAGE \(index) compile \(compileID) changed \(changed) onScreen \(onScreen) image \(image.map { "\(type(of: $0.image)) \($0.pixelsPerPoint)" } ?? "nil") view \(view != nil)") }
         case .sources(let src):
-            sourceMap.apply(src)
+            changeSourceMap(.apply(src))
+        case .spanShift(let s):
+            changeSourceMap(.shift(s)) // O(its shifts): no span is touched (DL3SourceMap)
         case .form(let f):
             forms[f.page.index] = f
             view?.formArrived(f.page.index)
@@ -2746,6 +2802,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case diagnostic(DL3JSON)
         case diag(DL3Diag)
         case sources(DL3Sources)
+        /// `span-shift-v1` (§5.3.1): the spans of a file's later lines moved.
+        case spanShift(DL3SpanShifts)
         case done(DL3JSON, compileID: Int)
         case exportDone(DL3JSON)
         case tool(DL3JSON)
@@ -2820,6 +2878,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
         case .sources(let s): return .sources(s)
+        case .spanShift(let s): return .spanShift(s)
         case .progress(let j): return .progress(j)
         case .hello, .other: return nil
         }
