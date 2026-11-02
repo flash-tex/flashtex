@@ -4139,11 +4139,11 @@ fn edits_after_a_reopen_from_s1_equal_scratch_compiles() {
 }
 
 /// A `COMPILE`'s buffers and edits are written only inside the project
-/// (`host::resident::apply_changes`), symlinks resolved: through a linked
-/// directory, a linked file or a dangling link that leads out of the root,
-/// the request is refused ("... leads outside root") and nothing outside is
-/// written or created. A link that stays inside the root is written
-/// through, as before.
+/// (`host::resident::apply_changes`, through the root's descriptor, no link
+/// followed below it, #2094): through a linked directory, a linked file or a
+/// dangling link that leads out of the root, the request is refused and
+/// nothing outside is written or created. A link that stays inside the root
+/// is refused too (failing closed), and its file left as it was.
 #[cfg(unix)]
 #[test]
 fn buffers_through_a_symlink_out_of_the_project_are_refused() {
@@ -4212,7 +4212,7 @@ fn buffers_through_a_symlink_out_of_the_project_are_refused() {
         }
         r.edits = e.into_iter().collect();
         let why = refusal(&mut c, &r).unwrap_or_else(|| panic!("{what}: written"));
-        assert!(why.contains("leads outside root"), "{what}: {why}");
+        assert!(why.contains("\"request\""), "{what}: {why}");
         assert!(
             !away.join("evil.tex").exists(),
             "{what}: away/evil.tex made"
@@ -4224,13 +4224,13 @@ fn buffers_through_a_symlink_out_of_the_project_are_refused() {
             "{what}: away/kept.tex changed"
         );
     }
-    // a link inside the project is written through
+    // a link inside the project is refused as well
     let mut r = req(9, &proj, &out, "main.tex");
     r.buffers = vec![("alias.tex".into(), "inside, edited\n".into())];
-    assert_eq!(refusal(&mut c, &r), None, "a link inside the root");
+    assert!(refusal(&mut c, &r).is_some(), "a link inside the root");
     assert_eq!(
         std::fs::read_to_string(proj.join("real.tex")).unwrap(),
-        "inside, edited\n"
+        "inside\n"
     );
     let _ = c.bye();
     drop(host);
