@@ -846,9 +846,24 @@ large to keep) to 3.6 k–44 k (0.4–5.8 MB, all kept).
 TikZ copies boxes made outside the picture (node contents kept in `\pgfnodeparttextbox` and the
 like). A `\copy` of a foreign register keys the register's contents (`kc`, its nodes walked as for
 fragments) instead of refusing (`BoxContent`; contents a fragment cannot hold are refused with the
-fragment's reason). Still refused: changing a foreign box's dimension (amsmath's `\resetMathstrut@`,
-`\ht\Mathstrutbox@\ht\z@`, run at each math size change in a node's text), which stops most
-pictures with math labels on 2501.07413v3 and four on 2501.08950v2. The full-state verifier now also compares the math
+fragment's reason).
+
+The copy itself is not kept as nodes: it is `Node::Copy`, made again at the replay by
+`copy_node_list` of the register's box as it is then, so its nodes carry that box's SyncTeX tags as
+on the normal path, and then given the words the call left on the copied box node (`box_end`'s
+shift for `\raise`/`\lower`, a dimension assigned). Any other node of a span's output whose SyncTeX
+tag is not the span's file's is refused (`SyncTag`): it came from a box made elsewhere and taken
+apart. A dimension of a foreign box assigned in a span (amsmath's `\resetMathstrut@`,
+`\ht\Mathstrutbox@\ht\z@`) is the operation `BoxDim`, with the box keyed as it was before; a
+`BoxDim` after a copy of the same register is refused.
+
+A box register the call assigned is its own only while it holds the box the call put there
+(`r.boxes` holds (register, box) pairs): after the group that assigned it ends it holds the caller's
+box again, which is read and keyed as a foreign one. (Before, it stayed "the call's own", so a later
+`\wd` or `\copy` of it was not keyed: a wrong replay, found by daniel-parent's review of #1997, in
+registered macros too.)
+
+The full-state verifier now also compares the math
 scratch scalars `cur_style`, `cur_size`, `cur_mu`, `mlist_penalties` and `head_info` (a push_nest
 leaves garbage in `head_info` that a later `\vadjust` reads).
 
@@ -881,6 +896,17 @@ origin/main at f53095ff2 (BOX-MEMO on in both):
 
 ### 15.9 Open
 
-Token-list F (a picture in a macro argument or a macro body); a foreign box's dimension changed (an
-operation that alters the node, keyed by the box); the plots' one group still kept whole; on by
-default only after the span sweeps show no difference.
+A span whose F, a macro body, ends with `\end{..}` (F is popped before the span ends: `SpanFile`;
+llncs' ORCID icons); `\scantokens` inside a picture (TikZ's rescanning in `\scalebox` arguments);
+a global box left non-void (pgfplots, register 103 on 2501.08950v2); the plots' one group still kept
+whole; on by default only after the span sweeps show no difference.
+
+### 15.10 A picture in a macro's argument or body
+
+F may be a token list: a macro's argument (`\scalebox{0.8}{\begin{tikzpicture}..}`, a parameter
+level), its body, or a backed-up or inserted list. The key is the line, the list's type and name and
+`in_open`; a variant is taken only if the list's next tokens are the ones the recording read
+(`SpanEntry::toks`). A replay moves `loc` past them. A token list read is refused when it holds a
+macro parameter (`out_param`: the macro's argument, which the key does not hold). Reading a token
+list moves nothing in the buffer or the file; the buffer's high mark is kept as for a file (§15.2),
+counted from 0.
