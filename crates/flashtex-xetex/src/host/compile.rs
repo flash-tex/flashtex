@@ -254,6 +254,9 @@ pub struct RunResult {
     pub stderr: String,
     /// An in-process run that broke off (`inproc`): why.
     pub failure: Option<String>,
+    /// The engine thread died (`inproc::FATAL_EXIT`): the host exits after
+    /// the compile's `DONE`.
+    pub fatal: bool,
     /// An in-process run: where it started.
     pub start: Option<crate::resident::Start>,
 }
@@ -627,11 +630,27 @@ fn run_in_process(
         r.stop = None;
         res.cancelled = r.cancelled;
     }
-    let (rep, ()) = ran?;
+    // (an engine thread that has ended -- it died at an earlier run or a
+    // save -- is as fatal as one that dies now)
+    let (rep, ()) = ran.unwrap_or_else(|e| {
+        (
+            crate::resident::Report {
+                failure: Some(e),
+                fatal: true,
+                ..Default::default()
+            },
+            (),
+        )
+    });
     res.cancelled |= rep.cancelled;
     res.exit_code = rep.exit_code;
     res.stderr = rep.reports.join("\n");
     res.failure = rep.failure;
+    res.fatal = rep.fatal;
+    if res.fatal {
+        // (not a cancel: the run is lost, whatever stopped it)
+        res.cancelled = false;
+    }
     res.start = Some(rep.start);
     if std::env::var_os("FLASHTEX_UNICODE_DEBUG").is_some() {
         eprintln!(
@@ -873,6 +892,9 @@ pub struct Outcome {
     /// Where each pass's run started (`crate::resident::Start`; a run in a
     /// process of its own: none).
     pub starts: Vec<&'static str>,
+    /// The engine thread died (`RunResult::fatal`): the host exits after
+    /// this compile's `DONE`.
+    pub fatal: bool,
 }
 
 impl Outcome {
@@ -886,6 +908,7 @@ impl Outcome {
             first_page_ms: None,
             diagnostics: 0,
             starts: vec![],
+            fatal: false,
         }
     }
 }
@@ -948,6 +971,28 @@ pub fn compile(
                     ("message", js(format!("the engine stopped: {f}"))),
                 ]),
             );
+        }
+        if last.fatal {
+            send_json(
+                out,
+                kind::DIAGNOSTIC,
+                &obj([
+                    ("id", Json::Int(job.id)),
+                    ("severity", js("error")),
+                    (
+                        "message",
+                        js("the Unicode engine's host stops; a new one starts"),
+                    ),
+                ]),
+            );
+            return Outcome {
+                passes,
+                first_page_ms,
+                diagnostics: 2,
+                starts,
+                fatal: true,
+                ..Outcome::none("failed")
+            };
         }
         for l in last.stderr.lines() {
             let (sev, m) = match l.strip_prefix("! FlashTeX output: ") {
@@ -1023,6 +1068,7 @@ pub fn compile(
         first_page_ms,
         diagnostics: count,
         starts,
+        fatal: false,
     }
 }
 

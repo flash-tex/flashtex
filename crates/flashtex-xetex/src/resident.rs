@@ -408,6 +408,9 @@ pub struct Report {
     /// The run broke off (an engine panic or the host's failure to set it
     /// up): its message.
     pub failure: Option<String>,
+    /// The engine thread itself died (a panic outside the engine's run,
+    /// `host::inproc`): the host is to exit after the compile's `DONE`.
+    pub fatal: bool,
     /// What the run wrote to its terminal.
     pub terminal: Vec<u8>,
     /// The output's reports (`FlashTeX output: ...`).
