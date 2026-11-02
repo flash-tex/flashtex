@@ -6015,8 +6015,11 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
 /// 1). Here boxes made and dropped in a group when the chapter's size is
 /// odd do the same at every keystroke. The words are read only with a
 /// `\pdfsetmatrix` in effect, which the old run between the comparison and
-/// the restart point never had: they are not compared there. Every
-/// keystroke revalidates, and every compile equals scratch runs.
+/// the restart point never had; #1908 left them out there, but the run
+/// from the restart point is live and can still ship the destination under
+/// a matrix (`a_kept_destination_shipped_under_a_matrix_after_a_revalidation`),
+/// so they are compared: no keystroke revalidates (review of #1908, lane
+/// REVIEW), and every compile equals scratch runs.
 #[test]
 fn a_revalidation_leaves_out_what_a_destination_never_set() {
     let Some(e) = env() else {
@@ -6025,14 +6028,15 @@ fn a_revalidation_leaves_out_what_a_destination_never_set() {
     };
     // (case, what paragraphs 3-12 of chapter 3, on the comparison's page
     // and the next ones, have, whether the comparison holds: with a matrix
-    // in effect at a destination after it the words are compared, so it
-    // holds only when the two runs' memory happened to hold the same words
-    // there. On macOS it never does; in the Linux debug build it did
-    // (nightly 41318867031, "workspace, debug profile"). Not asserted: the
-    // comparison of what the memory happened to hold is no property of the
-    // engine's, and every compile equals scratch runs either way)
+    // in effect at a destination after it the words are compared; without
+    // one too, since review of #1908. So the comparison holds only when the
+    // two runs' memory happened to hold the same words there: on macOS it
+    // never does; in the Linux debug build it did (nightly 41318867031,
+    // "workspace, debug profile"). Not asserted in either case: what the
+    // memory happened to hold is no property of the engine's, and every
+    // compile equals scratch runs either way)
     let cases = [
-        ("no matrix", "", Some(true)),
+        ("no matrix", "", None),
         (
             "a matrix after the comparison",
             "\\pdfsave\\pdfsetmatrix{1 0 0 1}\\pdfdest name{m\\the\\inputlineno} xyz\\pdfrestore ",
@@ -6109,6 +6113,180 @@ fn a_revalidation_leaves_out_what_a_destination_never_set() {
             }
         }
     }
+}
+
+/// Review of #1908 (lane REVIEW): a destination whose unset words differ
+/// between the runs at READ-REVALIDATE's comparison, kept in a box register
+/// past the restart point `P2` and shipped there with a `\pdfsetmatrix` in
+/// effect. The old run had no matrix in effect between `P1` and `P2`, but
+/// the run from `P2` is live and reads the words (`set_rect_dimens` under
+/// `matrixused`): with the old run's words, its PDF was not a scratch
+/// run's (`/XYZ 160.667` for `-3920.03`), (a) with the matrix in the old
+/// run after `P2` and (b) with no matrix anywhere until the edit put it in.
+/// Every compile equals scratch runs.
+#[test]
+fn a_kept_destination_shipped_under_a_matrix_after_a_revalidation() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let para = |c: usize, i: usize| {
+        format!(
+            "\\hypertarget{{t{c}-{i}}}{{Chapter {c}}} paragraph {i} with the word theta, and \
+             enough text to fill a few lines of the page so that the chapter ships several \
+             pages; math $a^{i}+b$ and more words to make it long enough.\n\n"
+        )
+    };
+    // (the scratch box made and dropped when the size is odd leaves its
+    // dimensions in the destination's unset words; the destination ships
+    // at the chapter's end, after the edit, under a half turn)
+    let chapter = |c: usize| -> String {
+        format!(
+            "\\chapter{{Chapter {c}}}\n\\begingroup\\ifodd\\pdffilesize{{ch{c}.tex}} \
+             \\setbox0\\hbox{{abc}}\\fi\\endgroup\
+             \\global\\setbox3\\hbox{{\\pdfdest name{{keep{c}}} xyz\\relax}}\n"
+        ) + &(0..40).map(|i| para(c, i)).collect::<String>()
+            + if c == 3 {
+                "\\noindent\\pdfsave\\pdfsetmatrix{-1 0 0 -1}\\box3\\pdfrestore\\par\n"
+            } else {
+                "\\box3\n"
+            }
+    };
+    let dir = e.dir.join("revalidate-dest-matrix-late");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = "\\documentclass[openany]{book}\n\\usepackage{hyperref}\n\
+               \\begin{document}\n\\tableofcontents\n\\include{ch1}\n\\include{ch2}\n\
+               \\include{ch3}\n\\include{ch4}\n\\end{document}\n";
+    let mut files: Vec<(String, String)> = (1..=4)
+        .map(|c| (format!("ch{c}.tex"), chapter(c)))
+        .collect();
+    files.push(("doc.tex".into(), doc.into()));
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let mut h = Host::start(&e, &dir);
+    let mut step = |files: &[(&str, &str)], what: &str| {
+        for (name, text) in files {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let r = h.cmd("compile");
+        eprintln!("{what}: revalidated {}", field(&r, "revalidated"));
+        check_against(&e, &dir, &reference, &r, what);
+        r
+    };
+    for k in 0..4 {
+        let r = step(&refs, "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let (plain, typed) = (
+        chapter(3),
+        chapter(3).replacen("paragraph 30 with", "paragraph 30 withx", 1),
+    );
+    for k in 0..4 {
+        step(
+            &[("ch3.tex", if k % 2 == 0 { &typed } else { &plain })],
+            &format!("edit {k}"),
+        );
+    }
+    // (the next keystroke puts the matrix in, after the restart point the
+    // previous compile took: the run from there ships the destination it
+    // kept from the old run)
+    let unturned = |s: &str| {
+        s.replace(
+            "\\pdfsave\\pdfsetmatrix{-1 0 0 -1}\\box3\\pdfrestore",
+            "\\box3",
+        )
+    };
+    for k in 0..4 {
+        let t = if k % 2 == 0 {
+            unturned(&typed)
+        } else {
+            unturned(&plain)
+        };
+        step(&[("ch3.tex", &t)], &format!("unturned edit {k}"));
+    }
+    // (every compile since the last turned one kept its destination: one
+    // typed now differs from it)
+    step(&[("ch3.tex", &typed)], "the matrix put in, a letter typed");
+}
+
+/// Review of #1908 (lane REVIEW), the convergence test's own rule: it
+/// leaves a destination's unset words out when the old run's future has no
+/// `\pdfsetmatrix` in effect, and the jump keeps the old run's checkpoints,
+/// with the old run's words in a destination kept in a box register. A
+/// later compile that puts a matrix around that box's shipout restarts at
+/// one of them and ships the old words, where a scratch run ships its own.
+/// Fails on main (the PDF differs by its `/XYZ`). Comparing the words in
+/// the convergence test makes it pass but stops three convergence tests
+/// (`a_link_broken_across_lines_does_not_stop_convergence`,
+/// `beamer_navigation_actions_converge`,
+/// `beamer_fragile_frames_restart_near_and_converge`): a sound fix that
+/// keeps them is a design decision (the run noticing such a read in a
+/// lineage that left the words out, and redoing the compile). Ignored
+/// until then.
+#[test]
+#[ignore = "known soundness hole (lane REVIEW): a destination's unset words kept past a convergence"]
+fn a_destination_kept_past_a_convergence_shipped_later_under_a_matrix() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("converge-dest-matrix-later");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |scratch: bool, turned: bool| {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for i in 0..60 {
+            if i == 8 {
+                if scratch {
+                    s.push_str("\\begingroup\\setbox0\\hbox{abc}\\endgroup");
+                }
+                s.push_str("\\global\\setbox3\\hbox{\\pdfdest name{keep} xyz\\relax}\n");
+            }
+            s.push_str(&para(i, "alpha"));
+        }
+        s.push_str(if turned {
+            "\\noindent\\pdfsave\\pdfsetmatrix{-1 0 0 -1}\\box3\\pdfrestore\\par\n"
+        } else {
+            "\\box3\n"
+        });
+        s + "\\end{document}\n"
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc(true, false))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc(false, false))],
+        "the scratch box taken out",
+    );
+    eprintln!("converged at {}", field(&r, "converged_at"));
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc(false, true))],
+        "the matrix put in",
+    );
 }
 
 /// Review of #1724: a whole read between `\document`'s start and S₀'s

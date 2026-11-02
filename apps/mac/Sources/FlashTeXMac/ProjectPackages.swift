@@ -443,7 +443,7 @@ final class ProjectPackagesState {
     /// window closed (`model` is unowned; reading it then traps). As
     /// `prepareForEngineV3`'s, it keeps neither the model nor this state alive.
     private func spawn(_ body: @escaping @MainActor (ProjectPackagesState) async -> Void) {
-        weak var shell = model
+        weak let shell = model
         Task { [weak self] in
             guard let self, shell != nil else { return }
             await body(self)
@@ -538,7 +538,7 @@ final class ProjectPackagesState {
         inFlight.formUnion(names)
         resolving = true
         defer { resolving = false; inFlight.subtract(names) }
-        weak var shell = model
+        weak let shell = model
         let reply = await resolveThroughHelper(root, names, consent, offline: offline)
         // The window closed while the helper answered (the new engine's
         // DONE asks too): nothing to deliver to, and `model` is gone.
@@ -688,7 +688,7 @@ final class ProjectPackagesState {
         let names = pins.keys.sorted()
         // Neither the model nor this state is kept alive by the resolution
         // (a window closed meanwhile ends it).
-        weak var shell = model
+        weak let shell = model
         Task { [weak self] in
             guard let self else { return }
             let reply = await resolveThroughHelper(projectRoot, names, false, offline: true, libraries: true)
@@ -748,7 +748,7 @@ final class ProjectPackagesState {
             let pinned = uncached.map { "\($0) \(pins[$0] ?? "")" }.joined(separator: ", ")
             model.navigationNote = "\(ProjectManifest.fileName) pins \(pinned), which the package cache does not have: TeX Live's copy is used until it is fetched."
             let fetching = manifestFetch != "never" && manifestSource != "none"
-            let wanted = uncached.filter { delivered[$0] == nil && !declined.contains($0) && !inFlight.contains($0) }
+            let wanted = uncached.filter { self.delivered[$0] == nil && !self.declined.contains($0) && !self.inFlight.contains($0) }
             if fetching, manifestFetch == "always" { await resolve(wanted, consent: true) }
             else if fetching { offerByName(wanted) }
         }
@@ -778,7 +778,7 @@ final class ProjectPackagesState {
         }
         offers = []
         shown = false
-        if remember { await writePolicy(fetch: "always") }
+        if remember { _ = await writePolicy(fetch: "always") }
         let fetched = names.joined(separator: ", ")
         model.navigationNote = "Fetched \(fetched) into the package cache (\(delivered.count - before) new); recompiling"
         _ = root
