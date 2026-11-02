@@ -329,12 +329,16 @@ impl Globals {
         if unset {
             if let Some(v) = std::env::var_os("SOURCE_DATE_EPOCH") {
                 if parse_source_date_epoch(v.as_encoded_bytes()).is_none() {
-                    eprintln!(
+                    use std::io::Write as _;
+                    let mut bytes = format!(
                         "{}: fatal: invalid epoch-seconds-timezone value for environment \
-                         variable $SOURCE_DATE_EPOCH: {}.",
-                        crate::system::invocation_name(),
-                        v.to_string_lossy()
-                    );
+                         variable $SOURCE_DATE_EPOCH: ",
+                        crate::system::invocation_name()
+                    )
+                    .into_bytes();
+                    bytes.extend_from_slice(v.as_encoded_bytes());
+                    bytes.extend_from_slice(b".\n");
+                    let _ = std::io::stderr().write_all(&bytes);
                     crate::system::exit_process(self, 1);
                 }
             }
@@ -378,11 +382,13 @@ impl Globals {
             .as_deref()
             .filter(|v| !forced && !v.is_empty() && *v != "0")
         {
-            eprintln!(
-                "warning: invalid value (expected 0 or 1) for environment variable \
-                 $FORCE_SOURCE_DATE: {}.",
-                v.to_string_lossy()
-            );
+            use std::io::Write as _;
+            let mut bytes = b"warning: invalid value (expected 0 or 1) for environment variable \
+                 $FORCE_SOURCE_DATE: "
+                .to_vec();
+            bytes.extend_from_slice(v.as_encoded_bytes());
+            bytes.extend_from_slice(b".\n");
+            let _ = std::io::stderr().write_all(&bytes);
         }
         let tm = if forced {
             let st = with_state(|s| start_time(&mut s.utils));
