@@ -17,6 +17,7 @@
 
 use crate::fontmgr::FontCatalog;
 use crate::resident::{Engine, Fonts, Report, Spec};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -162,13 +163,20 @@ impl Shared {
                 let mut engine = Engine::new(clock, Some(Box::new(KeptFonts::default())));
                 let waiting = || queued.load(Ordering::Acquire) > 0;
                 let idle = save_when_idle();
-                let save = |engine: &mut Engine, stop: &dyn Fn() -> bool| match engine
-                    .save_pending(stop)
-                {
-                    Ok(Some(n)) if debug() => eprintln!("flashtex-host-unicode: {n}"),
-                    Ok(_) => {}
-                    Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
-                };
+                // (a panic in a save, whose engine is then in no known
+                // state, ends the host: `fatal`)
+                let save =
+                    |engine: &mut Engine, stop: &dyn Fn() -> bool| match std::panic::catch_unwind(
+                        AssertUnwindSafe(|| {
+                            test_panic("save");
+                            engine.save_pending(stop)
+                        }),
+                    ) {
+                        Ok(Ok(Some(n))) if debug() => eprintln!("flashtex-host-unicode: {n}"),
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
+                        Err(p) => fatal(&p),
+                    };
                 loop {
                     // an asked-for save of S₀ is made when no request comes
                     // for a while, and stops for one that comes meanwhile
@@ -193,14 +201,46 @@ impl Shared {
                     queued.fetch_sub(1, Ordering::AcqRel);
                     match req {
                         Req::Run { spec, reply } => {
-                            let rep = engine.run(spec);
-                            let _ = reply.send(rep);
+                            // (the engine's own panics end its run,
+                            // `Engine::run`; one outside it leaves the engine
+                            // in no known state: the run fails as fatal and
+                            // the host exits, `FATAL_EXIT`)
+                            let rep = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                test_panic("run");
+                                engine.run(spec)
+                            }));
+                            match rep {
+                                Ok(rep) => {
+                                    let _ = reply.send(rep);
+                                }
+                                Err(p) => {
+                                    let why = format!(
+                                        "the engine thread panicked: {}",
+                                        panic_message(&p)
+                                    );
+                                    eprintln!("flashtex-host-unicode: {why}");
+                                    let _ = reply.send(Report {
+                                        failure: Some(why),
+                                        fatal: true,
+                                        ..Report::default()
+                                    });
+                                    break;
+                                }
+                            }
                         }
-                        Req::SaveS0(p, root) => match engine.save_s0(&p, &root) {
-                            Ok(Some(n)) if debug() => eprintln!("flashtex-host-unicode: {n}"),
-                            Ok(_) => {}
-                            Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
-                        },
+                        Req::SaveS0(p, root) => {
+                            let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                engine.save_s0(&p, &root)
+                            }));
+                            match r {
+                                Ok(Ok(Some(n))) if debug() => {
+                                    eprintln!("flashtex-host-unicode: {n}")
+                                }
+                                Ok(Ok(_)) => {}
+                                Ok(Err(e)) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
+                                Err(p) => fatal(&p),
+                            }
+                        }
                         Req::Flush(done) => {
                             // (the host ends: the asked-for save is made
                             // now, whole)
@@ -264,6 +304,56 @@ impl Shared {
 
 fn debug() -> bool {
     std::env::var_os("FLASHTEX_UNICODE_DEBUG").is_some()
+}
+
+/// The host's exit status when its engine thread died (`EX_SOFTWARE`): the
+/// app restarts a host on any exit, and a new one starts with a new
+/// engine.
+pub const FATAL_EXIT: i32 = 70;
+
+/// A panic's message.
+fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
+    p.downcast_ref::<String>()
+        .cloned()
+        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_else(|| "a panic".into())
+}
+
+/// The engine thread panicked outside a run (an S₀ save): no compile waits
+/// for a report, so the host ends here (its children with it, `proc.rs`).
+fn fatal(p: &Box<dyn std::any::Any + Send>) -> ! {
+    eprintln!(
+        "flashtex-host-unicode: the engine thread panicked: {}; exiting",
+        panic_message(p)
+    );
+    std::process::exit(FATAL_EXIT)
+}
+
+/// Debug builds only (the tests' builds): `FLASHTEX_UNICODE_TEST_PANIC=WHAT:N`
+/// panics at the `N`th (from 1) point `what` of the engine thread (`run`:
+/// before a run, outside the engine's own catch; `save`: an idle save of
+/// S₀), so that the recovery from an engine thread that died is tested.
+fn test_panic(what: &str) {
+    #[cfg(debug_assertions)]
+    {
+        use std::sync::atomic::AtomicU64;
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        let Ok(v) = std::env::var("FLASHTEX_UNICODE_TEST_PANIC") else {
+            return;
+        };
+        let Some((w, n)) = v.split_once(':') else {
+            return;
+        };
+        if w != what {
+            return;
+        }
+        let k = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if n.parse::<u64>().ok() == Some(k) {
+            panic!("FLASHTEX_UNICODE_TEST_PANIC={v}");
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = what;
 }
 
 /// A new run's cancel flag.

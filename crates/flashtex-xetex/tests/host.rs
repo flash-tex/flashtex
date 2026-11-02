@@ -288,6 +288,76 @@ fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
+/// The host's exit status once `child` exits, within `secs` (else `None`,
+/// and the child is still running).
+fn exit_within(child: &mut Child, secs: u64) -> Option<std::process::ExitStatus> {
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(secs) {
+        if let Ok(Some(s)) = child.try_wait() {
+            return Some(s);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
+/// A host whose engine thread dies (a panic outside the engine's own run,
+/// injected by the debug builds' `FLASHTEX_UNICODE_TEST_PANIC`) exits with
+/// `inproc::FATAL_EXIT` (70), so that the app's restart starts a new one:
+/// at a run, after that compile's `DONE` (`failed`, with the reason); at
+/// an idle save of S₀, at once. Before, the host stayed up with no engine
+/// thread and failed every later compile ("the engine thread has ended").
+#[test]
+fn a_host_whose_engine_thread_dies_exits() {
+    if !cfg!(debug_assertions) {
+        eprintln!("skipped: the panic hook is in debug builds only");
+        return;
+    }
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-dies-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // (the first compile is two runs, the second pass for its `.aux`; the
+    // third run is the second compile's)
+    for what in ["run:3", "save:1"] {
+        let sub = dir.join(what.replace(':', "-"));
+        let (proj, out) = project(&sub, DOC);
+        let cache = sub.join("s0");
+        let mut h = start_with(
+            &sub,
+            &[
+                ("FLASHTEX_UNICODE_TEST_PANIC", what),
+                ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+            ],
+            &sub.join("host.err"),
+        );
+        let mut c = Client::connect(&h.sock).unwrap();
+        c.compile(&request(1, &proj, &out)).unwrap();
+        let (_, done) = events(&mut c, 1);
+        assert_eq!(done.str_field("status"), Some("ok"), "{what}: {done:?}");
+        if what.starts_with("run") {
+            c.compile(&request(2, &proj, &out)).unwrap();
+            let (ev, done) = events(&mut c, 2);
+            assert_eq!(done.str_field("status"), Some("failed"), "{what}: {done:?}");
+            assert!(
+                ev.iter().any(|e| matches!(e, Event::Diagnostic(j)
+                    if j.str_field("message").is_some_and(|m| m.contains("panicked")))),
+                "{what}: the reason, as a diagnostic"
+            );
+        }
+        let status = exit_within(&mut h.child, 120);
+        let err = std::fs::read_to_string(sub.join("host.err")).unwrap_or_default();
+        assert_eq!(
+            status.and_then(|s| s.code()),
+            Some(70),
+            "{what}: the host did not exit as fatal: {err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A CANCEL that names a compile already finished (or one never sent)
 /// is dropped: it does not cancel a later compile that reuses the id.
 #[test]
