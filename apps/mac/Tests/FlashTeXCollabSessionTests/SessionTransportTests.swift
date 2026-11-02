@@ -9,6 +9,36 @@ import XCTest
 /// reconnect, the IME hold and local undo (proposal §7.2–§7.3).
 @MainActor
 final class SessionTransportTests: XCTestCase {
+    func testRefusedReplaceRestoresOptimisticEditorText() throws {
+        let project = CollabProject(replica: 1, caps: .init(maxFiles: 2, maxTextBytes: 3))
+        let file = FileID.random()
+        _ = try project.fileOp { try $0.create(file, kind: .text, path: "a.tex") }
+        _ = try project.insert("abc", at: 0, in: file)
+        let session = CollabSession(role: .hub, replica: 1, name: "Host", colourIndex: 0)
+        let binding = CollabTextBinding(file: file, document: try XCTUnwrap(project.text(file)), session: session)
+        let host = FakeHost()
+        host.text.setString("axc") // the editor has already applied the replacement
+        binding.attach(host)
+
+        binding.localReplace(1..<2, with: "x")
+
+        XCTAssertEqual(host.text as String, "axc")
+        let reverted = expectation(description: "deferred revert")
+        DispatchQueue.main.async { reverted.fulfill() }
+        wait(for: [reverted], timeout: 1)
+        XCTAssertEqual(host.text as String, "abc")
+        XCTAssertEqual(binding.document.text, "abc")
+
+        host.text.setString("axc")
+        binding.localReplace(1..<2, with: "x")
+        host.text.setString("ayc") // a newer edit owns the range now
+        let skipped = expectation(description: "deferred revert skipped")
+        DispatchQueue.main.async { skipped.fulfill() }
+        wait(for: [skipped], timeout: 1)
+        XCTAssertEqual(host.text as String, "ayc")
+        XCTAssertEqual(host.applies, 1)
+    }
+
     func testIdentityIsSelfSignedP256AndFingerprintRoundTrips() throws {
         let id = try CollabIdentity()
         XCTAssertEqual(id.fingerprint.count, 32)

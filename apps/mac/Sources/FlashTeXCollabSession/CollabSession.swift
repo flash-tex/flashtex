@@ -10,6 +10,8 @@ public protocol CollabTextHost: AnyObject {
     var collabIsComposing: Bool { get }
     /// The selection, UTF-16, in the text the session last agreed with.
     var collabSelection: Range<Int> { get }
+    /// The editor's current text, including a local edit not yet accepted by the session.
+    var collabText: String { get }
     /// Hand any local edit still pending in the view to the binding, so the
     /// view and the CRDT agree before remote operations are integrated.
     func collabFlushLocalEdits()
@@ -441,7 +443,23 @@ public final class CollabTextBinding {
     public func localReplace(_ range: Range<Int>, with text: String) {
         guard session.canEdit else { return }
         let ops: [TextOp]
-        do { ops = try document.replace(utf16Range: range, with: text) } catch { return }
+        do { ops = try document.replace(utf16Range: range, with: text) } catch {
+            if let host {
+                let original = (document.text as NSString).substring(with: NSRange(location: range.lowerBound, length: range.count))
+                // The editor calls here from didProcessEditing; wait until that pass ends.
+                DispatchQueue.main.async { [weak self, weak host] in
+                    MainActor.assumeIsolated {
+                        guard let self, let host, self.host === host else { return }
+                        let current = host.collabText as NSString
+                        let editedRange = NSRange(location: range.lowerBound, length: text.utf16.count)
+                        guard NSMaxRange(editedRange) <= current.length,
+                              current.substring(with: editedRange) == text else { return }
+                        host.collabApply([TextChange(location: range.lowerBound, length: editedRange.length, text: original)], selection: range)
+                    }
+                }
+            }
+            return
+        }
         guard !ops.isEmpty else { return }
         let continues = typingEnd.map { end in
             (range.isEmpty && range.lowerBound == end) || (text.isEmpty && range.upperBound == end)
