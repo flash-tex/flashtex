@@ -187,6 +187,18 @@ fn request(id: i64, proj: &Path, out: &str) -> CompileRequest {
     r
 }
 
+/// Write `main.tex` atomically: a temp file renamed over it.
+/// `std::fs::write` truncates then writes, so a compile reading the file in
+/// between sees an empty or partial document and fails with a TeX error in
+/// ~2 ms instead of compiling what was there (id 100 answered `error`, not
+/// `cancelled`). A rename lands all at once: the running compile reads
+/// either the whole old or the whole new document.
+fn write_main(proj: &Path, text: &str) {
+    let tmp = proj.join("main.tex.tmp");
+    std::fs::write(&tmp, text).unwrap();
+    std::fs::rename(&tmp, proj.join("main.tex")).unwrap();
+}
+
 /// Kills the host after `secs` unless the returned sender is dropped
 /// first: a lost cancel then fails the test (the host closes) instead of
 /// hanging it.
@@ -251,14 +263,13 @@ fn cancels_are_never_lost_in(inproc: &str) {
     // superseded: a looping compile, then a newer one that ends
     for i in 0..20i64 {
         let id = 100 + 2 * i;
-        std::fs::write(proj.join("main.tex"), LOOP).unwrap();
+        write_main(&proj, LOOP);
         c.compile(&request(id, &proj, &out)).unwrap();
         std::thread::sleep(Duration::from_micros((i as u64 % 10) * 2000));
-        std::fs::write(
-            proj.join("main.tex"),
+        write_main(
+            &proj,
             "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
-        )
-        .unwrap();
+        );
         c.compile(&request(id + 1, &proj, &out)).unwrap();
         let (_, done) = events(&mut c, id);
         assert_eq!(done.str_field("status"), Some("cancelled"), "{done:?}");
