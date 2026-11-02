@@ -1005,6 +1005,7 @@ impl Engine {
         ps.peer.font_formats = Some(displaylist::parse_font_formats(
             &server::font_formats(&req).join(","),
         ));
+        ps.peer.form_state = conn.form_state;
         // (a save of this S₀ still being written by this process: wait for it)
         // (`FLASHTEX_S1=off`: a reopen never uses a stored S₁, which is
         // still saved)

@@ -72,6 +72,10 @@ pub mod accept {
     pub const FONT_PROGRAM_REFS: &str = "font-program-refs";
     /// FONT with an empty program and a `file` the client reads (§11.1).
     pub const FONT_FILES: &str = "font-files";
+    /// A FORM flagged INHERITS starts from the state where it is drawn
+    /// (§4.3); without it, a stream that draws a form in another colour or
+    /// text render mode than a new page's comes INCOMPLETE.
+    pub const FORM_STATE: &str = "form-state";
 }
 
 /// 3.3 host capability: the host answers RESOLVE and LOCATE (spec §11.6).

@@ -21,6 +21,32 @@ pub mod flags {
     pub const INCOMPLETE: u32 = 1;
     /// No geometry (\pdfdraftmode, or DVI mode): the items are empty.
     pub const NO_GEOMETRY: u32 = 2;
+    /// FORM (`form-state`, spec §4.3): the form starts from the fill and
+    /// stroke colour and the text render mode in force where it is drawn,
+    /// as a PDF form does, not from a new page's. A client that does not
+    /// know the bit starts it from a new page's state; the host then marks
+    /// every stream that relies on the difference ([`FORM_STATE`]).
+    pub const INHERITS: u32 = 4;
+    /// PAGE or FORM: the stream draws a form in a fill or stroke colour or
+    /// a text render mode other than a new page's. Exact for a client that
+    /// takes `form-state`; to one that does not, the host sends the stream
+    /// with INCOMPLETE ([`without_form_state`]).
+    pub const FORM_STATE: u32 = 8;
+}
+
+/// The body of a PAGE or FORM as a host sends it to a client that does not
+/// accept `form-state` (spec §4.3): INCOMPLETE added when the stream draws
+/// a form in a state other than a new page's ([`flags::FORM_STATE`]), else
+/// `None` (send the body as it is). Only the header's flags change: the
+/// content hash does not cover them (§4.6).
+pub fn without_form_state(body: &[u8]) -> Option<Vec<u8>> {
+    let f = u32::from_le_bytes(body.get(4..8)?.try_into().ok()?);
+    if f & flags::FORM_STATE == 0 || f & flags::INCOMPLETE != 0 {
+        return None;
+    }
+    let mut out = body.to_vec();
+    out[4..8].copy_from_slice(&(f | flags::INCOMPLETE).to_le_bytes());
+    Some(out)
 }
 
 /// Section tags.
@@ -1487,5 +1513,21 @@ mod tests {
             e: 1.0,
         };
         assert!(Page::decode(StreamKind::Page, &s.encode()).is_err());
+    }
+
+    #[test]
+    fn a_form_state_stream_is_incomplete_without_form_state() {
+        let mut p = Page::new(StreamKind::Page, 3);
+        p.items.push(Item::Form { id: 1, matrix: 0 });
+        assert_eq!(without_form_state(&p.encode()), None);
+        p.flags = flags::FORM_STATE;
+        let body = p.encode();
+        let old = without_form_state(&body).expect("patched");
+        let d = Page::decode(StreamKind::Page, &old).unwrap();
+        assert_eq!(d.flags, flags::FORM_STATE | flags::INCOMPLETE);
+        // Only the flags change: same items, same hash.
+        assert_eq!(d.items, p.items);
+        assert_eq!(d.hash, Page::decode(StreamKind::Page, &body).unwrap().hash);
+        assert_eq!(without_form_state(&old), None);
     }
 }

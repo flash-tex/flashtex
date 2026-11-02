@@ -77,11 +77,24 @@ struct Col {
     v: Vec<Fx>,
 }
 
+/// `Col::n` of the colour a form inherits from where it is drawn.
+const INHERITED: u8 = 0xFF;
+/// The text render mode a form inherits from where it is drawn.
+const TR_INHERITED: u8 = 0xFF;
+
 impl Col {
     fn black() -> Col {
         Col {
             n: 1,
             v: vec![Fx::ZERO],
+        }
+    }
+    /// A form's colour before it sets one: the colour where it is drawn
+    /// (flags::INHERITS, spec §4.3).
+    fn inherited() -> Col {
+        Col {
+            n: INHERITED,
+            v: vec![],
         }
     }
     fn wire(&self) -> Color {
@@ -290,6 +303,21 @@ pub fn interpret<E: Env>(
     ctm: Mat,
     markers: &[Marker],
 ) -> Output {
+    let mut page = Page::new(kind, index);
+    let mut gs = GState::new(ctm);
+    if kind == StreamKind::Form {
+        // A PDF form starts from the state where it is drawn (pdfTeX writes
+        // no colour at a form's start): every colour and text render mode
+        // the form sets is told, and until it sets one the client keeps
+        // the one it draws the form in (flags::INHERITS, spec §4.3).
+        page.flags |= flags::INHERITS;
+        gs.fill = Col::inherited();
+        gs.stroke = Col::inherited();
+        gs.told_fill = Col::inherited();
+        gs.told_stroke = Col::inherited();
+        gs.tr = TR_INHERITED;
+        gs.told_tr = TR_INHERITED;
+    }
     let mut it = Interp {
         env,
         s: stream,
@@ -297,9 +325,9 @@ pub fn interpret<E: Env>(
         height,
         markers,
         mi: 0,
-        page: Page::new(kind, index),
+        page,
         mats: HashMap::new(),
-        gs: GState::new(ctm),
+        gs,
         stack: Vec::new(),
         tm: Mat::IDENTITY,
         tlm: Mat::IDENTITY,
@@ -719,7 +747,7 @@ impl<'a, E: Env> Interp<'a, E> {
 
     fn tell_fill(&mut self) {
         if self.gs.fill != self.gs.told_fill {
-            if self.gs.fill.n == 0 {
+            if self.gs.fill.n == 0 || self.gs.fill.n == INHERITED {
                 self.unsupported("fill colour space");
             } else {
                 self.page.items.push(Item::FillColor(self.gs.fill.wire()));
@@ -730,7 +758,7 @@ impl<'a, E: Env> Interp<'a, E> {
 
     fn tell_stroke(&mut self) {
         if self.gs.stroke != self.gs.told_stroke {
-            if self.gs.stroke.n == 0 {
+            if self.gs.stroke.n == 0 || self.gs.stroke.n == INHERITED {
                 self.unsupported("stroke colour space");
             } else {
                 self.page
@@ -1069,14 +1097,41 @@ impl<'a, E: Env> Interp<'a, E> {
                         }
                         self.page.items.push(Item::Image { id: n, matrix: mi });
                     } else if let Some(n) = num(b"Fm") {
-                        if !self.initial_state() {
-                            // The PDF draws the form in this colour, text
-                            // render mode, pen; the FORM would start black.
-                            self.unsupported("a form drawn in a state other than a new page's");
+                        // The PDF draws the form in this state. A FORM
+                        // inherits the colours and the text render mode
+                        // (INHERITS); a client without `form-state` gets
+                        // this stream INCOMPLETE (FORM_STATE). The pen and
+                        // the text state are not inherited by a FORM.
+                        let g = &self.gs;
+                        if g.fill.n == 0 || g.stroke.n == 0 {
+                            self.unsupported("a form drawn in a colour space v3 cannot express");
+                        } else if g.tr > 3 && g.tr != TR_INHERITED {
+                            self.unsupported("a form drawn in text clipping mode (Tr 4-7)");
+                        } else if !self.colours_initial() {
+                            self.page.flags |= flags::FORM_STATE;
+                        }
+                        if !self.pen_and_text_initial() {
+                            self.unsupported(
+                                "a form drawn with a pen or text state other than a new page's",
+                            );
                         }
                         let mi = self.matrix(&m);
                         if !self.forms.contains(&n) {
                             self.forms.push(n);
+                        }
+                        // The client draws the form in the last told
+                        // colours and mode: tell the pending ones first
+                        // (unless the check above already said they
+                        // cannot be told: no second report).
+                        if self.gs.fill.n != 0 {
+                            self.tell_fill();
+                        }
+                        if self.gs.stroke.n != 0 {
+                            self.tell_stroke();
+                        }
+                        if self.gs.tr != self.gs.told_tr && self.gs.tr <= 3 {
+                            self.page.items.push(Item::TextRender(self.gs.tr));
+                            self.gs.told_tr = self.gs.tr;
                         }
                         self.page.items.push(Item::Form { id: n, matrix: mi });
                     } else {
@@ -1124,17 +1179,21 @@ impl<'a, E: Env> Interp<'a, E> {
             && g.ctm.is_translation()
     }
 
-    /// The graphics state is a new page's (spec §4.3), but for the CTM, the
-    /// clip and the font: what a form drawn here starts from. A PDF form
-    /// inherits the state it is drawn in (`Do`), while a display-list FORM
-    /// starts from a new page's.
-    fn initial_state(&self) -> bool {
+    /// The colours and the text render mode are a new page's (spec §4.3),
+    /// or this form's own, inherited ones: a form drawn here starts from
+    /// what a client without `form-state` starts it from.
+    fn colours_initial(&self) -> bool {
         let g = &self.gs;
         let black = Col::black();
-        g.fill == black
-            && g.stroke == black
-            && g.tr == 0
-            && g.line_width == Fx::ONE
+        let start = |c: &Col| *c == black || c.n == INHERITED;
+        start(&g.fill) && start(&g.stroke) && (g.tr == 0 || g.tr == TR_INHERITED)
+    }
+
+    /// The pen and the text state are a new page's: a PDF form inherits
+    /// them too, a FORM does not (its paths carry their own pen).
+    fn pen_and_text_initial(&self) -> bool {
+        let g = &self.gs;
+        g.line_width == Fx::ONE
             && g.cap == 0
             && g.join == 0
             && g.miter == Fx::from_int(10)
@@ -1207,7 +1266,7 @@ impl<'a, E: Env> Interp<'a, E> {
         // without LINE_STATE (spec §11.4) is a new graphics state's: width
         // 1, miter joins, limit 10, no dash, in stream space. Any other pen,
         // or a CTM that scales or turns it, cannot be expressed.
-        if matches!(self.gs.tr, 1 | 2) && !bytes.is_empty() && !self.plain_pen() {
+        if matches!(self.gs.tr, 1 | 2 | TR_INHERITED) && !bytes.is_empty() && !self.plain_pen() {
             self.set_span(offs.first().copied().unwrap_or(0));
             self.unsupported("stroked text with a line state (LINE_STATE)");
         }
@@ -1269,19 +1328,27 @@ impl<'a, E: Env> Interp<'a, E> {
             }
             if self.gs.tr != self.gs.told_tr {
                 if self.gs.tr > 3 {
+                    // (TR_INHERITED is told as it stands: never unequal)
                     self.unsupported("text clipping (Tr 4-7)");
                 }
                 self.page.items.push(Item::TextRender(self.gs.tr));
                 self.gs.told_tr = self.gs.tr;
             }
-            match self.gs.tr & 3 {
-                0 => self.tell_fill(),
-                1 => self.tell_stroke(),
-                2 => {
+            match self.gs.tr {
+                TR_INHERITED => {
+                    // the mode where the form is drawn: either colour
                     self.tell_fill();
                     self.tell_stroke();
                 }
-                _ => {}
+                t => match t & 3 {
+                    0 => self.tell_fill(),
+                    1 => self.tell_stroke(),
+                    2 => {
+                        self.tell_fill();
+                        self.tell_stroke();
+                    }
+                    _ => {}
+                },
             }
             let (x, y) = if self.gs.ts.is_zero() {
                 trm.apply(Fx::ZERO, Fx::ZERO)
@@ -1641,32 +1708,187 @@ mod tests {
     }
 
     #[test]
-    fn a_form_drawn_in_another_state_is_incomplete() {
+    fn a_form_drawn_in_another_state() {
         // pdfTeX writes no colour at a form's start (only a page starts with
         // the colour stacks' values), so the PDF draws the form's ink in the
-        // colour, text render mode and pen it is drawn in; a FORM starts
-        // black (spec §4.3). (fixtures/preview-probes/pv-form-state)
+        // colour, text render mode and pen it is drawn in
+        // (fixtures/preview-probes/pv-form-state). A FORM inherits the
+        // colours and the mode (INHERITS); the page says it relies on that
+        // (FORM_STATE), so a client without `form-state` gets it INCOMPLETE.
+        // The pen and the text state are not inherited: INCOMPLETE.
         let at = |pre: &str| {
-            incomplete(
-                format!("{pre} q 1 0 0 1 10 10 cm /Fm3 Do Q").as_bytes(),
+            let s = format!("{pre} q 1 0 0 1 10 10 cm /Fm3 Do Q");
+            let out = interpret(
                 &mut TestEnv,
+                StreamKind::Page,
+                0,
+                s.as_bytes(),
+                fx("792"),
+                Mat::IDENTITY,
+                &[],
+            );
+            (
+                out.page.flags & flags::FORM_STATE != 0,
+                out.page.unsupported,
             )
         };
-        assert!(at("").is_empty());
-        assert!(at("0 g 0 G").is_empty());
-        assert!(at("1 0 0 rg 0 g").is_empty());
-        for pre in [
-            "1 0 0 rg", "0 0 1 RG", "0 0 0 rg", "1 Tr", "3 Tr", "2 w", "1 j", "[1] 0 d", "2 Tc",
-            "90 Tz",
-        ] {
-            assert_eq!(
-                at(pre),
-                vec!["a form drawn in a state other than a new page's".to_string()],
-                "{pre}"
-            );
+        for pre in ["", "0 g 0 G", "1 0 0 rg 0 g", "q 1 0 0 rg Q"] {
+            assert_eq!(at(pre), (false, vec![]), "{pre}");
         }
-        // Restored before the form: as a new page's again.
-        assert!(at("q 1 0 0 rg Q").is_empty());
+        for pre in [
+            "1 0 0 rg",
+            "0 0 1 RG",
+            "0 0 0 rg",
+            "1 Tr",
+            "3 Tr",
+            "0 0 0 1 k",
+        ] {
+            assert_eq!(at(pre), (true, vec![]), "{pre}");
+        }
+        let pen = "a form drawn with a pen or text state other than a new page's".to_string();
+        for pre in ["2 w", "1 j", "[1] 0 d", "2 Tc", "90 Tz"] {
+            assert_eq!(at(pre), (false, vec![pen.clone()]), "{pre}");
+        }
+        assert_eq!(
+            at("7 Tr").1,
+            vec!["a form drawn in text clipping mode (Tr 4-7)".to_string()]
+        );
+        assert_eq!(
+            at("/Pattern cs /P1 scn").1,
+            vec!["a form drawn in a colour space v3 cannot express".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_form_tells_the_state_it_is_drawn_in() {
+        // The client draws the form in the last TOLD colours and text
+        // render mode, so the page tells the pending ones before each
+        // FORM (the form itself sets no colour: pdfTeX writes none at a
+        // form's start; see a_form_drawn_in_another_state).
+        let told = |s: &[u8]| {
+            let out = interpret(
+                &mut TestEnv,
+                StreamKind::Page,
+                0,
+                s,
+                fx("792"),
+                Mat::IDENTITY,
+                &[],
+            );
+            assert!(out.page.unsupported.is_empty(), "{s:?}");
+            out.page
+                .items
+                .iter()
+                .filter(|i| {
+                    matches!(
+                        i,
+                        Item::FillColor(_)
+                            | Item::StrokeColor(_)
+                            | Item::TextRender(_)
+                            | Item::Form { .. }
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let form = |id: u32| Item::Form { id, matrix: 0 };
+        let red = Item::FillColor(Color(vec![1.0, 0.0, 0.0]));
+        assert_eq!(told(b"1 0 0 rg /Fm1 Do"), vec![red.clone(), form(1)]);
+        assert_eq!(
+            told(b"0 0 1 RG /Fm1 Do"),
+            vec![Item::StrokeColor(Color(vec![0.0, 0.0, 1.0])), form(1)]
+        );
+        assert_eq!(told(b"1 Tr /Fm1 Do"), vec![Item::TextRender(1), form(1)]);
+        // The second form re-tells the new colour ...
+        assert_eq!(
+            told(b"1 0 0 rg /Fm1 Do 0 0 1 rg /Fm1 Do"),
+            vec![
+                red.clone(),
+                form(1),
+                Item::FillColor(Color(vec![0.0, 0.0, 1.0])),
+                form(1),
+            ]
+        );
+        // ... while a form whose state is already told adds no items.
+        assert_eq!(
+            told(b"1 0 0 rg /Fm1 Do /Fm1 Do"),
+            vec![red, form(1), form(1)]
+        );
+        // An unsupported fill (reported once, never told) does not keep a
+        // valid pending stroke colour from being told before the form.
+        let out = interpret(
+            &mut TestEnv,
+            StreamKind::Page,
+            0,
+            b"/Pattern cs /P1 scn 0 0 1 RG /Fm1 Do",
+            fx("792"),
+            Mat::IDENTITY,
+            &[],
+        );
+        let strokes: Vec<_> = out
+            .page
+            .items
+            .iter()
+            .filter(|i| matches!(i, Item::StrokeColor(_) | Item::Form { .. }))
+            .cloned()
+            .collect();
+        assert_eq!(
+            strokes,
+            vec![Item::StrokeColor(Color(vec![0.0, 0.0, 1.0])), form(1)]
+        );
+    }
+
+    #[test]
+    fn a_form_starts_from_where_it_is_drawn() {
+        // In a form: no colour before its own, every colour it sets told
+        // (0 g too: it may be drawn in red), and Tr likewise.
+        let s = b"BT /F1 10 Tf 0 0 Td (o) Tj ET 0 0 5 5 re f 0 g 0 0 5 5 re f 1 Tr BT /F1 10 Tf (o) Tj ET 0 Tr q 1 0 0 1 3 3 cm /Fm2 Do Q";
+        let out = interpret(
+            &mut TestEnv,
+            StreamKind::Form,
+            1,
+            s,
+            fx("20"),
+            Mat::IDENTITY,
+            &[],
+        );
+        assert_eq!(
+            out.page.flags & (flags::INHERITS | flags::INCOMPLETE | flags::FORM_STATE),
+            flags::INHERITS
+        );
+        let told: Vec<&Item> = out
+            .page
+            .items
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i,
+                    Item::FillColor(_)
+                        | Item::StrokeColor(_)
+                        | Item::TextRender(_)
+                        | Item::Glyph { .. }
+                        | Item::Rule { .. }
+                )
+            })
+            .collect();
+        assert!(matches!(told[0], Item::Glyph { .. }), "{told:?}");
+        assert!(matches!(told[1], Item::Rule { .. }), "{told:?}");
+        assert_eq!(told[2], &Item::FillColor(Color(vec![0.0])));
+        assert!(matches!(told[3], Item::Rule { .. }), "{told:?}");
+        assert_eq!(told[4], &Item::TextRender(1));
+        // Tr 1 strokes with the stroke colour still the inherited one.
+        assert!(matches!(told[5], Item::Glyph { .. }), "{told:?}");
+        // A page draws in a new page's state: no INHERITS on pages.
+        let page = interpret(
+            &mut TestEnv,
+            StreamKind::Page,
+            0,
+            b"/Fm1 Do",
+            fx("792"),
+            Mat::IDENTITY,
+            &[],
+        );
+        assert_eq!(page.page.flags, 0);
     }
 
     #[test]

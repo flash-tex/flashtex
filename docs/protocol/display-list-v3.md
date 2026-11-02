@@ -187,7 +187,8 @@ u32     index        PAGE: 0-based index of the page in the document: the
                      `total_pages`), which is the ship-out index of a
                      full run
                      FORM: the form's id (pdfTeX's `/Fm<n>` number)
-u32     flags        bit 0 INCOMPLETE, bit 1 NO_GEOMETRY (§4.7)
+u32     flags        bit 0 INCOMPLETE, bit 1 NO_GEOMETRY, bit 2 INHERITS,
+                     bit 3 FORM_STATE (§4.7)
 i32     width        PAGE: TeX's page width (sp);  FORM: box width (sp)
 i32     height       PAGE: TeX's page height (sp); FORM: height + depth (sp)
 i32[10] counts       \count0 .. \count9 at ship-out (FORM: zeros)
@@ -300,6 +301,21 @@ PDF graphics state (width 1, butt caps, miter joins, miter limit 10, no
 dash). SAVE/RESTORE scope the colours, the text render mode and the clip,
 as PDF's `q`/`Q` do, and in 3.3 the alphas and the line state; the glyph
 matrix and the span are not graphics state and are not restored.
+
+**Forms (`form-state`, adopted 2026-11-01, lane RENDER-AUDIT).** A PDF form
+starts from the graphics state where it is drawn (`Do`), and pdfTeX writes
+no colour at a form's start. A FORM flagged **INHERITS** does the same: it
+starts from the fill and stroke colour and the text render mode in force
+where the FORM item is drawn (the clip, the glyph matrix and the span as
+above), and every colour and mode the form sets itself is an item, black
+included. Both hosts flag every FORM so. A stream that draws a form in a
+fill or stroke colour or a text render mode other than a new page's is
+flagged **FORM_STATE**. A client lists `form-state` in `HELLO.accept` to
+draw such streams; to a client that does not, the host sends a FORM_STATE
+stream with INCOMPLETE (only the flags change; the hash does not cover
+them), and that client starts every FORM from a new page's state. A form
+drawn with a pen, text state (`Tc`, `Tw`, `Tz`, `TL`, `Ts`), alpha or
+line state other than a new page's is INCOMPLETE for every client.
 
 ### 4.4 Glyphs, rules, paths
 
@@ -432,6 +448,11 @@ keys it with the forms' hashes too.
   pixel-identical renders the PDF page instead (`DONE.pdf`).
 - **NO_GEOMETRY**: the page was shipped in `\pdfdraftmode` (no content
   stream exists): the header is valid, there are no items.
+- **INHERITS** (FORM): the form starts from the state where it is drawn
+  (§4.3, `form-state`).
+- **FORM_STATE**: the stream draws a form in a colour or text render mode
+  other than a new page's (§4.3); INCOMPLETE is added for a client that
+  does not accept `form-state`.
 
 ## 5. Resources
 
@@ -1425,10 +1446,9 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
   separation colour spaces, inline images and text clipping are flagged
   INCOMPLETE, not expressed (2 of the 82 parity fixtures use `gs`).
 - The LaTeX host also flags INCOMPLETE (lane RENDER-AUDIT,
-  `fixtures/preview-probes`): a form drawn in a graphics state other than
-  a new page's (a PDF form inherits the colour, text render mode and pen it
-  is drawn in, a `FORM` starts from §4.3's state; pdfTeX writes no colour
-  at a form's start); stroked text (modes 1, 2) whose pen is not a new
+  `fixtures/preview-probes`): a form drawn with a pen or text state other
+  than a new page's, and for a client without `form-state` a form drawn in
+  another colour or text render mode (§4.3); stroked text (modes 1, 2) whose pen is not a new
   graphics state's or whose CTM scales or turns it, for a client without
   `line-state` (§11.4); and a glyph a `\pdfliteral` shows in a code TeX has
   not typeset in that font (it is not in the PDF's font subset, and past

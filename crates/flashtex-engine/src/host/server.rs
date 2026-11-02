@@ -185,6 +185,10 @@ pub(crate) struct Conn {
     pub diag: bool,
     /// The client accepted `progress-v1`: it gets `PROGRESS` heartbeats (spec §6.8).
     pub progress: bool,
+    /// The client accepted `form-state`: its FORMs flagged INHERITS start
+    /// from where they are drawn (spec §4.3); without it, a stream that
+    /// relies on that comes INCOMPLETE.
+    pub form_state: bool,
 }
 
 impl Conn {
@@ -802,6 +806,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     // HELLO
     let diag;
     let progress;
+    let form_state;
     let profile;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
@@ -827,6 +832,10 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
             progress = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
                 a.iter()
                     .any(|x| x.as_str() == Some(flashtex_display_list::PROGRESS_CAPABILITY))
+            });
+            form_state = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
+                a.iter()
+                    .any(|x| x.as_str() == Some(flashtex_display_list::accept::FORM_STATE))
             });
             // A mode the host does not know is ignored, as unknown names are
             // (the host's own then stays, and its HELLO says which).
@@ -876,6 +885,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
         minor,
         diag,
         progress,
+        form_state,
     });
     if let Some(p) = profile {
         let _ = tx.send(Req::Profile {
@@ -908,7 +918,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                     run.cancel();
                 }
                 if req.get("export").and_then(Json::as_bool) == Some(true) {
-                    match start_export(cfg, &out, &req, id, conn.diag) {
+                    match start_export(cfg, &out, &req, id, conn.diag, conn.form_state) {
                         Ok(run) => export = Some(run),
                         Err(e) => error(&out, req.int_field("id"), "request", &e),
                     }
@@ -1224,6 +1234,7 @@ fn start_export(
     req: &Json,
     conn: u64,
     diag: bool,
+    form_state: bool,
 ) -> Result<Running, String> {
     let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
     let job = Job::parse(req, conn)?;
@@ -1238,6 +1249,14 @@ fn start_export(
         .current_dir(&root)
         .env("FLASHTEX_DISPLAY_LIST_HAVE_FONTS", have_fonts.join(","))
         .env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", font_formats.join(","))
+        .env(
+            "FLASHTEX_DISPLAY_LIST_ACCEPT",
+            if form_state {
+                flashtex_display_list::accept::FORM_STATE
+            } else {
+                ""
+            },
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
