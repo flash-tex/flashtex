@@ -11,6 +11,24 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// The `new_ligature` function creates a ligature node having given
+    /// contents of the `font`, `character`, and `lig_ptr` fields. We also have
+    /// a `new_lig_item` function, which returns a two-word node having a given
+    /// `character` field. Such nodes are used for temporary processing as ligatures
+    /// are being created.
+    // §162
+    pub fn new_lig_item(&mut self, mut c: quarterword) -> halfword {
+        let mut new_lig_item: halfword = 0;
+        let mut p: halfword = 0; // §162
+        #[allow(unused_mut)]
+        let mut __av_mem = self.mem.view();
+        p = self.get_node(small_node_size);
+        __av_mem[crate::ix::U((p) as usize)].set_hh_b1(c);
+        __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(null);
+        new_lig_item = p;
+        new_lig_item
+    }
+
     /// A `disc_node`, which occurs only in horizontal lists, specifies a
     /// ``dis\-cretion\-ary'' line break. If such a break occurs at node `p`, the text
     /// that starts at `pre_break(p)` will precede the break, the text that starts at
@@ -6571,96 +6589,6 @@ impl Globals {
         self.show_eqtb(p);
         self.print_char(125i32);
         self.end_diagnostic(false);
-    }
-
-    /// The `print_group` procedure prints the current level of grouping and
-    /// the name corresponding to `cur_group`.
-    /// @<Declare \eTeX\ procedures for tr...
-    // §1662
-    pub fn print_group(&mut self, mut e: bool) {
-        'l_exit_f: {
-            match self.cur_group {
-                bottom_level => {
-                    {
-                        self.print(2007i32);
-                        break 'l_exit_f;
-                    }
-                }
-                simple_group | semi_simple_group => {
-                    {
-                        if (self.cur_group == semi_simple_group) {
-                            self.print(2008i32);
-                        }
-                        self.print(2009i32);
-                    }
-                }
-                hbox_group | adjusted_hbox_group => {
-                    {
-                        if (self.cur_group == adjusted_hbox_group) {
-                            self.print(2010i32);
-                        }
-                        self.print(1486i32);
-                    }
-                }
-                vbox_group => {
-                    self.print(1396i32);
-                }
-                vtop_group => {
-                    self.print(1485i32);
-                }
-                align_group | no_align_group => {
-                    {
-                        if (self.cur_group == no_align_group) {
-                            self.print(2011i32);
-                        }
-                        self.print(2012i32);
-                    }
-                }
-                output_group => {
-                    self.print(415i32);
-                }
-                disc_group => {
-                    self.print(2013i32);
-                }
-                insert_group => {
-                    self.print(337i32);
-                }
-                vcenter_group => {
-                    self.print(628i32);
-                }
-                math_group | math_choice_group | math_shift_group | math_left_group => {
-                    {
-                        self.print(352i32);
-                        if (self.cur_group == math_choice_group) {
-                            self.print(2014i32);
-                        } else {
-                            if (self.cur_group == math_shift_group) {
-                                self.print(2015i32);
-                            } else {
-                                if (self.cur_group == math_left_group) {
-                                    self.print(2016i32);
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-            self.print(2017i32);
-            self.print_int(((self.cur_level) as i64));
-            self.print_char(41i32);
-            if (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int() != 0i32) {
-                {
-                    if e {
-                        self.print(381i32);
-                    } else {
-                        self.print(2018i32);
-                    }
-                    self.ls_print_unknown(self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int());
-                    self.print_int(((self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int()) as i64));
-                }
-            }
-        }
     }
 
 }

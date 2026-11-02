@@ -15,6 +15,31 @@ impl Globals {
     /// and \.{\\omit} are allowed also after `\.{\\noalign\{...\}}'.
     /// @<Declare act...
     // §1308
+    pub fn no_align_error(&mut self) {
+        {
+            self.dg_mark();
+            if (self.interaction == error_stop_mode) {
+            }
+            if self.file_line_error_style_p {
+                self.print_file_line();
+            } else {
+                self.print_nl(264i32);
+            }
+            self.print(1542i32);
+        }
+        self.print_esc(615i32);
+        {
+            self.help_ptr = 2i32;
+            self.help_line[crate::ix::U((1i32) as usize)] = 1550i32;
+            self.help_line[crate::ix::U((0i32) as usize)] = 1551i32;
+        }
+        self.error();
+    }
+
+    /// The help messages here contain a little white lie, since \.{\\noalign}
+    /// and \.{\\omit} are allowed also after `\.{\\noalign\{...\}}'.
+    /// @<Declare act...
+    // §1308
     pub fn omit_error(&mut self) {
         {
             self.dg_mark();

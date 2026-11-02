@@ -11,6 +11,96 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// The `print_group` procedure prints the current level of grouping and
+    /// the name corresponding to `cur_group`.
+    /// @<Declare \eTeX\ procedures for tr...
+    // §1662
+    pub fn print_group(&mut self, mut e: bool) {
+        'l_exit_f: {
+            match self.cur_group {
+                bottom_level => {
+                    {
+                        self.print(2007i32);
+                        break 'l_exit_f;
+                    }
+                }
+                simple_group | semi_simple_group => {
+                    {
+                        if (self.cur_group == semi_simple_group) {
+                            self.print(2008i32);
+                        }
+                        self.print(2009i32);
+                    }
+                }
+                hbox_group | adjusted_hbox_group => {
+                    {
+                        if (self.cur_group == adjusted_hbox_group) {
+                            self.print(2010i32);
+                        }
+                        self.print(1486i32);
+                    }
+                }
+                vbox_group => {
+                    self.print(1396i32);
+                }
+                vtop_group => {
+                    self.print(1485i32);
+                }
+                align_group | no_align_group => {
+                    {
+                        if (self.cur_group == no_align_group) {
+                            self.print(2011i32);
+                        }
+                        self.print(2012i32);
+                    }
+                }
+                output_group => {
+                    self.print(415i32);
+                }
+                disc_group => {
+                    self.print(2013i32);
+                }
+                insert_group => {
+                    self.print(337i32);
+                }
+                vcenter_group => {
+                    self.print(628i32);
+                }
+                math_group | math_choice_group | math_shift_group | math_left_group => {
+                    {
+                        self.print(352i32);
+                        if (self.cur_group == math_choice_group) {
+                            self.print(2014i32);
+                        } else {
+                            if (self.cur_group == math_shift_group) {
+                                self.print(2015i32);
+                            } else {
+                                if (self.cur_group == math_left_group) {
+                                    self.print(2016i32);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            self.print(2017i32);
+            self.print_int(((self.cur_level) as i64));
+            self.print_char(41i32);
+            if (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int() != 0i32) {
+                {
+                    if e {
+                        self.print(381i32);
+                    } else {
+                        self.print(2018i32);
+                    }
+                    self.ls_print_unknown(self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int());
+                    self.print_int(((self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int()) as i64));
+                }
+            }
+        }
+    }
+
     /// The `group_trace` procedure is called when a new level of grouping
     /// begins (`e=false`) or ends (`e=true`) with `saved(-1)` containing the
     /// line number.
@@ -4937,6 +5027,7 @@ impl Globals {
     /// replacement, but always existing character `font_bc[f]`.
     /// ...
     // §1899
+    #[inline(always)]
     pub fn effective_char(&mut self, mut err_p: bool, mut f: internal_font_number, mut c: quarterword) -> i32 {
         let mut effective_char: i32 = 0;
         let mut base_c: i32 = 0; // §1899
@@ -7028,143 +7119,6 @@ impl Globals {
         }
         quotient = a;
         quotient
-    }
-
-    /// Finally, the function `fract(x,n,d,max_answer)` computes the integer
-    /// $q=\lfloor xn/d+{1\over2}\rfloor$, when $x$, $n$, and $d$ are positive
-    /// and the result does not exceed `max_answer`.  We can't use floating
-    /// point arithmetic since the routine must produce identical results in all
-    /// cases; and it would be too dangerous to multiply by~`n` and then divide
-    /// by~`d`, in separate operations, since overflow might well occur.  Hence
-    /// this subroutine simulates double precision arithmetic, somewhat
-    /// analogous to \MF's `make_fraction` and `take_fraction` routines.
-    // §1800
-    pub fn fract(&mut self, mut x: i32, mut n: i32, mut d: i32, mut max_answer: i32) -> i32 {
-        let mut fract: i32 = 0;
-        let mut negative: bool = false; // §1800
-        let mut a: i32 = 0; // §1800
-        let mut f: i32 = 0; // §1800
-        let mut h: i32 = 0; // §1800
-        let mut r: i32 = 0; // §1800
-        let mut t: i32 = 0; // §1800
-        'l_done_f: {
-            'l_L88_f: {
-                'l_found_f: {
-                    'l_found1_f: {
-                        if (d == 0i32) {
-                            break 'l_L88_f;
-                        }
-                        a = 0i32;
-                        if (d > 0i32) {
-                            negative = false;
-                        } else {
-                            {
-                                d = (d).wrapping_neg();
-                                negative = true;
-                            }
-                        }
-                        if (x < 0i32) {
-                            {
-                                x = (x).wrapping_neg();
-                                negative = (!negative);
-                            }
-                        } else {
-                            if (x == 0i32) {
-                                break 'l_done_f;
-                            }
-                        }
-                        if (n < 0i32) {
-                            {
-                                n = (n).wrapping_neg();
-                                negative = (!negative);
-                            }
-                        }
-                        t = (n / d);
-                        if (t > (max_answer / x)) {
-                            break 'l_L88_f;
-                        }
-                        a = (t).wrapping_mul(x);
-                        n = (n).wrapping_sub((t).wrapping_mul(d));
-                        if (n == 0i32) {
-                            break 'l_found_f;
-                        }
-                        t = (x / d);
-                        if (t > ((max_answer).wrapping_sub(a) / n)) {
-                            break 'l_L88_f;
-                        }
-                        a = (a).wrapping_add((t).wrapping_mul(n));
-                        x = (x).wrapping_sub((t).wrapping_mul(d));
-                        if (x == 0i32) {
-                            break 'l_found_f;
-                        }
-                        if (x < n) {
-                            {
-                                t = x;
-                                x = n;
-                                n = t;
-                            }
-                        }
-                        // §1801
-                        f = 0i32;
-                        r = ((d / 2i32)).wrapping_sub(d);
-                        h = (r).wrapping_neg();
-                        while true {
-                            {
-                                if (((n) % 2) != 0) {
-                                    {
-                                        r = (r).wrapping_add(x);
-                                        if (r >= 0i32) {
-                                            {
-                                                r = (r).wrapping_sub(d);
-                                                f = (f).wrapping_add(1i32);
-                                            }
-                                        }
-                                    }
-                                }
-                                n = (n / 2i32);
-                                if (n == 0i32) {
-                                    break 'l_found1_f;
-                                }
-                                if (x < h) {
-                                    x = (x).wrapping_add(x);
-                                } else {
-                                    {
-                                        t = (x).wrapping_sub(d);
-                                        x = (t).wrapping_add(x);
-                                        f = (f).wrapping_add(n);
-                                        if (x < n) {
-                                            {
-                                                if (x == 0i32) {
-                                                    break 'l_found1_f;
-                                                }
-                                                t = x;
-                                                x = n;
-                                                n = t;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (f > (max_answer).wrapping_sub(a)) {
-                        // §1800
-                        break 'l_L88_f;
-                    }
-                    a = (a).wrapping_add(f);
-                }
-                if negative {
-                    a = (a).wrapping_neg();
-                }
-                break 'l_done_f;
-            }
-            {
-                self.arith_error = true;
-                a = 0i32;
-            }
-        }
-        fract = a;
-        fract
     }
 
 }

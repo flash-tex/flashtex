@@ -1899,11 +1899,13 @@ impl Globals {
     /// conversion) or 1..52 (insert the control sequence).
     /// ...
     // §1872
-    pub fn read_buffer(&mut self, i: &mut i32) -> ASCII_code {
-        let mut read_buffer: ASCII_code = 0;
+    #[inline(never)]
+    pub fn read_buffer_slow(&mut self, i: &mut i32) -> ASCII_code {
+        let mut read_buffer_slow: ASCII_code = 0;
         let mut p: halfword = 0; // §1872
         let mut last_found: i32 = 0; // §1872
         let mut last_type: i32 = 0; // §1872
+        let mut read_buffer: ASCII_code = 0; // §1872
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -2038,8 +2040,45 @@ impl Globals {
                 }
             }
             if __goto_1 <= 4 { // exit
+                read_buffer_slow = read_buffer;
             }
             break 'l_dispatch_1;
+        }
+        read_buffer_slow
+    }
+
+    /// Auxiliary functions/procedures for enc\TeX{} (by Petr Olsak) follow.
+    /// These functions implement the \.{\\mubyte} code to convert
+    /// the multibytes in `buffer` to one byte or to one control
+    /// sequence. These functions manipulate a mubyte tree: each node of
+    /// this tree is token list with n+1 tokens (first token consist the byte
+    /// from the byte sequence itself and the other tokens point to the
+    /// branches). If you travel from root of the tree to a leaf then you
+    /// find exactly one byte sequence which we have to convert to one byte or
+    /// control sequence. There are two variants of the leaf: the ``definitive
+    /// end'' or the ``middle leaf'' if a longer byte sequence exists and the mubyte
+    /// tree continues under this leaf. First variant is implemented as one
+    /// memory word where the link part includes the token to
+    /// which we have to convert and type part includes the number 60 (normal
+    /// conversion) or 1..52 (insert the control sequence).
+    /// ...
+    // §1872
+    #[inline(always)]
+    pub fn read_buffer(&mut self, i: &mut i32) -> ASCII_code {
+        let mut read_buffer: ASCII_code = 0;
+        #[allow(unused_mut)]
+        let mut __av_eqtb = self.eqtb.view();
+        if (__av_eqtb[crate::ix::U(((29338i32) - 1) as usize)].int() == 0i32) {
+            {
+                self.mubyte_skip = 0i32;
+                self.mubyte_token = 0i32;
+                if (self.mubyte_keep > 0i32) {
+                    self.mubyte_keep = 0i32;
+                }
+                read_buffer = self.buffer[crate::ix::U(((*i)) as usize)];
+            }
+        } else {
+            read_buffer = { let mut __f0 = ::core::mem::take(&mut (*i)); let __r = self.read_buffer_slow(&mut __f0); (*i) = __f0; __r };
         }
         read_buffer
     }
@@ -4225,24 +4264,6 @@ impl Globals {
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(0i32);
         new_ligature = p;
         new_ligature
-    }
-
-    /// The `new_ligature` function creates a ligature node having given
-    /// contents of the `font`, `character`, and `lig_ptr` fields. We also have
-    /// a `new_lig_item` function, which returns a two-word node having a given
-    /// `character` field. Such nodes are used for temporary processing as ligatures
-    /// are being created.
-    // §162
-    pub fn new_lig_item(&mut self, mut c: quarterword) -> halfword {
-        let mut new_lig_item: halfword = 0;
-        let mut p: halfword = 0; // §162
-        #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
-        p = self.get_node(small_node_size);
-        __av_mem[crate::ix::U((p) as usize)].set_hh_b1(c);
-        __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(null);
-        new_lig_item = p;
-        new_lig_item
     }
 
 }

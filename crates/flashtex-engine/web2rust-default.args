@@ -72,6 +72,15 @@
 --inline flush_list=always
 --inline begin_token_list=always
 --inline end_token_list=always
+# changes/throughput.ch [9]: read_buffer's case without \mubytein inlined.
+--inline read_buffer=always
+--inline read_buffer_slow=never
+# ML\TeX's effective_char, which every char_info calls, and
+# effective_char_info (changes/tex-mltex.ch), inlined. Measured
+# (instructions, against the engine without ML\TeX and encTeX): an arXiv
+# paper +2.3% before, +1.6% after; 40,000 lines of text +2.4%, +1.4%.
+--inline effective_char=always
+--inline effective_char_info=always
 # Each routine indexes mem and eqtb through a local copy of the array header
 # (crate::arena::ArrView): an element write through a raw pointer otherwise
 # makes LLVM reload the address, length and flag pointer from Globals before

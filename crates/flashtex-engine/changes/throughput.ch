@@ -187,6 +187,22 @@
 % in both: the original's loop has no effect before it gets there. The
 % errors (m = 0, m too big) are tested first in both.
 %
+% [9] read_buffer (enctex2.ch, part 54/encTeX): what it does without
+% \mubytein, inlined (web2rust-*.args: --inline read_buffer=always,
+% --inline read_buffer_slow=never).
+%
+% get_next reads every character of a file through read_buffer (enctex2.ch
+% [24.343], [24.354], [24.356]), and without \mubytein (mubyte_in=0, every
+% run without `-enc') read_buffer sets mubyte_skip and mubyte_token to 0,
+% mubyte_keep to 0 if it was positive, and returns buffer[i], i unchanged:
+% its first statements, then the `return' of `if mubyte_in = 0'. Here
+% read_buffer does just that, and otherwise calls read_buffer_slow, which
+% is enctex2.ch's routine (its result a local named as enctex2.ch names
+% the function's, returned at exit), whose first statements then store
+% the same values again and whose test of mubyte_in fails as before. Both
+% read the same variables and store the same values in the same order
+% where they differ only by stores that repeat a store.
+%
 % [8] search_string (tex.ch's string recycling, changes/filenames.ch): the
 % scan of the pool by a routine written by hand, src/strsearch.rs.
 %
@@ -549,6 +565,51 @@ var q, r, t: longinteger;
     t := t * ten_pow[dd];
     q := t div m;
     r := t mod m;
+@z
+
+@x enctex2.ch [54/enc\TeX] - read_buffer: what it does without \mubytein, inlined [9]
+function read_buffer(var i:integer):ASCII_code;
+var p: pointer;
+    last_found: integer;
+    last_type: integer;
+begin
+  mubyte_skip := 0; mubyte_token := 0;
+  read_buffer := buffer[i];
+@y
+function read_buffer_slow(var i:integer):ASCII_code;
+var p: pointer;
+    last_found: integer;
+    last_type: integer;
+    read_buffer: ASCII_code; {the result, as enctex2.ch names it}
+begin
+  mubyte_skip := 0; mubyte_token := 0;
+  read_buffer := buffer[i];
+@z
+
+@x enctex2.ch [54/enc\TeX] - read_buffer: what it does without \mubytein, inlined [9]
+      mubyte_skip := -1;
+    end;
+    if mubyte_start and (i >= start) then mubyte_start := false;
+    return;
+  end;
+exit: end;
+@y
+      mubyte_skip := -1;
+    end;
+    if mubyte_start and (i >= start) then mubyte_start := false;
+    return;
+  end;
+exit: read_buffer_slow := read_buffer;
+end;
+@#
+function read_buffer(var i:integer):ASCII_code;
+begin if mubyte_in = 0 then
+  begin mubyte_skip := 0; mubyte_token := 0;
+  if mubyte_keep > 0 then mubyte_keep := 0;
+  read_buffer := buffer[i];
+  end
+else read_buffer := read_buffer_slow(i);
+end;
 @z
 
 @x [54] tex.ch's search_string: the scan by flashtex_search_pool [8]

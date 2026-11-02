@@ -14,6 +14,65 @@ impl Globals {
     /// Following procedures implement low-level subroutines to convert \TeX{}
     /// internal structures to PDF page description.
     // §693
+    pub fn pdf_set_origin(&mut self, mut h: scaled, mut v: scaled) {
+        if ((((h).wrapping_sub(self.pdf_origin_h)).wrapping_abs() >= self.min_bp_val) || (((v).wrapping_sub(self.pdf_origin_v)).wrapping_abs() >= self.min_bp_val)) {
+            {
+                self.pdf_print(1046i32);
+                self.pdf_print_bp((h).wrapping_sub(self.pdf_origin_h));
+                self.pdf_origin_h = (self.pdf_origin_h).wrapping_add(self.scaled_out);
+                {
+                    {
+                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                            self.pdf_os_get_os_buf(1i32);
+                        } else {
+                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                self.overflow(1018i32, pdf_op_buf_size);
+                            } else {
+                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                    self.pdf_flush();
+                                }
+                            }
+                        }
+                    }
+                    {
+                        self.pdf_buf_set(self.pdf_ptr, 32i32);
+                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                    }
+                }
+                self.pdf_print_bp((self.pdf_origin_v).wrapping_sub(v));
+                self.pdf_origin_v = (self.pdf_origin_v).wrapping_sub(self.scaled_out);
+                {
+                    self.pdf_print(1047i32);
+                    {
+                        {
+                            if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                self.pdf_os_get_os_buf(1i32);
+                            } else {
+                                if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                    self.overflow(1018i32, pdf_op_buf_size);
+                                } else {
+                                    if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                        self.pdf_flush();
+                                    }
+                                }
+                            }
+                        }
+                        {
+                            self.pdf_buf_set(self.pdf_ptr, pdf_new_line_char);
+                            self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                        }
+                    }
+                }
+            }
+        }
+        self.pdf_h = self.pdf_origin_h;
+        self.pdf_tj_start_h = self.pdf_h;
+        self.pdf_v = self.pdf_origin_v;
+    }
+
+    /// Following procedures implement low-level subroutines to convert \TeX{}
+    /// internal structures to PDF page description.
+    // §693
     pub fn pdf_set_origin_temp(&mut self, mut h: scaled, mut v: scaled) {
         if ((((h).wrapping_sub(self.pdf_origin_h)).wrapping_abs() >= self.min_bp_val) || (((v).wrapping_sub(self.pdf_origin_v)).wrapping_abs() >= self.min_bp_val)) {
             {
@@ -3561,18 +3620,6 @@ impl Globals {
     pub fn pdf_out_save(&mut self, mut p: halfword) {
         self.checkpdfsave(self.cur_h, self.cur_v);
         self.literal(113i32, set_origin, false);
-    }
-
-    /// \[32f] PDF shipping out.
-    /// To ship out a \TeX\ box to PDF page description we need to implement
-    /// `pdf_hlist_out`, `pdf_vlist_out` and `pdf_ship_out`, which are equivalent to
-    /// the \TeX' original `hlist_out`, `vlist_out` and `ship_out` resp. But first we
-    /// need to declare some procedures needed in `pdf_hlist_out` and `pdf_vlist_out`.
-    /// @<Declare procedures needed in `pdf_hlist_out`, `pdf_vlist_out`
-    // §728
-    pub fn pdf_out_restore(&mut self, mut p: halfword) {
-        self.checkpdfrestore(self.cur_h, self.cur_v);
-        self.literal(81i32, set_origin, false);
     }
 
 }

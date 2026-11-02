@@ -11,6 +11,143 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// Finally, the function `fract(x,n,d,max_answer)` computes the integer
+    /// $q=\lfloor xn/d+{1\over2}\rfloor$, when $x$, $n$, and $d$ are positive
+    /// and the result does not exceed `max_answer`.  We can't use floating
+    /// point arithmetic since the routine must produce identical results in all
+    /// cases; and it would be too dangerous to multiply by~`n` and then divide
+    /// by~`d`, in separate operations, since overflow might well occur.  Hence
+    /// this subroutine simulates double precision arithmetic, somewhat
+    /// analogous to \MF's `make_fraction` and `take_fraction` routines.
+    // §1800
+    pub fn fract(&mut self, mut x: i32, mut n: i32, mut d: i32, mut max_answer: i32) -> i32 {
+        let mut fract: i32 = 0;
+        let mut negative: bool = false; // §1800
+        let mut a: i32 = 0; // §1800
+        let mut f: i32 = 0; // §1800
+        let mut h: i32 = 0; // §1800
+        let mut r: i32 = 0; // §1800
+        let mut t: i32 = 0; // §1800
+        'l_done_f: {
+            'l_L88_f: {
+                'l_found_f: {
+                    'l_found1_f: {
+                        if (d == 0i32) {
+                            break 'l_L88_f;
+                        }
+                        a = 0i32;
+                        if (d > 0i32) {
+                            negative = false;
+                        } else {
+                            {
+                                d = (d).wrapping_neg();
+                                negative = true;
+                            }
+                        }
+                        if (x < 0i32) {
+                            {
+                                x = (x).wrapping_neg();
+                                negative = (!negative);
+                            }
+                        } else {
+                            if (x == 0i32) {
+                                break 'l_done_f;
+                            }
+                        }
+                        if (n < 0i32) {
+                            {
+                                n = (n).wrapping_neg();
+                                negative = (!negative);
+                            }
+                        }
+                        t = (n / d);
+                        if (t > (max_answer / x)) {
+                            break 'l_L88_f;
+                        }
+                        a = (t).wrapping_mul(x);
+                        n = (n).wrapping_sub((t).wrapping_mul(d));
+                        if (n == 0i32) {
+                            break 'l_found_f;
+                        }
+                        t = (x / d);
+                        if (t > ((max_answer).wrapping_sub(a) / n)) {
+                            break 'l_L88_f;
+                        }
+                        a = (a).wrapping_add((t).wrapping_mul(n));
+                        x = (x).wrapping_sub((t).wrapping_mul(d));
+                        if (x == 0i32) {
+                            break 'l_found_f;
+                        }
+                        if (x < n) {
+                            {
+                                t = x;
+                                x = n;
+                                n = t;
+                            }
+                        }
+                        // §1801
+                        f = 0i32;
+                        r = ((d / 2i32)).wrapping_sub(d);
+                        h = (r).wrapping_neg();
+                        while true {
+                            {
+                                if (((n) % 2) != 0) {
+                                    {
+                                        r = (r).wrapping_add(x);
+                                        if (r >= 0i32) {
+                                            {
+                                                r = (r).wrapping_sub(d);
+                                                f = (f).wrapping_add(1i32);
+                                            }
+                                        }
+                                    }
+                                }
+                                n = (n / 2i32);
+                                if (n == 0i32) {
+                                    break 'l_found1_f;
+                                }
+                                if (x < h) {
+                                    x = (x).wrapping_add(x);
+                                } else {
+                                    {
+                                        t = (x).wrapping_sub(d);
+                                        x = (t).wrapping_add(x);
+                                        f = (f).wrapping_add(n);
+                                        if (x < n) {
+                                            {
+                                                if (x == 0i32) {
+                                                    break 'l_found1_f;
+                                                }
+                                                t = x;
+                                                x = n;
+                                                n = t;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (f > (max_answer).wrapping_sub(a)) {
+                        // §1800
+                        break 'l_L88_f;
+                    }
+                    a = (a).wrapping_add(f);
+                }
+                if negative {
+                    a = (a).wrapping_neg();
+                }
+                break 'l_done_f;
+            }
+            {
+                self.arith_error = true;
+                a = 0i32;
+            }
+        }
+        fract = a;
+        fract
+    }
+
     /// The `scan_expr` procedure scans and evaluates an expression.
     /// @<Declare procedures needed for expressions
     // §1783
@@ -3870,6 +4007,7 @@ impl Globals {
     /// `effective_char` for more information.)
     /// @<Declare additional functions for ML\TeX
     // §1900
+    #[inline(always)]
     pub fn effective_char_info(&mut self, mut f: internal_font_number, mut c: quarterword) -> four_quarters {
         let mut effective_char_info: four_quarters = four_quarters::default();
         let mut ci: four_quarters = four_quarters::default(); // §1900
@@ -8543,65 +8681,6 @@ impl Globals {
             s = self.round_xn_over_d(s, __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int(), 1000i32);
         }
         self.pdf_print_bp(s);
-    }
-
-    /// Following procedures implement low-level subroutines to convert \TeX{}
-    /// internal structures to PDF page description.
-    // §693
-    pub fn pdf_set_origin(&mut self, mut h: scaled, mut v: scaled) {
-        if ((((h).wrapping_sub(self.pdf_origin_h)).wrapping_abs() >= self.min_bp_val) || (((v).wrapping_sub(self.pdf_origin_v)).wrapping_abs() >= self.min_bp_val)) {
-            {
-                self.pdf_print(1046i32);
-                self.pdf_print_bp((h).wrapping_sub(self.pdf_origin_h));
-                self.pdf_origin_h = (self.pdf_origin_h).wrapping_add(self.scaled_out);
-                {
-                    {
-                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                            self.pdf_os_get_os_buf(1i32);
-                        } else {
-                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(1018i32, pdf_op_buf_size);
-                            } else {
-                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                    self.pdf_flush();
-                                }
-                            }
-                        }
-                    }
-                    {
-                        self.pdf_buf_set(self.pdf_ptr, 32i32);
-                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                    }
-                }
-                self.pdf_print_bp((self.pdf_origin_v).wrapping_sub(v));
-                self.pdf_origin_v = (self.pdf_origin_v).wrapping_sub(self.scaled_out);
-                {
-                    self.pdf_print(1047i32);
-                    {
-                        {
-                            if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                self.pdf_os_get_os_buf(1i32);
-                            } else {
-                                if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(1018i32, pdf_op_buf_size);
-                                } else {
-                                    if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                        self.pdf_flush();
-                                    }
-                                }
-                            }
-                        }
-                        {
-                            self.pdf_buf_set(self.pdf_ptr, pdf_new_line_char);
-                            self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                        }
-                    }
-                }
-            }
-        }
-        self.pdf_h = self.pdf_origin_h;
-        self.pdf_tj_start_h = self.pdf_h;
-        self.pdf_v = self.pdf_origin_v;
     }
 
 }

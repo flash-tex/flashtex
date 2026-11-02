@@ -11,6 +11,133 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// A ligature found in a math formula does not create a `ligature_node`, because
+    /// there is no question of hyphenation afterwards; the ligature will simply be
+    /// stored in an ordinary `char_node`, after residing in an `ord_noad`.
+    /// The `math_type` is converted to `math_text_char` here if we would not want to
+    /// apply an italic correction to the current character unless it belongs
+    /// to a math font (i.e., a font with `space=0`).
+    /// No boundary characters enter into these ligatures.
+    /// @<Declare math...
+    // §929
+    pub fn make_ord(&mut self, mut q: halfword) {
+        let mut a: i32 = 0; // §929
+        let mut p: halfword = 0; // §929
+        let mut r: halfword = 0; // §929
+        #[allow(unused_mut)]
+        let mut __av_mem = self.mem.view();
+        // goto labels: restart, exit
+        let mut __goto_1: i32 = 0;
+        'l_dispatch_1: loop {
+            if __goto_1 <= 0 {
+                if (__av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].hh().rh() == empty) {
+                    if (__av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].hh().rh() == empty) {
+                        if (__av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().rh() == math_char) {
+                            {
+                                p = __av_mem[crate::ix::U((q) as usize)].hh().rh();
+                                if (p != null) {
+                                    if ((__av_mem[crate::ix::U((p) as usize)].hh().b0() >= ord_noad) && (__av_mem[crate::ix::U((p) as usize)].hh().b0() <= punct_noad)) {
+                                        if (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh() == math_char) {
+                                            if (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().b0() == __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().b0()) {
+                                                {
+                                                    __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_rh(math_text_char);
+                                                    self.fetch((q).wrapping_add(1i32));
+                                                    if ((self.cur_i.b2() % 4i32) == lig_tag) {
+                                                        {
+                                                            a = (self.lig_kern_base[crate::ix::U((self.cur_f) as usize)]).wrapping_add(self.cur_i.b3());
+                                                            self.cur_c = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().b1();
+                                                            self.cur_i = self.font_info[crate::ix::U((a) as usize)].qqqq();
+                                                            if (self.cur_i.b0() > stop_flag) {
+                                                                {
+                                                                    a = ((((self.lig_kern_base[crate::ix::U((self.cur_f) as usize)]).wrapping_add((256i32).wrapping_mul(self.cur_i.b2()))).wrapping_add(self.cur_i.b3())).wrapping_add(32768i32)).wrapping_sub((256i32).wrapping_mul(128i32));
+                                                                    self.cur_i = self.font_info[crate::ix::U((a) as usize)].qqqq();
+                                                                }
+                                                            }
+                                                            while true {
+                                                                {
+                                                                    // §930
+                                                                    if (self.cur_i.b1() == self.cur_c) {
+                                                                        if (self.cur_i.b0() <= stop_flag) {
+                                                                            if (self.cur_i.b2() >= kern_flag) {
+                                                                                {
+                                                                                    p = self.new_kern(self.font_info[crate::ix::U((((self.kern_base[crate::ix::U((self.cur_f) as usize)]).wrapping_add((256i32).wrapping_mul(self.cur_i.b2()))).wrapping_add(self.cur_i.b3())) as usize)].int());
+                                                                                    { let __v1046 = __av_mem[crate::ix::U((q) as usize)].hh().rh(); __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v1046); }
+                                                                                    __av_mem[crate::ix::U((q) as usize)].set_hh_rh(p);
+                                                                                    { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                                }
+                                                                            } else {
+                                                                                {
+                                                                                    {
+                                                                                        if (self.interrupt != 0i32) {
+                                                                                            self.pause_for_instructions();
+                                                                                        }
+                                                                                    }
+                                                                                    match self.cur_i.b2() {
+                                                                                        1 | 5 => {
+                                                                                            { let __v1047 = self.cur_i.b3(); __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_b1(__v1047); }
+                                                                                        }
+                                                                                        2 | 6 => {
+                                                                                            { let __v1048 = self.cur_i.b3(); __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b1(__v1048); }
+                                                                                        }
+                                                                                        3 | 7 | 11 => {
+                                                                                            {
+                                                                                                r = self.new_noad();
+                                                                                                { let __v1049 = self.cur_i.b3(); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_b1(__v1049); }
+                                                                                                { let __v1050 = __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().b0(); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_b0(__v1050); }
+                                                                                                __av_mem[crate::ix::U((q) as usize)].set_hh_rh(r);
+                                                                                                __av_mem[crate::ix::U((r) as usize)].set_hh_rh(p);
+                                                                                                if (self.cur_i.b2() < 11i32) {
+                                                                                                    __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_rh(math_char);
+                                                                                                } else {
+                                                                                                    __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_rh(math_text_char);
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        _ => {
+                                                                                            {
+                                                                                                { let __v1051 = __av_mem[crate::ix::U((p) as usize)].hh().rh(); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v1051); }
+                                                                                                { let __v1052 = self.cur_i.b3(); __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_b1(__v1052); }
+                                                                                                { let __v1053 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)]; __av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)] = __v1053; }
+                                                                                                { let __v1054 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)]; __av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)] = __v1054; }
+                                                                                                self.free_node(p, noad_size);
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                    if (self.cur_i.b2() > 3i32) {
+                                                                                        { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                                    }
+                                                                                    __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_rh(math_char);
+                                                                                    { __goto_1 = 0; continue 'l_dispatch_1; }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    // §929
+                                                                    if (self.cur_i.b0() >= stop_flag) {
+                                                                        { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                    }
+                                                                    a = ((a).wrapping_add(self.cur_i.b0())).wrapping_add(1i32);
+                                                                    self.cur_i = self.font_info[crate::ix::U((a) as usize)].qqqq();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if __goto_1 <= 1 { // exit
+            }
+            break 'l_dispatch_1;
+        }
+    }
+
     /// The purpose of `make_scripts(q,delta)` is to attach the subscript and/or
     /// superscript of noad `q` to the list that starts at `new_hlist(q)`,
     /// given that the subscript and superscript aren't both empty. The superscript
@@ -9874,31 +10001,6 @@ impl Globals {
                 self.ins_error();
             }
         }
-    }
-
-    /// The help messages here contain a little white lie, since \.{\\noalign}
-    /// and \.{\\omit} are allowed also after `\.{\\noalign\{...\}}'.
-    /// @<Declare act...
-    // §1308
-    pub fn no_align_error(&mut self) {
-        {
-            self.dg_mark();
-            if (self.interaction == error_stop_mode) {
-            }
-            if self.file_line_error_style_p {
-                self.print_file_line();
-            } else {
-                self.print_nl(264i32);
-            }
-            self.print(1542i32);
-        }
-        self.print_esc(615i32);
-        {
-            self.help_ptr = 2i32;
-            self.help_line[crate::ix::U((1i32) as usize)] = 1550i32;
-            self.help_line[crate::ix::U((0i32) as usize)] = 1551i32;
-        }
-        self.error();
     }
 
 }
