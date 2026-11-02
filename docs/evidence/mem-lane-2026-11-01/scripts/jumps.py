@@ -63,7 +63,7 @@ def keys(i, page, n):
         if a.jump_ms >= 0 and i > 0:
             args += ['--jump-viewport', str(a.jump_ms)]
     r = subprocess.run(args, capture_output=True, text=True, env=env)
-    ms, instr = [], []
+    ms, instr, stages = [], [], []
     for line in r.stdout.splitlines():
         try:
             d = json.loads(line)
@@ -74,9 +74,15 @@ def keys(i, page, n):
             ms.append(round(d['edited_page_ms'], 2))
             st = (d.get('host') or {}).get('stages') or {}
             instr.append(st.get('edited_instr_k'))
+            # (where a key's time goes: `queue` = COMPILE's arrival to the engine taking it,
+            # `queue_by` = what the engine thread did meanwhile, `paused_how`/`paused` = what it
+            # did with a run newer work stopped)
+            stages.append({k: st.get(k) for k in ('queue', 'queue_by', 'paused_how', 'paused', 'find', 'key',
+                                                  'changes', 'restore', 'first_page', 'edited_page')
+                           if k in st})
     if n and not ms:
         sys.stderr.write(f'{a.name} page {page}: no keystroke timed (exit {r.returncode})\n{r.stderr[-1500:]}\n')
-    return ms, instr
+    return ms, instr, stages
 
 
 t0 = time.time()
@@ -86,11 +92,12 @@ with open(a.out, 'a') as f:
     for i, p in enumerate(int(x) for x in a.pages.split(',')):
         if host.poll() is not None:
             break
-        ms, instr = keys(i, p, a.keys)
+        ms, instr, stages = keys(i, p, a.keys)
         rec = {'doc': a.name, 'cfg': a.cfg or a.engine, 'engine': a.engine, 'round': a.round,
                'far': os.environ.get('FLASHTEX_FAR'), 'jump_ms': a.jump_ms, 'step': i, 'page': p,
                'edit': EDITS[i % len(EDITS)] if EDITS else None, 'open_s': open_s,
-               'first_ms': ms[0] if ms else None, 'rest_ms': ms[1:], 'instr_k': instr}
+               'first_ms': ms[0] if ms else None, 'rest_ms': ms[1:], 'instr_k': instr,
+               'first_stages': stages[0] if stages else None}
         f.write(json.dumps(rec) + '\n')
         f.flush()
         print(f"{a.name} {rec['cfg']} r{a.round} step {i} page {p}: first {rec['first_ms']} ms, "

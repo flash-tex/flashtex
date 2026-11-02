@@ -28,14 +28,15 @@ python3 tools/incr-bench/mkdocs.py >/dev/null
 python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null
 ed=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("edit",""))' "$IB/docs/infdesc-x2/doc.json")
 J=$OUT/jumps.jsonl
-CFGS=(main far2 vp300 vp0)
+read -r -a CFGS <<< "${CFGS:-main far2 vp300 vp0}"
+N=${#CFGS[@]}
 run() {  # run CFG ROUND DOC
   local c=$1 r=$2 d=$3 eng=prof far= jm=-1 extra=()
   case $c in
     main) eng=base ;;
     far2) far=2 ;;
-    vp300) far=4; jm=300 ;;
-    vp0) far=4; jm=0 ;;
+    vp300) far=${VP_FAR:-4}; jm=300 ;;
+    vp0) far=${VP_FAR:-4}; jm=0 ;;
   esac
   case $d in
     full-1000) extra=(--pages 0,300,600) ;;
@@ -46,8 +47,8 @@ run() {  # run CFG ROUND DOC
 }
 for r in $(seq 1 "${ROUNDS:-3}"); do
   for d in ${DOCS:-full-1000 infdesc-x2}; do
-    for k in 0 1 2 3; do
-      run "${CFGS[$(( (k + r) % 4 ))]}" "$r" "$d"
+    for k in $(seq 0 $((N - 1))); do
+      run "${CFGS[$(( (k + r) % N ))]}" "$r" "$d"
     done
   done
 done
