@@ -2232,8 +2232,8 @@ fn last_rotate(b: &[u8]) -> Option<i64> {
         let mut j = i + k + key.len();
         i = j;
         let delim = |c: u8| c.is_ascii_whitespace() || b"()<>[]{}/%".contains(&c);
-        if j < b.len() && !delim(b[j]) && !b[j].is_ascii_digit() && b[j] != b'-' && b[j] != b'+' {
-            continue; // `/RotateX`
+        if j < b.len() && !delim(b[j]) {
+            continue; // `/RotateX`, `/Rotate90`, `/Rotate-90`: other names
         }
         while j < b.len() && b[j].is_ascii_whitespace() {
             j += 1;
@@ -2745,9 +2745,13 @@ mod tests {
             b"/Rotate/Foo",
             b"/Rotate 9.5",
             b"/Rotate",
+            b"/Rotate90 90",
+            b"/Rotate90",
+            b"/Rotate-90 0",
         ] {
             assert_eq!(last_rotate(t), None, "{}", String::from_utf8_lossy(t));
         }
+        assert_eq!(last_rotate(b"/Rotate90 90 /Rotate 180"), Some(180));
         assert_eq!(flags::rotate(-90), 3 << flags::ROTATE_SHIFT);
         assert_eq!(flags::rotate(450), 1 << flags::ROTATE_SHIFT);
         assert_eq!(flags::rotate(45), 0);
