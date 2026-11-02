@@ -34,7 +34,8 @@ FLASHTEX_BOXMEMO_VERIFY_FAIL=1 a difference ends the host, which is an error her
 
 Writes --out (one JSON line per compile) and OUT.host-stderr; prints a totals line
 {"compiles", "ok", "bad", "err", "hits", "xdoc_hits", ...} (soundness.py's keys, which sweeps.py
-reads). Exit 0 all equal, 1 a compile differed, 2 the host failed or ended.
+reads). Exit 0 for an exercised passing gate or a labelled BOX-MEMO-off run, 1 for a failed
+gate, 2 when the host failed or ended.
 
   python3 tools/incr-bench/xdoc.py gates --docs plain-10,beamer-5,rw:beamer-madrid --rounds 2
 """
@@ -224,7 +225,7 @@ def main():
         time.sleep(0.05)
 
     tot = dict(compiles=0, ok=0, bad=0, err=0, conv=0, interrupted=0, skipped=0, acct=0, hits=0,
-               xdoc_hits=None, docs=len(docs), rounds=a.rounds)
+               xdoc_hits=0, docs=len(docs), rounds=a.rounds)
     counts = [None]
 
     def reference(pre, d, tag):
@@ -290,8 +291,10 @@ def main():
         tot['acct'] += acct
         tot['ok' if not bad else 'bad'] += 1
         tot['hits'] += delta[1] if len(delta) > 1 else 0
-        if len(delta) > 4:
-            tot['xdoc_hits'] = (tot['xdoc_hits'] or 0) + delta[4]
+        if len(delta) > 4 and tot['xdoc_hits'] is not None:
+            tot['xdoc_hits'] += delta[4]
+        else:
+            tot['xdoc_hits'] = None
         line = dict(doc=d['name'], round=rnd, step=step, kind=kind, mode=r.get('mode'), status=r.get('status'),
                     pages=r.get('pages'), ms=round(ms, 1), ref_runs=runs, boxmemo=delta, ok=not bad, bad=bad)
         rec.write(json.dumps(line) + '\n')
@@ -342,11 +345,21 @@ def main():
             shutil.rmtree(sockdir, ignore_errors=True)
     if tot['bad']:
         print(f"{tot['bad']} mismatches (records in {out}; the files in {BASE}/xdoc-mm)", flush=True)
+    boxmemo_off = env.get('FLASHTEX_BOXMEMO') == 'off'
+    if boxmemo_off:
+        tot['gate'] = 'not exercised (BOX-MEMO off)'
+    elif tot['compiles'] and not tot['xdoc_hits']:
+        reason = ('cross-document replay count not measured' if tot['xdoc_hits'] is None
+                  else 'no cross-document replays')
+        print(f'sound-xdoc: {reason}', flush=True)
+    if not tot['compiles']:
+        print('sound-xdoc: no compiles', flush=True)
     print(json.dumps(tot), flush=True)
     rec.close()
     if not a.keep:
         shutil.rmtree(W, ignore_errors=True)
-    sys.exit(2 if tot['err'] else 1 if tot['bad'] else 0)
+    sys.exit(2 if tot['err'] else 1 if tot['bad'] or not tot['compiles']
+             or not boxmemo_off and not tot['xdoc_hits'] else 0)
 
 
 if __name__ == '__main__':
