@@ -428,3 +428,52 @@ fn an_argument_that_turns_outer_is_a_miss() {
     assert!(stat(&s, "hits") >= 2, "{s}");
     assert!(stat(&s, "k3_tokens") >= 1, "{s}");
 }
+
+/// The calls below assign a register inside a group of their own before
+/// they read it, as pgf's `\pgfmathsetlength\pgf@x{..}` does (`\begingroup
+/// \pgf@x=..\expandafter\endgroup\expandafter\pgf@x\the\pgf@x`); between
+/// the calls the document leaves other values there (BOX-MEMO.md §15.8).
+const REGS: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+    \\def\\show{\\message{[\\the\\dimen1|\\the\\dimen3|\\the\\dimen300|\\the\\count3]}}\n";
+
+#[test]
+fn a_register_assigned_in_a_group_before_it_is_read_is_not_keyed() {
+    // `\dimen3` (and the sparse `\dimen300`) first assigned inside the
+    // call's group: what it held is not an input, and `\the\dimen300`
+    // before the `\endgroup` reads the call's own value
+    let s = check(
+        "reg-write-first",
+        &[
+            REGS,
+            "\\def\\measure#1{\\begingroup\\dimen3=#1\\dimen300=\\dimen3\\advance\\dimen300 1pt\
+             \\expandafter\\endgroup\\expandafter\\dimen\\expandafter3\\expandafter=\\the\\dimen300\\relax\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\dimen3}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\dimen3=5pt \\dimen300=6pt \\measure{1pt}\\show\\dimen3=7pt \\measure{1pt}\\show\
+             \\dimen300=8pt \\measure{1pt}\\show\\dimen3=9pt \\measure{2pt}\\show\\measure{2pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn a_register_a_group_end_brings_back_is_keyed() {
+    // assigned inside a group of the call, then read after the group's
+    // end (`\advance` too): what the document left there is an input, so
+    // a call after a change is a miss (and the logs agree)
+    let s = check(
+        "reg-restored",
+        &[
+            REGS,
+            "\\def\\measure#1{\\begingroup\\dimen3=#1\\count3=2 \\endgroup\\advance\\count3 1 \
+             \\begingroup\\setbox0\\hbox{\\vrule width\\dimen3}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\dimen3=1pt \\count3=0 \\measure{9pt}\\show\\count3=0 \\measure{9pt}\\show\
+             \\dimen3=2pt \\count3=0 \\measure{9pt}\\show\\count3=5 \\measure{9pt}\\show\
+             \\def\\measure#1{\\begingroup\\dimen3=#1\\setbox0\\hbox{\\vrule width\\dimen3}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\dimen3=3pt \\measure{3pt}\\show\\dimen3=4pt \\measure{3pt}\\show\\measure{3pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}

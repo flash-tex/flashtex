@@ -594,6 +594,11 @@ struct Rec {
     /// Registers the call assigned globally: read after that, they hold
     /// what the call put there.
     gwritten: HashSet<RegId>,
+    /// Registers the call assigned locally, inside a group of its own,
+    /// before it read them, with what each held then: a read that finds
+    /// that value again (the group's end brought it back) keys it, any
+    /// other read finds the call's own value (BOX-MEMO.md §15.8).
+    rpre: Vec<(RegId, Vec<i32>)>,
     line_read: bool,
     boxes: HashSet<i32>,
     /// Box registers assigned globally: each must be void when the call
@@ -1771,8 +1776,13 @@ impl Globals {
         q
     }
 
-    /// The recording read register `r` (a register it assigned globally
-    /// before holds the call's own value: not an input).
+    /// The recording read register `r`. Its value is an input, part of
+    /// KR, at the first read before any assignment to it, and at the first
+    /// read that finds again what a local assignment inside one of the
+    /// call's groups overwrote (the group's end brought it back): a
+    /// register the call assigned globally or at its own level, or locally
+    /// with that value not back, holds the call's own value (BOX-MEMO.md
+    /// §15.8).
     fn bm_note_reg(&mut self, r: RegId) {
         let known = self
             .bm_with_rec(|rec| rec.gwritten.contains(&r) || rec.kr.iter().any(|(x, _)| *x == r))
@@ -1781,7 +1791,34 @@ impl Globals {
             return;
         }
         let v = self.bm_reg_value(r);
-        self.bm_with_rec(|rec| rec.kr.push((r, v)));
+        self.bm_with_rec(|rec| {
+            if let Some((_, old)) = rec.rpre.iter().rev().find(|(x, _)| *x == r) {
+                if *old != v {
+                    return;
+                }
+            }
+            rec.kr.push((r, v));
+        });
+    }
+
+    /// The recording assigns register `r` locally inside one of its groups
+    /// (`flashtex_bm_def`, before the change). If nothing read it yet, what
+    /// it holds is not an input: the replay's `eq_word_define` & co. treat
+    /// whatever is there as the normal path did, and the group's end puts
+    /// it back. It is kept aside for a later read (`bm_note_reg`).
+    fn bm_note_reg_write(&mut self, r: RegId) {
+        let fresh = self
+            .bm_with_rec(|rec| {
+                !rec.gwritten.contains(&r)
+                    && !rec.kr.iter().any(|(x, _)| *x == r)
+                    && !rec.rpre.iter().any(|(x, _)| *x == r)
+            })
+            .unwrap_or(false);
+        if !fresh {
+            return;
+        }
+        let v = self.bm_reg_value(r);
+        self.bm_with_rec(|rec| rec.rpre.push((r, v)));
     }
 
     /// `\count`-like register `n` of type `t` (`int_val` .. `tok_val`)
@@ -2636,6 +2673,7 @@ impl Globals {
             voids: vec![],
             kr: vec![],
             gwritten: HashSet::new(),
+            rpre: vec![],
             line_read: false,
             boxes: HashSet::new(),
             gboxes: vec![],
@@ -3138,9 +3176,10 @@ impl Globals {
         // normal path did. A control sequence's is kept aside, and a later
         // read that finds it again (brought back by an `\endgroup`) keys it
         // then (`bm_note_cs`, BOX-MEMO.md §15). For a register: a global
-        // assignment makes later reads the call's own; a local one is
-        // undone when its group ends, and a later read then sees the old
-        // value, so that value is keyed now.
+        // assignment, or one at the call's own level, makes later reads the
+        // call's own; a local one inside a group of the call is undone when
+        // its group ends, and what it overwrote is kept aside likewise
+        // (`bm_note_reg_write`, §15.8).
         if Self::bm_is_cs(p) {
             self.bm_note_cs_write(p);
         } else if global || outer {
@@ -3148,7 +3187,7 @@ impl Globals {
                 self.bm_with_rec(|r| r.gwritten.insert(RegId::Eqtb(p)));
             }
         } else if Self::bm_is_register(p) {
-            self.bm_note_reg(RegId::Eqtb(p));
+            self.bm_note_reg_write(RegId::Eqtb(p));
         }
         if !self.bm_rec_on {
             return;
@@ -3194,7 +3233,7 @@ impl Globals {
         if global || outer {
             self.bm_with_rec(|r| r.gwritten.insert(RegId::Sa(t, n)));
         } else {
-            self.bm_note_reg(RegId::Sa(t, n));
+            self.bm_note_reg_write(RegId::Sa(t, n));
         }
         let v = if kind == 1 || kind == 3 {
             Val::Word(e)
