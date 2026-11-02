@@ -266,17 +266,17 @@ pub struct Accept {
 /// them, so every id a page uses is bound as it was when the page was sent
 /// (spec §5: a later `FONT` rebinds an id, never a page the client holds).
 /// The engine's frames are the same bytes for the same page (they are made
-/// once a page and sent again from its cache, `out::encode`), so a page
-/// before the restart point or after convergence is not sent again.
+/// once a page and sent again from its cache, `out::frame`), so a page
+/// before the restart point or after convergence is not sent again. A run in
+/// this process compares them itself, before it writes them
+/// (`out::FrameDigests`, shared); a child's run, here, as they arrive.
 #[derive(Debug, Default)]
 pub struct Held {
     /// The document the client's pages are of: `None` before the first
     /// incremental compile (and after a non-incremental one).
     doc: Option<String>,
-    /// Per page index: the digest of the frame the client holds, 0 for none.
-    pages: Vec<u64>,
-    /// Per form id: the digest of the frame the client holds.
-    forms: HashMap<u32, u64>,
+    /// The page and form frames the client holds (digests).
+    frames: crate::out::HeldFrames,
     /// Font keys whose program the client was sent on this connection.
     programs: HashSet<[u8; 32]>,
     /// This compile's: whether the client keeps what it holds.
@@ -332,14 +332,15 @@ impl Held {
     /// them. `complete`: the compile's `count` pages are all current.
     fn pages_frame(&mut self, id: i64, upto: usize, complete: Option<usize>, out: &Out) {
         let range = |a: usize, b: usize| Json::Arr(vec![Json::Int(a as i64), Json::Int(b as i64)]);
+        let mut f = self.frames.lock().unwrap();
         let (count, current, stale) = match complete {
             Some(n) => {
-                self.pages.truncate(n);
+                f.pages.truncate(n);
                 let cur = if n > 0 { vec![range(0, n - 1)] } else { vec![] };
                 (n, cur, vec![])
             }
             None => {
-                let n = self.pages.len().max(upto + 1);
+                let n = f.pages.len().max(upto + 1);
                 let stale = if n > upto + 1 {
                     vec![range(upto + 1, n - 1)]
                 } else {
@@ -348,6 +349,7 @@ impl Held {
                 (n, vec![range(0, upto)], stale)
             }
         };
+        drop(f);
         send_json(
             out,
             kind::PAGES,
@@ -367,22 +369,6 @@ impl Held {
             self.pages_frame(id, 0, Some(n), out);
         }
     }
-}
-
-/// A frame's digest: 64 bits of a multiply-rotate hash over its words and
-/// its length (a page is some 100 KB, hashed at memory speed).
-fn digest(b: &[u8]) -> u64 {
-    const K: u64 = 0x9E37_79B9_7F4A_7C15;
-    let mut h = (b.len() as u64).wrapping_mul(K) ^ 0x5851_F42D_4C95_7F2D;
-    let (words, rest) = b.as_chunks::<8>();
-    for c in words {
-        h = (h ^ u64::from_le_bytes(*c)).wrapping_mul(K).rotate_left(29);
-    }
-    let mut last = [0u8; 8];
-    last[..rest.len()].copy_from_slice(rest);
-    h = (h ^ u64::from_le_bytes(last)).wrapping_mul(K);
-    // (a digest is never 0, which is "none")
-    (h ^ (h >> 31)).max(1)
 }
 
 /// One run of the engine: what it sent and how it ended.
@@ -684,7 +670,7 @@ pub fn run_once(
         };
         if let Some(s) = stream {
             s.set_nonblocking(false).ok();
-            forward(s, job, accept, out, &mut res, t0, held);
+            forward(s, job, accept, out, &mut res, t0, held, false);
         }
     }
     let _ = std::fs::remove_file(&sock);
@@ -755,11 +741,15 @@ fn run_in_process(
         preview: !job.export,
         // (an export is a run of its own: no persisted S₀)
         s0_file: (!job.export).then(|| job.s0_file.clone()).flatten(),
+        held: (held.tracking() && !job.export).then(|| {
+            held.frames.lock().unwrap().seen = 0;
+            held.frames.clone()
+        }),
     };
     let mut res = RunResult::default();
     let ran = sh.run(spec, || {
         if let Some(r) = r {
-            forward(r, job, accept, out, &mut res, t0, held);
+            forward(r, job, accept, out, &mut res, t0, held, true);
         }
     });
     {
@@ -768,6 +758,10 @@ fn run_in_process(
         res.cancelled = r.cancelled;
     }
     let (rep, ()) = ran?;
+    if held.tracking() && !job.export {
+        // (the pages it held were not sent: the run's count is the engine's)
+        res.pages = held.frames.lock().unwrap().seen;
+    }
     res.cancelled |= rep.cancelled;
     res.exit_code = rep.exit_code;
     res.stderr = rep.reports.join("\n");
@@ -788,6 +782,7 @@ fn run_in_process(
 /// does not take go without their program (spec §5.1); 3.3 items the client
 /// did not accept are left out of the page, which is then incomplete
 /// (spec §11.7).
+#[allow(clippy::too_many_arguments)]
 fn forward(
     s: std::os::unix::net::UnixStream,
     job: &Job,
@@ -796,12 +791,19 @@ fn forward(
     res: &mut RunResult,
     t0: Instant,
     held: &mut Held,
+    in_process: bool,
 ) {
     let mut r = BufReader::new(s);
     let mut font_keys: HashMap<u16, [u8; 32]> = HashMap::new();
     let mut image_keys: HashMap<u32, [u8; 32]> = HashMap::new();
     let tracking = held.tracking();
+    // (a run in this process compared its frames with the client's itself)
+    let compare = tracking && !in_process;
     while let Ok(Some((k, body))) = frame::read_frame(&mut r) {
+        // (the frame as the engine made it: a run in this process compares
+        // that)
+        let raw_digest =
+            (compare && matches!(k, kind::PAGE | kind::FORM)).then(|| crate::out::digest(&body));
         let body = match k {
             kind::FONT => match Font::decode(&body) {
                 Ok(mut f) => {
@@ -842,18 +844,14 @@ fn forward(
             .get(..4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
         let mut held_already = false;
-        if tracking && matches!(k, kind::PAGE | kind::FORM) {
-            if let Some(i) = index {
-                let d = digest(&body);
-                if k == kind::PAGE {
-                    if held.pages.len() <= i {
-                        held.pages.resize(i + 1, 0);
-                    }
-                    held_already = held.pages[i] == d;
-                    held.pages[i] = d;
+        if let (Some(d), Some(i)) = (raw_digest, index) {
+            {
+                let mut f = held.frames.lock().unwrap();
+                held_already = if k == kind::PAGE {
+                    f.page(i, d)
                 } else {
-                    held_already = held.forms.insert(i as u32, d) == Some(d);
-                }
+                    f.form(i as u32, d)
+                };
             }
         }
         if k == kind::PAGE {
@@ -1339,13 +1337,13 @@ Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4
         assert_eq!(inc.viewport, Some(4));
         let mut h = Held::default();
         assert!(!h.begin(&inc), "nothing is held before the first compile");
-        h.pages = vec![7, 8];
+        h.frames.lock().unwrap().pages = vec![7, 8];
         assert!(h.begin(&inc), "the same document keeps");
-        assert_eq!(h.pages, [7, 8]);
+        assert_eq!(h.frames.lock().unwrap().pages, [7, 8]);
         let other = job(r#"{"id": 2, "root": "/p", "main": "other.tex", "incremental": true}"#);
         assert!(!h.keeps(&other));
         assert!(!h.begin(&other), "another document drops the pages");
-        assert!(h.pages.is_empty());
+        assert!(h.frames.lock().unwrap().pages.is_empty());
         let plain = job(r#"{"id": 3, "root": "/p", "main": "other.tex"}"#);
         assert!(!h.begin(&plain));
         assert!(
@@ -1357,6 +1355,7 @@ Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4
         );
         assert!(!h.begin(&export));
         assert!(!h.tracking());
+        let digest = crate::out::digest;
         assert_ne!(digest(b"abcdefgh1"), digest(b"abcdefgh2"));
         assert_ne!(digest(b""), 0);
     }

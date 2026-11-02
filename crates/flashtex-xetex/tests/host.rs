@@ -1742,76 +1742,89 @@ fn an_incremental_client_is_sent_only_the_pages_that_changed() {
     let at = doc.find("\\section{Part 12}").unwrap();
     let at = at + doc[at..].find("Words and more").unwrap() + "Words and".len();
     let edited = format!("{} many{}", &doc[..at], &doc[at..]);
-    let sub = dir.join("run");
-    let (proj, out) = project(&sub, &doc);
-    let env = [("FLASHTEX_PIN_CLOCK", "1760000000.5")];
-    let h = start_with(&sub, &env, &sub.join("host.err"));
-    let mut c = Client::connect(&h.sock).unwrap();
-    let mut held = HeldPages { pages: vec![] };
-    let mut results = vec![];
-    for (id, text) in [(1, &doc), (2, &doc), (3, &edited), (4, &doc)] {
-        let mut r = request(id, &proj, &out);
-        r.incremental = true;
-        r.buffers = vec![("main.tex".into(), text.to_string())];
-        c.compile(&r).unwrap();
-        let (ev, done) = events(&mut c, id);
-        assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
-        let (keep, sent, first) = held.apply(&ev, &done);
-        results.push((keep, sent, first, held.pages.clone(), text.to_string()));
-    }
-    c.bye().unwrap();
-    drop(h);
-    let n = results[0].3.len();
-    assert!(n >= 6, "{n} pages");
-    assert!(!results[0].0, "the first compile keeps nothing");
-    assert!(results[0].1 >= n, "the first compile sends every page");
-    for (k, (keep, sent, first, _, _)) in results.iter().enumerate().skip(1) {
-        assert!(keep, "compile {} keeps the client's pages", k + 1);
-        if k == 1 {
-            assert_eq!(*sent, 0, "an unchanged compile sends no page");
-        } else {
-            assert!(
-                *sent < n / 2 && first.is_some_and(|f| f as usize >= n / 2),
-                "compile {}: {sent} of {n} pages sent, the first {first:?}",
-                k + 1
-            );
-        }
-    }
-    // the client's pages after each compile: a compile from scratch's
-    for (k, (_, _, _, pages, text)) in results.iter().enumerate() {
-        let fresh = sub.join(format!("fresh{k}"));
-        let (proj2, out2) = project(&fresh, text);
-        let h = start_with(
-            &fresh,
-            &[
-                ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
-                ("FLASHTEX_UNICODE_INPROCESS", "0"),
-            ],
-            &fresh.join("host.err"),
-        );
+    // (the engine in the host's process, which compares its frames with
+    // the client's itself, and in processes of their own, whose frames the
+    // host compares as they arrive)
+    for inproc in ["1", "0"] {
+        let sub = dir.join(format!("run{inproc}"));
+        let (proj, out) = project(&sub, &doc);
+        let env = [
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_INPROCESS", inproc),
+        ];
+        let h = start_with(&sub, &env, &sub.join("host.err"));
         let mut c = Client::connect(&h.sock).unwrap();
-        let mut want = HeldPages { pages: vec![] };
-        // (twice: the reference's .aux settles as the measured run's did)
-        for id in [1, 2] {
-            let r = request(id, &proj2, &out2);
+        let mut held = HeldPages { pages: vec![] };
+        let mut results = vec![];
+        for (id, text) in [(1, &doc), (2, &doc), (3, &edited), (4, &doc)] {
+            let mut r = request(id, &proj, &out);
+            r.incremental = true;
+            r.buffers = vec![("main.tex".into(), text.to_string())];
             c.compile(&r).unwrap();
             let (ev, done) = events(&mut c, id);
-            want.pages.clear();
-            for e in &ev {
-                if let Event::Page(p) = e {
-                    let i = p.index as usize;
-                    if want.pages.len() <= i {
-                        want.pages.resize(i + 1, None);
-                    }
-                    want.pages[i] = Some(p.hash);
-                }
-            }
-            want.pages
-                .truncate(done.int_field("pages").unwrap() as usize);
+            assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+            let (keep, sent, first) = held.apply(&ev, &done);
+            results.push((keep, sent, first, held.pages.clone(), text.to_string()));
         }
         c.bye().unwrap();
         drop(h);
-        assert_eq!(pages, &want.pages, "compile {}: the client's pages", k + 1);
+        let n = results[0].3.len();
+        assert!(n >= 6, "{n} pages");
+        assert!(!results[0].0, "the first compile keeps nothing");
+        assert!(results[0].1 >= n, "the first compile sends every page");
+        for (k, (keep, sent, first, _, _)) in results.iter().enumerate().skip(1) {
+            assert!(keep, "{inproc}: compile {} keeps the client's pages", k + 1);
+            if k == 1 {
+                assert_eq!(*sent, 0, "{inproc}: an unchanged compile sends no page");
+            } else {
+                assert!(
+                    *sent < n / 2 && first.is_some_and(|f| f as usize >= n / 2),
+                    "{inproc}: compile {}: {sent} of {n} pages sent, the first {first:?}",
+                    k + 1
+                );
+            }
+        }
+        // the client's pages after each compile: a compile from scratch's
+        for (k, (_, _, _, pages, text)) in results.iter().enumerate() {
+            let fresh = sub.join(format!("fresh{k}"));
+            let (proj2, out2) = project(&fresh, text);
+            let h = start_with(
+                &fresh,
+                &[
+                    ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+                    ("FLASHTEX_UNICODE_INPROCESS", "0"),
+                ],
+                &fresh.join("host.err"),
+            );
+            let mut c = Client::connect(&h.sock).unwrap();
+            let mut want = HeldPages { pages: vec![] };
+            // (twice: the reference's .aux settles as the measured run's did)
+            for id in [1, 2] {
+                let r = request(id, &proj2, &out2);
+                c.compile(&r).unwrap();
+                let (ev, done) = events(&mut c, id);
+                want.pages.clear();
+                for e in &ev {
+                    if let Event::Page(p) = e {
+                        let i = p.index as usize;
+                        if want.pages.len() <= i {
+                            want.pages.resize(i + 1, None);
+                        }
+                        want.pages[i] = Some(p.hash);
+                    }
+                }
+                want.pages
+                    .truncate(done.int_field("pages").unwrap() as usize);
+            }
+            c.bye().unwrap();
+            drop(h);
+            assert_eq!(
+                pages,
+                &want.pages,
+                "{inproc}: compile {}: the client's pages",
+                k + 1
+            );
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
