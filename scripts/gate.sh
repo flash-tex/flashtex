@@ -101,8 +101,12 @@ step() {
   if (( LIST_ONLY )); then record "$name" PLAN 0 "$*"; return 0; fi
   bold "==> $name"
   local t0=$SECONDS rc=0
+  # errexit inside the step (`set -e` again): with the `set +e` inherited, a
+  # step's status was its LAST command's, so a failure earlier in a
+  # multi-command step (workspace_profile's build, gate_parity_fixtures'
+  # engine build) passed it unless the last command failed too.
   set +e
-  ( "$@" )
+  ( set -e; "$@" )
   rc=$?
   set -e
   local el=$(( SECONDS - t0 ))

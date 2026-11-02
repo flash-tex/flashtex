@@ -105,7 +105,15 @@ declare -a T_NAMES=() T_SECS=()
 timed() {
   local name="$1"; shift
   local t0=$SECONDS rc=0
-  ( "$@" ) || rc=$?
+  # `set -e` inside, and NOT as the left side of `||`: there bash ignores
+  # errexit in the whole subshell, so a step's status was its LAST command's
+  # and a failure before it (a `cargo build` that failed, then a stale
+  # cached binary copied) passed the step; the engine tests' shards passed
+  # with FAILED tests in their logs from 2026-10-05 to #2085 (lane GATES).
+  set +e
+  ( set -e; "$@" )
+  rc=$?
+  set -e
   local dt=$(( SECONDS - t0 ))
   echo "TIME $name ${dt}s rc=$rc"
   T_NAMES+=("$name$([[ $rc -eq 0 ]] || echo ' (FAILED)')"); T_SECS+=("$dt")
