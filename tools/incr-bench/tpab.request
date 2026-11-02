@@ -1,2 +1,4 @@
-REFS='main'
-TPAB_CLEANUP='1'
+REFS='agent/kabir-claude-beamerframe/cov-fbc0cce50 agent/kabir-claude-beamerframe/cov-8709a9801 agent/kabir-claude-beamerframe/cov-93fe506f9'
+TPAB_DOCS='none'
+TPAB_REPS='1'
+TPAB_PERF='0'
