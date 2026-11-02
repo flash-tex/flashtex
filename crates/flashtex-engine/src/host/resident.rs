@@ -2153,7 +2153,8 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         return Ok(());
     }
     // (the root itself may be a link, `~/thesis -> Dropbox`: followed once
-    // and pinned; every component below it is walked no-follow)
+    // and pinned; every component below it is walked from there, a link
+    // only where its target stays below the root: `server::open_confined`)
     let root_fd = sys::open_root(root).map_err(|e| format!("root {}: {e}", root.display()))?;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
@@ -2172,20 +2173,44 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
             flashtex_runtime::statsig::racy_ns(),
         ))
     };
-    // The file's bytes now: the host's copy while the file is as it left
-    // it, else read. (The copy may be shared with `Doc::texts`.)
-    let current = |path: &Path, written: &mut Written| -> std::io::Result<Arc<Vec<u8>>> {
-        let rel = path.strip_prefix(root).expect("target is under root");
-        let mut f = server::open_confined(&root_fd, rel, sys::O_RDONLY)?;
+    // The file `rel`, opened once for its read and its write (one
+    // descriptor: the bytes an edit is made from are the file's it is
+    // written to, whatever is renamed over the name meanwhile); `create`,
+    // for a buffer. Read-only where the file may not be written (`EACCES`):
+    // a buffer that changes nothing is still taken, a write fails.
+    let open = |rel: &Path, create: bool| -> std::io::Result<std::fs::File> {
+        #[cfg(test)]
+        BEFORE_WRITE_OPEN.with(|hook| {
+            let call = hook.borrow_mut().take();
+            if let Some(call) = call {
+                call();
+            }
+        });
+        let flags = sys::O_RDWR | if create { sys::O_CREAT } else { 0 };
+        let f = match server::open_confined(&root_fd, rel, flags) {
+            Err(e) if e.raw_os_error() == Some(libc::EACCES) => {
+                server::open_confined(&root_fd, rel, sys::O_RDONLY)?
+            }
+            r => r?,
+        };
         if !f.metadata()?.is_file() {
             return Err(std::io::Error::other("not a regular file"));
         }
+        Ok(f)
+    };
+    // The bytes of `f` (the file at `path`) now: the host's copy while the
+    // file is as it left it, else read. (The copy may be shared with
+    // `Doc::texts`.)
+    let current = |f: &mut std::fs::File,
+                   path: &Path,
+                   written: &mut Written|
+     -> std::io::Result<Arc<Vec<u8>>> {
         if let Some((s, d)) = written.remove(path) {
             // (the host's own last write, still in place: exact fields,
             // racy or not -- the file is the host's copy of the editor's
             // text, which nothing else writes, and a racy test here would
             // read the typed file back at every keystroke)
-            if sig(&f).is_some_and(|n| n.same_fields(&s)) {
+            if sig(f).is_some_and(|n| n.same_fields(&s)) {
                 return Ok(d);
             }
         }
@@ -2193,98 +2218,91 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         f.read_to_end(&mut data)?;
         Ok(Arc::new(data))
     };
-    // Write `data` to `path`, whose bytes before `from` are already these
-    // and whose length is `old` (when known). The length is set only where
-    // the write leaves it wrong: a file that grows grows by the write (lane
-    // T7-MARGIN). A file that gets shorter is cut at the 16 KB boundary at
-    // or before its new end, and written from there (or from `from`, if
-    // that comes first): on the M5 Pro's APFS, cutting a file to a length
-    // inside a block blocked for 0.33-0.83 ms (`ftruncate`, every deleted
-    // letter's keystroke), and the restore after it was 0.2 ms slower; to a
-    // 16 KB boundary it took 0.04 ms (lane T7-HEADROOM, Mac run 2).
-    let write_from =
-        |path: &Path, data: Vec<u8>, from: usize, old: Option<usize>, written: &mut Written| {
-            // (each step's time, for the latency accounting: `APPLY_STEPS`)
-            let mut steps = [0u64; 5];
-            let mut t = Instant::now();
-            let mut lap = |i: usize, t: &mut Instant| {
-                steps[i] += t.elapsed().as_micros() as u64;
-                *t = Instant::now();
-            };
-            let rel = path.strip_prefix(root).expect("target is under root");
-            #[cfg(test)]
-            BEFORE_WRITE_OPEN.with(|hook| {
-                let call = hook.borrow_mut().take();
-                if let Some(call) = call {
-                    call();
-                }
-            });
-            let r =
-                server::open_confined(&root_fd, rel, sys::O_WRONLY | sys::O_CREAT).and_then(|f| {
-                    if !f.metadata()?.is_file() {
-                        return Err(std::io::Error::other("not a regular file"));
-                    }
-                    lap(0, &mut t);
-                    let n = data.len() as u64;
-                    let r = match old {
-                        Some(o) if o <= data.len() => {
-                            crate::os::write_all_at(&f, &data[from..], from as u64)
-                        }
-                        Some(_) => {
-                            let to = data.len() & !(CUT_ALIGN - 1);
-                            f.set_len(to as u64)?;
-                            lap(2, &mut t);
-                            let at = from.min(to);
-                            crate::os::write_all_at(&f, &data[at..], at as u64)
-                        }
-                        None => {
-                            f.set_len(n)?;
-                            lap(2, &mut t);
-                            crate::os::write_all_at(&f, &data[from..], from as u64)
-                        }
-                    };
-                    lap(1, &mut t);
-                    r?;
-                    let s = sig(&f);
-                    drop(f);
-                    lap(3, &mut t);
-                    Ok(s)
-                });
-            let s = r.map_err(|e| format!("{}: {e}", path.display()))?;
-            let held = s.map(|s| (s, Arc::new(data)));
-            lap(4, &mut t);
-            APPLY_STEPS.with(|a| {
-                let mut v = a.get();
-                for (x, y) in v.iter_mut().zip(steps) {
-                    *x += y;
-                }
-                a.set(v);
-            });
-            crate::system::note_known_content(path, held.clone());
-            if let Some(h) = held {
-                written.insert(path.to_path_buf(), h);
-            }
-            Ok::<(), String>(())
+    // Write `data` to `f` (the file at `path`), whose bytes before `from`
+    // are already these and whose length is `old` (when known). The length
+    // is set only where the write leaves it wrong: a file that grows grows
+    // by the write (lane T7-MARGIN). A file that gets shorter is cut at the
+    // 16 KB boundary at or before its new end, and written from there (or
+    // from `from`, if that comes first): on the M5 Pro's APFS, cutting a
+    // file to a length inside a block blocked for 0.33-0.83 ms
+    // (`ftruncate`, every deleted letter's keystroke), and the restore after
+    // it was 0.2 ms slower; to a 16 KB boundary it took 0.04 ms (lane
+    // T7-HEADROOM, Mac run 2).
+    let write_from = |f: std::fs::File,
+                      path: &Path,
+                      data: Vec<u8>,
+                      from: usize,
+                      old: Option<usize>,
+                      written: &mut Written| {
+        // (each step's time, for the latency accounting: `APPLY_STEPS`)
+        let mut steps = [0u64; 5];
+        let mut t = Instant::now();
+        let mut lap = |i: usize, t: &mut Instant| {
+            steps[i] += t.elapsed().as_micros() as u64;
+            *t = Instant::now();
         };
+        lap(0, &mut t);
+        let r = (|| {
+            let n = data.len() as u64;
+            let r = match old {
+                Some(o) if o <= data.len() => {
+                    crate::os::write_all_at(&f, &data[from..], from as u64)
+                }
+                Some(_) => {
+                    let to = data.len() & !(CUT_ALIGN - 1);
+                    f.set_len(to as u64)?;
+                    lap(2, &mut t);
+                    let at = from.min(to);
+                    crate::os::write_all_at(&f, &data[at..], at as u64)
+                }
+                None => {
+                    f.set_len(n)?;
+                    lap(2, &mut t);
+                    crate::os::write_all_at(&f, &data[from..], from as u64)
+                }
+            };
+            lap(1, &mut t);
+            r?;
+            let s = sig(&f);
+            drop(f);
+            lap(3, &mut t);
+            Ok::<_, std::io::Error>(s)
+        })();
+        let s = r.map_err(|e| format!("{}: {e}", path.display()))?;
+        let held = s.map(|s| (s, Arc::new(data)));
+        lap(4, &mut t);
+        APPLY_STEPS.with(|a| {
+            let mut v = a.get();
+            for (x, y) in v.iter_mut().zip(steps) {
+                *x += y;
+            }
+            a.set(v);
+        });
+        crate::system::note_known_content(path, held.clone());
+        if let Some(h) = held {
+            written.insert(path.to_path_buf(), h);
+        }
+        Ok::<(), String>(())
+    };
     for b in req.get("buffers").and_then(Json::as_array).unwrap_or(&[]) {
         let p = b.str_field("path").ok_or("a buffer needs path")?;
         let text = b.str_field("text").ok_or("a buffer needs text")?;
         let path = target(p)?;
-        match current(&path, written) {
+        let mut f = open(Path::new(p), true).map_err(|e| format!("{}: {e}", path.display()))?;
+        match current(&mut f, &path, written) {
             Ok(d) if d.as_slice() == text.as_bytes() => {
-                let f = server::open_confined(&root_fd, Path::new(p), sys::O_RDONLY)
-                    .map_err(|e| format!("{p}: {e}"))?;
                 if let Some(s) = sig(&f) {
                     written.insert(path, (s, d));
                 }
             }
-            _ => write_from(&path, text.as_bytes().to_vec(), 0, None, written)?,
+            _ => write_from(f, &path, text.as_bytes().to_vec(), 0, None, written)?,
         }
     }
     for e in req.get("edits").and_then(Json::as_array).unwrap_or(&[]) {
         let p = e.str_field("path").ok_or("an edit needs path")?;
         let path = target(p)?;
-        let d = current(&path, written).map_err(|x| format!("{p}: {x}"))?;
+        let mut f = open(Path::new(p), false).map_err(|x| format!("{p}: {x}"))?;
+        let d = current(&mut f, &path, written).map_err(|x| format!("{p}: {x}"))?;
         let at = e.int_field("offset").ok_or("an edit needs offset")?;
         let del = e.int_field("delete").unwrap_or(0);
         let ins = e.str_field("insert").unwrap_or("");
@@ -2295,8 +2313,6 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         let old = d.len();
         if d[at..at + del] == *ins.as_bytes() {
             // nothing changes (the file is left alone, as before)
-            let f = server::open_confined(&root_fd, Path::new(p), sys::O_RDONLY)
-                .map_err(|e| format!("{p}: {e}"))?;
             if let Some(s) = sig(&f) {
                 written.insert(path, (s, d));
             }
@@ -2328,7 +2344,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 (n, Some(d))
             }
         };
-        write_from(&path, d, at, Some(old), written)?;
+        write_from(f, &path, d, at, Some(old), written)?;
         if let (true, Some(p)) = (edited, &pre) {
             crate::system::note_known_edit(&path, p.clone(), at, del, ins.len());
         }
@@ -2981,6 +2997,134 @@ mod tests {
         assert!(super::apply_changes(&link, &below, &mut written).is_err());
         assert_eq!(std::fs::read(away.join("x.tex")).unwrap(), b"outside");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The race the link-following walk adds: a link within the project
+    /// retargeted (renamed over, atomically) from a directory inside to one
+    /// outside, by `..` and absolute by turns, while buffers are written
+    /// through it, new files whose names exist outside. Nothing outside is
+    /// written, removed or made; the writes that go through land inside.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_link_retargeted_out_of_the_project_while_buffers_are_written_leaves_the_outside_alone() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let base = std::env::temp_dir().join(format!("ftx-retarget-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(root.join("shared")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        const N: usize = 2000;
+        for i in 0..N {
+            std::fs::write(away.join(format!("f{i}.tex")), "outside").unwrap();
+        }
+        std::os::unix::fs::symlink("shared", root.join("refs")).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let swapper = std::thread::spawn({
+            let (root, away, stop) = (root.clone(), away.clone(), stop.clone());
+            move || {
+                let targets = [
+                    std::path::PathBuf::from("../away"),
+                    std::path::PathBuf::from("shared"),
+                    away.clone(),
+                    std::path::PathBuf::from("shared"),
+                ];
+                let (tmp, at) = (root.join("refs.tmp"), root.join("refs"));
+                let mut k = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = std::fs::remove_file(&tmp);
+                    let _ = std::os::unix::fs::symlink(&targets[k % 4], &tmp);
+                    let _ = std::fs::rename(&tmp, &at);
+                    k += 1;
+                    std::thread::yield_now();
+                }
+            }
+        });
+        let mut written = super::Written::new();
+        let mut ok = 0;
+        for i in 0..N {
+            let req = obj([(
+                "buffers",
+                Json::Arr(vec![obj([
+                    ("path", js(format!("refs/f{i}.tex").as_str())),
+                    ("text", js("buffer")),
+                ])]),
+            )]);
+            if super::apply_changes(&root, &req, &mut written).is_ok() {
+                ok += 1;
+                assert!(root.join(format!("shared/f{i}.tex")).is_file(), "f{i}");
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        swapper.join().unwrap();
+        let harmed = (0..N)
+            .filter(|i| {
+                std::fs::read(away.join(format!("f{i}.tex"))).map_or(true, |b| b != b"outside")
+            })
+            .count();
+        let outside = std::fs::read_dir(&away).unwrap().count();
+        let _ = std::fs::remove_dir_all(&base);
+        eprintln!("retarget race: {ok} buffers written inside, {harmed} outside files harmed");
+        assert!(
+            harmed == 0 && outside == N,
+            "{harmed} harmed, {outside} files outside"
+        );
+        assert!(ok > 0, "no buffer went through");
+    }
+
+    /// A shared `.bib` linked within the project (`refs.bib ->
+    /// shared/refs.bib`) takes buffers and edits through the link; a file
+    /// the user may not write takes a buffer that changes nothing and
+    /// refuses one that does, the file left as it was.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_link_within_the_project_and_a_read_only_file() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = std::env::temp_dir().join(format!("ftx-inlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("shared")).unwrap();
+        std::fs::write(root.join("shared/refs.bib"), "@misc{a}\n").unwrap();
+        symlink("shared/refs.bib", root.join("refs.bib")).unwrap();
+        let buf = |p: &str, t: &str| {
+            obj([(
+                "buffers",
+                Json::Arr(vec![obj([("path", js(p)), ("text", js(t))])]),
+            )])
+        };
+        let mut written = super::Written::new();
+        super::apply_changes(&root, &buf("refs.bib", "@misc{b}\n"), &mut written).unwrap();
+        let edit = obj([(
+            "edits",
+            Json::Arr(vec![obj([
+                ("path", js("refs.bib")),
+                ("offset", Json::Int(7)),
+                ("delete", Json::Int(0)),
+                ("insert", js("c")),
+            ])]),
+        )]);
+        super::apply_changes(&root, &edit, &mut written).unwrap();
+        assert_eq!(
+            std::fs::read(root.join("shared/refs.bib")).unwrap(),
+            b"@misc{bc}\n"
+        );
+        assert!(std::fs::symlink_metadata(root.join("refs.bib"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let ro = root.join("ro.tex");
+        std::fs::write(&ro, "fixed\n").unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o444)).unwrap();
+        super::apply_changes(&root, &buf("ro.tex", "fixed\n"), &mut written).unwrap();
+        // (root may write anything: the refusal only for others)
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(
+                super::apply_changes(&root, &buf("ro.tex", "changed\n"), &mut written).is_err()
+            );
+        }
+        assert_eq!(std::fs::read(&ro).unwrap(), b"fixed\n");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Hosts without a rooted walk must refuse edits instead of relying on
