@@ -2608,6 +2608,9 @@ impl Globals {
                     } else {
                         {
                             self.end_token_list();
+                            if self.bm_rec_on {
+                                self.flashtex_bm_popped();
+                            }
                             { __goto_1 = 0; continue 'l_dispatch_1; }
                         }
                     }

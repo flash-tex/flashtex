@@ -142,7 +142,7 @@ final class PadModel: ObservableObject {
     /// with the three the Mac's converter is best at. Persisted per iPad.
     static let defaultInstructions = ["Convert to TikZ", "Transcribe as LaTeX", "This is a matrix"]
     static let recentInstructionsKey = "flashtexpad.recentInstructions"
-    static let maxRecentInstructions = 6
+    nonisolated static let maxRecentInstructions = 6
     @Published var recentInstructions: [String] = {
         let saved = UserDefaults.standard.stringArray(forKey: PadModel.recentInstructionsKey) ?? []
         return PadModel.merged(recent: saved, defaults: PadModel.defaultInstructions)
@@ -679,7 +679,7 @@ final class PadModel: ObservableObject {
     }
 
     func forgetPairing() {
-        if let p = pairedMac { try? link.store?.remove(fingerprint: p.fingerprint) }
+        if let p = pairedMac { _ = try? link.store?.remove(fingerprint: p.fingerprint) }
         link.disconnect()
         pairedMac = nil
         linkStatus = "not paired"
