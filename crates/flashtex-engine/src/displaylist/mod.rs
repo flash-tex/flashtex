@@ -1724,6 +1724,7 @@ enum Query {
     Width(u32, u8),
     Advance(u32, u8),
     FontProblem(u32),
+    Typeset(u32, u8),
 }
 
 #[derive(Clone, PartialEq)]
@@ -1731,6 +1732,7 @@ enum Answer {
     Width(Option<i64>),
     Advance(Option<(i64, i64)>),
     FontProblem(Option<String>),
+    Typeset(bool),
 }
 
 impl Query {
@@ -1740,6 +1742,7 @@ impl Query {
             Query::Width(f, c) => Answer::Width(env.width(f, c)),
             Query::Advance(f, c) => Answer::Advance(env.advance(f, c)),
             Query::FontProblem(f) => Answer::FontProblem(env.font_problem(f)),
+            Query::Typeset(f, c) => Answer::Typeset(env.typeset(f, c)),
         }
     }
 }
@@ -1776,6 +1779,15 @@ impl interp::Env for Recording<'_> {
         }
         let a = self.env.font_problem(font);
         self.queries.insert(q, Answer::FontProblem(a.clone()));
+        a
+    }
+    fn typeset(&mut self, font: u32, code: u8) -> bool {
+        let q = Query::Typeset(font, code);
+        if let Some(Answer::Typeset(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.typeset(font, code);
+        self.queries.insert(q, Answer::Typeset(a));
         a
     }
     fn resname_prefix(&self) -> &[u8] {
@@ -1859,6 +1871,21 @@ impl interp::Env for WidthEnv<'_> {
     fn font_problem(&mut self, font: u32) -> Option<String> {
         let key = self.g.dl_font_key(font);
         with(|st| st.fonts.get(&key).and_then(|f| f.problem.clone())).flatten()
+    }
+    fn typeset(&mut self, font: u32, code: u8) -> bool {
+        // pdfTeX marks a character on the font that typeset it; a font
+        // sharing another's PDF object (`pdf_font_num` < 0) has its marks
+        // merged into that font's only when the fonts are written (§801).
+        let g = &mut *self.g;
+        let f = font as i32;
+        if f <= 0 || f > g.font_ptr {
+            return true;
+        }
+        if g.pdf_char_marked(f, code as i32) {
+            return true;
+        }
+        (1..=g.font_ptr)
+            .any(|k| g.pdf_font_num[k as usize] == -f && g.pdf_char_marked(k, code as i32))
     }
     fn resname_prefix(&self) -> &[u8] {
         &self.prefix

@@ -379,14 +379,29 @@ func pdfColored(_ img: CGImage, _ cs: DL3JSON) -> CGImage? {
 
 /// The decoded samples in the PDF's device colour space, as pdfTeX embeds
 /// PNG/JPEG data (`/DeviceGray`, `/DeviceRGB`, `/DeviceCMYK`; no gamma, no
-/// profile), not interpolated (no `/Interpolate`).
+/// profile), not interpolated (no `/Interpolate`). A palette image keeps
+/// its palette over the device space: pdfTeX writes `/Indexed /DeviceRGB`
+/// with the PLTE bytes, while ImageIO bases the palette on sRGB, or on
+/// linear sRGB for a PNG with gAMA 1.0, which pdfTeX ignores.
 func deviceSamples(_ img: CGImage) -> CGImage {
+    func device(_ model: CGColorSpaceModel?) -> CGColorSpace? {
+        switch model {
+        case .monochrome?: CGColorSpaceCreateDeviceGray()
+        case .rgb?: CGColorSpaceCreateDeviceRGB()
+        case .cmyk?: CGColorSpaceCreateDeviceCMYK()
+        default: nil
+        }
+    }
     let space: CGColorSpace
-    switch img.colorSpace?.model {
-    case .monochrome?: space = CGColorSpaceCreateDeviceGray()
-    case .rgb?: space = CGColorSpaceCreateDeviceRGB()
-    case .cmyk?: space = CGColorSpaceCreateDeviceCMYK()
-    default: return img
+    if img.colorSpace?.model == .indexed {
+        guard let src = img.colorSpace, let base = device(src.baseColorSpace?.model), let table = src.colorTable,
+              table.count >= base.numberOfComponents, table.count % base.numberOfComponents == 0,
+              let ix = CGColorSpace(indexedBaseSpace: base, last: table.count / base.numberOfComponents - 1, colorTable: table)
+        else { return img }
+        space = ix
+    } else {
+        guard let d = device(img.colorSpace?.model) else { return img }
+        space = d
     }
     guard let provider = img.dataProvider,
           let out = CGImage(width: img.width, height: img.height, bitsPerComponent: img.bitsPerComponent, bitsPerPixel: img.bitsPerPixel,

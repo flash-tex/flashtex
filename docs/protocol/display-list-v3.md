@@ -1468,6 +1468,15 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
   INCOMPLETE, not expressed (2 of the 82 parity fixtures use `gs`).
+- The LaTeX host also flags INCOMPLETE (lane RENDER-AUDIT,
+  `fixtures/preview-probes`): a form drawn in a graphics state other than
+  a new page's (a PDF form inherits the colour, text render mode and pen it
+  is drawn in, a `FORM` starts from §4.3's state; pdfTeX writes no colour
+  at a form's start); stroked text (modes 1, 2) whose pen is not a new
+  graphics state's or whose CTM scales or turns it, for a client without
+  `line-state` (§11.4); and a glyph a `\pdfliteral` shows in a code TeX has
+  not typeset in that font (it is not in the PDF's font subset, and past
+  `/LastChar` its width is 0).
 - TrueType, OpenType and Type 3 (PK) fonts reach a display list (§5.1,
   §5.1.1) for a client that asks for them; a Type 3 font from a `.pgc`
   file, and a PK font on the compile that first makes its PK file, are
