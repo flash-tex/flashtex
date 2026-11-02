@@ -172,6 +172,17 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
         BridgeError::new("invalid_proposal", message)
     }
 
+    // TeX's `^^` notation (two superscript characters, then two lowercase
+    // hex digits or any one character) is reduced while input is read,
+    // before control sequence names are scanned: `^^5cinput` and
+    // `\in^^70ut` are both `\input` to the engine, so the denylist below
+    // would be blind to them. A transcribed snippet never needs it.
+    if latex.contains("^^") {
+        return Err(invalid(
+            "LaTeX uses ^^ character notation, which can spell any control sequence and is not permitted in an inserted snippet",
+        ));
+    }
+
     let chars: Vec<char> = latex.chars().collect();
     let mut advisories = Vec::new();
     let mut seen_soft_words = std::collections::BTreeSet::new();

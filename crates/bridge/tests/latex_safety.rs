@@ -64,6 +64,26 @@ fn csname_obfuscation_is_rejected() {
 }
 
 #[test]
+fn caret_notation_cannot_spell_a_denied_control_word() {
+    // TeX reduces `^^5c` to `\` and `^^69` to `i` while it reads input,
+    // before a control sequence name is scanned, so these are `\input`,
+    // `\immediate\write18` and `\end{document}` to the engine (pdflatex
+    // runs the `\write` of the second spelling) although the denylist
+    // never sees a backslash followed by the denied word.
+    rejected(r"^^5cinput{/etc/passwd}");
+    rejected(r"^^5cimmediate^^5cwr^^69te18{touch /tmp/pwned}");
+    rejected(r"\in^^70ut{/etc/passwd}");
+    rejected(r"\end{docu^^6dent}");
+    // The one-character form (`^^` and any character, its code ± 64:
+    // `^^I` is a tab) and a `^^` in a comment are refused as well; no
+    // transcription needs two adjacent superscript characters.
+    rejected(r"$x^^I$");
+    rejected("% ^^5cinput\n x");
+    // Ordinary superscripts are untouched.
+    accepted(r"$x^2 + y^{2^k} + {}^1_2 + z^{^2}$");
+}
+
+#[test]
 fn unbalanced_braces_and_environments_are_rejected() {
     rejected("{unbalanced open");
     rejected("unbalanced close}");
