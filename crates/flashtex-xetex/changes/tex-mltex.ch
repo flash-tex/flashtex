@@ -1,4 +1,4 @@
-% changes/mltex.ch -- tex.ch's ML\TeX character access, through which
+% changes/tex-mltex.ch -- tex.ch's ML\TeX character access, through which
 % xetexdir/xetex.ch applies a TFM font's TECkit mapping.
 %
 % TeX Live's tex.ch makes |char_info(f)(c)| read the information of the
@@ -22,7 +22,19 @@
 % |hlist_out| outputs a character only if it exists, as tex.ch's code does
 % without ML\TeX. Applied after xetex-web2c.ch, as xetex.ch follows tex.ch.
 %
-% GPL-2.0-or-later, like the rest of crates/flashtex-xetex.
+% The hunks below are tex.ch's ML\TeX\ code, changed (the mapping), so this
+% file is not named `mltex.ch': ML\TeX's terms, from tex.ch's header, are
+% "The MLTeX changes are copyrighted so that we have some chance to forbid
+% unauthorized copies; we explicitly authorize copying of correct MLTeX
+% implementations, and not of incorrect ones! ... Copying of this file is
+% authorized only if either (1) you make absolutely no changes to your
+% copy, including name, or (2) if you do make changes, you name it to
+% something other than "mltex.ch", "char_sub.ch", or "charsub.ch"."
+% It is not a complete ML\TeX: the substitutions are left out, as above.
+%
+% MLTeX is copyright (C) 1990-92 by Michael J. Ferguson; all rights reserved.
+% MLTeX Version 2.2 is copyright (C) 1995 by B. Raichle; all rights reserved.
+% The rest of crates/flashtex-xetex is GPL-2.0-or-later.
 
 @x xetex.web l.13016 - tex.ch [30.554]: |char_info| reads the effective character
 @d char_info_end(#)==#].qqqq
