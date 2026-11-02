@@ -359,7 +359,7 @@ jobs:
           export FLASHTEX_CACHE_DIR="$RUNNER_TEMP/flashtex-cache"
           mkdir -p "$RUNNER_TEMP/reopen"
           if [[ ! -f tools/incr-bench/unicode_reopen.py ]]; then
-            echo "no unicode_reopen.py at this ref" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+            echo "tools/incr-bench/unicode_reopen.py is missing at this ref" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1
           fi
           python3 tools/incr-bench/unicode_reopen.py "$RUNNER_TEMP/bin/flashtex-host-unicode" \
             tools/incr-bench/unicode-corpus/*.tex tools/xetex-pdfparity/cases/*.tex \
