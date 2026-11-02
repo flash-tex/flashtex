@@ -18,7 +18,7 @@
 //!   `save PATH` (persist S₀), `quit`.
 //! * `iserve` likewise for the incremental engine (`crate::incr`), with
 //!   `compile [PAGE]`, `compile-interrupt PASS PAGES [NTH]`,
-//!   `compile-interrupt-at SECONDS`, `finish`, `save`,
+//!   `compile-interrupt-at SECONDS`, `redensify PAGE`, `finish`, `save`,
 //!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
 //!   compile's `diag-v1` messages, `src/host/diag.rs`).
 //! * `bench` compiles once cold, then `--reps N` times after editing
@@ -328,6 +328,15 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
             match n.trim().parse::<usize>() {
                 Ok(n) => s.compile(Some(n)).map(|r| r.json()),
                 Err(_) => Err(format!("bad page {n}")),
+            }
+        } else if let Some(n) = line.strip_prefix("redensify ") {
+            // the client shows page PAGE (0-based; the socket's VIEWPORT,
+            // `Session::redensify`): `null` when there is nothing to do
+            match n.trim().parse::<usize>() {
+                Ok(n) => s
+                    .redensify(n)
+                    .map(|r| r.map_or_else(|| "null".to_string(), |r| r.json())),
+                Err(_) => Err(format!("redensify PAGE, not {n}")),
             }
         } else if line == "finish" {
             s.finish().map(|r| r.json())

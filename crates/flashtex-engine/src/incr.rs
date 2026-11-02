@@ -3666,6 +3666,9 @@ pub struct Session {
     /// restored run's differ from: the next pass restarts there at the
     /// latest, so that they are shipped again (a display holds them).
     reemit_from: Option<CheckpointId>,
+    /// The next run's convergence tests start at this page count, not
+    /// before (`redensify`: its run typesets the shown page and the next).
+    tests_from: Option<usize>,
     /// `arm_window`'s run from `\document`'s start: S₀, the key's cover,
     /// the pass's flag and the anchor's bookkeeping, put back when its
     /// comparison at the anchor holds.
@@ -3825,6 +3828,7 @@ impl Session {
             no_tests: false,
             before_pass: None,
             reemit_from: None,
+            tests_from: None,
             anchor_saved: None,
             midline_refill: None,
             stale_midline: vec![],
@@ -4779,26 +4783,38 @@ impl Session {
     }
 
     /// The client shows page `page` (0-based; `VIEWPORT`, lane MEMORY): if
-    /// retention kept no page checkpoint right before it (far from the last
-    /// edit, one in `Options::far`), run again from the kept one before it,
-    /// with nothing changed, so that the checkpoints near it are taken (the
-    /// cursor goes there) and a key there restarts close by. The run
-    /// converges at the old run's next kept checkpoint and jumps to its end,
-    /// as an edit's run does; its pages are the old ones. `None`: nothing to
-    /// do. The caller's `set_preempt` stops it for newer work, and the next
-    /// compile keeps what it typeset.
+    /// it is more than `Options::dense` pages from the retention cursor,
+    /// where retention keeps a page checkpoint only now and then
+    /// (`Options::far`) and no segment checkpoints, run again with nothing
+    /// changed from a kept page checkpoint `REDENSIFY_BACK` pages or more
+    /// before it, through it and the page after (no convergence test
+    /// before), so that their checkpoints, segment ones too, are taken (the
+    /// cursor goes there) and a key there restarts close by. The run then
+    /// converges with the old one and jumps to its end, as an edit's run
+    /// does; its pages are the old ones. `None`: nothing to do. The
+    /// caller's `set_preempt` stops it for newer work, and the next compile
+    /// keeps what it typeset.
     pub fn redensify(&mut self, page: usize) -> Result<Option<Report>, String> {
-        if self.paused.is_some() || self.g.is_none() || page == 0 || page > self.pages.len() {
+        if self.paused.is_some() || self.g.is_none() || page >= self.pages.len() {
             return Ok(None);
         }
-        if self.pages[page - 1].ckpt.is_some() {
+        if page.abs_diff(self.cursor) <= self.opts.dense || page <= REDENSIFY_BACK {
             return Ok(None);
         }
-        let Some(ck) = self.pages[..page - 1].iter().rev().find_map(|p| p.ckpt) else {
+        // (`pages[k].ckpt` is taken after page `k`: the start of `k + 1`)
+        let Some(ck) = self.pages[..page - REDENSIFY_BACK]
+            .iter()
+            .rev()
+            .find_map(|p| p.ckpt)
+        else {
             return Ok(None);
         };
         self.reemit_from = Some(ck);
-        self.compile(None).map(Some)
+        self.tests_from = Some(page + 2);
+        let r = self.compile(None);
+        // (never the next edit's: a run that returned before its tests)
+        self.tests_from = None;
+        r.map(Some)
     }
 
     /// Compile the document as it is now. With `stop_at`, stop once that
@@ -7091,6 +7107,9 @@ impl Session {
             .collect();
         obs.old_reads_end = old_reads_end;
         obs.converge = self.opts.converge && !std::mem::take(&mut self.no_tests);
+        if let Some(j) = self.tests_from.take() {
+            obs.next_test = j;
+        }
         obs.pdf = rec.files.iter().find_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
             _ => None,
@@ -8331,6 +8350,12 @@ fn consumed_nothing_changed(
 /// Pages around the cursor whose checkpoints are all kept, by default
 /// (`Options::dense`; Balanced's).
 pub const DEFAULT_DENSE: usize = 16;
+
+/// Pages before the shown one that `Session::redensify`'s run starts at
+/// least (a key's restart point is often a page or two before its page:
+/// TeX takes the checkpoint after a page once it has read on into the
+/// paragraph that breaks it).
+const REDENSIFY_BACK: usize = 2;
 
 /// Segment checkpoints at least this far apart by default (seconds of
 /// engine time). Measured on the benchmark documents
