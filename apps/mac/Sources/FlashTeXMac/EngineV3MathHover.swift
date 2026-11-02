@@ -59,7 +59,9 @@ extension EngineV3Session {
               view.pageShowsCurrent(page),
               let size = pageSize(page), let image = view.installedImage(page), size.width > 0 else { return nil }
         let pad = MathPreviewView.cropPadding
-        let rect = box.insetBy(dx: -pad, dy: -pad).intersection(CGRect(origin: .zero, size: size))
+        // The bitmap shows the page turned by its `/Rotate`: so does the crop.
+        let shown = pages[page]?.shownRect(box) ?? box
+        let rect = shown.insetBy(dx: -pad, dy: -pad).intersection(CGRect(origin: .zero, size: size))
         let ppp = Double(image.width) / Double(size.width)
         let pixel = CGRect(x: rect.minX * ppp, y: rect.minY * ppp, width: rect.width * ppp, height: rect.height * ppp).integral
             .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
