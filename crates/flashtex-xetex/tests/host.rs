@@ -324,7 +324,8 @@ fn a_host_whose_engine_thread_dies_exits() {
     let _ = std::fs::remove_dir_all(&dir);
     // (the first compile is two runs, the second pass for its `.aux`; the
     // third run is the second compile's)
-    for what in ["run:3"] {
+    {
+        let what = "run:3";
         let sub = dir.join(what.replace(':', "-"));
         let (proj, out) = project(&sub, DOC);
         let cache = sub.join("s0");
