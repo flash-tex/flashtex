@@ -151,6 +151,21 @@ pub fn journal_mark() -> (u64, Vec<(i32, i32)>, bool) {
     })
 }
 
+/// For BOX-MEMO's spans (docs/design/engine-v2/BOX-MEMO.md §15.4): the
+/// journal entries made since `mark` (a [`journal_mark`]'s count), when no
+/// checkpoint's record has taken any of them since.
+pub fn journal_since(mark: u64) -> Option<Vec<LineRead>> {
+    with(|s| {
+        let from = mark.checked_sub(s.taken)? as usize;
+        s.events.get(from..).map(<[LineRead]>::to_vec)
+    })
+}
+
+/// A span's replay makes the journal entries its normal path made.
+pub fn journal_push(r: LineRead) {
+    with(|s| s.events.push(r));
+}
+
 /// Put a checkpoint's line record back: nothing has been read since it.
 pub fn restore(g: &mut Globals, r: &Rec) {
     with(|s| {

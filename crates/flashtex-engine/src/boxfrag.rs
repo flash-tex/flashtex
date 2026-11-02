@@ -29,6 +29,11 @@ use std::collections::HashMap;
 
 const SYNCTEX_FIELDS: i32 = 2;
 
+/// Of a copied box node's words 0 to 6, the bits a `Node::Copy` takes
+/// from the copy made again: the link (word 0's low half) and the list
+/// pointer (word 5's).
+const COPY_KEEP: [u64; 7] = [0xffff_ffff, 0, 0, 0, 0, 0xffff_ffff, 0];
+
 /// A glue specification the fragment points at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Spec {
@@ -93,6 +98,13 @@ pub enum Node {
     },
     /// The box moved out of the call's `hole`-th foreign register.
     Hole(usize),
+    /// A span's `\copy` of its `i`-th copied foreign register (§15.6):
+    /// rebuilt by `copy_node_list` of the register's box, as the normal
+    /// path made it (its nodes keep that box's SyncTeX tags), then the box
+    /// node's own words as the call left them (`box_end`'s shift for
+    /// `\raise`, a dimension assigned): words 0 to 6 but the link and the
+    /// list pointer ([`COPY_KEEP`]).
+    Copy(usize, [u64; 7]),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -318,6 +330,12 @@ pub fn frag_diff(a: &Frag, b: &Frag) -> Option<String> {
 struct Ser<'a> {
     g: &'a Globals,
     holes: &'a [i32],
+    /// a span's copies of foreign boxes (`Node::Copy`), and the SyncTeX tag
+    /// its own nodes carry: a node with another (of a box it did not make,
+    /// taken apart) is refused
+    copies: &'a [i32],
+    tag: Option<i32>,
+    bad_tag: bool,
     /// the objects the call made, in order (`Ref::NewObj`)
     new_objs: &'a [i32],
     act_ix: HashMap<i32, usize>,
@@ -483,6 +501,13 @@ impl Ser<'_> {
 
     fn big(&mut self, p: i32, size: i32, synctex: bool, fields: Vec<(i32, bool, Ref)>) -> Node {
         let copy = if synctex { size - SYNCTEX_FIELDS } else { size };
+        if synctex
+            && self
+                .tag
+                .is_some_and(|t| self.g.mem[(p + copy) as usize].int() != t)
+        {
+            self.bad_tag = true;
+        }
         let mut words: Vec<u64> = (0..copy).map(|w| self.g.mem[(p + w) as usize].0).collect();
         // addresses are not kept: the link, and each pointer field
         words[0] &= !0xffff_ffffu64;
@@ -515,6 +540,12 @@ impl Ser<'_> {
                 if let Some(i) = self.holes.iter().position(|&h| h == p) {
                     self.found[i] += 1;
                     return Ok(Node::Hole(i));
+                }
+                if let Some(i) = self.copies.iter().position(|&c| c == p) {
+                    self.found[self.holes.len() + i] += 1;
+                    let w: [u64; 7] =
+                        std::array::from_fn(|j| self.g.mem[p as usize + j].0 & !COPY_KEEP[j]);
+                    return Ok(Node::Copy(i, w));
                 }
                 let l = self.sub(self.hh(p + 5).rh())?;
                 Ok(self.big(p, k::box_node_size, true, vec![(5, false, l)]))
@@ -613,6 +644,26 @@ impl Ser<'_> {
                 }
                 _ => Err("WhatsitKind"),
             },
+            // A noad of `noad_size` words whose three fields are a
+            // nucleus, a superscript and a subscript (tex.web §681-§687:
+            // the ordinary to inner noads, under, over, vcenter), as a span
+            // in math mode leaves one: `box_end` makes the picture's box the
+            // nucleus of an ordinary noad (§1076). A field's `math_type` is
+            // its link half; a sub-box or sub-list is its `info`, by value.
+            t if (k::ord_noad..=k::inner_noad).contains(&t)
+                || t == k::under_noad
+                || t == k::over_noad
+                || t == k::vcenter_noad =>
+            {
+                let mut fields = vec![];
+                for w in 1..=3 {
+                    let f = self.hh(p + w);
+                    if f.rh() == k::sub_box || f.rh() == k::sub_mlist {
+                        fields.push((w, true, self.sub(f.lh())?));
+                    }
+                }
+                Ok(self.big(p, k::noad_size, false, fields))
+            }
             _ => Err("NodeKind"),
         }
     }
@@ -621,6 +672,8 @@ impl Ser<'_> {
 /// What a fragment's references point at once it is rebuilt.
 struct Rebuild<'a> {
     holes: &'a [i32],
+    /// the copies a span made again for its `Node::Copy`s
+    copies: &'a [i32],
     specs: &'a [i32],
     toks: &'a [i32],
     acts: &'a [i32],
@@ -638,18 +691,39 @@ impl Globals {
         holes: &[i32],
         new_objs: &[i32],
     ) -> Result<Frag, &'static str> {
+        self.frag_take_span(first, stop, holes, &[], new_objs, None)
+    }
+
+    /// [`Globals::frag_take`] for a span (§15.6): `copies` are the copies
+    /// of foreign boxes it made, each kept as `Node::Copy`, and `tag` the
+    /// SyncTeX tag every other node it made carries.
+    pub(crate) fn frag_take_span(
+        &self,
+        first: i32,
+        stop: i32,
+        holes: &[i32],
+        copies: &[i32],
+        new_objs: &[i32],
+        tag: Option<i32>,
+    ) -> Result<Frag, &'static str> {
         let mut s = Ser {
             g: self,
             holes,
+            copies,
+            tag,
+            bad_tag: false,
             new_objs,
             act_ix: HashMap::new(),
-            found: vec![0; holes.len()],
+            found: vec![0; holes.len() + copies.len()],
             spec_ix: HashMap::new(),
             tok_ix: HashMap::new(),
             frag: Frag::default(),
             nodes: 0,
         };
         let nodes = s.list(first, stop)?;
+        if s.bad_tag {
+            return Err("SyncTag");
+        }
         if s.found.iter().any(|&n| n != 1) {
             return Err("Hole");
         }
@@ -690,6 +764,18 @@ impl Globals {
     /// Rebuild `f` with `holes[i]` (box nodes now) for its holes. Returns the
     /// first and the last node of the top-level list (0, 0 if empty).
     pub(crate) fn frag_make(&mut self, f: &Frag, holes: &[i32], objs: &[i32]) -> (i32, i32) {
+        self.frag_make_span(f, holes, &[], objs)
+    }
+
+    /// [`Globals::frag_make`], with `copies[i]` the node its `Node::Copy(i)`
+    /// stands for, a copy made again (§15.6).
+    pub(crate) fn frag_make_span(
+        &mut self,
+        f: &Frag,
+        holes: &[i32],
+        copies: &[i32],
+        objs: &[i32],
+    ) -> (i32, i32) {
         let mut specs = vec![0; f.specs.len()];
         for (i, (w, n)) in f.specs.iter().enumerate() {
             let q = self.get_node(k::glue_spec_size);
@@ -738,6 +824,7 @@ impl Globals {
         }
         let r = Rebuild {
             holes,
+            copies,
             specs: &specs,
             toks: &toks,
             acts: &acts,
@@ -757,6 +844,14 @@ impl Globals {
                     p
                 }
                 Node::Hole(i) => holes[*i],
+                Node::Copy(i, w) => {
+                    let c = r.copies[*i];
+                    for (j, (&x, &keep)) in w.iter().zip(&COPY_KEEP).enumerate() {
+                        let m = &mut self.mem[c as usize + j];
+                        m.0 = (m.0 & keep) | x;
+                    }
+                    c
+                }
                 Node::Big {
                     size,
                     copy,

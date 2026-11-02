@@ -2812,6 +2812,13 @@ impl Globals {
         }
     }
 
+    /// BOX-MEMO's spans are not offered where `input_ln`'s reads note the
+    /// preamble's lines (`maybe_request_timed_checkpoint`): a replay reads
+    /// its lines without those notes.
+    pub(crate) fn span_in_preamble(&mut self) -> bool {
+        self.in_preamble()
+    }
+
     /// Before `\document` is expanded, in a run that takes S₀ and asks for
     /// preamble line checkpoints.
     fn in_preamble(&mut self) -> bool {

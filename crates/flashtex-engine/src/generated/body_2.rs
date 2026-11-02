@@ -2395,7 +2395,12 @@ impl Globals {
                                             } else {
                                                 {
                                                     if { let mut __f0 = ::core::mem::take(&mut self.input_file[crate::ix::U(((self.cur_input.index_field) - 1) as usize)]); let __r = self.input_ln(&mut __f0, true); self.input_file[crate::ix::U(((self.cur_input.index_field) - 1) as usize)] = __f0; __r } {
-                                                        self.firm_up_the_line();
+                                                        {
+                                                            self.firm_up_the_line();
+                                                            if self.bm_rec_on {
+                                                                self.flashtex_bm_line_read();
+                                                            }
+                                                        }
                                                     } else {
                                                         if ((__av_eqtb[crate::ix::U(((every_eof_loc) - 1) as usize)].hh().rh() != null) && (!self.eof_seen[crate::ix::U(((self.cur_input.index_field) - 1) as usize)])) {
                                                             {

@@ -75,6 +75,8 @@ const MAX_LIST: usize = 1 << 16;
 const MAX_VARIANTS: usize = 1024;
 /// Bytes of recordings kept in all, roughly.
 const MAX_BYTES: usize = 32 << 20;
+/// The most one span's entry may take of it (§15.5).
+const MAX_SPAN_BYTES: usize = MAX_BYTES / 4;
 /// Recordings abandoned in a row before a macro is no longer recorded.
 const ABORT_BUDGET: u32 = 64;
 
@@ -92,6 +94,9 @@ pub enum Mode {
 struct Config {
     mode: Mode,
     names: Vec<Vec<u8>>,
+    /// The environments offered as spans (§15): `FLASHTEX_BOXMEMO_SPANS`,
+    /// none by default.
+    spans: Vec<Vec<u8>>,
     stats_out: Option<String>,
     debug: bool,
     verify_fail: bool,
@@ -186,6 +191,11 @@ enum Val {
     FreshGlue([i32; 5]),
     /// A token list made for the assignment (`\def`, `\edef`, `\toks`).
     FreshList(Vec<i32>),
+    /// A span's compressed log (§15.5): the token list the log's operation
+    /// `.0` made, which a `\let` may have shared; a replay makes it at the
+    /// first operation with this `.0` and shares it at the others, so the
+    /// lists are shared as on the normal path (their reference counts).
+    Shared(u32, Vec<i32>),
     /// The meaning of a control sequence as it is when the assignment is
     /// made (`\let`, `\futurelet`).
     LetCs(i32),
@@ -227,6 +237,15 @@ enum Op {
         p: i32,
         name: Vec<i32>,
     },
+    /// A span's `\ht`/`\wd`/`\dp` assignment to box register `n`, which it
+    /// did not make (amsmath's `\resetMathstrut@`): word `c` of the box
+    /// node becomes `v`, as `alter_box_dimen` does; no group takes it back
+    /// (§15.6).
+    BoxDim {
+        n: i32,
+        c: i32,
+        v: i32,
+    },
 }
 
 thread_local! {
@@ -237,6 +256,11 @@ thread_local! {
     static TOKENS: RefCell<HashSet<std::rc::Rc<[i32]>>> = RefCell::new(HashSet::new());
     /// The pool's size in bytes, roughly (part of `MAX_BYTES`).
     static TOKEN_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Is the recording's span's F a token list (§15.10)?
+    static SPAN_TOKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// During a replay, the lists its `Val::Shared` operations made, by
+    /// the recorded operation that made each.
+    static SHARED: RefCell<HashMap<u32, i32>> = RefCell::new(HashMap::new());
 }
 
 /// `v`, shared with the pool's equal body if there is one.
@@ -261,6 +285,29 @@ fn prune_tokens() {
         let n: usize = t.iter().map(|r| 32 + 4 * r.len()).sum();
         TOKEN_BYTES.with(|b| b.set(n));
     });
+}
+
+/// Roughly what a log costs in the store's budget.
+fn ops_bytes(ops: &[Op]) -> usize {
+    ops.iter()
+        .map(|o| match o {
+            Op::Def {
+                v: Val::FreshList(l) | Val::Shared(_, l),
+                ..
+            }
+            | Op::Sa {
+                v: Val::FreshList(l) | Val::Shared(_, l),
+                ..
+            } => 32 + 4 * l.len(),
+            Op::Def {
+                v: Val::FreshShape(l),
+                ..
+            } => 32 + 4 * l.len(),
+            // (and once more in `Entry::new_cs`)
+            Op::NewCs { name, .. } => 2 * (32 + 4 * name.len()),
+            _ => 32,
+        })
+        .sum()
 }
 
 /// Keep `entry` among `cs`'s variants: the least recently used is dropped
@@ -469,9 +516,14 @@ struct Entry {
     voids: Vec<i32>,
     /// `line` when the recording read `\inputlineno` (LaTeX's `\begin`).
     line: Option<i32>,
+    /// `cur_level` and `cur_group` at the call when the recording read
+    /// `\currentgrouplevel` or `\currentgrouptype`.
+    group: Option<(i32, i32)>,
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
+    /// Foreign box registers a span copied, by contents (§15.6).
+    kc: Vec<(i32, crate::boxfrag::Frag, Positions)>,
     holes: Vec<(i32, Vec<i32>)>,
     /// A draw call's output: the nodes it appended to the current list,
     /// and the list's `aux` after them.
@@ -507,6 +559,8 @@ struct Entry {
     /// packs none leaves it as it was, which a replay must then do too (it
     /// is the state's, not the call's).
     last_badness: Option<i32>,
+    /// A span's file and what it left (§15).
+    span: Option<Box<SpanEntry>>,
     last_used: u64,
     hits: u64,
     bytes: usize,
@@ -548,8 +602,148 @@ struct ObjRef {
     dims: [i32; 3],
 }
 
+/// What a span (§15) read of its file: the lines `input_ln` read, each raw
+/// with the stream's offset after it, counted from the offset at the call.
+/// Part of the key: the file must hold the same lines there now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SpanFile {
+    /// The file level's file, as the run opened it.
+    path: String,
+    lines: Vec<(Vec<u8>, u64)>,
+}
+
+/// Where a span left its file level (§15), counted from its `start`: the
+/// line in the buffer (`buffer[start..=limit]`), `loc`, `limit`, the state;
+/// `first` and, when the span read a line, `last` and the buffer's high
+/// mark; `line`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SpanEnd {
+    buf: Vec<i32>,
+    loc: i32,
+    limit: i32,
+    state: i32,
+    first: i32,
+    last: Option<i32>,
+    max_buf: Option<i32>,
+    /// `max_buf_stack` at the call: with `max_buf` `None` the span's own
+    /// high mark is at most this, so a replay needs `max_buf_stack` at
+    /// least this (a restored checkpoint can leave it lower); comparisons
+    /// compare the high mark each leaves instead ([`SpanEnd::same`]).
+    max_buf0: i32,
+    line: i32,
+    /// The line-shift journal's entries the span made (`\inputlineno`
+    /// reads of its file level's lines, tikz-cd's `\tikzcd@lineno`), each
+    /// as its line's distance from the span's first.
+    journal: Vec<i32>,
+}
+
+impl SpanEnd {
+    /// The buffer's high mark a replay of `self` leaves after a call at
+    /// which it was `at` (both counted from the line's start).
+    fn high_mark(&self, at: i32) -> i32 {
+        self.max_buf.map_or(at, |m| m.max(at))
+    }
+
+    /// Does a replay of the recorded `self` leave the state the normal
+    /// path's `b` (of a call at the same place) left? Equal but for the
+    /// high mark, where each leaves the same one from `b`'s call.
+    fn same(&self, b: &SpanEnd) -> bool {
+        let strip = |e: &SpanEnd| SpanEnd {
+            max_buf: None,
+            max_buf0: 0,
+            ..e.clone()
+        };
+        strip(self) == strip(b)
+            && (self.max_buf.is_some() || self.max_buf0 <= b.max_buf0)
+            && self.high_mark(b.max_buf0) == b.high_mark(b.max_buf0)
+    }
+}
+
+/// A span begun in vertical mode inside a box (§15.3): it started a
+/// paragraph (`new_graf`), which is still open at its end. The nodes it
+/// appended to the box's list before (the paragraph skip), the paragraph's
+/// level (`mode_line`, `prev_graf`, `aux`) and its list. (On the main
+/// vertical list, `outer_h`: the skips' natural widths, each at least 0,
+/// for [`Globals::bm_page_quiet`].)
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Graf {
+    outer: crate::boxfrag::Frag,
+    inner: crate::boxfrag::Frag,
+    ml: i32,
+    pg: i32,
+    aux: u64,
+    outer_h: i64,
+}
+
+/// The source positions of a span's output nodes (§15.4), in the order
+/// [`Globals::bm_node_walk`] visits them: the outer fragment's (or the draw
+/// fragment's), then the paragraph's list head and its fragment's.
+type Positions = Vec<crate::displaylist::SidePos>;
+
+/// What a span keeps besides a call's entry (§15).
+#[derive(Clone, Debug)]
+struct SpanEntry {
+    file: SpanFile,
+    end: SpanEnd,
+    graf: Option<Graf>,
+    pos: Positions,
+    /// The foreign box registers whose `\copy` its output holds
+    /// (`Node::Copy`, in order, §15.6).
+    copies: Vec<i32>,
+    /// A token list's F (§15.10): the tokens the span read from it.
+    toks: Option<Vec<i32>>,
+}
+
+/// A paragraph skip a span's `new_graf` appended to the main vertical
+/// list (§15.3), as it was then: the node, its glue specification and that
+/// specification's words, and its source position. The page builder took
+/// it at once (and may have thrown it away), so it is kept from here.
+#[derive(Clone)]
+struct GlueRec {
+    p: i32,
+    words: [u64; 2],
+    spec: i32,
+    spec_words: [u64; 4],
+    pos: crate::displaylist::SidePos,
+}
+
+/// What a span's recording noted of the paragraphs `new_graf` began on the
+/// main vertical list (§15.3). LaTeX begins every paragraph twice (ltpara:
+/// `\everypar` ends the paragraph `new_graf` began, empty, and begins it
+/// again with `\noindent`), and each time the page builder runs: the
+/// paragraph skips, in order, the outer list's tail after the page builder's
+/// last run, and the page's state then with the parameters it read (each
+/// run's the same).
+struct GrafNote {
+    glues: Vec<GlueRec>,
+    tail: i32,
+    page: Option<(Vec<i64>, [i64; 7])>,
+}
+
+/// A span's recording: the file level's input-stack index and file.
+struct SpanRec {
+    f: i32,
+    index: i32,
+    file: SpanFile,
+    /// A token list's F (§15.10): its list (`start`) and `loc` at the call.
+    toks: Option<(i32, i32)>,
+    /// The stream's offset at the call, and `max_buf_stack`.
+    at: u64,
+    max_buf: i32,
+    graf: Option<GrafNote>,
+    /// The current list's `eTeX_aux` at the call.
+    etex_aux: i32,
+    /// `line` at the call, and the line-shift journal's count of entries.
+    line0: i32,
+    journal: u64,
+}
+
 struct Rec {
     cs: i32,
+    /// The macro called: `cs` itself, or for a span `\begin` (`cs` is then
+    /// the environment's control sequence, the store's key).
+    call: i32,
+    span: Option<SpanRec>,
     obj_refs: Vec<ObjRef>,
     new_objs: Vec<i32>,
     last_link: i32,
@@ -570,7 +764,12 @@ struct Rec {
     /// after that, they hold what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
-    boxes: HashSet<i32>,
+    group_read: bool,
+    /// `cur_level` and `cur_group` at the call.
+    group0: (i32, i32),
+    /// (register, box) for each box the call put in a register: a register
+    /// holding a box the call did not put there (a group ended) is foreign.
+    boxes: HashSet<(i32, i32)>,
     /// Box registers assigned globally: each must be void when the call
     /// ends, and the replay makes it so (`\global\setbox` to void, at the
     /// end of the log).
@@ -578,7 +777,16 @@ struct Rec {
     /// A foreign box register just fetched, waiting for what is done with
     /// it (`flashtex_bm_box_use`): (register, box).
     pending_box: Option<(i32, i32)>,
+    /// A foreign box register whose dimension a span is assigning, until
+    /// the value is scanned (`flashtex_bm_box_dimen`).
+    alter: Option<i32>,
     kb: Vec<(i32, Vec<i32>)>,
+    /// Foreign box registers a span copied (`\copy`), by contents (§15.6).
+    kc: Vec<(i32, crate::boxfrag::Frag, Positions)>,
+    /// (register, copy) of each `\copy` of a foreign register a span made,
+    /// and the register of the one being made (§15.6).
+    copies: Vec<(i32, i32)>,
+    copying: Option<i32>,
     /// (register, box node, key) of each box moved out of a foreign register
     holes: Vec<(i32, i32, Vec<i32>)>,
     ops: Vec<Op>,
@@ -612,6 +820,9 @@ struct State {
 #[derive(Default)]
 struct Fast {
     base: i32,
+    /// A span's file level (`base - 1`), else -1: the one level below the
+    /// body the recording may read (§15).
+    span_f: i32,
     stamp: u32,
     seen: Vec<u32>,
 }
@@ -649,9 +860,18 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                     .map(|s| s.as_bytes().to_vec())
                     .collect(),
             };
+            let spans = std::env::var("FLASHTEX_BOXMEMO_SPANS")
+                .map(|v| {
+                    v.split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.as_bytes().to_vec())
+                        .collect()
+                })
+                .unwrap_or_default();
             *c = Some(Config {
                 mode,
                 names,
+                spans,
                 stats_out: std::env::var("FLASHTEX_BOXMEMO_STATS").ok(),
                 debug: std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some(),
                 verify_fail: std::env::var_os("FLASHTEX_BOXMEMO_VERIFY_FAIL").is_some(),
@@ -884,6 +1104,24 @@ struct Scratch {
     // `big_switch`'s flags, set before each `get_x_token`
     intr_at_switch: bool,
     bm_at_switch: bool,
+    // `mlist_penalties`: every caller of `mlist_to_hlist` (`clean_box`, its
+    // own sub-list case, `after_math`'s three) sets it just before the
+    // call, which reads it on entry and nowhere else (pdftex.web; found by
+    // a span's full verification, BOX-MEMO.md §15)
+    mlist_penalties: bool,
+    // `cur_style`, `cur_size`, `cur_mu`: likewise every caller of
+    // `mlist_to_hlist` sets `cur_style` before the call, which sets the
+    // other two from it; only it and its helpers read them (pdftex.web,
+    // `clean_box` to `make_scripts`; a span in display math, §15)
+    cur_style: i32,
+    cur_size: i32,
+    cur_mu: i32,
+    // The current list's head's `info`: `push_nest`'s `get_avail` leaves
+    // what the cell held, and nothing reads it (pdftex.web reads a list's
+    // head only by `link` and as `tail=head`; `\lastpenalty` & co. test it
+    // with `is_char_node`). A span that began a paragraph (§15) got its
+    // head from another cell than its replay.
+    head_info: i32,
 }
 
 impl Scratch {
@@ -915,6 +1153,11 @@ impl Scratch {
             base_ptr: g.base_ptr,
             intr_at_switch: g.intr_at_switch,
             bm_at_switch: g.bm_at_switch,
+            mlist_penalties: g.mlist_penalties,
+            cur_style: g.cur_style,
+            cur_size: g.cur_size,
+            cur_mu: g.cur_mu,
+            head_info: g.mem[g.cur_list.head_field as usize].hh().lh(),
         }
     }
     fn put(self, g: &mut Globals) {
@@ -960,6 +1203,14 @@ impl Scratch {
         g.base_ptr = self.base_ptr;
         g.intr_at_switch = self.intr_at_switch;
         g.bm_at_switch = self.bm_at_switch;
+        g.mlist_penalties = self.mlist_penalties;
+        g.cur_style = self.cur_style;
+        g.cur_size = self.cur_size;
+        g.cur_mu = self.cur_mu;
+        let h = g.cur_list.head_field;
+        if h >= g.hi_mem_min && g.mem[h as usize].hh().lh() != self.head_info {
+            g.mem[h as usize].set_hh_lh(self.head_info);
+        }
     }
 }
 
@@ -969,6 +1220,30 @@ impl Scratch {
 /// specification there) take theirs from the state.
 fn by_value(v: &Val) -> bool {
     !matches!(v, Val::LetCs(_) | Val::GlueFrom(..))
+}
+
+/// A span's log with its entered control sequences first, in their order
+/// (§15.5), so that [`compress_groups`] can take the groups holding them by
+/// their effect. `id_lookup` making a name changes the hash and the string
+/// pool and nothing a later assignment or group reads: no `unsave` takes a
+/// name away, no assignment reads the hash (a `\let`'s meaning is read from
+/// `eqtb`, which entering a name leaves as it was, undefined), and a name is
+/// assigned only after it is entered. Only the names' order among
+/// themselves decides where each lands, and that is kept. A pgfplots axis
+/// enters a few dozen names in the outermost group and makes some 10^5
+/// assignments to a few hundred locations.
+fn new_cs_first(ops: &[Op]) -> Vec<Op> {
+    let mut v: Vec<Op> = ops
+        .iter()
+        .filter(|o| matches!(o, Op::NewCs { .. }))
+        .cloned()
+        .collect();
+    v.extend(
+        ops.iter()
+            .filter(|o| !matches!(o, Op::NewCs { .. }))
+            .cloned(),
+    );
+    v
 }
 
 /// The operations a replay makes: `ops` with every group (`Begin` .. its
@@ -1004,6 +1279,23 @@ fn by_value(v: &Val) -> bool {
 /// its local assignments to every location no such value in it reads,
 /// which its `unsave` takes back unread.
 fn compress_groups(ops: &[Op]) -> Vec<Op> {
+    compress_groups_with(ops, false)
+}
+
+/// The location of sparse register (type `t`, number `n`) among
+/// [`compress_groups_with`]'s, below every `eqtb` location.
+fn sa_loc(t: i32, n: i32) -> i32 {
+    -(t * 65536 + n) - 1
+}
+
+/// [`compress_groups`]; with `sparse`, a span's (§15.5), a group that
+/// assigns e-TeX's sparse registers globally by value is taken by its
+/// effect too: e-TeX's `sa_save`/`sa_restore` keep a location of level one
+/// at the group's end and put back the others, as `eq_save` and `unsave`
+/// do for `eqtb` (etex.ch, "retaining"/"restoring"), so a sparse register
+/// is one more location, its net effect its last global assignment. (pgf's
+/// counters above 255 are sparse: every picture's serial is one.)
+fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
     // (each `Begin`'s `End`)
     let n = ops.len();
     let mut end = vec![usize::MAX; n];
@@ -1022,12 +1314,16 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
     // The net global assignments of the group ops[b] begins, in the order
     // of their last assignment, and every location it assigned; `None`
     // when it is replayed as recorded.
-    fn net(ops: &[Op], end: &[usize], b: usize) -> Option<(Vec<Op>, HashSet<i32>)> {
+    fn net(ops: &[Op], end: &[usize], b: usize, sparse: bool) -> Option<(Vec<Op>, HashSet<i32>)> {
         let e = end[b];
         if e == usize::MAX {
             return None;
         }
-        let mut last: Vec<(i32, Op)> = vec![];
+        // (in the order of each location's last assignment: a location's
+        // earlier one is left as `None`, found by `at`; a pgfplots group
+        // makes 10^5 assignments to a few thousand locations)
+        let mut last: Vec<Option<Op>> = vec![];
+        let mut at: HashMap<i32, usize> = HashMap::new();
         // (a value from the state is the group's entry state's when nothing
         // in the group assigned what it reads before it: it is then made
         // where the group was, before what the group assigns after it)
@@ -1042,42 +1338,140 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
             } => *a > 0 && !touched.contains(a),
             _ => true,
         };
-        let put = |p: i32, o: &Op, last: &mut Vec<(i32, Op)>| {
-            last.retain(|(q, _)| *q != p);
-            last.push((p, o.clone()));
+        let put = |p: i32, o: &Op, last: &mut Vec<Option<Op>>, at: &mut HashMap<i32, usize>| {
+            if let Some(i) = at.insert(p, last.len()) {
+                last[i] = None;
+            }
+            last.push(Some(o.clone()));
+        };
+        // (a span's, §15.5: `cur` holds what each control sequence the
+        // group assigned holds now, as a value; a `\let` from one of them
+        // takes that value, as the normal path's `\let` takes the meaning
+        // it has then. Two locations that shared a token list then hold
+        // equal lists: a memory difference only, DESIGN.md §1.1. pgfplots'
+        // `\global\let`s of macros its group defined kept every plot's
+        // outermost group whole)
+        let mut cur: HashMap<i32, Op> = HashMap::new();
+        let resolve = |o: &Op, touched: &HashSet<i32>, cur: &HashMap<i32, Op>| -> Option<Op> {
+            if from_entry(o, touched) {
+                return Some(o.clone());
+            }
+            let Op::Def {
+                p,
+                kind,
+                v: Val::LetCs(q),
+                ..
+            } = o
+            else {
+                return None;
+            };
+            if !sparse {
+                return None;
+            }
+            let Some(Op::Def { t, v, .. }) = cur.get(q) else {
+                return None;
+            };
+            let r = Op::Def {
+                p: *p,
+                t: *t,
+                v: v.clone(),
+                kind: *kind,
+            };
+            from_entry(&r, touched).then_some(r)
+        };
+        // (does the group assign box register `n`? a `BoxDim` changes the
+        // box it holds then)
+        let assigns_box = |n: i32| {
+            ops[b + 1..e].iter().any(|o| match o {
+                Op::Def { p, .. } => n < 256 && *p == BOX_BASE + n,
+                Op::Sa { t, n: m, .. } => *t == BOX_VAL && *m == n,
+                _ => false,
+            })
         };
         let mut i = b + 1;
         while i < e {
             match &ops[i] {
                 Op::Begin(_) => {
-                    let (v, t) = net(ops, end, i)?;
+                    let (v, t) = net(ops, end, i, sparse)?;
                     for o in v {
-                        if !from_entry(&o, &touched) {
-                            return None;
-                        }
-                        let Op::Def { p, .. } = o else { unreachable!() };
-                        put(p, &o, &mut last);
+                        let o = resolve(&o, &touched, &cur)?;
+                        let p = match &o {
+                            Op::Def { p, .. } => {
+                                cur.insert(*p, o.clone());
+                                *p
+                            }
+                            Op::Sa { t, n, .. } => sa_loc(*t, *n),
+                            Op::BoxDim { n, .. } => {
+                                if assigns_box(*n) {
+                                    return None;
+                                }
+                                last.push(Some(o.clone()));
+                                continue;
+                            }
+                            _ => unreachable!(),
+                        };
+                        put(p, &o, &mut last, &mut at);
                     }
+                    // (a location the inner group assigned only locally
+                    // holds again what it held before it)
                     touched.extend(t);
                     i = end[i] + 1;
                     continue;
                 }
-                Op::Def { p, kind, .. } => {
-                    if *kind > 1 {
-                        if !from_entry(&ops[i], &touched) {
-                            return None;
+                Op::Def { p, kind, t, v } => {
+                    // (a list made here: named by where, for its sharers)
+                    let made;
+                    let o = match v {
+                        Val::FreshList(l) if sparse => {
+                            made = Op::Def {
+                                p: *p,
+                                t: *t,
+                                v: Val::Shared(i as u32, l.clone()),
+                                kind: *kind,
+                            };
+                            &made
                         }
-                        put(*p, &ops[i], &mut last);
+                        _ => &ops[i],
+                    };
+                    let r = resolve(o, &touched, &cur);
+                    if *kind > 1 {
+                        put(*p, r.as_ref()?, &mut last, &mut at);
+                    }
+                    match r {
+                        Some(r) if sparse => {
+                            cur.insert(*p, r);
+                        }
+                        _ => {
+                            cur.remove(p);
+                        }
                     }
                     touched.insert(*p);
                 }
+                Op::Sa { t, n, v, kind } if sparse => {
+                    if *kind > 1 {
+                        if !by_value(v) {
+                            return None;
+                        }
+                        put(sa_loc(*t, *n), &ops[i], &mut last, &mut at);
+                    }
+                    touched.insert(sa_loc(*t, *n));
+                }
                 Op::Sa { kind, .. } if *kind > 1 => return None,
                 Op::Sa { .. } => {}
+                Op::BoxDim { n, .. } => {
+                    // (no group takes it back: it stays, in its order
+                    // among the others, unless the group assigns the
+                    // register, whose box it changes)
+                    if assigns_box(*n) {
+                        return None;
+                    }
+                    last.push(Some(ops[i].clone()));
+                }
                 Op::NewCs { .. } | Op::End => return None,
             }
             i += 1;
         }
-        Some((last.into_iter().map(|(_, o)| o).collect(), touched))
+        Some((last.into_iter().flatten().collect(), touched))
     }
     // `kept`: inside a group replayed as recorded, the locations a value
     // from the state reads anywhere in it (`None` at the call's level).
@@ -1090,12 +1484,13 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
         to: usize,
         kept: Option<&HashSet<i32>>,
         out: &mut Vec<Op>,
+        sparse: bool,
     ) {
         let mut i = from;
         while i < to {
             match &ops[i] {
                 Op::Begin(_) if end[i] != usize::MAX => {
-                    match net(ops, end, i) {
+                    match net(ops, end, i, sparse) {
                         Some((v, _)) => out.extend(v),
                         None => {
                             let read: HashSet<i32> = ops[i + 1..end[i]]
@@ -1112,7 +1507,7 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
                                 })
                                 .collect();
                             out.push(ops[i].clone());
-                            walk(ops, end, i + 1, end[i], Some(&read), out);
+                            walk(ops, end, i + 1, end[i], Some(&read), out, sparse);
                             out.push(Op::End);
                         }
                     }
@@ -1126,7 +1521,29 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
         }
     }
     let mut out = Vec::with_capacity(n);
-    walk(ops, &end, 0, n, None, &mut out);
+    walk(ops, &end, 0, n, None, &mut out, sparse);
+    if sparse {
+        // (a list only one operation holds is its own)
+        let mut uses: HashMap<u32, u32> = HashMap::new();
+        for o in &out {
+            if let Op::Def {
+                v: Val::Shared(id, _),
+                ..
+            } = o
+            {
+                *uses.entry(*id).or_default() += 1;
+            }
+        }
+        for o in &mut out {
+            if let Op::Def { v, .. } = o {
+                if let Val::Shared(id, l) = v {
+                    if uses[id] == 1 {
+                        *v = Val::FreshList(std::mem::take(l));
+                    }
+                }
+            }
+        }
+    }
     out
 }
 
@@ -2046,12 +2463,19 @@ impl Globals {
         self.bm_font_version = v;
         self.bm_hyph_version = v;
         let names = with_config(|c| c.names.clone());
+        let spans = with_config(|c| !c.spans.is_empty());
+        self.bm_span_cs = 0;
         for p in 1..=k::eqtb_top {
             if !Self::bm_is_cs(p) || p < k::hash_base {
                 continue;
             }
             if self.bm_name_is(p, &names) {
                 self.bm_cand[p as usize] = true;
+            }
+            // (§15: LaTeX's `\begin` offers the environments named)
+            if spans && self.bm_name_is(p, &[b"begin".to_vec()]) {
+                self.bm_cand[p as usize] = true;
+                self.bm_span_cs = p;
             }
         }
     }
@@ -2111,6 +2535,13 @@ impl Globals {
         // `\pdfstringdef` makes some 250 control sequences)
         if with_config(|c| self.bm_name_is(p, &c.names)) {
             self.bm_cand[p as usize] = true;
+        }
+        if self.bm_span_cs == 0
+            && with_config(|c| !c.spans.is_empty())
+            && self.bm_name_is(p, &[b"begin".to_vec()])
+        {
+            self.bm_cand[p as usize] = true;
+            self.bm_span_cs = p;
         }
         if self.bm_rec_on {
             self.bm_note_new_cs(p);
@@ -2362,13 +2793,39 @@ impl Globals {
         if self.bm_rec_on || self.intr_rec_on {
             return;
         }
-        let cs = self.warning_index;
+        let call = self.warning_index;
         // the body must be the top level, as `Feed` left it
         if self.cur_input.state_field != TOKEN_LIST || self.cur_input.index_field != k::macro_ {
             return;
         }
-        if cs == self.ckpt_arm_cs || self.ckpt_arm_level == self.input_ptr {
+        if call == self.ckpt_arm_cs || self.ckpt_arm_level == self.input_ptr {
             return;
+        }
+        // A span (§15): `\begin` of an environment named, read from a
+        // file; its entries are kept under the environment's control
+        // sequence.
+        let mut cs = call;
+        let mut span_key: Option<Vec<i32>> = None;
+        if call == self.bm_span_cs && call != 0 {
+            let r = self.bm_span_offer(n);
+            if debug() {
+                if let Err(Some(w)) = &r {
+                    eprintln!("boxmemo: span not offered: {w} (line {})", self.line);
+                } else if r.is_ok() {
+                    eprintln!("boxmemo: span offered at line {}", self.line);
+                }
+            }
+            match r {
+                Ok((env, key)) => {
+                    cs = env;
+                    span_key = Some(key);
+                }
+                Err(None) => return,
+                Err(Some(why)) => {
+                    ST.with(|s| s.borrow_mut().stats.offers += 1);
+                    return self.bm_miss(why);
+                }
+            }
         }
         let m = mode();
         ST.with(|s| s.borrow_mut().stats.offers += 1);
@@ -2377,7 +2834,10 @@ impl Globals {
         if globaldefs != 0 || self.after_token != 0 {
             return self.bm_miss("Preconditions");
         }
-        let k1 = self.bm_k1(cs, n);
+        let mut k1 = self.bm_k1(call, n);
+        if let Some(sk) = &span_key {
+            k1.extend_from_slice(sk);
+        }
         let ctx = self.bm_ctx(scanner);
         // K1 and the context select the variants (by their hash, then in
         // full); K2 and the rest are compared in place, without a copy of
@@ -2396,19 +2856,23 @@ impl Globals {
                 s.index.insert(cs, ix);
             }
         });
-        let (found, partial) = ST.with(|s| {
+        let spanning = span_key.is_some();
+        let (found, partial, fits) = ST.with(|s| {
             let s = s.borrow();
             let (Some(v), Some(ix)) = (
                 s.store.get(&cs),
                 s.index.get(&cs).and_then(|ix| ix.get(&hash)),
             ) else {
-                return (None, None);
+                return (None, None, vec![]);
             };
             let mut best: Option<(u64, usize)> = None;
             let mut partial = None;
+            // (a span's variants whose key holds but for the file, which is
+            // read after: §15)
+            let mut fits: Vec<(u64, usize)> = vec![];
             let mut k2_seen: Vec<(*const i32, bool)> = vec![];
             for (i, e) in ix.iter().map(|&i| (i, &v[i])) {
-                if best.is_some_and(|(u, _)| u >= e.last_used) {
+                if !spanning && best.is_some_and(|(u, _)| u >= e.last_used) {
                     continue;
                 }
                 if e.hash != hash
@@ -2416,6 +2880,9 @@ impl Globals {
                     || e.ctx != ctx
                     || e.k4 != k4_now
                     || !e.line.is_none_or(|l| l == self.line)
+                    || !e
+                        .group
+                        .is_none_or(|g| g == (self.cur_level, self.cur_group))
                 {
                     continue;
                 }
@@ -2442,6 +2909,13 @@ impl Globals {
                         .chain(&e.holes)
                         .all(|(n, v)| self.bm_box_key(self.bm_box_value(*n)) == *v)
                     && e.k3.iter().all(|(p, m)| self.bm_meaning_is(*p, m))
+                    && e.kc.iter().all(|(n, f, pos)| {
+                        let b = self.bm_box_value(*n);
+                        b != 0
+                            && self.bm_box_contents(b).is_ok_and(|(g, ps)| {
+                                crate::boxfrag::frag_diff(f, &g).is_none() && ps == *pos
+                            })
+                    })
                     && e.obj_refs
                         .iter()
                         .all(|r| self.bm_obj_is(r.t, r.n) && self.bm_obj_dims(r.n) == r.dims)
@@ -2450,14 +2924,24 @@ impl Globals {
                         q > LO_MEM_STAT_MAX && self.bm_glue_fields(q) == *w
                     })
                     && self.bm_new_cs_placeable(&e.new_cs);
-                if rest_ok {
+                if rest_ok && spanning {
+                    fits.push((e.last_used, i));
+                } else if rest_ok {
                     best = Some((e.last_used, i));
                 } else if partial.is_none_or(|(u, _)| u < e.last_used) {
                     partial = Some((e.last_used, i));
                 }
             }
-            (best.map(|b| b.1), partial.map(|p| p.1))
+            (best.map(|b| b.1), partial.map(|p| p.1), fits)
         });
+        let (found, partial) = if spanning {
+            match self.bm_span_pick(cs, fits) {
+                Ok(i) => (Some(i), partial),
+                Err(p) => (None, p.or(partial)),
+            }
+        } else {
+            (found, partial)
+        };
         let mut why = "NotRecorded";
         let doomed = found
             .is_some_and(|i| ST.with(|s| s.borrow().store.get(&cs).is_some_and(|v| v[i].doomed)));
@@ -2481,7 +2965,7 @@ impl Globals {
                     }
                 }
                 let (k2, k4) = (self.bm_k2(), k4_now);
-                return self.bm_start(cs, n, scanner, k1, ctx, k2, k4, Some(i));
+                return self.bm_start(cs, call, spanning, scanner, k1, ctx, k2, k4, Some(i));
             }
             if let Some(t) = self.bm_replay(cs, i) {
                 self.cur_tok = t;
@@ -2553,7 +3037,7 @@ impl Globals {
             return;
         }
         let (k2, k4) = (self.bm_k2(), k4_now);
-        self.bm_start(cs, n, scanner, k1, ctx, k2, k4, None);
+        self.bm_start(cs, call, spanning, scanner, k1, ctx, k2, k4, None);
     }
 
     fn bm_miss(&mut self, why: &str) {
@@ -2566,7 +3050,8 @@ impl Globals {
     fn bm_start(
         &mut self,
         cs: i32,
-        _n: i32,
+        call: i32,
+        spanning: bool,
         scanner: i32,
         k1: Vec<i32>,
         ctx: Context,
@@ -2575,8 +3060,46 @@ impl Globals {
         verify: Option<usize>,
     ) {
         let start = self.bm_frame();
+        let span = if spanning {
+            // (`bm_span_offer` checked the level below the body)
+            let f = self.input_ptr - 1;
+            let fl = self.input_stack[f as usize];
+            let index = fl.index_field;
+            let (path, at, toks) = if fl.state_field == TOKEN_LIST {
+                (String::new(), 0, Some((fl.start_field, fl.loc_field)))
+            } else {
+                let file = &mut self.input_file[(index - 1) as usize];
+                let (Some(path), Some(at)) =
+                    (file.opened_path().map(str::to_string), file.read_offset())
+                else {
+                    return self.bm_miss("SpanFile");
+                };
+                (path, at, None)
+            };
+            Some(SpanRec {
+                f,
+                index,
+                file: SpanFile {
+                    path,
+                    lines: vec![],
+                },
+                toks,
+                at,
+                max_buf: self.max_buf_stack,
+                graf: None,
+                etex_aux: self.cur_list.eTeX_aux_field,
+                line0: self.line,
+                journal: crate::lineshift::journal_mark().0,
+            })
+        } else {
+            None
+        };
+        let span_f = span.as_ref().map_or(-1, |s| s.f);
+        SPAN_TOKS.with(|t| t.set(span.as_ref().is_some_and(|s| s.toks.is_some())));
         let rec = Rec {
             cs,
+            call,
+            span,
             obj_refs: vec![],
             new_objs: vec![],
             last_link: self.pdf_last_link,
@@ -2593,10 +3116,16 @@ impl Globals {
             kr: vec![],
             gwritten: HashSet::new(),
             line_read: false,
+            group_read: false,
+            group0: (self.cur_level, self.cur_group),
             boxes: HashSet::new(),
             gboxes: vec![],
             pending_box: None,
+            alter: None,
             kb: vec![],
+            kc: vec![],
+            copies: vec![],
+            copying: None,
             holes: vec![],
             ops: vec![],
             created: vec![],
@@ -2609,13 +3138,14 @@ impl Globals {
         FAST.with(|f| {
             let mut f = f.borrow_mut();
             f.base = base;
+            f.span_f = span_f;
             f.stamp = f.stamp.wrapping_add(1);
             if f.stamp == 0 || f.seen.len() < size {
                 f.seen = vec![0; size];
                 f.stamp = 1;
             }
             let st = f.stamp;
-            f.seen[cs as usize] = st;
+            f.seen[call as usize] = st;
         });
         ST.with(|s| {
             let mut s = s.borrow_mut();
@@ -2701,12 +3231,14 @@ impl Globals {
                     absent: rec.absent,
                     kr: rec.kr,
                     kb: rec.kb,
+                    kc: rec.kc,
                     holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                     frag: None,
                     aux: 0,
                     trailer: None,
                     voids: rec.voids,
-                    line: rec.line_read.then_some(self.line),
+                    line: (rec.line_read && rec.span.is_none()).then_some(self.line),
+                    group: rec.group_read.then_some(rec.group0),
                     fast: vec![],
                     new_cs: vec![],
                     last_link: None,
@@ -2716,6 +3248,29 @@ impl Globals {
                     rs_locs: vec![],
                     ops: vec![],
                     last_badness: None,
+                    // (a span's lines read up to the refusal: the same
+                    // lines take it there again)
+                    span: rec.span.map(|sp| {
+                        Box::new(SpanEntry {
+                            file: sp.file,
+                            end: SpanEnd {
+                                buf: vec![],
+                                loc: 0,
+                                limit: 0,
+                                state: 0,
+                                first: 0,
+                                last: None,
+                                max_buf: None,
+                                max_buf0: 0,
+                                line: 0,
+                                journal: vec![],
+                            },
+                            graf: None,
+                            pos: vec![],
+                            copies: vec![],
+                            toks: None,
+                        })
+                    }),
                     last_used: now,
                     hits: 0,
                     bytes,
@@ -2770,11 +3325,18 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_next(&mut self) {
-        let base = FAST.with(|f| f.borrow().base);
+        let (base, span_f) = FAST.with(|f| {
+            let f = f.borrow();
+            (f.base, f.span_f)
+        });
         if self.input_ptr < base {
-            return self.bm_abort("Level");
-        }
-        if self.cur_input.state_field != TOKEN_LIST {
+            // a span reads its file level (§15): its lines are the key's
+            if self.input_ptr != span_f
+                || (self.cur_input.state_field == TOKEN_LIST) != SPAN_TOKS.with(|t| t.get())
+            {
+                return self.bm_abort("Level");
+            }
+        } else if self.cur_input.state_field != TOKEN_LIST {
             return self.bm_abort("File");
         }
         if self.cur_cs != 0 {
@@ -3010,7 +3572,7 @@ impl Globals {
                     }
                 });
             }
-            self.bm_with_rec(|r| r.boxes.insert(p - BOX_BASE));
+            self.bm_with_rec(|r| r.boxes.insert((p - BOX_BASE, e)));
             return;
         }
         if t == BOX_REF {
@@ -3074,7 +3636,7 @@ impl Globals {
                     }
                 });
             }
-            self.bm_with_rec(|r| r.boxes.insert(n));
+            self.bm_with_rec(|r| r.boxes.insert((n, e)));
             return;
         }
         if global || outer {
@@ -3108,11 +3670,13 @@ impl Globals {
             // box's contents were read (`\copy`, `\unhbox`, `\vsplit`, ...)
             return self.bm_abort("BoxContent");
         }
-        let written = self.bm_with_rec(|r| r.boxes.contains(&n)).unwrap_or(false);
+        let p = self.bm_box_value(n);
+        let written = self
+            .bm_with_rec(|r| r.boxes.contains(&(n, p)))
+            .unwrap_or(false);
         if written {
             return;
         }
-        let p = self.bm_box_value(n);
         if p == 0 {
             self.bm_with_rec(|r| {
                 if !r.voids.contains(&n) {
@@ -3124,9 +3688,35 @@ impl Globals {
         self.bm_with_rec(|r| r.pending_box = Some((n, p)));
     }
 
+    /// `copy_node_list` made `c`, a `\copy` of box register `n`, during a
+    /// recording: of a foreign one a span copies, kept (§15.6).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_copied(&mut self, n: i32, c: i32) {
+        self.bm_with_rec(|r| {
+            if r.copying.take() == Some(n) {
+                r.copies.push((n, c));
+            }
+        });
+    }
+
+    /// `alter_box_dimen` scanned the value `v` for word `c` of a box node,
+    /// during a recording: of a foreign register's box (`r.alter`), an
+    /// operation (§15.6).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_box_dimen(&mut self, c: i32, v: i32) {
+        self.bm_with_rec(|r| {
+            if let Some(n) = r.alter.take() {
+                r.ops.push(Op::BoxDim { n, c, v });
+            }
+        });
+    }
+
     /// The box register a recording just fetched is used: `k` 1 for a
     /// dimension (`\wd` & co.), 2 for a test (`\ifvoid`, `\ifhbox`), 3 for a
-    /// move (`\box`, which voids the register).
+    /// move (`\box`, which voids the register), 4 a copy, 5 a dimension
+    /// assigned.
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_box_use(&mut self, n: i32, k: i32) {
@@ -3136,12 +3726,56 @@ impl Globals {
         if m != n {
             return self.bm_abort("BoxContent");
         }
+        if k == 5 {
+            // `\ht n=..` & co. on a box the call did not make: a span keys
+            // the box as it is now and replays the assignment
+            // (`Op::BoxDim`, §15.6)
+            if !self.bm_with_rec(|r| r.span.is_some()).unwrap_or(false) {
+                return self.bm_abort("BoxContent");
+            }
+            // (a copy made before it is made again from the box after it)
+            if self
+                .bm_with_rec(|r| r.copies.iter().any(|c| c.0 == n))
+                .unwrap_or(false)
+            {
+                return self.bm_abort("BoxContent");
+            }
+            let key = self.bm_box_key(p);
+            self.bm_with_rec(|r| {
+                if !r.kb.iter().any(|(x, _)| *x == n) {
+                    r.kb.push((n, key));
+                }
+                r.alter = Some(n);
+            });
+            return;
+        }
+        if k == 4 {
+            // `\copy` of a box the call did not make: a span keys the box
+            // by its contents (amsmath's `\Mathstrut@` copies
+            // `\Mathstrutbox@` into every pgfplots label, §15.6)
+            if !self.bm_with_rec(|r| r.span.is_some()).unwrap_or(false) {
+                return self.bm_abort("BoxContent");
+            }
+            self.bm_with_rec(|r| r.copying = Some(n));
+            let known = self
+                .bm_with_rec(|r| r.kc.iter().any(|(x, _, _)| *x == n))
+                .unwrap_or(false);
+            if known {
+                return;
+            }
+            let key = match self.bm_box_contents(p) {
+                Ok(key) => key,
+                Err(w) => return self.bm_abort(w),
+            };
+            self.bm_with_rec(|r| r.kc.push((n, key.0, key.1)));
+            return;
+        }
         let key = self.bm_box_key(p);
         self.bm_with_rec(|r| {
             if k == 3 {
                 r.holes.push((n, p, key));
                 // void now, and the call's own from here on
-                r.boxes.insert(n);
+                r.boxes.insert((n, 0));
             } else if !r.kb.iter().any(|(x, _)| *x == n) {
                 r.kb.push((n, key));
             }
@@ -3157,6 +3791,34 @@ impl Globals {
         }
         let m = |o: i32| self.mem[(p + o) as usize].int();
         vec![self.mem[p as usize].hh().b0(), m(1), m(2), m(3), m(4)]
+    }
+
+    /// Box `p` (a register's) by value, with its nodes' source positions:
+    /// what a `\copy` of it reads (§15.6).
+    fn bm_box_contents(&self, p: i32) -> Result<(crate::boxfrag::Frag, Positions), &'static str> {
+        let f = self.frag_take(p, self.bm_link(p), &[], &[])?;
+        let pos = if crate::displaylist::enabled() {
+            let mut at = vec![];
+            self.bm_nodes_one(p, &mut at);
+            at.iter().map(|&q| self.dl_side_pos(q)).collect()
+        } else {
+            vec![]
+        };
+        Ok((f, pos))
+    }
+
+    /// Node `p` and what it holds, in `bm_nodes`'s order.
+    fn bm_nodes_one(&self, p: i32, out: &mut Vec<i32>) {
+        let next = self.bm_link(p);
+        // (`bm_nodes` on a list of `p` alone)
+        let mut v = vec![];
+        self.bm_nodes(p, &[], &mut v);
+        let stop = if next == 0 {
+            v.len()
+        } else {
+            v.iter().position(|&q| q == next).unwrap_or(v.len())
+        };
+        out.extend_from_slice(&v[..stop]);
     }
 
     /// `change_box(null)`: box register `n` becomes void at its level
@@ -3262,6 +3924,13 @@ impl Globals {
                     self.bm_with_rec(|r| r.line_read = true);
                     true
                 }
+                // \currentgrouplevel, \currentgrouptype: the call's level
+                // and group join the key (inside its own groups the call
+                // makes both)
+                21 | 22 => {
+                    self.bm_with_rec(|r| r.group_read = true);
+                    true
+                }
                 _ => false,
             };
             if !ok {
@@ -3292,8 +3961,10 @@ impl Globals {
         // the call: the recording ends before it runs (`bm_finish`'s
         // trailer), and a replay runs it again
         if c == k::ignore_spaces && chr == 0 {
-            let base = self.bm_with_rec(|r| r.base).unwrap_or(i32::MAX);
-            if base != i32::MAX && self.bm_exhausted(base) {
+            let (base, span, level) = self
+                .bm_with_rec(|r| (r.base, r.span.is_some(), r.start.cur_level))
+                .unwrap_or((i32::MAX, false, 0));
+            if base != i32::MAX && self.bm_exhausted(base) && (!span || self.cur_level == level) {
                 let tok = self.cur_tok;
                 return self.bm_finish(Some(tok));
             }
@@ -3390,18 +4061,47 @@ impl Globals {
         })
     }
 
-    /// `big_switch`, during a recording: finish it when the body is done.
+    /// `big_switch`, during a recording: finish it when the body is done --
+    /// a span's when its group is closed again too (§15: until then the
+    /// call reads on from its file).
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_switch(&mut self) {
-        let Some(base) = self.bm_with_rec(|r| r.base) else {
+        let Some((base, span, level)) =
+            self.bm_with_rec(|r| (r.base, r.span.is_some(), r.start.cur_level))
+        else {
             self.bm_rec_on = false;
             return;
         };
-        if !self.bm_exhausted(base) {
+        if !self.bm_exhausted(base) || (span && self.cur_level != level) {
             return;
         }
         self.bm_finish(None);
+    }
+
+    /// `input_ln` read a line of the current file level (tex.web §362),
+    /// during a recording: a span's file level's line is kept (§15).
+    /// (A file level above it is refused at its first token.)
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_line_read(&mut self) {
+        let Some(Some((f, at))) = self.bm_with_rec(|r| r.span.as_ref().map(|s| (s.f, s.at))) else {
+            return;
+        };
+        if self.input_ptr != f {
+            return;
+        }
+        let index = self.cur_input.index_field;
+        let file = &mut self.input_file[(index - 1) as usize];
+        let (Some(line), Some(off)) = (file.read_line().map(<[u8]>::to_vec), file.read_offset())
+        else {
+            return self.bm_abort("SpanFile");
+        };
+        self.bm_with_rec(|r| {
+            if let Some(s) = r.span.as_mut() {
+                s.file.lines.push((line, off - at));
+            }
+        });
     }
 
     /// The recording is done: its body is used up, and `trailer` is the
@@ -3411,7 +4111,55 @@ impl Globals {
     fn bm_finish(&mut self, trailer: Option<i32>) {
         let end = self.bm_frame();
         let (start, scanner) = self.bm_with_rec(|r| (r.start.clone(), r.scanner)).unwrap();
-        let why = if end.cur_level != start.cur_level
+        // A span (§15): its file level must still be there; begun in
+        // vertical mode inside a box, it may leave a paragraph begun (§15.3)
+        let (span_f, start_aux, start_etex, span_toks) = self
+            .bm_with_rec(|r| {
+                (
+                    r.span.as_ref().map(|s| (s.f, s.index, s.etex_aux)),
+                    r.ctx.aux,
+                    r.span.as_ref().map_or(0, |s| s.etex_aux),
+                    r.span.as_ref().and_then(|s| s.toks),
+                )
+            })
+            .unwrap();
+        let span_f = span_f.map(|(f, i, _)| (f, i));
+        let span_lost = span_f.is_some_and(|(f, index)| {
+            if self.input_ptr < f {
+                return true;
+            }
+            let l = if self.input_ptr == f {
+                self.cur_input
+            } else {
+                self.input_stack[f as usize]
+            };
+            (l.state_field == TOKEN_LIST) != span_toks.is_some()
+                || l.index_field != index
+                || span_toks.is_some_and(|(list, _)| l.start_field != list)
+        });
+        // (on the main vertical list the page builder ran where the
+        // paragraph began: the page is as it left it, and so are the
+        // parameters it read)
+        let page_then = self
+            .bm_with_rec(|r| {
+                r.span
+                    .as_ref()
+                    .and_then(|s| s.graf.as_ref())
+                    .and_then(|g| g.page.clone())
+            })
+            .flatten()
+            .filter(|(_, params)| *params == self.bm_page_params())
+            .map(|(page, _)| page);
+        let graf = span_f.is_some()
+            && start.mode.abs() == k::vmode
+            && (start.nest_ptr > 0 || page_then.is_some())
+            && end.nest_ptr == start.nest_ptr + 1
+            && end.mode == k::hmode
+            && self.cur_list.eTeX_aux_field == 0
+            && self.nest[start.nest_ptr as usize].aux_field.0 == start_aux;
+        let why = if span_lost {
+            Some("SpanFile")
+        } else if end.cur_level != start.cur_level
             || end.save_ptr < start.save_ptr
             || !self.bm_saves_only(start.save_ptr, end.save_ptr)
         {
@@ -3426,18 +4174,32 @@ impl Globals {
             Some("Error")
         } else if self.after_token != 0 || self.scanner_status != scanner {
             Some("State")
-        } else if end.nest_ptr != start.nest_ptr || end.mode != start.mode {
+        } else if (end.nest_ptr != start.nest_ptr || end.mode != start.mode) && !graf {
             Some("OuterList")
-        } else if end.tail != start.tail && start.mode != -k::hmode {
+        } else if end.tail != start.tail
+            && start.mode != -k::hmode
+            && !(span_f.is_some()
+                && (start.mode.abs() == k::hmode || start.mode.abs() == k::mmode || graf))
+        {
             // only in restricted horizontal mode may a call append: no
-            // paragraph, no page builder
+            // paragraph, no page builder (a span also in a paragraph or in
+            // math, and one that begins a paragraph, §15.3)
+            Some("OuterList")
+        } else if span_f.is_some()
+            && start.mode.abs() == k::mmode
+            && (self.cur_list.aux_field.0 != start_aux
+                || self.cur_list.eTeX_aux_field != start_etex)
+        {
+            // (in math the list's `aux` is `incompleat_noad` and its
+            // `eTeX_aux` the display's box or `delim_ptr`: pointers, which a
+            // replay cannot make again; the call must leave them alone)
             Some("OuterList")
         } else if self
             .bm_with_rec(|r| r.pending_box.is_some())
             .unwrap_or(false)
         {
             Some("BoxContent")
-        } else if end.page != start.page {
+        } else if end.page != *page_then.as_ref().filter(|_| graf).unwrap_or(&start.page) {
             Some("Page")
         } else if end.fonts != start.fonts || end.font_glue != start.font_glue {
             Some("Fonts")
@@ -3465,7 +4227,18 @@ impl Globals {
             Some("State")
         } else if end.outputs != start.outputs {
             Some("Output")
-        } else if end.lines != start.lines {
+        } else if end.lines != start.lines
+            && (span_f.is_none()
+                || end.lines.1 != start.lines.1
+                || end.lines.2 != start.lines.2
+                || self
+                    .bm_with_rec(|r| r.span.as_ref().map(|s| (s.f, s.line0, s.journal)))
+                    .flatten()
+                    .and_then(|(f, l, m)| self.bm_span_journal(f, l, m))
+                    .is_none())
+        {
+            // (a span's `\inputlineno` reads of its own lines are made
+            // again by its replay, §15.4)
             Some("LineShift")
         } else {
             None
@@ -3475,6 +4248,14 @@ impl Globals {
         }
         let gboxes = self.bm_with_rec(|r| r.gboxes.clone()).unwrap_or_default();
         if gboxes.iter().any(|&n| self.bm_box_value(n) != 0) {
+            if debug() {
+                let left: Vec<i32> = gboxes
+                    .iter()
+                    .copied()
+                    .filter(|&n| self.bm_box_value(n) != 0)
+                    .collect();
+                eprintln!("boxmemo: global boxes left: {left:?}");
+            }
             return self.bm_abort("GlobalBox");
         }
         self.bm_rec_on = false;
@@ -3496,28 +4277,136 @@ impl Globals {
                 });
             }
         }
+        // a span's paragraph (§15.3): the paragraph skip appended to the
+        // box's list, and the paragraph's own list, with the holes
+        let mut span_graf = None;
+        let mut pos: Positions = vec![];
+        let dl = crate::displaylist::enabled();
+        // (a span's `\copy`s of foreign boxes, and the SyncTeX tag of its
+        // file level, which every other node it made carries, §15.6)
+        let copied: Vec<i32> = rec.copies.iter().map(|c| c.1).collect();
+        let span_tag = rec.span.as_ref().map(|s| {
+            if self.input_ptr == s.f {
+                self.cur_input.synctex_tag_field
+            } else {
+                self.input_stack[s.f as usize].synctex_tag_field
+            }
+        });
+        if graf {
+            let holes: Vec<i32> = rec.holes.iter().map(|h| h.1).collect();
+            let skip: Vec<i32> = holes.iter().chain(&copied).copied().collect();
+            let note = rec.span.as_mut().and_then(|s| s.graf.take());
+            let outer_h: i64 = note.as_ref().map_or(0, |n| {
+                n.glues
+                    .iter()
+                    .map(|g| {
+                        (crate::generated::types::memory_word(g.spec_words[1]).int() as i64).max(0)
+                    })
+                    .sum()
+            });
+            // the paragraph skips: on the outer list still (a box's), or
+            // as the main vertical list's noted them
+            let outer = if start.nest_ptr > 0 {
+                let first = self.bm_link(start.tail);
+                let mut q = first;
+                while q != 0 {
+                    if q >= self.hi_mem_min || self.mem[q as usize].hh().b0() != k::glue_node {
+                        return self.bm_abort_taken(rec, "OuterList");
+                    }
+                    q = self.bm_link(q);
+                }
+                if dl {
+                    let mut at = vec![];
+                    self.bm_nodes(first, &[], &mut at);
+                    pos = at.iter().map(|&p| self.dl_side_pos(p)).collect();
+                }
+                match self.frag_take(first, 0, &[], &rec.new_objs) {
+                    Ok(f) => f,
+                    Err(w) => return self.bm_abort_taken(rec, w),
+                }
+            } else {
+                let Some(note) = note else {
+                    return self.bm_abort_taken(rec, "OuterList");
+                };
+                if dl {
+                    pos = note.glues.iter().map(|g| g.pos).collect();
+                }
+                match self.bm_graf_glues(&note.glues) {
+                    Ok(f) => f,
+                    Err(w) => return self.bm_abort_taken(rec, w),
+                }
+            };
+            let head = self.cur_list.head_field;
+            let inner = match self.frag_take_span(
+                self.bm_link(head),
+                0,
+                &holes,
+                &copied,
+                &rec.new_objs,
+                span_tag,
+            ) {
+                Ok(f) => f,
+                Err(w) => return self.bm_abort_taken(rec, w),
+            };
+            if dl {
+                let mut at = vec![head];
+                self.bm_nodes(self.bm_link(head), &skip, &mut at);
+                pos.extend(at.iter().map(|&p| self.dl_side_pos(p)));
+            }
+            span_graf = Some(Graf {
+                outer,
+                inner,
+                ml: self.cur_list.ml_field,
+                pg: self.cur_list.pg_field,
+                aux: self.cur_list.aux_field.0,
+                outer_h,
+            });
+        }
         // a draw call's output, with its holes
         let mut frag = None;
-        if end.tail != start.tail || !rec.holes.is_empty() {
+        if !graf && (end.tail != start.tail || !rec.holes.is_empty()) {
             let holes: Vec<i32> = rec.holes.iter().map(|h| h.1).collect();
             if end.tail == start.tail {
                 return self.bm_abort_taken(rec, "Hole");
             }
             let first = self.bm_link(start.tail);
-            match self.frag_take(first, 0, &holes, &rec.new_objs) {
+            let skip: Vec<i32> = holes.iter().chain(&copied).copied().collect();
+            match self.frag_take_span(first, 0, &holes, &copied, &rec.new_objs, span_tag) {
                 Ok(f) if self.cur_list.tail_field == end.tail => frag = Some(f),
                 Ok(_) => return self.bm_abort_taken(rec, "Tail"),
                 Err(w) => return self.bm_abort_taken(rec, w),
             }
+            if dl && rec.span.is_some() {
+                let mut at = vec![];
+                self.bm_nodes(first, &skip, &mut at);
+                pos = at.iter().map(|&p| self.dl_side_pos(p)).collect();
+            }
         }
         let aux = self.cur_list.aux_field.0;
         let last_badness = rec.packed.then_some(self.last_badness);
+        let span_read = match rec.span.as_ref() {
+            Some(s) => match self.bm_span_toks(s) {
+                Ok(t) => t,
+                Err(w) => return self.bm_abort_taken(rec, w),
+            },
+            None => None,
+        };
+        let span = rec.span.as_ref().map(|s| {
+            Box::new(SpanEntry {
+                file: s.file.clone(),
+                end: self.bm_span_end(s),
+                graf: span_graf,
+                pos,
+                copies: rec.copies.iter().map(|c| c.0).collect(),
+                toks: span_read,
+            })
+        });
         if let Some(i) = rec.verify {
             let (cs, scanner) = (rec.cs, rec.scanner);
-            self.bm_verified(rec, i, last_badness, &frag, trailer);
+            self.bm_verified(rec, i, last_badness, &frag, trailer, &span);
             return self.bm_verify_full(cs, i, scanner);
         }
-        self.bm_commit(rec, last_badness, frag, aux, trailer);
+        self.bm_commit(rec, last_badness, frag, aux, trailer, span);
     }
 
     /// Abandon a recording already taken out of the state (its end check).
@@ -3534,37 +4423,63 @@ impl Globals {
         frag: Option<crate::boxfrag::Frag>,
         aux: u64,
         trailer: Option<i32>,
+        span: Option<Box<SpanEntry>>,
     ) {
+        // (a span's `\inputlineno` reads are of the lines its key holds)
         let line = self.line;
-        let mut bytes = 4 * (rec.k1.len() + rec.k2.len() + rec.k4.len())
+        let line_read = rec.line_read && span.is_none();
+        let fast = if span.is_some() {
+            let t0 = std::time::Instant::now();
+            let f = compress_groups_with(&new_cs_first(&rec.ops), true);
+            if debug() {
+                eprintln!(
+                    "boxmemo: span log of {} operations compressed in {:?}",
+                    rec.ops.len(),
+                    t0.elapsed()
+                );
+            }
+            f
+        } else {
+            compress_groups(&rec.ops)
+        };
+        // A span keeps its whole log only to be verified (§15.5): a
+        // pgfplots axis makes some 10^5 to 10^6 operations.
+        let keep_ops = span.is_none() || mode() == Mode::Verify;
+        let ops_cost = if keep_ops { ops_bytes(&rec.ops) } else { 0 };
+        let span_bytes = span.as_ref().map_or(0, |s| {
+            s.file.lines.iter().map(|l| 40 + l.0.len()).sum::<usize>()
+                + 4 * s.end.buf.len()
+                + 16 * s.pos.len()
+                + s.graf
+                    .as_ref()
+                    .map_or(0, |g| g.outer.bytes() + g.inner.bytes() + 64)
+        });
+        let mut bytes = span_bytes
+            + frag
+                .as_ref()
+                .filter(|_| span.is_some())
+                .map_or(0, |f| f.bytes())
+            + 4 * (rec.k1.len() + rec.k2.len() + rec.k4.len())
             // (a macro's tokens are shared: `intern_tokens` counts them once)
             + 16 * rec.k3.len()
-            + rec
-                .ops
-                .iter()
-                .map(|o| match o {
-                    Op::Def {
-                        v: Val::FreshList(l),
-                        ..
-                    }
-                    | Op::Sa {
-                        v: Val::FreshList(l),
-                        ..
-                    } => 32 + 4 * l.len(),
-                    Op::Def {
-                        v: Val::FreshShape(l),
-                        ..
-                    } => 32 + 4 * l.len(),
-                    // (and once more in `Entry::new_cs`)
-                    Op::NewCs { name, .. } => 2 * (32 + 4 * name.len()),
-                    _ => 32,
-                })
-                .sum::<usize>();
+            + ops_cost
+            + if span.is_some() { ops_bytes(&fast) } else { 0 };
         let name = if debug() {
             Some(self.cs_name_string(rec.cs))
         } else {
             None
         };
+        // (the size it has where it is not verified)
+        if span.is_some() && bytes - ops_cost > MAX_SPAN_BYTES {
+            if let Some(n) = &name {
+                eprintln!(
+                    "boxmemo: span \\{n} too large to keep: {} bytes, {} operations replayed",
+                    bytes - ops_cost,
+                    fast.len()
+                );
+            }
+            return self.bm_abort_taken(rec, "Large");
+        }
         ST.with(|s| {
             let mut s = s.borrow_mut();
             s.clock += 1;
@@ -3604,7 +4519,7 @@ impl Globals {
             };
             let rs_locs = {
                 let mut v: Vec<i32> = rec.k3.iter().map(|(p, _)| *p).collect();
-                v.push(rec.cs);
+                v.push(rec.call);
                 for o in &rec.ops {
                     if let Op::Def { p, v: val, .. } = o {
                         v.push(*p);
@@ -3632,13 +4547,15 @@ impl Globals {
                 absent: rec.absent,
                 kr: rec.kr,
                 kb: rec.kb,
+                kc: rec.kc,
                 holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                 frag,
                 aux,
                 trailer,
                 voids: rec.voids,
-                line: rec.line_read.then_some(line),
-                fast: compress_groups(&rec.ops),
+                line: line_read.then_some(line),
+                group: rec.group_read.then_some(rec.group0),
+                fast,
                 new_cs: rec
                     .ops
                     .iter()
@@ -3654,8 +4571,9 @@ impl Globals {
                 new_objs: rec.new_objs.len(),
                 font_glues,
                 rs_locs,
-                ops: rec.ops,
+                ops: if keep_ops { rec.ops } else { vec![] },
                 last_badness,
+                span,
                 last_used: now,
                 hits: 0,
                 bytes,
@@ -3687,6 +4605,29 @@ impl Globals {
                     bytes
                 );
             }
+            if name.is_some() && entry.span.is_some() {
+                let (mut newcs, mut glob, mut loc, mut grp, mut toks) = (0, 0, 0, 0, 0usize);
+                let mut locs = HashSet::new();
+                for o in &entry.fast {
+                    match o {
+                        Op::NewCs { .. } => newcs += 1,
+                        Op::Begin(_) => grp += 1,
+                        Op::Def { p, kind, v, .. } => {
+                            locs.insert(*p);
+                            if *kind >= 2 { glob += 1 } else { loc += 1 }
+                            if let Val::FreshList(l) | Val::Shared(_, l) = v { toks += l.len() }
+                        }
+                        Op::Sa { kind, .. } => {
+                            if *kind >= 2 { glob += 1 } else { loc += 1 }
+                        }
+                        _ => {}
+                    }
+                }
+                eprintln!(
+                    "boxmemo: span log: {newcs} entered, {glob} global and {loc} local assignments to {} locations, {grp} groups, {toks} tokens",
+                    locs.len()
+                );
+            }
             insert_entry(&mut s, rec.cs, entry);
             s.stats.committed += 1;
         });
@@ -3701,6 +4642,7 @@ impl Globals {
         last_badness: Option<i32>,
         frag: &Option<crate::boxfrag::Frag>,
         trailer: Option<i32>,
+        span: &Option<Box<SpanEntry>>,
     ) {
         let name = self.cs_name_string(rec.cs);
         let fail = with_config(|c| c.verify_fail);
@@ -3739,6 +4681,56 @@ impl Globals {
             }
             if e.trailer != trailer {
                 diffs.push("the last \\ignorespaces differs".to_string());
+            }
+            // a span's file, where it left the file level, its paragraph
+            // and its nodes' source positions (§15)
+            match (&e.span, span) {
+                (None, None) => {}
+                (Some(a), Some(b)) => {
+                    if a.file != b.file || a.toks != b.toks || a.copies != b.copies {
+                        diffs.push("the span's lines differ".to_string());
+                    }
+                    if !a.end.same(&b.end) {
+                        diffs.push(
+                            format!(
+                                "the span's end: recorded {:?} normal path {:?}",
+                                a.end, b.end
+                            )
+                            .chars()
+                            .take(400)
+                            .collect(),
+                        );
+                    }
+                    match (&a.graf, &b.graf) {
+                        (None, None) => {}
+                        (Some(x), Some(y)) => {
+                            if (x.ml, x.pg, x.aux) != (y.ml, y.pg, y.aux) {
+                                diffs.push(format!(
+                                    "the span's paragraph: recorded {:?} normal path {:?}",
+                                    (x.ml, x.pg, x.aux),
+                                    (y.ml, y.pg, y.aux)
+                                ));
+                            }
+                            for (what, f, g) in
+                                [("skip", &x.outer, &y.outer), ("list", &x.inner, &y.inner)]
+                            {
+                                if let Some(d) = crate::boxfrag::frag_diff(f, g) {
+                                    diffs.push(
+                                        format!("the span's paragraph {what} differs: {d}")
+                                            .chars()
+                                            .take(400)
+                                            .collect(),
+                                    );
+                                }
+                            }
+                        }
+                        _ => diffs.push("the span's paragraph: one path began one".to_string()),
+                    }
+                    if a.pos != b.pos {
+                        diffs.push("the span's source positions differ".to_string());
+                    }
+                }
+                _ => diffs.push("one path is a span".to_string()),
             }
             if e.last_badness != last_badness {
                 diffs.push(format!(
@@ -3884,6 +4876,616 @@ impl Globals {
         fail_now();
     }
 
+    // -- spans (§15) ---------------------------------------------------------
+
+    /// `\begin` was called with `n` arguments: is it a span? `Ok`: the
+    /// environment's control sequence (the store's key) and the part of the
+    /// key the file level's buffer holds (its line, where it stands in it,
+    /// and the rest of the line). `Err(None)`: not an environment offered
+    /// (no offer); `Err(Some(why))`: one offered that cannot be a span here.
+    fn bm_span_offer(&mut self, n: i32) -> Result<(i32, Vec<i32>), Option<&'static str>> {
+        if n != 1 || self.param_ptr < 1 {
+            return Err(None);
+        }
+        let mut arg = vec![];
+        if !self.bm_tokens(self.param_stack[(self.param_ptr - 1) as usize], &mut arg)
+            || arg.is_empty()
+            || arg.len() > 64
+        {
+            return Err(None);
+        }
+        // letters and other characters (`cmd*256+chr`, cmd 11 or 12)
+        if arg.iter().any(|&t| !(11 * 256..13 * 256).contains(&t)) {
+            return Err(None);
+        }
+        let name: Vec<i32> = arg.iter().map(|&t| t % 256).collect();
+        let offered = with_config(|c| {
+            c.spans
+                .iter()
+                .any(|s| s.len() == name.len() && s.iter().zip(&name).all(|(&a, &b)| a as i32 == b))
+        });
+        if !offered {
+            return Err(None);
+        }
+        let Some(env) = self.bm_find_cs(&name) else {
+            return Err(Some("SpanEnv"));
+        };
+        // the level below the body: a file's line (not the terminal, a
+        // `\read` or a pseudo file)
+        if self.input_ptr < 1 {
+            return Err(Some("SpanLevel"));
+        }
+        let fl = self.input_stack[(self.input_ptr - 1) as usize];
+        if fl.state_field == TOKEN_LIST {
+            // (or a token list: a macro's argument, `\scalebox{..}{\begin..}`,
+            // or body, read token by token, §15.10)
+            if ![k::parameter, k::backed_up, k::inserted, k::macro_].contains(&fl.index_field)
+                || fl.loc_field == 0
+            {
+                return Err(Some("SpanLevel"));
+            }
+            if self.span_in_preamble() {
+                return Err(Some("SpanPreamble"));
+            }
+            return Ok((
+                env,
+                vec![-8, self.line, fl.index_field, fl.name_field, self.in_open],
+            ));
+        }
+        if fl.name_field <= 19 || fl.index_field < 1 {
+            return Err(Some("SpanLevel"));
+        }
+        if self.span_in_preamble() {
+            return Err(Some("SpanPreamble"));
+        }
+        let mut key = vec![
+            -7,
+            self.line,
+            fl.loc_field - fl.start_field,
+            fl.limit_field - fl.start_field,
+            fl.state_field,
+            fl.index_field,
+            self.in_open,
+        ];
+        for j in fl.loc_field..=fl.limit_field {
+            key.push(self.buffer[j as usize]);
+        }
+        Ok((env, key))
+    }
+
+    /// Of a span's variants whose key holds but for the file (`fits`), the
+    /// most recent whose lines the file level's file holds next; else
+    /// `Err` with the most recent of them.
+    fn bm_span_pick(
+        &mut self,
+        cs: i32,
+        mut fits: Vec<(u64, usize)>,
+    ) -> Result<usize, Option<usize>> {
+        if fits.is_empty() {
+            return Err(None);
+        }
+        fits.sort_unstable_by(|a, b| b.cmp(a));
+        let most = fits[0].1;
+        let want: Vec<(usize, String, usize)> = ST.with(|s| {
+            let s = s.borrow();
+            let v = &s.store[&cs];
+            fits.iter()
+                .filter_map(|&(_, i)| {
+                    let sp = v[i].span.as_ref()?;
+                    Some((i, sp.file.path.clone(), sp.file.lines.len()))
+                })
+                .collect()
+        });
+        let fl = self.input_stack[(self.input_ptr - 1) as usize];
+        if fl.state_field == TOKEN_LIST {
+            // (§15.10: the list's next tokens are the recorded ones)
+            let high = self.max_buf_stack;
+            let found = ST.with(|s| {
+                let s = s.borrow();
+                let v = &s.store[&cs];
+                fits.iter().find_map(|&(_, i)| {
+                    let sp = v[i].span.as_ref()?;
+                    let t = sp.toks.as_ref()?;
+                    let mut q = fl.loc_field;
+                    for &x in t {
+                        if q == 0 || self.bm_info(q) != x {
+                            return None;
+                        }
+                        q = self.bm_link(q);
+                    }
+                    ((sp.end.max_buf.is_some() || sp.end.max_buf0 <= high)
+                        && sp
+                            .graf
+                            .as_ref()
+                            .is_none_or(|g| self.nest_ptr != 0 || self.bm_page_quiet(g.outer_h)))
+                    .then_some(i)
+                })
+            });
+            return found.ok_or(Some(most));
+        }
+        let n = want.iter().map(|w| w.2).max().unwrap_or(0);
+        let (index, high) = (fl.index_field, self.max_buf_stack - fl.start_field);
+        let file = &mut self.input_file[(index - 1) as usize];
+        let Some(path) = file.opened_path().map(str::to_string) else {
+            return Err(Some(most));
+        };
+        let Some(next) = file.peek_lines(n) else {
+            return Err(Some(most));
+        };
+        let found = ST.with(|s| {
+            let s = s.borrow();
+            let v = &s.store[&cs];
+            want.iter().find_map(|(i, p, len)| {
+                let sp = v[*i].span.as_ref()?;
+                // (the buffer's high mark: see `SpanEnd::max_buf0`)
+                (*p == path
+                    && next.len() >= *len
+                    && next[..*len] == sp.file.lines[..]
+                    && (sp.end.max_buf.is_some() || sp.end.max_buf0 <= high)
+                    // (a paragraph begun on the main vertical list: the
+                    // page builder's run there must fire nothing, §15.3)
+                    && sp
+                        .graf
+                        .as_ref()
+                        .is_none_or(|g| self.nest_ptr != 0 || self.bm_page_quiet(g.outer_h)))
+                .then_some(*i)
+            })
+        });
+        found.ok_or(Some(most))
+    }
+
+    /// `new_graf` began a paragraph, before (`k` 0) and after (1) the page
+    /// builder's run on the main vertical list, during a recording: a
+    /// span's paragraph on its own level is noted (§15.3).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_new_graf(&mut self, k: i32) {
+        let Some(Some((n0, tail0))) = self.bm_with_rec(|r| {
+            r.span.as_ref().map(|s| {
+                (
+                    r.start.nest_ptr,
+                    s.graf.as_ref().map_or(r.start.tail, |g| g.tail),
+                )
+            })
+        }) else {
+            return;
+        };
+        if debug() {
+            eprintln!(
+                "boxmemo: span new_graf {k}: nest {} (call's {n0}), line {}",
+                self.nest_ptr, self.line
+            );
+        }
+        // (a box's paragraph skips stay on its list, and are taken at the
+        // end; a paragraph inside one of the call's own boxes is the call's)
+        if self.nest_ptr != 1 || n0 != 0 {
+            return;
+        }
+        if k == 0 {
+            // what the main vertical list got since the call, or since the
+            // page builder's last run: only paragraph skips
+            let mut glues = vec![];
+            let mut q = self.bm_link(tail0);
+            while q != 0 {
+                if q >= self.hi_mem_min || self.mem[q as usize].hh().b0() != k::glue_node {
+                    return self.bm_abort("OuterList");
+                }
+                let w = |i: i32| self.mem[(q + i) as usize].0;
+                let spec = self.mem[(q + 1) as usize].hh().lh();
+                if self.mem[(q + 1) as usize].hh().rh() != 0 {
+                    return self.bm_abort("OuterList");
+                }
+                let sw = |i: i32| self.mem[(spec + i) as usize].0;
+                glues.push(GlueRec {
+                    p: q,
+                    words: [w(0), w(1)],
+                    spec,
+                    spec_words: [sw(0), sw(1), sw(2), sw(3)],
+                    pos: self.dl_side_pos(q),
+                });
+                q = self.bm_link(q);
+            }
+            self.bm_with_rec(|r| {
+                if let Some(s) = r.span.as_mut() {
+                    let g = s.graf.get_or_insert(GrafNote {
+                        glues: vec![],
+                        tail: 0,
+                        page: None,
+                    });
+                    g.glues.extend(glues);
+                }
+            });
+        } else {
+            // (the page builder took the contributions and fired nothing,
+            // and no insertion is on the page: it read no insertion's
+            // registers; each run read the same parameters)
+            if self.output_active || self.bm_link(k::page_ins_head) != k::page_ins_head {
+                return self.bm_abort("Page");
+            }
+            let page = self.bm_frame().page;
+            let params = self.bm_page_params();
+            let tail = self.nest[0].tail_field;
+            let same = self
+                .bm_with_rec(|r| {
+                    let g = r.span.as_mut()?.graf.as_mut()?;
+                    let same = g.page.as_ref().is_none_or(|(_, p)| *p == params);
+                    g.page = Some((page, params));
+                    g.tail = tail;
+                    Some(same)
+                })
+                .flatten();
+            if same != Some(true) {
+                self.bm_abort("Page");
+            }
+        }
+    }
+
+    /// The paragraph skips a span appended to the main vertical list
+    /// (§15.3), as a fragment: each specification as the replay must share
+    /// it, decided now (the call's end, where the replay rebuilds them): the
+    /// static ones, one an `eqtb` glue location, a sparse register or a
+    /// font holds now with the same words, else the fragment's own -- when
+    /// every reference to it is one of these nodes still on the page (one
+    /// the page builder threw away is made again to be thrown away again).
+    fn bm_graf_glues(&self, glues: &[GlueRec]) -> Result<crate::boxfrag::Frag, &'static str> {
+        use crate::boxfrag::{Field, Frag, Node, Ref, Spec};
+        let mut on_page = HashSet::new();
+        let mut q = self.bm_link(k::page_head);
+        while q != 0 && q != k::page_head {
+            on_page.insert(q);
+            q = self.bm_link(q);
+        }
+        let alive = |g: &GlueRec| {
+            on_page.contains(&g.p)
+                && self.mem[g.p as usize].hh().b0() == k::glue_node
+                && self.mem[(g.p + 1) as usize].hh().lh() == g.spec
+        };
+        let same_words = |q: i32, w: &[u64; 4]| {
+            (0..4).all(|i| {
+                let x = self.mem[(q + i) as usize].0;
+                // (word 0's link half is the reference count)
+                if i == 0 {
+                    x >> 32 == w[0] >> 32
+                } else {
+                    x == w[i as usize]
+                }
+            })
+        };
+        let mut f = Frag::default();
+        let mut own: HashMap<i32, usize> = HashMap::new();
+        for g in glues {
+            let q = g.spec;
+            let spec = if q <= LO_MEM_STAT_MAX {
+                Spec::Static(q)
+            } else if let Some(e) = (GLUE_BASE..LOCAL_BASE)
+                .find(|&e| self.bm_eq(e).hh().rh() == q && same_words(q, &g.spec_words))
+            {
+                Spec::Eqtb(e)
+            } else if let Some(n) = {
+                let mut found = None;
+                self.bm_sa_walk(k::glue_val, &mut |n, e| {
+                    if found.is_none() && self.bm_link(e + 1) == q {
+                        found = Some(n);
+                    }
+                });
+                found.filter(|_| same_words(q, &g.spec_words))
+            } {
+                Spec::Sparse(k::glue_val, n)
+            } else if let Some(i) = own.get(&q) {
+                f.specs[*i].1 += 1;
+                Spec::Own(*i)
+            } else {
+                let refs = glues.iter().filter(|x| x.spec == q && alive(x)).count();
+                if alive(g) && self.mem[q as usize].hh().rh() as usize + 1 != refs {
+                    // (shared with something not named: a register beyond
+                    // `eqtb`'s, another list)
+                    return Err("SharedGlue");
+                }
+                f.specs.push((g.spec_words, 1));
+                own.insert(q, f.specs.len() - 1);
+                Spec::Own(f.specs.len() - 1)
+            };
+            // (as `boxfrag` keeps a glue node: its first two words, the link
+            // and both pointer fields set again; SyncTeX's two are
+            // `get_node`'s)
+            let words = vec![g.words[0] & !0xffff_ffffu64, 0];
+            f.nodes.push(Node::Big {
+                size: k::medium_node_size,
+                copy: k::medium_node_size - 2,
+                words,
+                fields: vec![
+                    Field {
+                        word: 1,
+                        left: true,
+                        to: Ref::Spec(spec),
+                    },
+                    Field {
+                        word: 1,
+                        left: false,
+                        to: Ref::Null,
+                    },
+                ],
+            });
+        }
+        Ok(f)
+    }
+
+    /// What the page builder reads of `eqtb` when no insertion and no
+    /// output routine is involved (pdftex.web's `build_page` and
+    /// `freeze_page_specs`): `\vsize`, `\maxdepth`, `\tracingpages`, and
+    /// `\topskip` (its glue on an empty page: width, stretch, shrink and
+    /// the orders' word).
+    fn bm_page_params(&self) -> [i64; 7] {
+        let t = self.bm_eq(GLUE_BASE + k::top_skip_code).hh().rh();
+        let w = |i: i32| self.mem[(t + i) as usize].int() as i64;
+        [
+            self.bm_eq(k::dimen_base + k::vsize_code).int() as i64,
+            self.bm_eq(k::dimen_base + k::max_depth_code).int() as i64,
+            self.bm_eq(INT_BASE + k::tracing_pages_code).int() as i64,
+            w(1),
+            w(2),
+            w(3),
+            (self.mem[t as usize].0 >> 32) as i64,
+        ]
+    }
+
+    /// Will the page builder, run on the main vertical list's
+    /// contributions and then skips of natural width `extra` (each at
+    /// least 0), fire nothing and take no insertion (§15.3)? A span begun
+    /// there replays its run only then: its recording's paragraph was
+    /// typeset with no output routine between. Sufficient, not necessary:
+    /// no penalty that forces a break, no insertion, and the page's total
+    /// with every contribution's height, depth and natural width added
+    /// (each at least 0; shrink only takes away) at most the page's goal,
+    /// so no breakpoint is past the goal (pdftex.web's `build_page`, `c =
+    /// awful_bad` only then).
+    fn bm_page_quiet(&self, extra: i64) -> bool {
+        if self.output_active
+            || self.bm_link(k::page_ins_head) != k::page_ins_head
+            || self.insert_penalties >= k::inf_penalty
+            || self.nest_ptr != 0
+        {
+            return false;
+        }
+        let sc = |p: i32| (self.mem[p as usize].int() as i64).max(0);
+        let (goal, mut h) = if self.page_contents == k::empty {
+            let t = self.bm_eq(GLUE_BASE + k::top_skip_code).hh().rh();
+            (
+                self.bm_eq(k::dimen_base + k::vsize_code).int() as i64,
+                sc(t + 1),
+            )
+        } else {
+            (self.page_so_far[0] as i64, 0)
+        };
+        h += self.page_so_far[1] as i64 + (self.page_so_far[7] as i64).max(0) + extra;
+        let mut p = self.bm_link(CONTRIB_HEAD);
+        let mut n = 0;
+        while p != 0 {
+            n += 1;
+            if p >= self.hi_mem_min || n > 10_000 {
+                return false;
+            }
+            let t = self.mem[p as usize].hh().b0();
+            if t == k::hlist_node || t == k::vlist_node || t == k::rule_node {
+                h += sc(p + 3) + sc(p + 2);
+            } else if t == k::glue_node {
+                h += sc(self.mem[(p + 1) as usize].hh().lh() + 1);
+            } else if t == k::kern_node {
+                h += sc(p + 1);
+            } else if t == k::penalty_node {
+                if self.mem[(p + 1) as usize].int() <= -k::inf_penalty {
+                    return false;
+                }
+            } else if t == k::ins_node {
+                return false;
+            }
+            if p == self.cur_list.tail_field {
+                break;
+            }
+            p = self.bm_link(p);
+        }
+        h <= goal
+    }
+
+    /// A token list's F (§15.10): the tokens the span read from it, from
+    /// `loc` at the call to `loc` now; refused if one is a macro
+    /// parameter (`out_param`: the macro's argument, which the key does not
+    /// hold).
+    fn bm_span_toks(&self, s: &SpanRec) -> Result<Option<Vec<i32>>, &'static str> {
+        let Some((_, loc0)) = s.toks else {
+            return Ok(None);
+        };
+        let l = if self.input_ptr == s.f {
+            self.cur_input
+        } else {
+            self.input_stack[s.f as usize]
+        };
+        let mut v = vec![];
+        let mut q = loc0;
+        while q != l.loc_field {
+            if q == 0 || v.len() >= 1 << 20 {
+                return Err("SpanToks");
+            }
+            let t = self.bm_info(q);
+            if t < k::cs_token_flag && t / 256 == k::out_param {
+                return Err("SpanParam");
+            }
+            v.push(t);
+            q = self.bm_link(q);
+        }
+        Ok(Some(v))
+    }
+
+    /// Where a span's recording leaves its file level (§15).
+    fn bm_span_end(&self, s: &SpanRec) -> SpanEnd {
+        let l = if self.input_ptr == s.f {
+            self.cur_input
+        } else {
+            self.input_stack[s.f as usize]
+        };
+        if s.toks.is_some() {
+            // (a token list: its tokens, `bm_span_toks`; reading it moves
+            // nothing in the buffer or the file, and the buffer's high mark
+            // is counted from 0)
+            return SpanEnd {
+                buf: vec![],
+                loc: 0,
+                limit: 0,
+                state: TOKEN_LIST,
+                first: 0,
+                last: None,
+                max_buf: (self.max_buf_stack > s.max_buf).then_some(self.max_buf_stack),
+                max_buf0: s.max_buf,
+                line: self.line,
+                journal: self
+                    .bm_span_journal(s.f, s.line0, s.journal)
+                    .unwrap_or_default(),
+            };
+        }
+        let st = l.start_field;
+        let read = !s.file.lines.is_empty();
+        SpanEnd {
+            buf: (st..=l.limit_field)
+                .map(|j| self.buffer[j as usize])
+                .collect(),
+            loc: l.loc_field - st,
+            limit: l.limit_field - st,
+            state: l.state_field,
+            first: self.first - st,
+            last: read.then_some(self.last - st),
+            max_buf: (self.max_buf_stack > s.max_buf).then_some(self.max_buf_stack - st),
+            max_buf0: s.max_buf - st,
+            line: self.line,
+            journal: self
+                .bm_span_journal(s.f, s.line0, s.journal)
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The line-shift journal's entries since `mark`, each a read of the
+    /// span's file level's line (its SyncTeX tag, the file), as its line's
+    /// distance from the span's first line; `None` when one is not, or a
+    /// checkpoint took some (§15.4).
+    fn bm_span_journal(&self, f: i32, line0: i32, mark: u64) -> Option<Vec<i32>> {
+        let l = if self.input_ptr == f {
+            self.cur_input
+        } else {
+            self.input_stack[f as usize]
+        };
+        crate::lineshift::journal_since(mark)?
+            .iter()
+            .map(|r| (r.known && r.tag == l.synctex_tag_field).then_some(r.line - line0))
+            .collect()
+    }
+
+    /// The nodes of list `p` in pre-order, character nodes included,
+    /// through boxes' lists, leaders, ligatures' characters and
+    /// discretionaries' texts, as `boxfrag` keeps them; a hole and what it
+    /// holds left out (its nodes are not the call's).
+    fn bm_nodes(&self, mut p: i32, holes: &[i32], out: &mut Vec<i32>) {
+        while p != 0 {
+            if !holes.contains(&p) {
+                out.push(p);
+                if p < self.hi_mem_min {
+                    let t = self.mem[p as usize].hh().b0();
+                    let w1 = self.mem[(p + 1) as usize].hh();
+                    if t == k::hlist_node || t == k::vlist_node || t == k::unset_node {
+                        self.bm_nodes(self.mem[(p + 5) as usize].hh().rh(), holes, out);
+                    } else if t == k::glue_node || t == k::ligature_node {
+                        self.bm_nodes(w1.rh(), holes, out);
+                    } else if t == k::disc_node {
+                        self.bm_nodes(w1.lh(), holes, out);
+                        self.bm_nodes(w1.rh(), holes, out);
+                    } else if (k::ord_noad..=k::inner_noad).contains(&t)
+                        || t == k::under_noad
+                        || t == k::over_noad
+                        || t == k::vcenter_noad
+                    {
+                        // (`boxfrag`'s noads: a field's sub-box or sub-list)
+                        for w in 1..=3 {
+                            let f = self.mem[(p + w) as usize].hh();
+                            if f.rh() == k::sub_box || f.rh() == k::sub_mlist {
+                                self.bm_nodes(f.lh(), holes, out);
+                            }
+                        }
+                    }
+                }
+            }
+            p = self.bm_link(p);
+        }
+    }
+
+    /// Give the nodes of the lists a replay rebuilt (in `bm_nodes`'s order)
+    /// the source positions the normal path gave them.
+    fn bm_put_positions(&mut self, at: &[i32], pos: &[crate::displaylist::SidePos]) {
+        if at.len() != pos.len() {
+            debug_assert!(
+                false,
+                "boxmemo: a span's nodes and positions differ in number"
+            );
+            return;
+        }
+        for (&p, &v) in at.iter().zip(pos) {
+            self.dl_side_put(p, v);
+        }
+    }
+
+    /// A span's replay leaves its file level as the normal path did: the
+    /// `n` lines it read are read again (as `input_ln` reads them) and the
+    /// level's buffer, positions and state, `first`, `last` and `line` set.
+    /// The file level is the current one (the body is popped).
+    fn bm_span_forward(&mut self, n: usize, end: &SpanEnd) {
+        let index = self.cur_input.index_field;
+        assert!(
+            self.cur_input.state_field != TOKEN_LIST && index >= 1,
+            "boxmemo: a span's file level is not the current level"
+        );
+        let ok = self.input_file[(index - 1) as usize].skip_lines(n);
+        assert!(ok, "boxmemo: a span's file ended before its lines");
+        let st = self.cur_input.start_field;
+        for (j, &v) in end.buf.iter().enumerate() {
+            self.buffer[st as usize + j] = v;
+        }
+        self.cur_input.loc_field = st + end.loc;
+        self.cur_input.limit_field = st + end.limit;
+        self.cur_input.state_field = end.state;
+        self.first = st + end.first;
+        if let Some(l) = end.last {
+            self.last = st + l;
+        }
+        if let Some(m) = end.max_buf {
+            self.max_buf_stack = self.max_buf_stack.max(st + m);
+        }
+        self.line = end.line;
+        // (each line `input_ln` read counts towards the next checkpoint)
+        if self.arena.extra.is_some() {
+            for _ in 0..n {
+                self.maybe_request_timed_checkpoint();
+            }
+        }
+    }
+
+    /// A token list's F (§15.10): a span's replay leaves it as the normal
+    /// path did, `n` tokens further on (the body is popped).
+    fn bm_span_forward_toks(&mut self, n: usize, end: &SpanEnd) {
+        assert!(
+            self.cur_input.state_field == TOKEN_LIST,
+            "boxmemo: a span's token list is not the current level"
+        );
+        for _ in 0..n {
+            let q = self.cur_input.loc_field;
+            assert!(
+                q != 0,
+                "boxmemo: a span's token list ended before its tokens"
+            );
+            self.cur_input.loc_field = self.bm_link(q);
+        }
+        if let Some(m) = end.max_buf {
+            self.max_buf_stack = self.max_buf_stack.max(m);
+        }
+        self.line = end.line;
+    }
+
     // -- replay --------------------------------------------------------------
 
     fn bm_make_list(&mut self, toks: &[i32]) -> i32 {
@@ -3920,6 +5522,19 @@ impl Globals {
                 (None, q)
             }
             Val::FreshList(l) => (None, self.bm_make_list(l)),
+            Val::Shared(id, l) => match SHARED.with(|s| s.borrow().get(id).copied()) {
+                Some(e) => {
+                    // (`add_token_ref`, as the normal path's `\let`)
+                    let r = self.bm_info(e) + 1;
+                    self.mem[e as usize].set_hh_lh(r);
+                    (None, e)
+                }
+                None => {
+                    let e = self.bm_make_list(l);
+                    SHARED.with(|s| s.borrow_mut().insert(*id, e));
+                    (None, e)
+                }
+            },
             Val::GlueFrom(a, b) => {
                 let e = if *a > 0 {
                     self.bm_eq(*a).hh().rh()
@@ -3983,6 +5598,7 @@ impl Globals {
             ))
         });
         let (ops, last_badness, rs_locs) = taken?;
+        SHARED.with(|s| s.borrow_mut().clear());
         // the body, used up: as `get_next` pops it
         self.end_token_list();
         // the L5 read-set (DESIGN.md §5.5), as D9's `intr_report_reads`
@@ -4019,6 +5635,12 @@ impl Globals {
                     }
                 }
                 Op::NewCs { p, name } => self.bm_make_cs(*p, name),
+                Op::BoxDim { n, c, v } => {
+                    let b = self.bm_box_value(*n);
+                    if b != 0 {
+                        self.mem[(b + c) as usize].set_int(*v);
+                    }
+                }
             }
         }
         if let Some(b) = last_badness {
@@ -4037,6 +5659,35 @@ impl Globals {
                 e.last_link,
             ))
         });
+        // a span (§15): its paragraph, its nodes' positions, where it left
+        // its file level
+        let span = ST.with(|s| {
+            let s = s.borrow();
+            let sp = s.store.get(&cs)?.get(i)?.span.as_ref()?;
+            Some((
+                sp.file.lines.len(),
+                sp.end.clone(),
+                sp.graf.clone(),
+                sp.pos.clone(),
+                sp.copies.clone(),
+                sp.toks.as_ref().map(Vec::len),
+            ))
+        });
+        let dl = crate::displaylist::enabled();
+        // (a span's copies of foreign boxes, made as `\copy` made them, of
+        // the boxes as they are now: after its `BoxDim`s, before a box is
+        // moved, §15.6)
+        let copies: Vec<i32> = span
+            .as_ref()
+            .map(|sp| {
+                sp.4.iter()
+                    .map(|&n| {
+                        let b = self.bm_box_value(n);
+                        self.copy_node_list(b)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // the links' objects, as `pdf_new_objnum` made them on the normal
         // path (nothing else the call did makes or reads an object)
         let mut objs = vec![];
@@ -4046,22 +5697,100 @@ impl Globals {
                 self.pdf_last_link = objs[*l];
             }
         }
-        if let Some((holes, Some(frag), aux, _, _)) = draw {
+        if let Some((holes, Some(frag), aux, _, _)) = &draw {
             let mut nodes = vec![];
-            for (n, _) in &holes {
+            for (n, _) in holes {
                 nodes.push(self.bm_box_value(*n));
                 self.bm_void_box(*n);
             }
             let save = self.scanner_status;
             self.scanner_status = 0;
-            let (first, last) = self.frag_make(&frag, &nodes, &objs);
+            let (first, last) = self.frag_make_span(frag, &nodes, &copies, &objs);
             self.scanner_status = save;
             if first != 0 {
                 let t = self.cur_list.tail_field;
                 self.mem[t as usize].set_hh_rh(first);
                 self.cur_list.tail_field = last;
             }
-            self.cur_list.aux_field = crate::generated::types::memory_word(aux);
+            self.cur_list.aux_field = crate::generated::types::memory_word(*aux);
+            if let Some((_, _, _, pos, _, _)) = &span {
+                if dl && !pos.is_empty() {
+                    let mut at = vec![];
+                    let skip: Vec<i32> = nodes.iter().chain(&copies).copied().collect();
+                    self.bm_nodes(first, &skip, &mut at);
+                    self.bm_put_positions(&at, pos);
+                }
+            }
+        }
+        if let (Some((holes, None, _, _, _)), Some((_, _, Some(g), pos, _, _))) = (&draw, &span) {
+            // §15.3: the paragraph skip on the box's list, then the
+            // paragraph `new_graf` began, its list with the holes
+            let mut nodes = vec![];
+            for (n, _) in holes {
+                nodes.push(self.bm_box_value(*n));
+                self.bm_void_box(*n);
+            }
+            let save = self.scanner_status;
+            self.scanner_status = 0;
+            // (`new_graf`: `prev_graf:=0` on the outer level, its skip,
+            // `push_nest`, the paragraph's level; and on the main vertical
+            // list the page builder, which reads only what the key and the
+            // recording's checks hold, §15.3)
+            self.cur_list.pg_field = 0;
+            let (first, last) = self.frag_make(&g.outer, &[], &objs);
+            if first != 0 {
+                let t = self.cur_list.tail_field;
+                self.mem[t as usize].set_hh_rh(first);
+                self.cur_list.tail_field = last;
+            }
+            // (the skips' positions now: the page builder may free them)
+            let n_outer = if dl && !pos.is_empty() {
+                let mut at = vec![];
+                self.bm_nodes(first, &[], &mut at);
+                let n = at.len().min(pos.len());
+                self.bm_put_positions(&at[..n], &pos[..n]);
+                n
+            } else {
+                0
+            };
+            self.push_nest();
+            self.cur_list.mode_field = k::hmode;
+            self.cur_list.aux_field = crate::generated::types::memory_word(g.aux);
+            self.cur_list.pg_field = g.pg;
+            self.cur_list.ml_field = g.ml;
+            if self.nest_ptr == 1 {
+                self.build_page();
+            }
+            let head = self.cur_list.head_field;
+            let (ifirst, ilast) = self.frag_make_span(&g.inner, &nodes, &copies, &objs);
+            self.scanner_status = save;
+            if ifirst != 0 {
+                self.mem[head as usize].set_hh_rh(ifirst);
+                self.cur_list.tail_field = ilast;
+            }
+            if dl && !pos.is_empty() {
+                let mut at = vec![head];
+                let skip: Vec<i32> = nodes.iter().chain(&copies).copied().collect();
+                self.bm_nodes(ifirst, &skip, &mut at);
+                self.bm_put_positions(&at, &pos[n_outer..]);
+            }
+        }
+        if let Some((n, end, _, _, _, toks)) = &span {
+            // (the line-shift journal's entries, as the normal path made
+            // them: reads of the file level's lines, whose first is `line`
+            // now, the key's)
+            let tag = self.cur_input.synctex_tag_field;
+            for &d in &end.journal {
+                crate::lineshift::journal_push(crate::lineshift::LineRead {
+                    tag,
+                    known: true,
+                    line: self.line + d,
+                });
+            }
+            match toks {
+                Some(t) => self.bm_span_forward_toks(*t, end),
+                None => self.bm_span_forward(*n, end),
+            }
         }
         let n = ops.len() as u64;
         ST.with(|s| {
@@ -4194,6 +5923,79 @@ mod tests {
         assert_eq!(
             compress_groups(&open),
             vec![def(1, 1, 3), Op::End, Op::Begin(2)]
+        );
+    }
+
+    #[test]
+    fn a_spans_let_takes_the_value_its_group_assigned() {
+        // §15.5: `\def\q{..}` (local) then `\global\let\p\q`: in a span's
+        // log the `\let` takes the list; elsewhere the group is kept
+        let list = |p: i32, kind: i32, l: Vec<i32>| Op::Def {
+            p,
+            t: 111,
+            v: Val::FreshList(l),
+            kind,
+        };
+        let let_ = |p: i32, q: i32, kind: i32| Op::Def {
+            p,
+            t: 111,
+            v: Val::LetCs(q),
+            kind,
+        };
+        let ops = vec![
+            Op::Begin(1),
+            list(8, 0, vec![1, 2]),
+            let_(7, 8, 2),
+            Op::Begin(1),
+            list(8, 0, vec![3]),
+            let_(6, 8, 2),
+            Op::End,
+            let_(5, 8, 2),
+            Op::End,
+        ];
+        // (\p and \r share \q's list, as on the normal path; \s's is its own)
+        let shared = |p: i32| Op::Def {
+            p,
+            t: 111,
+            v: Val::Shared(1, vec![1, 2]),
+            kind: 2,
+        };
+        assert_eq!(
+            compress_groups_with(&ops, true),
+            vec![shared(7), list(6, 2, vec![3]), shared(5)]
+        );
+        assert_eq!(compress_groups_with(&ops, false), ops);
+        // a `\let` from one the inner group assigned only locally, which
+        // the span does not follow, or of a `\let` whose source changed
+        // since: kept
+        let ops2 = vec![
+            Op::Begin(1),
+            Op::Begin(1),
+            list(8, 0, vec![3]),
+            Op::End,
+            let_(5, 8, 2),
+            Op::End,
+        ];
+        assert_eq!(
+            compress_groups_with(&ops2, true),
+            vec![Op::Begin(1), let_(5, 8, 2), Op::End]
+        );
+        let ops3 = vec![
+            Op::Begin(1),
+            let_(8, 9, 0),
+            list(9, 0, vec![4]),
+            let_(5, 8, 2),
+            Op::End,
+        ];
+        assert_eq!(
+            compress_groups_with(&ops3, true),
+            vec![
+                Op::Begin(1),
+                let_(8, 9, 0),
+                list(9, 0, vec![4]),
+                let_(5, 8, 2),
+                Op::End
+            ]
         );
     }
 }

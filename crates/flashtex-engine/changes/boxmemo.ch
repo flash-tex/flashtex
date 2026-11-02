@@ -123,6 +123,16 @@ else begin if intr_rec_on then flashtex_intr_next;
   end;
 @z
 
+@x pdftex.web l.8836 - a span's recording keeps each line its file level reads
+  begin if input_ln(cur_file,true) then {not end of file}
+    firm_up_the_line {this sets |limit|}
+@y
+  begin if input_ln(cur_file,true) then {not end of file}
+    begin firm_up_the_line; {this sets |limit|}
+    if bm_rec_on then flashtex_bm_line_read;
+    end
+@z
+
 @x pdftex.web l.8961 (after changes/intrinsics.ch) - every expansion a recording makes is checked
 reswitch: intr_at_switch:=false;
 if intr_rec_on then flashtex_intr_expand;
@@ -271,6 +281,25 @@ box_code: begin scan_register_num; fetch_box(cur_box);
   if bm_rec_on then flashtex_bm_box_use(cur_val,3);
 @z
 
+@x pdftex.web l.29738 - ... and a box a recording copies
+copy_code: begin scan_register_num; fetch_box(q); cur_box:=copy_node_list(q);
+@y
+copy_code: begin scan_register_num; fetch_box(q);
+  if bm_rec_on then flashtex_bm_box_use(cur_val,4);
+  cur_box:=copy_node_list(q);
+  if bm_rec_on then flashtex_bm_copied(cur_val,cur_box);
+@z
+
+@x pdftex.web l.29936 - a span's recording notes the paragraph it begins, before and after the page builder runs
+if every_par<>null then begin_token_list(every_par,every_par_text);
+if nest_ptr=1 then build_page; {put |par_skip| glue on current page}
+@y
+if every_par<>null then begin_token_list(every_par,every_par_text);
+if bm_rec_on then flashtex_bm_new_graf(0);
+if nest_ptr=1 then build_page; {put |par_skip| glue on current page}
+if bm_rec_on then flashtex_bm_new_graf(1);
+@z
+
 @x pdftex.web l.31632 (after changes/intrinsics.ch) - ... and every assignment
 if intr_rec_on then flashtex_intr_command;
 case cur_cmd of
@@ -287,6 +316,19 @@ if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
 @y
 if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
 if bm_rec_on then if q<>register then flashtex_bm_reg_loc(l,e);
+@z
+
+@x pdftex.web l.32213 - a span's recording assigns a dimension of a box it did not make
+begin c:=cur_chr; scan_register_num; fetch_box(b); scan_optional_equals;
+scan_normal_dimen;
+if b<>null then mem[b+c].sc:=cur_val;
+@y
+begin c:=cur_chr; scan_register_num; fetch_box(b);
+if bm_rec_on then flashtex_bm_box_use(cur_val,5);
+scan_optional_equals;
+scan_normal_dimen;
+if bm_rec_on then flashtex_bm_box_dimen(c,cur_val);
+if b<>null then mem[b+c].sc:=cur_val;
 @z
 
 @x pdftex.web l.32879 - new hyphenation exceptions are a new version of them
@@ -448,9 +490,11 @@ restore keeps them; the guard checks every value they depend on.
 @!bm_cand:array[0..eqtb_top] of boolean; {a registered macro}
 @!bm_font_version:integer; {names the state of the loaded fonts' parameters}
 @!bm_hyph_version:integer; {names the state of the hyphenation exceptions}
+@!bm_span_cs:pointer; {\.{\\begin}, when environments are offered as spans}
 
 @ @<Set init...@>=
 bm_rec_on:=false; bm_at_switch:=false; bm_font_version:=0; bm_hyph_version:=0;
+bm_span_cs:=0;
 bm_on:=flashtex_bm_enabled;
 
 @ @<Declare the routines of pdf\TeX's C parts@>=
@@ -473,6 +517,8 @@ procedure flashtex_bm_switch; external;
 procedure flashtex_bm_command; external;
 procedure flashtex_bm_box(@!n:integer); external;
 procedure flashtex_bm_box_use(@!n:integer;@!k:integer); external;
+procedure flashtex_bm_box_dimen(@!c:integer;@!v:integer); external;
+procedure flashtex_bm_copied(@!n:integer;@!c:pointer); external;
 procedure flashtex_bm_reg_read(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_sa_read(@!p:pointer); external;
 procedure flashtex_bm_reg_loc(@!l:pointer;@!e:boolean); external;
@@ -483,6 +529,8 @@ procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_new_obj(@!n:integer); external;
+procedure flashtex_bm_line_read; external;
+procedure flashtex_bm_new_graf(@!k:integer); external;
 
 @* \[55] Index.
 @z

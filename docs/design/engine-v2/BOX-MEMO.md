@@ -745,3 +745,168 @@ Measured (NixOS PC, T7 beamer-30, two rounds of 19 keys, instructions to the edi
 key 1 143 M → 93 M (the steady keys 92 M); the open's preamble row (a run from the format) 24.5 G →
 24.1 G instructions for the whole compile, 5.29 G → 5.24 G to its first page, wall unchanged.
 Evidence: `docs/evidence/t7-margin-2026-10-21/`.
+
+## 15. Revision 6: spans, a picture read from its file (lane PICTURE-MEMO, 2026-11-01)
+
+DESIGN.md §12 P6's picture memoisation for TikZ and pgfplots. **Off by default**: an environment is
+offered only when `FLASHTEX_BOXMEMO_SPANS` names it (`tikzpicture,tikzcd`); sweeps.yml takes it as
+`boxmemo_spans`. A measure call (§2) is one macro whose arguments are its whole input; a picture is
+not: `\begin{tikzpicture}` reads its body line by line from the file until `\end{tikzpicture}`.
+
+### 15.1 The unit, its key, and what it reads and writes
+
+A **span** is offered where LaTeX's `\begin` (`bm_span_cs`, marked at format load or when entered)
+is called with an argument naming an offered environment, the level below it being a file's line
+(not a token list, the terminal, `\read` or a pseudo file) after the preamble. Its recording may
+read that file level F. It ends when `\begin`'s body is used up and `cur_level` is back at the
+call's: after `\end{tikzpicture}`'s `\endgroup`. The store's key is the environment's control
+sequence; K1 adds the call's line number, `loc`/`limit` from the line's start, the state, the file's
+index, `in_open` and the rest of the buffer's line. Each line `input_ln` reads into F is recorded
+raw with its offset (a hook after `input_ln` in `next_line`). A variant whose key holds is taken only
+if F's file is the same path and its next lines (`peek_lines`, a read then a seek back) are exactly
+the recorded ones; else the span is read normally (the `spans_fall_back_when_the_file_changed` test
+rewrites the file between inputs).
+
+What a picture reads, and how each is held:
+- macros, registers, parameters, fonts and their parameters, `\pgf*` state (all ordinary macros and
+  registers: the picture serial `\pgf@picture@serial@count`, `\tikz@fig@count`, pgfmath's
+  `\pgfmath@rnd@z`): K2, K3, KR as for every call (§3, §10.1, §12);
+- its own lines: the key above; any other file (`\input`, `\openin`, pgfplots' `table`, an image) is
+  refused (a file level above F at its first token; `\openin`/`\read` are `Command`, `\pdfximage`
+  and `\pdffilesize` are not admitted);
+- randomness: `\pdfuniformdeviate`, `\pdfnormaldeviate` and `\pdfsetrandomseed` are refused
+  (`Expandable`, `Command`); pgfmath's own generator is a register and part of the key;
+- page position: `\pdfsavepos` is a node replayed like any other (its position is the shipout's);
+  `\pdflastxpos`/`\pdflastypos` are refused (`LastItem`); remember-picture's positions come from
+  macros the `.aux` defined, so they are meanings in K3;
+- the page and output: `Page`, `OuterList` and output are refused as before (§4);
+- the group: `\currentgrouplevel` and `\currentgrouptype` put the call's `cur_level` and `cur_group`
+  into the key (`Entry::group`; inside its own groups the call makes both).
+
+What it writes: the op log (§5, §12.5), the nodes it appends (draw-call fragments, §10.3, now with
+math noads), F's position (below), the line-shift journal and source positions (§15.4).
+
+### 15.2 Fast-forwarding the file
+
+A replay leaves F where the recording left it: the buffer's line from F's `start`, `loc`, `limit`,
+`state`, `first`, `last`, `line` (`SpanEnd`), F's file advanced past the recorded lines
+(`skip_lines`, each counting towards the next timed checkpoint as `input_ln` would). `max_buf_stack`
+is the recording's high mark if it raised it; if not, the variant is taken only where
+`max_buf_stack` is at least what it was at the recording's call (a restored checkpoint can leave it
+lower), so a replay leaves the high mark the normal path would.
+
+### 15.3 Paragraphs begun by a picture
+
+`\begin{tikzpicture}` in vertical mode begins a paragraph (`\leavevmode`), which is open at the
+span's end. LaTeX's `\everypar` (ltpara) calls `new_graf` twice. Inside a box, the recording keeps
+the outer list's nodes the paragraph added (its `\parskip` glue: static, from eqtb, a sparse
+register, or its own spec with its reference count) and the paragraph's `space_factor`/`prev_graf`;
+a replay appends them, pushes the nest as `new_graf` did and replays the inner nodes. On the main
+vertical list a hook at `new_graf` notes the page builder's run there; the replay runs `build_page`
+at the same point. The recording is kept only if that run fired nothing and put no insertion on the
+page, and the parameters it reads (`\vsize`, `\maxdepth`, `\tracingpages`, `\topskip`) are the same
+at each run and at the end. A variant is taken there only when the run is sure to fire nothing
+(`bm_page_quiet`: no forcing penalty or insertion among the contributions, no output active, and the
+page's total plus every contribution's height, depth and natural width, each at least 0, at most the
+page's goal); otherwise the output routine would run before the picture, and the picture is read
+normally. `spans_begin_paragraphs` tests a box and the page with a `\parskip` that changes;
+`spans_where_the_page_breaks` fails without the check (logs differ with BOX-MEMO on; verification
+mode reports "normal path not pure").
+
+### 15.4 Source positions and the line-shift journal
+
+Nodes carry display-list source positions (SyncTeX tags and lines): the recording keeps each one
+relative to F's first line (`SidePos::At`), the replay puts them back for the lines where the span
+now is. tikz-cd reads `\inputlineno` (`\tikzcd@lineno`), which the line-shift journal records: the
+entries a span made are kept as lines relative to its first and pushed again by the replay
+(`journal_push`); a span whose entries are not all F's lines is not recorded.
+
+### 15.5 Memory
+
+pgfplots pictures log tens of thousands of operations. A span's entry keeps only the replay's
+compressed operations (§12.5, with global assignments to sparse registers compressed too); the full
+log is kept only in verification mode. A span's entry is at most `MAX_BYTES/4` (8 MB, else `Large`),
+so one plot cannot evict the store. Control sequences a span enters are hoisted to the front of its
+replay (`new_cs_first`).
+
+§12.5's `net` kept a group whole when a `\global\let\p\q` read a `\q` the group had assigned, which
+pgfplots does throughout its outermost group: so every plot replayed its whole log. In a span's log
+`net` now follows what each control sequence the group assigned holds (`cur`): such a `\let` takes
+that value, as the normal path's `\let` takes the meaning `\q` has then. A list one `\let` shares
+with another holder stays shared: the list made by the log's operation N is `Val::Shared(N, ..)`,
+made at the first replayed operation naming N and shared (`add_token_ref`) at the others, so the
+reference counts are the normal path's (the full-state verifier compares them; without the sharing it
+found `token list reference count differs (1 vs 0)` on the test documents). A `\let` from a value
+the log does not hold (an inner group's local one, a `\let` whose source changed since) still keeps
+the group. On 2501.08950v2 the plots' replays went from 9.7 k–105 k operations (1.1–8.9 MB, one too
+large to keep) to 3.6 k–44 k (0.4–5.8 MB, all kept).
+
+### 15.6 `\copy` of a box it did not make
+
+TikZ copies boxes made outside the picture (node contents kept in `\pgfnodeparttextbox` and the
+like). A `\copy` of a foreign register keys the register's contents (`kc`, its nodes walked as for
+fragments) instead of refusing (`BoxContent`; contents a fragment cannot hold are refused with the
+fragment's reason).
+
+The copy itself is not kept as nodes: it is `Node::Copy`, made again at the replay by
+`copy_node_list` of the register's box as it is then, so its nodes carry that box's SyncTeX tags as
+on the normal path, and then given the words the call left on the copied box node (`box_end`'s
+shift for `\raise`/`\lower`, a dimension assigned). Any other node of a span's output whose SyncTeX
+tag is not the span's file's is refused (`SyncTag`): it came from a box made elsewhere and taken
+apart. A dimension of a foreign box assigned in a span (amsmath's `\resetMathstrut@`,
+`\ht\Mathstrutbox@\ht\z@`) is the operation `BoxDim`, with the box keyed as it was before; a
+`BoxDim` after a copy of the same register is refused.
+
+A box register the call assigned is its own only while it holds the box the call put there
+(`r.boxes` holds (register, box) pairs): after the group that assigned it ends it holds the caller's
+box again, which is read and keyed as a foreign one. (Before, it stayed "the call's own", so a later
+`\wd` or `\copy` of it was not keyed: a wrong replay, found by daniel-parent's review of #1997, in
+registered macros too.)
+
+The full-state verifier now also compares the math
+scratch scalars `cur_style`, `cur_size`, `cur_mu`, `mlist_penalties` and `head_info` (a push_nest
+leaves garbage in `head_info` that a later `\vadjust` reads).
+
+### 15.7 How a replay is proven equal
+
+Verification mode (`FLASHTEX_BOXMEMO=verify`) runs every admitted span both ways: the command line
+compares the whole engine state (`incr::same_state`, the scalars above, F's level and file offset)
+from a checkpoint; the host compares the op logs, the fragment, `SpanEnd` (`same`: equal but for the
+high mark, where each must leave the same one), the paragraph, the journal and the positions. Gates:
+`tests/boxmemo.rs` (`spans_*`, off/on/verify logs and PDFs equal, `full_differences` 0); the
+`FLASHTEX_BOXMEMO_SPANS` sweeps (sweeps.yml `boxmemo=on|verify|off`, `boxmemo_spans`).
+
+### 15.8 Measured (this Mac, mac-m5pro-kabir, shared with other lanes' builds; CPU to the edited page)
+
+picbench (iserve keystrokes, a type and a revert per key, three keys; every compile's PDF compared with
+a scratch compile: 0 differences in every row), this branch at 73b09e755 with spans on against
+origin/main at f53095ff2 (BOX-MEMO on in both):
+
+- arXiv 2501.08950v2 (pgfplots, 27 pages), at "as we al": off 1.28 s, then 0.68–0.71 s a key; spans
+  2.51 s for the first (recording), then 0.44–0.48 s a key.
+- fixtures/real-world/tikzcd-shaded-notes, four edit points (ms, after the first two keys): 18–20 → 4–5;
+  57–64 → 23–29; 57–62 → 21–24; 37–44 → 6–7. The first one or two keys at a point are slower (they
+  record): up to 78 ms against 38.
+- arXiv 2501.07239v1 (40 pictures, in figures far from the edit; at 205f8b049): 52–57 ms either way.
+- arXiv 2501.07413v3 (65 pictures in tabulars; at 205f8b049): no span kept (the box-dimension refusal of §15.6),
+  86–108 ms off, 99–115 ms on: the recording attempts cost about 10 %, within this machine's noise.
+- The command line, verification mode, 2501.08950v2: 5 535 calls verified on the whole state (the registered macros: no picture repeats in one run), 0
+  differences; the INITEX tests and four test documents (pictures inline, in display math, `center`,
+  `minipage`, `figure`, tikz-cd): 0 full differences, PDFs identical to the base engine's.
+
+### 15.9 Open
+
+A span whose F, a macro body, ends with `\end{..}` (F is popped before the span ends: `SpanFile`;
+llncs' ORCID icons); `\scantokens` inside a picture (TikZ's rescanning in `\scalebox` arguments);
+a global box left non-void (pgfplots, register 103 on 2501.08950v2); the plots' one group still kept
+whole; on by default only after the span sweeps show no difference.
+
+### 15.10 A picture in a macro's argument or body
+
+F may be a token list: a macro's argument (`\scalebox{0.8}{\begin{tikzpicture}..}`, a parameter
+level), its body, or a backed-up or inserted list. The key is the line, the list's type and name and
+`in_open`; a variant is taken only if the list's next tokens are the ones the recording read
+(`SpanEntry::toks`). A replay moves `loc` past them. A token list read is refused when it holds a
+macro parameter (`out_param`: the macro's argument, which the key does not hold). Reading a token
+list moves nothing in the buffer or the file; the buffer's high mark is kept as for a file (§15.2),
+counted from 0.

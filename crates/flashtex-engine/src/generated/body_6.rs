@@ -8569,7 +8569,13 @@ impl Globals {
                                 }
                             }
                         }
+                        if self.bm_rec_on {
+                            self.flashtex_bm_box_use(self.cur_val, 4i32);
+                        }
                         self.cur_box = self.copy_node_list(q);
+                        if self.bm_rec_on {
+                            self.flashtex_bm_copied(self.cur_val, self.cur_box);
+                        }
                     }
                 }
                 last_box_code => {
@@ -8893,8 +8899,14 @@ impl Globals {
         if (__av_eqtb[crate::ix::U(((every_par_loc) - 1) as usize)].hh().rh() != null) {
             self.begin_token_list(__av_eqtb[crate::ix::U(((every_par_loc) - 1) as usize)].hh().rh(), every_par_text);
         }
+        if self.bm_rec_on {
+            self.flashtex_bm_new_graf(0i32);
+        }
         if (self.nest_ptr == 1i32) {
             self.build_page();
+        }
+        if self.bm_rec_on {
+            self.flashtex_bm_new_graf(1i32);
         }
     }
 
