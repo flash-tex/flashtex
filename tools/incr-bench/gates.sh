@@ -2,7 +2,7 @@
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
 #                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span readers sound-c sound-d
-#                           sound-pre sound-first sound-book soak gate
+#                           sound-pre sound-first sound-xdoc sound-book soak gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -30,6 +30,8 @@
 #              package): 8 edits + reverts, fixtures + full-100 + full-100t + refs-30; then 6 interleaved
 #   sound-first soundness: 10 interleaved edits that interrupt a first compile (no .aux: the compiles'
 #              files removed first) in its first pass (lane COLD-OPEN)
+#   sound-xdoc one socket host (one BOX-MEMO store) serves 11 documents in turn, twice round: an open
+#              and 2 edits + reverts a visit, every compile against from-scratch runs (xdoc.py)
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
 #              1,072-page book.tex (copied to $B/src-book/book.tex beforehand)
 #   soak       soak_gate.sh: the host's footprint plateaus over 300 keystrokes on plain-120
@@ -71,7 +73,7 @@ trials() { local n=$(( ($1 * ${SWEEP_SCALE_PCT:-100} + 99) / 100 )); echo $(( n 
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
 export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1 FLASHTEX_VERIFY_RELOC=1
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span readers sound-c sound-d sound-pre sound-first sound-book soak gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span readers sound-c sound-d sound-pre sound-first sound-xdoc sound-book soak gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -231,6 +233,13 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
         --kinds replace,insert,sentence,section,label,ref \
         --extra $B/src-refs-30:refs-30 --extra $B/src-full-100:full-100 > $R/soundness-first.txt 2>&1
       echo "soundness first exit $?" >> $R/soundness-first.txt ;;
+    sound-xdoc)
+      # (sweeps.py's XDOC, in the same order)
+      XDOC=plain-10,full-10,full-100,beamer-5,beamer-30,rw:beamer-madrid,rw:beamer-overlays,rw:beamer-blocks-columns
+      XDOC=$XDOC,rw:framed-tikz-theorems,rw:tikzcd-shaded-notes,rw:siunitx-tables
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/xdoc.py gates --docs $XDOC --rounds 2 --edits 2 --fixtures $W/fixtures \
+        --out $R/xdoc.jsonl > $R/xdoc.txt 2>&1
+      echo "xdoc exit $?" >> $R/xdoc.txt ;;
     sound-book)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials $(trials 8) --no-fixtures --dir $B/sound-book --out $R/soundness-book.jsonl \
         --extra $B/src-book:book > $R/soundness-book.txt 2>&1

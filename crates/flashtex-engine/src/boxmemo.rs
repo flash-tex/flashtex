@@ -157,7 +157,7 @@ pub struct Stats {
     pub entered: u64,
     /// Hits of an entry another document recorded (`set_document`: the
     /// host serves documents one after another on one thread, with one
-    /// store).
+    /// store); in verify mode, the calls checked against such an entry.
     pub xdoc_hits: u64,
     /// K3's macro bodies compared token by token, the comparisons §12.4's
     /// entries answered, and the times the entries were emptied.
@@ -723,13 +723,15 @@ fn debug() -> bool {
 
 /// Counts over the session, for the host's `DONE` (`stages.boxmemo`):
 /// offers, hits, recordings committed, control sequences a replay entered,
-/// hits of another document's entries.
+/// hits of another document's entries. In verify mode a hit is a call
+/// checked against its entry (`verified`): it runs normally and is compared
+/// with the replay.
 pub fn counts() -> [u64; 5] {
     ST.with(|s| {
         let s = s.borrow();
         [
             s.stats.offers,
-            s.stats.hits,
+            s.stats.hits + s.stats.verified,
             s.stats.committed,
             s.stats.entered,
             s.stats.xdoc_hits,
@@ -4020,6 +4022,7 @@ impl Globals {
             let Some(e) = s.store.get(&rec.cs).and_then(|v| v.get(i)) else {
                 return;
             };
+            let other = e.doc != document();
             let mut diffs = vec![];
             if e.ops.len() != rec.ops.len() {
                 diffs.push(format!(
@@ -4059,6 +4062,7 @@ impl Globals {
             if diffs.is_empty() && debug() {
                 eprintln!("boxmemo: verified \\{name}");
             }
+            s.stats.xdoc_hits += u64::from(other);
             if !diffs.is_empty() {
                 s.stats.verify_differences += 1;
                 eprintln!("boxmemo verify: \\{name}: {diffs:?}");

@@ -817,3 +817,12 @@ hold. Each has a test that failed before the fix: BOX-MEMO on gave another log o
 - `\openin`, `\read` and `\ifeof`, `\input`, `\scantokens` and `\endinput`, `\immediate`, every
   PDF object but a link, `\message`, and an `\openout` whatsit in a fragment (`WhatsitKind`).
 - The string pool and the hash: §4.2's counters and `NewCs`.
+
+**One store, many documents.** The host keeps one store for every document it serves (35 % of the
+T7 set's hits, 788 of 2,263, took another document's entry; measured on the NixOS PC 2026-11-01,
+`xdoc_hits`). Items 1 and 2 broke only there. The sweep `sound-xdoc` (`tools/incr-bench/xdoc.py`)
+checks this case. One host serves eleven documents in turn, twice round: a T7 subset, the beamer
+decks, and the framed, TikZ and siunitx fixtures. Each visit is an open and two edits with their
+reverts, and every compile's files are compared byte for byte with from-scratch runs with BOX-MEMO
+off. In verify mode a hit is a checked call, and `xdoc_hits` counts those made against another
+document's entry.
