@@ -169,6 +169,11 @@ pub struct Stats {
     pub meanings_walked: u64,
     pub meanings_seen: u64,
     pub seen_cleared: u64,
+    /// Control sequences recordings assigned before reading their meaning
+    /// (not in K3), and those read only as tokens (K3 keeps
+    /// [`Meaning::Token`]), BOX-MEMO.md §15.
+    pub k3_written_first: u64,
+    pub k3_tokens: u64,
     pub abandoned: BTreeMap<String, u64>,
     pub misses: BTreeMap<String, u64>,
     pub verify_details: Vec<String>,
@@ -338,6 +343,26 @@ enum Meaning {
     /// A `\countdef` (and kin) of an e-TeX sparse register: the command,
     /// the register's type and number.
     Sparse(i32, i32, i32),
+    /// A control sequence read only as a token: the control sequence being
+    /// defined (`get_r_token`), a parameter text or a body that is not
+    /// expanded (`scan_toks`), a macro's argument (`macro_call`, scanner
+    /// status `matching`), a conditional's skipped text (`pass_text`,
+    /// `skipping`). There its meaning matters only in being one of
+    /// [`token_matters`]'s or not (BOX-MEMO.md §15).
+    Token,
+}
+
+/// Whether a control sequence read only as a token ([`Meaning::Token`])
+/// acts on what it is read by, by its command `t`: `get_next` checks an
+/// `\outer` one (`check_outer_validity`) and inserts an alignment template
+/// at a `&` or `\cr` (tex.web §336, §342); `scan_toks` takes a `#` as a
+/// parameter (§476, §479); `pass_text` counts the `\if`s and `\fi`s it
+/// skips (§494).
+fn token_matters(t: i32) -> bool {
+    (k::tab_mark..=k::mac_param).contains(&t)
+        || t == k::if_test
+        || t == k::fi_or_else
+        || t >= k::outer_call
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -577,8 +602,8 @@ struct Rec {
     absent: Vec<Vec<i32>>,
     voids: Vec<i32>,
     kr: Vec<(RegId, Vec<i32>)>,
-    /// Registers and control sequences the call assigned globally: read
-    /// after that, they hold what the call put there.
+    /// Registers the call assigned globally: read after that, they hold
+    /// what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
     boxes: HashSet<i32>,
@@ -618,14 +643,30 @@ struct State {
 }
 
 /// The recording's hot state, outside `ST`'s `RefCell` borrow: the body's
-/// input level, and which control sequences it has looked at (`seen[p] ==
-/// stamp`), so that `get_next`'s hook costs a load and a compare.
+/// input level, and what it has done with each control sequence (`seen[p]
+/// - stamp`, one of [`SEEN_READ`], [`SEEN_TOKEN`], [`SEEN_WRITTEN`]; any
+/// other value: nothing yet), so that `get_next`'s hook costs a load and a
+/// compare. `stamp` moves on by 4 at each recording.
 #[derive(Default)]
 struct Fast {
     base: i32,
     stamp: u32,
     seen: Vec<u32>,
+    /// The control sequences the recording assigned before it read their
+    /// meaning ([`SEEN_WRITTEN`]), with what each held then, `(p, eq_type,
+    /// equiv)`. A read that finds it there again (an `\endgroup` brought it
+    /// back) is a first read (BOX-MEMO.md §15). A call assigns a few: a
+    /// list searched from its end costs less than a hash.
+    pre: Vec<(i32, i32, i32)>,
 }
+
+/// `p`'s meaning is in K3 in full (or it is the macro itself).
+const SEEN_READ: u32 = 0;
+/// `p` was read only as a token: K3 has [`Meaning::Token`].
+const SEEN_TOKEN: u32 = 1;
+/// `p` was assigned before anything read its meaning: what it held is in
+/// `Fast::pre`, and not in the key.
+const SEEN_WRITTEN: u32 = 2;
 
 /// A key by location (`bm_key_by_loc`): each location and its values.
 type KeyByLoc = Vec<(i32, Vec<i32>)>;
@@ -2101,6 +2142,9 @@ impl Globals {
 
     /// [`bm_meaning_is`](Self::bm_meaning_is) with the entries borrowed.
     fn bm_meaning_is_in(&self, seen: &mut Seen, p: i32, m: &Meaning) -> bool {
+        if let Meaning::Token = m {
+            return !token_matters(self.bm_eq(p).hh().b0());
+        }
         if let Meaning::Name(n) = m {
             // A location of the hash's chains holds the name `id_lookup`
             // finds there: it enters a name only where it found none, in
@@ -2883,13 +2927,14 @@ impl Globals {
         FAST.with(|f| {
             let mut f = f.borrow_mut();
             f.base = base;
-            f.stamp = f.stamp.wrapping_add(1);
+            f.stamp = f.stamp.wrapping_add(4);
             if f.stamp == 0 || f.seen.len() < size {
                 f.seen = vec![0; size];
-                f.stamp = 1;
+                f.stamp = 4;
             }
             let st = f.stamp;
-            f.seen[cs as usize] = st;
+            f.seen[cs as usize] = st + SEEN_READ;
+            f.pre.clear();
         });
         ST.with(|s| {
             let mut s = s.borrow_mut();
@@ -3014,24 +3059,59 @@ impl Globals {
         ST.with(|s| s.borrow_mut().rec.as_mut().map(f))
     }
 
-    /// First access to control sequence `p` (read, or write before it).
-    fn bm_note_cs(&mut self, p: i32) {
+    fn bm_set_seen(p: i32, state: u32) {
+        FAST.with(|f| {
+            let mut f = f.borrow_mut();
+            let st = f.stamp;
+            f.seen[p as usize] = st + state;
+        });
+    }
+
+    /// The recording reads control sequence `p`'s meaning: in full, or only
+    /// as a token (`token`, [`Meaning::Token`]). Its meaning is an input,
+    /// part of K3, at the first such read before any assignment to `p`,
+    /// and at the first after an `\endgroup` brought back what `p` held
+    /// before the call (BOX-MEMO.md §15).
+    fn bm_note_cs(&mut self, p: i32, token: bool) {
         if !Self::bm_is_cs(p) {
             return;
         }
-        let seen = FAST.with(|f| {
-            let mut f = f.borrow_mut();
-            let st = f.stamp;
-            let e = &mut f.seen[p as usize];
-            let was = *e == st;
-            *e = st;
-            was
+        let d = FAST.with(|f| {
+            let f = f.borrow();
+            f.seen[p as usize].wrapping_sub(f.stamp)
         });
-        if seen {
+        self.bm_note_cs_seen(p, token, d);
+    }
+
+    /// [`bm_note_cs`](Self::bm_note_cs) once `seen[p] - stamp` is `d`.
+    fn bm_note_cs_seen(&mut self, p: i32, token: bool, d: u32) {
+        if d == SEEN_READ || (d == SEEN_TOKEN && token) {
+            return;
+        }
+        let w = self.bm_eq(p).hh();
+        let (t, e) = (w.b0(), w.rh());
+        if d == SEEN_WRITTEN {
+            // the call's own value, unless it is the one from before
+            let back = FAST.with(|f| {
+                f.borrow()
+                    .pre
+                    .iter()
+                    .rev()
+                    .find(|x| x.0 == p)
+                    .is_some_and(|x| x.1 == t && x.2 == e)
+            });
+            if !back {
+                return;
+            }
+        }
+        if token && !token_matters(t) {
+            Self::bm_set_seen(p, SEEN_TOKEN);
+            self.bm_with_rec(|r| r.k3.push((p, Meaning::Token)));
             return;
         }
         match self.bm_meaning(p) {
             Some(m) => {
+                Self::bm_set_seen(p, SEEN_READ);
                 self.bm_with_rec(|r| {
                     r.k3.push((p, m));
                 });
@@ -3040,22 +3120,59 @@ impl Globals {
         }
     }
 
+    /// The recording assigns control sequence `p` (`flashtex_bm_def`, before
+    /// the change). If nothing read its meaning yet, what it holds is not an
+    /// input: the replay's `eq_define` & co. treat whatever is there as the
+    /// normal path did (BOX-MEMO.md §15).
+    fn bm_note_cs_write(&mut self, p: i32) {
+        let w = self.bm_eq(p).hh();
+        FAST.with(|f| {
+            let mut f = f.borrow_mut();
+            let st = f.stamp;
+            let d = f.seen[p as usize].wrapping_sub(st);
+            if d != SEEN_READ && d != SEEN_WRITTEN {
+                f.seen[p as usize] = st + SEEN_WRITTEN;
+                f.pre.push((p, w.b0(), w.rh()));
+            }
+        });
+    }
+
     /// The end of `get_next`, during a recording.
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_next(&mut self) {
-        let base = FAST.with(|f| f.borrow().base);
+        let p = self.cur_cs;
+        // the body's level, and (one borrow) what the recording did with `p`
+        let (base, d) = FAST.with(|f| {
+            let f = f.borrow();
+            let d = if Self::bm_is_cs(p) {
+                f.seen[p as usize].wrapping_sub(f.stamp)
+            } else {
+                SEEN_READ
+            };
+            (f.base, d)
+        });
         if self.input_ptr < base {
             return self.bm_abort("Level");
         }
         if self.cur_input.state_field != TOKEN_LIST {
             return self.bm_abort("File");
         }
-        if self.cur_cs != 0 {
+        if p != 0 {
             if self.cur_cmd == k::top_bot_mark {
                 return self.bm_abort("Mark");
             }
-            self.bm_note_cs(self.cur_cs);
+            if d == SEEN_READ {
+                return;
+            }
+            // `get_next`'s callers that look only at the token: those that
+            // set `intr_weak` (changes/intrinsics.ch: `get_r_token`, and
+            // `scan_toks` reading a parameter text or a body it does not
+            // expand), `macro_call` matching an argument, `pass_text`
+            let token = self.intr_weak
+                || self.scanner_status == k::matching
+                || self.scanner_status == k::skipping;
+            self.bm_note_cs_seen(p, token, d);
         }
     }
 
@@ -3065,7 +3182,7 @@ impl Globals {
     pub fn flashtex_bm_read(&mut self, p: i32) {
         // a name not found is noted by `flashtex_bm_id`
         if p != UNDEFINED_CS {
-            self.bm_note_cs(p);
+            self.bm_note_cs(p, false);
         }
     }
 
@@ -3088,7 +3205,7 @@ impl Globals {
                     r.k3.push((p, Meaning::Name(name)));
                 }
             });
-            return self.bm_note_cs(p);
+            return self.bm_note_cs(p, false);
         }
         let name: Vec<i32> = (j..j + l).map(|i| self.buffer[i as usize]).collect();
         self.bm_with_rec(|r| {
@@ -3307,23 +3424,20 @@ impl Globals {
         }
         // The old value of what an assignment overwrites is not an input:
         // the replay's own `eq_define` & co. treat whatever is there as the
-        // normal path did. A global assignment makes later reads the call's
-        // own; a local one is undone when its group ends, and a later read
-        // then sees the old value, so that value is keyed now.
-        if global || outer {
+        // normal path did. A control sequence's is kept aside, and a later
+        // read that finds it again (brought back by an `\endgroup`) keys it
+        // then (`bm_note_cs`, BOX-MEMO.md §15). For a register: a global
+        // assignment makes later reads the call's own; a local one is
+        // undone when its group ends, and a later read then sees the old
+        // value, so that value is keyed now.
+        if Self::bm_is_cs(p) {
+            self.bm_note_cs_write(p);
+        } else if global || outer {
             if Self::bm_is_register(p) {
                 self.bm_with_rec(|r| r.gwritten.insert(RegId::Eqtb(p)));
-            } else if Self::bm_is_cs(p) {
-                FAST.with(|f| {
-                    let mut f = f.borrow_mut();
-                    let st = f.stamp;
-                    f.seen[p as usize] = st;
-                });
             }
         } else if Self::bm_is_register(p) {
             self.bm_note_reg(RegId::Eqtb(p));
-        } else {
-            self.bm_note_cs(p);
         }
         if !self.bm_rec_on {
             return;
@@ -4085,8 +4199,15 @@ impl Globals {
                     bytes
                 );
             }
+            let tokens = entry
+                .k3
+                .iter()
+                .filter(|(_, m)| matches!(m, Meaning::Token))
+                .count() as u64;
             insert_entry(&mut s, rec.cs, entry);
             s.stats.committed += 1;
+            s.stats.k3_tokens += tokens;
+            s.stats.k3_written_first += FAST.with(|f| f.borrow().pre.len()) as u64;
         });
         write_stats(false);
     }
