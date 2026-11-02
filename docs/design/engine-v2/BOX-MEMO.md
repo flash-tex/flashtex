@@ -94,7 +94,7 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 |---|---|---|
 | K1 | the macro's meaning and its arguments | `eqtb[warning_index]` by content, and each argument's tokens |
 | K2 | every `eqtb` entry from `glue_base` to `eqtb_size` (glue, local, int and dimen regions) **except the box registers** | **conservatively**: all of them, at the call. Pointer values are taken by content: glue specs by their four fields, token lists by their tokens, `\parshape` by its words. Typesetting reads parameters directly (`hpack` reads `\hbadness`, `append_to_vlist` reads `\baselineskip`, ...); the conservative snapshot covers every such implicit read without a hook per site |
-| K3 | the meaning of every control sequence the recording read before writing it | precisely: `get_next`'s delivered `cur_cs`, `\csname`/`\ifcsname` look-ups (the D9 read points, with BOX-MEMO's own hooks). By content: macros by their tokens, the rest by `(eq_type, equiv)` |
+| K3 | the meaning of every control sequence the recording read before writing it | precisely: `get_next`'s delivered `cur_cs`, `\csname`/`\ifcsname` look-ups (the D9 read points, with BOX-MEMO's own hooks). By content: macros by their tokens, the rest by `(eq_type, equiv)`. A control sequence read only as a token (the one being defined, an argument, a body not expanded, a skipped text) is kept by its kind only, and one assigned before anything read it is not kept: §16 |
 | K4 | e-TeX's sparse registers (`\count`, `\dimen`, `\skip`, `\muskip` and `\toks` above 255) | conservatively: every entry of the sparse trees, by (type, number, value), values by content as in K2 |
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
 | K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
@@ -798,3 +798,97 @@ What is left, by the profile:
   own level (`\size@update`);
 - framed's `\MakeFramed`, which puts its pre-penalties and skips on the main vertical list;
 - the text.
+
+## 16. Revision 7: K3 by first access (lane L6, 2026-11-01)
+
+**The misses.** On full-100, BOX-MEMO hit 163 of `\pdfstringdefPreHook`'s 226 offers, and D9 198
+(L6.md, lead 5). The debug run (`docs/evidence/l6-2026-11-01/raw/lead5/`) put half of the misses
+on K3: the meanings of `\reserved@a` (112), `\reserved@b` (90) and `\l__cmd_tmpa_tl` (40). The
+hook defines each of them before it reads them, as `\@ifnextchar` and `\tl_set:Nn` do. §3 says
+that K3 keeps a meaning read *before* it is written, but `get_next`'s hook keyed every control
+sequence it delivered. That includes the one `get_r_token` delivers for a `\def` or `\let`, which
+comes before the assignment, so the old `\reserved@a` was keyed.
+
+**The rule now, per recording, from the order of its accesses** (`SEEN_*` in `src/boxmemo.rs`):
+
+- **A read of the meaning** (an expansion, a command, `\ifx`, `\csname`, ...) keys it in full, as
+  before, if it is the first access, or the first since an `\endgroup` brought back the value the
+  call found (below).
+- **A read only as a token** keys only whether the meaning is one of `token_matters`'s:
+  `\outer`, `#`, `&` or `\cr`, `\if`, `\fi` (`Meaning::Token`). The token readers are:
+  - `get_r_token`, the control sequence being defined;
+  - `scan_toks` reading a parameter text or a body it does not expand (these set `intr_weak`, as
+    for D9);
+  - `macro_call` matching an argument (`scanner_status = matching`);
+  - `pass_text` skipping (`skipping`).
+- **An assignment** (`eq_define` & co.) to a control sequence whose meaning nothing read yet keeps
+  the old `(eq_type, equiv)` aside (`Fast::pre`), out of the key.
+- **After an assignment**, a read keys the meaning only if it is that kept value again.
+
+**Why the replay needs no check for what an assignment overwrote.** The argument goes access by
+access.
+1. *Token readers.* Each of them looks only at `cur_tok`, which for a control sequence is
+   `cs_token_flag` plus its location, never its meaning. That holds for `get_r_token`'s
+   `cur_cs = 0` and frozen tests, the argument delimiters and `par_token`, and `scan_toks`'s
+   storing. The exceptions all depend only on the meaning's kind, and that kind is the key:
+   - `get_next`'s own `check_outer_validity` and alignment insertion (tex.web §336, §342);
+   - `scan_toks`'s `cur_cmd = mac_param` (§476, §479);
+   - `pass_text`'s `\if` and `\fi` (§494).
+2. *Assignments.* `eq_define`, `eq_word_define`, `geq_define` and `geq_word_define` read the old
+   entry only for their own bookkeeping: its level (save it or destroy it), and e-TeX's
+   "reassigning" test (tex.web §277–279). A replay makes each assignment again through the same
+   procedures (`Op::Def`), on the state at the replay. The normal path would do exactly that
+   there, so the old value is not an input of the call.
+3. *Reads after an assignment.* The entry holds one of two things:
+   - a value the call made, which depends only on the call's own inputs, already in the key;
+   - after an `\endgroup`, what `unsave` copied back from the save stack.
+
+   The value copied back is the call's own (a level it assigned) or the one the call found. The
+   one it found is the word kept in `pre`, bit for bit. So a read whose `(eq_type, equiv)` equals
+   `pre` is keyed as a first read. Equality can make that test fire for a value the call made: a
+   macro whose token list landed at a freed address is one way, and an assignment of the same
+   word is another. That keys more than it must, which costs a hit and never makes one wrong.
+
+Registers keep §10.1's rule. They are never read as tokens, and the debug run found no register
+in the misses.
+
+**Tokens read in place.** changes/throughput.ch's token loops read without `get_next`:
+- [4] `pass_text`;
+- [5] a delimited argument;
+- [6] a braced argument;
+- [7] a body that is not expanded.
+
+They do so whenever D9 is not recording, so a BOX-MEMO recording never sees those control
+sequences. A body's `\x` that became a `#` between calls is therefore replayed past. This is a
+hole that predates this revision, and this revision neither makes it wider nor closes it.
+
+A control sequence this revision leaves out of the key is always assigned in the call, so it was
+first delivered as the assignment's target (`get_r_token`) or looked up. That delivery keeps a
+token read for it, which covers what an in-place read of it could depend on.
+
+The fix and its cost are in the next PR (lane L6, `agent/kabir-claude-l6/bm-inplace`). In that
+PR, `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on while
+the loops stay as they are.
+
+**An assignment at the call's own level, or a global one, is final** (lane BEAMER-FRAME). What
+the control sequence held before the call cannot come back inside the call after it: no group of
+the call saved it, `unsave` at the end of the call's own groups restores the call's values, and
+it keeps a global one (tex.web §282–283). So no later read keys it, and the value kept aside is
+dropped. Comparing `(eq_type, equiv)` with the kept value was not enough. `\@ifnextchar`
+defines `\reserved@b` at the call's level, and `eq_define` frees the old token list:
+`flush_list` puts its head first on the free list (§123). The next `\def` of it in the same call
+(`\usebeamercolor` calls `\@ifnextchar` again) then makes its list from those nodes, at the old
+address. A read afterwards found "the old value back" and keyed the call's own meaning, which
+missed at every later offer. On the frame-typeset stack (#1992, which offers
+`\beamer@usebeamercolor`), this made beamer-visuals' edit windows re-record and abandon
+`\usebeamercolor` every keystroke, and the calls inside it were not offered: 792 → 696 offers
+and 668 → 571 hits a window, 172.9 → 246.2 M a keystroke (PC runs 41377417237, 41378361514). Test:
+`a_meaning_defined_twice_at_the_call_level_is_not_keyed` (0 hits before the change, 3 after).
+
+**Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
+- a `\def` of `\reserved@a` first, which hits whatever the document left there;
+- a target passed as an argument (`\tl_set:Nn`'s shape), which hits;
+- `\ifx\reserved@a` before the `\def`, and an `\edef` that reads its own target, which are keyed;
+- a `\def` in a group of the call's own and a read after its `\endgroup`, which is keyed;
+- an argument (`get_next`, `matching`) that becomes `\outer`, which is a miss; while it only
+  changes meaning, it hits.
