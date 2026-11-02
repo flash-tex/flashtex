@@ -329,7 +329,7 @@ final class EngineV3Session {
     /// This session's number in the process (its project copy's name).
     @ObservationIgnored let serial: Int = EngineV3Session.takeSerial()
     nonisolated(unsafe) private static var nextSerial = 0
-    private static let serialLock = NSLock()
+    nonisolated private static let serialLock = NSLock()
     nonisolated static func takeSerial() -> Int { serialLock.lock(); defer { serialLock.unlock() }; nextSerial += 1; return nextSerial }
     /// The project copy the host compiles (tests).
     var projectCopy: URL? { project?.root }
@@ -395,7 +395,8 @@ final class EngineV3Session {
 
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-                self?.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp)
+                // Only this window's keys: another project window's typing is not this session's latency.
+                if let self, e.window == nil || e.window === self.view?.window { self.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp) }
                 return e
             }
         }
@@ -403,10 +404,11 @@ final class EngineV3Session {
             // ⌘-click in the editor: forward search to the preview (after the
             // click has moved the caret).
             clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] e in
-                if e.modifierFlags.contains(.command), let tv = e.window?.firstResponder as? NSTextView,
+                // (this window's editor only: every project window has a session)
+                if e.modifierFlags.contains(.command), let self, let w = e.window, w === self.view?.window, let tv = w.firstResponder as? NSTextView,
                    tv.accessibilityLabel() == "LaTeX source", let v = e.window?.contentView?.hitTest(e.locationInWindow),
                    v === tv || v.isDescendant(of: tv) {
-                    DispatchQueue.main.async { self?.model?.revealCaretInPreview() }
+                    DispatchQueue.main.async { [weak self] in self?.model?.revealCaretInPreview() }
                 }
                 return e
             }
@@ -605,6 +607,25 @@ final class EngineV3Session {
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
     }
+
+    /// The window closed (ProjectWindows.closed): stops the session, then,
+    /// once the host has exited (on a utility queue, bounded), releases the
+    /// project copy (`EngineV3Mirror.release`), so reopening the project in
+    /// this run takes it over and compiles from its S₀, not from the format.
+    func end() {
+        let copy = project, host = self.host
+        stop()
+        project = nil
+        guard let copy else { return }
+        Self.releaseQueue.async {
+            let deadline = Date().addingTimeInterval(15)
+            while host?.isRunning == true, Date() < deadline { usleep(20_000) }
+            guard host?.isRunning != true else { return } // still writing it: kept, as an exited instance's would be at the next launch
+            copy.release()
+        }
+    }
+
+    nonisolated static let releaseQueue = DispatchQueue(label: "flashtex.engine-v3.release", qos: .utility)
 
     /// The host died or the connection broke: start another (bounded), keep
     /// the pages on screen as stale until the new host sends them.
@@ -3046,7 +3067,8 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// The copies of exited instances, by project key (the newest first):
     /// directories `<key>-...` whose owner file names an instance that has
-    /// exited (not this one).
+    /// exited (not this one), or that a running instance released
+    /// (`release`: its window closed and its host exited), this one too.
     static func exitedCopies() -> [String: [(url: URL, owner: String, modified: Date)]] {
         let dir = EngineV3.cacheDirectory.appendingPathComponent("projects", isDirectory: true)
         let fm = FileManager.default
@@ -3054,7 +3076,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
             let base = dir.appendingPathComponent(name)
             guard let owner = try? String(contentsOf: base.appendingPathComponent("owner"), encoding: .utf8),
-                  owner != EngineV3.instanceOwner, !EngineV3.ownerAlive(owner) else { continue }
+                  owner != EngineV3.instanceOwner, owner.hasSuffix(releasedSuffix) || !EngineV3.ownerAlive(owner) else { continue }
             // (not a symbolic link: nothing here is followed out of the cache)
             if (try? fm.attributesOfItem(atPath: base.path))?[.type] as? FileAttributeType == .typeSymbolicLink { continue }
             // the last compile's stamp, else when the owner last wrote its file
@@ -3099,6 +3121,23 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             return c.url
         }
         return nil
+    }
+
+    /// What `release` appends to the owner: the instance is done with the copy.
+    static let releasedSuffix = " released"
+
+    /// This instance is done with the copy: its window closed and its host
+    /// has exited, so nothing writes it any more. The owner file says so,
+    /// and the next session of the project, in this instance or another,
+    /// takes it over (`takeOver`) as it takes over an exited instance's:
+    /// its `.aux` and its paths, and with them the host's persisted S₀, so
+    /// reopening the project compiles warm. Only a copy this instance owns.
+    func release() {
+        let file = base.appendingPathComponent("owner")
+        guard (try? String(contentsOf: file, encoding: .utf8)) == EngineV3.instanceOwner else { return }
+        let tmp = base.appendingPathComponent("owner.release-\(getpid())")
+        guard (try? Data((EngineV3.instanceOwner + Self.releasedSuffix).utf8).write(to: tmp)) != nil else { return }
+        if rename(tmp.path, file.path) != 0 { try? FileManager.default.removeItem(at: tmp) }
     }
 
     /// Whether the copy is still there (something outside may remove it).
