@@ -181,7 +181,9 @@ final class LiveShareController {
             sheetShown = true
             return
         }
-        let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        // The folder as it resolves now (a project opened through a link to
+        // it is still shareable); the fd pins it from here on.
+        let fd = open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else {
             hub.stop()
             note = "Could not open the shared project folder: \(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))"
@@ -343,7 +345,7 @@ final class LiveShareController {
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             if rootFD < 0 {
-                rootFD = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                rootFD = open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
                 guard rootFD >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             }
             // The copy is exactly the files present now, each at a safe path
@@ -515,7 +517,7 @@ final class LiveShareController {
     static func writeConfined(_ data: Data, root: URL, path: String, rootFD: Int32? = nil, afterCheck: (() -> Void)? = nil) throws -> URL? {
         guard let parts = safeParts(path), let name = parts.last else { return nil }
         func failure() -> POSIXError { POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        var dir = rootFD.map { fcntl($0, F_DUPFD_CLOEXEC, 0) } ?? open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        var dir = rootFD.map { fcntl($0, F_DUPFD_CLOEXEC, 0) } ?? open(root.resolvingSymlinksInPath().path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard dir >= 0 else { throw failure() }
         defer { close(dir) }
         for part in parts.dropLast() {

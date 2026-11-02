@@ -323,6 +323,16 @@ final class LiveShareSecurityTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(mtime, writeStarted)
     }
 
+    /// A project opened through a link to its folder is still written:
+    /// the root is opened as it resolves, only the walk below refuses links.
+    func testConfinedWriteThroughALinkedProjectRoot() throws {
+        let real = temp.appendingPathComponent("project")
+        let linked = temp.appendingPathComponent("linked-project")
+        try FileManager.default.createSymbolicLink(at: linked, withDestinationURL: real)
+        XCTAssertNotNil(try LiveShareController.writeConfined(Data("via link\n".utf8), root: linked, path: "chapters/one.tex"))
+        XCTAssertEqual(try String(contentsOf: real.appendingPathComponent("chapters/one.tex"), encoding: .utf8), "via link\n")
+    }
+
     func testConfinedWriteKeepsOpenedRootAfterPathIsSwapped() throws {
         let root = temp.appendingPathComponent("project")
         let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
