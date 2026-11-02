@@ -374,6 +374,12 @@ final class EngineV3Session {
     /// Set by a scripted bench just before it edits the text view.
     @ObservationIgnored var nextKeystrokeNs: UInt64?
     @ObservationIgnored private var restarts: [Date] = []
+    /// The window `restarts` are counted in (tests shrink it).
+    nonisolated(unsafe) static var restartWindowSeconds: TimeInterval = 60
+    /// Restarts since the last DONE: a host that dies on every compile but
+    /// slowly (a malformed font that crashes it after a long compile) never
+    /// fits three restarts in the minute, and must stop all the same.
+    @ObservationIgnored private var restartsWithoutDone = 0
     @ObservationIgnored private var stopping = false
     /// Bumped by every host launch and by `stop()`: an event or a HELLO
     /// exchange started for an earlier host (replaced, or stopped) carries
@@ -795,8 +801,9 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         guard !stopping, phase != .idle else { return }
-        restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
-        guard restarts.count <= 3 else {
+        restarts = restarts.filter { $0.timeIntervalSinceNow > -Self.restartWindowSeconds } + [Date()]
+        restartsWithoutDone += 1
+        guard restarts.count <= 3, restartsWithoutDone <= 3 else {
             phase = .failed("The preview engine stopped repeatedly (\(why)). Compile (⌘B) to restart it.")
             return
         }
@@ -1146,6 +1153,7 @@ final class EngineV3Session {
             return
         case .idle, .failed:
             restarts = []
+            restartsWithoutDone = 0
             start(model: model)
         }
     }
@@ -2098,6 +2106,7 @@ final class EngineV3Session {
             if let t = typesettingID, compileID >= t { typesettingID = nil }
             for k in unanswered.keys where k <= compileID { unanswered[k] = nil }
             if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1; scheduleCaretMark(afterCompile: true) }
+            restartsWithoutDone = 0 // this host finishes compiles
             maybeSendExport()
         case .progress:
             progressFrames += 1 // the stall bound's heartbeat (`lastHostActivityNs`, above)

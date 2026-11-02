@@ -74,6 +74,29 @@ final class EngineV3AppParityTests: XCTestCase {
 
     // MARK: A13 crash limit, A14 retry
 
+    /// A host that dies on every compile but slowly (a malformed font in the
+    /// project that crashes the engine after a long compile) never fits
+    /// three restarts in the minute; it must still stop after three
+    /// restarts that never reached a DONE, not restart forever (lane
+    /// TRANSFER-AUDIT). The minute is shrunk to nothing to stand in for the
+    /// slow crash.
+    func testAHostThatKeepsDyingSlowlyStillStopsAfterThreeRestartsWithoutADone() async throws {
+        let fake = "/usr/bin/false"
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: fake), "no \(fake)")
+        env.set("FLASHTEX_HOST", fake)
+        let window = EngineV3Session.restartWindowSeconds
+        EngineV3Session.restartWindowSeconds = 0
+        defer { EngineV3Session.restartWindowSeconds = window }
+        let model = v3Model()
+        defer { model.engineV3Enabled = false }
+        let s = model.engineV3
+        let stopped = try await waitUntil(20) { self.failedRepeatedly(s) }
+        XCTAssertTrue(stopped, "phase \(s.phase), \(s.hostStarts) starts")
+        XCTAssertEqual(s.hostStarts, 4, "the first start and three restarts")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(s.hostStarts, 4, "no more starts while it is stopped")
+    }
+
     /// The fake host (`/usr/bin/false`) exits as soon as it starts. The first
     /// start and three restarts within the minute are allowed; the fourth exit
     /// stops the session ("stopped repeatedly"), the pages kept on screen and
