@@ -1,0 +1,206 @@
+//! An export's own output directory (Commander's ruling, 2026-11-02; spec
+//! §6.3 `export_dir`). An `export: true` compile runs the engine as a child
+//! process; in the session's output directory it wrote the `.aux`, the log
+//! and the rest again, which the resident engine's checkpoints hold (an
+//! export's log is not the preview's: pdfTeX's says the PDF is compressed),
+//! so the next keystroke compiled from S₀ or from nothing. It runs instead
+//! in a directory of its own, [`DIR`] in the client's `export_dir` (the
+//! app's cache, never next to the sources), seeded with what the session's
+//! runs wrote there (`seed`): it reads the `.aux`, `.toc`, `.bbl`, ... a run
+//! in the session's directory reads, and writes only its own copies. The
+//! session's files are never touched, for either host; `DONE.pdf` and
+//! `DONE.log` name the export's.
+
+use std::path::{Path, PathBuf};
+
+/// The directory an export runs in, inside the client's `export_dir`: this
+/// name only is ever removed (and made again) there.
+pub const DIR: &str = "ftx-export";
+
+/// The session's files an export does not take: what the session's runs
+/// make and never read back (the PDF, the log, SyncTeX's), and the
+/// resident engine's own (`*.flashtex-removed`, a fatal run's PDF set aside).
+fn not_seeded(name: &str) -> bool {
+    [
+        ".pdf",
+        ".log",
+        ".synctex",
+        ".synctex.gz",
+        ".fls",
+        ".flashtex-removed",
+    ]
+    .iter()
+    .any(|e| name.ends_with(e))
+}
+
+/// A job's own files in the project's directory that are its sources, not
+/// what a run wrote ([`Seed::Job`]).
+const SOURCES: &[&str] = &[
+    ".tex", ".ltx", ".bib", ".sty", ".cls", ".dtx", ".ins", ".png", ".jpg", ".jpeg", ".eps",
+    ".svg", ".toml",
+];
+
+/// The default `export_dir` of connection `conn` (a client that names
+/// none): a temporary directory of this process's.
+pub fn default_base(conn: u64) -> PathBuf {
+    std::env::temp_dir().join(format!("flashtex-export-{}-{conn}", std::process::id()))
+}
+
+/// What of the session's directory an export takes.
+#[derive(Clone, Copy, Debug)]
+pub enum Seed<'a> {
+    /// A directory of the session's own: every file but [`not_seeded`]'s.
+    All,
+    /// The project's directory itself (a session without an output
+    /// directory of its own; the job's name): only what LaTeX writes there
+    /// and reads back, the `.aux` files (`\include`'s too) and the job's
+    /// own `jobname.*` (`.toc`, `.bbl`, ...), never the sources and figures.
+    Job(&'a str),
+}
+
+/// The directory for an export of a job whose output directory is
+/// `session`, in `base`: `base/ftx-export`, removed if it was there (the
+/// last export's) and made again, then seeded with `session`'s files
+/// (`what`, with its subdirectories, which `\include` needs; links are not
+/// followed). pdfTeX and XeTeX look for a file in `-output-directory`
+/// before the current directory (kpathsea's `open_input`), so the export
+/// reads these copies.
+pub fn prepare(base: &Path, session: &Path, what: Seed) -> Result<PathBuf, String> {
+    if !base.is_absolute() {
+        return Err(format!("export_dir {} is not absolute", base.display()));
+    }
+    std::fs::create_dir_all(base).map_err(|e| format!("export_dir {}: {e}", base.display()))?;
+    let dir = base.join(DIR);
+    match std::fs::symlink_metadata(&dir) {
+        Ok(m) if m.is_dir() => {
+            std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?
+        }
+        Ok(_) => std::fs::remove_file(&dir).map_err(|e| format!("{}: {e}", dir.display()))?,
+        Err(_) => {}
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let skip = [base, dir.as_path()];
+    seed(session, &dir, what, true, &skip)
+        .map_err(|e| format!("seeding {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// `skip`: the client's `export_dir` and the export's directory, never
+/// copied into themselves when they are inside the session's directory.
+fn seed(from: &Path, to: &Path, what: Seed, top: bool, skip: &[&Path]) -> std::io::Result<()> {
+    let Ok(rd) = std::fs::read_dir(from) else {
+        return Ok(());
+    };
+    for e in rd.flatten() {
+        let name = e.file_name();
+        let n = name.to_string_lossy();
+        let t = e.file_type()?;
+        if skip.contains(&e.path().as_path()) {
+            continue;
+        }
+        if t.is_dir() {
+            // (made even when empty: TeX writes an `\include`'s `.aux` into
+            // its directory and does not make it)
+            if matches!(what, Seed::All) || !n.starts_with('.') {
+                std::fs::create_dir_all(to.join(&name))?;
+                seed(&e.path(), &to.join(&name), what, false, skip)?;
+            }
+        } else if t.is_file() && !not_seeded(&n) {
+            let take = match what {
+                Seed::All => true,
+                Seed::Job(job) => {
+                    n.ends_with(".aux")
+                        || (top
+                            && n.strip_prefix(job).is_some_and(|r| {
+                                r.starts_with('.') && !SOURCES.iter().any(|s| r == *s)
+                            }))
+                }
+            };
+            if take {
+                std::fs::copy(e.path(), to.join(&name))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The export's directory holds the session's files but its PDF and
+    /// log, with their subdirectories; a second export starts from them
+    /// again (the first one's files gone); nothing else in `base`, and
+    /// nothing of the session's, is touched.
+    #[test]
+    fn an_export_directory_is_the_sessions_files_again() {
+        let d = std::env::temp_dir().join(format!("flashtex-export-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (session, base) = (d.join("out"), d.join("cache"));
+        std::fs::create_dir_all(session.join("chapters")).unwrap();
+        for (f, t) in [
+            ("main.aux", "aux"),
+            ("main.toc", "toc"),
+            ("main.pdf", "pdf"),
+            ("main.log", "log"),
+            ("chapters/one.aux", "one"),
+        ] {
+            std::fs::write(session.join(f), t).unwrap();
+        }
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("keep.txt"), "mine").unwrap();
+        let dir = prepare(&base, &session, Seed::All).unwrap();
+        assert_eq!(dir, base.join(DIR));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("main.aux")).unwrap(),
+            "aux"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("main.toc")).unwrap(),
+            "toc"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("chapters/one.aux")).unwrap(),
+            "one"
+        );
+        assert!(!dir.join("main.pdf").exists() && !dir.join("main.log").exists());
+        std::fs::write(dir.join("main.pdf"), "exported").unwrap();
+        std::fs::write(dir.join("stale.toc"), "x").unwrap();
+        let again = prepare(&base, &session, Seed::All).unwrap();
+        assert!(!again.join("main.pdf").exists() && !again.join("stale.toc").exists());
+        assert_eq!(
+            std::fs::read_to_string(base.join("keep.txt")).unwrap(),
+            "mine"
+        );
+        assert_eq!(
+            std::fs::read_to_string(session.join("main.pdf")).unwrap(),
+            "pdf"
+        );
+        assert!(prepare(Path::new("relative"), &session, Seed::All).is_err());
+        // the project's own directory: its `.aux` files and the job's, not
+        // its sources
+        for f in ["main.tex", "fig.png", "notes.txt", "chapters/one.tex"] {
+            std::fs::write(session.join(f), "src").unwrap();
+        }
+        let dir = prepare(&base, &session, Seed::Job("main")).unwrap();
+        for f in ["main.aux", "main.toc", "chapters/one.aux"] {
+            assert!(dir.join(f).is_file(), "{f}");
+        }
+        for f in [
+            "main.tex",
+            "fig.png",
+            "notes.txt",
+            "chapters/one.tex",
+            "main.log",
+        ] {
+            assert!(!dir.join(f).exists(), "{f}");
+        }
+        // an `export_dir` inside the session's directory: seeded, not into itself
+        let inner = session.join("export");
+        prepare(&inner, &session, Seed::All).unwrap();
+        let dir = prepare(&inner, &session, Seed::All).unwrap();
+        assert!(dir.join("main.aux").is_file());
+        assert!(!dir.join("export").exists() && !dir.join(DIR).exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

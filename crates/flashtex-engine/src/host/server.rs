@@ -23,7 +23,8 @@
 //!
 //! `"export": true` asks instead for a one-shot run of the engine as a child
 //! process with pdflatex's command line (the exported PDF, compressed, which
-//! the parity gates compare with pdflatex's): the path of lane P3, kept.
+//! the parity gates compare with pdflatex's): the path of lane P3, kept. It
+//! runs in an output directory of its own (`export_dir`, `super::export_dir`).
 //!
 //! GPL-2.0-or-later like the engine. The app never links this program; it
 //! runs it and talks to its socket.
@@ -1226,7 +1227,20 @@ fn start_export(
     diag: bool,
 ) -> Result<Running, String> {
     let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
-    let job = Job::parse(req, conn)?;
+    let mut job = Job::parse(req, conn)?;
+    // A directory of its own, seeded with the session's files: the
+    // session's `.aux` and log, which the resident engine's checkpoints
+    // hold, are never written by an export (`super::export_dir`).
+    let base = req
+        .str_field("export_dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| super::export_dir::default_base(conn));
+    let what = if job.out_is_root() {
+        super::export_dir::Seed::Job(&job.jobname)
+    } else {
+        super::export_dir::Seed::All
+    };
+    job.out_dir = super::export_dir::prepare(&base, &job.out_dir, what)?;
     let have_fonts = have_fonts(req);
     let font_formats = font_formats(req);
     let argv = job.argv();
