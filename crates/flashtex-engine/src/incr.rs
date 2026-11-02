@@ -3947,6 +3947,8 @@ impl Session {
             clock = key.clock;
             crate::pdftex::utils::pin_clock(Some(key.clock));
             key.check(key.clock, &first_line)?;
+            // (the format a full run loads now: `Key::check_format`)
+            key.check_format()?;
             // (no checkpoint before S₀ here: a changed read at the
             // document's start refuses it, `Key::check_arm`)
             key.check_arm()

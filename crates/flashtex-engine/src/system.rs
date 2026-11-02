@@ -1743,6 +1743,65 @@ fn default_format_file() -> String {
     }
 }
 
+/// The format file each name a run asked for was found at in this process
+/// (`w_open_in`): (name as asked, path found).
+static LOADED_FORMATS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// The format name a run with first line `first_line` asks for: the
+/// `&name` that starts it (§524, `open_fmt_file`), else
+/// `TEX_format_default`.
+pub fn format_asked(first_line: &[u8]) -> String {
+    let s = String::from_utf8_lossy(first_line);
+    let s = s.trim_start();
+    match s.strip_prefix('&') {
+        Some(rest) => {
+            let n = rest.split(' ').next().unwrap_or("");
+            if n.len() > 4 && n[n.len() - 4..].eq_ignore_ascii_case(".fmt") {
+                n.to_string()
+            } else {
+                format!("{n}.fmt")
+            }
+        }
+        None => default_format_file(),
+    }
+}
+
+/// The format file a run asking for `asked` ([`format_asked`]) opens now:
+/// where a run of this process found it (the TeX distribution's trees are
+/// taken as unchanged for the process, as for the lookups), else looked up
+/// as `w_open_in` looks it up (`-output-directory` first, then
+/// `find_format`). A persisted S₀ holds the state its run loaded from its
+/// format; opened in another process, it stands for a full run only where
+/// that run would load the same format (`host::Key::check_format`).
+pub fn format_file_now(asked: &str) -> Option<String> {
+    if let Some((_, p)) = LOADED_FORMATS
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(a, _)| a == asked)
+    {
+        return Some(p.clone());
+    }
+    let base = match asked.split_once(':') {
+        Some((area, rest)) if area.len() > 1 && area.chars().all(|c| c.is_ascii_alphabetic()) => {
+            if area != "TeXformats" {
+                return None;
+            }
+            rest
+        }
+        _ => asked,
+    };
+    if let Some(dir) = run().output_directory {
+        if !base.starts_with('/') {
+            let p = format!("{dir}/{base}");
+            if Path::new(&p).is_file() {
+                return Some(p);
+            }
+        }
+    }
+    find_format(base)
+}
+
 /// The process's file resolver (see `resolver.rs`). kpathsea keeps its state
 /// in the environment, so there is one per process; `set_resolver` replaces
 /// the default chosen on first use.
@@ -2975,11 +3034,19 @@ impl Globals {
     pub fn w_open_in(&mut self, f: &mut WordFile) -> bool {
         *f = WordFile::default();
         f.err = 1;
+        let asked = self.raw_file_name();
         let Some(name) = self.input_path(Format::Fmt, true) else {
             return false;
         };
         match File::open(&name) {
             Ok(h) => {
+                {
+                    let mut l = LOADED_FORMATS.lock().unwrap();
+                    match l.iter_mut().find(|(a, _)| *a == asked) {
+                        Some(e) => e.1 = name.clone(),
+                        None => l.push((asked, name.clone())),
+                    }
+                }
                 f.input = Some(BufReader::new(h));
                 f.path = Some(name);
                 f.err = 0;
