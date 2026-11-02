@@ -4137,3 +4137,102 @@ fn edits_after_a_reopen_from_s1_equal_scratch_compiles() {
     assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A `COMPILE`'s buffers and edits are written only inside the project
+/// (`host::resident::apply_changes`, walked from the root's descriptor, a
+/// link only where its target stays below the root: `server::open_confined`):
+/// through a linked directory, a linked file or a dangling link that leads
+/// out of the root, the request is refused and nothing outside is written
+/// or created. A link that stays inside the root is written through.
+#[cfg(unix)]
+#[test]
+fn buffers_through_a_symlink_out_of_the_project_are_refused() {
+    use std::os::unix::fs::symlink;
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    fn refusal(c: &mut Client, r: &CompileRequest) -> Option<String> {
+        c.compile(r).unwrap();
+        loop {
+            match c
+                .next_event()
+                .unwrap()
+                .expect("the host closed the connection")
+            {
+                Event::Error(e) => return Some(e.to_string()),
+                Event::Done(_) => return None,
+                _ => {}
+            }
+        }
+    }
+    let base = common::fresh_dir("flashtex-host-symlink");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, away) = (base.join("proj"), base.join("out"), base.join("away"));
+    for d in [&proj, &out, &away] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    std::fs::write(away.join("kept.tex"), "outside\n").unwrap();
+    symlink(&away, proj.join("linked")).unwrap();
+    symlink(away.join("kept.tex"), proj.join("kept.tex")).unwrap();
+    symlink(away.join("new.tex"), proj.join("dangling.tex")).unwrap();
+    std::fs::write(proj.join("real.tex"), "inside\n").unwrap();
+    symlink(proj.join("real.tex"), proj.join("alias.tex")).unwrap();
+    let host = start_host("symlink");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let edit = |p: &str| Edit {
+        path: p.into(),
+        offset: 0,
+        delete: 0,
+        insert: "x".into(),
+    };
+    let cases: [(&str, Option<&str>, Option<Edit>); 5] = [
+        (
+            "a buffer in a linked directory",
+            Some("linked/evil.tex"),
+            None,
+        ),
+        ("a buffer over a linked file", Some("kept.tex"), None),
+        ("a buffer at a dangling link", Some("dangling.tex"), None),
+        (
+            "an edit of a linked directory's file",
+            None,
+            Some(edit("linked/kept.tex")),
+        ),
+        ("an edit of a linked file", None, Some(edit("kept.tex"))),
+    ];
+    for (k, (what, buffer, e)) in cases.into_iter().enumerate() {
+        let mut r = req(2 + k as i64, &proj, &out, "main.tex");
+        if let Some(p) = buffer {
+            r.buffers = vec![(p.into(), "written\n".into())];
+        }
+        r.edits = e.into_iter().collect();
+        let why = refusal(&mut c, &r).unwrap_or_else(|| panic!("{what}: written"));
+        assert!(why.contains("\"request\""), "{what}: {why}");
+        assert!(
+            !away.join("evil.tex").exists(),
+            "{what}: away/evil.tex made"
+        );
+        assert!(!away.join("new.tex").exists(), "{what}: away/new.tex made");
+        assert_eq!(
+            std::fs::read_to_string(away.join("kept.tex")).unwrap(),
+            "outside\n",
+            "{what}: away/kept.tex changed"
+        );
+    }
+    // a link inside the project is written through
+    let mut r = req(9, &proj, &out, "main.tex");
+    r.buffers = vec![("alias.tex".into(), "inside, edited\n".into())];
+    assert_eq!(refusal(&mut c, &r), None, "a link inside the root");
+    assert_eq!(
+        std::fs::read_to_string(proj.join("real.tex")).unwrap(),
+        "inside, edited\n"
+    );
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
