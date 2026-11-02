@@ -249,6 +249,13 @@ public struct DL3Page: Equatable, Sendable {
     public var incomplete: Bool { flags & Self.flagIncomplete != 0 }
     public var noGeometry: Bool { flags & Self.flagNoGeometry != 0 }
     public var inherits: Bool { flags & Self.flagInherits != 0 }
+    /// PAGE: its `/Rotate` in quarter turns clockwise, 0–3 (flags bits 4–5, spec §4.7).
+    public var quarterTurns: Int { Int((flags >> 4) & 3) }
+    /// What the page shows: its content hash and, when it is turned, its
+    /// `/Rotate` (outside the hash, spec §4.7), so a rotation-only change
+    /// is a change to every bitmap and cache keyed by it. (The turn's byte,
+    /// 0xF1–0xF3, is never a byte the keys built on it append: 0 or 1.)
+    public var shownHash: [UInt8] { quarterTurns == 0 ? hash : hash + [0xF0 | UInt8(quarterTurns)] }
     /// Box width/height in bp.
     public var boxWidth: Double { box[2] - box[0] }
     public var boxHeight: Double { box[3] - box[1] }

@@ -90,6 +90,8 @@ pub fn enabled() -> bool {
 // `tests::eqtb_locations_match_the_translation` checks that `pdf_ship_out`
 // and `pdf_print_mag_bp` still read them.
 const COUNT_BASE: usize = crate::generated::consts::count_base as usize;
+const PAGE_ATTR_LOC: usize = crate::generated::consts::pdf_page_attr_loc as usize;
+const PAGES_ATTR_LOC: usize = crate::generated::consts::pdf_pages_attr_loc as usize;
 const MAG_LOC: usize =
     (crate::generated::consts::int_base + crate::generated::consts::mag_code) as usize;
 
@@ -1236,6 +1238,7 @@ impl Globals {
                 frame.counts[k] = self.eqtb[COUNT_BASE + k - 1].int();
             }
             self.dl_links(&mut frame, mag);
+            frame.flags |= flags::rotate(self.dl_rotate());
         }
         // Everything the display list is a function of, but the engine's
         // answers to the interpreter (`Memo::queries`) and the resource keys.
@@ -1302,6 +1305,7 @@ impl Globals {
         page.height = hsp;
         page.pdf_box = frame.pdf_box;
         page.counts = frame.counts;
+        page.flags |= frame.flags & flags::ROTATE_MASK;
         page.links.append(&mut frame.links);
         page.dests.append(&mut frame.dests);
         // The keys of the fonts and images the items use, then the spans
@@ -1648,6 +1652,23 @@ impl Globals {
         self.flush_str(s);
         self.last_tokens_string = saved_last;
         b
+    }
+
+    /// The page's `/Rotate` as the PDF gives it: pdfTeX writes
+    /// `\pdfpageattr` into the page object and `\pdfpagesattr` into the
+    /// `/Pages` node the page inherits from; the last `/Rotate n` of the
+    /// page's own, else of the node's, else 0 (pdflscape adds `/Rotate 90`
+    /// to `\pdfpageattr` for a landscape page).
+    fn dl_rotate(&mut self) -> i64 {
+        for loc in [PAGE_ATTR_LOC, PAGES_ATTR_LOC] {
+            let p = self.eqtb[loc - 1].hh().rh();
+            if p != 0 {
+                if let Some(r) = last_rotate(&self.dl_tokens(p)) {
+                    return r;
+                }
+            }
+        }
+        0
     }
 
     fn dl_links(&mut self, page: &mut Page, mag: i32) {
@@ -2200,6 +2221,42 @@ impl Globals {
     }
 }
 
+/// The integer after the last `/Rotate` key in a PDF dictionary's text
+/// (`/Rotate 90`, `/Rotate -90`; a `/Rotate` that is not followed by an
+/// integer, or a name that only starts with it, is not one).
+fn last_rotate(b: &[u8]) -> Option<i64> {
+    let key = b"/Rotate";
+    let mut found = None;
+    let mut i = 0;
+    while let Some(k) = b[i..].windows(key.len()).position(|w| w == key) {
+        let mut j = i + k + key.len();
+        i = j;
+        let delim = |c: u8| c.is_ascii_whitespace() || b"()<>[]{}/%".contains(&c);
+        if j < b.len() && !delim(b[j]) {
+            continue; // `/RotateX`, `/Rotate90`, `/Rotate-90`: other names
+        }
+        while j < b.len() && b[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        let start = j;
+        if j < b.len() && (b[j] == b'-' || b[j] == b'+') {
+            j += 1;
+        }
+        while j < b.len() && b[j].is_ascii_digit() {
+            j += 1;
+        }
+        if let Ok(v) = std::str::from_utf8(&b[start..j])
+            .unwrap_or("")
+            .parse::<i64>()
+        {
+            if j == b.len() || delim(b[j]) {
+                found = Some(v);
+            }
+        }
+    }
+    found
+}
+
 /// A file the resolver finds, without it counting as a read of the run:
 /// the writer's lookups are not the engine's (its read journal, which the
 /// incremental system compares across runs, must not see them).
@@ -2670,6 +2727,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `/Rotate` from `\pdfpageattr`/`\pdfpagesattr` text (spec §4.7).
+    #[test]
+    fn rotate_is_the_last_rotate_key() {
+        assert_eq!(last_rotate(b"/Rotate 90"), Some(90));
+        assert_eq!(
+            last_rotate(b"/Group << /S /Transparency >>/Rotate -90 "),
+            Some(-90)
+        );
+        assert_eq!(last_rotate(b"/Rotate 90 /Rotate 0"), Some(0));
+        assert_eq!(last_rotate(b"/Rotate 180/CropBox [0 0 1 1]"), Some(180));
+        for t in [
+            &b""[..],
+            b"/RotateX 9",
+            b"/Rotate/Foo",
+            b"/Rotate 9.5",
+            b"/Rotate",
+            b"/Rotate90 90",
+            b"/Rotate90",
+            b"/Rotate-90 0",
+        ] {
+            assert_eq!(last_rotate(t), None, "{}", String::from_utf8_lossy(t));
+        }
+        assert_eq!(last_rotate(b"/Rotate90 90 /Rotate 180"), Some(180));
+        assert_eq!(flags::rotate(-90), 3 << flags::ROTATE_SHIFT);
+        assert_eq!(flags::rotate(450), 1 << flags::ROTATE_SHIFT);
+        assert_eq!(flags::rotate(45), 0);
+        assert_eq!(
+            flags::quarter_turns(flags::rotate(270) | flags::INCOMPLETE),
+            3
+        );
     }
 
     /// `form-state` (spec §4.3): a stream flagged FORM_STATE goes to a

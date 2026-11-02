@@ -32,6 +32,25 @@ pub mod flags {
     /// takes `form-state`; to one that does not, the host sends the stream
     /// with INCOMPLETE ([`without_form_state`]).
     pub const FORM_STATE: u32 = 8;
+    /// PAGE, bits 4–5: the page's `/Rotate` in quarter turns clockwise
+    /// (spec §4.7), as a viewer turns the page to show it. The items stay
+    /// in the unturned page's space.
+    pub const ROTATE_MASK: u32 = 0x30;
+    pub const ROTATE_SHIFT: u32 = 4;
+
+    /// The ROTATE bits for `/Rotate degrees` (any multiple of 90; another
+    /// value, as a viewer treats it, is 0).
+    pub fn rotate(degrees: i64) -> u32 {
+        if degrees % 90 != 0 {
+            return 0;
+        }
+        ((degrees / 90).rem_euclid(4) as u32) << ROTATE_SHIFT
+    }
+
+    /// Quarter turns clockwise (0–3) in `flags`.
+    pub fn quarter_turns(flags: u32) -> u32 {
+        (flags & ROTATE_MASK) >> ROTATE_SHIFT
+    }
 }
 
 /// The body of a PAGE or FORM as a host sends it to a client that does not

@@ -188,7 +188,7 @@ u32     index        PAGE: 0-based index of the page in the document: the
                      full run
                      FORM: the form's id (pdfTeX's `/Fm<n>` number)
 u32     flags        bit 0 INCOMPLETE, bit 1 NO_GEOMETRY, bit 2 INHERITS,
-                     bit 3 FORM_STATE (§4.7)
+                     bit 3 FORM_STATE, bits 4–5 ROTATE (§4.7)
 i32     width        PAGE: TeX's page width (sp);  FORM: box width (sp)
 i32     height       PAGE: TeX's page height (sp); FORM: height + depth (sp)
 i32[10] counts       \count0 .. \count9 at ship-out (FORM: zeros)
@@ -450,6 +450,18 @@ keys it with the forms' hashes too.
   stream exists): the header is valid, there are no items.
 - **INHERITS** (FORM): the form starts from the state where it is drawn
   (§4.3, `form-state`).
+- **ROTATE** (PAGE, bits 4–5, adopted 2026-11-01, lane RENDER-AUDIT): the
+  page's `/Rotate` in quarter turns clockwise, 0–3: the last `/Rotate n`
+  of `\pdfpageattr` at ship-out, else of `\pdfpagesattr` (the `/Pages`
+  node the page inherits it from), n a multiple of 90 (another value is
+  0). pdflscape's landscape pages carry 90. The items stay in the unturned
+  page's space; a client shows the page turned as a viewer does
+  (PDF 32000-1 §7.7.3.3): for q quarter turns of a `w × h` box, the shown
+  page is `h × w` for odd q, and a point (x, y) of the unturned page (y up,
+  the box's corner at the origin) is shown at (y, w − x), (w − x, h − y)
+  or (h − y, x) for q = 1, 2, 3. The flags are not in the hash (§4.6): a
+  raster of the unturned page stays valid. A client before this bit shows
+  the page unturned.
 - **FORM_STATE**: the stream draws a form in a colour or text render mode
   other than a new page's (§4.3); INCOMPLETE is added for a client that
   does not accept `form-state`.
