@@ -477,10 +477,9 @@ struct Entry {
     /// `\splitdiscards`: `disc_ptr[c]`, by `c`), and whether there were
     /// none when it took them (some: a refusal's key).
     discs: Vec<(i32, bool)>,
-    /// The font identifiers the call read (`\the\font`'s token, which
-    /// `\string` prints by its name `font_id_text`, that `\font` of a
-    /// loaded font renames without loading anything): location, name.
-    font_texts: Vec<(i32, Vec<i32>)>,
+    /// The names the call printed that a location does not always hold
+    /// (`flashtex_bm_print_cs`): location, name.
+    names: Vec<(i32, Vec<i32>)>,
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
@@ -585,7 +584,8 @@ struct Rec {
     /// The call expanded `\jobname` (`Entry::job`).
     job_read: bool,
     discs: Vec<(i32, bool)>,
-    font_texts: Vec<(i32, Vec<i32>)>,
+    names: Vec<(i32, Vec<i32>)>,
+    names_seen: HashSet<i32>,
     boxes: HashSet<i32>,
     /// Box registers assigned globally: each must be void when the call
     /// ends, and the replay makes it so (`\global\setbox` to void, at the
@@ -2577,7 +2577,7 @@ impl Globals {
                         .iter()
                         .all(|&(c, none)| (self.bm_disc(c) == 0) == none)
                     || !e.job.as_ref().is_none_or(|j| *j == self.bm_job_name())
-                    || !e.font_texts.iter().all(|(p, t)| self.bm_text_of(*p) == *t)
+                    || !e.names.iter().all(|(p, t)| self.bm_text_is(*p, t))
                 {
                     continue;
                 }
@@ -2757,7 +2757,8 @@ impl Globals {
             line_read: false,
             job_read: false,
             discs: vec![],
-            font_texts: vec![],
+            names: vec![],
+            names_seen: HashSet::new(),
             boxes: HashSet::new(),
             gboxes: vec![],
             pending_box: None,
@@ -2874,7 +2875,7 @@ impl Globals {
                     line: rec.line_read.then_some(self.line),
                     job: rec.job_read.then(|| self.bm_job_name()),
                     discs: rec.discs,
-                    font_texts: rec.font_texts,
+                    names: rec.names,
                     fast: vec![],
                     new_cs: vec![],
                     last_link: None,
@@ -2949,19 +2950,46 @@ impl Globals {
             if self.cur_cmd == k::top_bot_mark {
                 return self.bm_abort("Mark");
             }
-            let p = self.cur_cs;
-            if (k::font_id_base..=k::font_id_base + k::font_max).contains(&p) {
-                // a font's identifier (`\the\font`): `\string` prints its
-                // name, which `\font` of the loaded font changes
-                let t = self.bm_text_of(p);
-                self.bm_with_rec(|r| {
-                    if !r.font_texts.iter().any(|(q, _)| *q == p) {
-                        r.font_texts.push((p, t));
-                    }
-                });
-            }
-            self.bm_note_cs(p);
+            self.bm_note_cs(self.cur_cs);
         }
+    }
+
+    /// `print_cs` or `sprint_cs` prints control sequence `p` during a
+    /// recording (`\string`, `\meaning`, `\detokenize`, `\pdfstrcmp`'s
+    /// operands): its name joins the key. A token is a location, and the
+    /// key compares tokens by location, but the name there is not always
+    /// the same:
+    /// - a name entered after a restore point takes the location its hash
+    ///   and the order of entry give it (tex.web §259-260, web2c's
+    ///   `hash_extra`), so after the restore another new name can be there
+    ///   with the same meaning (`\qqXa` and `\qqaO` hash alike);
+    /// - a font identifier's name (`font_id_text`) is what the last `\font`
+    ///   of that font called it.
+    ///
+    /// A name the format entered is the same in every run from the format
+    /// (no restore goes before it, and the format names the fonts' first
+    /// version), and the call's own new names are `Op::NewCs`'s.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_print_cs(&mut self, p: i32) {
+        if p < k::hash_base
+            || (k::undefined_control_sequence..=k::eqtb_size).contains(&p)
+            || p > k::eqtb_top
+            || (k::prim_eqtb_base..k::frozen_null_font).contains(&p)
+        {
+            return;
+        }
+        let font_id = (k::font_id_base..=k::font_id_base + k::font_max).contains(&p);
+        let t = self.hash[(p - k::hash_base) as usize].rh();
+        if !font_id && (0..self.init_str_ptr).contains(&t) {
+            return;
+        }
+        let name = self.bm_text_of(p);
+        self.bm_with_rec(|r| {
+            if !r.created.contains(&p) && r.names_seen.insert(p) {
+                r.names.push((p, name));
+            }
+        });
     }
 
     /// `\csname` and `\ifcsname` looked `p` up.
@@ -3383,6 +3411,20 @@ impl Globals {
     /// prints it.
     fn bm_text_of(&self, p: i32) -> Vec<i32> {
         self.bm_str(self.hash[(p - k::hash_base) as usize].rh())
+    }
+
+    /// Whether the name at `p` is `want` ([`bm_text_of`](Self::bm_text_of)
+    /// compared in place).
+    fn bm_text_is(&self, p: i32, want: &[i32]) -> bool {
+        let s = self.hash[(p - k::hash_base) as usize].rh();
+        if s < 0 || s >= self.str_ptr {
+            return want == [-1];
+        }
+        let (a, b) = (
+            self.str_start[s as usize] as usize,
+            self.str_start[s as usize + 1] as usize,
+        );
+        self.str_pool[a..b] == *want
     }
 
     /// `box(n)` (a sparse one looked up without creating anything).
@@ -3872,7 +3914,7 @@ impl Globals {
                 line: rec.line_read.then_some(line),
                 job: rec.job_read.then(|| self.bm_job_name()),
                 discs: rec.discs,
-                font_texts: rec.font_texts,
+                names: rec.names,
                 fast: compress_groups(&rec.ops),
                 new_cs: rec
                     .ops

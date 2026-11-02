@@ -23,7 +23,8 @@
 %   (|eq_define|, |eq_word_define|, |geq_define|, |geq_word_define|, e-TeX's
 %   |sa_def| family, |new_save_level|, |unsave|), the box registers fetched,
 %   the commands, expansions and internal quantities, conditionals popped,
-%   and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
+%   the names printed (|print_cs|, |sprint_cs|: \.{\\string}, \.{\\meaning},
+%   \.{\\detokenize}), and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
 %   outside its model.
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
@@ -51,6 +52,24 @@ if intr_on then flashtex_intr_new_cs(p);
 @y
 if intr_on then flashtex_intr_new_cs(p);
 if bm_on then flashtex_bm_new_cs(p);
+@z
+
+@x pdftex.web l.6686 - a name a recording prints is part of its key
+procedure print_cs(@!p:integer); {prints a purported control sequence}
+begin if p<hash_base then {single character}
+@y
+procedure print_cs(@!p:integer); {prints a purported control sequence}
+begin if bm_rec_on then flashtex_bm_print_cs(p);
+if p<hash_base then {single character}
+@z
+
+@x pdftex.web l.6712 - ... by either printing procedure
+procedure sprint_cs(@!p:pointer); {prints a control sequence}
+begin if p<hash_base then
+@y
+procedure sprint_cs(@!p:pointer); {prints a control sequence}
+begin if bm_rec_on then flashtex_bm_print_cs(p);
+if p<hash_base then
 @z
 
 @x pdftex.web l.7122 (after changes/intrinsics.ch) - a recorded run opens a group
@@ -483,6 +502,7 @@ procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_new_obj(@!n:integer); external;
+procedure flashtex_bm_print_cs(@!p:integer); external;
 
 @* \[55] Index.
 @z

@@ -746,9 +746,9 @@ key 1 143 M → 93 M (the steady keys 92 M); the open's preamble row (a run from
 24.1 G instructions for the whole compile, 5.29 G → 5.24 G to its first page, wall unchanged.
 Evidence: `docs/evidence/t7-margin-2026-10-21/`.
 
-## Review 2026-11-01: four state reads no key held (lane REVIEW-BOXMEMO)
+## Review 2026-11-01: five state reads no key held (lane REVIEW-BOXMEMO)
 
-An adversarial pass over the state a recorded call can read found four reads that §3's key did not
+An adversarial pass over the state a recorded call can read found five reads that §3's key did not
 hold. Each has a test that failed before the fix: BOX-MEMO on gave another log or page than off.
 
 1. **Which font a number holds.** K5's version named the changes to the fonts' parameters, not the
@@ -774,9 +774,7 @@ hold. Each has a test that failed before the fix: BOX-MEMO on gave another log o
 3. **A font identifier's name.** `\string` of `\the\font` prints `font_id_text(f)`. `\font` of a
    font already loaded loads nothing and renames it there, writing `font_id_text` and
    `eqtb[font_id_base+f]` itself, not through `eq_define`.
-   - Read: a font identifier a recording reads is keyed by its name (`Entry::font_texts`). The
-     tokens throughput.ch's loops read in place reach this hook once a recording reads them through
-     `get_next` (#2064).
+   - Read: the identifier's name is keyed when a recording prints it (item 5's hook).
    - Written: a recording that runs `\font`, `\letterspacefont` or `\pdfcopyfont` is abandoned. Each
      either loads a font (`Fonts`, as before) or renames one.
 
@@ -787,6 +785,20 @@ hold. Each has a test that failed before the fix: BOX-MEMO on gave another log o
    were none read their absence unkeyed. After a `\vsplit` saved a glue, it replayed an empty box
    and left the glue saved. Now whether there are any is keyed (`Entry::discs`), and taking some
    refuses the call. Test: `discarded_items_a_call_takes_are_part_of_the_key`.
+
+5. **A printed name** (#2091 left it as an open belief; reproduced here). The key compares tokens by
+   their location in the hash, but a name entered after a restore point takes the location its hash
+   and the order of entry give it (tex.web §259-260, web2c's `hash_extra`). So after the restore,
+   another new name can be at the same location with the same meaning. `\qqXa` and `\qqaO` hash
+   alike (1629 for `hash_prime` 8501). Renaming a call's argument from one to the other replayed
+   `\string` of the old name.
+   - Fix: `print_cs` and `sprint_cs` (`changes/boxmemo.ch`) report every name a recording prints
+     (`\string`, `\meaning`, `\detokenize`, `\pdfstrcmp`'s operands). Its characters join the key
+     (`Entry::names`), compared in place.
+   - Left out: names the format entered (`text(p)` below `init_str_ptr`), which are the same in every
+     run from the format; the frozen primitives' names; the call's own new names (`Op::NewCs`).
+   - Item 3's identifier names come through the same hook.
+   - Test: `tests/host_incremental.rs` `a_replay_keys_the_names_it_prints`.
 
 **Checked and held.** Each item below is held, or refused, by the code named:
 - `eqtb`'s regions 3 to 6: K2, and KR for the registers.
@@ -805,10 +817,3 @@ hold. Each has a test that failed before the fix: BOX-MEMO on gave another log o
 - `\openin`, `\read` and `\ifeof`, `\input`, `\scantokens` and `\endinput`, `\immediate`, every
   PDF object but a link, `\message`, and an `\openout` whatsit in a fragment (`WhatsitKind`).
 - The string pool and the hash: §4.2's counters and `NewCs`.
-
-**Open, not fixed (belief).** A control sequence's name (`text(p)`) is held only for the names a
-`\csname` looks up (§11.6). A call that prints a token of its body or its arguments (`\string`,
-`\meaning`, `\detokenize`) reads the name at that token's location. After a restore that enters
-names in another order, a location in the hash's overflow (`hash_used`'s descent) can hold another
-name with the same meaning. For a key to match, the body would have to be redefined with the other
-name at the same location. No test reproduces this.

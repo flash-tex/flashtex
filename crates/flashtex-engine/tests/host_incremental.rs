@@ -2185,6 +2185,94 @@ fn a_replay_in_another_document_keys_the_job_name() {
     assert!(hits[2] > 0, "the same document did not replay: {hits:?}");
 }
 
+#[test]
+fn a_replay_keys_the_names_it_prints() {
+    // (lane REVIEW-BOXMEMO) A token is a location in the hash, and the key
+    // compares tokens by location. A name entered after the restore point
+    // takes the location its hash and the order of entry give it (tex.web
+    // §259-260, web2c's `hash_extra`), so after the restore another new name
+    // can take the same location: `\qqXa` and `\qqaO` hash alike (1629 for
+    // hash_prime 8501). The edit renames the call's argument; its token,
+    // the location, is the same, and so is its meaning (undefined), and the
+    // call replayed `\string` of the old name
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-bmnames");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    let text = "\\documentclass{article}\n\
+        \\makeatletter\n\
+        \\def\\pgf@parsefunc#1{\\begingroup\\xdef\\jn{\\string#1}\\endgroup}\n\
+        \\makeatother\n\
+        \\begin{document}\n\
+        Page one.\\newpage\n\
+        Page two \\makeatletter\\pgf@parsefunc{\\qqXa}\\makeatother[\\jn].\n\
+        \\end{document}\n";
+    std::fs::write(proj.join(main), text).unwrap();
+    let env = [
+        ("FLASHTEX_BOXMEMO", "on"),
+        ("FLASHTEX_BOXMEMO_NAMES", "pgf@parsefunc"),
+    ];
+    let host = start_host_env("bmn", &env);
+    let scratch = start_host_env("bmns", &[("FLASHTEX_BOXMEMO", "off")]);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let at = text.find("qqXa").unwrap() as u64;
+    let mut hits = vec![];
+    for (k, name) in ["qqaO", "qqXa", "qqaO"].iter().enumerate() {
+        id += 1;
+        let mut r = req(id, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at,
+            delete: 4,
+            insert: (*name).into(),
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("n{k}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("rename {k} to \\{name}"),
+        );
+        let now = o
+            .done
+            .get("stages")
+            .and_then(|s| s.get("boxmemo"))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.get(1).and_then(|n| n.as_i64()))
+            .unwrap_or(0);
+        hits.push(now);
+    }
+    // each name's recording is replayed when the name comes back
+    assert!(
+        hits[2] > hits[1],
+        "no replay after the second rename: {hits:?}"
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// An absolute name the run looked for (review of #1549, (a)): its own
 /// directory decides the answer, not the working directory, both before
 /// S₀ (S₀'s key) and after it (the journal). A file appearing there is
