@@ -69,7 +69,8 @@ def keys(i, page, n):
             d = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if d.get('edited_page_ms') is not None:
+        # (one line a keystroke; the last line's `edited_page_ms` is the summary's object)
+        if isinstance(d.get('edited_page_ms'), (int, float)):
             ms.append(round(d['edited_page_ms'], 2))
             st = (d.get('host') or {}).get('stages') or {}
             instr.append(st.get('edited_instr_k'))

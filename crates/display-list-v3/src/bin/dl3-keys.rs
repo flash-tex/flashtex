@@ -265,10 +265,19 @@ fn main() {
         None => (held.count as f64 * at) as u32,
     }
     .min(held.count.saturating_sub(1) as u32);
+    // (the shortest path ending in `/FILE`: the file itself, not a
+    // namesake deeper down, as a book twice has its copy's `x2/FILE`)
+    let tail = format!("/{efile}");
+    let shortest = held
+        .files
+        .values()
+        .filter(|p| p.ends_with(&tail))
+        .map(|p| p.len())
+        .min();
     let main_file = |f: u32| {
         held.files
             .get(&f)
-            .is_some_and(|p| p.ends_with(&format!("/{efile}")))
+            .is_some_and(|p| p.ends_with(&tail) && Some(p.len()) == shortest)
     };
     let on_pages = |line: u32| -> Vec<u32> {
         let mut v: Vec<u32> = held
@@ -315,7 +324,9 @@ fn main() {
     let preamble = arg("--kind").as_deref() == Some("preamble");
     // `--min-words N`: a prose line has more than N words (default 40; a
     // book's source wraps its lines, so fewer there)
-    let min_words: usize = arg("--min-words").and_then(|v| v.parse().ok()).unwrap_or(40);
+    let min_words: usize = arg("--min-words")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
     let (line, page) = given.unwrap_or_else(|| {
         if preamble {
             return (1, 0);
