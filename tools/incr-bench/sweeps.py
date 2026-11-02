@@ -326,8 +326,9 @@ def _run_unit(tree, bench, out, u, timeout):
         cmd = [sys.executable, f'{ib}/readers.py', f'{bench}/{ENGINE}', f'{out}/raw/readers']
     r['cmd'] = ' '.join(cmd)
     t0 = time.monotonic()
+    run_env = dict(env(), INCR_BENCH_DIR=bench, **u.get('env', {}))
     try:
-        p = subprocess.run(cmd, cwd=tree, env=dict(env(), INCR_BENCH_DIR=bench, **u.get('env', {})),
+        p = subprocess.run(cmd, cwd=tree, env=run_env,
                            stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, text=True, errors='replace', timeout=timeout)
         code, so, se = p.returncode, p.stdout, p.stderr
@@ -336,7 +337,8 @@ def _run_unit(tree, bench, out, u, timeout):
         code, se = 'timeout', f'timed out after {timeout} s'
     r['seconds'] = round(time.monotonic() - t0, 1)
     r['exit'] = code
-    open(f'{stem}.out', 'w').write(so + ('\n--- stderr\n' + se if se else ''))
+    with open(f'{stem}.out', 'w') as f:
+        f.write(so + ('\n--- stderr\n' + se if se else ''))
     if u['tool'] in ('soundness', 'xdoc'):
         tot = last_json(so, lambda x: 'compiles' in x and 'ok' in x)
         if tot is None:
@@ -346,14 +348,20 @@ def _run_unit(tree, bench, out, u, timeout):
             r[k] = tot.get(k, 0)
         if u['tool'] == 'xdoc':
             # BOX-MEMO's replays, and those of another document's entries (None: an engine from
-            # before that count)
+            # before that count, which cannot pass this gate)
             r['hits'], r['xdoc_hits'] = tot.get('hits'), tot.get('xdoc_hits')
         if tot['err'] or tot['bad'] or code != 0:
             r['status'] = 'bad' if tot['bad'] else 'error'
-            r['note'] = '\n'.join(l for l in so.splitlines() if 'ERROR' in l or 'mismatches' in l)[-600:]
-        elif tot['compiles'] == 0 and not tot['skipped']:
-            # no such document in the tree: soundness.py and fixtures() above disagree
-            r.update(status='error', note=f'soundness.py ran no document named {doc}')
+            r['note'] = '\n'.join(l for l in so.splitlines() if 'ERROR' in l or 'mismatches' in l
+                                  or 'sound-xdoc:' in l)[-600:]
+        elif tot['compiles'] == 0 and (u['tool'] == 'xdoc' or not tot['skipped']):
+            # no such document in the tree, or no xdoc work was requested
+            r.update(status='error', note=f'{u["tool"]} ran no document named {doc}')
+        elif u['tool'] == 'xdoc' and run_env.get('FLASHTEX_BOXMEMO') == 'off':
+            r.update(status='absent', note='not exercised (BOX-MEMO off)')
+        elif u['tool'] == 'xdoc' and not tot.get('xdoc_hits'):
+            r.update(status='error', note=('cross-document replay count not measured'
+                                          if tot.get('xdoc_hits') is None else 'no cross-document replays'))
         else:
             r['status'] = 'ok'
     elif u['tool'] == 'span':
