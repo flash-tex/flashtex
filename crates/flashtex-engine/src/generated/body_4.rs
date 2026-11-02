@@ -1861,7 +1861,7 @@ impl Globals {
         } else {
             {
                 step = self.pdf_font_step[crate::ix::U((f) as usize)];
-                if ((e % step) > 0i32) {
+                if ((e).total_mod(step) > 0i32) {
                     e = (step).wrapping_mul(self.round_xn_over_d(e, 1i32, step));
                 }
             }
@@ -1980,11 +1980,11 @@ impl Globals {
         if (font_step == 0i32) {
             self.pdf_error(1040i32, 1083i32);
         }
-        stretch_limit = (stretch_limit).wrapping_sub((stretch_limit % font_step));
+        stretch_limit = (stretch_limit).wrapping_sub((stretch_limit).total_mod(font_step));
         if (stretch_limit < 0i32) {
             stretch_limit = 0i32;
         }
-        shrink_limit = (shrink_limit).wrapping_sub((shrink_limit % font_step));
+        shrink_limit = (shrink_limit).wrapping_sub((shrink_limit).total_mod(font_step));
         if (shrink_limit < 0i32) {
             shrink_limit = 0i32;
         }
@@ -2100,7 +2100,7 @@ impl Globals {
                     vf_alpha = (vf_alpha).wrapping_add(vf_alpha);
                 }
             }
-            vf_beta = (256i32 / vf_alpha);
+            vf_beta = (256i32).total_div(vf_alpha);
             vf_alpha = (vf_alpha).wrapping_mul(vf_z);
         }
         w = self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(), e, 2000i32);
@@ -2113,15 +2113,15 @@ impl Globals {
             }
         }
         r = (w).wrapping_mul(vf_beta);
-        self.tmp_w.set_qqqq_b1((r / vf_z));
-        r = (r % vf_z);
+        self.tmp_w.set_qqqq_b1((r).total_div(vf_z));
+        r = (r).total_mod(vf_z);
         if (r == 0i32) {
             self.tmp_w.set_qqqq_b2(0i32);
         } else {
             {
                 r = (r).wrapping_mul(256i32);
-                self.tmp_w.set_qqqq_b2((r / vf_z));
-                r = (r % vf_z);
+                self.tmp_w.set_qqqq_b2((r).total_div(vf_z));
+                r = (r).total_mod(vf_z);
             }
         }
         if (r == 0i32) {
@@ -2129,7 +2129,7 @@ impl Globals {
         } else {
             {
                 r = (r).wrapping_mul(256i32);
-                self.tmp_w.set_qqqq_b3((r / vf_z));
+                self.tmp_w.set_qqqq_b3((r).total_div(vf_z));
             }
         }
         { let __v667 = self.new_vf_packet(k); self.vf_packet_base[crate::ix::U((k) as usize)] = __v667; }

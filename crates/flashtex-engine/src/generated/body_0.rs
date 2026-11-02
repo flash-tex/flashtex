@@ -1010,7 +1010,7 @@ impl Globals {
     // §1879
     pub fn pdf_char_marked(&mut self, mut f: internal_font_number, mut c: eight_bits) -> bool {
         let mut pdf_char_marked: bool = false;
-        pdf_char_marked = ((((self.pdf_char_used[crate::ix::U((f) as usize)][crate::ix::U(((c / 8i32)) as usize)] / self.pdf_char_bit(c))) % 2) != 0);
+        pdf_char_marked = ((((self.pdf_char_used[crate::ix::U((f) as usize)][crate::ix::U(((c / 8i32)) as usize)]).total_div(self.pdf_char_bit(c))) % 2) != 0);
         pdf_char_marked
     }
 
@@ -1354,7 +1354,7 @@ impl Globals {
                 }
                 pseudo => {
                     if (self.tally < self.trick_count) {
-                        self.trick_buf[crate::ix::U(((self.tally % self.error_line)) as usize)] = s;
+                        self.trick_buf[crate::ix::U(((self.tally).total_mod(self.error_line)) as usize)] = s;
                     }
                 }
                 new_string => {
@@ -2626,11 +2626,11 @@ impl Globals {
                         break 'l_exit_f;
                     }
                     k = (j).wrapping_add(2i32);
-                    u = (v / (self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
+                    u = (v).total_div((self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
                     if (self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)] == 50i32) {
                         {
                             k = (k).wrapping_add(2i32);
-                            u = (u / (self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
+                            u = (u).total_div((self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
                         }
                     }
                     if ((n).wrapping_add(u) >= v) {
@@ -2641,7 +2641,7 @@ impl Globals {
                     } else {
                         {
                             j = (j).wrapping_add(2i32);
-                            v = (v / (self.str_pool[crate::ix::U(((j).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
+                            v = (v).total_div((self.str_pool[crate::ix::U(((j).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
                         }
                     }
                 }
@@ -2840,7 +2840,7 @@ impl Globals {
         if (n == 0i32) {
             mult_and_add = y;
         } else {
-            if ((x <= ((max_answer).wrapping_sub(y) / n)) && ((x).wrapping_neg() <= ((max_answer).wrapping_add(y) / n))) {
+            if ((x <= ((max_answer).wrapping_sub(y)).total_div(n)) && ((x).wrapping_neg() <= ((max_answer).wrapping_add(y)).total_div(n))) {
                 mult_and_add = ((n).wrapping_mul(x)).wrapping_add(y);
             } else {
                 {
@@ -2875,13 +2875,13 @@ impl Globals {
                 }
                 if (x >= 0i32) {
                     {
-                        x_over_n = (x / n);
-                        self.remainder = (x % n);
+                        x_over_n = (x).total_div(n);
+                        self.remainder = (x).total_mod(n);
                     }
                 } else {
                     {
-                        x_over_n = (((x).wrapping_neg() / n)).wrapping_neg();
-                        self.remainder = (((x).wrapping_neg() % n)).wrapping_neg();
+                        x_over_n = (((x).wrapping_neg()).total_div(n)).wrapping_neg();
+                        self.remainder = (((x).wrapping_neg()).total_mod(n)).wrapping_neg();
                     }
                 }
             }
@@ -2915,21 +2915,21 @@ impl Globals {
         }
         t = ((x % 32768i32)).wrapping_mul(n);
         u = (((x / 32768i32)).wrapping_mul(n)).wrapping_add((t / 32768i32));
-        v = (((u % d)).wrapping_mul(32768i32)).wrapping_add((t % 32768i32));
-        if ((u / d) >= 32768i32) {
+        v = (((u).total_mod(d)).wrapping_mul(32768i32)).wrapping_add((t % 32768i32));
+        if ((u).total_div(d) >= 32768i32) {
             self.arith_error = true;
         } else {
-            u = ((32768i32).wrapping_mul((u / d))).wrapping_add((v / d));
+            u = ((32768i32).wrapping_mul((u).total_div(d))).wrapping_add((v).total_div(d));
         }
         if positive {
             {
                 xn_over_d = u;
-                self.remainder = (v % d);
+                self.remainder = (v).total_mod(d);
             }
         } else {
             {
                 xn_over_d = (u).wrapping_neg();
-                self.remainder = ((v % d)).wrapping_neg();
+                self.remainder = ((v).total_mod(d)).wrapping_neg();
             }
         }
         xn_over_d
@@ -2962,10 +2962,10 @@ impl Globals {
             } else {
                 {
                     if (t <= 7230584i32) {
-                        r = ((t).wrapping_mul(297i32) / s);
+                        r = ((t).wrapping_mul(297i32)).total_div(s);
                     } else {
                         if (s >= 1663497i32) {
-                            r = (t / (s / 297i32));
+                            r = (t).total_div((s / 297i32));
                         } else {
                             r = t;
                         }
@@ -3017,8 +3017,8 @@ impl Globals {
                 negative = (!negative);
             }
         }
-        n = (p / q);
-        p = (p % q);
+        n = (p).total_div(q);
+        p = (p).total_mod(q);
         if (n >= 8i32) {
             {
                 self.arith_error = true;
@@ -3090,7 +3090,7 @@ impl Globals {
             {
                 n = (f / fraction_one);
                 f = (f % fraction_one);
-                if (q <= (el_gordo / n)) {
+                if (q <= (el_gordo).total_div(n)) {
                     n = (n).wrapping_mul(q);
                 } else {
                     {
@@ -3187,7 +3187,7 @@ impl Globals {
                 while (x > 1073741828i32) {
                     // §120
                     {
-                        z = (((x).wrapping_sub(1i32) / self.two_to_the[crate::ix::U((k) as usize)])).wrapping_add(1i32);
+                        z = (((x).wrapping_sub(1i32)).total_div(self.two_to_the[crate::ix::U((k) as usize)])).wrapping_add(1i32);
                         while (x < (fraction_four).wrapping_add(z)) {
                             {
                                 z = ((z).wrapping_add(1i32) / 2i32);
@@ -3291,8 +3291,8 @@ impl Globals {
             // §122
             while true {
                 {
-                    q = (a / d);
-                    r = (c / b);
+                    q = (a).total_div(d);
+                    r = (c).total_div(b);
                     if (q != r) {
                         if (q > r) {
                             {
@@ -3306,8 +3306,8 @@ impl Globals {
                             }
                         }
                     }
-                    q = (a % d);
-                    r = (c % b);
+                    q = (a).total_mod(d);
+                    r = (c).total_mod(b);
                     if (r == 0i32) {
                         if (q == 0i32) {
                             {
