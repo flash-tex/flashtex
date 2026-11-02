@@ -1093,6 +1093,9 @@ impl S0Image {
         // process maps, `os::map_file_over`)
         // Created new, never opened as it is: no other writer can truncate
         // or write into it (a name already there gets another suffix).
+        // (and the ones of writers that died writing this path, which
+        // nothing else removes: `remove_dead_tmps`)
+        remove_dead_tmps(path);
         let (tmp, f) = {
             let mut k = 0u32;
             loop {
@@ -1145,7 +1148,9 @@ impl S0Image {
         }
         drop(data);
         let f = f.into_inner().map_err(|e| gone(format!("{tmp}: {e}")))?;
-        f.sync_all().ok();
+        // (a file whose sync failed may not be on disk as written: never
+        // renamed over the one that is)
+        f.sync_all().map_err(|e| gone(format!("{tmp}: {e}")))?;
         drop(f);
         if cancelled() {
             return Err(gone("superseded".into()));
@@ -1158,6 +1163,66 @@ impl S0Image {
         let on_disk = m.len();
         Ok((m.len(), on_disk))
     }
+}
+
+/// Remove the temporary files of `path`'s writers that died before
+/// renaming them (`S0Image::write`'s `PATH.PID.NANOS.K.tmp`): a host killed
+/// or cut off at exit with a save pending, a crash, a reboot. Each is a
+/// partial S₀ or S₁ (tens of megabytes) that nothing opens; left, they
+/// piled up in the cache. Only names of exactly that form, of a process
+/// that no longer runs (`kill(pid, 0)` finds none) other than this one: a
+/// live writer's file is never touched. Elsewhere than Unix nothing is
+/// removed.
+pub(crate) fn remove_dead_tmps(path: &str) {
+    #[cfg(unix)]
+    {
+        let p = std::path::Path::new(path);
+        let (Some(dir), Some(name)) = (p.parent(), p.file_name().and_then(|n| n.to_str())) else {
+            return;
+        };
+        let dir = if dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            dir
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let me = std::process::id();
+        for e in entries.flatten() {
+            let n = e.file_name();
+            let Some(rest) = n
+                .to_str()
+                .and_then(|n| n.strip_prefix(name))
+                .and_then(|r| r.strip_prefix('.'))
+                .and_then(|r| r.strip_suffix(".tmp"))
+            else {
+                continue;
+            };
+            let parts: Vec<&str> = rest.split('.').collect();
+            let [pid, nanos, k] = parts[..] else {
+                continue;
+            };
+            let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+            if !(numeric(pid) && numeric(nanos) && numeric(k)) {
+                continue;
+            }
+            let Ok(pid) = pid.parse::<u32>() else {
+                continue;
+            };
+            if pid == me || pid == 0 || pid > i32::MAX as u32 {
+                continue;
+            }
+            // (ESRCH: no such process; EPERM says one runs)
+            let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
+                || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+            if !alive {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Open the S₀ file at `path` into a new engine. `prepare` runs once the
