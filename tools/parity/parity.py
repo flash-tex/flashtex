@@ -354,7 +354,9 @@ def oracle_reference(doc, texbin, cache, log):
                            + (f": {m.group(1)[:160]}" if m else ""))
             break
         cur = harness.sha256_file(produced)
-        if cur == previous and "Rerun to get" not in harness.read_text(logpath):
+        txt = harness.read_text(logpath)
+        meta["exit"], meta["errors"] = code, ptiers.pcapture.error_count(txt)
+        if cur == previous and "Rerun to get" not in txt:
             meta["ok"] = True
             break
         previous = cur
@@ -383,7 +385,8 @@ def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None, st
     converted figures (`tiers.GENERATED`)."""
     meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env,
                                     seed=seed, stream=stream, timeout=timeout)
-    errors = 0 if meta.get("exit") == 0 else 1
+    # a run that compiled has its log's error count; one that stopped counts as one error at least
+    errors = meta["errors"] if meta.get("ok") and "errors" in meta else (0 if meta.get("exit") == 0 else 1)
     rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
            "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
            "warnings": None, "pages": None, "diagnostics": [], "pdf": pdf,
@@ -533,10 +536,14 @@ def score_pt(doc, cfg, cand, out_dir):
     if not cfg["qpdf"]:
         pt["why"]["P-T2"] = "n/a: qpdf not found on PATH"
     else:
-        if cand.get("pdf"):
-            pt2 = ptiers.compare_pt2(ref_pdf, cand["pdf"], os.path.join(out_dir, "pt2"))
-        else:
+        if not cand.get("pdf"):
             pt2 = {"ok": False, "why": "the candidate wrote no PDF"}
+        elif not same_errors(cand, meta):
+            # the same PDF after a different number of errors is not the same run
+            pt2 = {"ok": False, "why": f"error count {cand.get('errors')} (exit {cand.get('exit')}), "
+                                      f"pdfTeX's {meta.get('errors', 0)} (exit {meta.get('exit', 0)})"}
+        else:
+            pt2 = ptiers.compare_pt2(ref_pdf, cand["pdf"], os.path.join(out_dir, "pt2"))
         pt["P-T2"], pt["pt2"] = pt2["ok"], pt2
     if cfg["pt"] != "on":
         pt["why"]["P-T1"] = "not run (--pt pt2)"
@@ -939,6 +946,15 @@ def compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of):
     return page_recs, errors, missing_all, extra_all, unmapped, kept
 
 
+def same_errors(cand, ref_meta):
+    """Whether the candidate ended as the oracle did: its exit status and its
+    log's error count. A reference made halting on errors has neither (it
+    compiled, so 0 and 0); with --no-halt-on-error the oracle's are recorded,
+    and a document with recoverable errors passes only with the same number."""
+    ref_meta = ref_meta or {}
+    return cand.get("exit") == ref_meta.get("exit", 0) and cand.get("errors") == ref_meta.get("errors", 0)
+
+
 def score_run(doc, cfg, res, ref, out_dir, t0):
     skip = pt1_skip_reason(doc, cfg)
     stream, timeout = pt1_plan(doc, cfg, skip)
@@ -953,7 +969,7 @@ def score_run(doc, cfg, res, ref, out_dir, t0):
     cand.pop("capture", None)
     checks = res["checks"]
     layout = cand["pdf"]  # what L1-L3 read the candidate's glyphs from
-    checks["L0"] = (cand["exit"] == 0 and not cand["timed_out"] and cand["errors"] == 0
+    checks["L0"] = (same_errors(cand, res.get("oracle")) and not cand["timed_out"]
                     and bool(cand["pdf"]) and bool(layout))
     ref_doc = pdftext.PdfDocument.load(ref)
     ref_pages_raw = ref_doc.pages()

@@ -167,13 +167,15 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=
             meta["seconds"] = round(time.time() - t0, 2)
             return meta, None, None
         cur = pharness.sha256_file(pdf)
-        if cur == previous and "Rerun to get" not in pharness.read_text(logp):
+        txt = pharness.read_text(logp)
+        # the last pass's exit status (1 with --no-halt-on-error after an error) and its errors
+        meta["exit"], meta["errors"] = code, pcapture.error_count(txt)
+        if cur == previous and "Rerun to get" not in txt:
             meta["ok"] = True
             break
         previous = cur
     else:
         meta["why"] = f"did not converge in {PASSES} passes"
-    meta["exit"] = 0
     cap = None
     if trace and meta["ok"]:
         converged = pdf + ".converged"

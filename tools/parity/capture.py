@@ -94,7 +94,7 @@ SHELL_ESCAPE = None
 HALT_ON_ERROR = True
 # In every cache key made without HALT_ON_ERROR (none other carries it). 2: the
 # output PDF is removed before each pass (drop_stale_pdf).
-NO_HALT_V = 2
+NO_HALT_V = 3
 
 
 def interaction_args():
@@ -110,6 +110,12 @@ def drop_stale_pdf(pdf):
     so their cache entries and verdicts stay valid."""
     if not HALT_ON_ERROR and os.path.isfile(pdf):
         os.remove(pdf)
+
+
+def error_count(log_text):
+    """The errors a run's log reports: its lines that begin with `! ` (TeX's
+    `print_err`; `! Emergency stop.` and `! ==> Fatal error` included)."""
+    return len(re.findall(r"^! ", log_text, re.M))
 
 
 def compiled_exit(code):

@@ -73,7 +73,11 @@ Its P-T2 is measured.
   that exits 1 counts as compiled only with a PDF it wrote itself: the
   output PDF is removed before each pass (`capture.drop_stale_pdf`), because
   a TeX Live doc directory ships its document's PDF beside it. P-T1 then
-  compares the error messages and the recovery like any other line. Every
+  compares the error messages and the recovery like any other line. The
+  last pass's exit status and its log's error count (`! ` lines,
+  `capture.error_count`) are recorded for both. The candidate reaches L0 and
+  passes P-T2 only with the same values as the oracle's (`same_errors`): the
+  same PDF after another number of errors is not the same run. Every
   cache key made this way says so (`capture.NO_HALT_V`). A halting run's
   keys and verdicts are unchanged.
 - **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
