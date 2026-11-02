@@ -2448,11 +2448,19 @@ impl Globals {
             ) else {
                 return (None, None);
             };
+            // The newest variant that matches, one that replays before one
+            // that is doomed: an abandoned recording keys only what it read
+            // up to its refusal, a wider key than a full recording's, and a
+            // call that matches a full one reads what that one read and
+            // replays as it does (BOX-MEMO.md §15).
             let mut best: Option<(u64, usize)> = None;
+            let mut best_doomed: Option<(u64, usize)> = None;
             let mut partial = None;
             let mut k2_seen: Vec<(*const i32, bool)> = vec![];
             for (i, e) in ix.iter().map(|&i| (i, &v[i])) {
-                if best.is_some_and(|(u, _)| u >= e.last_used) {
+                if best.is_some_and(|(u, _)| u >= e.last_used)
+                    || (e.doomed && best_doomed.is_some_and(|(u, _)| u >= e.last_used))
+                {
                     continue;
                 }
                 if e.hash != hash
@@ -2494,13 +2502,15 @@ impl Globals {
                         q > LO_MEM_STAT_MAX && self.bm_glue_fields(q) == *w
                     })
                     && self.bm_new_cs_placeable(&e.new_cs);
-                if rest_ok {
+                if rest_ok && e.doomed {
+                    best_doomed = Some((e.last_used, i));
+                } else if rest_ok {
                     best = Some((e.last_used, i));
                 } else if partial.is_none_or(|(u, _)| u < e.last_used) {
                     partial = Some((e.last_used, i));
                 }
             }
-            (best.map(|b| b.1), partial.map(|p| p.1))
+            (best.or(best_doomed).map(|b| b.1), partial.map(|p| p.1))
         });
         let mut why = "NotRecorded";
         let doomed = found

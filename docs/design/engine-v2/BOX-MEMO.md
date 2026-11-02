@@ -817,6 +817,15 @@ The fix and its cost are in the next PR (lane L6, `agent/kabir-claude-l6/bm-inpl
 PR, `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on while
 the loops stay as they are.
 
+**Doomed entries come after full ones** (lane BEAMER-FRAME). An abandoned recording is kept as a
+doomed entry keyed by what it read up to its refusal (§11), and a call that matches it runs the
+normal path. Keyed by first access, that key is wider than before, and the newest entry that
+matched, doomed or not, was chosen: on the frame-typeset stack (#1992, #2093) a doomed entry
+shadowed full variants that matched the same call (`\pgf@process`, `\pgfpoint`,
+`\pgfmathsetlength` went Doomed in every edit window of beamer-visuals). A variant that replays
+is now chosen before a doomed one. That is sound by the replay's own premise: a call that matches
+a full variant's whole key reads what that recording read and goes the way it went.
+
 **Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
 - a `\def` of `\reserved@a` first, which hits whatever the document left there;
 - a target passed as an argument (`\tl_set:Nn`'s shape), which hits;
