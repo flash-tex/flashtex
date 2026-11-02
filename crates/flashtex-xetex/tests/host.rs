@@ -1907,3 +1907,159 @@ fn the_font_lists_name_the_families_a_lookup_finds() {
     );
     let _ = std::fs::remove_dir_all(&cache);
 }
+
+/// `font` (an sfnt file) with `from` replaced by `to` (as long) in its
+/// `name` table's Mac Roman and UTF-16BE strings: a family no machine has
+/// installed.
+fn renamed_font(font: &[u8], from: &str, to: &str) -> Vec<u8> {
+    assert_eq!(from.len(), to.len());
+    let mut d = font.to_vec();
+    let u16_at = |d: &[u8], i: usize| u16::from_be_bytes([d[i], d[i + 1]]) as usize;
+    let u32_at =
+        |d: &[u8], i: usize| u32::from_be_bytes([d[i], d[i + 1], d[i + 2], d[i + 3]]) as usize;
+    let (off, len) = (0..u16_at(&d, 4))
+        .map(|k| 12 + 16 * k)
+        .find(|&r| &d[r..r + 4] == b"name")
+        .map(|r| (u32_at(&d, r + 8), u32_at(&d, r + 12)))
+        .expect("a name table");
+    let utf16 = |s: &str| -> Vec<u8> { s.encode_utf16().flat_map(u16::to_be_bytes).collect() };
+    let mut n = 0;
+    for (a, b) in [
+        (from.as_bytes().to_vec(), to.as_bytes().to_vec()),
+        (utf16(from), utf16(to)),
+    ] {
+        let mut i = off;
+        while i + a.len() <= off + len {
+            if d[i..i + a.len()] == a[..] {
+                d[i..i + a.len()].copy_from_slice(&b);
+                n += 1;
+                i += a.len();
+            } else {
+                i += 1;
+            }
+        }
+    }
+    assert!(n > 0, "{from} is not in the name table");
+    d
+}
+
+/// A font installed between compiles is found by a lookup by name in the
+/// document's body, as by compiles in processes of their own (the oracle,
+/// `FLASHTEX_UNICODE_INPROCESS=0`). The lookup comes after S₀, whose key
+/// watches the font directories only for a lookup made before it, and the
+/// edit is on the last page: a page checkpoint after the lookup's page
+/// stood for the edit, with the lookup's old answer (the font not found)
+/// and the catalog its run had made, which a run from it used again.
+#[test]
+fn a_font_installed_after_a_lookup_in_the_body_is_found() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-installed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::from("{\\fontspec{TeX Gyre Prob3x}A lookup by name.}\n\n");
+    for i in 1..=6 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..8 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}See~\\ref{{p2}}.\n\\end{{document}}\n"
+    );
+    let edited = doc.replace("See~", "Look at~");
+    let font = renamed_font(
+        &std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/mac/Fonts/texgyrecursor-regular.otf"),
+        )
+        .unwrap(),
+        "Cursor",
+        "Prob3x",
+    );
+    type Out = (String, Option<String>, Vec<Vec<u8>>, Vec<String>);
+    let run = |tag: &str, envs: &[(&str, &str)]| -> Vec<Out> {
+        let sub = dir.join(tag);
+        let fonts = sub.join("fonts");
+        std::fs::create_dir_all(&fonts).unwrap();
+        let (proj, out) = project(&sub, &doc);
+        let cache = sub.join("cache");
+        let mut e = vec![
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_FONT_DIRS", fonts.to_str().unwrap()),
+            ("FLASHTEX_CACHE_DIR", cache.to_str().unwrap()),
+        ];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, text) in [&doc, &doc, &edited, &edited].into_iter().enumerate() {
+            if i == 2 {
+                std::fs::write(fonts.join("prob3x.otf"), &font).unwrap();
+            }
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.clone())];
+            c.compile(&r).unwrap();
+            let (ev, done) = events(&mut c, id);
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let pages = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Page(p) => Some(p.encode()),
+                    _ => None,
+                })
+                .collect();
+            let fonts = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Font(f) => Some(f.info.str_field("ps_name").unwrap_or("").to_string()),
+                    _ => None,
+                })
+                .collect();
+            outs.push((
+                starts,
+                done.str_field("status").map(String::from),
+                pages,
+                fonts,
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run("own", &[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    let got = run("resident", &[]);
+    // the oracle: not found before, found once installed
+    let found = |o: &Out| o.3.iter().any(|f| f == "TeXGyreProb3x-Regular");
+    assert!(
+        !found(&own[1]) && found(&own[2]),
+        "{:?} / {:?}",
+        own[1].3,
+        own[2].3
+    );
+    // (the second compile went on from a page: the test's premise; the
+    // third, after the install, from S₀; the fourth from a page again)
+    assert!(got[1].0.starts_with("page"), "{:?}", got[1].0);
+    assert!(got[2].0.starts_with("s0"), "{:?}", got[2].0);
+    assert!(got[3].0.starts_with("page"), "{:?}", got[3].0);
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        assert_eq!(a.1, b.1, "compile {}: the status ({})", i + 1, a.0);
+        assert_eq!(a.3, b.3, "compile {}: the fonts ({})", i + 1, a.0);
+        assert!(a.2 == b.2, "compile {}: the pages differ ({})", i + 1, a.0);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
