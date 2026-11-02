@@ -592,16 +592,22 @@ impl Globals {
         }
     }
 
-    /// `setjobid` (utils.c), without the web2c and kpathsea version strings.
+    /// `setjobid` (utils.c): the date and time, the job name, the format
+    /// and the banner `make_pdftex_banner` writes (`ptexbanner`, web2c's
+    /// `versionstring`, which starts with a space, and kpathsea's), whose
+    /// CRC-32 `get_resname_prefix` turns into `\pdfuniqueresname`'s prefix.
     pub fn set_job_id(&mut self, y: i32, m: i32, d: i32, t: i32) {
         let name = String::from_utf8_lossy(&self.str_bytes(self.job_name)).into_owned();
         let fmt = String::from_utf8_lossy(&self.str_bytes(self.format_ident)).into_owned();
         with_state(|s| {
             if s.utils.job_id.is_none() {
                 s.utils.job_id = Some(format!(
-                    "{y:04}/{m:02}/{d:02} {:02}:{:02} {name} {fmt}",
+                    "{y:04}/{m:02}/{d:02} {:02}:{:02} {name} {fmt} {}{} {}",
                     t / 60,
-                    t % 60
+                    t % 60,
+                    crate::system::BANNER,
+                    crate::system::WEB2C_VERSION,
+                    crate::resolver::kpathsea_version()
                 ));
             }
         });
