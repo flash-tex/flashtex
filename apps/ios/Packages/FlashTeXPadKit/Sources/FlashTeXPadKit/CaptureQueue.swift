@@ -230,6 +230,10 @@ public final class CaptureQueue: @unchecked Sendable {
                 }
                 dest = fresh
                 update(id) { $0.destinationId = dest.destinationId; $0.baseRevision = dest.baseRevision; $0.pairId = pair.pairId; $0.macFingerprint = pair.fingerprint }
+                // The frozen pin is on disk before the bytes leave (saves run
+                // on `persistQueue`): a relaunch after the Mac got the capture
+                // retries this exact envelope, never a re-queried pin.
+                await flush()
             }
             let submit = try session.makeCapture(captureId: id, image: r.png, mimeType: "image/png", instructions: r.instructions, destination: dest)
             let ack = try await session.submitCapture(submit)

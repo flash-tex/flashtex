@@ -219,7 +219,28 @@ final class PadModel: ObservableObject {
     /// overrides both lookups (tests: the fake Mac on loopback).
     @discardableResult
     func autoReconnect(endpoint: (host: String, port: UInt16)? = nil, browseSeconds: TimeInterval = 4) async -> Bool {
-        guard let pair = pairedMac, !link.isConnected, !reconnecting else { return link.isConnected }
+        guard pairedMac != nil, !link.isConnected else { return link.isConnected }
+        // One attempt at a time. A request made while one runs (a return to
+        // the foreground during the launch reconnect) is kept and runs once
+        // that attempt ends still disconnected, instead of being dropped.
+        guard !reconnecting else {
+            reconnectRequested = (endpoint, browseSeconds)
+            return false
+        }
+        var ok = await reconnectOnce(endpoint: endpoint, browseSeconds: browseSeconds)
+        while !ok, let next = reconnectRequested, pairedMac != nil, !link.isConnected {
+            reconnectRequested = nil
+            ok = await reconnectOnce(endpoint: next.endpoint, browseSeconds: next.browseSeconds)
+        }
+        reconnectRequested = nil
+        return ok || link.isConnected
+    }
+
+    /// An `autoReconnect` asked for while another attempt was running.
+    private var reconnectRequested: (endpoint: (host: String, port: UInt16)?, browseSeconds: TimeInterval)?
+
+    private func reconnectOnce(endpoint: (host: String, port: UInt16)?, browseSeconds: TimeInterval) async -> Bool {
+        guard let pair = pairedMac, !link.isConnected else { return link.isConnected }
         reconnecting = true
         defer { reconnecting = false }
         linkError = nil
@@ -267,15 +288,32 @@ final class PadModel: ObservableObject {
             guard pairedMac != nil, !link.isConnected else { return }
             await autoReconnect()
         case .background:
-            let app = UIApplication.shared
-            let task = BackgroundTask()
-            task.id = app.beginBackgroundTask(withName: "flashtex.pad.captures") { task.end(app) }
-            await queue.flush()
-            task.end(app)
+            await enteredBackground().value
         default:
             break
         }
     }
+
+    /// Takes the background-task grant now, synchronously in the caller's
+    /// scene-phase handler (not after an async hop, which a busy main thread
+    /// could push past iOS's grace period), then flushes the capture writes
+    /// and ends it. The returned task finishes with the flush.
+    @discardableResult
+    func enteredBackground() -> Task<Void, Never> {
+        let app = UIApplication.shared
+        let grant = BackgroundTask()
+        grant.id = app.beginBackgroundTask(withName: "flashtex.pad.captures") { grant.end(app) }
+        suspensionGrant = grant
+        return Task { [weak self] in
+            await self?.queue.flush()
+            grant.end(app)
+            if self?.suspensionGrant === grant { self?.suspensionGrant = nil }
+        }
+    }
+
+    private var suspensionGrant: BackgroundTask?
+    /// A background-task grant for the capture writes is held (tests).
+    var holdsSuspensionGrant: Bool { suspensionGrant.map { $0.id != .invalid } ?? false }
 
     /// One `beginBackgroundTask` grant, ended once (by the work or by expiry).
     private final class BackgroundTask: @unchecked Sendable {

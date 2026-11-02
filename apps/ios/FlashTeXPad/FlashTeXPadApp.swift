@@ -40,10 +40,19 @@ struct FlashTeXPadApp: App {
                 }
                 // Back from another app: reconnect a link iOS dropped while the
                 // app was suspended; going away: finish the capture writes.
-                .onChange(of: scenePhase) { _, phase in
-                    guard phase != .active || Self.reconnectsByItself else { return }
-                    Task { await model.scenePhaseChanged(to: phase) }
-                }
+                .onChange(of: scenePhase) { _, phase in Self.sceneChanged(to: phase, model: model) }
+        }
+    }
+
+    /// Background: the grant is taken here, synchronously; active: reconnect.
+    @MainActor static func sceneChanged(to phase: ScenePhase, model: PadModel) {
+        switch phase {
+        case .background:
+            model.enteredBackground()
+        case .active where reconnectsByItself:
+            Task { await model.scenePhaseChanged(to: .active) }
+        default:
+            break
         }
     }
 
