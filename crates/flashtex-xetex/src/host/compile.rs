@@ -241,6 +241,9 @@ pub struct Accept {
     pub line_state: bool,
     /// `diag-v1` (spec §6.7): `DIAG`s in place of `DIAGNOSTIC`s.
     pub diag: bool,
+    /// `form-state` (spec §4.3): FORMs flagged INHERITS start from where
+    /// they are drawn; without it a stream flagged FORM_STATE is INCOMPLETE.
+    pub form_state: bool,
 }
 
 /// One run of the engine: what it sent and how it ended.
@@ -682,7 +685,14 @@ fn forward(
                 } else {
                     StreamKind::Form
                 };
-                adapt(&body, sk, accept, &font_keys, &image_keys).unwrap_or(body)
+                let body = adapt(&body, sk, accept, &font_keys, &image_keys).unwrap_or(body);
+                match (!accept.form_state)
+                    .then(|| flashtex_display_list::page::without_form_state(&body))
+                    .flatten()
+                {
+                    Some(b) => b,
+                    None => body,
+                }
             }
             _ => body,
         };

@@ -466,6 +466,9 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
         diag: accepted
             .iter()
             .any(|a| a == flashtex_display_list::diag::CAPABILITY),
+        form_state: accepted
+            .iter()
+            .any(|a| a == flashtex_display_list::accept::FORM_STATE),
     };
     let caps = [
         "compile",

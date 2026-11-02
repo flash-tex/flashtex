@@ -415,6 +415,12 @@ pub fn init_from_env() {
         font_formats: std::env::var("FLASHTEX_DISPLAY_LIST_FONT_FORMATS")
             .ok()
             .map(|s| parse_font_formats(&s)),
+        // A file's reader is our own: it takes `form-state`, unless
+        // FLASHTEX_DISPLAY_LIST_ACCEPT is set and does not list it (the
+        // socket host's export of a client that does not take it).
+        form_state: std::env::var("FLASHTEX_DISPLAY_LIST_ACCEPT").map_or(true, |s| {
+            parse_font_formats(&s).contains(flashtex_display_list::accept::FORM_STATE)
+        }),
         ..Peer::default()
     };
     init_with_sink(Box::new(StreamSink { w: Some(w), peer }));
@@ -514,6 +520,10 @@ pub struct Peer {
     /// reader takes (`COMPILE.font_formats`); `None`: all (a file or
     /// descriptor sink, whose reader is our own).
     pub font_formats: Option<HashSet<String>>,
+    /// The reader accepts `form-state` (spec §4.3): a FORM flagged INHERITS
+    /// starts from the state where it is drawn. Without it, a stream flagged
+    /// FORM_STATE is sent INCOMPLETE.
+    pub form_state: bool,
     fonts: HashMap<u32, [u8; 32]>,
     images: HashMap<u32, [u8; 32]>,
     spans: HashMap<u32, (u32, u32)>,
@@ -568,7 +578,14 @@ impl Peer {
                 return false;
             }
         }
-        send(if e.form { kind::FORM } else { kind::PAGE }, &e.body)
+        let k = if e.form { kind::FORM } else { kind::PAGE };
+        match (!self.form_state)
+            .then(|| flashtex_display_list::page::without_form_state(&e.body))
+            .flatten()
+        {
+            Some(body) => send(k, &body),
+            None => send(k, &e.body),
+        }
     }
 
     /// A `SOURCES` body for the spans (and their files) the reader does not
@@ -2652,6 +2669,42 @@ mod tests {
                     st.span_id(f, l);
                 }
             }
+        }
+    }
+
+    /// `form-state` (spec §4.3): a stream flagged FORM_STATE goes to a
+    /// reader without it INCOMPLETE, to one with it as it is.
+    #[test]
+    fn a_reader_without_form_state_gets_form_state_pages_incomplete() {
+        use flashtex_display_list::page::{flags, Page, StreamKind};
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.flags = flags::FORM_STATE;
+        let e = Emitted {
+            form: false,
+            index: 0,
+            body: Arc::new(p.encode()),
+            hash: [0; 32],
+            fonts: vec![],
+            images: vec![],
+            forms: vec![],
+            spans: vec![],
+        };
+        for (form_state, want) in [
+            (true, flags::FORM_STATE),
+            (false, flags::FORM_STATE | flags::INCOMPLETE),
+        ] {
+            let mut peer = Peer {
+                form_state,
+                ..Peer::default()
+            };
+            let mut sent = vec![];
+            assert!(peer.send(&e, &mut |k, b| {
+                sent.push((k, b.to_vec()));
+                true
+            }));
+            let (k, body) = sent.pop().unwrap();
+            assert_eq!(k, kind::PAGE);
+            assert_eq!(Page::decode(StreamKind::Page, &body).unwrap().flags, want);
         }
     }
 

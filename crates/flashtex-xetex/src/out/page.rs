@@ -1124,6 +1124,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
         f.dl.height = clamp_i32((bbox[3] - bbox[1]).to_sp());
         f.form_name = Some(name);
         f.form_origin = (ux, uy);
+        // The PDF's form is written from these items (src/out/pdf.rs), with
+        // no colour at its start: drawn, it starts from the state where it
+        // is drawn, and so does the FORM (spec §4.3, `form-state`).
+        f.dl.flags |= flags::INHERITS;
         if let Some((fc, sc)) = self.doc.colors.last().cloned() {
             f.gs.fill = fc;
             f.gs.stroke = sc;
@@ -1157,6 +1161,22 @@ impl<'a, M: Metrics> Builder<'a, M> {
             .then(&Mat::translate(x, y))
             .then(&self.cur_ref().gs.ctm);
         let s = self.cur();
+        // What the PDF has in effect here is what the items told (the PDF is
+        // written from them). A FORM inherits the colours and the text
+        // render mode (FORM_STATE: INCOMPLETE for a client without
+        // `form-state`), not the alphas or the glyphs' line state.
+        let g = &s.gs;
+        let black = Col::black();
+        let odd = g.told_fill_alpha != 1.0 || g.told_stroke_alpha != 1.0 || g.told_line.is_some();
+        let other = g.told_fill != black || g.told_stroke != black || g.told_tr != 0;
+        if odd {
+            s.unsupported(
+                "a form drawn with an alpha or a line state other than a new page's".into(),
+                None,
+            );
+        } else if other {
+            s.dl.flags |= flags::FORM_STATE;
+        }
         let n = s.matrix(m.to_f64());
         s.use_form(id);
         s.push(Item::Form { id, matrix: n });

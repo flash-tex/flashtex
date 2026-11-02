@@ -24,6 +24,8 @@ public enum DL3 {
 
     /// The `HELLO` `accept` entry for `PROGRESS` (§6.8).
     public static let progressCapability = "progress-v1"
+    /// `HELLO.accept`: FORMs flagged INHERITS start from where they are drawn (spec §4.3).
+    public static let formStateAccept = "form-state"
     /// The host capability (`HELLO.capabilities`) for `TRIM`: the client
     /// sends TRIM only to a host that lists it.
     public static let trimCapability = "trim-v1"
@@ -206,6 +208,12 @@ public struct DL3Dest: Equatable, Sendable {
 public struct DL3Page: Equatable, Sendable {
     public enum StreamKind: Sendable { case page, form }
     public static let flagIncomplete: UInt32 = 1, flagNoGeometry: UInt32 = 2
+    /// FORM (`form-state`, spec §4.3): starts from the colours and text
+    /// render mode where it is drawn, as a PDF form does.
+    public static let flagInherits: UInt32 = 4
+    /// The stream draws a form in a state other than a new page's (exact
+    /// for a `form-state` client; the host sends it INCOMPLETE to others).
+    public static let flagFormState: UInt32 = 8
 
     public var kind: StreamKind
     /// PAGE: 0-based ship-out index; FORM: the form's id.
@@ -240,6 +248,7 @@ public struct DL3Page: Equatable, Sendable {
 
     public var incomplete: Bool { flags & Self.flagIncomplete != 0 }
     public var noGeometry: Bool { flags & Self.flagNoGeometry != 0 }
+    public var inherits: Bool { flags & Self.flagInherits != 0 }
     /// Box width/height in bp.
     public var boxWidth: Double { box[2] - box[0] }
     public var boxHeight: Double { box[3] - box[1] }

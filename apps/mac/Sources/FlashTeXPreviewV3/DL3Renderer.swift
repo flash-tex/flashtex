@@ -712,12 +712,14 @@ public enum DL3Renderer {
     /// `tile`: the context is a tile of the page raster (`rasterizeTile`):
     /// items outside it are skipped and glyph origins and rule edges are
     /// handed over as the whole page rounds them. `cull`: see `draw`.
+    /// `inherited`: a FORM flagged INHERITS starts from the state where it
+    /// is drawn (spec §4.3, `form-state`), else from a new page's.
     static func drawStream(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], in ctx: CGContext, depth: Int,
-                           appearance: DL3Appearance = .light, tile: Tile? = nil, cull: [CGRect] = []) {
+                           appearance: DL3Appearance = .light, tile: Tile? = nil, cull: [CGRect] = [], inherited: GState? = nil) {
         let page = prepared.page
         let H = page.box[3]
         let black = color([0], appearance)
-        var gs = GState(fill: black, stroke: black, textRender: 0, textFill: appearance == .dark ? color([0], appearance, text: true) : nil)
+        var gs = inherited ?? GState(fill: black, stroke: black, textRender: 0, textFill: appearance == .dark ? color([0], appearance, text: true) : nil)
         var inText = false // dark: the text fill is set on the context
         var stack: [GState] = []
         var glyphMatrix = CGAffineTransform.identity
@@ -729,9 +731,9 @@ public enum DL3Renderer {
         // The k-th RULE's geometry (RULE_GEOMETRY, spec §4.4), when sent.
         let ruleGeometry = page.ruleGeometry
         var ruleIndex = 0
-        ctx.setFillColor(black)
-        ctx.setStrokeColor(black)
-        ctx.setTextDrawingMode(.fill)
+        ctx.setFillColor(gs.fill)
+        ctx.setStrokeColor(gs.stroke)
+        ctx.setTextDrawingMode(mode(gs.textRender))
         for item in page.items {
             switch item {
             case .glyph(let f, let code, let x, let y, _):
@@ -881,7 +883,8 @@ public enum DL3Renderer {
                 // A form starts from the graphics state where it is drawn (PDF `Do`),
                 // but its items set their own colours; mirror the current ones.
                 ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke); inText = false
-                drawStream(form, forms: forms, in: ctx, depth: depth + 1, appearance: appearance)
+                drawStream(form, forms: forms, in: ctx, depth: depth + 1, appearance: appearance,
+                           inherited: form.page.inherits ? gs : nil)
                 ctx.restoreGState()
                 lastFont = nil
                 ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke); inText = false
