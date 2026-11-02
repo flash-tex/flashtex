@@ -926,6 +926,69 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// changes/readset.ch: `\ifcsname` with an empty or a one-character name
+/// (`\csname\endcsname` is `null_cs`, `\Q` is `single_base+"Q"`) calls no
+/// `id_lookup`, and the meaning it tests is read by no `get_next` either; it
+/// is a read all the same. The first page tests both; an edit on the last
+/// page makes the `.aux` define them (and then not), so the `.aux` pass
+/// must restart before the first page, and every compile equals
+/// from-scratch runs.
+#[test]
+fn l5_ifcsname_of_a_short_name_is_a_read() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-ifcsname-short");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |q: bool, empty: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        s.push_str(
+            "Short names: \\ifcsname Q\\endcsname Q defined\\else Q undefined\\fi, \
+             \\ifcsname\\endcsname empty defined\\else empty undefined\\fi.\n\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, "epsilon"));
+        }
+        s.push_str("\\makeatletter\n");
+        if q {
+            s.push_str("\\immediate\\write\\@auxout{\\string\\gdef\\string\\Q{q}}\n");
+        }
+        if empty {
+            s.push_str(
+                "\\immediate\\write\\@auxout{\\string\\expandafter\\string\\gdef\
+                 \\string\\csname\\string\\endcsname{e}}\n",
+            );
+        }
+        s.push_str("\\makeatother\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc(false, false))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let cases = [
+        ("the .aux defines \\Q", true, false),
+        ("and no longer", false, false),
+        ("the .aux defines \\csname\\endcsname", false, true),
+        ("both", true, true),
+        ("neither", false, false),
+    ];
+    for (what, q, empty) in cases {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(q, empty))], what);
+    }
+}
+
 /// `long_state` is dead at a checkpoint (`incr::dead_word`): an `.aux` whose
 /// last macro with parameters is `\long` in one pass and not in the other
 /// leaves `long_state` different after the read (`call` against

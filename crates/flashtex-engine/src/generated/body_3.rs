@@ -2315,6 +2315,13 @@ impl Globals {
                             }
                             // §1767
                             self.flush_list(n);
+                            if self.rs_on {
+                                if (self.cur_cs < hash_base) {
+                                    if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                        self.flashtex_cs_read(self.cur_cs);
+                                    }
+                                }
+                            }
                             if self.intr_rec_on {
                                 self.flashtex_intr_read(self.cur_cs);
                             }
