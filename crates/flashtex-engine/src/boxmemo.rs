@@ -3566,6 +3566,14 @@ impl Globals {
             // assignments are undone by its groups); a global one may only
             // make the register void (TikZ's `\tikz@figbox`), replayed.
             if global {
+                // (a copy made before it is made again from the box after
+                // the void: refused, as a BoxDim after a copy is)
+                if self
+                    .bm_with_rec(|r| r.copies.iter().any(|c| c.0 == p - BOX_BASE))
+                    .unwrap_or(false)
+                {
+                    return self.bm_abort("BoxContent");
+                }
                 self.bm_with_rec(|r| {
                     if !r.gboxes.contains(&(p - BOX_BASE)) {
                         r.gboxes.push(p - BOX_BASE)
@@ -3630,6 +3638,14 @@ impl Globals {
                 return self.bm_abort("OuterBox");
             }
             if global {
+                // (a copy made before it is made again from the box after
+                // the void: refused, as a BoxDim after a copy is)
+                if self
+                    .bm_with_rec(|r| r.copies.iter().any(|c| c.0 == n))
+                    .unwrap_or(false)
+                {
+                    return self.bm_abort("BoxContent");
+                }
                 self.bm_with_rec(|r| {
                     if !r.gboxes.contains(&n) {
                         r.gboxes.push(n)

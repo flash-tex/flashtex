@@ -514,24 +514,26 @@ fn spans_box_set_in_a_group_is_the_callers_again() {
     // (review of #1997, daniel-parent) a `\setbox5` inside a group of the
     // picture, then `\copy5` after the group: the copy is of the caller's
     // box, which changes before the fourth picture
-    span_copy_case(
+    let s = span_copy_case(
         "span-grpbox",
         "\\begin{pic}{\\setbox5\\hbox{\\vrule width 2pt height 1pt}}\\copy5\\kern1pt\n\\end{pic}\n",
         "\\setbox5\\hbox{\\vrule width 1pt height 1pt}\n",
         "\\setbox5\\hbox{\\vrule width 7pt height 1pt}",
     );
+    assert!(stat(&s, "hits") >= 1, "{s}");
 }
 
 #[test]
 fn spans_copy_a_box_made_elsewhere() {
     // (review of #1997) a `\copy` of a box made in another file: its
     // nodes keep that file's SyncTeX tag
-    span_copy_case(
+    let s = span_copy_case(
         "span-copytag",
         "\\begin{pic}\\copy5\\kern1pt\n\\end{pic}\n",
         "\\setbox5\\hbox{\\vrule width 1pt height 1pt}\n",
         "",
     );
+    assert!(stat(&s, "hits") >= 1, "{s}");
 }
 
 #[test]
@@ -544,6 +546,64 @@ fn spans_raise_a_copy() {
         "",
     );
     assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
+#[test]
+fn spans_copy_then_global_void_is_not_replayed() {
+    // (#1997) `\copy9` of a foreign box, then `\global\setbox9=\box3`
+    // (box 3 void): the replay rebuilds the copies after every logged op,
+    // so it copied the already-voided box and lost the hbox (3 hits, each
+    // replayed picture only `\kern 1.0`). The record-time guard refuses a
+    // global box assignment after a copy — as a BoxDim after a copy is
+    // refused — trading the hit for correctness: hits is 0.
+    let pic = "\\begin{pic}\\copy9 \\global\\setbox9=\\box3 \\kern1pt\n\\end{pic}\n";
+    let src = [
+        SPAN_PRELUDE,
+        "\\def\\cp{\\setbox9\\hbox{\\vrule width 2pt height 3pt}\
+         \\n=0 x \\input p y \\message{[\\the\\n|\\the\\dimen1]}}\n\
+         \\cp\\cp\\cp\\cp\\par\\showlists\\stop\n",
+    ]
+    .concat();
+    let files = [("p.tex", pic), ("t.tex", src.as_str())];
+    let d = scratch("span-copyvoid");
+    let write = || {
+        for (n, src) in &files {
+            std::fs::write(d.join(n), src).unwrap();
+        }
+    };
+    write();
+    let off = run_spans(&d, "off", "measure", "pic");
+    write();
+    let on = run_spans(&d, "on", "measure", "pic");
+    write();
+    let verify = run_spans(&d, "verify", "measure", "pic");
+    assert_eq!(off.log, on.log, "log with BOX-MEMO on differs");
+    assert_eq!(off.log, verify.log, "log in verification mode differs");
+    assert_eq!(
+        stat(&verify.stats, "verify_differences"),
+        0,
+        "{}",
+        verify.stats
+    );
+    assert_eq!(
+        stat(&verify.stats, "full_differences"),
+        0,
+        "{}",
+        verify.stats
+    );
+    // rules in the `\showlists` transcript: 8 is pdftex's count
+    // (`pdftex -ini -etex` on this input) and the BOX-MEMO-off run's — the
+    // expected value never comes from the memoised run. Before the fix the
+    // memoised run held 2.
+    let rules = |log: &str| log.matches("\\rule").count();
+    assert_eq!(rules(&off.log), 8, "pdftex counts 8 rules");
+    assert_eq!(rules(&on.log), 8, "{}", on.stats);
+    assert_eq!(rules(&verify.log), 8, "{}", verify.stats);
+    assert_eq!(stat(&on.stats, "hits"), 0, "{}", on.stats);
+    // the refusal is what keeps the span from replaying: a recording
+    // abandoned as `BoxContent`, so a change that re-enables the hit
+    // without making the replay right shows here as well as in `hits`
+    assert!(stat(&on.stats, "BoxContent") >= 1, "{}", on.stats);
 }
 
 #[test]
