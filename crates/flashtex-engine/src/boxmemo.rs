@@ -155,6 +155,10 @@ pub struct Stats {
     pub full_differences: u64,
     /// Control sequences a replay entered again (`Op::NewCs`, §12.3).
     pub entered: u64,
+    /// Hits of an entry another document recorded (`set_document`: the
+    /// host serves documents one after another on one thread, with one
+    /// store).
+    pub xdoc_hits: u64,
     /// K3's macro bodies compared token by token, the comparisons §12.4's
     /// entries answered, and the times the entries were emptied.
     pub meanings_walked: u64,
@@ -509,6 +513,8 @@ struct Entry {
     last_badness: Option<i32>,
     last_used: u64,
     hits: u64,
+    /// The document that recorded it (`set_document`).
+    doc: u32,
     bytes: usize,
 }
 
@@ -700,8 +706,9 @@ fn debug() -> bool {
 }
 
 /// Counts over the session, for the host's `DONE` (`stages.boxmemo`):
-/// offers, hits, recordings committed, control sequences a replay entered.
-pub fn counts() -> [u64; 4] {
+/// offers, hits, recordings committed, control sequences a replay entered,
+/// hits of another document's entries.
+pub fn counts() -> [u64; 5] {
     ST.with(|s| {
         let s = s.borrow();
         [
@@ -709,6 +716,7 @@ pub fn counts() -> [u64; 4] {
             s.stats.hits,
             s.stats.committed,
             s.stats.entered,
+            s.stats.xdoc_hits,
         ]
     })
 }
@@ -834,6 +842,29 @@ thread_local! {
 /// The host: an edit's window opens (`true`) or closes.
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+}
+
+thread_local! {
+    /// The document the thread's engine runs (`set_document`), as a
+    /// number, and the numbers given: 0 until the host names one (the
+    /// command line's one document).
+    static DOC: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static DOCS: RefCell<HashMap<String, u32>> = RefCell::new(HashMap::new());
+}
+
+/// The host: the document it makes resident (its root, main file and job,
+/// as `key` says), the same number for the same key.
+pub fn set_document(key: &str) {
+    let n = DOCS.with(|d| {
+        let mut d = d.borrow_mut();
+        let next = d.len() as u32 + 1;
+        *d.entry(key.to_string()).or_insert(next)
+    });
+    DOC.with(|c| c.set(n));
+}
+
+fn document() -> u32 {
+    DOC.with(|c| c.get())
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
@@ -2718,6 +2749,7 @@ impl Globals {
                     last_badness: None,
                     last_used: now,
                     hits: 0,
+                    doc: document(),
                     bytes,
                 };
                 insert_entry(&mut s, rec.cs, entry);
@@ -3658,6 +3690,7 @@ impl Globals {
                 last_badness,
                 last_used: now,
                 hits: 0,
+                doc: document(),
                 bytes,
             };
             if let Some(n) = &name {
@@ -4066,11 +4099,14 @@ impl Globals {
         let n = ops.len() as u64;
         ST.with(|s| {
             let mut s = s.borrow_mut();
+            let mut other = false;
             if let Some(e) = s.store.get_mut(&cs).and_then(|v| v.get_mut(i)) {
                 e.fast = ops;
                 e.rs_locs = rs_locs;
+                other = e.doc != document();
             }
             s.stats.hits += 1;
+            s.stats.xdoc_hits += u64::from(other);
             s.stats.replayed_ops += n;
         });
         if debug() {
