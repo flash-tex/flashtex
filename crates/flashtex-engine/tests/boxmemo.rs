@@ -487,6 +487,65 @@ fn spans_in_a_macros_argument() {
     assert!(stat(&s, "hits") >= 4, "{s}");
 }
 
+/// A paragraph of four inputs of `p.tex`; `pre` runs before the fourth.
+fn span_copy_case(tag: &str, pic: &str, setup: &str, pre: &str) -> String {
+    check_files(
+        tag,
+        &[
+            ("p.tex", pic),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    setup,
+                    "\\def\\cp{\\n=0 x \\input p y \\message{[\\the\\n|\\the\\dimen1]}}\n\\cp\\cp\\cp",
+                    pre,
+                    "\\cp\\par\\showlists\\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    )
+}
+
+#[test]
+fn spans_box_set_in_a_group_is_the_callers_again() {
+    // (review of #1997, daniel-parent) a `\setbox5` inside a group of the
+    // picture, then `\copy5` after the group: the copy is of the caller's
+    // box, which changes before the fourth picture
+    span_copy_case(
+        "span-grpbox",
+        "\\begin{pic}{\\setbox5\\hbox{\\vrule width 2pt height 1pt}}\\copy5\\kern1pt\n\\end{pic}\n",
+        "\\setbox5\\hbox{\\vrule width 1pt height 1pt}\n",
+        "\\setbox5\\hbox{\\vrule width 7pt height 1pt}",
+    );
+}
+
+#[test]
+fn spans_copy_a_box_made_elsewhere() {
+    // (review of #1997) a `\copy` of a box made in another file: its
+    // nodes keep that file's SyncTeX tag
+    span_copy_case(
+        "span-copytag",
+        "\\begin{pic}\\copy5\\kern1pt\n\\end{pic}\n",
+        "\\setbox5\\hbox{\\vrule width 1pt height 1pt}\n",
+        "",
+    );
+}
+
+#[test]
+fn spans_raise_a_copy() {
+    // (review of #2014) `\raise2pt\copy9`: `box_end` shifts the copy
+    let s = span_copy_case(
+        "span-raisecopy",
+        "\\begin{pic}\\vrule width 1pt\\raise2pt\\copy9 \\lower1pt\\copy9 \\end{pic}\n",
+        "\\setbox9\\hbox{\\vrule width 2pt height 3pt}\n",
+        "",
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
 #[test]
 fn spans_fall_back_when_the_file_changed() {
     // the same file name and first line, its next line rewritten by

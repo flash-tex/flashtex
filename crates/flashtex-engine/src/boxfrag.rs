@@ -29,6 +29,11 @@ use std::collections::HashMap;
 
 const SYNCTEX_FIELDS: i32 = 2;
 
+/// Of a copied box node's words 0 to 6, the bits a `Node::Copy` takes
+/// from the copy made again: the link (word 0's low half) and the list
+/// pointer (word 5's).
+const COPY_KEEP: [u64; 7] = [0xffff_ffff, 0, 0, 0, 0, 0xffff_ffff, 0];
+
 /// A glue specification the fragment points at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Spec {
@@ -95,8 +100,11 @@ pub enum Node {
     Hole(usize),
     /// A span's `\copy` of its `i`-th copied foreign register (§15.6):
     /// rebuilt by `copy_node_list` of the register's box, as the normal
-    /// path made it (its nodes keep that box's SyncTeX tags).
-    Copy(usize),
+    /// path made it (its nodes keep that box's SyncTeX tags), then the box
+    /// node's own words as the call left them (`box_end`'s shift for
+    /// `\raise`, a dimension assigned): words 0 to 6 but the link and the
+    /// list pointer ([`COPY_KEEP`]).
+    Copy(usize, [u64; 7]),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -535,7 +543,9 @@ impl Ser<'_> {
                 }
                 if let Some(i) = self.copies.iter().position(|&c| c == p) {
                     self.found[self.holes.len() + i] += 1;
-                    return Ok(Node::Copy(i));
+                    let w: [u64; 7] =
+                        std::array::from_fn(|j| self.g.mem[p as usize + j].0 & !COPY_KEEP[j]);
+                    return Ok(Node::Copy(i, w));
                 }
                 let l = self.sub(self.hh(p + 5).rh())?;
                 Ok(self.big(p, k::box_node_size, true, vec![(5, false, l)]))
@@ -834,7 +844,14 @@ impl Globals {
                     p
                 }
                 Node::Hole(i) => holes[*i],
-                Node::Copy(i) => r.copies[*i],
+                Node::Copy(i, w) => {
+                    let c = r.copies[*i];
+                    for (j, (&x, &keep)) in w.iter().zip(&COPY_KEEP).enumerate() {
+                        let m = &mut self.mem[c as usize + j];
+                        m.0 = (m.0 & keep) | x;
+                    }
+                    c
+                }
                 Node::Big {
                     size,
                     copy,
