@@ -318,3 +318,163 @@ fn font_parameters_are_part_of_the_key() {
     assert!(stat(&s, "hits") >= 3, "{s}");
     assert!(stat(&s, "recordings") >= 3, "{s}");
 }
+
+#[test]
+fn call_level_runs_aftergroup_and_fis_before_a_trailing_ignorespaces() {
+    // BOX-MEMO.md §16: a call that defines one macro again and again at the
+    // level it is called at (the run is replayed as one assignment), `\let`s
+    // from it in between (which ends the run), saves an `\aftergroup` token
+    // at that level, and ends in `\ignorespaces` before its own `\fi`. With
+    // `\tracingrestores` on, the caller's group end shows every save-stack
+    // entry the call left, in order, and the saved token runs after it.
+    let call = "{\\measure{q} \\message{[in \\meaning\\tmp|\\meaning\\y|\\the\\count1]}}\n";
+    let s = check(
+        "calllevel",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+             \\tracingrestores=1 \\tracingonline=0\n\
+             \\def\\tmp{old}\\def\\other{old}\\let\\y\\relax\n\
+             \\def\\measure#1{\\def\\tmp{a}\\def\\tmp{#1}\\def\\other{b}\\def\\tmp{#1#1}\\let\\y\\tmp\
+             \\def\\tmp{c}\\def\\tmp{#1c}\\count1=5 \\count1=6 \\aftergroup\\done\\ifnum1=1 \\ignorespaces\\fi}\n\
+             \\def\\done{\\message{[after \\meaning\\tmp|\\meaning\\y|\\meaning\\other|\\the\\count1]}}\n",
+            call,
+            call,
+            call,
+            call,
+            "\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+/// The calls below define `\reserved@a` before they read it, as LaTeX's
+/// `\@ifnextchar` and expl3's `\tl_set:Nn` do; between the calls the
+/// document gives it other meanings (BOX-MEMO.md §15).
+const RESERVED: &str =
+    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\@=11 \\scrollmode\n\
+    \\def\\show{\\message{[\\the\\dimen1|\\the\\count1|\\meaning\\reserved@a|\\meaning\\tmp]}}\n";
+
+#[test]
+fn a_meaning_assigned_before_it_is_read_is_not_keyed() {
+    // `\def\reserved@a` first: what it held is not an input (its first
+    // access is a write), so a call hits whatever the document left there;
+    // its new meaning, read later in the call, is the call's own
+    let s = check(
+        "write-first",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\reserved@a{#1}\\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\let\\reserved@a\\relax\\measure{1pt}\\show\\def\\reserved@a{2pt}\\measure{1pt}\\show\
+             \\measure{2pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+    assert!(stat(&s, "k3_written_first") >= 1, "{s}");
+}
+
+#[test]
+fn a_target_passed_as_an_argument_is_not_keyed() {
+    // expl3's `\tl_set:Nn \l__cmd_tmpa_tl {..}`: the control sequence is
+    // matched as an argument, then defined; neither reads its meaning
+    let s = check(
+        "write-first-arg",
+        &[
+            RESERVED,
+            "\\def\\set#1#2{\\def#1{#2}}\n\
+             \\def\\measure#1{\\set\\reserved@a{#1}\\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\let\\reserved@a\\relax\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_meaning_read_before_it_is_assigned_is_keyed() {
+    // `\ifx\reserved@a\relax` reads it before the `\def`, and an `\edef`
+    // reads its target in its own body: both keep the meaning in the key,
+    // so a call after a change is a miss (and the logs agree)
+    let s = check(
+        "read-first",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\ifx\\reserved@a\\relax\\gdef\\tmp{R}\\else\\gdef\\tmp{M}\\fi\\def\\reserved@a{#1}\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\let\\reserved@a\\relax\\measure{1pt}\\show\\let\\reserved@a\\relax\\measure{1pt}\\show\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\let\\reserved@a\\relax\\measure{1pt}\\show\n\
+             \\def\\measure#1{\\edef\\tmp{\\tmp#1}\\begingroup\\setbox0\\hbox{\\vrule width 1pt}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\tmp{a}\\measure{b}\\show\\def\\tmp{a}\\measure{b}\\show\\def\\tmp{c}\\measure{b}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn a_meaning_an_endgroup_brings_back_is_keyed() {
+    // a local `\def` in a group of the call's own is undone at its
+    // `\endgroup`: the read after it sees what the document left, which is
+    // then an input of the call
+    let s = check(
+        "restored",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\begingroup\\def\\reserved@a{#1}\\endgroup\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{1pt}\\measure{9pt}\\show\\measure{9pt}\\show\
+             \\def\\reserved@a{2pt}\\measure{9pt}\\show\\measure{9pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn an_argument_that_turns_outer_is_a_miss() {
+    // `\x`, an argument of `\set` inside the call, is read only as a token:
+    // the key holds that it is not `\outer` (nor `#`, `&`, `\if`, `\fi`).
+    // Once it is, matching `\set`'s argument is an error, so that call must
+    // not be replayed
+    let s = check(
+        "token-outer",
+        &[
+            RESERVED,
+            "\\def\\set#1{\\def\\tmp{#1}}\n\
+             \\def\\measure#1{\\set\\x\\begingroup\\setbox0\\hbox{\\vrule width #1}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\let\\x\\relax\\measure{1pt}\\show\\measure{1pt}\\show\\def\\x{}\\measure{1pt}\\show\
+             \\outer\\def\\x{}\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert!(stat(&s, "k3_tokens") >= 1, "{s}");
+}
+
+#[test]
+fn a_meaning_defined_twice_at_the_call_level_is_not_keyed() {
+    // `\@ifnextchar`'s shape, twice in one call: the first `\def` frees
+    // what `\reserved@a` held (the free list then begins with its nodes),
+    // and the second's token list is made of them, at the old address. A
+    // read after that finds the call's own meaning, not the old one come
+    // back: no `\endgroup` of the call could bring it back
+    let s = check(
+        "write-twice",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\reserved@a{#1}\\def\\reserved@a{#1}\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\def\\reserved@a{zzz}\\measure{1pt}\\show\\def\\reserved@a{2pt}\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}

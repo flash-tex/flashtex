@@ -1,7 +1,7 @@
 # BOX-MEMO: guarded replay of macro calls that typeset only what they throw away
 
 Lane **P6-INFDESC-PAGE** (Commander, 2026-10-06: "attributes Infinite Descent's 800 M-instruction
-page and builds picture/box memoisation"). Status: **revision 2 (T7-BEAMER, 2026-10-20): on in the engine host** (§11): it records in an
+page and builds picture/box memoisation"). Status: **revision 2 (T7-BEAMER, 2026-10-20): on in the engine host** (§11; revision 6, L6, is §15; revision 7, BEAMER-FRAME, is §16): it records in an
 edit's window and replays; the command-line engine keeps it off unless `FLASHTEX_BOXMEMO=on`.
 Revision 1 (the framed.sty prototype, off by default) is §2-§10.
 
@@ -94,7 +94,7 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 |---|---|---|
 | K1 | the macro's meaning and its arguments | `eqtb[warning_index]` by content, and each argument's tokens |
 | K2 | every `eqtb` entry from `glue_base` to `eqtb_size` (glue, local, int and dimen regions) **except the box registers** | **conservatively**: all of them, at the call. Pointer values are taken by content: glue specs by their four fields, token lists by their tokens, `\parshape` by its words. Typesetting reads parameters directly (`hpack` reads `\hbadness`, `append_to_vlist` reads `\baselineskip`, ...); the conservative snapshot covers every such implicit read without a hook per site |
-| K3 | the meaning of every control sequence the recording read before writing it | precisely: `get_next`'s delivered `cur_cs`, `\csname`/`\ifcsname` look-ups (the D9 read points, with BOX-MEMO's own hooks). By content: macros by their tokens, the rest by `(eq_type, equiv)` |
+| K3 | the meaning of every control sequence the recording read before writing it | precisely: `get_next`'s delivered `cur_cs`, `\csname`/`\ifcsname` look-ups (the D9 read points, with BOX-MEMO's own hooks). By content: macros by their tokens, the rest by `(eq_type, equiv)`. A control sequence read only as a token (the one being defined, an argument, a body not expanded, a skipped text) is kept by its kind only, and one assigned before anything read it is not kept: §15 |
 | K4 | e-TeX's sparse registers (`\count`, `\dimen`, `\skip`, `\muskip` and `\toks` above 255) | conservatively: every entry of the sparse trees, by (type, number, value), values by content as in K2 |
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
 | K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
@@ -745,3 +745,196 @@ Measured (NixOS PC, T7 beamer-30, two rounds of 19 keys, instructions to the edi
 key 1 143 M → 93 M (the steady keys 92 M); the open's preamble row (a run from the format) 24.5 G →
 24.1 G instructions for the whole compile, 5.29 G → 5.24 G to its first page, wall unchanged.
 Evidence: `docs/evidence/t7-margin-2026-10-21/`.
+
+## 15. Revision 6: K3 by first access (lane L6, 2026-11-01)
+
+**The misses.** On full-100, BOX-MEMO hit 163 of `\pdfstringdefPreHook`'s 226 offers, and D9 198
+(L6.md, lead 5). The debug run (`docs/evidence/l6-2026-11-01/raw/lead5/`) put half of the misses
+on K3: the meanings of `\reserved@a` (112), `\reserved@b` (90) and `\l__cmd_tmpa_tl` (40). The
+hook defines each of them before it reads them, as `\@ifnextchar` and `\tl_set:Nn` do. §3 says
+that K3 keeps a meaning read *before* it is written, but `get_next`'s hook keyed every control
+sequence it delivered. That includes the one `get_r_token` delivers for a `\def` or `\let`, which
+comes before the assignment, so the old `\reserved@a` was keyed.
+
+**The rule now, per recording, from the order of its accesses** (`SEEN_*` in `src/boxmemo.rs`):
+
+- **A read of the meaning** (an expansion, a command, `\ifx`, `\csname`, ...) keys it in full, as
+  before, if it is the first access, or the first since an `\endgroup` brought back the value the
+  call found (below).
+- **A read only as a token** keys only whether the meaning is one of `token_matters`'s:
+  `\outer`, `#`, `&` or `\cr`, `\if`, `\fi` (`Meaning::Token`). The token readers are:
+  - `get_r_token`, the control sequence being defined;
+  - `scan_toks` reading a parameter text or a body it does not expand (these set `intr_weak`, as
+    for D9);
+  - `macro_call` matching an argument (`scanner_status = matching`);
+  - `pass_text` skipping (`skipping`).
+- **An assignment** (`eq_define` & co.) to a control sequence whose meaning nothing read yet keeps
+  the old `(eq_type, equiv)` aside (`Fast::pre`), out of the key.
+- **After an assignment**, a read keys the meaning only if it is that kept value again.
+
+**Why the replay needs no check for what an assignment overwrote.** The argument goes access by
+access.
+1. *Token readers.* Each of them looks only at `cur_tok`, which for a control sequence is
+   `cs_token_flag` plus its location, never its meaning. That holds for `get_r_token`'s
+   `cur_cs = 0` and frozen tests, the argument delimiters and `par_token`, and `scan_toks`'s
+   storing. The exceptions all depend only on the meaning's kind, and that kind is the key:
+   - `get_next`'s own `check_outer_validity` and alignment insertion (tex.web §336, §342);
+   - `scan_toks`'s `cur_cmd = mac_param` (§476, §479);
+   - `pass_text`'s `\if` and `\fi` (§494).
+2. *Assignments.* `eq_define`, `eq_word_define`, `geq_define` and `geq_word_define` read the old
+   entry only for their own bookkeeping: its level (save it or destroy it), and e-TeX's
+   "reassigning" test (tex.web §277–279). A replay makes each assignment again through the same
+   procedures (`Op::Def`), on the state at the replay. The normal path would do exactly that
+   there, so the old value is not an input of the call.
+3. *Reads after an assignment.* The entry holds one of two things:
+   - a value the call made, which depends only on the call's own inputs, already in the key;
+   - after an `\endgroup`, what `unsave` copied back from the save stack.
+
+   The value copied back is the call's own (a level it assigned) or the one the call found. The
+   one it found is the word kept in `pre`, bit for bit. So a read whose `(eq_type, equiv)` equals
+   `pre` is keyed as a first read. Equality can make that test fire for a value the call made: a
+   macro whose token list landed at a freed address is one way, and an assignment of the same
+   word is another. That keys more than it must, which costs a hit and never makes one wrong.
+
+Registers keep §10.1's rule. They are never read as tokens, and the debug run found no register
+in the misses.
+
+**Tokens read in place.** changes/throughput.ch's token loops read without `get_next`:
+- [4] `pass_text`;
+- [5] a delimited argument;
+- [6] a braced argument;
+- [7] a body that is not expanded.
+
+They do so whenever D9 is not recording, so a BOX-MEMO recording never sees those control
+sequences. A body's `\x` that became a `#` between calls is therefore replayed past. This is a
+hole that predates this revision, and this revision neither makes it wider nor closes it.
+
+A control sequence this revision leaves out of the key is always assigned in the call, so it was
+first delivered as the assignment's target (`get_r_token`) or looked up. That delivery keeps a
+token read for it, which covers what an in-place read of it could depend on.
+
+The fix and its cost are in the next PR (lane L6, `agent/kabir-claude-l6/bm-inplace`). In that
+PR, `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on while
+the loops stay as they are.
+
+**An assignment at the call's own level, or a global one, is final** (lane BEAMER-FRAME). What
+the control sequence held before the call cannot come back inside the call after it: no group of
+the call saved it, `unsave` at the end of the call's own groups restores the call's values, and
+it keeps a global one (tex.web §282–283). So no later read keys it, and the value kept aside is
+dropped. Comparing `(eq_type, equiv)` with the kept value was not enough. `\@ifnextchar`
+defines `\reserved@b` at the call's level, and `eq_define` frees the old token list:
+`flush_list` puts its head first on the free list (§123). The next `\def` of it in the same call
+(`\usebeamercolor` calls `\@ifnextchar` again) then makes its list from those nodes, at the old
+address. A read afterwards found "the old value back" and keyed the call's own meaning, which
+missed at every later offer. On the frame-typeset stack (#1992, which offers
+`\beamer@usebeamercolor`), this made beamer-visuals' edit windows re-record and abandon
+`\usebeamercolor` every keystroke, and the calls inside it were not offered: 792 → 696 offers
+and 668 → 571 hits a window, 172.9 → 246.2 M a keystroke (PC runs 41377417237, 41378361514). Test:
+`a_meaning_defined_twice_at_the_call_level_is_not_keyed` (0 hits before the change, 3 after).
+
+**Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
+- a `\def` of `\reserved@a` first, which hits whatever the document left there;
+- a target passed as an argument (`\tl_set:Nn`'s shape), which hits;
+- `\ifx\reserved@a` before the `\def`, and an `\edef` that reads its own target, which are keyed;
+- a `\def` in a group of the call's own and a read after its `\endgroup`, which is keyed;
+- an argument (`get_next`, `matching`) that becomes `\outer`, which is a miss; while it only
+  changes meaning, it hits.
+
+## 16. Revision 7: xkeyval's `\setkeys`, `\usebeamercolor`, and cheaper replays (lane BEAMER-FRAME, 2026-11-01)
+
+After #1907 the metropolis demo deck (T7's real document `beamer-metropolis`, PR #1889) still spent
+about 275 M instructions typesetting its Blocks frame, the letter@middle site, per keystroke
+(`typeset_instr_k`, from the engine's resumption to the edited page's shipout). A sampling profile
+of those windows alone (samply on the host, its samples cut to the `FLASHTEX_PERF_MARKS` intervals)
+and the macro profile showed where:
+
+- **xkeyval's `\setkeys`.** `\beamercolorbox` (metropolis's block titles and bodies, the frame
+  title) calls it twice for its defaults and options, and `\usebeamercolor` & co. more: 39 calls a
+  frame, 46 % of the window. Nothing offered it.
+- **BOX-MEMO's own hits**, once it was offered: 30 % of the window. The replays made every
+  operation of `\setkeys`' log (24 k a keystroke) and the offers' K3 checks went through a hash
+  map per meaning.
+- **`\usebeamercolor`** (eight `\colorlet`s and a `\color`) was refused: `\color` ends in
+  `\ignorespaces` after the call's own `\fi`, and saves `\aftergroup\reset@color` at the call's
+  level.
+
+### 16.1 A run of fresh local values at the call's level is made as one
+
+A replay at the call's own level made every assignment the call made. xkeyval defines its scratch
+macros (`\XKV@tempa`, `\XKV@resa`, the key's name and family, ...) again for every key it sets.
+`compress_call_level` (after §12.5's `compress_groups`) makes each run of local assignments of
+*fresh* values (a token list, a glue specification or a `\parshape` made for the assignment) to one
+location as its first assignment, with the value of the last. The first `eq_define` of the run
+decides the location's save-stack entry (`eq_save` when it was last assigned at another level, else
+`eq_destroy`); a fresh value is never e-TeX's "reassigning", so every later one finds the location at
+the call's level and only destroys the run's previous value. The run thus leaves the save entry of
+its first assignment, in its place among the others, and the value of its last; the values between
+are made and freed again, which changes only the free lists and the usage statistics, as §11.2's
+elision does. A run ends at anything else that touches or reads the location: an assignment of a
+word or of a value from the state (either may be "reassigning"), a global one, a `\let` of it or a
+glue it holds, a kept group that assigns it, a control sequence entered there, and an `End` or
+`Begin` of the caller's group. Unit test: `a_run_of_fresh_local_values_is_its_first_assignment_with_its_last_value`.
+
+### 16.2 `\fi`s before a trailing `\ignorespaces`
+
+§11's trailer ends a recording at an `\ignorespaces` that would read past the body. When the
+body's only tokens left are control sequences meaning `\fi` (`\else\color{#1}\fi`), the hook
+expands them first, as `\ignorespaces`' own `get_x_token` would (each a `get_next` and an `expand`,
+in the same order, with the recording's observers on), and then ends the recording; `main_control`
+goes on with the `\ignorespaces`. The same holds at `big_switch`, whose `get_x_token` would expand
+a body's last `\fi`s and read past it (`\usebeamercolor` without its optional argument): they are
+expanded there and the recording ends. Anything else left is the normal path, as before.
+
+### 16.3 `\aftergroup` at the call's level
+
+`save_for_after` reports to the recording (`flashtex_bm_after`, changes/boxmemo.ch). A token saved
+at the call's own level outlives the call (xcolor's `\set@color` saves `\reset@color`): it is
+`Op::AfterGroup(t)`, made again by the replay's `save_for_after` in its place among the save-stack
+entries, which `bm_saves_only` now accepts (`insert_token`). One saved in a group of the call is
+inserted at that group's end, inside the call, as before.
+
+### 16.4 Offers
+
+- K3 takes the entries of §12.4 once per variant, not once per meaning, and finds a location's
+  entry by index (`Seen::at`, a slot per location) instead of a hash map. Unit test:
+  `meanings_found_equal_are_kept_by_location_until_their_list_goes`.
+- KR is compared in place (`bm_reg_is`, a `\toks` register's tokens walked against the kept ones),
+  not by making each register's value. Debug builds check it against the old comparison.
+
+### 16.5 Names
+
+`XKV@setkeys` and `\beamer@usebeamercolor` (the macro `\usebeamercolor` calls after its optional
+argument) join `DEFAULT_NAMES`. Tried on the Blocks frame and left out (no gain, or refused):
+`\ifbeamercolorempty` and `hook_use:n` (their last tokens read past the body), `beamer@masterdecode`
+(a box register set at the call's level), `XC@mcolor`, `XC@display`, `colorlet`, `XC@colorlet`,
+`pgfsys@transformcm`, `color@b@x`, `beamer@decodefind`, `IfHookEmptyTF`, `selectfont`,
+`beamer@spacingcover`, `beamer@parsedactionenv`, `beamer@smuggle`, `pgf@sys@bp`, `beamer@colclose`,
+`metropolis@block` (`\prevdepth`); `pgfkeys@@set` and `beamer@setbeamercolor` gain under 2 %.
+Recording after the edited page as well (the pages re-typeset until convergence) was tried and
+left out: the next keystroke's window cost more (49 → 65 M at the start site) and its recordings
+did not settle.
+
+### 16.6 Measured
+
+M5 Pro, T7 `beamer-metropolis` (PR #1889's harness on a measure-only checkout), the engine thread's
+instructions, p50 of 19 measured keys. Instruction counts do not move with load; the machine ran at
+load 50-170 throughout, so every wall time here is non-reference.
+
+| site | main `df75c3a20` typeset / to the edited page | this revision | thread CPU to the edited page |
+|---|---:|---:|---:|
+| letter@middle (the Blocks frame) | 274.6 M / 287.3 M | **109.7 M / 122.4 M** (−57 %) | 27.5 ms (load 50) → 16.3 ms (load 105) |
+| letter@start (the first fragile frame) | 68.0 M / 81.3 M | **48.3 M / 61.8 M** (−24 %) | 10.7 → 10.3 ms |
+
+The steps, letter@middle, typesetting p50 of 5 keys: main 274.4 M; `XKV@setkeys` offered 147.9 M;
+§16.1 128.1 M; KR in place 124.3 M; §16.2, §16.3 and `\beamer@usebeamercolor` 113.8 M; §16.4's
+slots 110.0 M. Re-typeset pages and convergence are unchanged (2 and 5 pages; 19/19).
+
+**Correctness.** `cargo test` `--lib boxmemo` and `tests/boxmemo.rs` (debug and release, which runs
+off, on and verify and compares the logs and PDFs), `tests/incremental.rs` (87),
+`tests/host_incremental.rs`, `tests/intrinsics.rs`, `tests/checkpoint.rs`. The command line in
+verify mode (the whole engine state compared after every replay) on the metropolis deck: 4,390
+replays, 0 differences, the PDF and log byte-identical with BOX-MEMO off, on and verify; on 41
+copies of its Blocks frame: 15,310 replays, 0 differences. `soundness.py`, 20 trials (40 compiles)
+each, every compile byte-identical to a run from scratch: beamer-fragile, -overlays, -default,
+-visuals, -blocks-columns, -madrid and metropolis 0 bad (converged 19, 25, 20, 15, 1, 34, 21, as on
+main), metropolis interleaved 43 compiles, 32 checked, 11 interrupted, 0 bad.

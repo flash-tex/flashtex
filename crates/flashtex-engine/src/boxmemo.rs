@@ -127,6 +127,14 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // instructions a call): recorded anywhere and taken from the intrinsics
     // (`RECORD_ANYWHERE`, §12.2)
     "pdfstringdefPreHook",
+    // (lane BEAMER-FRAME) xkeyval's `\setkeys` after its options are read:
+    // `\beamercolorbox` calls it three times for its defaults and options,
+    // which was 46 % of metropolis's Blocks frame (BOX-MEMO.md §16)
+    "XKV@setkeys",
+    // beamer's `\usebeamercolor` after its optional argument: eight
+    // `\colorlet`s and a `\color`, whose `\aftergroup\reset@color` and
+    // trailing `\ignorespaces` a recording now takes (§16.2, §16.3)
+    "\\beamer@usebeamercolor",
 ];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
@@ -160,6 +168,11 @@ pub struct Stats {
     pub meanings_walked: u64,
     pub meanings_seen: u64,
     pub seen_cleared: u64,
+    /// Control sequences recordings assigned before reading their meaning
+    /// (not in K3), and those read only as tokens (K3 keeps
+    /// [`Meaning::Token`]), BOX-MEMO.md §15.
+    pub k3_written_first: u64,
+    pub k3_tokens: u64,
     pub abandoned: BTreeMap<String, u64>,
     pub misses: BTreeMap<String, u64>,
     pub verify_details: Vec<String>,
@@ -227,6 +240,8 @@ enum Op {
         p: i32,
         name: Vec<i32>,
     },
+    /// `save_for_after(t)` at the call's own level (`\\aftergroup`, §16.3).
+    AfterGroup(i32),
 }
 
 thread_local! {
@@ -327,6 +342,26 @@ enum Meaning {
     /// A `\countdef` (and kin) of an e-TeX sparse register: the command,
     /// the register's type and number.
     Sparse(i32, i32, i32),
+    /// A control sequence read only as a token: the control sequence being
+    /// defined (`get_r_token`), a parameter text or a body that is not
+    /// expanded (`scan_toks`), a macro's argument (`macro_call`, scanner
+    /// status `matching`), a conditional's skipped text (`pass_text`,
+    /// `skipping`). There its meaning matters only in being one of
+    /// [`token_matters`]'s or not (BOX-MEMO.md §15).
+    Token,
+}
+
+/// Whether a control sequence read only as a token ([`Meaning::Token`])
+/// acts on what it is read by, by its command `t`: `get_next` checks an
+/// `\outer` one (`check_outer_validity`) and inserts an alignment template
+/// at a `&` or `\cr` (tex.web §336, §342); `scan_toks` takes a `#` as a
+/// parameter (§476, §479); `pass_text` counts the `\if`s and `\fi`s it
+/// skips (§494).
+fn token_matters(t: i32) -> bool {
+    (k::tab_mark..=k::mac_param).contains(&t)
+        || t == k::if_test
+        || t == k::fi_or_else
+        || t >= k::outer_call
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -566,8 +601,8 @@ struct Rec {
     absent: Vec<Vec<i32>>,
     voids: Vec<i32>,
     kr: Vec<(RegId, Vec<i32>)>,
-    /// Registers and control sequences the call assigned globally: read
-    /// after that, they hold what the call put there.
+    /// Registers the call assigned globally: read after that, they hold
+    /// what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
     boxes: HashSet<i32>,
@@ -607,14 +642,33 @@ struct State {
 }
 
 /// The recording's hot state, outside `ST`'s `RefCell` borrow: the body's
-/// input level, and which control sequences it has looked at (`seen[p] ==
-/// stamp`), so that `get_next`'s hook costs a load and a compare.
+/// input level, and what it has done with each control sequence (`seen[p]
+/// - stamp`, one of [`SEEN_READ`], [`SEEN_TOKEN`], [`SEEN_WRITTEN`]; any
+/// other value: nothing yet), so that `get_next`'s hook costs a load and a
+/// compare. `stamp` moves on by 4 at each recording.
 #[derive(Default)]
 struct Fast {
     base: i32,
     stamp: u32,
     seen: Vec<u32>,
+    /// The control sequences the recording assigned before it read their
+    /// meaning ([`SEEN_WRITTEN`]), with what each held then, `(p, eq_type,
+    /// equiv)`. A read that finds it there again (an `\endgroup` brought it
+    /// back) is a first read (BOX-MEMO.md §15). A call assigns a few: a
+    /// list searched from its end costs less than a hash.
+    pre: Vec<(i32, i32, i32)>,
+    /// How many control sequences the recording assigned before it read
+    /// them (`Stats::k3_written_first`).
+    written_first: u32,
 }
+
+/// `p`'s meaning is in K3 in full (or it is the macro itself).
+const SEEN_READ: u32 = 0;
+/// `p` was read only as a token: K3 has [`Meaning::Token`].
+const SEEN_TOKEN: u32 = 1;
+/// `p` was assigned before anything read its meaning: what it held is in
+/// `Fast::pre`, and not in the key.
+const SEEN_WRITTEN: u32 = 2;
 
 /// A key by location (`bm_key_by_loc`): each location and its values.
 type KeyByLoc = Vec<(i32, Vec<i32>)>;
@@ -1073,7 +1127,7 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
                 }
                 Op::Sa { kind, .. } if *kind > 1 => return None,
                 Op::Sa { .. } => {}
-                Op::NewCs { .. } | Op::End => return None,
+                Op::NewCs { .. } | Op::End | Op::AfterGroup(_) => return None,
             }
             i += 1;
         }
@@ -1130,6 +1184,95 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
     out
 }
 
+/// A value made fresh for its assignment: a pointer no location holds yet,
+/// so `eq_define` never finds it already there (e-TeX's "reassigning"
+/// compares `equiv` with it), and its word does not depend on the state.
+fn fresh(v: &Val) -> bool {
+    matches!(
+        v,
+        Val::FreshList(_) | Val::FreshGlue(_) | Val::FreshShape(_)
+    )
+}
+
+/// [`compress_groups`]' operations with each run of local assignments of
+/// fresh values to one location at the call's own level made as one: the
+/// first of them, with the value of the last (BOX-MEMO.md §16). xkeyval's
+/// `\setkeys` defines its scratch macros (`\XKV@tempa`, `\XKV@resa`, the
+/// key's name and family, ...) again for every key, at the level it was
+/// called at: 24 k operations a key on metropolis's Blocks frame, of which
+/// a few hundred values survive.
+///
+/// The first `eq_define` of such a run decides the location's save-stack
+/// entry: `eq_save` when the location was last assigned at another level,
+/// else `eq_destroy` of its value (tex.web §277; a fresh value is never
+/// "reassigning"). Every later one finds the location at the call's level
+/// and `eq_destroy`s the run's previous value. So the run leaves the save
+/// entry of its first assignment, where it was made among the others, and
+/// the value of its last; the values in between are made and freed again,
+/// which changes only the free lists and the usage statistics, as §11.2's
+/// elision does. A run ends (the next assignment starts another) at
+/// anything else that touches or reads the location: an assignment of
+/// another kind or of a value from the state, a value from the state that
+/// reads it (`\let` of it, a glue it holds), a kept group that assigns it,
+/// a control sequence entered there, and, for every location, an `End` or
+/// `Begin` of the caller's group (the call's level changes).
+fn compress_call_level(ops: Vec<Op>) -> Vec<Op> {
+    fn reads(v: &Val) -> Option<i32> {
+        match v {
+            Val::LetCs(q) => Some(*q),
+            Val::GlueFrom(a, _) if *a > 0 => Some(*a),
+            _ => None,
+        }
+    }
+    let mut out: Vec<Op> = Vec::with_capacity(ops.len());
+    // (each location's run at the call's level: the index of its first
+    // assignment in `out`)
+    let mut open: HashMap<i32, usize, IntHash> = HashMap::default();
+    let mut depth = 0i32;
+    for o in ops {
+        match &o {
+            // (inside a group, every assignment is at another level: it
+            // ends the location's run, below)
+            Op::Begin(_) => depth += 1,
+            Op::End => {
+                if depth == 0 {
+                    // the caller's group ends: the call's level is another
+                    open.clear();
+                } else {
+                    depth -= 1;
+                }
+            }
+            Op::Def { p, v, kind, .. } => {
+                if let Some(q) = reads(v) {
+                    open.remove(&q);
+                }
+                if depth == 0 && *kind <= 1 && fresh(v) {
+                    if let Some(&j) = open.get(p) {
+                        if matches!(&out[j], Op::Def { kind: k0, .. } if *k0 == *kind) {
+                            out[j] = o;
+                            continue;
+                        }
+                    }
+                    open.insert(*p, out.len());
+                } else {
+                    open.remove(p);
+                }
+            }
+            Op::Sa { v, .. } => {
+                if let Some(q) = reads(v) {
+                    open.remove(&q);
+                }
+            }
+            Op::NewCs { p, .. } => {
+                open.remove(p);
+            }
+            Op::AfterGroup(_) => {}
+        }
+        out.push(o);
+    }
+    out
+}
+
 /// Leave the used-up token lists at the top of the input stack, as the
 /// next `get_next` would.
 fn pop_used_up(g: &mut Globals) {
@@ -1171,10 +1314,24 @@ type IntHash = std::hash::BuildHasherDefault<crate::iso::FastHasher>;
 /// tokens are still that body and the walk is not made again. Emptied at
 /// every restore of the word space (`after_restore`), at a format load, and
 /// when another engine on this thread notes one (`owner`).
+/// One location's entry: its type, its list, the kept body.
+#[derive(Default, Clone)]
+struct Slot {
+    t: i32,
+    e: i32,
+    body: Option<std::rc::Rc<[i32]>>,
+    /// (in `Seen::used`)
+    listed: bool,
+}
+
 #[derive(Default)]
 struct Seen {
     owner: usize,
-    at: HashMap<i32, (i32, i32, std::rc::Rc<[i32]>), IntHash>,
+    /// The entries, by location (`eqtb` and the hash's extra locations: a
+    /// look-up is an index, not a hash; BOX-MEMO.md §16.4).
+    at: Vec<Slot>,
+    /// The locations that have an entry (what `clear` empties).
+    used: Vec<i32>,
     /// The locations whose entry names list `e`.
     by_list: HashMap<i32, Vec<i32>, IntHash>,
     /// The lists some entry names, a bit each by `mem` index: the free
@@ -1193,7 +1350,10 @@ impl Seen {
                 *w = 0;
             }
         }
-        self.at.clear();
+        for &p in &self.used {
+            self.at[p as usize] = Slot::default();
+        }
+        self.used.clear();
         self.by_list.clear();
     }
 
@@ -1205,7 +1365,9 @@ impl Seen {
 
     /// `p`'s entry, which names list `e`, goes.
     fn forget_at(&mut self, p: i32, e: i32) {
-        self.at.remove(&p);
+        if let Some(slot) = self.at.get_mut(p as usize) {
+            slot.body = None;
+        }
         if let Some(l) = self.by_list.get_mut(&e) {
             l.retain(|&q| q != p);
             if l.is_empty() {
@@ -1215,6 +1377,51 @@ impl Seen {
                 }
             }
         }
+    }
+
+    /// Whether `p` holding `t` and `e` was found equal to `toks` since.
+    #[inline]
+    fn is(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
+        let ok = self.at.get(p as usize).is_some_and(|s| {
+            s.e == e
+                && s.t == t
+                && s.body
+                    .as_ref()
+                    .is_some_and(|b| std::rc::Rc::ptr_eq(b, toks))
+        });
+        if ok {
+            self.hits += 1;
+        }
+        ok
+    }
+
+    /// `p` holding `t` and `e` was just found equal to `toks` (`mem_len`:
+    /// the size of `mem`, for the bits).
+    fn note(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>, mem_len: usize) {
+        let i = p as usize;
+        if self.at.len() <= i {
+            self.at.resize(i + 1, Slot::default());
+        }
+        if self.at[i].body.is_some() {
+            let e0 = self.at[i].e;
+            self.forget_at(p, e0);
+        }
+        if !self.at[i].listed {
+            self.used.push(p);
+        }
+        let w = e as usize / 64;
+        if self.bits.len() <= w {
+            let n = (w + 1).max(mem_len / 64 + 1);
+            self.bits.resize(n, 0);
+        }
+        self.bits[w] |= 1u64 << (e as usize % 64);
+        self.by_list.entry(e).or_default().push(p);
+        self.at[i] = Slot {
+            t,
+            e,
+            body: Some(toks.clone()),
+            listed: true,
+        };
     }
 }
 
@@ -1228,47 +1435,16 @@ fn owner_of(g: &Globals) -> usize {
     g as *const Globals as usize
 }
 
-/// Whether `p` holding `t` and `e` was found equal to `toks` since.
-fn seen_is(g: &Globals, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
-    if !SEEN_ANY.with(|a| a.get()) {
-        return false;
-    }
-    SEEN.with(|s| {
-        let mut s = s.borrow_mut();
-        if s.owner != owner_of(g) {
-            return false;
-        }
-        let ok =
-            s.at.get(&p)
-                .is_some_and(|(t0, e0, b)| *t0 == t && *e0 == e && std::rc::Rc::ptr_eq(b, toks));
-        if ok {
-            s.hits += 1;
-        }
-        ok
-    })
-}
-
-/// `p` holding `t` and `e` was just found equal to `toks`.
-fn seen_note(g: &Globals, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) {
+/// `f` with the entries, emptied first when another engine noted them.
+fn with_seen<R>(g: &Globals, f: impl FnOnce(&mut Seen) -> R) -> R {
     SEEN.with(|s| {
         let mut s = s.borrow_mut();
         if s.owner != owner_of(g) {
             s.clear();
             s.owner = owner_of(g);
         }
-        if let Some(&(_, e0, _)) = s.at.get(&p) {
-            s.forget_at(p, e0);
-        }
-        let w = e as usize / 64;
-        if s.bits.len() <= w {
-            let n = (w + 1).max(g.mem.len() / 64 + 1);
-            s.bits.resize(n, 0);
-        }
-        s.bits[w] |= 1u64 << (e as usize % 64);
-        s.by_list.entry(e).or_default().push(p);
-        s.at.insert(p, (t, e, toks.clone()));
-    });
-    SEEN_ANY.with(|a| a.set(true));
+        f(&mut s)
+    })
 }
 
 /// Every entry goes (a restore, a format load).
@@ -1709,6 +1885,86 @@ impl Globals {
         v
     }
 
+    /// Whether [`bm_push_list`](Self::bm_push_list) of `e` would make
+    /// `want`, compared in place (an offer's KR check makes nothing).
+    fn bm_list_is(&self, e: i32, want: &[i32]) -> bool {
+        if e == 0 {
+            return want == [-1];
+        }
+        let mut p = self.bm_link(e);
+        match want.split_first() {
+            // (more than `bm_tokens` keeps)
+            Some((&-2, [])) => {
+                let mut n = 0usize;
+                while p != 0 {
+                    n += 1;
+                    if n > MAX_LIST + 1 {
+                        return true;
+                    }
+                    p = self.bm_link(p);
+                }
+                false
+            }
+            Some((&n, toks)) if n >= 0 && toks.len() == n as usize => {
+                for &x in toks {
+                    if p == 0 || self.bm_info(p) != x {
+                        return false;
+                    }
+                    p = self.bm_link(p);
+                }
+                p == 0
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `glue` (a specification) is kept as `want`: `[-1, e]` for a
+    /// static one, else its fields (as [`bm_reg_value`](Self::bm_reg_value)).
+    fn bm_glue_is(&self, q: i32, want: &[i32]) -> bool {
+        if q <= LO_MEM_STAT_MAX {
+            want == [-1, q]
+        } else {
+            want == self.bm_glue_fields(q)
+        }
+    }
+
+    /// `bm_reg_value(r) == want`, without making the value.
+    fn bm_reg_is(&self, r: RegId, want: &[i32]) -> bool {
+        match r {
+            RegId::Eqtb(p) => {
+                let w = self.bm_eq(p);
+                if (k::skip_base..k::mu_skip_base + 256).contains(&p) {
+                    self.bm_glue_is(w.hh().rh(), want)
+                } else if (TOKS_BASE..TOKS_BASE + 256).contains(&p) {
+                    self.bm_list_is(w.hh().rh(), want)
+                } else {
+                    want == [w.int()]
+                }
+            }
+            RegId::Sa(t, n) => {
+                let e = self.bm_sa_find(t, n);
+                match t {
+                    INT_VAL | DIMEN_VAL => {
+                        want == [if e == 0 {
+                            0
+                        } else {
+                            self.mem[(e + 2) as usize].int()
+                        }]
+                    }
+                    GLUE_VAL | MU_VAL => self.bm_glue_is(
+                        if e == 0 {
+                            k::zero_glue
+                        } else {
+                            self.bm_link(e + 1)
+                        },
+                        want,
+                    ),
+                    _ => self.bm_list_is(if e == 0 { 0 } else { self.bm_link(e + 1) }, want),
+                }
+            }
+        }
+    }
+
     /// The sparse array element of type `t` and number `n`, or 0, found as
     /// `find_sa_element(t,n,false)` finds it, without changing anything.
     fn bm_sa_find(&self, t: i32, n: i32) -> i32 {
@@ -1832,6 +2088,21 @@ impl Globals {
     /// Whether the meaning of `p` is `m` ([`bm_meaning`](Self::bm_meaning)
     /// compared in place, without copying a macro's tokens).
     fn bm_meaning_is(&self, p: i32, m: &Meaning) -> bool {
+        with_seen(self, |s| self.bm_meaning_is_in(s, p, m))
+    }
+
+    /// K3: every kept meaning holds now (one borrow of the entries for all).
+    fn bm_k3_holds(&self, k3: &[(i32, Meaning)]) -> bool {
+        with_seen(self, |s| {
+            k3.iter().all(|(p, m)| self.bm_meaning_is_in(s, *p, m))
+        })
+    }
+
+    /// [`bm_meaning_is`](Self::bm_meaning_is) with the entries borrowed.
+    fn bm_meaning_is_in(&self, seen: &mut Seen, p: i32, m: &Meaning) -> bool {
+        if let Meaning::Token = m {
+            return !token_matters(self.bm_eq(p).hh().b0());
+        }
         if let Meaning::Name(n) = m {
             // A location of the hash's chains holds the name `id_lookup`
             // finds there: it enters a name only where it found none, in
@@ -1862,10 +2133,10 @@ impl Globals {
             if *mt != t {
                 return false;
             }
-            if seen_is(self, p, t, e, toks) {
+            if seen.is(p, t, e, toks) {
                 return true;
             }
-            SEEN.with(|s| s.borrow_mut().walks += 1);
+            seen.walks += 1;
             let mut q = self.bm_link(e);
             for &x in toks.iter() {
                 if q == 0 || self.bm_info(q) != x {
@@ -1874,7 +2145,8 @@ impl Globals {
                 q = self.bm_link(q);
             }
             if q == 0 {
-                seen_note(self, p, t, e, toks);
+                seen.note(p, t, e, toks, self.mem.len());
+                SEEN_ANY.with(|a| a.set(true));
             }
             return q == 0;
         }
@@ -2436,12 +2708,16 @@ impl Globals {
                     None => true,
                     Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
                 }) && e.voids.iter().all(|&n| self.bm_box_value(n) == 0)
-                    && e.kr.iter().all(|(r, v)| self.bm_reg_value(*r) == *v)
+                    && e.kr.iter().all(|(r, v)| {
+                        let ok = self.bm_reg_is(*r, v);
+                        debug_assert_eq!(ok, self.bm_reg_value(*r) == *v);
+                        ok
+                    })
                     && e.kb
                         .iter()
                         .chain(&e.holes)
                         .all(|(n, v)| self.bm_box_key(self.bm_box_value(*n)) == *v)
-                    && e.k3.iter().all(|(p, m)| self.bm_meaning_is(*p, m))
+                    && self.bm_k3_holds(&e.k3)
                     && e.obj_refs
                         .iter()
                         .all(|r| self.bm_obj_is(r.t, r.n) && self.bm_obj_dims(r.n) == r.dims)
@@ -2609,13 +2885,15 @@ impl Globals {
         FAST.with(|f| {
             let mut f = f.borrow_mut();
             f.base = base;
-            f.stamp = f.stamp.wrapping_add(1);
+            f.stamp = f.stamp.wrapping_add(4);
             if f.stamp == 0 || f.seen.len() < size {
                 f.seen = vec![0; size];
-                f.stamp = 1;
+                f.stamp = 4;
             }
             let st = f.stamp;
-            f.seen[cs as usize] = st;
+            f.seen[cs as usize] = st + SEEN_READ;
+            f.pre.clear();
+            f.written_first = 0;
         });
         ST.with(|s| {
             let mut s = s.borrow_mut();
@@ -2740,24 +3018,59 @@ impl Globals {
         ST.with(|s| s.borrow_mut().rec.as_mut().map(f))
     }
 
-    /// First access to control sequence `p` (read, or write before it).
-    fn bm_note_cs(&mut self, p: i32) {
+    fn bm_set_seen(p: i32, state: u32) {
+        FAST.with(|f| {
+            let mut f = f.borrow_mut();
+            let st = f.stamp;
+            f.seen[p as usize] = st + state;
+        });
+    }
+
+    /// The recording reads control sequence `p`'s meaning: in full, or only
+    /// as a token (`token`, [`Meaning::Token`]). Its meaning is an input,
+    /// part of K3, at the first such read before any assignment to `p`,
+    /// and at the first after an `\endgroup` brought back what `p` held
+    /// before the call (BOX-MEMO.md §15).
+    fn bm_note_cs(&mut self, p: i32, token: bool) {
         if !Self::bm_is_cs(p) {
             return;
         }
-        let seen = FAST.with(|f| {
-            let mut f = f.borrow_mut();
-            let st = f.stamp;
-            let e = &mut f.seen[p as usize];
-            let was = *e == st;
-            *e = st;
-            was
+        let d = FAST.with(|f| {
+            let f = f.borrow();
+            f.seen[p as usize].wrapping_sub(f.stamp)
         });
-        if seen {
+        self.bm_note_cs_seen(p, token, d);
+    }
+
+    /// [`bm_note_cs`](Self::bm_note_cs) once `seen[p] - stamp` is `d`.
+    fn bm_note_cs_seen(&mut self, p: i32, token: bool, d: u32) {
+        if d == SEEN_READ || (d == SEEN_TOKEN && token) {
+            return;
+        }
+        let w = self.bm_eq(p).hh();
+        let (t, e) = (w.b0(), w.rh());
+        if d == SEEN_WRITTEN {
+            // the call's own value, unless it is the one from before
+            let back = FAST.with(|f| {
+                f.borrow()
+                    .pre
+                    .iter()
+                    .rev()
+                    .find(|x| x.0 == p)
+                    .is_some_and(|x| x.1 == t && x.2 == e)
+            });
+            if !back {
+                return;
+            }
+        }
+        if token && !token_matters(t) {
+            Self::bm_set_seen(p, SEEN_TOKEN);
+            self.bm_with_rec(|r| r.k3.push((p, Meaning::Token)));
             return;
         }
         match self.bm_meaning(p) {
             Some(m) => {
+                Self::bm_set_seen(p, SEEN_READ);
                 self.bm_with_rec(|r| {
                     r.k3.push((p, m));
                 });
@@ -2766,22 +3079,78 @@ impl Globals {
         }
     }
 
+    /// The recording assigns control sequence `p` (`flashtex_bm_def`, before
+    /// the change). If nothing read its meaning yet, what it holds is not an
+    /// input: the replay's `eq_define` & co. treat whatever is there as the
+    /// normal path did (BOX-MEMO.md §15).
+    ///
+    /// `fin`: the assignment is global or at the call's own level. Then
+    /// what `p` held before the call never comes back inside it (no group
+    /// of the call saved it: `unsave` at the call's own groups restores the
+    /// call's values, and keeps a global one), so no later read keys it.
+    /// Without this, a later local `\def` whose token list landed where the
+    /// overwritten one was freed (the free list hands back the node it was
+    /// just given) looked like that value come back and keyed the call's
+    /// own meaning: `\@ifnextchar`'s `\reserved@b` in beamer's
+    /// `\usebeamercolor`, a miss at every offer.
+    fn bm_note_cs_write(&mut self, p: i32, fin: bool) {
+        let w = self.bm_eq(p).hh();
+        FAST.with(|f| {
+            let mut f = f.borrow_mut();
+            let st = f.stamp;
+            let d = f.seen[p as usize].wrapping_sub(st);
+            if d == SEEN_READ {
+                return;
+            }
+            if d != SEEN_WRITTEN {
+                f.written_first += 1;
+            }
+            if fin {
+                f.seen[p as usize] = st + SEEN_WRITTEN;
+                f.pre.retain(|x| x.0 != p);
+            } else if d != SEEN_WRITTEN {
+                f.seen[p as usize] = st + SEEN_WRITTEN;
+                f.pre.push((p, w.b0(), w.rh()));
+            }
+        });
+    }
+
     /// The end of `get_next`, during a recording.
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_next(&mut self) {
-        let base = FAST.with(|f| f.borrow().base);
+        let p = self.cur_cs;
+        // the body's level, and (one borrow) what the recording did with `p`
+        let (base, d) = FAST.with(|f| {
+            let f = f.borrow();
+            let d = if Self::bm_is_cs(p) {
+                f.seen[p as usize].wrapping_sub(f.stamp)
+            } else {
+                SEEN_READ
+            };
+            (f.base, d)
+        });
         if self.input_ptr < base {
             return self.bm_abort("Level");
         }
         if self.cur_input.state_field != TOKEN_LIST {
             return self.bm_abort("File");
         }
-        if self.cur_cs != 0 {
+        if p != 0 {
             if self.cur_cmd == k::top_bot_mark {
                 return self.bm_abort("Mark");
             }
-            self.bm_note_cs(self.cur_cs);
+            if d == SEEN_READ {
+                return;
+            }
+            // `get_next`'s callers that look only at the token: those that
+            // set `intr_weak` (changes/intrinsics.ch: `get_r_token`, and
+            // `scan_toks` reading a parameter text or a body it does not
+            // expand), `macro_call` matching an argument, `pass_text`
+            let token = self.intr_weak
+                || self.scanner_status == k::matching
+                || self.scanner_status == k::skipping;
+            self.bm_note_cs_seen(p, token, d);
         }
     }
 
@@ -2791,7 +3160,7 @@ impl Globals {
     pub fn flashtex_bm_read(&mut self, p: i32) {
         // a name not found is noted by `flashtex_bm_id`
         if p != UNDEFINED_CS {
-            self.bm_note_cs(p);
+            self.bm_note_cs(p, false);
         }
     }
 
@@ -2814,7 +3183,7 @@ impl Globals {
                     r.k3.push((p, Meaning::Name(name)));
                 }
             });
-            return self.bm_note_cs(p);
+            return self.bm_note_cs(p, false);
         }
         let name: Vec<i32> = (j..j + l).map(|i| self.buffer[i as usize]).collect();
         self.bm_with_rec(|r| {
@@ -2838,6 +3207,21 @@ impl Globals {
             return self.bm_abort("Group");
         }
         self.bm_with_rec(|r| r.ops.push(Op::End));
+    }
+
+    /// `save_for_after(t)` (`\\aftergroup`), during a recording: a token
+    /// saved at the call's own level outlives the call (it is inserted when
+    /// the caller's group ends: xcolor's `\\set@color` saves
+    /// `\\reset@color`), an effect the replay's `save_for_after` makes
+    /// again, in its place among the save-stack entries (§16.3). One saved
+    /// in a group of the call is inserted at that group's end, inside it.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_after(&mut self, t: i32) {
+        let level = self.bm_with_rec(|r| r.start.cur_level).unwrap_or(0);
+        if self.cur_level == level {
+            self.bm_with_rec(|r| r.ops.push(Op::AfterGroup(t)));
+        }
     }
 
     #[cold]
@@ -3018,23 +3402,20 @@ impl Globals {
         }
         // The old value of what an assignment overwrites is not an input:
         // the replay's own `eq_define` & co. treat whatever is there as the
-        // normal path did. A global assignment makes later reads the call's
-        // own; a local one is undone when its group ends, and a later read
-        // then sees the old value, so that value is keyed now.
-        if global || outer {
+        // normal path did. A control sequence's is kept aside, and a later
+        // read that finds it again (brought back by an `\endgroup`) keys it
+        // then (`bm_note_cs`, BOX-MEMO.md §15). For a register: a global
+        // assignment makes later reads the call's own; a local one is
+        // undone when its group ends, and a later read then sees the old
+        // value, so that value is keyed now.
+        if Self::bm_is_cs(p) {
+            self.bm_note_cs_write(p, global || outer);
+        } else if global || outer {
             if Self::bm_is_register(p) {
                 self.bm_with_rec(|r| r.gwritten.insert(RegId::Eqtb(p)));
-            } else if Self::bm_is_cs(p) {
-                FAST.with(|f| {
-                    let mut f = f.borrow_mut();
-                    let st = f.stamp;
-                    f.seen[p as usize] = st;
-                });
             }
         } else if Self::bm_is_register(p) {
             self.bm_note_reg(RegId::Eqtb(p));
-        } else {
-            self.bm_note_cs(p);
         }
         if !self.bm_rec_on {
             return;
@@ -3293,6 +3674,18 @@ impl Globals {
         // trailer), and a replay runs it again
         if c == k::ignore_spaces && chr == 0 {
             let base = self.bm_with_rec(|r| r.base).unwrap_or(i32::MAX);
+            // (the body's last tokens may be `\\fi`s, which `\\ignorespaces`
+            // expands before it reads past the body: xcolor's `\\color` ends
+            // in `\\ignorespaces`, and beamer's `\\usebeamercolor` calls it in
+            // a conditional, `\\else\\color{#1}\\fi`. They are expanded here, as
+            // its `get_x_token` would, and then the recording ends: §16.2)
+            if base != i32::MAX && !self.bm_exhausted(base) && self.bm_only_fis_left(base) {
+                // (`main_control` then goes on with the `\\ignorespaces`)
+                self.bm_expand_fis(base);
+                if !self.bm_rec_on {
+                    return;
+                }
+            }
             if base != i32::MAX && self.bm_exhausted(base) {
                 let tok = self.cur_tok;
                 return self.bm_finish(Some(tok));
@@ -3359,15 +3752,16 @@ impl Globals {
 
     /// The save-stack entries a call left at its own level: only those of
     /// local assignments (`eq_save`'s `restore_old_value` and
-    /// `restore_zero`, e-TeX's `restore_sa`), not an `\\aftergroup` token
-    /// or a group boundary. Walked down from the top as `unsave` pops them.
+    /// `restore_zero`, e-TeX's `restore_sa`) and `\\aftergroup` tokens
+    /// (`insert_token`, each an `Op::AfterGroup`), not a group boundary. Walked down from the top as `unsave` pops them.
     fn bm_saves_only(&self, lo: i32, hi: i32) -> bool {
         let mut k = hi - 1;
         while k >= lo {
             let w = self.save_stack[k as usize].hh();
             match w.b0() {
                 t if t == k::restore_old_value => k -= 2,
-                t if t == k::restore_zero || t == k::restore_sa => k -= 1,
+                // (and `\\aftergroup` tokens, `Op::AfterGroup`)
+                t if t == k::restore_zero || t == k::restore_sa || t == k::insert_token => k -= 1,
                 _ => return false,
             }
         }
@@ -3390,6 +3784,37 @@ impl Globals {
         })
     }
 
+    /// Whether every token left in the input levels from the body's on is a
+    /// control sequence that means `\\fi` now (a primitive's location, or a
+    /// `\\let` of it), and no level is a file or an alignment template.
+    fn bm_only_fis_left(&self, base: i32) -> bool {
+        (base..=self.input_ptr).all(|j| {
+            let l = if j == self.input_ptr {
+                self.cur_input
+            } else {
+                self.input_stack[j as usize]
+            };
+            if l.state_field != TOKEN_LIST || l.index_field == V_TEMPLATE {
+                return false;
+            }
+            let mut q = l.loc_field;
+            let mut n = 0;
+            while q != 0 {
+                let t = self.bm_info(q);
+                if t < k::cs_token_flag || n > 64 {
+                    return false;
+                }
+                let w = self.bm_eq(t - k::cs_token_flag).hh();
+                if w.b0() != k::fi_or_else || w.rh() != k::fi_code {
+                    return false;
+                }
+                q = self.bm_link(q);
+                n += 1;
+            }
+            true
+        })
+    }
+
     /// `big_switch`, during a recording: finish it when the body is done.
     #[cold]
     #[inline(never)]
@@ -3398,10 +3823,40 @@ impl Globals {
             self.bm_rec_on = false;
             return;
         };
+        // (the body's last tokens may be `\\fi`s, which `big_switch`'s
+        // `get_x_token` expands and then reads past the body: beamer's
+        // `\\usebeamercolor` without its optional argument ends in its own
+        // `\\fi`. They are expanded here, as that `get_x_token` would, and
+        // the recording ends: §16.2)
+        if !self.bm_exhausted(base) && self.bm_only_fis_left(base) {
+            self.bm_expand_fis(base);
+            if !self.bm_rec_on {
+                return;
+            }
+        }
         if !self.bm_exhausted(base) {
             return;
         }
         self.bm_finish(None);
+    }
+
+    /// Expand the `\\fi`s left in the input levels from the body's on
+    /// ([`bm_only_fis_left`](Self::bm_only_fis_left)), each a `get_next`
+    /// and an `expand` as `get_x_token` makes them, with the recording's
+    /// observers on; `cur_tok` & co. are left as they were.
+    fn bm_expand_fis(&mut self, base: i32) {
+        let now = (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs);
+        while self.bm_rec_on && !self.bm_exhausted(base) {
+            self.get_next();
+            if self.cur_cmd != k::fi_or_else {
+                // (not reached: `bm_only_fis_left`) the token goes back
+                self.back_input();
+                self.bm_abort("Trailer");
+                break;
+            }
+            self.expand();
+        }
+        (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs) = now;
     }
 
     /// The recording is done: its body is used up, and `trailer` is the
@@ -3638,7 +4093,7 @@ impl Globals {
                 trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
-                fast: compress_groups(&rec.ops),
+                fast: compress_call_level(compress_groups(&rec.ops)),
                 new_cs: rec
                     .ops
                     .iter()
@@ -3687,8 +4142,15 @@ impl Globals {
                     bytes
                 );
             }
+            let tokens = entry
+                .k3
+                .iter()
+                .filter(|(_, m)| matches!(m, Meaning::Token))
+                .count() as u64;
             insert_entry(&mut s, rec.cs, entry);
             s.stats.committed += 1;
+            s.stats.k3_tokens += tokens;
+            s.stats.k3_written_first += FAST.with(|f| f.borrow().written_first) as u64;
         });
         write_stats(false);
     }
@@ -4019,6 +4481,7 @@ impl Globals {
                     }
                 }
                 Op::NewCs { p, name } => self.bm_make_cs(*p, name),
+                Op::AfterGroup(t) => self.save_for_after(*t),
             }
         }
         if let Some(b) = last_badness {
@@ -4159,6 +4622,138 @@ mod tests {
         assert_eq!(
             compress_groups(&ops),
             vec![def(1, 10, 1), def(3, 31, 3), def(4, 40, 3), def(6, 60, 1)]
+        );
+    }
+
+    #[test]
+    fn meanings_found_equal_are_kept_by_location_until_their_list_goes() {
+        let body: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
+        let other: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
+        let mut s = Seen::default();
+        assert!(!s.is(70000, 111, 500, &body));
+        s.note(70000, 111, 500, &body, 1 << 12);
+        s.note(600, 111, 500, &body, 1 << 12);
+        assert!(s.is(70000, 111, 500, &body) && s.is(600, 111, 500, &body));
+        // another type, list or body (the same tokens, another kept body)
+        assert!(!s.is(70000, 112, 500, &body) && !s.is(70000, 111, 501, &body));
+        assert!(!s.is(70000, 111, 500, &other));
+        // the list freed: both entries naming it go
+        assert!(s.has_bit(500));
+        for q in s.by_list.get(&500).cloned().unwrap_or_default() {
+            s.forget_at(q, 500);
+        }
+        assert!(!s.has_bit(500) && !s.is(70000, 111, 500, &body) && !s.is(600, 111, 500, &body));
+        // a location noted again, then everything cleared
+        s.note(600, 111, 502, &body, 1 << 12);
+        s.note(600, 111, 503, &body, 1 << 12);
+        assert!(!s.has_bit(502) && s.has_bit(503) && s.is(600, 111, 503, &body));
+        assert_eq!(s.used, vec![70000, 600]);
+        s.clear();
+        assert!(!s.is(600, 111, 503, &body) && !s.has_bit(503) && s.used.is_empty());
+        s.note(600, 111, 503, &body, 1 << 12);
+        assert_eq!(s.used, vec![600]);
+    }
+
+    fn list(p: i32, tok: i32) -> Op {
+        Op::Def {
+            p,
+            t: 111,
+            v: Val::FreshList(vec![tok]),
+            kind: 0,
+        }
+    }
+
+    #[test]
+    fn a_run_of_fresh_local_values_is_its_first_assignment_with_its_last_value() {
+        // \def\a{1}\def\b{1}\def\a{2}\def\a{3}: \a's entry where its first
+        // assignment made it, with its last value
+        let ops = vec![list(1, 1), list(2, 1), list(1, 2), list(1, 3)];
+        assert_eq!(compress_call_level(ops), vec![list(1, 3), list(2, 1)]);
+        // a \let of \a reads the value it has there: the run ends before it
+        let let_a = Op::Def {
+            p: 5,
+            t: 0,
+            v: Val::LetCs(1),
+            kind: 0,
+        };
+        let ops = vec![
+            list(1, 1),
+            list(1, 2),
+            let_a.clone(),
+            list(1, 3),
+            list(1, 4),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![list(1, 2), let_a.clone(), list(1, 4)]
+        );
+        // a word (it may be the value already there: "reassigning", no save
+        // entry), a global assignment, a kept group that assigns it, a
+        // control sequence entered there: each ends the run
+        let word = def(1, 7, 1);
+        let global = Op::Def {
+            p: 1,
+            t: 111,
+            v: Val::FreshList(vec![9]),
+            kind: 2,
+        };
+        let ops = vec![
+            list(1, 1),
+            list(1, 2),
+            global.clone(),
+            list(1, 3),
+            Op::Begin(1),
+            list(1, 4),
+            Op::End,
+            list(1, 5),
+            list(1, 6),
+            Op::NewCs {
+                p: 1,
+                name: vec![1, 2],
+            },
+            list(1, 7),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![
+                list(1, 2),
+                global,
+                list(1, 3),
+                Op::Begin(1),
+                list(1, 4),
+                Op::End,
+                list(1, 6),
+                Op::NewCs {
+                    p: 1,
+                    name: vec![1, 2]
+                },
+                list(1, 7),
+            ]
+        );
+        let ops = vec![def(3, 1, 1), def(3, 2, 1), word.clone(), word.clone()];
+        assert_eq!(compress_call_level(ops.clone()), ops);
+        // a group that leaves \a alone does not end its run; the caller's
+        // group ending ends every run
+        let ops = vec![
+            list(1, 1),
+            Op::Begin(1),
+            list(2, 1),
+            Op::End,
+            list(1, 2),
+            Op::End,
+            list(1, 3),
+            list(1, 4),
+        ];
+        assert_eq!(
+            compress_call_level(ops),
+            vec![
+                list(1, 2),
+                Op::Begin(1),
+                list(2, 1),
+                Op::End,
+                Op::End,
+                list(1, 4),
+            ]
         );
     }
 
