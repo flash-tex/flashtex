@@ -202,7 +202,9 @@ What it shows:
 - **Why BOX-MEMO misses** (`raw/lead5/boxmemo-misses-full-100.txt`):
   - half the misses are a meaning the key read: `\reserved@a` and `\reserved@b`, LaTeX's scratch
     macros;
-  - the other half are a register or `eqtb` entry, `\count255` and other counts;
+  - the other half are calls whose K2 (parameters such as `\offinterlineskip`'s three and
+    `\uccode`~`) matches no recorded call. The registers in the digest are what changed between
+    calls, not entries of the key (corrected below);
   - D9's guard does not depend on them.
 - **Also seen.** In the host, BOX-MEMO costs 1.2–3.1 % of a first open on the decks and 1.5 % on
   the book (`off` against `def`). The keystroke wins it is there for are not measured here.
@@ -215,6 +217,69 @@ the BOX-MEMO lanes:
 - D9 owning the hook in cold passes and BOX-MEMO in edit windows. Today `owns()` allows one owner
   per macro per session.
 
+## Lead 5 fixed: K3 by first access (#2041), and a hole in the token loops (#2064)
+
+The coordinator's follow-up: check whether a recording keys entries whose first access is a write.
+It did, and `docs/design/engine-v2/BOX-MEMO.md` §15 has the rule and the proof.
+- **Why the hook missed.** `get_next`'s hook keyed the full meaning of every control sequence it
+  delivered, including the target `get_r_token` delivers for a `\def` or `\let`, before the
+  assignment.
+- **The 130 `Meanings` misses of the 252** (`raw/k3/debug-41355186238/misses-main.txt`): the hook
+  defines `\reserved@a`, `\reserved@b` and `\l__cmd_tmpa_tl` before it reads them.
+- **The other 122** were `NotRecorded`: K2 differences, untouched.
+
+**The change, #2041 (head `fbc0cce50`).**
+- A read only as a token keys only the meaning's kind: `\outer`, `#`, `&`/`\cr`, `\if`, `\fi`.
+  The token readers are `get_r_token`, `scan_toks` without expansion, `macro_call` matching, and
+  `pass_text`.
+- An assignment to something nothing read yet keeps the old word aside, out of the key.
+- A later read that finds that word again (an `\endgroup` brought it back) keys it.
+
+**Measured** on the PC, main `6777eff07`, instructions. PDFs were identical in every run.
+
+| | full-100 | full-300 | beamer-30 | madrid | blocks-columns | polish | framed | *Infinite Descent* |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| host first open, #2041 | **−8.32 %** | **−4.19 %** | −1.42 % | +0.11 % | +0.00 % | +0.01 % | +0.00 % | +0.00 % |
+| host first open, #2064 | −6.83 % | −3.66 % | −1.19 % | +0.43 % | −0.06 % | −0.02 % | +0.06 % | +0.20 % |
+| command line, BOX-MEMO off, #2041 | −0.00 % | | +0.00 % | −0.00 % | −0.00 % | +0.00 % | −0.00 % | +0.00 % |
+| command line, the host's two names, #2041 | −8.58 % | | −1.36 % | +0.08 % | −0.00 % | −0.00 % | −0.00 % | −0.00 % |
+
+The host row is run 41367287585 (three opens per cell). The command-line rows are run
+41367284395 (three reps); `raw/k3/cli-final-41367284395/table.md` has every row, the
+`\XC@col@rlet` variant included.
+- **Lead 5 on full-100.** The hook's hits went from 163 to 195 of 226 (D9 gets 198), and its
+  recordings from 63 to 31. The first open is now within about 0.2 % of BOX-MEMO off: 18.70 G
+  against 18.69 G in run 41355171586.
+- **On full-300,** BOX-MEMO's ownership of the hook now saves about 5.9 % against off, up from
+  1.7 %.
+- **The remaining 31 misses on full-100** are all `NotRecorded`, that is K2
+  (`raw/k3/debug-41355186238/misses-branch.txt`).
+- **E3's recording cost** (`fit_xc.py`: each document's `\XC@col@rlet` net against its hits and
+  recordings):
+
+  | build | cost of a recording | saving per hit |
+  |---|---:|---:|
+  | main | 0.799 M | 0.255 M |
+  | #2041 | 0.805 M | 0.254 M |
+  | #2064 | 1.011 M | 0.262 M |
+
+  An earlier #2041 head, `7181c7071`, cost 0.867 M per recording. It looked old values up in a
+  hash and loaded `eqtb` before the stamp test; `80071d7ca` and `fbc0cce50` fixed both.
+
+  So #2041 leaves E3 where it was: the break-even is 3.16 hits per recording, and E3 still does
+  not land.
+
+**The hole that predates #2041 (#2064, for the Commander).**
+- `changes/throughput.ch`'s token loops [4]–[7] read in place whenever D9 is not recording, so a
+  BOX-MEMO recording never saw those control sequences. For example, a body's `\x` that becomes
+  `#` between calls was replayed past.
+- `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on when the
+  loops are left as they were.
+- **#2064's fix:** the loops go through `get_next` while a recording is in progress, as they do
+  for D9. Its cost is in the rows above: about 1.0 M per recording against 0.8 M.
+- **Tried and dropped:** reporting each control sequence from inside the loops. It cost every run
+  0.2–0.7 %, BOX-MEMO off included (run 41357526880, `raw/k3/cli-a-b-41357526880/table.md`).
+
 ## E1: PGO, not measured
 
 `l6-pgo.yml` on GitHub's M1 VMs (runs 41334149491 and 41339976306):
@@ -222,8 +287,15 @@ the BOX-MEMO lanes:
   building the format.
 - That happens with an 8 MB stack and with a 64 MB one.
 
-That is two attempts, so the lane stops, as its bounds say. Run 41346722990 (queued) adds an
-lldb backtrace. There are no PGO numbers, so there is nothing to put to `release.yml`.
+**The lldb backtrace** (run 41346722990): `EXC_BAD_ACCESS` at `0x200000000` in
+`__llvm_profile_instrument_target`, LLVM's value-profiling runtime.
+
+**A cheap fix, being tried** (run 41365690360, queued). `l6pgo.sh`'s `L6PGO_GEN` builds the
+instrumented engine with `-Cllvm-args=-disable-vp=true`. That keeps the branch and block counts PGO
+uses and drops only indirect-call promotion, and `scripts/build-engine-dist.sh` itself is not
+changed.
+
+If that run fails too, PGO stops here.
 
 ## Files
 
@@ -236,4 +308,9 @@ lldb backtrace. There are no PGO numbers, so there is nothing to put to `release
   `traces/` and `boxmemo-stats/`;
 - `lead5/`: the host first opens (`host-41337613821.jsonl`, `summary-41337613821.md`), and
   the command-line debug run 41343123964 (its BOX-MEMO and D9 stats, and a digest of
-  `FLASHTEX_BOXMEMO_DEBUG`'s misses).
+  `FLASHTEX_BOXMEMO_DEBUG`'s misses);
+- `k3/`: the runs of #2041 and #2064, one directory per run with its summary, rows, engines and
+  BOX-MEMO stats. Beside them are the scripts that made the tables:
+  - `ab_table.py`, the A/B tables;
+  - `fit_xc.py`, E3's recording cost;
+  - `misses.py`, the miss digests.
