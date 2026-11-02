@@ -872,9 +872,50 @@ thread_local! {
     static WINDOW: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
-/// The host: an edit's window opens (`true`) or closes.
+/// The host: an edit's window opens (`true`) or closes. With
+/// `FLASHTEX_BOXMEMO_DEBUG`, each window's offers, hits, recordings and
+/// misses by reason are printed when it closes (debugging only).
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+    if !debug() {
+        return;
+    }
+    type Snap = (u64, u64, u64, BTreeMap<String, u64>, BTreeMap<String, u64>);
+    thread_local! {
+        static AT_OPEN: RefCell<Option<Snap>> = const { RefCell::new(None) };
+    }
+    let now: Snap = ST.with(|s| {
+        let st = &s.borrow().stats;
+        (
+            st.offers,
+            st.hits,
+            st.recordings,
+            st.misses.clone(),
+            st.abandoned.clone(),
+        )
+    });
+    if open {
+        eprintln!("boxmemo: window open");
+        AT_OPEN.with(|a| *a.borrow_mut() = Some(now));
+        return;
+    }
+    let Some(o) = AT_OPEN.with(|a| a.borrow_mut().take()) else {
+        return;
+    };
+    let delta = |a: &BTreeMap<String, u64>, b: &BTreeMap<String, u64>| -> Vec<(String, u64)> {
+        a.iter()
+            .map(|(k, v)| (k.clone(), v - b.get(k).copied().unwrap_or(0)))
+            .filter(|(_, v)| *v > 0)
+            .collect()
+    };
+    eprintln!(
+        "boxmemo: window closed: {} offers, {} hits, {} recordings, misses {:?}, abandoned {:?}",
+        now.0 - o.0,
+        now.1 - o.1,
+        now.2 - o.2,
+        delta(&now.3, &o.3),
+        delta(&now.4, &o.4)
+    );
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
@@ -2594,6 +2635,9 @@ impl Globals {
         }
         let refused = ST.with(|s| s.borrow().aborts.get(&cs).copied().unwrap_or(0) >= ABORT_BUDGET);
         if refused {
+            if debug() && WINDOW.with(|w| w.get()) == Some(true) {
+                eprintln!("boxmemo: window refused \\{}", self.cs_name_string(cs));
+            }
             return;
         }
         let (k2, k4) = (self.bm_k2(), k4_now);
@@ -2604,6 +2648,12 @@ impl Globals {
         ST.with(|s| {
             *s.borrow_mut().stats.misses.entry(why.into()).or_default() += 1;
         });
+        if debug() && WINDOW.with(|w| w.get()) == Some(true) {
+            eprintln!(
+                "boxmemo: window miss \\{} {why}",
+                self.cs_name_string(self.warning_index)
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
