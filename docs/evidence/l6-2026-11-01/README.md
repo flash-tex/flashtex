@@ -290,12 +290,14 @@ The host row is run 41367287585 (three opens per cell). The command-line rows ar
 **The lldb backtrace** (run 41346722990): `EXC_BAD_ACCESS` at `0x200000000` in
 `__llvm_profile_instrument_target`, LLVM's value-profiling runtime.
 
-**A cheap fix, being tried** (run 41365690360, queued). `l6pgo.sh`'s `L6PGO_GEN` builds the
-instrumented engine with `-Cllvm-args=-disable-vp=true`. That keeps the branch and block counts PGO
-uses and drops only indirect-call promotion, and `scripts/build-engine-dist.sh` itself is not
-changed.
-
-If that run fails too, PGO stops here.
+**The cheap fix tried, which failed** (run 41365690360). `l6pgo.sh`'s `L6PGO_GEN` built the
+instrumented engine with `-Cllvm-args=-disable-vp=true`; `scripts/build-engine-dist.sh` itself was
+not changed. It crashed in the same function: `EXC_BAD_ACCESS` at `0x3a65646f43797274`, which is
+the ASCII text "tryCode:" read as a pointer.
+- **What follows:** either the flag did not turn value profiling off in rustc's pipeline, or the
+  profile data is overwritten.
+- **Not a cheap fix either way, so PGO stops here, as agreed.** The crash log is
+  `pgo-crash.txt` in that run's artifact.
 
 ## Files
 
