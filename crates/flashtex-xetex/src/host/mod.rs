@@ -185,6 +185,11 @@ pub fn main(argv: Vec<String>) -> i32 {
             return 1;
         }
     };
+    // The per-compile checks' files outside the document (S₀'s key: every
+    // file the preamble read) vouched for by the kernel's events instead of
+    // a `stat` each, as in the pdfTeX host (`fswatch`; `FLASHTEX_FSWATCH=off`
+    // keeps it off): about 1 ms a keystroke on T7's `full-120`.
+    flashtex_engine::fswatch::enable();
     let (texmf, formats) = prepare(&exe, &opts, &children);
     println!("flashtex-host-unicode: {texmf}");
     serve(&exe, &opts, texmf, formats, children)
@@ -720,6 +725,14 @@ fn run_job(
         }
     };
     let _ = std::fs::create_dir_all(scratch);
+    // (the document's own directories, which the client and the run write
+    // at every compile, are `stat`ed at every check: `fswatch::exclude`)
+    for d in [job.root.clone(), job.output_dir.clone()] {
+        flashtex_engine::fswatch::exclude(&d.to_string_lossy());
+        if let Ok(c) = std::fs::canonicalize(&d) {
+            flashtex_engine::fswatch::exclude(&c.to_string_lossy());
+        }
+    }
     // `[fonts]` (PROPOSAL.md §4.5), read after the client's buffers are
     // written, so an unsaved manifest counts
     let fonts = fonts::setup(&job.root, &job.format);
