@@ -90,18 +90,50 @@ final class EngineV3RealDocTypingTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init) ?? MainThreadStall.frameMs
     }
 
+    /// With `FLASHTEX_REALDOC_STALL_MS` set (the hosted PR job), at most this many keys, and at most
+    /// this many main-run-loop turns, per phase may exceed the soft budget (the env value) as long
+    /// as they stay under `hardLimitMs`. Hosted 3-vCPU VMs have 100-250 ms hiccups unrelated to
+    /// the PR (#2146: 6 of 7 PR runs failed, several on PRs that never touch the app).
+    private static let hostedTolerated = 3
+
+    /// With the env budget set, the hard limit is `max(hardLimitFactor x budget, hardLimitFloorMs)`:
+    /// any key or turn over it fails outright. 500 ms still catches the owner's 1.9 s freeze by
+    /// about 4x. Unset (nightly, reference), there is one limit, the one-frame budget.
+    private static let hardLimitFactor = 5.0
+    private static let hardLimitFloorMs = 500.0
+
+    private var hostedBudgetMs: Double? {
+        ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init)
+    }
+
     private func gate(_ p: Phase) {
         let frame = budgetMs
+        let hard: Double? = hostedBudgetMs.map { max(Self.hardLimitFactor * $0, Self.hardLimitFloorMs) }
+        let allowed = hard == nil ? 0 : Self.hostedTolerated
+        let limits = hard.map { "soft budget \(frame) ms (up to \(allowed) allowed), hard limit \($0) ms" } ?? "budget \(frame) ms"
         XCTAssertEqual(p.keys.count, p.wanted, "\(p.name): \(p.wanted - p.keys.count) of \(p.wanted) keys never handled")
         let late = p.keys.enumerated().filter { $0.element.ms > frame }
-        XCTAssertTrue(late.isEmpty, "\(p.name): \(late.count) of \(p.keys.count) keys reached the text storage later than the budget "
-                      + "(\(frame) ms): " + late.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element.ms)) ms" }.joined(separator: ", "))
+        let lateList = late.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element.ms)) ms" }.joined(separator: ", ")
+        let lateHard = late.filter { $0.element.ms > (hard ?? .infinity) }
+        if !lateHard.isEmpty {
+            XCTFail("\(p.name): HARD limit crossed by \(lateHard.count) keys (\(limits)): "
+                    + lateHard.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element.ms)) ms" }.joined(separator: ", "))
+        } else {
+            XCTAssertLessThanOrEqual(late.count, allowed, "\(p.name): \(late.count) of \(p.keys.count) keys reached the text storage later than the "
+                                     + "budget, more than the \(allowed) allowed (\(limits)): " + lateList)
+        }
         let missing = p.keys.filter { !$0.inStorage }.count
         XCTAssertEqual(missing, 0, "\(p.name): \(missing) keys not in the editor's text storage")
         let stalls = p.report.over(frame)
-        XCTAssertTrue(stalls.isEmpty, "\(p.name): \(stalls.count) main run-loop turns over the budget (\(frame) ms), longest "
-                      + stalls.prefix(8).map { String(format: "%.1f ms at +%.0f ms", $0.ms, Double($0.startNs &- p.report.startNs) / 1e6) }
-                          .joined(separator: ", "))
+        let stallList = stalls.prefix(8).map { String(format: "%.1f ms at +%.0f ms", $0.ms, Double($0.startNs &- p.report.startNs) / 1e6) }
+            .joined(separator: ", ")
+        let stallHard = stalls.filter { $0.ms > (hard ?? .infinity) }
+        if !stallHard.isEmpty {
+            XCTFail("\(p.name): HARD limit crossed by \(stallHard.count) main run-loop turns (\(limits)); turns over budget: " + stallList)
+        } else {
+            XCTAssertLessThanOrEqual(stalls.count, allowed, "\(p.name): \(stalls.count) main run-loop turns over the budget, more than the "
+                                     + "\(allowed) allowed (\(limits)), longest " + stallList)
+        }
     }
 
     func testTypingOnALatePageOfARealBookNeverStallsTheEditor() async throws {
