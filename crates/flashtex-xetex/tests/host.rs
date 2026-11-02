@@ -1324,6 +1324,106 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An export (Export PDF…, Print…) between two keystrokes is a run of its
+/// own, in a process of its own (spec §6.3): it leaves the resident engine's
+/// S₀, so the keystroke after it goes on from S₀ or a page, not from the
+/// format (run by the resident engine, the export replaced S₀ and the page
+/// checkpoints with its own, made without the display list's source map),
+/// and every compile writes what the same compiles in processes of their
+/// own write (`FLASHTEX_UNICODE_INPROCESS=0`, the oracle).
+#[test]
+fn an_export_leaves_the_next_keystroke_incremental() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=6 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..8 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}See~\\ref{{p2}}.\n\\end{{document}}\n"
+    );
+    let first = doc.replace("See~", "Look at~");
+    let second = doc.replace("See~", "Look here at~");
+    // (text, export)
+    let steps = [
+        (&doc, false),
+        (&first, false),
+        (&first, true),
+        (&second, false),
+        (&first, false),
+    ];
+    type Out = (String, Option<String>, Vec<u8>, Vec<Vec<u8>>);
+    let run = |tag: &str, envs: &[(&str, &str)]| -> Vec<Out> {
+        let sub = dir.join(tag);
+        let (proj, out) = project(&sub, &doc);
+        let mut e = vec![("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, (text, export)) in steps.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.to_string())];
+            r.export = *export;
+            c.compile(&r).unwrap();
+            let (ev, done) = events(&mut c, id);
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let pages = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Page(p) => Some(p.encode()),
+                    _ => None,
+                })
+                .collect();
+            outs.push((
+                starts,
+                done.str_field("status").map(String::from),
+                std::fs::read(Path::new(&out).join("main.pdf")).unwrap_or_default(),
+                pages,
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run("own", &[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    let got = run("resident", &[]);
+    // (the compile before the export went on from a page: the premise)
+    assert!(got[1].0.starts_with("page"), "{:?}", got[1].0);
+    assert!(
+        got[3].0.starts_with("s0") || got[3].0.starts_with("page"),
+        "the keystroke after the export: {:?}",
+        got[3].0
+    );
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        assert_eq!(a.1.as_deref(), Some("ok"), "compile {}", i + 1);
+        assert_eq!(a.1, b.1, "compile {}: the status ({})", i + 1, a.0);
+        assert!(a.2 == b.2, "compile {}: the PDFs differ ({})", i + 1, a.0);
+        assert!(a.3 == b.3, "compile {}: the pages differ ({})", i + 1, a.0);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A compile cancelled while it runs from S₀ or a page leaves the output
 /// files as the last complete run left them (`resident::Resident::guard`):
 /// the next compile still goes on from S₀ or a page (its `.aux` was cut

@@ -432,7 +432,12 @@ pub fn run_once(
 ) -> Result<RunResult, String> {
     std::fs::create_dir_all(&job.output_dir)
         .map_err(|e| format!("{}: {e}", job.output_dir.display()))?;
-    if let Some(sh) = inproc {
+    // An export is a run of its own, in a process of its own (spec §6.3),
+    // as the pdfTeX host's: run by the resident engine, it replaced the
+    // engine's S₀ and page checkpoints with its own (made without the
+    // display list's source map, so the next keystroke's run could not go
+    // on from them either, and ran from the format).
+    if let Some(sh) = inproc.filter(|_| !job.export) {
         return run_in_process(
             sh,
             format_dir,
