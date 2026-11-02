@@ -2783,6 +2783,39 @@ impl Globals {
         }
     }
 
+    /// `get_next` popped a used-up token list, during a recording. When it
+    /// was the last of the call's levels and `big_switch`'s own
+    /// `get_x_token` popped it -- `bm_at_switch`, no `expand` in progress,
+    /// no macro's parameters being scanned -- the call is over: the token
+    /// `get_next` reads next is the first after it, which the next command
+    /// reads as it would after a replay. The recording ends here, before
+    /// that token is read (`bm_finish`'s checks as at `big_switch`).
+    ///
+    /// Without this, a body whose last tokens only expand (LaTeX's `\end`:
+    /// `\if@endpe ... \fi`, the `env/.../after` hook, `\if@ignore ...
+    /// \fi` after its last `\endgroup`) was used up inside that
+    /// `get_x_token`, not at `big_switch`, and the read of the next token
+    /// abandoned it (`Level`): every frame on Infinite Descent (ntheorem's
+    /// `*@framecommand`, a TikZ picture ending in `\end{tikzpicture}`),
+    /// about a third of an edited page's instructions there (lane
+    /// EDITED-PAGE). A read past the call anywhere else -- a primitive's
+    /// look-ahead, a macro's parameters, an expansion's scan -- still
+    /// abandons it (`flashtex_bm_next`).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_popped(&mut self) {
+        let Some(base) = self.bm_with_rec(|r| r.base) else {
+            return;
+        };
+        if self.input_ptr < base
+            && self.bm_at_switch
+            && self.expand_depth_count == 0
+            && self.scanner_status == k::normal
+        {
+            self.bm_finish(None);
+        }
+    }
+
     /// The end of `get_next`, during a recording.
     #[cold]
     #[inline(never)]

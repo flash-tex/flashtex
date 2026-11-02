@@ -745,3 +745,56 @@ Measured (NixOS PC, T7 beamer-30, two rounds of 19 keys, instructions to the edi
 key 1 143 M → 93 M (the steady keys 92 M); the open's preamble row (a run from the format) 24.5 G →
 24.1 G instructions for the whole compile, 5.29 G → 5.24 G to its first page, wall unchanged.
 Evidence: `docs/evidence/t7-margin-2026-10-21/`.
+
+## 15. Revision 6: a call whose last tokens only expand ends where its last level is popped (lane EDITED-PAGE, 2026-11-01)
+
+**The problem (measured).** On *Infinite Descent* x2's late page (t7 `letter@x2-late`), 155 M
+engine instructions typeset the edited page. The macro profile of that window (instruction clock,
+roots) put about a third of it in the theorem frames:
+- ntheorem's `\lemma@framecommand` and kin, offered as `*@framecommand`: each draws a TikZ
+  picture around the theorem's box;
+- `\fb@putboxa` around them, which carries the picture's `\end{tikzpicture}`, run after the
+  frame command's own level is used up.
+
+Every recording of a frame command was abandoned with `Level`. The body ends with
+`\end{tikzpicture}`, and LaTeX's `\end` ends with tokens that only expand after its last
+`\endgroup`: `\if@endpe ... \fi`, the `env/.../after` hook, `\if@ignore ... \fi`. Those levels
+are used up inside `big_switch`'s `get_x_token`, not at `big_switch` (§4.2), so the same
+`get_x_token` popped them and read the token after the call (`\centerline`'s `\hss`).
+
+**The rule.** `get_next` reports a popped token list during a recording (`flashtex_bm_popped`,
+`changes/boxmemo.ch`, after `end_token_list` in section 357). When it was the last of the call's
+levels (`input_ptr` below the body's), the recording ends there (`bm_finish`, with §4.2's checks)
+if `big_switch`'s own `get_x_token` popped it, that is, when all three hold:
+- `bm_at_switch`;
+- no `expand` in progress (`expand_depth_count = 0`);
+- no macro's parameters being scanned (`scanner_status = normal`).
+
+A read past the call anywhere else still abandons the recording (`Level`): a primitive's
+look-ahead (a number's digits, a keyword), a macro's parameters, an expansion's scan.
+
+**Why it is sound.** At that point the call has run every token of its body. The next token
+`get_next` reads is the first after the call, and the next command reads it as it would after a
+replay: the replay pops the body at `macro_call`, and the same `get_x_token` then reads on. The
+expansions between the last command and the pop belong to the recording, and they are observed
+as before (meanings read, conditionals, `\csname`). The state at that point is exactly the state
+the normal path has when it goes on, and that is the state the recording is compared and
+committed against.
+
+**Tests** (`tests/boxmemo.rs`, off, on and verify, the full-state verifier included):
+- `calls_ending_in_expansions_replay`: a draw call around a box it moves, followed by `\hss`, and
+  a measure call, each ending in conditionals. They replay, with logs identical to the normal path.
+- `a_tail_that_reads_past_the_call_never_replays`: the last expansion takes the next token as a
+  parameter, or `\number` reads more digits. Neither replays.
+
+**Measured.** M5 Pro, `letter@x2-late`, 8 keys, steady keys, with #1913 and #1914 applied:
+- typesetting to the edited page: 155 M → 106 M;
+- `edited_instr_k`: 173 M → 123 M;
+- `to_edited_instr_k`: 324 M → 273 M.
+
+What is left, by the profile:
+- the output routine;
+- fancyhdr's head and foot, refused by `OuterBox`: `\normalsize` sets `\strutbox` at the call's
+  own level (`\size@update`);
+- framed's `\MakeFramed`, which puts its pre-penalties and skips on the main vertical list;
+- the text.

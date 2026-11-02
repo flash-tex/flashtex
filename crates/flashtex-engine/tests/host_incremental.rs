@@ -3589,8 +3589,21 @@ fn s1_store_env(proj: &Path, out: &Path, cache: &Path, name: &str, env: &[(&str,
     while !(stored(cache, "s0") && stored(cache, "s1")) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
+    if !stored(cache, "s1") {
+        // (why: the next DONE says how the last save went, `s1_save`)
+        id += 1;
+        let mut r = req(id, proj, out, "main.tex");
+        r.viewport = Some(S1_VIEW);
+        let o = compile(&mut c, &mut view, &r);
+        panic!(
+            "no S1 was stored: {}",
+            o.done
+                .get("s1_save")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "no save was tried".into())
+        );
+    }
     let _ = c.bye();
-    assert!(stored(cache, "s1"), "no S1 was stored");
 }
 
 /// The PDF and log a from-scratch compile gives in the same directories
