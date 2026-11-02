@@ -800,7 +800,16 @@ fn forward(
     let tracking = held.tracking();
     // (a run in this process compared its frames with the client's itself)
     let compare = tracking && !in_process;
+    // SCRATCH: per kind before the first page sent: (frames, bytes, ms
+    // handling, ms sending); and the ms waiting for frames
+    let mut fwd: HashMap<u8, (u32, usize, f64, f64)> = HashMap::new();
+    let mut fwd_wait = 0.0f64;
+    let mut fwd_on = std::env::var_os("FLASHTEX_UNICODE_STAGES").is_some();
+    let mut t_wait = Instant::now();
     while let Ok(Some((k, body))) = frame::read_frame(&mut r) {
+        let t_frame = Instant::now();
+        fwd_wait += (t_frame - t_wait).as_secs_f64() * 1e3;
+        let raw_len = body.len();
         // (the frame as the engine made it: a run in this process compares
         // that)
         let raw_digest =
@@ -858,15 +867,40 @@ fn forward(
         if k == kind::PAGE {
             res.pages += 1;
         }
+        let t_send = Instant::now();
+        let mut first_now = false;
         if !held_already {
             if k == kind::PAGE && res.first_page_ms.is_none() {
                 crate::out::abs("forward_first_page", None);
                 res.first_page_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
+                first_now = true;
             }
             if !send(out, k, &body) {
                 break;
             }
         }
+        if fwd_on {
+            let e = fwd.entry(k).or_default();
+            e.0 += 1;
+            e.1 += raw_len;
+            e.2 += (t_send - t_frame).as_secs_f64() * 1e3;
+            e.3 += t_send.elapsed().as_secs_f64() * 1e3;
+            if first_now {
+                let mut v: Vec<_> = fwd.iter().collect();
+                v.sort_by_key(|(k, _)| **k);
+                eprintln!(
+                    "[fwd] wait {fwd_wait:.3} ms; {}",
+                    v.iter()
+                        .map(|(k, (n, b, h, s))| format!(
+                            "k{k}: {n} frames {b} B handle {h:.3} send {s:.3}"
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+                fwd_on = false;
+            }
+        }
+        t_wait = Instant::now();
         if tracking && k == kind::PAGE {
             let i = index.unwrap_or(0);
             // `PAGES` after the first page sent, and at the viewport
