@@ -1,0 +1,95 @@
+{
+ "about": "measurement only (lane BEAMER-FRAME, 2026-11-01): BOX-MEMO coverage of beamer decks' edited keystrokes; sites from pdflatex's SyncTeX",
+ "target_ms": 20.0,
+ "pr_gate": {
+  "rerun_pages_max": 3,
+  "to_edited_instr_m_max": 500,
+  "to_edited_instr_m_target": 100
+ },
+ "docs": {
+  "long-deck": {
+   "source": {
+    "manifest": "beamer.json",
+    "id": "v3-long-deck"
+   },
+   "pages": 118,
+   "sites": {
+    "start": {
+     "line": 63,
+     "page": 15
+    },
+    "middle": {
+     "line": 188,
+     "page": 58
+    },
+    "end": {
+     "line": 335,
+     "page": 106
+    }
+   }
+  },
+  "beamer-madrid": {
+   "source": {
+    "manifest": "beamer.json",
+    "id": "rw-beamer-madrid"
+   },
+   "pages": 7,
+   "sites": {
+    "start": {
+     "line": 23,
+     "page": 1
+    },
+    "middle": {
+     "line": 57,
+     "page": 3
+    },
+    "end": {
+     "line": 82,
+     "page": 6
+    }
+   }
+  },
+  "beamer-visuals": {
+   "source": {
+    "manifest": "beamer.json",
+    "id": "rw-beamer-visuals"
+   },
+   "pages": 7,
+   "sites": {
+    "start": {
+     "line": 36,
+     "page": 2
+    },
+    "middle": {
+     "line": 48,
+     "page": 3
+    },
+    "end": {
+     "line": 61,
+     "page": 6
+    }
+   }
+  },
+  "beamer-blocks-columns": {
+   "source": {
+    "manifest": "beamer.json",
+    "id": "rw-beamer-blocks-columns"
+   },
+   "pages": 6,
+   "sites": {
+    "start": {
+     "line": 26,
+     "page": 1
+    },
+    "middle": {
+     "line": 56,
+     "page": 3
+    },
+    "end": {
+     "line": 80,
+     "page": 4
+    }
+   }
+  }
+ }
+}
