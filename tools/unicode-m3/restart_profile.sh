@@ -44,6 +44,7 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
     envs=(FLASHTEX_POOL="$INCR_BENCH_DIR/cur/pdftex.pool" FLASHTEX_FORMATS="$INCR_BENCH_DIR/fmt-cur")
   else
     exe="$UH"
+    envs=(FLASHTEX_UNICODE_STAGES=1)
   fi
   rm -f "$sock"
   env "${envs[@]}" nice -n 5 "$exe" --socket "$sock" --s0-cache "$d/s0" > "$d/host.out" 2> "$d/host.err" &
@@ -66,9 +67,11 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
   wait "$hp" 2>/dev/null || true
   {
     echo "== $variant at $at: $(grep summary "$WORK/r/keys-$variant-$at.jsonl" | cut -c1-400)"
-    "${PERF_CMD[@]}" report -i "$d/perf.data" --no-children --sort dso,symbol --stdio -F overhead,dso,sym 2>/dev/null \
-      | grep -v '^#' | grep -v '^$' | head -70
+    if [[ $variant != classic* ]]; then python3 "$ROOT/tools/unicode-m3/stages_summary.py" "$d/host.err"; fi
+    "${PERF_CMD[@]}" report -i "$d/perf.data" --no-children --sort dso,symbol --stdio 2>/dev/null \
+      | grep -v '^#' | grep -v '^$' | sort -t% -k1 -rn | head -90
   } > "$WORK/r/perf-$variant-$at.txt" || true
+  grep -v '^\[stage\] page' "$d/host.err" | tail -200 > "$WORK/r/host-err-$variant-$at.txt" || true
   cat "$WORK/r/perf-$variant-$at.txt" | head -45
   rm -rf "$d"
 }
