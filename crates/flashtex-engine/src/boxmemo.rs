@@ -658,6 +658,9 @@ struct Fast {
     /// back) is a first read (BOX-MEMO.md §15). A call assigns a few: a
     /// list searched from its end costs less than a hash.
     pre: Vec<(i32, i32, i32)>,
+    /// How many control sequences the recording assigned before it read
+    /// them (`Stats::k3_written_first`).
+    written_first: u32,
 }
 
 /// `p`'s meaning is in K3 in full (or it is the macro itself).
@@ -2985,6 +2988,7 @@ impl Globals {
             let st = f.stamp;
             f.seen[cs as usize] = st + SEEN_READ;
             f.pre.clear();
+            f.written_first = 0;
         });
         ST.with(|s| {
             let mut s = s.borrow_mut();
@@ -3174,13 +3178,32 @@ impl Globals {
     /// the change). If nothing read its meaning yet, what it holds is not an
     /// input: the replay's `eq_define` & co. treat whatever is there as the
     /// normal path did (BOX-MEMO.md §15).
-    fn bm_note_cs_write(&mut self, p: i32) {
+    ///
+    /// `fin`: the assignment is global or at the call's own level. Then
+    /// what `p` held before the call never comes back inside it (no group
+    /// of the call saved it: `unsave` at the call's own groups restores the
+    /// call's values, and keeps a global one), so no later read keys it.
+    /// Without this, a later local `\def` whose token list landed where the
+    /// overwritten one was freed (the free list hands back the node it was
+    /// just given) looked like that value come back and keyed the call's
+    /// own meaning: `\@ifnextchar`'s `\reserved@b` in beamer's
+    /// `\usebeamercolor`, a miss at every offer.
+    fn bm_note_cs_write(&mut self, p: i32, fin: bool) {
         let w = self.bm_eq(p).hh();
         FAST.with(|f| {
             let mut f = f.borrow_mut();
             let st = f.stamp;
             let d = f.seen[p as usize].wrapping_sub(st);
-            if d != SEEN_READ && d != SEEN_WRITTEN {
+            if d == SEEN_READ {
+                return;
+            }
+            if d != SEEN_WRITTEN {
+                f.written_first += 1;
+            }
+            if fin {
+                f.seen[p as usize] = st + SEEN_WRITTEN;
+                f.pre.retain(|x| x.0 != p);
+            } else if d != SEEN_WRITTEN {
                 f.seen[p as usize] = st + SEEN_WRITTEN;
                 f.pre.push((p, w.b0(), w.rh()));
             }
@@ -3481,7 +3504,7 @@ impl Globals {
         // undone when its group ends, and a later read then sees the old
         // value, so that value is keyed now.
         if Self::bm_is_cs(p) {
-            self.bm_note_cs_write(p);
+            self.bm_note_cs_write(p, global || outer);
         } else if global || outer {
             if Self::bm_is_register(p) {
                 self.bm_with_rec(|r| r.gwritten.insert(RegId::Eqtb(p)));
@@ -4257,7 +4280,7 @@ impl Globals {
             insert_entry(&mut s, rec.cs, entry);
             s.stats.committed += 1;
             s.stats.k3_tokens += tokens;
-            s.stats.k3_written_first += FAST.with(|f| f.borrow().pre.len()) as u64;
+            s.stats.k3_written_first += FAST.with(|f| f.borrow().written_first) as u64;
         });
         write_stats(false);
     }
