@@ -21,7 +21,7 @@ git rev-parse HEAD > "$OUT/HEAD"
 cargo build --release --locked -p flashtex-engine -p flashtex-display-list
 bash tools/incr-bench/mkeng.sh prof
 rm -rf "$OUT/base"; git fetch -q --depth=1 origin "$BASE_REF" && git worktree add --detach "$OUT/base" FETCH_HEAD
-(cd "$OUT/base" && git rev-parse HEAD > "$OUT/BASE" && CARGO_TARGET_DIR="$W/target-base" cargo build --release --locked \
+(cd "$OUT/base" && git rev-parse HEAD > "$OUT/base-head.txt" && CARGO_TARGET_DIR="$W/target-base" cargo build --release --locked \
    -p flashtex-engine -p flashtex-display-list && CARGO_TARGET_DIR="$W/target-base" bash tools/incr-bench/mkeng.sh base)
 export JUMPS_CLIENT=$IB/prof/dl3-keys
 python3 tools/incr-bench/mkdocs.py >/dev/null

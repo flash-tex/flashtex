@@ -58,6 +58,6 @@ jobs:
             ${{ runner.temp }}/mm/*.jsonl
             ${{ runner.temp }}/mm/*.txt
             ${{ runner.temp }}/mm/HEAD
-            ${{ runner.temp }}/mm/BASE
+
             ${{ runner.temp }}/mm.log
           if-no-files-found: ignore
