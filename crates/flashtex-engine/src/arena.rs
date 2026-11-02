@@ -1984,6 +1984,45 @@ impl Core {
         b.logs = out_logs;
     }
 
+    /// Drop the newest checkpoint as if it had never been taken: the open
+    /// log becomes the previous checkpoint's, holding the pre-image at that
+    /// checkpoint of every chunk written since (none left: plain memory).
+    fn drop_newest(&mut self) {
+        let _m = crate::memstat::scope(crate::memstat::tag::LOG);
+        self.drop_part();
+        self.set_also(None);
+        if self.ids.pop().is_none() {
+            return;
+        }
+        let open = self.logs.pop().expect("a log per checkpoint");
+        let Some(prev) = self.logs.pop() else {
+            self.free_log(open);
+            let t = self.touched.clone();
+            self.saved().copy_from_slice(&t);
+            return;
+        };
+        let logs = [prev, open];
+        let mut cs: Vec<u32> = logs.iter().flat_map(|l| l.chunk_ids()).collect();
+        cs.sort_unstable();
+        cs.dedup();
+        let live = |c: u32| self.chunk_ptr(c as usize) as *const u64;
+        let bufs = rewound(self.nchunks, &cs, &live, &logs);
+        for log in logs {
+            self.free_log(log);
+        }
+        self.clear_saved();
+        let mut log = Log::default();
+        for (i, &c) in cs.iter().enumerate() {
+            let dst = self.slab.take();
+            let src = &bufs[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS];
+            // SAFETY: a slab chunk of CHUNK_WORDS words.
+            unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), dst, CHUNK_WORDS) };
+            log.entries.push((c, dst));
+            self.saved()[c as usize] = 1;
+        }
+        self.logs.push(log);
+    }
+
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
     /// dropped log into its predecessor (the older value of a word wins).
     fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
@@ -2800,6 +2839,12 @@ impl Arena {
 
     pub fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
         self.core_mut().retain(keep)
+    }
+
+    /// Drop the newest checkpoint, which `retain` keeps, as if it had never
+    /// been taken (the XeTeX intrinsics verifier's checkpoint).
+    pub fn drop_newest(&mut self) {
+        self.core_mut().drop_newest()
     }
 
     /// Drop every checkpoint and log: the space becomes plain memory again.
@@ -4790,6 +4835,28 @@ mod tests {
         a.checkpoint();
         a.restore_discard(id).unwrap();
         assert!(arr[..] == before[..]);
+    }
+
+    /// Dropping the newest checkpoint (which `retain` keeps) leaves the
+    /// others restorable, the open log covering the writes on either side.
+    #[test]
+    fn drop_newest_leaves_the_previous_checkpoint_whole() {
+        let (mut a, mut arr) = space(100_000);
+        scribble(&mut arr, 3, 20_000);
+        let p = a.checkpoint();
+        let at_p = arr.to_vec();
+        scribble(&mut arr, 4, 2000);
+        let c = a.checkpoint();
+        scribble(&mut arr, 5, 2000);
+        a.drop_newest();
+        assert_eq!(a.checkpoint_ids(), &[p]);
+        assert!(!a.checkpoint_ids().contains(&c));
+        scribble(&mut arr, 6, 2000);
+        a.restore_discard(p).unwrap();
+        assert!(arr[..] == at_p[..]);
+        // the last one: plain memory again
+        a.drop_newest();
+        assert!(a.checkpoint_ids().is_empty());
     }
 
     #[test]
