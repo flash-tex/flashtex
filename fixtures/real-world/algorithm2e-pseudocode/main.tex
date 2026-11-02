@@ -1,0 +1,73 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage[ruled]{algorithm2e}
+
+\title{Single-Source Shortest Paths in the Campus Shuttle Graph}
+\author{Transit Analytics, Course Project}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+The campus shuttle network is modelled as a directed graph whose
+vertices are stops and whose edge weights are scheduled travel times
+in minutes. All weights are non-negative, so Dijkstra's algorithm
+applies directly. Algorithm~\ref{alg:dijkstra} states the variant we
+implemented: it maintains tentative distances, repeatedly settles the
+unsettled vertex of minimum distance, and relaxes its outgoing edges
+until every reachable stop is settled.
+
+\section{Algorithm}
+\begin{algorithm}[htbp]
+\SetAlgoLined
+\KwIn{Directed graph $G = (V, E)$ with non-negative weights $w$, source $s \in V$.}
+\KwOut{Array $\mathit{dist}$ with $\mathit{dist}[v]$ the shortest-path distance from $s$ to $v$.}
+\For{each $v \in V$}{
+  $\mathit{dist}[v] \gets \infty$\;
+  $\mathit{settled}[v] \gets \mathit{false}$\;
+}
+$\mathit{dist}[s] \gets 0$\;
+$Q \gets$ priority queue of $V$ keyed by $\mathit{dist}$\;
+\While{$Q$ is not empty}{
+  $u \gets$ extract-minimum from $Q$\;
+  \If{$\mathit{settled}[u]$}{
+    skip $u$ (a stale queue entry)\;
+  }
+  \Else{
+    $\mathit{settled}[u] \gets \mathit{true}$\;
+    \For{each edge $(u, v) \in E$}{
+      \If{$\mathit{dist}[u] + w(u, v) < \mathit{dist}[v]$}{
+        $\mathit{dist}[v] \gets \mathit{dist}[u] + w(u, v)$\;
+        decrease the key of $v$ in $Q$\;
+      }
+    }
+  }
+}
+\Return{$\mathit{dist}$}\;
+\caption{Dijkstra's algorithm with lazy deletion.}
+\label{alg:dijkstra}
+\end{algorithm}
+
+The \While loop in Algorithm~\ref{alg:dijkstra} runs until the queue
+is empty; the \If test inside it discards stale entries left behind
+by earlier relaxations. Each edge is relaxed at most once per
+settling, which keeps the total work proportional to the number of
+queue operations.
+
+\section{Analysis}
+With a binary heap, initialisation costs $O(|V|)$, each extraction
+costs $O(\log |V|)$, and each relaxation costs $O(\log |V|)$ for the
+key decrease. The shuttle graph has 64 stops and 214 directed edges,
+so the whole computation finishes in well under a millisecond; the
+dominant cost in practice is loading the timetable, not the search.
+
+Correctness follows the standard argument: when a vertex $u$ is
+settled, $\mathit{dist}[u]$ already equals the true shortest-path
+distance, because any alternative path would have to leave the
+settled set through an edge of non-negative weight. The lazy-deletion
+\If therefore never discards a vertex that could still improve the
+answer, and the returned array holds exact distances.
+\end{document}

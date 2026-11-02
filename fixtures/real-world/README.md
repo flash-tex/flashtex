@@ -116,6 +116,21 @@ the NixOS PC, to convergence (oracle only); the engine's PDF is byte-identical t
 | `framed-tikz-theorems` | ntheorem `[framed]` with TikZ frames as in *An Infinite Descent into Pure Mathematics* (`\newframedtheorem`, `\theoremframecommand` drawing a `tikzpicture` node and a rule), theorem/lemma/definition/proof boxes, a proof split across a page break, `itemize` and `align*` inside boxes, a5paper | 3 / 0 |
 | `tikzcd-shaded-notes` | tikz-cd diagrams in `center`, display math and inside framed.sty's `shaded` and `leftbar`, a `\MakeFramed` environment framed by `\fcolorbox`, a shaded box split across pages | 2 / 0 |
 
+## 2026-11-02 additions — TikZ libraries, tcolorbox, algorithm2e
+
+Owner: lane `fixtures-ptt-1101`. Written for this corpus as P-T parity
+fixtures: FlashTeX passes P-T1 and P-T2 on all three (measured
+2026-11-02 against the TeX Live 2026 oracle), so all three are in the
+gated tier. References were generated with MacTeX 2026 pdflatex to
+convergence (`harness.py reference`); each `reference.json` records
+the pass count, SHA-256, page count and argv.
+
+| fixture | what it exercises | pdfLaTeX pages / overfull |
+|---|---|---|
+| `tikz-libraries` | sensor-network figure: one `tikzpicture` using `arrows.meta`, `shapes.geometric`, `positioning`, `calc`, `fit`, `backgrounds` and `decorations.pathmorphing`, with ordinary prose around it | 2 / 0 |
+| `tcolorbox-boxes` | runbook callouts: `\tcbset` house style, titled boxes, a `\newtcolorbox` environment, an `enhanced` (`skins`) box with `drop fuzzy shadow`, and a breakable box whose body spans a page break | 2 / 0 |
+| `algorithm2e-pseudocode` | Dijkstra write-up: `algorithm` with `\SetAlgoLined`, `\KwIn`/`\KwOut`, `\For`/`\While`, `\If`/`\Else`, `\Return`, a caption and a `\label`/`\ref` | 2 / 0 |
+
 ## Adding a fixture
 
 Create `fixtures/real-world/<id>/main.tex` (plus any `\input` files below it),
