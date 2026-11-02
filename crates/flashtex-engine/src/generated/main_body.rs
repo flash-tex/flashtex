@@ -204,6 +204,9 @@ impl Globals {
                 {
                     self.input_ptr = 0i32;
                     self.max_in_stack = 0i32;
+                    self.pk_in_stack = 0i32;
+                    self.pk_buf_stack = 0i32;
+                    self.pk_param_stack = 0i32;
                     self.full_source_filename_stack[crate::ix::U((0i32) as usize)] = 0i32;
                     self.in_open = 0i32;
                     self.open_parens = 0i32;

@@ -141,6 +141,7 @@ const LO_MEM_STAT_MAX: i32 = 19;
 const PROTECTED_TOKEN: i32 = 3585;
 const END_MATCH_TOKEN: i32 = 3584;
 const V_TEMPLATE: i32 = 2;
+const MACRO: i32 = 5; // token_type of a macro body (tex.web §307)
 
 // Integer parameter codes.
 const TRACING_MACROS_CODE: i32 = 30;
@@ -199,6 +200,11 @@ const S_REC_SCANNER: usize = 23;
 /// and the scratch a recording sets at its start.
 pub(crate) const REC_SLOT: usize = S_REC_SLOT;
 pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_SCANNER);
+/// The stack high-water shadows a recording lowered when it was fed
+/// (`crate::stackpeak`), and its levels then: scratch like the above.
+const S_PK_SAVED: usize = 34; // five
+const S_PK_BASE: usize = 39; // five
+pub(crate) const REC_PEAK_SCRATCH: (usize, usize) = (S_PK_SAVED, S_PK_BASE + 4);
 const S_WATCH_FREE: usize = 30; // free watch records, index + 1
 const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used
@@ -241,6 +247,9 @@ const F_HEAD: usize = 14; // the chain's first slot, plus one
 const F_DIS: usize = 15; // (head) 1: neither replayed nor recorded
 const F_NOREC: usize = 16; // (head) 1: no more recordings
 const F_LAST: usize = 17; // call number of the last hit
+/// The stack peaks the recorded run reached, relative to where it was fed
+/// (five fields, `crate::stackpeak`).
+const F_PEAK: usize = 18;
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -415,6 +424,8 @@ pub enum Why {
     Mode,
     Align,
     ParToken,
+    /// the normal path would overflow a stack here
+    Stack,
     Disabled,
     NoSlot,
     /// no valid recording (yet, or the macro is left alone)
@@ -1073,6 +1084,9 @@ impl Globals {
             self.set_sf(slot, F_MODE, self.cur_list.mode_field.abs());
             self.set_sf(slot, F_ALIGN, self.align_state);
             self.set_sf(slot, F_PAR_TOKEN, self.par_token);
+            for i in 0..5 {
+                self.set_sf(slot, F_PEAK + i, crate::stackpeak::NONE);
+            }
         }
         self.intr_rec_on = true;
         STATS.with(|s| s.borrow_mut().recordings += 1);
@@ -1103,6 +1117,7 @@ impl Globals {
             return;
         }
         self.intr_rec_on = false;
+        self.rec_peaks_end();
         let Some(slot) = self.rec_slot() else { return };
         self.set_st(S_REC_SLOT, 0);
         STATS.with(|s| bump(&mut s.borrow_mut().abandoned, why));
@@ -1252,7 +1267,52 @@ impl Globals {
     pub fn flashtex_intr_fed(&mut self) {
         if self.st(S_REC_BASE) == 0 {
             self.set_st(S_REC_BASE, self.input_ptr);
+            // the stack peaks, from here (`crate::stackpeak`)
+            let base = self.stack_levels();
+            let saved = self.peaks_begin();
+            for i in 0..5 {
+                self.set_st(S_PK_SAVED + i, saved[i]);
+                self.set_st(S_PK_BASE + i, base[i]);
+            }
         }
+    }
+
+    /// The recording in progress ends (`intr_rec_on` was just cleared):
+    /// the stack peaks it reached since it was fed, if it was.
+    fn rec_peaks_end(&mut self) -> crate::stackpeak::Marks {
+        if self.st(S_REC_BASE) == 0 {
+            return crate::stackpeak::NO_PEAKS;
+        }
+        let (mut saved, mut base) = ([0; 5], [0; 5]);
+        for i in 0..5 {
+            saved[i] = self.st(S_PK_SAVED + i);
+            base[i] = self.st(S_PK_BASE + i);
+        }
+        self.peaks_end(saved, base)
+    }
+
+    /// Where the normal path would feed a body here (tex.web §390): it
+    /// first ends the used-up token lists on top (and with a macro's, its
+    /// parameters), then pushes the body. The input level before that push
+    /// (the one `max_in_stack` is raised to), and the levels as
+    /// [`Globals::flashtex_intr_fed`] takes them after it.
+    fn intr_feed_levels(&self) -> (i32, crate::stackpeak::Marks) {
+        let (mut ptr, mut st, mut param) = (self.input_ptr, self.cur_input, self.param_ptr);
+        while st.state_field == 0 && st.loc_field == 0 && st.index_field != V_TEMPLATE && ptr > 0 {
+            if st.index_field == MACRO {
+                param = st.limit_field; // `param_start`
+            }
+            ptr -= 1;
+            st = self.input_stack[ptr as usize];
+        }
+        (
+            ptr,
+            [ptr + 1, self.nest_ptr, param, self.first, self.save_ptr],
+        )
+    }
+
+    fn intr_peaks(&self, slot: usize) -> crate::stackpeak::Marks {
+        std::array::from_fn(|i| self.sf(slot, F_PEAK + i))
     }
 
     pub fn flashtex_intr_read(&mut self, p: i32) {
@@ -1374,6 +1434,7 @@ impl Globals {
         }
         let Some(slot) = self.rec_slot() else {
             self.intr_rec_on = false;
+            self.rec_peaks_end();
             return;
         };
         let why = if self.cur_level != self.st(S_REC_LEVEL) {
@@ -1419,10 +1480,14 @@ impl Globals {
             return self.rec_abort(w);
         }
         self.intr_rec_on = false;
+        let peaks = self.rec_peaks_end();
         self.set_st(S_REC_SLOT, 0);
         if self.st(S_REC_VERIFY) == 1 {
             crate::intrinsics_verify::normal_path_done(self, slot);
             return;
+        }
+        for (i, &v) in peaks.iter().enumerate() {
+            self.set_sf(slot, F_PEAK + i, v);
         }
         self.set_sf(slot, F_STATE, ST_VALID);
         STATS.with(|s| s.borrow_mut().committed += 1);
@@ -1539,6 +1604,14 @@ impl Globals {
                         crate::intrinsics_verify::begin(self, s);
                         return false;
                     }
+                    // (the normal path would stop with `TeX capacity
+                    // exceeded`: let it)
+                    let (b0, base) = self.intr_feed_levels();
+                    if b0 >= crate::generated::consts::stack_size
+                        || self.peaks_overflow(base, self.intr_peaks(s))
+                    {
+                        return self.no_replay(Why::Stack);
+                    }
                     self.replay(s);
                     return true;
                 }
@@ -1606,6 +1679,14 @@ impl Globals {
     /// Make the recorded changes of `slot`, through TeX's own routines.
     pub(crate) fn replay(&mut self, slot: usize) {
         let t0 = std::time::Instant::now();
+        // The stack marks the normal path would raise: the body's push, and
+        // the peaks above it (`crate::stackpeak`).
+        let (b0, levels) = self.intr_feed_levels();
+        let mut push = crate::stackpeak::NO_PEAKS;
+        push[0] = 0;
+        self.peaks_raise([b0, 0, 0, 0, 0], push);
+        let peaks = self.intr_peaks(slot);
+        self.peaks_raise(levels, peaks);
         if self.rs_on && fault() != Fault::NoReadset {
             self.intr_report_reads(slot);
         }

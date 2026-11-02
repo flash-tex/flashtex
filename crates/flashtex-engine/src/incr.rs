@@ -2074,9 +2074,15 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "intr_state" && g.intr_state[crate::intrinsics::REC_SLOT] == 0 {
         let (r, rel) = g.arena.region_at(w.off);
         let elem = r.elem.max(1);
-        let (lo, hi) = crate::intrinsics::REC_SCRATCH;
-        if rel / elem >= lo && (rel + 7) / elem <= hi {
-            return true;
+        for (lo, hi) in [
+            crate::intrinsics::REC_SCRATCH,
+            // (the stack shadows it lowered when it was fed, and its levels
+            // then: set at every feed, read only at the recording's end)
+            crate::intrinsics::REC_PEAK_SCRATCH,
+        ] {
+            if rel / elem >= lo && (rel + 7) / elem <= hi {
+                return true;
+            }
         }
     }
     match w.scalar {
@@ -2094,6 +2100,12 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         Some(
             "max_buf_stack" | "max_in_stack" | "max_nest_stack" | "max_param_stack"
             | "max_save_stack",
+        ) => return true,
+        // Their shadows (changes/stackpeak.ch, `crate::stackpeak`): read
+        // only by the tests that raise them and the marks, and by a
+        // recording, which lowers them first.
+        Some(
+            "pk_buf_stack" | "pk_in_stack" | "pk_nest_stack" | "pk_param_stack" | "pk_save_stack",
         ) => return true,
         // §970-§977, §1010: `vert_break` always sets it (its loop takes
         // at least the list's end as a champion) and the two callers read
