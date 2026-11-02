@@ -2809,7 +2809,7 @@ impl Globals {
                 a = 0i32;
                 while (self.cur_cmd == prefix) {
                     {
-                        if (!((((a / self.cur_chr)) % 2) != 0)) {
+                        if (!((((a).total_div(self.cur_chr)) % 2) != 0)) {
                             a = (a).wrapping_add(self.cur_chr);
                         }
                         // §430

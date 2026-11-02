@@ -1302,7 +1302,7 @@ impl Globals {
             shrink_amount = __av_mem[crate::ix::U(((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(3i32)) as usize)].int();
         }
         if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == pdf_snapy_node) {
-            last_pos = (self.pdf_snapy_refpos).wrapping_add((snap_unit).wrapping_mul(((cur_pos).wrapping_sub(self.pdf_snapy_refpos) / snap_unit)));
+            last_pos = (self.pdf_snapy_refpos).wrapping_add((snap_unit).wrapping_mul(((cur_pos).wrapping_sub(self.pdf_snapy_refpos)).total_div(snap_unit)));
         } else {
             self.pdf_error(1954i32, 1955i32);
         }
@@ -1841,20 +1841,20 @@ impl Globals {
                                                                 if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == a_leaders) {
                                                                     {
                                                                         save_h = self.cur_h;
-                                                                        self.cur_h = (left_edge).wrapping_add((leader_wd).wrapping_mul(((self.cur_h).wrapping_sub(left_edge) / leader_wd)));
+                                                                        self.cur_h = (left_edge).wrapping_add((leader_wd).wrapping_mul(((self.cur_h).wrapping_sub(left_edge)).total_div(leader_wd)));
                                                                         if (self.cur_h < save_h) {
                                                                             self.cur_h = (self.cur_h).wrapping_add(leader_wd);
                                                                         }
                                                                     }
                                                                 } else {
                                                                     {
-                                                                        self.lq = (self.rule_wd / leader_wd);
-                                                                        self.lr = (self.rule_wd % leader_wd);
+                                                                        self.lq = (self.rule_wd).total_div(leader_wd);
+                                                                        self.lr = (self.rule_wd).total_mod(leader_wd);
                                                                         if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == c_leaders) {
                                                                             self.cur_h = (self.cur_h).wrapping_add((self.lr / 2i32));
                                                                         } else {
                                                                             {
-                                                                                lx = (self.lr / (self.lq).wrapping_add(1i32));
+                                                                                lx = (self.lr).total_div((self.lq).wrapping_add(1i32));
                                                                                 self.cur_h = (self.cur_h).wrapping_add(((self.lr).wrapping_sub(((self.lq).wrapping_sub(1i32)).wrapping_mul(lx)) / 2i32));
                                                                             }
                                                                         }
@@ -2310,20 +2310,20 @@ impl Globals {
                                                                 if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == a_leaders) {
                                                                     {
                                                                         save_v = self.cur_v;
-                                                                        self.cur_v = (top_edge).wrapping_add((leader_ht).wrapping_mul(((self.cur_v).wrapping_sub(top_edge) / leader_ht)));
+                                                                        self.cur_v = (top_edge).wrapping_add((leader_ht).wrapping_mul(((self.cur_v).wrapping_sub(top_edge)).total_div(leader_ht)));
                                                                         if (self.cur_v < save_v) {
                                                                             self.cur_v = (self.cur_v).wrapping_add(leader_ht);
                                                                         }
                                                                     }
                                                                 } else {
                                                                     {
-                                                                        self.lq = (self.rule_ht / leader_ht);
-                                                                        self.lr = (self.rule_ht % leader_ht);
+                                                                        self.lq = (self.rule_ht).total_div(leader_ht);
+                                                                        self.lr = (self.rule_ht).total_mod(leader_ht);
                                                                         if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == c_leaders) {
                                                                             self.cur_v = (self.cur_v).wrapping_add((self.lr / 2i32));
                                                                         } else {
                                                                             {
-                                                                                lx = (self.lr / (self.lq).wrapping_add(1i32));
+                                                                                lx = (self.lr).total_div((self.lq).wrapping_add(1i32));
                                                                                 self.cur_v = (self.cur_v).wrapping_add(((self.lr).wrapping_sub(((self.lq).wrapping_sub(1i32)).wrapping_mul(lx)) / 2i32));
                                                                             }
                                                                         }
