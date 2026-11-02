@@ -107,13 +107,20 @@
 05 pre 
 08flushing
 07copying
-08vertical
-10horizontal
-12display math
-02no
-17internal vertical
-21restricted horizontal
-05 mode
+13vertical mode
+15horizontal mode
+17display math mode
+07no mode
+22internal vertical mode
+26restricted horizontal mode
+09math mode
+18' in vertical mode
+20' in horizontal mode
+22' in display math mode
+12' in no mode
+27' in internal vertical mode
+31' in restricted horizontal mode
+14' in math mode
 18semantic nest size
 04### 
 17 entered at line 
@@ -124,6 +131,7 @@
 10prevdepth 
 07ignored
 11, prevgraf 
+06 lines
 05 line
 12spacefactor 
 19, current language 
@@ -233,6 +241,10 @@
 13charsubdefmin
 13charsubdefmax
 17tracingcharsubdef
+08mubytein
+09mubyteout
+09mubytelog
+10specialout
 18tracingstacklevels
 15partokencontext
 10showstream
@@ -331,6 +343,7 @@
 04char
 09delimiter
 06divide
+09endmubyte
 08endgroup
 11expandafter
 04font
@@ -391,11 +404,10 @@
 23[unknown command code!]
 02: 
 07(level 
-08Runaway 
-10definition
-08argument
-08preamble
-04text
+18Runaway definition
+16Runaway argument
+16Runaway preamble
+12Runaway text
 03<*>
 09<insert> 
 06<read 
@@ -430,13 +442,15 @@
 53The file ended while I was skipping conditional text.
 10File ended
 32Forbidden control sequence found
-16 while scanning 
 04 of 
 46I suspect you have forgotten a `}', causing me
 41to read past where you wanted me to stop.
 49I'll try to recover; but if the error is serious,
 51you'd better type `E' or `X' now and fix your file.
-03use
+26 while scanning definition
+19 while scanning use
+24 while scanning preamble
+20 while scanning text
 39Text line contains an invalid character
 53A funny symbol that I can't read has just been input.
 48Continue, and I'll forget that it ever happened.
@@ -679,8 +693,6 @@
 23Missing = inserted for 
 48I was expecting to see `<', `=', or `>'. Didn't.
 06{case 
-10TeXinputs:
-09TeXfonts:
 04.fmt
 15input file name
 19I can't find file `
@@ -743,6 +755,7 @@
 35The following box has been deleted:
 19No pages of output.
 18Output written on 
+06 pages
 05 page
 02, 
 08 bytes).
@@ -1176,7 +1189,6 @@
 18Missing $ inserted
 56I've inserted a begin-math/end-math symbol since I think
 48you left one out. Proceed, with fingers crossed.
-05' in 
 50Sorry, but I'm not programmed to handle this case;
 45I'll just pretend that you didn't ask for it.
 49If you're in the wrong mode, you might be able to
@@ -1284,6 +1296,7 @@
 49an alignment. Proceed, and I'll ignore this case.
 56I expect to see \omit only after tab marks or the \cr of
 53I'm guessing that you meant to end an alignment here.
+50I'm ignoring this, since I wasn't doing a \mubyte.
 50I'm ignoring this, since I wasn't doing a \csname.
 04eqno
 05leqno
@@ -1355,6 +1368,13 @@
 12inaccessible
 03let
 09futurelet
+06mubyte
+09noconvert
+61not appear in <byte sequence> between \mubyte and \endmubyte.
+27The empty <byte sequence>, 
+08 ignored
+22The <byte sequence> in
+62\mubyte <token> <byte sequence>\endmubyte should not be empty.
 07chardef
 11mathchardef
 08countdef
@@ -1362,8 +1382,14 @@
 07skipdef
 09muskipdef
 07toksdef
+10charsubdef
+28New character substitution: 
+03 = 
 44You should have said `\read<number> to \cs'.
 34I'm going to look for the \cs now.
+08xordcode
+08xchrcode
+08xprncode
 14Invalid code (
 29), should be in the range 0..
 21), should be at most 
@@ -1433,11 +1459,14 @@
 43 memory locations dumped; current usage is 
 30 multiletter control sequences
 24 words of font info for 
+16 preloaded fonts
 15 preloaded font
 05\font
+23 hyphenation exceptions
 22 hyphenation exception
 27Hyphenation trie of length 
 05 has 
+04 ops
 03 op
 08 out of 
 14 for language 
@@ -1814,5 +1843,8 @@
 13clubpenalties
 14widowpenalties
 21displaywidowpenalties
+17substitution for 
+43Missing character: Incomplete substitution 
+30Using character substitution: 
 07synctex
-*112854628
+*312141437

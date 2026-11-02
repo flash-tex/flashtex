@@ -2358,8 +2358,10 @@ impl Globals {
     #[inline(never)]
     pub fn flashtex_bm_call(&mut self, n: i32, scanner: i32, warn: i32) {
         // Never inside a recording, BOX-MEMO's or the intrinsics' (the
-        // boundary with MACRO-REPLAY, BOX-MEMO.md §1).
-        if self.bm_rec_on || self.intr_rec_on {
+        // boundary with MACRO-REPLAY, BOX-MEMO.md §1); never with ML\TeX or
+        // encTeX on, whose state the recorder does not observe (see
+        // `flashtex_intr_call`).
+        if self.bm_rec_on || self.intr_rec_on || self.mltex_enabled_p || self.enctex_enabled_p {
             return;
         }
         let cs = self.warning_index;

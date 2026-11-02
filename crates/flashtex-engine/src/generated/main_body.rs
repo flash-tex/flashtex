@@ -15,12 +15,12 @@ impl Globals {
     pub fn tex_body(&mut self) {
         'l_final_end_f: {
             'l_start_of_TEX_f: {
-                // §1512
+                // §1513
                 self.setup_bound_vars();
                 if (self.error_line > ssup_error_line) {
                     self.error_line = ssup_error_line;
                 }
-                // §1901
+                // §1923
                 self.interaction_option = self.web2c_interaction_option();
                 self.file_line_error_style_p = self.web2c_file_line_error_style_p();
                 self.halt_on_error_p = self.web2c_halt_on_error_p();
@@ -28,10 +28,12 @@ impl Globals {
                 self.dump_line = self.web2c_dump_line();
                 self.eight_bit_p = self.web2c_eight_bit_p();
                 self.translate_filename_p = self.web2c_translate_filename_p();
+                self.mltex_p = self.web2c_mltex_p();
+                self.enctex_p = self.web2c_enctex_p();
                 self.shellenabledp = self.web2c_shellenabledp();
                 self.restrictedshell = self.web2c_restrictedshell();
                 { let mut __f0 = ::core::mem::take(&mut self.pdf_output_option); let mut __f1 = ::core::mem::take(&mut self.pdf_output_value); let mut __f2 = ::core::mem::take(&mut self.pdf_draftmode_option); let mut __f3 = ::core::mem::take(&mut self.pdf_draftmode_value); let __r = self.web2c_pdf_options(&mut __f0, &mut __f1, &mut __f2, &mut __f3); self.pdf_output_option = __f0; self.pdf_output_value = __f1; self.pdf_draftmode_option = __f2; self.pdf_draftmode_value = __f3; __r };
-                // §1512
+                // §1513
                 self.history = fatal_error_stop;
                 crate::system::rewrite_char(&mut self.term_out, "TTY:", "/O");
                 if (self.ready_already == 314159i32) {
@@ -98,15 +100,15 @@ impl Globals {
                 if (634287i32 > max_halfword) {
                     self.bad = 21i32;
                 }
-                // §548
+                // §549
                 if (format_default_length > file_name_size) {
                     self.bad = 31i32;
                 }
-                // §1427
+                // §1428
                 if ((2i32).wrapping_mul(max_halfword) < (mem_top).wrapping_sub(mem_min)) {
                     self.bad = 41i32;
                 }
-                // §1512
+                // §1513
                 if (self.bad > 0i32) {
                     {
                         {
@@ -192,13 +194,13 @@ impl Globals {
                 }
             }
             crate::system::break_out(&mut self.term_out);
-            // §554
+            // §555
             self.job_name = 0i32;
             self.name_in_progress = false;
             self.log_opened = false;
-            // §559
+            // §560
             self.output_file_name = 0i32;
-            // §1517
+            // §1518
             {
                 // §353
                 {
@@ -235,118 +237,118 @@ impl Globals {
                     self.cur_input.limit_field = self.last;
                     self.first = (self.last).wrapping_add(1i32);
                 }
-                // §1648
-                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 1684i32)) {
+                // §1649
+                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 1710i32)) {
                     {
                         self.no_new_control_sequence = false;
+                        // §1650
+                        self.primitive(1993i32, last_item, last_node_type_code);
+                        self.primitive(1994i32, last_item, eTeX_version_code);
+                        self.primitive(883i32, convert, eTeX_revision_code);
+                        // §1658
+                        self.primitive(1996i32, assign_toks, every_eof_loc);
+                        self.primitive(1997i32, assign_int, 29379i32);
+                        self.primitive(1998i32, assign_int, 29380i32);
+                        self.primitive(1999i32, assign_int, 29381i32);
+                        self.primitive(2000i32, assign_int, 29382i32);
+                        self.primitive(2001i32, assign_int, 29383i32);
+                        self.primitive(2002i32, assign_int, 29384i32);
+                        self.primitive(2003i32, assign_int, 29385i32);
+                        self.primitive(2004i32, assign_int, 29386i32);
+                        self.primitive(2005i32, assign_int, 29387i32);
+                        self.primitive(2006i32, assign_int, 29388i32);
+                        // §1664
+                        self.primitive(2021i32, last_item, current_group_level_code);
+                        self.primitive(2022i32, last_item, current_group_type_code);
+                        // §1667
+                        self.primitive(2023i32, last_item, current_if_level_code);
+                        self.primitive(2024i32, last_item, current_if_type_code);
+                        self.primitive(2025i32, last_item, current_if_branch_code);
+                        // §1670
+                        self.primitive(2026i32, last_item, font_char_wd_code);
+                        self.primitive(2027i32, last_item, font_char_ht_code);
+                        self.primitive(2028i32, last_item, font_char_dp_code);
+                        self.primitive(2029i32, last_item, font_char_ic_code);
+                        // §1673
+                        self.primitive(2030i32, last_item, par_shape_length_code);
+                        self.primitive(2031i32, last_item, par_shape_indent_code);
+                        self.primitive(2032i32, last_item, par_shape_dimen_code);
+                        // §1676
+                        self.primitive(2033i32, xray, show_groups);
+                        // §1685
+                        self.primitive(2035i32, xray, show_tokens);
+                        // §1687
+                        self.primitive(2036i32, the, 1i32);
+                        self.primitive(2037i32, the, show_tokens);
+                        // §1690
+                        self.primitive(2038i32, xray, show_ifs);
+                        // §1693
+                        self.primitive(2042i32, set_page_int, 2i32);
+                        // §1698
+                        self.primitive(1300i32, left_right, middle_noad);
+                        // §1702
+                        self.primitive(2046i32, assign_int, 29389i32);
+                        self.primitive(2047i32, valign, begin_L_code);
+                        self.primitive(2048i32, valign, end_L_code);
+                        self.primitive(2049i32, valign, begin_R_code);
+                        self.primitive(2050i32, valign, end_R_code);
+                        // §1748
+                        self.primitive(2059i32, input, 2i32);
+                        // §1760
+                        self.primitive(2061i32, read_to_cs, 1i32);
+                        // §1763
+                        self.primitive(940i32, expand_after, 1i32);
+                        self.primitive(2062i32, if_test, if_def_code);
+                        self.primitive(2063i32, if_test, if_cs_code);
+                        self.primitive(2064i32, if_test, if_font_char_code);
+                        self.primitive(2065i32, if_test, if_in_csname_code);
+                        self.primitive(2066i32, if_test, if_pdfabs_num_code);
+                        self.primitive(2067i32, if_test, if_pdfabs_dim_code);
+                        // §1771
+                        self.primitive(1615i32, prefix, 8i32);
+                        // §1779
+                        self.primitive(2073i32, last_item, 39i32);
+                        self.primitive(2074i32, last_item, 40i32);
+                        self.primitive(2075i32, last_item, 41i32);
+                        self.primitive(2076i32, last_item, 42i32);
+                        // §1802
+                        self.primitive(2080i32, last_item, glue_stretch_order_code);
+                        self.primitive(2081i32, last_item, glue_shrink_order_code);
+                        self.primitive(2082i32, last_item, glue_stretch_code);
+                        self.primitive(2083i32, last_item, glue_shrink_code);
+                        // §1806
+                        self.primitive(2084i32, last_item, mu_to_glue_code);
+                        self.primitive(2085i32, last_item, glue_to_mu_code);
+                        // §1810
+                        self.primitive(2086i32, mark, marks_code);
+                        self.primitive(2087i32, top_bot_mark, 5i32);
+                        self.primitive(2088i32, top_bot_mark, 6i32);
+                        self.primitive(2089i32, top_bot_mark, 7i32);
+                        self.primitive(2090i32, top_bot_mark, 8i32);
+                        self.primitive(2091i32, top_bot_mark, 9i32);
+                        // §1862
+                        self.primitive(2095i32, un_vbox, last_box_code);
+                        self.primitive(2096i32, un_vbox, vsplit_code);
+                        // §1865
+                        self.primitive(2097i32, set_shape, inter_line_penalties_loc);
+                        self.primitive(2098i32, set_shape, club_penalties_loc);
+                        self.primitive(2099i32, set_shape, widow_penalties_loc);
+                        self.primitive(2100i32, set_shape, display_widow_penalties_loc);
                         // §1649
-                        self.primitive(1964i32, last_item, last_node_type_code);
-                        self.primitive(1965i32, last_item, eTeX_version_code);
-                        self.primitive(869i32, convert, eTeX_revision_code);
-                        // §1657
-                        self.primitive(1967i32, assign_toks, every_eof_loc);
-                        self.primitive(1968i32, assign_int, 29379i32);
-                        self.primitive(1969i32, assign_int, 29380i32);
-                        self.primitive(1970i32, assign_int, 29381i32);
-                        self.primitive(1971i32, assign_int, 29382i32);
-                        self.primitive(1972i32, assign_int, 29383i32);
-                        self.primitive(1973i32, assign_int, 29384i32);
-                        self.primitive(1974i32, assign_int, 29385i32);
-                        self.primitive(1975i32, assign_int, 29386i32);
-                        self.primitive(1976i32, assign_int, 29387i32);
-                        self.primitive(1977i32, assign_int, 29388i32);
-                        // §1663
-                        self.primitive(1992i32, last_item, current_group_level_code);
-                        self.primitive(1993i32, last_item, current_group_type_code);
-                        // §1666
-                        self.primitive(1994i32, last_item, current_if_level_code);
-                        self.primitive(1995i32, last_item, current_if_type_code);
-                        self.primitive(1996i32, last_item, current_if_branch_code);
-                        // §1669
-                        self.primitive(1997i32, last_item, font_char_wd_code);
-                        self.primitive(1998i32, last_item, font_char_ht_code);
-                        self.primitive(1999i32, last_item, font_char_dp_code);
-                        self.primitive(2000i32, last_item, font_char_ic_code);
-                        // §1672
-                        self.primitive(2001i32, last_item, par_shape_length_code);
-                        self.primitive(2002i32, last_item, par_shape_indent_code);
-                        self.primitive(2003i32, last_item, par_shape_dimen_code);
-                        // §1675
-                        self.primitive(2004i32, xray, show_groups);
-                        // §1684
-                        self.primitive(2006i32, xray, show_tokens);
-                        // §1686
-                        self.primitive(2007i32, the, 1i32);
-                        self.primitive(2008i32, the, show_tokens);
-                        // §1689
-                        self.primitive(2009i32, xray, show_ifs);
-                        // §1692
-                        self.primitive(2013i32, set_page_int, 2i32);
-                        // §1697
-                        self.primitive(1287i32, left_right, middle_noad);
-                        // §1701
-                        self.primitive(2017i32, assign_int, 29389i32);
-                        self.primitive(2018i32, valign, begin_L_code);
-                        self.primitive(2019i32, valign, end_L_code);
-                        self.primitive(2020i32, valign, begin_R_code);
-                        self.primitive(2021i32, valign, end_R_code);
-                        // §1747
-                        self.primitive(2030i32, input, 2i32);
-                        // §1759
-                        self.primitive(2032i32, read_to_cs, 1i32);
-                        // §1762
-                        self.primitive(926i32, expand_after, 1i32);
-                        self.primitive(2033i32, if_test, if_def_code);
-                        self.primitive(2034i32, if_test, if_cs_code);
-                        self.primitive(2035i32, if_test, if_font_char_code);
-                        self.primitive(2036i32, if_test, if_in_csname_code);
-                        self.primitive(2037i32, if_test, if_pdfabs_num_code);
-                        self.primitive(2038i32, if_test, if_pdfabs_dim_code);
-                        // §1770
-                        self.primitive(1602i32, prefix, 8i32);
-                        // §1778
-                        self.primitive(2044i32, last_item, 39i32);
-                        self.primitive(2045i32, last_item, 40i32);
-                        self.primitive(2046i32, last_item, 41i32);
-                        self.primitive(2047i32, last_item, 42i32);
-                        // §1801
-                        self.primitive(2051i32, last_item, glue_stretch_order_code);
-                        self.primitive(2052i32, last_item, glue_shrink_order_code);
-                        self.primitive(2053i32, last_item, glue_stretch_code);
-                        self.primitive(2054i32, last_item, glue_shrink_code);
-                        // §1805
-                        self.primitive(2055i32, last_item, mu_to_glue_code);
-                        self.primitive(2056i32, last_item, glue_to_mu_code);
-                        // §1809
-                        self.primitive(2057i32, mark, marks_code);
-                        self.primitive(2058i32, top_bot_mark, 5i32);
-                        self.primitive(2059i32, top_bot_mark, 6i32);
-                        self.primitive(2060i32, top_bot_mark, 7i32);
-                        self.primitive(2061i32, top_bot_mark, 8i32);
-                        self.primitive(2062i32, top_bot_mark, 9i32);
-                        // §1861
-                        self.primitive(2066i32, un_vbox, last_box_code);
-                        self.primitive(2067i32, un_vbox, vsplit_code);
-                        // §1864
-                        self.primitive(2068i32, set_shape, inter_line_penalties_loc);
-                        self.primitive(2069i32, set_shape, club_penalties_loc);
-                        self.primitive(2070i32, set_shape, widow_penalties_loc);
-                        self.primitive(2071i32, set_shape, display_widow_penalties_loc);
-                        // §1648
                         if (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32) {
                             self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
                         }
                         self.eTeX_mode = 1i32;
-                        // §1813
+                        // §1814
                         self.max_reg_num = 32767i32;
-                        self.max_reg_help_line = 2063i32;
+                        self.max_reg_help_line = 2092i32;
                     }
                 }
-                // §1648
+                // §1649
                 if (!self.no_new_control_sequence) {
                     self.no_new_control_sequence = true;
                 } else {
-                    // §1517
+                    // §1518
                     if (((self.format_ident == 0i32) || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 38i32)) || self.dump_line) {
                         {
                             if (self.format_ident != 0i32) {
@@ -380,10 +382,10 @@ impl Globals {
                     }
                 }
                 if (self.pdf_output_option != 0i32) {
-                    { let __v2348 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2348); }
+                    { let __v2495 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2495); }
                 }
                 if (self.pdf_draftmode_option != 0i32) {
-                    { let __v2349 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2349); }
+                    { let __v2496 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2496); }
                 }
                 self.pdf_init_map_file();
                 if (self.eTeX_mode == 1i32) {
@@ -395,7 +397,34 @@ impl Globals {
                 if ((self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix2350 = self.cur_input.limit_field; let __v2351 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2350) as usize)] = __v2351; }
+                    { let __ix2497 = self.cur_input.limit_field; let __v2498 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2497) as usize)] = __v2498; }
+                }
+                if self.mltex_enabled_p {
+                    {
+                        {
+                            crate::system::wr_str(&mut self.term_out, "MLTeX v2.2 enabled");
+                            crate::system::wr_ln(&mut self.term_out);
+                        }
+                    }
+                }
+                if self.enctex_enabled_p {
+                    {
+                        {
+                            crate::system::wr_str(&mut self.term_out, " encTeX v. Jun. 2004");
+                        }
+                        {
+                            crate::system::wr_str(&mut self.term_out, ", reencoding enabled.");
+                            crate::system::wr_ln(&mut self.term_out);
+                        }
+                        if self.translate_filename_p {
+                            {
+                                {
+                                    crate::system::wr_str(&mut self.term_out, " (\\xordcode, \\xchrcode, \\xprncode overridden by TCX)");
+                                    crate::system::wr_ln(&mut self.term_out);
+                                }
+                            }
+                        }
+                    }
                 }
                 self.fix_date_and_time();
                 if self.trie_not_ready {
@@ -403,7 +432,7 @@ impl Globals {
                 }
                 self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));
                 self.init_randoms(self.random_seed);
-                // §941
+                // §942
                 self.magic_offset = (self.str_start[crate::ix::U((math_spacing) as usize)]).wrapping_sub((9i32).wrapping_mul(ord_noad));
                 // §75
                 if (self.interaction == batch_mode) {
@@ -411,12 +440,12 @@ impl Globals {
                 } else {
                     self.selector = term_only;
                 }
-                // §1517
+                // §1518
                 if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[crate::ix::U((((cat_code_base).wrapping_add(self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)])) - 1) as usize)].hh().rh() != escape)) {
                     self.start_input();
                 }
             }
-            // §1512
+            // §1513
             self.history = spotless;
             self.main_control();
             self.final_cleanup();
