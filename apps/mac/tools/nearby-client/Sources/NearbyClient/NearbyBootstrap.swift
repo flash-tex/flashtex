@@ -3,7 +3,7 @@ import Foundation
 /// The bootstrap payload the Mac shows as a QR image beside its pairing code
 /// (`apps/mac` `PairingBootstrapPayload`), accepted by `pair --qr <text>`:
 ///
-///     flashtex-nearby://pair?v=1&code=123456&salt=<32 hex>&fp=<16 hex>&name=<Mac name>
+///     flashtex-nearby://pair?v=2&code=<52 base32>&salt=<32 hex>&fp=<16 hex>&name=<Mac name>
 ///
 /// Scanning it is equivalent to typing `--code` and picking the Mac by
 /// `--mac <fp>`; `salt` also serves direct `--host/--port` mode in place of
@@ -12,7 +12,7 @@ import Foundation
 public struct NearbyBootstrapPayload: Equatable {
     public static let scheme = "flashtex-nearby"
     public static let host = "pair"
-    public static let version = "1"
+    public static let version = "2"
 
     public var code: String
     public var salt: Data
@@ -49,8 +49,8 @@ public struct NearbyBootstrapPayload: Equatable {
         var q: [String: String] = [:]
         for item in c.queryItems ?? [] { q[item.name] = item.value ?? "" }
         guard q["v"] == version else { throw NearbyError.invalidInput("payload version \(q["v"] ?? "missing") is not \(version)") }
-        guard let code = q["code"], code.count == 6, code.allSatisfy(\.isNumber) else {
-            throw NearbyError.invalidInput("payload code must be 6 digits")
+        guard let code = q["code"].flatMap(NearbyCrypto.canonicalCode) else {
+            throw NearbyError.invalidInput("payload code must be the \(NearbyCrypto.codeLength)-character code")
         }
         guard let saltHex = q["salt"], let salt = NearbyCrypto.data(hex: saltHex), salt.count == NearbyCrypto.saltLength else {
             throw NearbyError.invalidInput("payload salt must be \(NearbyCrypto.saltLength) hex bytes")

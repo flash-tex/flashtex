@@ -35,12 +35,18 @@ handshake below is the only authentication.
 ## 2. Pairing
 
 Pairing is explicit and user-driven. The Mac (`Edit > Nearby Companion…`,
-⌘⇧N, "Show Pairing Code") displays a 6-digit decimal code from the system CSPRNG
-for 120 s. The user types it on the companion while the Mac's service is
-selected. Both sides derive:
+⌘⇧N, "Show Pairing Code") shows, for 120 s, a code made of 32 bytes from the
+system CSPRNG: as a QR image, and as 52 Crockford base32 characters
+(`0-9 A-Z` without `I L O U`, groups of four) for a companion that cannot
+scan. The text form is a full-strength fallback, not a shorter code: typed
+spaces, hyphens and case are ignored, `O` reads as 0 and `I`/`L` as 1, and
+the reference client refuses any code that is not 52 such characters before
+connecting. (Until 2026-11 the code was 6 decimal digits; see §5 for why that
+is gone.) Both sides derive:
 
 ```
-ikm      = UTF-8 bytes of the code, e.g. "123456"
+ikm      = UTF-8 bytes of the canonical code (the 52 characters, upper case,
+           no spaces); the pinned vector below uses "123456"
 salt     = TXT salt (16 bytes)
 psk_boot = HKDF-SHA256(ikm, salt, info = "flashtex-nearby-v1 psk",     L = 32)
 pair_id  = hex(HKDF-SHA256(ikm, salt, info = "flashtex-nearby-v1 pair-id", L = 8))  — 16 hex chars
@@ -77,15 +83,18 @@ each capture, so the change needs no restart. The reference client treats
 the code as its own class (`needsPermission`: not `needsRepair`, not a new
 capture, not retried; exit 6).
 
-QR bootstrap: beside the six-digit code the window shows a CoreImage
+QR bootstrap: beside the text code the window shows a CoreImage
 `CIQRCodeGenerator` image (level M) of
-`flashtex-nearby://pair?v=1&code=<6 digits>&salt=<32 hex>&fp=<16 hex>&name=<Mac name>`
+`flashtex-nearby://pair?v=2&code=<52 base32>&salt=<32 hex>&fp=<16 hex>&name=<Mac name>`
 — exactly the inputs `nearby-client pair` takes (`--qr <decoded text>`
 replaces `--code`, `--mac <fp>` and `--salt`; an explicit `--code`/`--mac`
-must agree with it, `fp` must match `salt`). The code is also copyable
-("Copy code", ⌘C on the focused code) as bare digits; VoiceOver reads it
-grouped in pairs ("1 2, 3 4, 5 6"). Nothing in the QR is secret beyond the
-code already displayed next to it; `protocol_version` stays 1.
+must agree with it, `fp` must match `salt`). Payload `v=1` (six digits) is
+refused. The code is also copyable ("Copy code", ⌘C on the focused code)
+without its spacing; VoiceOver reads it in groups of four ("A B C D, E F G
+H, …"), and announcements say a code is shown without reading all 52
+characters. Nothing in the QR is secret beyond the code already displayed
+next to it; `protocol_version` stays 1 (no wire message changed: only `ikm`
+grew).
 
 ## 3. Transport
 
@@ -205,6 +214,8 @@ error, never a silent drop):
 | sessions per `pair_id` | 4 | `too_many_sessions` at `hello`, connection closed |
 | accepted TCP connections | 16 | closed before the handshake (no bytes to an unauthenticated peer); Mac logs `too many connections` |
 | TLS handshake deadline | 10 s | closed (no bytes to an unauthenticated peer); Mac logs `handshake timed out` |
+| failed handshakes per address | 3 free, then 1 s × 2^(n−3) up to 300 s (forgotten after 10 min) | closed before the handshake; Mac logs `refused <address> before TLS` (§5) |
+| handshakes in progress from one address | 2 | closed before the handshake; Mac logs `handshakes from it already in progress` (§5) |
 | `hello` deadline after the handshake | 10 s | `hello_timeout`, `id: null`, connection closed |
 | one frame, first byte to newline | 60 s (≥ 200 KiB/s for a full frame) | `frame_timeout`, `id: null`, connection closed |
 | TCP keepalive (half-open peer) | idle 15 s, 5 s × 4 probes | connection fails, session slot and in-flight bytes released |
@@ -279,15 +290,34 @@ rules).
   a PSK, so no application byte is parsed from an unpaired peer; the listener
   never creates a session before TLS reports `.ready`. A rogue Mac advertising
   the same name gets a failed handshake from a paired companion, not data.
-- **The 6-digit code is ~20 bits.** During the ≤120 s window an attacker who
-  captures the bootstrap handshake *and* the `hello_ack` can brute-force the
-  code offline (PSK-only suites have no forward secrecy) and thereby recover
-  `pair_psk`. Mitigations in v1: the window is short, one code confirms one
-  pairing, and an online guess costs a full TLS handshake with a fresh code
-  needed after expiry. This is the weakest point; the Commander may prefer a
-  longer alphanumeric code or a QR code carrying 32 random bytes — the
-  derivation and every message are unchanged, only `ikm` grows. `Pairing.derive`
-  takes any string.
+- **The pairing code is 256 bits** (32 CSPRNG bytes; QR, or 52 base32
+  characters typed). PSK-only suites have no forward secrecy, so an attacker
+  who records the bootstrap handshake *and* the `hello_ack` can test codes
+  offline, and a hit yields `pair_psk`. The 6-digit code used until 2026-11
+  (~20 bits) fell to that in about a second of CPU, and a confirmed bootstrap
+  hello pairs without a further prompt, so a recovered or guessed code meant a
+  permanent pairing. With 256 bits neither the offline search nor online
+  guessing is feasible. The typed form is the same secret, not a shorter
+  fallback; the reference client refuses a code that is not full strength
+  before connecting, and QR payload `v=1` is refused.
+- **Online guessing is rate-limited anyway** (`NearbyHandshakeLimiter`). A
+  failed handshake is a connection that ended before `.ready` (the stack's
+  `.failed`, or no handshake within 10 s); Network.framework says neither why
+  nor which key was tried. Per peer address the first 3 failures are free (a
+  companion forgotten on the Mac, a typo); then a new connection from that
+  address is closed before TLS for 1 s × 2^(n−3) from its last failure, at
+  most 300 s, and failures older than 10 min are forgotten; a successful
+  handshake clears the address. At most 2 connections from one address may be
+  in the handshake at once (a further one is closed before TLS), so a burst of
+  simultaneous connections cannot spend failures faster than the backoff
+  allows. Failed handshakes never end a pairing attempt: anyone on the network
+  can fail one, so counting them against the code would let an
+  unauthenticated peer withdraw the owner's code at will; the code expires on
+  its own after its lifetime. The counters survive the listener's key-table
+  restarts. Cost: an attacker on the LAN can lock out its own address, and
+  with many addresses can hold the 16 connection slots for 10 s at a time,
+  which it could do anyway by flooding the port; neither reveals or cancels
+  the code.
 - **Forward secrecy: none.** Compromise of `pairs.json` (mode 0600, user-only)
   decrypts recorded sessions of that pairing. Rotating to ECDHE-PSK would fix
   this but Network.framework offers no such suite.
@@ -435,7 +465,7 @@ import Security
 enum NearbyCrypto {
     static func derive(code: String, saltHex: String) -> (pairId: String, psk: SymmetricKey) {
         let salt = Data(hex: saltHex)                       // 16 bytes from TXT `salt`
-        let ikm = SymmetricKey(data: Data(code.utf8))       // the 6 digits the user typed
+        let ikm = SymmetricKey(data: Data(code.utf8))       // the canonical 52-character code
         let psk = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt,
                                          info: Data("flashtex-nearby-v1 psk".utf8), outputByteCount: 32)
         let id = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt,
@@ -528,7 +558,7 @@ over the Mac's own interfaces (loopback included) with no extra setup.
 3. Companion: `xcrun simctl boot "<iPad>"` (or from Xcode), build and run
    `apps/companion` on it (`apps/companion/build.sh` / the Xcode scheme).
    Bonjour browsing inside the simulator sees the Mac's service; enter the
-   6-digit code from step 1 when prompted (after the FT-004 changes in §8).
+   code from step 1 (or scan its QR) when prompted (after the FT-004 changes in §8).
 4. Expected on the Mac window: "paired <device> (<pair_id>)", the device
    listed under *Paired companions* with a green "connected" badge, and the
    countdown gone. Expected on the companion: `hello_ack` with

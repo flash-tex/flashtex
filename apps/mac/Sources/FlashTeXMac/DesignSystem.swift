@@ -105,10 +105,9 @@ enum DS {
         // not scaled: the split button's chevron is a small fixed glyph in
         // its own click region, not text a reader scales for legibility.
         static let toolbarChevron = Font.system(size: 9, weight: .semibold)
-        /// The pairing code: read across the room, typed on another device.
-        // not scaled: already large and monospaced for room-distance
-        // legibility; a reader who needs it bigger still zooms the display.
-        static let pairingCode = Font.system(size: 34, weight: .semibold, design: .monospaced)
+        /// The pairing code: 52 characters in groups of four, wrapped beside the
+        /// QR image; the fallback when the companion cannot scan.
+        static let pairingCode = Font.system(.title3, design: .monospaced).weight(.semibold)
     }
 
     // MARK: colour — the JetBrains Islands palette (context/PROMPT-appearance-overhaul.md §3)
@@ -373,6 +372,8 @@ enum DS {
         static let thumbnail: CGFloat = 72
         /// Larger imagery: pairing QR, proposal preview images.
         static let imageTile: CGFloat = 120
+        /// Width the pairing code wraps at: four groups of four per line.
+        static let pairingCodeWidth: CGFloat = 240
         /// Minimum width of the zoom percentage readout, so 100% → 1000%
         /// never shifts its neighbours.
         static let zoomReadoutMinWidth: CGFloat = 40

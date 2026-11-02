@@ -82,8 +82,12 @@ public enum NearbyClient {
                             code: String, companionName: String, connectTimeout: TimeInterval = 10,
                             onLine: ((NearbyConnection.Direction, Data) -> Void)? = nil) async throws -> (PairedMac, NearbySession) {
         guard salt.count == NearbyCrypto.saltLength else { throw NearbyError.unsupportedService("salt is not 16 bytes") }
-        guard !code.isEmpty else { throw NearbyError.invalidInput("empty pairing code") }
-        let derived = NearbyCrypto.derive(code: code, salt: salt)
+        // A weak code (the former six digits) never reaches the wire: its
+        // handshake could be cracked offline by anyone who recorded it.
+        guard let canonical = NearbyCrypto.canonicalCode(code) else {
+            throw NearbyError.invalidInput("pairing code must be the \(NearbyCrypto.codeLength)-character code the Mac shows")
+        }
+        let derived = NearbyCrypto.derive(code: canonical, salt: salt)
         let conn = NearbyConnection(endpoint: endpoint, pairId: derived.pairId, psk: derived.psk)
         conn.onLine = onLine
         try await conn.connect(timeout: connectTimeout)

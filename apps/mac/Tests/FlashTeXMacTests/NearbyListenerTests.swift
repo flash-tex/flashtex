@@ -578,8 +578,8 @@ final class PairingTests: XCTestCase {
         XCTAssertTrue(Pairing.verifyHelloProof(Pairing.vectorHelloProof, psk: a.psk, nonce: "n-1"))
         XCTAssertFalse(Pairing.verifyHelloProof(Pairing.vectorHelloProof, psk: a.psk, nonce: "n-2"))
         XCTAssertFalse(Pairing.verifyHelloProof("not base64!", psk: a.psk, nonce: "n-1"))
-        XCTAssertEqual(Pairing.generateCode().count, 6)
-        XCTAssertTrue(Pairing.generateCode().allSatisfy(\.isNumber))
+        XCTAssertEqual(Pairing.generateCode().count, 52)
+        XCTAssertNotNil(Pairing.canonicalCode(Pairing.generateCode()))
         XCTAssertNotEqual(Pairing.mintLongTermPSK(), Pairing.mintLongTermPSK())
     }
 
@@ -723,7 +723,7 @@ final class NearbyStateTests: XCTestCase {
 
         state.beginPairing()
         let code = try XCTUnwrap(state.pairingCode)
-        XCTAssertEqual(code.count, 6)
+        XCTAssertEqual(code.count, Pairing.codeLength)
         XCTAssertNotNil(state.codeExpiresAt)
         // Restarting for the bootstrap key keeps the port.
         try await waitUntil("restarted with bootstrap key") {
@@ -1830,17 +1830,18 @@ final class NearbyStateEventTests: XCTestCase {
 
         // (4) Resume an interrupted attempt: the published code/expiry follow the resumed values.
         let expires = Date().addingTimeInterval(20)
-        state.beginPairing(resuming: "123456", expiresAt: expires, generation: 7)
-        XCTAssertEqual(state.pairingCode, "123456")
+        let resumed = Pairing.generateCode()
+        state.beginPairing(resuming: resumed, expiresAt: expires, generation: 7)
+        XCTAssertEqual(state.pairingCode, resumed)
         XCTAssertEqual(state.codeExpiresAt, expires)
-        XCTAssertEqual(state.coordinator.current?.code, "123456")
+        XCTAssertEqual(state.coordinator.current?.code, resumed)
         XCTAssertEqual(state.coordinator.current?.generation, 7)
         try await waitUntil("advertising") { state.isAdvertising && state.port != nil }
         XCTAssertTrue(events.contains { if case .ready = $0 { return true }; return false }, "(1) onEvent saw the listener come up: \(events)")
         let port = try XCTUnwrap(state.port)
 
         // The resumed code pairs a companion.
-        let derived = Pairing.derive(code: "123456", salt: store.salt)
+        let derived = Pairing.derive(code: resumed, salt: store.salt)
         let client = NearbyTestClient(port: port, identity: derived.pairId, psk: derived.psk)
         try await waitUntil("client ready (\(String(describing: client.failure)))") { client.isReady }
         let nonce = UUID().uuidString

@@ -12,7 +12,7 @@ import XCTest
 final class FinishTests: XCTestCase {
     var mac: FakeMac!
     let salt = Data((0..<16).map { UInt8($0 * 7 + 3) })
-    let code = "440912"
+    let code = "4409120123456789ABCDEFGHJKMNPQRSTVWXYZ0123456789ABCD"
     var tmp: URL!
 
     override func setUp() async throws {
@@ -193,7 +193,7 @@ final class FinishTests: XCTestCase {
 
     func testPairFromTheMacsQRPayloadWithTypedHostPort() async throws {
         let payload = NearbyBootstrapPayload(code: code, salt: salt, macName: "Status Mac")
-        XCTAssertTrue(payload.urlString.hasPrefix("flashtex-nearby://pair?v=1&code=\(code)&salt=\(NearbyCrypto.hex(salt))&fp=\(NearbyCrypto.fingerprint(salt: salt))&name="))
+        XCTAssertTrue(payload.urlString.hasPrefix("flashtex-nearby://pair?v=2&code=\(code)&salt=\(NearbyCrypto.hex(salt))&fp=\(NearbyCrypto.fingerprint(salt: salt))&name="))
         let model = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))
         let ok = await model.pair(bootstrapText: " \(payload.urlString)\n", host: "127.0.0.1", port: String(mac.port))
         XCTAssertTrue(ok, model.linkError ?? "")

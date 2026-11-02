@@ -95,7 +95,7 @@ final class PairingFlowController: ObservableObject {
         }
     }
 
-    /// "Copy code" / ⌘C on the code: puts the digits (no display spacing) on
+    /// "Copy code" / ⌘C on the code: puts the code (no display spacing) on
     /// `pasteboard` and announces it. False when no code is shown.
     @discardableResult
     func copyCode(to pasteboard: NSPasteboard = .general) -> Bool {
@@ -103,7 +103,7 @@ final class PairingFlowController: ObservableObject {
         let text = Pairing.clipboardCode(a.code)
         pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else { return false }
-        announce("Pairing code \(Pairing.spokenCode(a.code)) copied.")
+        announce("Pairing code copied.")
         return true
     }
 
@@ -159,7 +159,7 @@ final class PairingFlowController: ObservableObject {
             apply(.captureRefused(pairId: pairId, captureId: captureId, code: code))
         case .failed(let why):
             apply(.listenerFailed("listener error: \(why)"))
-        case .ready, .stopped:
+        case .ready, .stopped, .handshakeRefused, .handshakePending:
             break
         }
     }
@@ -513,7 +513,7 @@ struct NearbyFlowView: View {
             case .off, .advertising:
                 HStack {
                     showCodeButton(title: "Show Pairing Code")
-                    Text("A 6-digit code, valid for \(Int(Pairing.codeLifetime)) s; starts advertising if needed.")
+                    Text("A QR code to scan (or a code to type), valid for \(Int(Pairing.codeLifetime)) s; starts advertising if needed.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -567,7 +567,7 @@ struct NearbyFlowView: View {
             .keyboardShortcut(.defaultAction)
             .focused($focus, equals: .showCode)
             .disabled(!controller.phase.canShowCode())
-            .accessibilityHint("Shows a six-digit code to type on the companion; starts advertising if needed.")
+            .accessibilityHint("Shows a QR code to scan with the companion, and the same code as text; starts advertising if needed.")
             .accessibilityIdentifier("nearby.pairing.show")
     }
 
@@ -582,13 +582,15 @@ struct NearbyFlowView: View {
                     .frame(width: DS.Size.imageTile, height: DS.Size.imageTile)
                     .background(DS.Colors.qrGround)
                     .accessibilityLabel("Pairing QR code")
-                    .accessibilityValue("Scan with the companion; carries code \(Pairing.spokenCode(a.code)) and this Mac's identity.")
+                    .accessibilityValue("Scan with the companion; carries the pairing code and this Mac's identity.")
                     .accessibilityIdentifier("nearby.pairing.qr")
             }
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 HStack(alignment: .firstTextBaseline, spacing: DS.Space.l) {
                     Text(Pairing.displayCode(a.code))
                         .font(DS.Fonts.pairingCode)
+                        .frame(maxWidth: DS.Size.pairingCodeWidth, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .focusable()
                         .focused($focus, equals: .code)
@@ -598,11 +600,11 @@ struct NearbyFlowView: View {
                         }
                         .accessibilityLabel("Pairing code")
                         .accessibilityValue(Pairing.spokenCode(a.code))
-                        .accessibilityHint("Type these six digits on the companion, or press Command C to copy them.")
+                        .accessibilityHint("Type this code on the companion, or press Command C to copy it.")
                         .accessibilityIdentifier("nearby.pairing.code")
                     Button("Copy code") { controller.copyCode() }
                         .accessibilityLabel("Copy pairing code")
-                        .accessibilityHint("Puts the six digits on the clipboard.")
+                        .accessibilityHint("Puts the code on the clipboard.")
                         .accessibilityIdentifier("nearby.pairing.copy")
                 }
                 HStack(spacing: DS.Space.l) {
@@ -623,8 +625,8 @@ struct NearbyFlowView: View {
                     }
                 }
                 Text(a.canRoll
-                     ? "Scan the QR code, or type the digits on the companion. An unused code is replaced when it expires."
-                     : "Scan the QR code, or type the digits on the companion. This is the last code; the attempt ends when it expires.")
+                     ? "Scan the QR code, or type the code on the companion. An unused code is replaced when it expires."
+                     : "Scan the QR code, or type the code on the companion. This is the last code; the attempt ends when it expires.")
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
@@ -642,6 +644,8 @@ struct NearbyFlowView: View {
             if !a.isExpired(at: Date()) {
                 Text(Pairing.displayCode(a.code))
                     .font(DS.Fonts.pairingCode)
+                    .frame(maxWidth: DS.Size.pairingCodeWidth, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Interrupted pairing code")
                     .accessibilityValue(Pairing.spokenCode(a.code))
