@@ -270,6 +270,13 @@ final class PadModel: ObservableObject {
         catch { linkError = "browse: \(error)" }
     }
 
+    /// Whether a typed code is the full-strength code the Mac shows (52
+    /// characters; spaces, hyphens and case do not matter): what enables
+    /// tap-to-pair. Same rule `NearbyClient.pair` applies before connecting.
+    static func typedCodeIsComplete(_ code: String) -> Bool {
+        NearbyCrypto.canonicalCode(code) != nil
+    }
+
     /// Tap-to-pair with a discovered Mac: the same bootstrap as the QR path.
     @discardableResult
     func pair(mac: DiscoveredMac, code: String) async -> Bool {

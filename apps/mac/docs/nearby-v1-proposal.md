@@ -215,7 +215,7 @@ error, never a silent drop):
 | accepted TCP connections | 16 | closed before the handshake (no bytes to an unauthenticated peer); Mac logs `too many connections` |
 | TLS handshake deadline | 10 s | closed (no bytes to an unauthenticated peer); Mac logs `handshake timed out` |
 | failed handshakes per address | 3 free, then 1 s × 2^(n−3) up to 300 s (forgotten after 10 min) | closed before the handshake; Mac logs `refused <address> before TLS` (§5) |
-| failed handshakes while one pairing code is served | 10 | the code is withdrawn and the attempt ends; Mac logs `pairing code withdrawn` (§5) |
+| handshakes in progress from one address | 2 | closed before the handshake; Mac logs `handshakes from it already in progress` (§5) |
 | `hello` deadline after the handshake | 10 s | `hello_timeout`, `id: null`, connection closed |
 | one frame, first byte to newline | 60 s (≥ 200 KiB/s for a full frame) | `frame_timeout`, `id: null`, connection closed |
 | TCP keepalive (half-open peer) | idle 15 s, 5 s × 4 probes | connection fails, session slot and in-flight bytes released |
@@ -307,12 +307,17 @@ rules).
   companion forgotten on the Mac, a typo); then a new connection from that
   address is closed before TLS for 1 s × 2^(n−3) from its last failure, at
   most 300 s, and failures older than 10 min are forgotten; a successful
-  handshake clears the address. 10 failed handshakes while one code is served,
-  from any mix of addresses, withdraw that code and end the attempt (no
-  Resume); the owner must show a new one. The counters survive the listener's
-  key-table restarts. Cost: an attacker on the LAN can lock out its own
-  address (and, by failing 10 handshakes, cancel a pairing in progress), which
-  it could do anyway by flooding the port.
+  handshake clears the address. At most 2 connections from one address may be
+  in the handshake at once (a further one is closed before TLS), so a burst of
+  simultaneous connections cannot spend failures faster than the backoff
+  allows. Failed handshakes never end a pairing attempt: anyone on the network
+  can fail one, so counting them against the code would let an
+  unauthenticated peer withdraw the owner's code at will; the code expires on
+  its own after its lifetime. The counters survive the listener's key-table
+  restarts. Cost: an attacker on the LAN can lock out its own address, and
+  with many addresses can hold the 16 connection slots for 10 s at a time,
+  which it could do anyway by flooding the port; neither reveals or cancels
+  the code.
 - **Forward secrecy: none.** Compromise of `pairs.json` (mode 0600, user-only)
   decrypts recorded sessions of that pairing. Rotating to ECDHE-PSK would fix
   this but Network.framework offers no such suite.

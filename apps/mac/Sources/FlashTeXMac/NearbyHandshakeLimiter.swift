@@ -1,7 +1,6 @@
 import Foundation
 
-/// Failed TLS-PSK handshakes, per peer address and per pairing code
-/// (proposal nearby-v1 §5). Network.framework does not say why a handshake
+/// Failed TLS-PSK handshakes, per peer address (proposal nearby-v1 §5). Network.framework does not say why a handshake
 /// failed or which key the peer tried, so a failure is a connection that
 /// ended before `.ready`: the stack reported `.failed`, or the peer did not
 /// finish within `handshakeTimeout`. A wrong key, a plaintext probe and a
@@ -14,18 +13,23 @@ import Foundation
 ///   last failure, at most `maxBackoff`, before a new connection from it is
 ///   even accepted. A success (any key) clears the address; failures older
 ///   than `forgetAfter` are forgotten.
-/// - **Per pairing code:** `bootstrapLockout` failures while one code is
-///   served end that pairing attempt, whatever addresses they came from; the
-///   owner must show a new code. With a 256-bit code an online guess cannot
-///   succeed anyway; the lockout bounds how long a hostile peer can keep an
-///   open pairing busy.
+/// - **Pending handshakes:** at most `maxPendingPerAddress` connections
+///   from one address may be in the handshake at once, so a burst of
+///   simultaneous connections cannot spend failures faster than the backoff
+///   allows.
+///
+/// Nothing here ends a pairing attempt. Anyone on the network can fail a
+/// handshake, so a count of failures against the code would let an
+/// unauthenticated peer withdraw it; with a 256-bit code an online guess
+/// cannot succeed, and the code expires on its own (`Pairing.codeLifetime`).
 struct NearbyHandshakeLimiter: Equatable {
     struct Policy: Equatable {
         var freeFailures = 3
         var baseBackoff: TimeInterval = 1
         var maxBackoff: TimeInterval = 300
         var forgetAfter: TimeInterval = 600
-        var bootstrapLockout = 10
+        /// Connections from one address still in the TLS handshake at once.
+        var maxPendingPerAddress = 2
         /// Addresses remembered at once; the stalest is dropped first.
         var maxTrackedAddresses = 256
     }
@@ -37,9 +41,6 @@ struct NearbyHandshakeLimiter: Equatable {
 
     var policy: Policy
     private(set) var entries: [String: Entry] = [:]
-    /// Pairing-code identity the bootstrap failures were counted against.
-    private(set) var bootstrapIdentity: String?
-    private(set) var bootstrapFailures = 0
 
     init(policy: Policy = .init()) { self.policy = policy }
 
@@ -55,11 +56,8 @@ struct NearbyHandshakeLimiter: Equatable {
 
     func failures(_ address: String) -> Int { entries[address]?.failures ?? 0 }
 
-    /// Records one failed handshake. `bootstrap` names the pairing code the
-    /// listener was serving then (its PSK identity), nil when none. Returns
-    /// true exactly once per code: when this failure reaches the lockout.
-    @discardableResult
-    mutating func recordFailure(_ address: String, bootstrap: String?, now: Date) -> Bool {
+    /// Records one failed handshake from `address`.
+    mutating func recordFailure(_ address: String, now: Date) {
         entries = entries.filter { now.timeIntervalSince($0.value.last) < policy.forgetAfter }
         var e = entries[address] ?? Entry(failures: 0, last: now)
         e.failures += 1
@@ -69,13 +67,6 @@ struct NearbyHandshakeLimiter: Equatable {
            let stalest = entries.min(by: { $0.value.last < $1.value.last })?.key {
             entries.removeValue(forKey: stalest)
         }
-        guard let bootstrap else { return false }
-        if bootstrap != bootstrapIdentity {
-            bootstrapIdentity = bootstrap
-            bootstrapFailures = 0
-        }
-        bootstrapFailures += 1
-        return bootstrapFailures == policy.bootstrapLockout
     }
 
     /// A handshake from `address` completed with one of the table's keys.

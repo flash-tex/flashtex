@@ -3,7 +3,7 @@ import XCTest
 @testable import FlashTeXMac
 
 /// The pairing code is a 256-bit secret, and failed handshakes back off per
-/// address and end a pairing attempt (proposal nearby-v1 §5, lane
+/// address without ever ending a pairing attempt (proposal nearby-v1 §5, lane
 /// TRANSFER-AUDIT). The 6-digit code these replace could be tested offline
 /// from one recorded handshake in about a second.
 final class PairingCodeStrengthTests: XCTestCase {
@@ -73,43 +73,32 @@ final class NearbyHandshakeLimiterTests: XCTestCase {
         var l = NearbyHandshakeLimiter()
         for i in 0..<3 {
             XCTAssertNil(l.retryAfter("10.0.0.9", now: t0), "failure \(i) is free")
-            l.recordFailure("10.0.0.9", bootstrap: nil, now: t0)
+            l.recordFailure("10.0.0.9", now: t0)
         }
         XCTAssertEqual(l.retryAfter("10.0.0.9", now: t0), 1)
         XCTAssertNil(l.retryAfter("10.0.0.10", now: t0), "other addresses are not affected")
         XCTAssertNil(l.retryAfter("10.0.0.9", now: t0.addingTimeInterval(1)))
-        l.recordFailure("10.0.0.9", bootstrap: nil, now: t0.addingTimeInterval(1))
+        l.recordFailure("10.0.0.9", now: t0.addingTimeInterval(1))
         XCTAssertEqual(l.retryAfter("10.0.0.9", now: t0.addingTimeInterval(1)), 2)
-        for k in 0..<20 { l.recordFailure("10.0.0.9", bootstrap: nil, now: t0.addingTimeInterval(2 + Double(k))) }
+        for k in 0..<20 { l.recordFailure("10.0.0.9", now: t0.addingTimeInterval(2 + Double(k))) }
         XCTAssertEqual(l.retryAfter("10.0.0.9", now: t0.addingTimeInterval(21)), 300, "capped at maxBackoff")
         XCTAssertNil(l.retryAfter("10.0.0.9", now: t0.addingTimeInterval(21 + 600)), "forgotten after forgetAfter")
     }
 
     func testSuccessClearsTheAddress() {
         var l = NearbyHandshakeLimiter()
-        for _ in 0..<5 { l.recordFailure("a", bootstrap: nil, now: t0) }
+        for _ in 0..<5 { l.recordFailure("a", now: t0) }
         XCTAssertNotNil(l.retryAfter("a", now: t0))
         l.recordSuccess("a")
         XCTAssertNil(l.retryAfter("a", now: t0))
         XCTAssertEqual(l.failures("a"), 0)
     }
 
-    func testLockoutFiresOncePerCodeAcrossAddresses() {
-        var l = NearbyHandshakeLimiter()
-        var fired: [Int] = []
-        for i in 0..<25 where l.recordFailure("10.0.1.\(i)", bootstrap: "code-1", now: t0) { fired.append(i) }
-        XCTAssertEqual(fired, [9], "the 10th failure locks the code out, once")
-        // A new code starts counting again; failures with no code served never lock out.
-        XCTAssertFalse(l.recordFailure("x", bootstrap: "code-2", now: t0))
-        XCTAssertEqual(l.bootstrapFailures, 1)
-        for _ in 0..<20 { XCTAssertFalse(l.recordFailure("y", bootstrap: nil, now: t0)) }
-    }
-
     func testTrackedAddressesAreBounded() {
         var p = NearbyHandshakeLimiter.Policy()
         p.maxTrackedAddresses = 4
         var l = NearbyHandshakeLimiter(policy: p)
-        for i in 0..<10 { l.recordFailure("h\(i)", bootstrap: nil, now: t0.addingTimeInterval(Double(i))) }
+        for i in 0..<10 { l.recordFailure("h\(i)", now: t0.addingTimeInterval(Double(i))) }
         XCTAssertEqual(l.entries.count, 4)
         XCTAssertEqual(Set(l.entries.keys), ["h6", "h7", "h8", "h9"], "the stalest are dropped")
     }
@@ -155,52 +144,75 @@ final class NearbyHandshakeBackoffListenerTests: XCTestCase {
         right.cancel()
     }
 
-    func testFailedHandshakesWhileACodeIsServedLockThePairingOut() throws {
-        var limits = NearbyReceiveLimits()
-        limits.handshake.freeFailures = 100 // one loopback address: test the per-code count alone
-        limits.handshake.bootstrapLockout = 3
-        let boot = Pairing.derive(code: Pairing.generateCode(), salt: Pairing.generateSalt())
-        let h = ListenerHarness(psks: [.init(identity: boot.pairId, key: boot.psk, isBootstrap: true, generation: 1)],
-                                sink: RecordingSink(), destinations: nil, limits: limits)
+    /// Simultaneous connections from one address would all be accepted
+    /// before any had failed; only `maxPendingPerAddress` get a handshake.
+    func testSimultaneousHandshakesFromOneAddressAreCapped() throws {
+        let h = ListenerHarness(psks: [.init(identity: "pair-a", key: Self.psk, isBootstrap: false)], sink: RecordingSink(),
+                                destinations: nil, limits: NearbyReceiveLimits())
         try h.start()
         defer { h.stop() }
-        for _ in 0..<4 { failHandshake(h, identity: boot.pairId) }
-        waitForEvent(h, "locked out") { $0 == .pairingLockedOut(failures: 3) }
-        waitForEvent(h, "fourth failure counted") { _ in h.listener.handshakeLimiter.bootstrapFailures == 4 }
-        XCTAssertEqual(h.snapshot.filter { if case .pairingLockedOut = $0 { return true }; return false }.count, 1, "\(h.snapshot)")
+        // Plain TCP peers that never start TLS stay in the handshake until
+        // `handshakeTimeout` (10 s), so the count below is not a race.
+        let stalled = (0..<5).map { _ in NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: h.port)!, using: .tcp) }
+        for (i, c) in stalled.enumerated() { c.start(queue: DispatchQueue(label: "stalled.\(i)")) }
+        defer { for c in stalled { c.cancel() } }
+        waitForEvent(h, "three refused") { _ in
+            h.snapshot.filter { if case .handshakePending(_, 2) = $0 { return true }; return false }.count == 3
+        }
+        XCTAssertEqual(h.listener.openConnectionCount, 2)
+        XCTAssertEqual(h.listener.handshakeLimiter.entries.count, 0, "a refusal is not a failed handshake")
+        // The right key from the same address waits for a free slot too.
+        let right = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.psk)
+        defer { right.cancel() }
+        XCTAssertEqual(XCTWaiter.wait(for: [right.ready], timeout: 1), .timedOut)
     }
 }
 
-/// NearbyState withdraws the code when the listener reports the lockout.
+/// An unauthenticated peer cannot take the pairing code away: failed
+/// handshakes cost the failing address time, never the owner's open code.
 @MainActor
 final class NearbyPairingLockoutStateTests: XCTestCase {
-    func testLockoutWithdrawsThePairingCode() async throws {
+    /// A journal written by an older build holds a six-digit code; resuming
+    /// it would serve a bootstrap key that is crackable offline.
+    func testAWeakJournaledCodeIsNotResumed() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("nearby-weak-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = NearbyState(store: PairStore(url: dir.appendingPathComponent("pairs.json")), macName: "Weak Mac", loopbackOnly: true)
+        state.beginPairing(resuming: "123456", expiresAt: Date().addingTimeInterval(60))
+        XCTAssertNil(state.pairingCode)
+        XCTAssertNil(state.coordinator.current)
+        XCTAssertEqual(state.log.last, "not resuming pairing code: not a full-strength code")
+        XCTAssertFalse(state.isAdvertising)
+    }
+
+    func testFailedHandshakesDoNotWithdrawThePairingCode() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("nearby-lockout-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = PairStore(url: dir.appendingPathComponent("pairs.json"))
-        var limits = NearbyReceiveLimits()
-        limits.handshake.freeFailures = 100
-        limits.handshake.bootstrapLockout = 2
-        let state = NearbyState(store: store, macName: "Lockout Mac", loopbackOnly: true, limits: limits)
+        // Default limits: what a hostile peer on the LAN meets.
+        let state = NearbyState(store: store, macName: "Lockout Mac", loopbackOnly: true, limits: NearbyReceiveLimits())
         state.attach(sink: RecordingSink(), destinations: FixedDestinations(nil))
         state.startAdvertising()
         try await eventually(timeout: loopbackWait) { state.isAdvertising && state.port != nil }
         state.beginPairing()
         let code = try XCTUnwrap(state.pairingCode)
-        XCTAssertEqual(code.count, Pairing.codeLength)
         try await eventually(timeout: loopbackWait) { state.log.filter { $0.hasPrefix("ready on port") }.count >= 2 }
         let port = try XCTUnwrap(state.port)
         let pairId = Pairing.derive(code: code, salt: store.salt).pairId
-        for _ in 0..<2 {
-            let c = NearbyTestClient(port: port, identity: pairId, psk: Data(repeating: 0x11, count: 32))
-            try await eventually(timeout: loopbackWait) { c.isFailed }
-            XCTAssertTrue(c.isFailed)
+        // Many wrong-key handshakes at once (concurrent connections are
+        // accepted before any of them has failed), then more one by one.
+        let burst = (0..<14).map { _ in NearbyTestClient(port: port, identity: pairId, psk: Data(repeating: 0x11, count: 32)) }
+        try await eventually(timeout: loopbackWait) { burst.allSatisfy { $0.isClosed || $0.isFailed } }
+        for c in burst { c.cancel() }
+        for _ in 0..<4 {
+            let c = NearbyTestClient(port: port, identity: pairId, psk: Data(repeating: 0x22, count: 32))
+            try await eventually(timeout: loopbackWait) { c.isClosed || c.isFailed }
             c.cancel()
         }
-        try await eventually(timeout: loopbackWait) { state.pairingCode == nil }
-        XCTAssertNil(state.pairingCode, "\(state.log)")
-        XCTAssertNil(state.coordinator.current)
-        XCTAssertTrue(state.log.contains("pairing code withdrawn after 2 failed handshakes"), "\(state.log)")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(state.pairingCode, code, "the code is still served: \(state.log)")
+        XCTAssertNotNil(state.coordinator.current)
+        XCTAssertFalse(state.log.contains { $0.contains("withdrawn") }, "\(state.log)")
         state.stopAdvertising()
     }
 }

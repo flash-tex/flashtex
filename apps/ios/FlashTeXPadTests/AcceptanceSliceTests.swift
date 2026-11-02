@@ -42,6 +42,20 @@ final class AcceptanceSliceTests: XCTestCase {
         mac = nil
     }
 
+    /// Tap-to-pair is enabled by the full-strength code as the Mac shows
+    /// it (grouped, any case), not by the former six digits.
+    func testTypedPairingAcceptsTheFullCodeOnly() {
+        XCTAssertTrue(PadModel.typedCodeIsComplete(code))
+        let grouped = stride(from: 0, to: code.count, by: 4).map { i -> String in
+            let a = code.index(code.startIndex, offsetBy: i)
+            return String(code[a..<code.index(a, offsetBy: min(4, code.count - i))])
+        }.joined(separator: "-")
+        XCTAssertTrue(PadModel.typedCodeIsComplete(grouped.lowercased()))
+        XCTAssertFalse(PadModel.typedCodeIsComplete("482913"), "six digits no longer pair")
+        XCTAssertFalse(PadModel.typedCodeIsComplete(String(code.dropLast())))
+        XCTAssertFalse(PadModel.typedCodeIsComplete(""))
+    }
+
     // (a)
     func testOpensBundledSample() throws {
         model.openBundledSample()

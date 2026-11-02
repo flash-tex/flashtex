@@ -409,7 +409,7 @@ struct MacLinkPanel: View {
                                 Image(systemName: "laptopcomputer")
                             }
                         }
-                        .disabled(code.count != 6)
+                        .disabled(!PadModel.typedCodeIsComplete(code))
                         .accessibilityIdentifier("pair.nearby.\(mac.fingerprint ?? mac.name)")
                     }
                 }

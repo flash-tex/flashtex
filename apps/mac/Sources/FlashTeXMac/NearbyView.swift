@@ -159,12 +159,7 @@ final class PairingFlowController: ObservableObject {
             apply(.captureRefused(pairId: pairId, captureId: captureId, code: code))
         case .failed(let why):
             apply(.listenerFailed("listener error: \(why)"))
-        case .pairingLockedOut(let failures):
-            // Ends the attempt for good (no Resume): the code is withdrawn.
-            guard machine.attempt != nil else { return }
-            apply(.cancel)
-            announce("Pairing stopped after \(failures) failed attempts to connect with a wrong code. Show a new code to pair.")
-        case .ready, .stopped, .handshakeRefused:
+        case .ready, .stopped, .handshakeRefused, .handshakePending:
             break
         }
     }
