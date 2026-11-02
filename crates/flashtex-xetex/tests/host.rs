@@ -2174,3 +2174,71 @@ fn the_font_lists_name_the_families_a_lookup_finds() {
     );
     let _ = std::fs::remove_dir_all(&cache);
 }
+
+/// FS-WATCH in the Unicode host (`flashtex_runtime::fswatch`, as in the
+/// pdfTeX host): a file outside the document that the preamble read is
+/// vouched for by the kernel's events at the next compile's check of S₀
+/// (no `stat`), and a change to it is still seen: the compile after it
+/// runs the preamble again.
+#[test]
+fn files_outside_the_document_are_watched_and_their_changes_seen() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-fswatch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // the file outside the document, its time in the past (a signature taken
+    // within its file's time tick is racy: compared by content, not kept)
+    let ext = dir.join("ext").join("ext.tex");
+    std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
+    let write_ext = |word: &str, ago: u64| {
+        std::fs::write(&ext, format!("\\def\\extword{{{word}}}\n")).unwrap();
+        let f = std::fs::File::options().write(true).open(&ext).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(ago))
+            .unwrap();
+    };
+    write_ext("Alpha", 7200);
+    let ext = std::fs::canonicalize(&ext).unwrap();
+    let doc = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\input{{{}}}\n\\typeout{{EXT:\\extword}}\n\
+             \\begin{{document}}\n{body} \\extword.\n\\end{{document}}\n",
+            ext.display()
+        )
+    };
+    let (proj, out) = project(&dir, &doc("One"));
+    let err = dir.join("host.err");
+    let h = start_with(&dir, &[("FLASHTEX_FSWATCH_DEBUG", "1")], &err);
+    let mut c = Client::connect(&h.sock).unwrap();
+    let log = || std::fs::read_to_string(Path::new(&out).join("main.log")).unwrap();
+    let compile = |c: &mut Client, id: i64, text: String| {
+        let mut r = request(id, &proj, &out);
+        r.buffers = vec![("main.tex".into(), text)];
+        c.compile(&r).unwrap();
+        let (_, done) = events(c, id);
+        assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    };
+    compile(&mut c, 1, doc("One"));
+    assert!(log().contains("EXT:Alpha"), "{}", log());
+    // an edit in the body: S₀ holds, and its check keeps the file's
+    // signature from the watcher's first `stat` of it
+    compile(&mut c, 2, doc("Two"));
+    assert!(log().contains("EXT:Alpha"), "{}", log());
+    // the file changes (another time in the past): the next compile's check
+    // sees its event, `stat`s it again, and the preamble runs again
+    write_ext("Beta", 3600);
+    compile(&mut c, 3, doc("Two"));
+    assert!(log().contains("EXT:Beta"), "{}", log());
+    c.bye().unwrap();
+    drop(h);
+    let said = std::fs::read_to_string(&err).unwrap();
+    let ext = ext.to_string_lossy();
+    assert!(
+        said.lines().any(|l| l.starts_with("[fswatch] stat ")
+            && l.contains(&*ext)
+            && l.ends_with(": kept")),
+        "the host's checks did not watch {ext}:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
