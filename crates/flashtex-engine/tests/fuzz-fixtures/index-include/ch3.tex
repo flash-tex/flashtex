@@ -1,0 +1,12 @@
+\chapter{Incremental Runs}\label{ch:incr}
+An incremental run\index{incremental run} restarts from a checkpoint\index{checkpoint}
+before the first changed read, and converges\index{convergence} with the old run
+when its state is the same again. The pages\index{page} between are typeset
+anew; those after are kept.
+
+A file read at the document's start, like the index\index{index} or the table
+of contents\index{table of contents}, is a barrier\index{barrier}: a change to it
+restarts the run before the read. Chapter~\ref{ch:pages} describes the pages.
+
+The auxiliary file\index{auxiliary file} is read once at the start and written
+once at the end, so a label\index{label} that moves changes the next pass.
