@@ -261,11 +261,8 @@ fn main() {
         None => (held.count as f64 * at) as u32,
     }
     .min(held.count.saturating_sub(1) as u32);
-    let main_file = |f: u32| {
-        held.files
-            .get(&f)
-            .is_some_and(|p| p.ends_with(&format!("/{efile}")))
-    };
+    let ids = edit_file_ids(&held.files, &efile);
+    let main_file = |f: u32| ids.contains(&f);
     let on_pages = |line: u32| -> Vec<u32> {
         let mut v: Vec<u32> = held
             .lines
@@ -777,5 +774,47 @@ fn wait_until(due: Instant) {
     }
     while Instant::now() < due {
         std::hint::spin_loop();
+    }
+}
+
+/// The ids of the held files that are `efile` (relative to the root): the
+/// shortest paths ending in `/efile`. A namesake deeper down is another
+/// file: *Infinite Descent* twice (infdesc-x2) inputs its second copy's
+/// `x2/book/...`, whose paths end in the first copy's `/book/...` too; both
+/// matched, every line was on two pages, and an edit of the first copy
+/// found "no prose line on one page".
+fn edit_file_ids(files: &HashMap<u32, String>, efile: &str) -> Vec<u32> {
+    let tail = format!("/{efile}");
+    let shortest = files
+        .values()
+        .filter(|p| p.ends_with(&tail))
+        .map(|p| p.len())
+        .min();
+    files
+        .iter()
+        .filter(|(_, p)| p.ends_with(&tail) && Some(p.len()) == shortest)
+        .map(|(&i, _)| i)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_edited_file_is_not_its_namesake_deeper_down() {
+        let files: HashMap<u32, String> = [
+            (1, "/w/main.tex"),
+            (2, "/w/book/nt/mod.tex"),
+            (3, "/w/x2/book/nt/mod.tex"),
+            (4, "/w/book/nt/other.tex"),
+        ]
+        .into_iter()
+        .map(|(i, p)| (i, p.to_string()))
+        .collect();
+        assert_eq!(edit_file_ids(&files, "book/nt/mod.tex"), vec![2]);
+        assert_eq!(edit_file_ids(&files, "x2/book/nt/mod.tex"), vec![3]);
+        assert_eq!(edit_file_ids(&files, "main.tex"), vec![1]);
+        assert!(edit_file_ids(&files, "book/nt/none.tex").is_empty());
     }
 }
