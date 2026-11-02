@@ -41,31 +41,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: this runner's build directory
         run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-coldopen" >> "$GITHUB_ENV"
-      - name: build each ref, then pdflatex's passes and the cold opens
+      # SCRATCH BRANCH ONLY (agent/kabir-claude-unicode/profile-pc, never merged): this
+      # dispatch runs tools/unicode-m3/restart_profile.sh instead of the cold opens.
+      - name: Unicode vs Classic keystroke profile
         run: |
           set -o pipefail
-          refs=()
-          for r in $REFS; do
-            # a branch name is origin's (the checkout has no local branches but its own)
-            if git rev-parse -q --verify "origin/$r^{commit}" >/dev/null; then refs+=("origin/$r"); else refs+=("$r"); fi
-          done
-          tools/incr-bench/coldopen-pc.sh "$RUNNER_TEMP/coldopen" "$REPS" "$PERF" "${refs[@]}" \
-            2>&1 | tee "$RUNNER_TEMP/coldopen.log"
-      - name: summary
-        if: always()
-        run: |
-          [ -f "$RUNNER_TEMP/coldopen/r/summary.md" ] || exit 0
-          { echo '### infdesc-x2 cold open (PC)'; cat "$RUNNER_TEMP/coldopen/r/summary.md"; } >> "$GITHUB_STEP_SUMMARY"
+          chmod +x tools/unicode-m3/restart_profile.sh
+          tools/unicode-m3/restart_profile.sh "$RUNNER_TEMP/uprof" 60 2>&1 | tee "$RUNNER_TEMP/uprof.log"
       - name: keep the results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coldopen-pc
+          name: unicode-restart-profile
           path: |
-            ${{ runner.temp }}/coldopen/r/
-            ${{ runner.temp }}/coldopen.log
+            ${{ runner.temp }}/uprof/r/
+            ${{ runner.temp }}/uprof.log
           if-no-files-found: ignore
           retention-days: 30
       - name: clean up
         if: always()
-        run: rm -rf "$RUNNER_TEMP/coldopen"
+        run: rm -rf "$RUNNER_TEMP/uprof"
