@@ -85,8 +85,13 @@ type Dirs = Vec<(PathBuf, Option<super::spare::Ident>)>;
 struct KeptFonts {
     /// The last walk of the directories.
     walked: Option<Dirs>,
+    /// Which walk `walked` is (one more at each walk).
+    walk: u64,
+    /// `dirs()` of `walked`, made once a walk: hashing the walk's text took
+    /// about 0.3 ms a keystroke on T7's `full-120` (lane UNICODE).
+    hash: Option<[u64; 2]>,
     /// The catalog made from them, and the walk it was made after.
-    kept: Option<(Dirs, Arc<FontCatalog>)>,
+    kept: Option<(u64, Arc<FontCatalog>)>,
 }
 
 impl KeptFonts {
@@ -98,6 +103,8 @@ impl KeptFonts {
             .is_some_and(|w| super::spare::font_dirs_unchanged(w));
         if !same {
             self.walked = Some(super::spare::font_dirs());
+            self.walk += 1;
+            self.hash = None;
         }
         self.walked.as_ref().expect("walked above")
     }
@@ -105,20 +112,26 @@ impl KeptFonts {
 
 impl Fonts for KeptFonts {
     fn catalog(&mut self) -> Arc<FontCatalog> {
-        let dirs = self.now().clone();
-        if let Some((d, c)) = &self.kept {
-            if *d == dirs {
+        self.now();
+        if let Some((w, c)) = &self.kept {
+            if *w == self.walk {
                 return c.clone();
             }
         }
         let c = Arc::new(FontCatalog::for_lookup());
-        self.kept = Some((dirs, c.clone()));
+        self.kept = Some((self.walk, c.clone()));
         c
     }
 
     fn dirs(&mut self) -> [u64; 2] {
-        let d = format!("{:?}", self.now());
-        flashtex_engine::persist::hash128(d.as_bytes())
+        self.now();
+        if let Some(h) = self.hash {
+            return h;
+        }
+        let d = format!("{:?}", self.walked.as_ref().expect("walked by now()"));
+        let h = flashtex_engine::persist::hash128(d.as_bytes());
+        self.hash = Some(h);
+        h
     }
 }
 
@@ -283,4 +296,39 @@ fn debug() -> bool {
 /// A new run's cancel flag.
 pub fn cancel_flag() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `KeptFonts::dirs` is the hash of the walk's text, made once a walk:
+    /// the same while the directories are unchanged, made again (of the
+    /// new walk) after one changes.
+    #[test]
+    fn the_font_directories_hash_is_made_once_a_walk() {
+        let dir = std::env::temp_dir().join(format!("flashtex-keptfonts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let walked: Dirs = vec![(dir.clone(), super::super::spare::ident(&dir))];
+        let of = |w: &Dirs| flashtex_engine::persist::hash128(format!("{w:?}").as_bytes());
+        let mut k = KeptFonts {
+            walked: Some(walked.clone()),
+            ..KeptFonts::default()
+        };
+        let h = k.dirs();
+        assert_eq!(h, of(&walked));
+        assert_eq!(k.dirs(), h);
+        assert_eq!(k.walk, 0, "no walk while the directory is unchanged");
+        // a font installed: the directory changes, the next check walks the
+        // directories again (the system's now) and hashes that walk
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.join("new.otf"), b"x").unwrap();
+        let h2 = k.dirs();
+        assert_eq!(k.walk, 1);
+        assert_eq!(h2, of(k.walked.as_ref().unwrap()));
+        assert_ne!(h2, h);
+        assert_eq!(k.dirs(), h2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
