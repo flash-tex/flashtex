@@ -15,6 +15,8 @@ final class PairingFlowMachineTests: XCTestCase {
     }
     var a1: PairingFlow.Attempt { attempt(1) }
     var a2: PairingFlow.Attempt { attempt(2, code: "654321") }
+    /// A full-strength code: `.resume` refuses a journaled code that `Pairing.canonicalCode` rejects.
+    var s1: PairingFlow.Attempt { attempt(1, code: Pairing.base32(Data(repeating: 0xA5, count: Pairing.codeSecretBytes))) }
     var later: Date { t0.addingTimeInterval(10) }
 
     // MARK: advertising and code issue
@@ -356,16 +358,16 @@ final class PairingFlowMachineTests: XCTestCase {
 
     func testRelaunchWithValidCodeResumesThroughTransport() {
         var m = M()
-        let out = m.apply(.restored(a1), now: later)
-        XCTAssertEqual(m.phase, .interrupted(a1, .relaunch, detail: "FlashTeX was quit while the code was valid"))
+        let out = m.apply(.restored(s1), now: later)
+        XCTAssertEqual(m.phase, .interrupted(s1, .relaunch, detail: "FlashTeX was quit while the code was valid"))
         XCTAssertEqual(m.generation, 1)
         XCTAssertEqual(out.effects, [.announce("A pairing from a previous launch is waiting. Resume it or cancel.")])
         XCTAssertTrue(m.phase.canResume(now: later))
         XCTAssertTrue(m.phase.canCancel(now: later))
         XCTAssertFalse(m.phase.canShowCode(now: later), "must resume or cancel first")
         let r = m.apply(.resume, now: later)
-        XCTAssertEqual(m.phase, .codeShown(a1))
-        XCTAssertEqual(r.effects.first, .resumeTransport(a1))
+        XCTAssertEqual(m.phase, .codeShown(s1))
+        XCTAssertEqual(r.effects.first, .resumeTransport(s1))
         XCTAssertTrue(m.isAdvertising)
     }
 
@@ -397,12 +399,12 @@ final class PairingFlowMachineTests: XCTestCase {
 
     func testPeerGoneDuringVerificationResumesWithoutTransportEffect() {
         var m = M()
-        m.apply(.codeIssued(a1), now: t0)
+        m.apply(.codeIssued(s1), now: t0)
         m.apply(.bootstrapSessionOpened(generation: 1), now: t0)
         m.apply(.peerGone(pairId: nil, reason: "handshake failed", generation: 1), now: t0)
-        XCTAssertEqual(m.phase, .interrupted(a1, .peerGone, detail: "handshake failed"))
+        XCTAssertEqual(m.phase, .interrupted(s1, .peerGone, detail: "handshake failed"))
         let r = m.apply(.resume, now: later)
-        XCTAssertEqual(m.phase, .codeShown(a1))
+        XCTAssertEqual(m.phase, .codeShown(s1))
         XCTAssertEqual(r.effects, [.announce("Resumed pairing code, 110 seconds left.")], "key still served; no transport effect")
     }
 
@@ -415,13 +417,13 @@ final class PairingFlowMachineTests: XCTestCase {
 
     func testAdvertisingOffUnderCodeInterruptsAndResumeRestartsTransport() {
         var m = M()
-        m.apply(.codeIssued(a1), now: t0)
+        m.apply(.codeIssued(s1), now: t0)
         m.apply(.advertising(false), now: t0)
-        XCTAssertEqual(m.phase, .interrupted(a1, .transportStopped, detail: "advertising was turned off"))
+        XCTAssertEqual(m.phase, .interrupted(s1, .transportStopped, detail: "advertising was turned off"))
         XCTAssertFalse(m.isAdvertising)
         let r = m.apply(.resume, now: later)
-        XCTAssertEqual(r.effects.first, .resumeTransport(a1))
-        XCTAssertEqual(m.phase, .codeShown(a1))
+        XCTAssertEqual(r.effects.first, .resumeTransport(s1))
+        XCTAssertEqual(m.phase, .codeShown(s1))
         XCTAssertTrue(m.isAdvertising)
     }
 

@@ -829,6 +829,12 @@ enum PairingFlow {
                     phase = .failed(reason: "The pairing code expired before it could be resumed.", generation: a.generation)
                     return Outcome(effects: [.clearJournal, .announce("The pairing code expired; show a new code.")])
                 }
+                // The transport refuses a journaled code that is not full strength
+                // (written by an older build); showing it would display a code nobody serves.
+                if Pairing.canonicalCode(a.code) != a.code {
+                    phase = .failed(reason: "The saved pairing code is no longer accepted; start pairing again.", generation: a.generation)
+                    return Outcome(effects: [.clearJournal, .announce("The saved pairing code is no longer accepted; show a new code.")])
+                }
                 phase = .codeShown(a)
                 isAdvertising = true
                 // The transport still holds the key after a peer dropped; it must
