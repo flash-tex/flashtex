@@ -1031,10 +1031,8 @@ Rules:
     (`crates/flashtex-build`) is now `flashtex`, the packaged CLI (RQ6), and
     `supported-latex.json` is generated from the new engine's measured package support
     (RQ5).
-  - *Open (review 2026-11-01):* `crates/document-runtime` (5.5k LOC), the old compiler's
-    stdio session manager, has no consumer left: no workspace crate, app, script or
-    workflow refers to it. The retirement plan kept it as an IDE crate; it is a deletion
-    candidate under the same rules (reference check, revert check).
+  - The old compiler's `document-runtime` stdio session manager was deleted after S8:
+    it had no remaining consumer (review 2026-11-01, §5 item 5).
 - **Old-pane work stops (adopted 2026-09-30, §13).** No new features go into the v2 preview
   pane or its producer routes (D13); #1228's renderer-agnostic tile core moves to the v3
   pane (§6.2). The v3 pane still lacks features the v2 pane has, and **each of these app
