@@ -942,8 +942,10 @@ impl Globals {
         let (mode, is_file) = (item.mode, item.is_file);
         if is_file {
             self.set_cur_file_name_str(Some(&line));
-            let name = String::from_utf8_lossy(&line).into_owned();
-            let found = crate::system::find_file(&name, Format::Map);
+            // fm_open: openclose.c's open_input, so `-output-directory`
+            // first and `nameoffile` without kpathsea's `./` (the log's
+            // `{x.map}` and the warnings' `(file x.map)`)
+            let found = self.open_input_named(&line, Format::Map);
             // A map file read before in this process into an empty map, and
             // unchanged since: its entries, without parsing it again.
             let key = found.as_ref().and_then(|path| {
