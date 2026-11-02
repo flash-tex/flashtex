@@ -1,38 +1,40 @@
 # P5 scoreboard summary
 
-Host: nixos-7800x3d (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools a6b02e7a7).
-Engines: new 5a42ab270243440446e4f103e17a63350a8cf788, old 5a42ab270243440446e4f103e17a63350a8cf788.
+Host: nixos-7800x3d-2 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools c5763d9b8).
+Engines: new f53095ff211ef74b09daac08b80f855d411bd1cf.
 
-Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/41312997356
+Old column: v1 was deleted in retirement stage S7 (#1888) and is not run; its cells are committed one-off v1 measurements: T3 from v1's last run, p5-scoreboard 41203982275 at 5a42ab270 (2026-10-31; `baselines/t3-v1-oneoff.json`); T4 from the decision-1 one-off (2026-10-01; `baselines/t4-v1-oneoff.json`).
 
-**Not all green** (24 row(s) not green). Retirement from S5 on does not start.
+Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/41341639780
+
+**All green**: new >= old on every tier, targets and bars met, every run complete. That is only the scoreboard part of S5's precondition; S5 also needs: decision 3 gate as confirmed (Q3): P-T2 >= 99% and P-T1 >= 98% on arXiv and T4, zero crashes on T4, new >= old on every tier; T2 clean; no-TeX-Live gate green; the S5 app-parity rows of docs/evidence/app-parity-2026-10-05 (plan §4.4; app_parity_gate: tools/parity/app-parity-rows.json, its tests passing, not skipped, on mac-app and the host leg); T1 (lockstep) has 0 new differences, which this board does not measure; §1.2 latency targets met on a T7 reference run; one shipped release carries #1421/#1427 records (met: v0.2.0, 2026-10-20, tag commit 6316bc14d); the modes lane's fontspec fallback; S3, S3r and S4 landed.
 
 | tier | metric | new | old | verdict | target | gates |
 |---|---|---|---|---|---|---|
-| T3 fixtures | P-T1 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 fixtures | P-T2 | 88/88 (100.0%) | missing | **missing** | new >= old | S3, S3r, S5+ |
-| T3 fixtures | L0 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 fixtures | L1 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 fixtures | L2 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 fixtures | L3 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 arXiv | P-T1 | 127/127 (100.0%) | missing | **missing** | new >= old; >= 98% (owner bar) | S5+ |
-| T3 arXiv | P-T2 | 127/127 (100.0%) | missing | **missing** | new >= old; >= 99% (owner bar) | S5+ |
-| T3 arXiv | L0 | 127/127 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 arXiv | L1 | 127/127 (100.0%) | missing | **missing** | new >= old; >= 90% | S5+ |
-| T3 arXiv | L2 | 127/127 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 arXiv | L3 | 127/127 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 templates | P-T1 | 17/17 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 templates | P-T2 | 17/17 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 templates | L0 | 17/17 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 templates | L1 | 17/17 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 templates | L2 | 17/17 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 templates | L3 | 17/17 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 packages (#1288) | P-T1 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 packages (#1288) | P-T2 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 packages (#1288) | L0 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 packages (#1288) | L1 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 packages (#1288) | L2 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
-| T3 packages (#1288) | L3 | 88/88 (100.0%) | missing | **missing** | new >= old | S5+ |
+| T3 fixtures | P-T1 | 88/88 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
+| T3 fixtures | P-T2 | 88/88 (100.0%) | 0/88 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S3, S3r, S5+ |
+| T3 fixtures | L0 | 88/88 (100.0%) | 84/88 (95.5%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 fixtures | L1 | 88/88 (100.0%) | 84/88 (95.5%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 fixtures | L2 | 88/88 (100.0%) | 74/88 (84.1%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 fixtures | L3 | 88/88 (100.0%) | 64/88 (72.7%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 arXiv | P-T1 | 127/127 (100.0%) | n/a | ahead (old n/a) | >= 98% (owner bar; old n/a) | S5+ |
+| T3 arXiv | P-T2 | 127/127 (100.0%) | 0/127 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 127/127 on the baseline's 127 IDs | ahead (v1 one-off) | new >= old; >= 99% (owner bar) | S5+ |
+| T3 arXiv | L0 | 127/127 (100.0%) | 2/127 (1.6%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 127/127 on the baseline's 127 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 arXiv | L1 | 127/127 (100.0%) | 1/127 (0.8%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 127/127 on the baseline's 127 IDs | ahead (v1 one-off) | new >= old; >= 90% | S5+ |
+| T3 arXiv | L2 | 127/127 (100.0%) | 0/127 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 127/127 on the baseline's 127 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 arXiv | L3 | 127/127 (100.0%) | 0/127 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 127/127 on the baseline's 127 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 templates | P-T1 | 17/17 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
+| T3 templates | P-T2 | 17/17 (100.0%) | 0/17 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 17/17 on the baseline's 17 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 templates | L0 | 17/17 (100.0%) | 2/17 (11.8%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 17/17 on the baseline's 17 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 templates | L1 | 17/17 (100.0%) | 2/17 (11.8%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 17/17 on the baseline's 17 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 templates | L2 | 17/17 (100.0%) | 0/17 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 17/17 on the baseline's 17 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 templates | L3 | 17/17 (100.0%) | 0/17 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 17/17 on the baseline's 17 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 packages (#1288) | P-T1 | 88/88 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
+| T3 packages (#1288) | P-T2 | 88/88 (100.0%) | 0/88 (0.0%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 packages (#1288) | L0 | 88/88 (100.0%) | 11/88 (12.5%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 packages (#1288) | L1 | 88/88 (100.0%) | 9/88 (10.2%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 packages (#1288) | L2 | 88/88 (100.0%) | 6/88 (6.8%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
+| T3 packages (#1288) | L3 | 88/88 (100.0%) | 3/88 (3.4%) v1 one-off (last v1 run, p5-scoreboard 41203982275, 2026-10-31); new 88/88 on the baseline's 88 IDs | ahead (v1 one-off) | new >= old | S5+ |
 | T4 5k corpus (#1276) | P-T1 | 193/193 (100.0%) | n/a | ahead (old n/a) | >= 98% (owner bar; old n/a) | S5+ |
 | T4 5k corpus (#1276) | P-T2 | 3789/3789 (100.0%) | 0/440 (0.0%) v1 one-off (decision 1, 2026-10-01); CROSS-ORACLE, v1 measured against texlive.tlpdb ca39e6791582 (/usr/local/texlive/2026), the board's 909745461c89 (/home/kubar/texlive/2026); new 381/381 on the baseline's 440 IDs | ahead (v1 one-off) | new >= old; >= 99% (owner bar) | S5+ |
 | T4 5k corpus (#1276) | L0 | 3790/3790 (100.0%) | 7/440 (1.6%) v1 one-off (decision 1, 2026-10-01); CROSS-ORACLE, v1 measured against texlive.tlpdb ca39e6791582 (/usr/local/texlive/2026), the board's 909745461c89 (/home/kubar/texlive/2026); new 381/381 on the baseline's 440 IDs | ahead (v1 one-off) | new >= old | S5+ |
