@@ -453,8 +453,9 @@ public struct DL3PreparedPage: @unchecked Sendable {
         (formIDs, glyphSpans) = Self.summary(page)
     }
 
-    public var widthPt: Double { page.boxWidth }
-    public var heightPt: Double { page.boxHeight }
+    /// The page as a viewer shows it: turned by its `/Rotate` (spec §4.7).
+    public var widthPt: Double { page.quarterTurns % 2 == 0 ? page.boxWidth : page.boxHeight }
+    public var heightPt: Double { page.quarterTurns % 2 == 0 ? page.boxHeight : page.boxWidth }
     /// Needs the exported PDF to be pixel-exact: the engine could not
     /// express something (INCOMPLETE), or a resource did not resolve.
     public var needsPDFFallback: Bool { page.incomplete || !problems.isEmpty }
@@ -704,6 +705,7 @@ public enum DL3Renderer {
     static func draw(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], in ctx: CGContext,
                      appearance: DL3Appearance = .light, cull: [CGRect]) {
         ctx.saveGState()
+        ctx.concatenate(turn(width: prepared.page.boxWidth, height: prepared.page.boxHeight, quarterTurns: prepared.page.quarterTurns))
         ctx.translateBy(x: -prepared.page.box[0], y: -prepared.page.box[1])
         drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance, cull: cull)
         ctx.restoreGState()
@@ -1007,6 +1009,40 @@ public enum DL3Renderer {
     /// (no rotation, or a quarter turn; flips included).
     static func axisAligned(_ m: CGAffineTransform) -> Bool { (m.b == 0 && m.c == 0) || (m.a == 0 && m.d == 0) }
 
+    /// A page's `/Rotate` as a viewer applies it (PDF 32000-1 §7.7.3.3: the
+    /// page turned clockwise for display): from the unturned page's space
+    /// (bp, y up, its box's corner at the origin) to the shown page's, whose
+    /// size is `width × height` turned. One transform for the display list
+    /// and for every rendering of the PDF page (the parity reference, the
+    /// fallback), so the two stay pixel-comparable.
+    public static func turn(width w: Double, height h: Double, quarterTurns q: Int) -> CGAffineTransform {
+        switch ((q % 4) + 4) % 4 {
+        case 1: CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: w)
+        case 2: CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: w, ty: h)
+        case 3: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: h, ty: 0)
+        default: .identity
+        }
+    }
+
+    /// A PDF page's `/Rotate` in quarter turns clockwise.
+    public static func quarterTurns(_ page: CGPDFPage) -> Int { ((Int(page.rotationAngle) / 90) % 4 + 4) % 4 }
+
+    /// The size a PDF page is shown at: its media box, turned by `/Rotate`.
+    public static func shownSize(_ page: CGPDFPage) -> CGSize {
+        let box = page.getBoxRect(.mediaBox)
+        return quarterTurns(page) % 2 == 0 ? box.size : CGSize(width: box.height, height: box.width)
+    }
+
+    /// Draws `page` as it is shown (turned by `/Rotate`) into `ctx`, whose
+    /// user space is the shown page's (bp, y up).
+    @discardableResult
+    static func drawShown(_ page: CGPDFPage, in ctx: CGContext) -> Bool {
+        let box = page.getBoxRect(.mediaBox)
+        ctx.concatenate(turn(width: box.width, height: box.height, quarterTurns: quarterTurns(page)))
+        ctx.translateBy(x: -box.minX, y: -box.minY)
+        return drawPDFPage(page, in: ctx)
+    }
+
     /// A position rounded to sp is within 7.6e-6 bp of the PDF's. pdfTeX
     /// writes positions with three decimals, so a value that close to the
     /// 0.001 grid is the PDF's exact number: restoring it keeps a glyph that
@@ -1132,10 +1168,9 @@ public enum DL3Renderer {
     /// PDF's pixels cannot be told apart from its ink.
     public static func rasterizeToSurface(pdfPage: CGPDFPage, scale: Double, appearance: DL3Appearance = .light,
                                           smoothFonts: Bool = false) -> IOSurface? {
-        let box = pdfPage.getBoxRect(.mediaBox)
+        let box = shownSize(pdfPage)
         let s = surface(widthPt: box.width, heightPt: box.height, scale: scale, smoothFonts: smoothFonts) { ctx in
-            ctx.translateBy(x: -box.minX, y: -box.minY)
-            DL3Renderer.drawPDFPage(pdfPage, in: ctx)
+            DL3Renderer.drawShown(pdfPage, in: ctx)
         }
         guard appearance == .dark, let s else { return s }
         let ci = CIImage(ioSurface: s)
@@ -1187,11 +1222,10 @@ public enum DL3Renderer {
     /// A page of a PDF rendered the same way (the fallback for INCOMPLETE
     /// pages, and the parity reference).
     public static func rasterize(pdfPage: CGPDFPage, scale: Double, layout: Layout = .rgba, smoothFonts: Bool = false) -> CGImage? {
-        let box = pdfPage.getBoxRect(.mediaBox)
+        let box = shownSize(pdfPage)
         guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout,
                                       smoothFonts: smoothFonts) else { return nil }
-        ctx.translateBy(x: -box.minX, y: -box.minY)
-        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
+        DL3Renderer.drawShown(pdfPage, in: ctx)
         return ctx.makeImage()
     }
 }

@@ -249,6 +249,8 @@ public struct DL3Page: Equatable, Sendable {
     public var incomplete: Bool { flags & Self.flagIncomplete != 0 }
     public var noGeometry: Bool { flags & Self.flagNoGeometry != 0 }
     public var inherits: Bool { flags & Self.flagInherits != 0 }
+    /// PAGE: its `/Rotate` in quarter turns clockwise, 0–3 (flags bits 4–5, spec §4.7).
+    public var quarterTurns: Int { Int((flags >> 4) & 3) }
     /// Box width/height in bp.
     public var boxWidth: Double { box[2] - box[0] }
     public var boxHeight: Double { box[3] - box[1] }
