@@ -2802,25 +2802,33 @@ impl Globals {
         if !Self::bm_is_cs(p) {
             return;
         }
+        let d = FAST.with(|f| {
+            let f = f.borrow();
+            f.seen[p as usize].wrapping_sub(f.stamp)
+        });
+        self.bm_note_cs_seen(p, token, d);
+    }
+
+    /// [`bm_note_cs`](Self::bm_note_cs) once `seen[p] - stamp` is `d`.
+    fn bm_note_cs_seen(&mut self, p: i32, token: bool, d: u32) {
+        if d == SEEN_READ || (d == SEEN_TOKEN && token) {
+            return;
+        }
         let w = self.bm_eq(p).hh();
         let (t, e) = (w.b0(), w.rh());
-        let first = FAST.with(|f| {
-            let f = f.borrow();
-            match f.seen[p as usize].wrapping_sub(f.stamp) {
-                SEEN_READ => false,
-                SEEN_TOKEN => !token,
-                // the call's own value, unless it is the one from before
-                SEEN_WRITTEN => f
+        if d == SEEN_WRITTEN {
+            // the call's own value, unless it is the one from before
+            let back = FAST.with(|f| {
+                f.borrow()
                     .pre
                     .iter()
                     .rev()
                     .find(|x| x.0 == p)
-                    .is_some_and(|x| x.1 == t && x.2 == e),
-                _ => true,
+                    .is_some_and(|x| x.1 == t && x.2 == e)
+            });
+            if !back {
+                return;
             }
-        });
-        if !first {
-            return;
         }
         if token && !token_matters(t) {
             Self::bm_set_seen(p, SEEN_TOKEN);
@@ -2859,16 +2867,29 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_next(&mut self) {
-        let base = FAST.with(|f| f.borrow().base);
+        let p = self.cur_cs;
+        // the body's level, and (one borrow) what the recording did with `p`
+        let (base, d) = FAST.with(|f| {
+            let f = f.borrow();
+            let d = if Self::bm_is_cs(p) {
+                f.seen[p as usize].wrapping_sub(f.stamp)
+            } else {
+                SEEN_READ
+            };
+            (f.base, d)
+        });
         if self.input_ptr < base {
             return self.bm_abort("Level");
         }
         if self.cur_input.state_field != TOKEN_LIST {
             return self.bm_abort("File");
         }
-        if self.cur_cs != 0 {
+        if p != 0 {
             if self.cur_cmd == k::top_bot_mark {
                 return self.bm_abort("Mark");
+            }
+            if d == SEEN_READ {
+                return;
             }
             // `get_next`'s callers that look only at the token: those that
             // set `intr_weak` (changes/intrinsics.ch: `get_r_token`, and
@@ -2877,7 +2898,7 @@ impl Globals {
             let token = self.intr_weak
                 || self.scanner_status == k::matching
                 || self.scanner_status == k::skipping;
-            self.bm_note_cs(self.cur_cs, token);
+            self.bm_note_cs_seen(p, token, d);
         }
     }
 
