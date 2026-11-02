@@ -4970,7 +4970,11 @@ fn a_settled_run_s_rewrite_does_not_replace_the_instance_a_restore_puts_back() {
     std::fs::write(reference.join("doc.tex"), &base).unwrap();
     let r = h.cmd("compile");
     // (at a checkpoint of the paused run, which only a settled one keeps)
-    assert_eq!(field(&r, "restart_mid_page"), "true", "the revert's restart: {r}");
+    assert_eq!(
+        field(&r, "restart_mid_page"),
+        "true",
+        "the revert's restart: {r}"
+    );
     check_against(&e, &dir, &reference, &r, "the revert");
 }
 
