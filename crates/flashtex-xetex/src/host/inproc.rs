@@ -163,13 +163,15 @@ impl Shared {
                 let mut engine = Engine::new(clock, Some(Box::new(KeptFonts::default())));
                 let waiting = || queued.load(Ordering::Acquire) > 0;
                 let idle = save_when_idle();
+                // `test_panic`'s count, this engine thread's (no process state)
+                let test_count = std::cell::Cell::new(0u64);
                 // (a panic in a save, whose engine is then in no known
                 // state, ends the engine thread: a waiting or next compile
                 // takes the path where it has ended, a failed DONE, and the
                 // host exits after it, `FATAL_EXIT`; `true` to leave the loop)
                 let save = |engine: &mut Engine, stop: &dyn Fn() -> bool| -> bool {
                     match std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        test_panic("save");
+                        test_panic("save", &test_count);
                         engine.save_pending(stop)
                     })) {
                         Ok(Ok(Some(n))) if debug() => {
@@ -221,7 +223,7 @@ impl Shared {
                             // in no known state: the run fails as fatal and
                             // the host exits, `FATAL_EXIT`)
                             let rep = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                                test_panic("run");
+                                test_panic("run", &test_count);
                                 engine.run(spec)
                             }));
                             match rep {
@@ -346,11 +348,10 @@ fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
 /// panics at the `N`th (from 1) point `what` of the engine thread (`run`:
 /// before a run, outside the engine's own catch; `save`: an idle save of
 /// S₀), so that the recovery from an engine thread that died is tested.
-fn test_panic(what: &str) {
+/// `count` is the engine thread's own count of matching points.
+fn test_panic(what: &str, count: &std::cell::Cell<u64>) {
     #[cfg(debug_assertions)]
     {
-        use std::sync::atomic::AtomicU64;
-        static COUNT: AtomicU64 = AtomicU64::new(0);
         let Ok(v) = std::env::var("FLASHTEX_UNICODE_TEST_PANIC") else {
             return;
         };
@@ -360,13 +361,14 @@ fn test_panic(what: &str) {
         if w != what {
             return;
         }
-        let k = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        let k = count.get() + 1;
+        count.set(k);
         if n.parse::<u64>().ok() == Some(k) {
             panic!("FLASHTEX_UNICODE_TEST_PANIC={v}");
         }
     }
     #[cfg(not(debug_assertions))]
-    let _ = what;
+    let _ = (what, count);
 }
 
 /// A new run's cancel flag.
