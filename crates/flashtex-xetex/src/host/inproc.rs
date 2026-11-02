@@ -176,7 +176,9 @@ impl Shared {
                         match rx.recv_timeout(idle) {
                             Ok(r) => r,
                             Err(mpsc::RecvTimeoutError::Timeout) => {
+                                crate::out::abs("save_pending", None);
                                 save(&mut engine, &waiting);
+                                crate::out::abs("save_pending_end", None);
                                 continue;
                             }
                             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -191,16 +193,28 @@ impl Shared {
                         }
                     };
                     queued.fetch_sub(1, Ordering::AcqRel);
+                    crate::out::abs(
+                        match &req {
+                            Req::Run { .. } => "req_run",
+                            Req::SaveS0(..) => "req_save_s0",
+                            Req::Flush(_) => "req_flush",
+                        },
+                        None,
+                    );
                     match req {
                         Req::Run { spec, reply } => {
                             let rep = engine.run(spec);
+                            crate::out::abs("engine_run_end", None);
                             let _ = reply.send(rep);
                         }
-                        Req::SaveS0(p, root) => match engine.save_s0(&p, &root) {
-                            Ok(Some(n)) if debug() => eprintln!("flashtex-host-unicode: {n}"),
-                            Ok(_) => {}
-                            Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
-                        },
+                        Req::SaveS0(p, root) => {
+                            match engine.save_s0(&p, &root) {
+                                Ok(Some(n)) if debug() => eprintln!("flashtex-host-unicode: {n}"),
+                                Ok(_) => {}
+                                Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
+                            }
+                            crate::out::abs("save_s0_end", None);
+                        }
                         Req::Flush(done) => {
                             // (the host ends: the asked-for save is made
                             // now, whole)

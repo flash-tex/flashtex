@@ -661,7 +661,24 @@ static STAGES_ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 fn stages_on() -> bool {
     *STAGES_ON.get_or_init(|| std::env::var_os("FLASHTEX_UNICODE_STAGES").is_some())
 }
+static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+/// SCRATCH: `[abs] name ms` since the process's first probe (any thread);
+/// `at` is the moment, else now.
+pub fn abs(name: &str, at: Option<std::time::Instant>) {
+    if !stages_on() {
+        return;
+    }
+    let e = *EPOCH.get_or_init(std::time::Instant::now);
+    let at = at.unwrap_or_else(std::time::Instant::now);
+    let ms = if at >= e {
+        (at - e).as_secs_f64() * 1e3
+    } else {
+        -((e - at).as_secs_f64() * 1e3)
+    };
+    eprintln!("[abs] {name} {ms:.3}");
+}
 pub fn stage_start(t: std::time::Instant) {
+    abs("engine_run", Some(t));
     if stages_on() {
         STAGES.with(|c| c.set(Some((t, t))));
         eprintln!("[stage] begin");
@@ -671,6 +688,24 @@ pub fn stage(name: &str) {
     if !stages_on() {
         return;
     }
+    thread_local! {
+        static PHASE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    }
+    PHASE.with(|p| match (name, p.get()) {
+        ("pre_main", _) => {
+            abs("pre_main", None);
+            p.set(1);
+        }
+        ("page", 1) => {
+            abs("engine_first_typeset", None);
+            p.set(2);
+        }
+        ("main_end", _) => {
+            abs("main_end", None);
+            p.set(0);
+        }
+        _ => {}
+    });
     STAGES.with(|c| {
         if let Some((t0, last)) = c.get() {
             let now = std::time::Instant::now();

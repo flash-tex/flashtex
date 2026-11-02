@@ -704,6 +704,7 @@ fn run_in_process(
     retention: crate::ckpt::Retention,
     held: &mut Held,
 ) -> Result<RunResult, String> {
+    crate::out::abs("run_in_process", None);
     let stop = super::inproc::cancel_flag();
     {
         // a cancel either comes first (and nothing starts) or finds the
@@ -859,6 +860,7 @@ fn forward(
         }
         if !held_already {
             if k == kind::PAGE && res.first_page_ms.is_none() {
+                crate::out::abs("forward_first_page", None);
                 res.first_page_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
             }
             if !send(out, k, &body) {
@@ -1088,6 +1090,7 @@ pub fn compile(
     loop {
         let before = pass_state(&job.output_dir, &job.jobname);
         passes += 1;
+        crate::out::abs("run_once", None);
         last = match run_once(
             exe, format_dir, job, accept, out, running, t0, sock_dir, children, spares, inproc,
             held,

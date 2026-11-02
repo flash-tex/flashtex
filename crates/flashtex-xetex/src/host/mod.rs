@@ -630,7 +630,11 @@ fn compile_thread(
     let mut held = Held::default();
     loop {
         let (job, t0, seq) = match rx.recv_timeout(spares.ttl()) {
-            Ok(Msg::Compile(job, t0, seq)) => (*job, t0, seq),
+            Ok(Msg::Compile(job, t0, seq)) => {
+                crate::out::abs("job_t0", Some(t0));
+                crate::out::abs("job_recv", None);
+                (*job, t0, seq)
+            }
             Ok(Msg::Profile(m)) => {
                 spares.set_mode(m);
                 send_json(
@@ -818,10 +822,12 @@ fn run_job(
         if job.export || o.status == "cancelled" || o.status == "failed" {
             break;
         }
+        crate::out::abs("after_done", None);
         // a new S₀ goes to its file, after the compile's DONE
         if let (Some(e), Some(p)) = (host.engine.as_ref(), job.s0_file.as_ref()) {
             e.save_s0(p.clone(), job.root.clone());
         }
+        crate::out::abs("tools", None);
         let (ran, changed) = tools::after_compile(
             job,
             auto,
@@ -875,6 +881,7 @@ fn started(out: &Out, job: &Job, exe: &Path, keep: bool) {
 }
 
 fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&str>, keep: bool) {
+    crate::out::abs("done", None);
     let (status, exit_code, pages, diagnostics, passes, first_page_ms) = (
         o.status,
         o.exit_code,

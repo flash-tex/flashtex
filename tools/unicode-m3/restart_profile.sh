@@ -67,7 +67,7 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
   wait "$hp" 2>/dev/null || true
   {
     echo "== $variant at $at: $(grep summary "$WORK/r/keys-$variant-$at.jsonl" | cut -c1-400)"
-    if [[ $variant != classic* ]]; then python3 "$ROOT/tools/unicode-m3/stages_summary.py" "$d/host.err"; fi
+    if [[ $variant != classic* ]]; then python3 "$ROOT/tools/unicode-m3/stages_summary.py" "$d/host.err"; python3 "$ROOT/tools/unicode-m3/abs_summary.py" "$d/host.err"; fi
     "${PERF_CMD[@]}" report -i "$d/perf.data" --no-children --sort dso,symbol --stdio 2>/dev/null \
       | grep -v '^#' | grep -v '^$' | sort -t% -k1 -rn | head -90
   } > "$WORK/r/perf-$variant-$at.txt" || true
