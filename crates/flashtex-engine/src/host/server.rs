@@ -1189,67 +1189,127 @@ pub(crate) fn inside(p: &Path) -> bool {
         && p.components().next().is_some()
 }
 
-/// `root.join(rel)`, `rel` already [`inside`], with its symlinks resolved,
-/// is inside `croot` (`root` canonicalized): the nearest of its ancestors
-/// that exists (a link counting, dangling or not) resolves into the root.
-/// The names after that one do not exist yet, and hold no `..`. A dangling
-/// link is refused wherever it points (it cannot be resolved); one that
-/// stays inside the root is followed, as a write through it would be.
-pub(crate) fn resolved_inside(croot: &Path, root: &Path, rel: &Path) -> Result<(), String> {
-    let full = root.join(rel);
-    let mut there = full.as_path();
-    while std::fs::symlink_metadata(there).is_err() {
-        match there.parent() {
-            Some(p) => there = p,
-            None => break,
+/// Directory-relative opens for [`open_confined`], on `libc`.
+///
+/// This mirrors the few helpers it needs from `flashtex-project-files`'s
+/// `sys.rs` (`open_at`, `open_dir_at_nofollow`). The engine must not depend
+/// on that crate: it pulls in the package resolver's network/TLS stack,
+/// with Apache-2.0-only crates, across the DESIGN.md §3 licence boundary.
+#[cfg(unix)]
+pub(crate) mod rooted {
+    use std::ffi::{CString, OsStr};
+    use std::fs::File;
+    use std::io;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    pub(crate) use libc::{O_CREAT, O_RDONLY, O_WRONLY};
+
+    /// The project root, pinned. A symlink *at* the root is followed (a
+    /// project opened as `~/thesis -> ~/Dropbox/thesis` is the user's own
+    /// choice); everything below it is walked from this fd, no-follow.
+    pub(crate) fn open_root(root: &Path) -> io::Result<File> {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NONBLOCK)
+            .open(root)
+    }
+
+    /// `openat(dir, name, flags | O_CLOEXEC | O_NONBLOCK, mode)`. (The
+    /// `O_NONBLOCK`, as in `sys.rs`: a FIFO at the name fails or returns at
+    /// once instead of blocking the host; regular files are unaffected.)
+    pub(crate) fn open_at(dir: &File, name: &OsStr, flags: i32, mode: u32) -> io::Result<File> {
+        let c = CString::new(name.as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path component"))?;
+        // SAFETY: `c` is NUL-terminated and outlives the call, `dir` is an
+        // open descriptor, and the variadic mode is the promoted `c_uint`.
+        let fd = unsafe {
+            libc::openat(
+                dir.as_raw_fd(),
+                c.as_ptr(),
+                flags | libc::O_CLOEXEC | libc::O_NONBLOCK,
+                mode as libc::c_uint,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `fd` is freshly opened and owned by nothing else.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    /// Directory `name` inside `dir`, refusing a symlink. Linux says
+    /// `ELOOP`; macOS says `ENOTDIR` for a link to a directory, which is
+    /// classified with `fstatat(AT_SYMLINK_NOFOLLOW)` (never a second open)
+    /// and reported as `ELOOP` too.
+    pub(crate) fn open_dir_at_nofollow(dir: &File, name: &OsStr) -> io::Result<File> {
+        match open_at(
+            dir,
+            name,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+            0,
+        ) {
+            Err(e) if e.raw_os_error() == Some(libc::ENOTDIR) && is_symlink_at(dir, name) => {
+                Err(io::Error::from_raw_os_error(libc::ELOOP))
+            }
+            other => other,
         }
     }
-    match there.canonicalize() {
-        Ok(real) if real.starts_with(croot) => Ok(()),
-        Ok(real) => Err(format!(
-            "{}: leads outside root, to {}",
-            rel.display(),
-            real.display()
-        )),
-        Err(e) => Err(format!(
-            "{}: leads outside root (a link that does not resolve: {e})",
-            rel.display()
-        )),
+
+    fn is_symlink_at(dir: &File, name: &OsStr) -> bool {
+        let Ok(c) = CString::new(name.as_bytes()) else {
+            return false;
+        };
+        let mut st = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: a valid C string, an open directory descriptor, and a
+        // `libc::stat` buffer of the target's own layout.
+        let rc = unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                c.as_ptr(),
+                st.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        // SAFETY: `fstatat` returned 0, so it filled the struct.
+        rc == 0 && (unsafe { st.assume_init() }.st_mode & libc::S_IFMT) == libc::S_IFLNK
     }
 }
 
-/// Where the open file `f` is, when that is outside `croot`: the check
-/// after the open, against a link swapped in since [`resolved_inside`]
-/// (`None`: inside, or the system cannot say).
-pub(crate) fn opened_outside(f: &std::fs::File, croot: &Path) -> Option<PathBuf> {
-    let at = fd_path(f)?;
-    (!at.starts_with(croot)).then_some(at)
-}
-
-#[cfg(target_os = "macos")]
-fn fd_path(f: &std::fs::File) -> Option<PathBuf> {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-    let mut buf = vec![0u8; libc::PATH_MAX as usize];
-    // SAFETY: F_GETPATH writes a NUL-terminated path of at most PATH_MAX
-    // bytes into `buf`.
-    let r = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) };
-    if r == -1 {
-        return None;
+/// Open a project file from a pinned root. Each directory and the file
+/// itself refuses symlinks, including one swapped in during the walk.
+#[cfg(unix)]
+pub(crate) fn open_confined(
+    root: &std::fs::File,
+    rel: &Path,
+    flags: i32,
+) -> std::io::Result<std::fs::File> {
+    if !inside(rel) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "a path inside root is required",
+        ));
     }
-    let n = buf.iter().position(|&b| b == 0)?;
-    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..n])))
-}
-
-#[cfg(target_os = "linux")]
-fn fd_path(f: &std::fs::File) -> Option<PathBuf> {
-    use std::os::fd::AsRawFd;
-    std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).ok()
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn fd_path(_: &std::fs::File) -> Option<PathBuf> {
-    None
+    let mut parts = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(n) => Some(n),
+            _ => None,
+        })
+        .peekable();
+    let mut dir = root.try_clone()?;
+    while let Some(name) = parts.next() {
+        if parts.peek().is_none() {
+            return rooted::open_at(&dir, name, flags | libc::O_NOFOLLOW, 0o666);
+        }
+        dir = rooted::open_dir_at_nofollow(&dir, name)?;
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "empty path",
+    ))
 }
 
 /// The font keys a `COMPILE` says the client holds.
@@ -1597,12 +1657,12 @@ mod job_tests {
         Json::Obj(kv)
     }
 
-    /// `resolved_inside` follows links (to a directory, a file, a dangling
-    /// one) and `opened_outside` finds a file opened through a link swapped
-    /// in after the check.
+    /// The rooted walk refuses links at every component, including after
+    /// a directory is swapped for a link to a pre-existing outside file.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
-    fn symlinks_out_of_the_root_are_found_before_and_after_the_open() {
+    fn rooted_open_refuses_swapped_symlinks() {
+        use super::rooted as sys;
         use std::os::unix::fs::symlink;
         let base = std::env::temp_dir().join(format!("flashtex-links-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -1611,25 +1671,37 @@ mod job_tests {
         std::fs::create_dir_all(&away).unwrap();
         std::fs::write(root.join("sub/a.tex"), "a").unwrap();
         std::fs::write(away.join("b.tex"), "b").unwrap();
-        symlink(&away, root.join("out")).unwrap();
-        symlink(away.join("b.tex"), root.join("b.tex")).unwrap();
-        symlink(away.join("none.tex"), root.join("none.tex")).unwrap();
-        symlink(root.join("sub"), root.join("alias")).unwrap();
-        let croot = root.canonicalize().unwrap();
-        let ok = |p: &str| resolved_inside(&croot, &root, Path::new(p)).is_ok();
-        assert!(ok("sub/a.tex") && ok("sub/new.tex") && ok("new/deeper.tex"));
-        assert!(ok("alias/a.tex") && ok("alias/new.tex"));
-        assert!(!ok("out/b.tex") && !ok("out/new.tex") && !ok("out/x/y.tex"));
-        assert!(!ok("b.tex") && !ok("none.tex"));
-        let inside = std::fs::File::open(root.join("sub/a.tex")).unwrap();
-        assert_eq!(opened_outside(&inside, &croot), None);
-        // (`sub` replaced by a link out after a check passed)
+        let pinned = sys::open_root(&root).unwrap();
+        assert!(open_confined(&pinned, Path::new("sub/a.tex"), sys::O_RDONLY).is_ok());
         std::fs::remove_dir_all(root.join("sub")).unwrap();
         symlink(&away, root.join("sub")).unwrap();
-        let swapped = std::fs::File::open(root.join("sub/b.tex")).unwrap();
-        let at = opened_outside(&swapped, &croot).expect("found outside");
-        assert!(at.ends_with("away/b.tex"), "{}", at.display());
+        assert!(open_confined(
+            &pinned,
+            Path::new("sub/b.tex"),
+            sys::O_WRONLY | sys::O_CREAT
+        )
+        .is_err());
+        assert_eq!(std::fs::read(away.join("b.tex")).unwrap(), b"b");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A failed lookup must never turn into permission to edit.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn rooted_open_refuses_failed_lookup() {
+        use super::rooted as sys;
+        let root = std::env::temp_dir().join(format!("flashtex-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let pinned = sys::open_root(&root).unwrap();
+        assert!(open_confined(
+            &pinned,
+            Path::new("missing/file.tex"),
+            sys::O_WRONLY | sys::O_CREAT
+        )
+        .is_err());
+        assert!(!root.join("missing/file.tex").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Strict mode (lane ERROR-RECOVERY): `halt_on_error` is pdflatex's
