@@ -75,8 +75,16 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_files(tag, src, &[])
+}
+
+/// [`check`], with `files` (name, path) copied into the run's directory.
+fn check_files(tag: &str, src: &str, files: &[(&str, PathBuf)]) -> String {
     let d = scratch(tag);
     std::fs::write(d.join("t.tex"), src).unwrap();
+    for (name, from) in files {
+        std::fs::copy(from, d.join(name)).unwrap();
+    }
     let off = run(&d, "off", "measure");
     let on = run(&d, "on", "measure");
     let verify = run(&d, "verify", "measure");
@@ -317,4 +325,70 @@ fn font_parameters_are_part_of_the_key() {
     );
     assert!(stat(&s, "hits") >= 3, "{s}");
     assert!(stat(&s, "recordings") >= 3, "{s}");
+}
+
+/// A Computer Modern TFM from the repository's own font tree: (name, path).
+fn cm(name: &'static str) -> (&'static str, PathBuf) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/mac/Fonts/texmf/fonts/tfm/public/cm")
+        .join(name);
+    (name, path)
+}
+
+#[test]
+fn a_font_identifiers_name_is_part_of_the_key() {
+    // (lane REVIEW-BOXMEMO) `\\font\\b=cmr10` of a font already loaded
+    // loads nothing: it makes `\\b` select that font and renames the font's
+    // identifier (`font_id_text`, the name `\\the\\font` stands for). A call
+    // that prints the identifier reads that name, which no key held: after
+    // `\\font\\a=cmr10` renamed it, the call replayed `\\b`
+    let s = check_files(
+        "fontid",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\a=cmr10 \\font\\b=cmr10 \\a\n\
+         \\def\\measure#1{\\begingroup\\xdef\\t{\\expandafter\\string\\the\\font}\\endgroup}\n\
+         \\def\\show{\\message{[\\t]}\\gdef\\t{}}\n\
+         \\measure{x}\\show\\measure{x}\\show\\font\\a=cmr10\\relax\\measure{x}\\show\\measure{x}\\show\
+         \\font\\b=cmr10\\relax\\measure{x}\\show\\end\n",
+        &[cm("cmr10.tfm")],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_call_that_renames_a_font_is_never_replayed() {
+    // (lane REVIEW-BOXMEMO) the same rename made inside a call: `new_font`
+    // writes the identifier's name and `eqtb[font_id_base+f]` itself, not
+    // through `eq_define`, so no operation of the log made them again and
+    // a replay left the old name. A recording that runs `\\font` (which
+    // loads a font or renames one) is abandoned
+    let s = check_files(
+        "fontid-write",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\a=cmr10 \\a\n\
+         \\def\\measure#1{\\begingroup\\font\\c=cmr10 \\endgroup}\n\
+         \\def\\show{\\message{[\\expandafter\\string\\the\\font]}}\n\
+         \\measure{x}\\show\\measure{x}\\show\\font\\b=cmr10\\relax\\show\\measure{x}\\show\\end\n",
+        &[cm("cmr10.tfm")],
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn discarded_items_a_call_takes_are_part_of_the_key() {
+    // (lane REVIEW-BOXMEMO) e-TeX's `\\splitdiscards` and `\\pagediscards`
+    // move the items the last `\\vsplit` or page break discarded into the
+    // current list, and forget them. A call recorded while there were none
+    // read their absence, which no key held: after a `\\vsplit` saved a
+    // glue, the call replayed an empty box and left the glue saved
+    let s = check(
+        "discards",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode \\savingvdiscards=1\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\splitdiscards}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1]}}\n\
+         \\def\\split{\\setbox1\\vbox{\\hrule height 10pt\\vskip 7pt\\hrule height 10pt}\\setbox2\\vsplit1 to 10pt }\n\
+         \\measure{a}\\show\\measure{a}\\show\\split\\measure{a}\\show\\measure{a}\\show\
+         \\split\\measure{a}\\show\\measure{a}\\show\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
 }
