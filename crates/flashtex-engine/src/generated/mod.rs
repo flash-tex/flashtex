@@ -3,6 +3,7 @@
 // with the change file crates/flashtex-engine/changes/web2c.ch
 // with the change file crates/flashtex-engine/changes/goto.ch
 // with the change file crates/flashtex-engine/changes/precedence.ch
+// with the change file crates/flashtex-engine/changes/intmin.ch
 // with the change file crates/flashtex-engine/changes/ext.ch
 // with the change file crates/flashtex-engine/changes/filenames.ch
 // with the change file crates/flashtex-engine/changes/virtex.ch

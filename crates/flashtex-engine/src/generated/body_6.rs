@@ -1970,7 +1970,7 @@ impl Globals {
         let mut __av_mem = self.mem.view();
         'l_exit_f: {
             // §1007
-            if ((pi).wrapping_abs() >= inf_penalty) {
+            if ((((pi) as i64).abs()) >= ((inf_penalty) as i64)) {
                 if (pi > 0i32) {
                     break 'l_exit_f;
                 } else {
@@ -2260,7 +2260,7 @@ impl Globals {
                                                 }
                                             }
                                             // §1012
-                                            if ((__av_eqtb[crate::ix::U(((29293i32) - 1) as usize)].int()).wrapping_abs() >= (awful_bad).wrapping_sub(self.minimum_demerits)) {
+                                            if ((((__av_eqtb[crate::ix::U(((29293i32) - 1) as usize)].int()) as i64).abs()) >= (((awful_bad).wrapping_sub(self.minimum_demerits)) as i64)) {
                                                 self.minimum_demerits = 1073741822i32;
                                             } else {
                                                 self.minimum_demerits = (self.minimum_demerits).wrapping_add((__av_eqtb[crate::ix::U(((29293i32) - 1) as usize)].int()).wrapping_abs());
@@ -2666,7 +2666,7 @@ impl Globals {
                                     // §1035
                                     {
                                         d = (__av_eqtb[crate::ix::U(((29279i32) - 1) as usize)].int()).wrapping_add(b);
-                                        if ((d).wrapping_abs() >= 10000i32) {
+                                        if ((((d) as i64).abs()) >= ((10000i32) as i64)) {
                                             d = 100000000i32;
                                         } else {
                                             d = (d).wrapping_mul(d);
@@ -2687,7 +2687,7 @@ impl Globals {
                                                 d = (d).wrapping_add(__av_eqtb[crate::ix::U(((29292i32) - 1) as usize)].int());
                                             }
                                         }
-                                        if (((fit_class).wrapping_sub(__av_mem[crate::ix::U((r) as usize)].hh().b1())).wrapping_abs() > 1i32) {
+                                        if (((((fit_class).wrapping_sub(__av_mem[crate::ix::U((r) as usize)].hh().b1())) as i64).abs()) > ((1i32) as i64)) {
                                             d = (d).wrapping_add(__av_eqtb[crate::ix::U(((29293i32) - 1) as usize)].int());
                                         }
                                     }
@@ -4195,7 +4195,7 @@ impl Globals {
         let mut u: quarterword = 0; // §1121
         let mut l: i32 = 0; // §1121
         'l_exit_f: {
-            h = ((((((n).wrapping_add((313i32).wrapping_mul(d))).wrapping_add((361i32).wrapping_mul(v))).wrapping_add((1009i32).wrapping_mul(self.cur_lang))).wrapping_abs() % (trie_op_size).wrapping_add(trie_op_size))).wrapping_sub(trie_op_size);
+            h = (((((((((n).wrapping_add((313i32).wrapping_mul(d))).wrapping_add((361i32).wrapping_mul(v))).wrapping_add((1009i32).wrapping_mul(self.cur_lang))) as i64).abs()) % (((trie_op_size).wrapping_add(trie_op_size)) as i64)) as i32)).wrapping_sub(trie_op_size);
             while true {
                 {
                     l = self.trie_op_hash[crate::ix::U(((h) + 35111) as usize)];
@@ -4256,7 +4256,7 @@ impl Globals {
         let mut h: trie_pointer = 0; // §1125
         let mut q: trie_pointer = 0; // §1125
         'l_exit_f: {
-            h = (((((self.trie_c[crate::ix::U((p) as usize)]).wrapping_add((1009i32).wrapping_mul(self.trie_o[crate::ix::U((p) as usize)]))).wrapping_add((2718i32).wrapping_mul(self.trie_l[crate::ix::U((p) as usize)]))).wrapping_add((3142i32).wrapping_mul(self.trie_r[crate::ix::U((p) as usize)]))).wrapping_abs() % trie_size);
+            h = ((((((((self.trie_c[crate::ix::U((p) as usize)]).wrapping_add((1009i32).wrapping_mul(self.trie_o[crate::ix::U((p) as usize)]))).wrapping_add((2718i32).wrapping_mul(self.trie_l[crate::ix::U((p) as usize)]))).wrapping_add((3142i32).wrapping_mul(self.trie_r[crate::ix::U((p) as usize)]))) as i64).abs()) % ((trie_size) as i64)) as i32);
             while true {
                 {
                     q = self.trie_hash[crate::ix::U((h) as usize)];
@@ -9620,7 +9620,7 @@ impl Globals {
     /// @<Declare act...
     // §1305
     pub fn align_error(&mut self) {
-        if ((self.align_state).wrapping_abs() > 2i32) {
+        if ((((self.align_state) as i64).abs()) > ((2i32) as i64)) {
             // §1306
             {
                 {

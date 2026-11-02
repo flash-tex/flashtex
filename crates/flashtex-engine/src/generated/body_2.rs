@@ -6385,7 +6385,7 @@ impl Globals {
             }
         }
         // §474
-        if (self.arith_error || ((self.cur_val).wrapping_abs() >= 1073741824i32)) {
+        if (self.arith_error || ((((self.cur_val) as i64).abs()) >= ((1073741824i32) as i64))) {
             // §486
             {
                 {
@@ -6861,7 +6861,7 @@ impl Globals {
                     } else {
                         if (l == dimen_val) {
                             {
-                                if ((f).wrapping_abs() > max_dimen) {
+                                if ((((f) as i64).abs()) > ((max_dimen) as i64)) {
                                     {
                                         self.arith_error = true;
                                         f = 0i32;
@@ -6870,7 +6870,7 @@ impl Globals {
                             }
                         } else {
                             {
-                                if ((((__av_mem[crate::ix::U(((f).wrapping_add(1i32)) as usize)].int()).wrapping_abs() > max_dimen) || ((__av_mem[crate::ix::U(((f).wrapping_add(2i32)) as usize)].int()).wrapping_abs() > max_dimen)) || ((__av_mem[crate::ix::U(((f).wrapping_add(3i32)) as usize)].int()).wrapping_abs() > max_dimen)) {
+                                if ((((((__av_mem[crate::ix::U(((f).wrapping_add(1i32)) as usize)].int()) as i64).abs()) > ((max_dimen) as i64)) || ((((__av_mem[crate::ix::U(((f).wrapping_add(2i32)) as usize)].int()) as i64).abs()) > ((max_dimen) as i64))) || ((((__av_mem[crate::ix::U(((f).wrapping_add(3i32)) as usize)].int()) as i64).abs()) > ((max_dimen) as i64))) {
                                     {
                                         self.arith_error = true;
                                         self.delete_glue_ref(f);
