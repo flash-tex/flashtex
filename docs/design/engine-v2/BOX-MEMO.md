@@ -796,8 +796,31 @@ access.
    macro whose token list landed at a freed address is one way, and an assignment of the same
    word is another. That keys more than it must, which costs a hit and never makes one wrong.
 
-Registers keep §10.1's rule. They are never read as tokens, and the debug run found no register
-in the misses.
+**Registers** (lane BEAMER-FRAME, stacked on this revision). They are never read as tokens, and
+on full-100 the debug run found no register in the misses. On beamer decks with pgf it found
+many: `\pgfmathsetlength\pgf@x{..}` assigns `\pgf@x` inside its own group (`\begingroup \pgf@x=..
+\expandafter\endgroup\expandafter\pgf@x\the\pgf@x`), and §10.1's rule keyed, at that local
+assignment, the value from before the call, which differs from call to call. KR now follows the
+rule above:
+- a global assignment, or a local one at the call's own level, makes later reads the call's own
+  (`gwritten`, as before);
+- a local assignment inside one of the call's groups, to a register nothing read yet, keeps the
+  value it overwrote aside (`Rec::rpre`), out of the key;
+- a later read keys the register only if it finds that value again (the group's end brought it
+  back), as a first read.
+
+The argument is the one above, item by item: `eq_word_define` & co. read the old value only for
+their own bookkeeping (e-TeX's "reassigning" test included), which the replay's `Op::Def` repeats
+on its own state; `unsave` restores the word bit for bit (a glue or token register's pointer, whose
+contents `bm_reg_value` compares); and a value the call made that happens to equal the kept one
+keys more than it must. Tests: `a_register_assigned_in_a_group_before_it_is_read_is_not_keyed`
+(`\dimen3` and the sparse `\dimen300`), `a_register_a_group_end_brings_back_is_keyed` (a read and an
+`\advance` after the group's end).
+
+Not every register in beamer-visuals' misses is of that kind: `\pgf@process`'s `\pgf@pt@x` and
+`\pgf@pt@y` (the current transformation's shift, read by `\pgfpointtransformed`), xxcolor's
+`\XC@countmixins` (`\applycolormixins`' loop counter, which selects the mixin `\XC@col@rlet`
+expands) and `\bmb@boxheight` are read before anything assigns them: genuine inputs.
 
 **Tokens read in place.** changes/throughput.ch's token loops read without `get_next`:
 - [4] `pass_text`;
