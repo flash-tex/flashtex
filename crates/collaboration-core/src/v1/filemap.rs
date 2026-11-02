@@ -103,6 +103,8 @@ pub struct FileMap {
     log: Vec<FileOp>,
     /// Most entries; a create past it is [`CollabError::ProjectFull`].
     max_files: usize,
+    /// This replica's own creates stop this far below `max_files` (§2.4a).
+    local_headroom: usize,
 }
 
 impl FileMap {
@@ -111,6 +113,10 @@ impl FileMap {
     }
 
     pub fn with_max_files(replica: u64, max_files: usize) -> Self {
+        Self::with_caps(replica, max_files, 0)
+    }
+
+    pub fn with_caps(replica: u64, max_files: usize, local_headroom: usize) -> Self {
         Self {
             replica,
             lamport: 0,
@@ -119,6 +125,7 @@ impl FileMap {
             sv: StateVector::default(),
             log: Vec::new(),
             max_files,
+            local_headroom,
         }
     }
 
@@ -148,6 +155,14 @@ impl FileMap {
     }
 
     fn local(&mut self, file: FileId, kind: FileOpKind) -> Result<FileOp, CollabError> {
+        // A local create stops `local_headroom` below the cap (§2.4a); a
+        // remote one may take the cap itself.
+        if matches!(kind, FileOpKind::Create { .. })
+            && !self.entries.contains_key(&file)
+            && self.entries.len() + self.local_headroom.min(self.max_files) >= self.max_files
+        {
+            return Err(CollabError::ProjectFull);
+        }
         let op = FileOp {
             id: Id::new(self.replica, self.sv.get(self.replica)),
             lamport: self.lamport + 1,

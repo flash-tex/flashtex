@@ -118,6 +118,8 @@ pub struct TextDoc {
     /// ([`super::limits::MAX_PROJECT_TEXT_BYTES`]); the project sets it
     /// before every use. Unbounded for a document on its own.
     room: usize,
+    /// How far below `room` this replica's own inserts stop (§2.4a).
+    local_headroom: usize,
 }
 
 impl TextDoc {
@@ -131,6 +133,7 @@ impl TextDoc {
             log: Vec::new(),
             bytes: 0,
             room: usize::MAX,
+            local_headroom: 0,
         }
     }
 
@@ -139,8 +142,14 @@ impl TextDoc {
         self.bytes
     }
 
-    pub(crate) fn set_room(&mut self, room: usize) {
+    pub(crate) fn set_room(&mut self, room: usize, local_headroom: usize) {
         self.room = room;
+        self.local_headroom = local_headroom;
+    }
+
+    /// Whether this replica's own insert of `n` bytes fits (§2.4a).
+    fn local_fits(&self, n: usize) -> bool {
+        n <= self.room - self.local_headroom.min(self.room)
     }
 
     pub fn replica(&self) -> u64 {
@@ -229,7 +238,7 @@ impl TextDoc {
     /// operation to broadcast. `None` if `pos` is past the end or `text`
     /// is empty.
     pub fn insert(&mut self, pos: usize, text: &str) -> Option<TextOp> {
-        if text.is_empty() {
+        if text.is_empty() || !self.local_fits(text.len()) {
             return None;
         }
         let i = self.raw_index_of_visible(pos)?;
@@ -544,7 +553,8 @@ impl TextDoc {
                 .iter()
                 .map(|&id| self.items[self.index_of(id).unwrap()].ch)
                 .collect();
-            if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES || content.len() > self.room
+            if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES
+                || !self.local_fits(content.len())
             {
                 continue;
             }

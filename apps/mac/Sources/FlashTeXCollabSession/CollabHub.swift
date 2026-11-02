@@ -389,6 +389,14 @@ public final class CollabHub {
         if fileOps > 0 { onEvent(.fileOpsDropped(participant: member.id, count: fileOps)) }
         guard !kept.isEmpty else { return }
         let errors = session.integrate(kept)
+        // The caps refused part of what this guest sent (§2.4a): the hub and
+        // the guest no longer hold the same project. Nothing of it is relayed
+        // (the others stay with the hub), and the guest's connection ends.
+        if errors.contains(where: \.isProjectFull) {
+            onEvent(.refused(reason: "project_full from participant \(member.id)"))
+            link.connection.refuse(code: "project_full", message: CollabSession.projectFullMessage)
+            return
+        }
         for (k, other) in links where other !== link && other.member != nil {
             _ = k
             other.outSeq += 1

@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class SessionTransportTests: XCTestCase {
     func testRefusedReplaceRestoresOptimisticEditorText() throws {
-        let project = CollabProject(replica: 1, caps: .init(maxFiles: 2, maxTextBytes: 3))
+        let project = CollabProject(replica: 1, caps: .init(maxFiles: 2, maxTextBytes: 3, localFileHeadroom: 0, localTextHeadroom: 0))
         let file = FileID.random()
         _ = try project.fileOp { try $0.create(file, kind: .text, path: "a.tex") }
         _ = try project.insert("abc", at: 0, in: file)
@@ -37,6 +37,30 @@ final class SessionTransportTests: XCTestCase {
         wait(for: [skipped], timeout: 1)
         XCTAssertEqual(host.text as String, "ayc")
         XCTAssertEqual(host.applies, 1)
+    }
+
+    /// §2.4a over the wire: the hub and a guest each make an edit within
+    /// their own headroom, but together past the cap. The hub refuses the
+    /// guest's as `project_full`, relays none of it and ends the guest's
+    /// connection; the guest's copy stops following (it never goes on
+    /// diverged).
+    func testARemoteOperationRefusedAsProjectFullEndsTheGuestsSession() throws {
+        CollabSession.capsOverride = .init(maxFiles: 8, maxTextBytes: 12, localFileHeadroom: 0, localTextHeadroom: 2)
+        defer { CollabSession.capsOverride = nil }
+        let h = try Harness(text: "abc")
+        try h.start(self)
+        let g = h.guest(name: "Bob")
+        let s = try XCTUnwrap(join(g))
+        waitUntil(5, "sync") { s.text(of: h.file) == "abc" }
+        // Both at 3 bytes; each may add 7 locally (12 - 2 - 3), so together 14 > 12.
+        let hubBinding = try XCTUnwrap(h.hubSession.binding(for: h.file))
+        let guestBinding = try XCTUnwrap(s.binding(for: h.file))
+        guestBinding.localReplace(3..<3, with: "GGGGGGG")
+        hubBinding.localReplace(0..<0, with: "HHHHHHH")
+        waitUntil(10, "the guest's session ends") { if case .ended = g.state { return true } else { return false } }
+        if case let .ended(why) = g.state { XCTAssertEqual(why, CollabSession.projectFullMessage) }
+        XCTAssertFalse(h.hubSession.text(of: h.file)!.contains("G"), "the hub took none of the refused edit")
+        h.hub.stop()
     }
 
     func testIdentityIsSelfSignedP256AndFingerprintRoundTrips() throws {

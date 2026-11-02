@@ -113,9 +113,17 @@ public final class CollabSession {
     static let heartbeat: TimeInterval = 3
     static let awarenessInterval: TimeInterval = 0.05
 
+    /// Caps for the projects of sessions made from now on (tests; nil: the contract's).
+    nonisolated(unsafe) public static var capsOverride: CollabProject.Caps?
+
+    /// What a participant is told when the project caps refused an
+    /// operation it was sent (§2.4a) and its copy stops following the session.
+    public static let projectFullMessage =
+        "The shared project reached its size limit, so this copy stopped following the session. Your copy is kept."
+
     public init(role: Role, replica: UInt64, name: String, colourIndex: Int) {
         self.role = role
-        project = CollabProject(replica: replica)
+        project = CollabProject(replica: replica, caps: Self.capsOverride ?? CollabProject.Caps())
         localName = name
         localColour = colourIndex
     }

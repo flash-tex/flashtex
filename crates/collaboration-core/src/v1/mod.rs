@@ -104,6 +104,13 @@ pub mod limits {
     /// stops a peer filling many documents each under
     /// [`MAX_DOCUMENT_BYTES`] (eight of them at most).
     pub const MAX_PROJECT_TEXT_BYTES: usize = 64 * 1024 * 1024;
+    /// A replica's own creates stop this many entries below
+    /// [`MAX_FILES`] (§2.4a); a peer's may take the cap itself, so creates
+    /// made concurrently near it still reach every replica alike.
+    pub const LOCAL_FILE_HEADROOM: usize = 64;
+    /// A replica's own text stops this many bytes below
+    /// [`MAX_PROJECT_TEXT_BYTES`] (§2.4a), for the same reason.
+    pub const LOCAL_TEXT_HEADROOM: usize = 1024 * 1024;
 }
 
 /// Why an operation was not applied. Every variant is a bounded,

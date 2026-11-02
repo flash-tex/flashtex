@@ -78,15 +78,24 @@ public enum CollabLimits {
     /// twice the 32 MiB a Live Share host shares, room for a session's
     /// tombstones; at most eight documents at `maxDocumentBytes`.
     public static let maxProjectTextBytes = 64 * 1024 * 1024
+    /// This replica's own edits stop this far below the caps (the oracle's
+    /// `LOCAL_FILE_HEADROOM`, `LOCAL_TEXT_HEADROOM`; contract §2.4a).
+    public static let localFileHeadroom = 64
+    public static let localTextHeadroom = 1024 * 1024
 }
 
 /// What a project's text documents have stored together, against its cap;
 /// shared by the project and every one of its documents.
 final class TextBudget {
     let limit: Int
+    /// A local edit's room ends this far below `limit` (contract §2.4a).
+    let localHeadroom: Int
     var used = 0
-    init(limit: Int) { self.limit = limit }
-    func fits(_ n: Int) -> Bool { n <= limit - used }
+    init(limit: Int, localHeadroom: Int = 0) { self.limit = limit; self.localHeadroom = localHeadroom }
+    func fits(_ n: Int, local: Bool = false) -> Bool {
+        let room = limit - used
+        return local ? n <= room - min(localHeadroom, room) : n <= room
+    }
 }
 
 /// Why an operation was not applied. None leaves the document changed.

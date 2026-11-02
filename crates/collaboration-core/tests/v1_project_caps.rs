@@ -15,10 +15,7 @@ fn fid(n: u32) -> FileId {
 fn uncapped(replica: u64) -> Project {
     Project::with_caps(
         replica,
-        ProjectCaps {
-            max_files: usize::MAX,
-            max_text_bytes: usize::MAX,
-        },
+        ProjectCaps::without_headroom(usize::MAX, usize::MAX),
     )
 }
 
@@ -33,6 +30,8 @@ fn the_contract_caps_are_these() {
     let d = ProjectCaps::default();
     assert_eq!(d.max_files, limits::MAX_FILES);
     assert_eq!(d.max_text_bytes, limits::MAX_PROJECT_TEXT_BYTES);
+    assert_eq!(d.local_file_headroom, 64);
+    assert_eq!(d.local_text_headroom, 1024 * 1024);
 }
 
 #[test]
@@ -68,10 +67,7 @@ fn a_create_past_the_file_cap_is_refused_remotely_and_locally() {
 
 #[test]
 fn text_past_the_project_byte_cap_is_refused_remotely_and_locally() {
-    let caps = ProjectCaps {
-        max_files: 16,
-        max_text_bytes: 100,
-    };
+    let caps = ProjectCaps::without_headroom(16, 100);
     let mut hostile = uncapped(2);
     let mut sections: Vec<Section> = Vec::new();
     for n in 0..3 {
@@ -100,10 +96,7 @@ fn text_past_the_project_byte_cap_is_refused_remotely_and_locally() {
 
 #[test]
 fn an_uncapped_project_keeps_the_per_document_limit() {
-    let caps = ProjectCaps {
-        max_files: 16,
-        max_text_bytes: 10,
-    };
+    let caps = ProjectCaps::without_headroom(16, 10);
     let mut hostile = uncapped(2);
     let create = hostile
         .file_op(|m| m.create(fid(0), FileKind::Text, "a.tex"))
@@ -117,4 +110,129 @@ fn an_uncapped_project_keeps_the_per_document_limit() {
     assert!(guest.receive(&[create]).is_empty());
     let over = hostile.insert(fid(0), 0, &"x".repeat(11)).unwrap();
     assert_eq!(kinds(&guest.receive(&[over])), vec!["project_full"]);
+}
+
+fn headroom_caps() -> ProjectCaps {
+    ProjectCaps {
+        max_files: 8,
+        max_text_bytes: 100,
+        local_file_headroom: 2,
+        local_text_headroom: 10,
+    }
+}
+
+/// §2.4a: this replica's own edits stop the headroom below each cap; a
+/// peer's may use the cap itself.
+#[test]
+fn local_edits_stop_at_the_headroom_and_remote_ones_at_the_cap() {
+    let mut peer = uncapped(2);
+    let mut me = Project::with_caps(1, headroom_caps());
+    let mut mine = Vec::new();
+    for n in 0..6 {
+        mine.push(
+            me.file_op(|m| m.create(fid(n), FileKind::Text, &format!("f{n}.tex")))
+                .unwrap(),
+        );
+    }
+    assert_eq!(
+        me.file_op(|m| m.create(fid(6), FileKind::Text, "f6.tex"))
+            .unwrap_err(),
+        CollabError::ProjectFull,
+        "a local create stops 2 below the cap"
+    );
+    let creates: Vec<Section> = (100..103)
+        .map(|n| {
+            peer.file_op(|m| m.create(fid(n), FileKind::Text, &format!("p{n}.tex")))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(kinds(&me.receive(&creates)), vec!["project_full"]);
+    assert_eq!(me.files().len(), 8);
+
+    assert!(me.insert(fid(0), 0, &"x".repeat(90)).is_some());
+    assert!(
+        me.insert(fid(1), 0, "y").is_none(),
+        "a local insert stops 10 bytes below the cap"
+    );
+    assert!(peer.receive(&mine).is_empty());
+    let remote = peer.insert(fid(0), 0, &"z".repeat(10)).unwrap();
+    assert!(
+        me.receive(&[remote]).is_empty(),
+        "a remote insert may fill the cap"
+    );
+    assert_eq!(me.stored_text_bytes(), 100);
+}
+
+/// §2.4a: replicas that each edit within their headroom while the others'
+/// edits are on their way all take each other's and end with the same
+/// project.
+#[test]
+fn concurrent_edits_at_the_cap_converge() {
+    let mut ps: Vec<Project> = (1..=3)
+        .map(|r| Project::with_caps(r, headroom_caps()))
+        .collect();
+    let mut base = Vec::new();
+    for n in 0..5 {
+        base.push(
+            ps[0]
+                .file_op(|m| m.create(fid(n), FileKind::Text, &format!("f{n}.tex")))
+                .unwrap(),
+        );
+    }
+    base.push(ps[0].insert(fid(0), 0, &"x".repeat(85)).unwrap());
+    for p in ps.iter_mut().skip(1) {
+        assert!(p.receive(&base).is_empty());
+    }
+    let mut sent: Vec<Vec<Section>> = Vec::new();
+    for (i, p) in ps.iter_mut().enumerate() {
+        let i = i as u32;
+        let mut mine = vec![p
+            .file_op(|m| m.create(fid(10 + i), FileKind::Text, &format!("new{i}.tex")))
+            .unwrap()];
+        let ch = ["a", "b", "c"][i as usize];
+        mine.push(p.insert(fid(1 + i), 0, &ch.repeat(5)).unwrap());
+        sent.push(mine);
+    }
+    for (i, p) in ps.iter_mut().enumerate() {
+        for (j, s) in sent.iter().enumerate() {
+            if j != i {
+                assert!(
+                    p.receive(s).is_empty(),
+                    "replica {i} takes replica {j}'s edits"
+                );
+            }
+        }
+    }
+    assert_eq!(ps[0].digest(), ps[1].digest());
+    assert_eq!(ps[1].digest(), ps[2].digest());
+    assert_eq!(ps[0].stored_text_bytes(), 100);
+    assert_eq!(ps[0].files().len(), 8);
+}
+
+/// More concurrent edits than the headroom holds: a replica refuses one as
+/// project_full and says so (the session then ends, §2.4a).
+#[test]
+fn concurrent_edits_past_the_cap_are_reported_as_project_full() {
+    let mut ps: Vec<Project> = (1..=3)
+        .map(|r| Project::with_caps(r, headroom_caps()))
+        .collect();
+    let base = vec![
+        ps[0]
+            .file_op(|m| m.create(fid(0), FileKind::Text, "f0.tex"))
+            .unwrap(),
+        ps[0].insert(fid(0), 0, &"x".repeat(80)).unwrap(),
+    ];
+    for p in ps.iter_mut().skip(1) {
+        assert!(p.receive(&base).is_empty());
+    }
+    let edits: Vec<Section> = ps
+        .iter_mut()
+        .map(|p| p.insert(fid(0), 0, &"y".repeat(10)).unwrap())
+        .collect();
+    let errors = ps[0].receive(&edits[1..]);
+    assert_eq!(
+        kinds(&errors),
+        vec!["project_full"],
+        "80 + 10 + 10 fits; a third 10 does not"
+    );
 }

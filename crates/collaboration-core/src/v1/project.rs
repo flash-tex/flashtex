@@ -82,6 +82,9 @@ fn pending_weight(op: &PendingOp) -> usize {
 pub struct ProjectCaps {
     pub max_files: usize,
     pub max_text_bytes: usize,
+    /// How far below each cap this replica's own edits stop (§2.4a).
+    pub local_file_headroom: usize,
+    pub local_text_headroom: usize,
 }
 
 impl Default for ProjectCaps {
@@ -89,6 +92,20 @@ impl Default for ProjectCaps {
         Self {
             max_files: limits::MAX_FILES,
             max_text_bytes: limits::MAX_PROJECT_TEXT_BYTES,
+            local_file_headroom: limits::LOCAL_FILE_HEADROOM,
+            local_text_headroom: limits::LOCAL_TEXT_HEADROOM,
+        }
+    }
+}
+
+impl ProjectCaps {
+    /// These caps with no local headroom (tests that fill to the cap locally).
+    pub fn without_headroom(max_files: usize, max_text_bytes: usize) -> Self {
+        Self {
+            max_files,
+            max_text_bytes,
+            local_file_headroom: 0,
+            local_text_headroom: 0,
         }
     }
 }
@@ -113,7 +130,7 @@ impl Project {
         Self {
             replica,
             caps,
-            files: FileMap::with_max_files(replica, caps.max_files),
+            files: FileMap::with_caps(replica, caps.max_files, caps.local_file_headroom),
             texts: BTreeMap::new(),
             pending: Vec::new(),
             pending_bytes: 0,
@@ -149,8 +166,9 @@ impl Project {
             .caps
             .max_text_bytes
             .saturating_sub(self.stored_text_bytes());
+        let headroom = self.caps.local_text_headroom;
         let doc = self.texts.get_mut(&file)?;
-        doc.set_room(room);
+        doc.set_room(room, headroom);
         Some(doc)
     }
 

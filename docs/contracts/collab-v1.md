@@ -104,7 +104,7 @@ Given an operation with id `(r, c)` and length n, and the document's state vecto
 4. Insert: if both origins exist and `index(L) ≥ index(R)`: **malformed**.
 5. If stored content (UTF-8 bytes, tombstones included) would exceed 8 MiB: **document full**.
    Otherwise, if the stored content of all the project's text documents together would exceed
-   64 MiB: **project full** (§2.4a).
+   64 MiB (63 MiB for this replica's own edit): **project full** (§2.4a).
 6. Integrate (§2.3) or tombstone, then `sv[r] = c + n`.
 
 Every rejection is deterministic given the same applied set, so all replicas reject alike (the
@@ -123,10 +123,24 @@ content, path or media type, plus 64); an operation over either bound is refused
 
 A project holds at most **4096 file-map entries** (deleted ones included, since a deleted entry is
 kept) and at most **64 MiB of stored text** (UTF-8 bytes, tombstones included, summed over every
-text document). A create past the first, or text past the second, is refused as **project full**.
-Local edits are refused the same way, so a replica never broadcasts what its peers would refuse.
-Undo's re-insertion of deleted text skips a piece that does not fit, as it does at 8 MiB. Deleting
-frees nothing.
+text document). A remote create past the first, or remote text past the second, is refused as
+**project full**. Deleting frees nothing.
+
+**Local headroom.** A replica's own edits stop short of the caps: a local create is refused once the
+project holds `4096 − 64` entries, and local text once it would exceed `64 MiB − 1 MiB`
+(`LOCAL_FILE_HEADROOM`, `LOCAL_TEXT_HEADROOM`). Undo's re-insertion of deleted text is a local edit
+and skips a piece that does not fit, as it does at 8 MiB. Remote operations are taken up to the
+caps themselves. So edits made concurrently near the caps, before each replica has seen the
+others', still fit everywhere and converge, as long as together they stay within the headroom:
+64 creates and 1 MiB of text across all participants between syncs.
+
+**Past the headroom.** If concurrent edits still go past a cap, some replica refuses a remote
+operation as **project full**, and then no longer holds what its peers hold. The session must not
+continue diverged: it resynchronises that replica or ends its part of the session. collab-v1's
+Live Share does the second. A guest that refuses an operation from the hub ends its session, and
+its copy is kept. A hub that refuses an operation from a guest relays none of it and closes that
+guest's connection with the error `project_full`. The guest then ends the same way. A resync could
+not help, because the refused operation would be refused again.
 
 These caps bound what a peer can make a replica hold. Without them a hostile Live Share hub could
 create files, or fill many documents each under 8 MiB, until the guest ran out of memory. Live

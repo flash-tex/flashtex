@@ -103,10 +103,13 @@ public final class FileMap {
 
     /// Most entries; a create past it is `projectFull`.
     public let maxFiles: Int
+    /// This replica's own creates stop this far below `maxFiles` (§2.4a).
+    public let localHeadroom: Int
 
-    public init(replica: UInt64, maxFiles: Int = CollabLimits.maxFiles) {
+    public init(replica: UInt64, maxFiles: Int = CollabLimits.maxFiles, localHeadroom: Int = 0) {
         self.replica = replica
         self.maxFiles = maxFiles
+        self.localHeadroom = localHeadroom
     }
 
     /// Number of entries, deleted ones included.
@@ -143,6 +146,11 @@ public final class FileMap {
     public func isDeleted(_ file: FileID) -> Bool? { entries[file]?.deleted.1 }
 
     func local(_ file: FileID, _ kind: FileOpKind) throws -> FileOp {
+        // A local create stops `localHeadroom` below the cap (§2.4a); a
+        // remote one may take the cap itself.
+        if case .create = kind, entries[file] == nil, entries.count >= maxFiles - min(localHeadroom, maxFiles) {
+            throw CollabError.projectFull
+        }
         let op = FileOp(id: CollabID(replica: replica, counter: stateVector[replica]), lamport: lamport + 1,
                         file: file, kind: kind)
         try apply(op)

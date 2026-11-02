@@ -182,12 +182,14 @@ public final class TextDocument {
 
     /// Whether `n` more stored bytes fit: `documentFull` first, then the
     /// project's `projectFull` (contract §2.4 step 5).
-    func checkRoom(_ n: Int) throws {
+    /// `local`: this replica's own edit, which stops `localTextHeadroom`
+    /// below the project's cap (§2.4a); a remote operation may use it all.
+    func checkRoom(_ n: Int, local: Bool = false) throws {
         guard storedBytes + n <= CollabLimits.maxDocumentBytes else { throw CollabError.documentFull }
-        if let budget, !budget.fits(n) { throw CollabError.projectFull }
+        if let budget, !budget.fits(n, local: local) { throw CollabError.projectFull }
     }
 
-    func hasRoom(_ n: Int) -> Bool { (try? checkRoom(n)) != nil }
+    func hasRoom(_ n: Int, local: Bool = false) -> Bool { (try? checkRoom(n, local: local)) != nil }
     /// Called for every change to the visible text while set, in the order
     /// the changes happen, each in UTF-16 units of the text as it was just
     /// before it: so replaying them one by one on an `NSTextStorage` (or a
@@ -552,7 +554,7 @@ public final class TextDocument {
         precondition(position >= 0 && position <= count, "insert position out of range")
         if text.isEmpty { return nil }
         let bytes = Array(text.utf8)
-        try checkRoom(bytes.count)
+        try checkRoom(bytes.count, local: true)
         var right: Item? = nil
         var left: Item? = lastItem
         if position < count {
@@ -940,7 +942,7 @@ public final class TextDocument {
     public func replace(utf16Range range: Range<Int>, with text: String) throws -> [TextOp] {
         let a = scalarOffset(ofUTF16: range.lowerBound)
         let b = scalarOffset(ofUTF16RoundingUp: range.upperBound)
-        if !text.isEmpty { try checkRoom(text.utf8.count) }
+        if !text.isEmpty { try checkRoom(text.utf8.count, local: true) }
         var ops = delete(at: a, length: b - a)
         if let ins = try insert(text, at: a) { ops.append(ins) }
         return ops
@@ -987,7 +989,7 @@ public final class TextDocument {
             let it = off > 0 ? split(it0, at: off) : it0
             if it.len > take { split(it, at: take) }
             k += UInt64(take)
-            guard it.deleted, hasRoom(it.bytes.count) else { continue }
+            guard it.deleted, hasRoom(it.bytes.count, local: true) else { continue }
             let bytes = it.bytes
             ops.append((it.firstID, localInsert(bytes: bytes, text: String(decoding: bytes, as: UTF8.self),
                                                 left: it, right: next(it))))

@@ -178,7 +178,7 @@ public final class CollabGuest {
             session?.stopTimers()
         case let .error(e):
             switch e.code {
-            case "invite_invalid", "join_denied", "removed", "token_invalid", "session_full", "join_timeout":
+            case "invite_invalid", "join_denied", "removed", "token_invalid", "session_full", "join_timeout", "project_full":
                 leaving = true
                 state = .ended(e.message)
                 session?.stopTimers()
@@ -196,6 +196,16 @@ public final class CollabGuest {
     private func receive(_ sections: [Section], on c: CollabConnection) {
         guard let s = session else { return }
         let errors = s.integrate(sections)
+        // A remote operation the caps refused (§2.4a): this copy no longer
+        // holds what the hub does, and no resync can bring it back under the
+        // cap, so the session ends here instead of going on diverged.
+        if errors.contains(where: \.isProjectFull) {
+            leaving = true
+            state = .ended(CollabSession.projectFullMessage)
+            c.close(reason: "project_full")
+            s.stopTimers()
+            return
+        }
         if errors.contains(where: { if case .pendingFull = $0 { return true } else { return false } }) {
             c.send(.syncRequest(s.project.stateVectors))
         }
