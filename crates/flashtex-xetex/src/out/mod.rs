@@ -691,6 +691,9 @@ fn mono_ns() -> i64 {
 pub fn stage_start(t: std::time::Instant) {
     abs("engine_run", Some(t));
     if stages_on() {
+        eprintln!("[win] pre-begin {}", mono_ns());
+    }
+    if stages_on() {
         STAGES.with(|c| c.set(Some((t, t))));
         eprintln!("[stage] begin");
     }
@@ -705,12 +708,14 @@ pub fn stage(name: &str) {
     PHASE.with(|p| match (name, p.get()) {
         ("pre_main", _) => {
             abs("pre_main", None);
-            eprintln!("[win] begin {}", mono_ns());
+            let n = mono_ns();
+            eprintln!("[win] pre-end {n}");
+            eprintln!("[win] page-begin {n}");
             p.set(1);
         }
         ("page", 1) => {
             abs("engine_first_typeset", None);
-            eprintln!("[win] end {}", mono_ns());
+            eprintln!("[win] page-end {}", mono_ns());
             p.set(2);
         }
         ("main_end", _) => {
