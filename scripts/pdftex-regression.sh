@@ -51,7 +51,7 @@ elif [ -n "${1:-}" ]; then
 fi
 if [ -z "$engine" ]; then
     (cd "$root" && cargo build --release --locked -p flashtex-engine)
-    engine=$root/target/release/flashtex-initex
+    engine=${CARGO_TARGET_DIR:-$root/target}/release/flashtex-initex
 fi
 [ -f "$engine" ] || die "no such engine: $engine"
 [ -x "$engine" ] || die "engine is not executable: $engine"
