@@ -26,7 +26,11 @@ tick(){ (( $(date +%s) > deadline )) && { log "TIMEOUT; stop"; exit 9; }; sleep 
 reran=0
 while :; do
   headok
-  c=$(gh api "repos/$R/commits/$sha/check-runs?check_name=CI%20required&per_page=20" --jq '.check_runs|sort_by(.started_at)|last|"\(.status) \(.conclusion)"' 2>/dev/null)
+  # Judge by the pull_request run only: the push run on the same SHA skips the mac job and can be
+  # green before the PR run's mac job finishes red (11-02: #2009, #2015, #2023 got auto-merge this way;
+  # the merge queue does not run the mac job, so nothing caught it).
+  prid=$(gh run list -R $R -c $sha -w CI -e pull_request -L 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null)
+  c=""; [[ -n $prid ]] && c=$(gh api "repos/$R/actions/runs/$prid/jobs?per_page=100" --jq '[.jobs[]|select(.name=="CI required")]|last|"\(.status) \(.conclusion)"' 2>/dev/null)
   case $c in
     "completed success") log "CI green"; break;;
     "completed failure"|"completed timed_out") log "CI-RED ($c); stop"; exit 3;;
