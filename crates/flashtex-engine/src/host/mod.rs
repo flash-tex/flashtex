@@ -32,6 +32,7 @@
 
 pub mod crash;
 pub mod diag;
+pub mod export_dir;
 pub mod external;
 mod resident;
 pub mod s0write;
