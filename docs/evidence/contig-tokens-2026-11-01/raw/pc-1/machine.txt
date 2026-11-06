@@ -1,0 +1,7 @@
+Linux nixos 6.18.58 #1-NixOS SMP PREEMPT_DYNAMIC @1792571549 x86_64 GNU/Linux
+5
+model name	: AMD Ryzen 7 7800X3D 8-Core Processor
+ 13:11:16  up 6 days 14:09,  1 user,  load average: 5.61, 5.07, 4.84
+/home/kubar/texlive/2026/bin/x86_64-linux/pdftex
+/home/kubar/texlive/2026/bin/x86_64-linux/kpsewhich
+pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)

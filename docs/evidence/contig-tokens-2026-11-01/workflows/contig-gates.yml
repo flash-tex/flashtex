@@ -1,0 +1,65 @@
+# Lane CONTIG-TOKENS: the parity gates of a build whose FLASHTEX_LAZY_FLUSH switch defaults to on
+# (changes/lazyflush.ch), on the NixOS PC's runner: the web2rust drift test, trip, etrip, lockstep
+# (T1, with its accounting check), the P-T1/P-T2 fixtures and T2 (the LaTeX suites), each against
+# TeX Live 2026's pdfTeX, as scripts/engine-parity.sh and CI run them. A push to
+# agent/kabir-claude-contig/pcgates-* runs it (in-repo code only; DESIGN §9.3). Measurement
+# branch only, never merged; scratch in ~/.cache/flashtex-agents/contig/, removed at the end.
+name: contig-gates
+
+on:
+  push:
+    branches: ["agent/kabir-claude-contig/pcgates-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contig-gates
+  cancel-in-progress: false
+
+jobs:
+  gates:
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 300
+    env:
+      CARGO_BUILD_JOBS: "4"
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: scratch
+        run: |
+          W="$HOME/.cache/flashtex-agents/contig/gates-$GITHUB_RUN_ID"
+          mkdir -p "$W"
+          mkdir -p "$W/trip" "$W/etrip"
+          { echo "W=$W"; echo "CARGO_TARGET_DIR=$W/target"; echo "FLASHTEX_PARITY_CACHE=$W/parity-oracle"
+            echo "TRIP_WORK=$W/trip"; echo "ETRIP_WORK=$W/etrip"; } >> "$GITHUB_ENV"
+          grep -n 'FLASHTEX_LAZY_FLUSH' crates/flashtex-engine/src/lazyflush.rs
+      - name: web2rust drift (src/generated/ is what the change files make)
+        run: nice -n 5 cargo test --release --locked -q -p web2rust --test drift 2>&1 | tail -5
+      - name: trip
+        run: nice -n 5 scripts/flashtex-trip.sh 2>&1 | tail -8
+      - name: etrip
+        run: nice -n 5 scripts/flashtex-etrip.sh 2>&1 | tail -8
+      - name: lockstep, P-T1/P-T2 fixtures
+        run: nice -n 5 scripts/engine-parity.sh --work "$W/ep" --jobs 4 build lockstep parity 2>&1 | tail -40
+      - name: T2 (the LaTeX suites)
+        run: nice -n 5 scripts/engine-parity.sh --work "$W/ep" --jobs 4 t2 2>&1 | tail -40
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contig-gates
+          path: |
+            ${{ env.W }}/ep/lockstep.txt
+            ${{ env.W }}/ep/parity/report.md
+            ${{ env.W }}/ep/parity/documents.json
+            ${{ env.W }}/ep/t2-reference.txt
+            ${{ env.W }}/ep/t2-engine.txt
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: clean up
+        if: always()
+        run: rm -rf "$W"
