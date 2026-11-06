@@ -928,7 +928,15 @@ struct SourceEditorView: NSViewRepresentable {
         /// Gutter disclosure triangles. `rescan` walks foldable regions (not
         /// per keystroke: text changes debounce this; fold commands pass true).
         func refreshFoldGutter(rescan: Bool = false) {
-            guard let tv = textView as? CompletingTextView, let gutter else { return }
+            guard let tv = textView as? CompletingTextView else { return }
+            guard let gutter else {
+                // No gutter to draw, but folds still wait on this rescan
+                // to be revalidated (`revalidateFolds`).
+                if rescan, !tv.folds.isEmpty, !tv.folds.cacheIsWarm, (tv.textStorage?.length ?? 0) > Self.foldScanOffMainUTF16 {
+                    scanFoldRegionsOffMain(tv)
+                }
+                return
+            }
             let table = syntax.highlighter
             let length = tv.textStorage?.length ?? 0
             guard table.length == length, length > 0 else {
@@ -939,29 +947,18 @@ struct SourceEditorView: NSViewRepresentable {
                 if rescan, length > 0, table.length != length { scheduleFoldGutterRefresh() }
                 return
             }
+            // A fold command can warm the cache after an edit that deferred
+            // its revalidation (`revalidateFolds`): against the cache, cheap.
+            if rescan, tv.folds.cacheIsWarm, !tv.folds.isEmpty, length > Self.foldScanOffMainUTF16 {
+                tv.folds.revalidate(in: tv.textStorage?.mutableString ?? NSMutableString())
+            }
             func lineOf(_ loc: Int) -> Int { table.line(at: min(max(0, loc), length - 1)) }
             gutter.foldedLines = Set(tv.folds.foldedLineStarts.map(lineOf))
             if tv.folds.cacheIsWarm {
                 // Cached: no scan (and no copy of the text).
                 gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.textStorage?.mutableString ?? NSMutableString()).map(lineOf))
             } else if rescan, length > Self.foldScanOffMainUTF16 {
-                // A long document's whole-buffer scan (every environment pair
-                // and the outline) runs off the main thread: it ran here when
-                // typing paused, holding the next key (APP-EDITOR-INSTANT).
-                // Installed only if no edit came meanwhile.
-                let generation = tv.folds.currentGeneration
-                let text = tv.string // an immutable copy for the other thread
-                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                    let regions = EditorFolding.regions(in: text as NSString)
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            guard let self, let tv = self.textView as? CompletingTextView,
-                                  tv.folds.currentGeneration == generation else { return }
-                            tv.folds.replaceCache(regions: regions)
-                            self.refreshFoldGutter(rescan: false)
-                        }
-                    }
-                }
+                scanFoldRegionsOffMain(tv)
             } else if rescan {
                 gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.string as NSString).map(lineOf))
             }
@@ -969,6 +966,42 @@ struct SourceEditorView: NSViewRepresentable {
 
         /// Above this many UTF-16 units the fold rescan runs off the main thread.
         static let foldScanOffMainUTF16 = 100_000
+
+        /// A long document's whole-buffer region scan (every environment pair
+        /// and the outline) runs off the main thread: it ran here when typing
+        /// paused, holding the next key (APP-EDITOR-INSTANT). Installed only
+        /// if no edit came meanwhile; then the folds are revalidated against
+        /// it (a cache hit) and the gutter redrawn.
+        func scanFoldRegionsOffMain(_ tv: CompletingTextView) {
+            let generation = tv.folds.currentGeneration
+            let text = tv.string // an immutable copy for the other thread
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let regions = EditorFolding.regions(in: text as NSString)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, let tv = self.textView as? CompletingTextView,
+                              tv.folds.currentGeneration == generation else { return }
+                        tv.folds.replaceCache(regions: regions)
+                        tv.folds.revalidate(in: tv.textStorage?.mutableString ?? NSMutableString())
+                        self.refreshFoldGutter(rescan: false)
+                    }
+                }
+            }
+        }
+
+        /// After a user edit, drop folds whose body no longer parses as a
+        /// region. Edits that touch a fold already unfolded it
+        /// (`shiftFolds`); what is left is a fold an edit elsewhere broke
+        /// (an unclosed `verbatim` above it, say). On a short buffer that is
+        /// checked now; on a long one the region scan is the whole-buffer lex
+        /// that held every keystroke while a fold existed, so it waits for
+        /// the debounced off-main rescan (`scheduleFoldGutterRefresh`, from
+        /// `textDidChange`), which revalidates when it lands.
+        func revalidateFolds(_ tv: NSTextView) {
+            guard let tv = tv as? CompletingTextView, !tv.folds.isEmpty, let storage = tv.textStorage else { return }
+            if storage.length > Self.foldScanOffMainUTF16 { return }
+            tv.folds.revalidate(in: storage.string as NSString) // not the mutableString proxy: the region scan reads it per character
+        }
 
         /// Debounced whole-buffer fold-triangle rescan. Also called from
         /// `updateNSView` on a text reset: that path posts no `textDidChange`.
@@ -1276,7 +1309,7 @@ struct SourceEditorView: NSViewRepresentable {
             let s = PerfSignposts.interval("bufferCopy") { storageText(of: tv) }
             lastKnownText = s
             parent.text = s
-            (tv as? CompletingTextView)?.folds.revalidate(in: s as NSString)
+            revalidateFolds(tv)
             PerfSignposts.interval("braceHighlight") { refreshBraceHighlight(tv) }
             if let edit, edit.range.length == 0, edit.replacement.count == 1, let ch = edit.replacement.first, BraceMatcher.isCloser(ch) {
                 announceMatch(in: tv)
