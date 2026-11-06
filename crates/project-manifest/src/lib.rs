@@ -1367,4 +1367,187 @@ name = "mylib"
         let t = "[ project ]\n  mode = \"classic\"\n";
         assert_eq!(check_with_mode(t, Mode::Unicode), "[ project ]\n  mode = \"unicode\"\n");
     }
+
+    #[test]
+    fn texinput_edge_cases() {
+        let root = Path::new("/home/u/proj");
+        // The project directory itself, however written.
+        for raw in ["", ".", "./", "a/.."] {
+            match classify_texinput(raw, root) {
+                TexInputLocation::Invalid(m) => assert!(m.contains("project directory itself"), "{raw:?}: {m}"),
+                other => panic!("{raw:?}: expected Invalid, got {other:?}"),
+            }
+        }
+        // `..` mixes with real segments lexically.
+        assert_eq!(classify_texinput("..", root), TexInputLocation::Outside(PathBuf::from("/home/u")));
+        assert_eq!(classify_texinput("a/b/..", root), TexInputLocation::Inside("a".into()));
+        assert_eq!(classify_texinput("sub/../../x", root), TexInputLocation::Outside(PathBuf::from("/home/u/x")));
+        assert_eq!(classify_texinput("a/./b", root), TexInputLocation::Inside("a/b".into()));
+        // Control characters and NUL are forbidden like `\` and `:`.
+        for raw in ["a\tb", "a\nb", "a\0b"] {
+            match classify_texinput(raw, root) {
+                TexInputLocation::Invalid(m) => assert!(m.contains("forbidden character"), "{raw:?}: {m}"),
+                other => panic!("{raw:?}: expected Invalid, got {other:?}"),
+            }
+        }
+        // File names: the match is on the final extension, case-sensitively.
+        assert!(is_texinput_file("archive.tar.sty"));
+        for name in ["", "a.STY", "a.", "a.sty ", "Makefile"] {
+            assert!(!is_texinput_file(name), "{name:?}");
+        }
+        assert_eq!(outside_virtual_dir(0), "texinputs/0");
+        assert!(outside_virtual_dir(7).starts_with(&format!("{OUTSIDE_PREFIX}/")));
+    }
+
+    #[test]
+    fn non_table_sections_warn_and_read_as_default() {
+        let p = Manifest::parse("project = \"x\"\nfonts = 1\npackages = []\nlibrary = \"y\"\n").unwrap();
+        let keys: Vec<&str> = p.warnings.iter().map(|w| w.key.as_str()).collect();
+        assert_eq!(keys, vec!["project", "fonts", "packages", "library"], "{:?}", p.warnings);
+        assert!(p.warnings.iter().all(|w| w.message.contains("expected a table")));
+        assert_eq!(p.manifest, Manifest::default());
+    }
+
+    #[test]
+    fn bad_collection_items_warn_with_indexed_paths() {
+        let p = Manifest::parse(
+            "[project]\ntexinputs = [\"ok\", 3, \"also-ok\"]\nmode = 3\nflashtex_version = 1\n[packages]\npin = \"x\"\npath = { good = \"../g\", bad = 7 }\n[library]\nversion = \"1\"\n",
+        )
+        .unwrap();
+        let keys: Vec<&str> = p.warnings.iter().map(|w| w.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "project.texinputs[1]",
+                "project.mode",
+                "project.flashtex_version",
+                "packages.pin",
+                "packages.path.bad",
+                "library.version",
+                "library"
+            ],
+            "{:?}",
+            p.warnings
+        );
+        assert_eq!(p.manifest.project.texinputs, vec!["ok", "also-ok"]);
+        assert_eq!(p.manifest.packages.path.len(), 1);
+        assert_eq!(p.manifest.library, None);
+        // A `[packages.pin]` subtable is the same map as the inline form.
+        let p = Manifest::parse("[packages.pin]\nsiunitx = \"3.3.24\"\n").unwrap();
+        assert!(p.warnings.is_empty(), "{:?}", p.warnings);
+        assert_eq!(p.manifest.packages.pin.get("siunitx").map(String::as_str), Some("3.3.24"));
+    }
+
+    #[test]
+    fn load_reports_syntax_and_io_errors_and_keeps_warnings() {
+        let d = tmp("load-err");
+        let bad = d.join("bad.toml");
+        std::fs::write(&bad, "[project\nentry = ").unwrap();
+        match Manifest::load(&bad) {
+            Err(ManifestError::Syntax(m)) => assert!(!m.is_empty()),
+            other => panic!("expected a syntax error, got {other:?}"),
+        }
+        // A directory is not a missing file: an I/O error, never the default.
+        match Manifest::load(&d) {
+            Err(ManifestError::Io(_)) => {}
+            other => panic!("expected an I/O error, got {other:?}"),
+        }
+        let warned = d.join(FILE_NAME);
+        std::fs::write(&warned, "[project]\nentry = \"m.tex\"\ntypo = 1\n").unwrap();
+        let loaded = Manifest::load(&warned).unwrap();
+        assert_eq!(loaded.found.as_deref(), Some(warned.as_path()));
+        assert_eq!(loaded.manifest.project.entry.as_deref(), Some("m.tex"));
+        assert_eq!(loaded.warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>(), vec!["project.typo"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn to_toml_omits_empty_optionals_and_keeps_defaults_explicit() {
+        let t = Manifest::default().to_toml();
+        assert!(t.starts_with("[project]\n"), "{t}");
+        for line in ["texinputs = []", "source = \"ctan\"", "fetch = \"ask\""] {
+            assert!(t.contains(line), "{line} missing:\n{t}");
+        }
+        for absent in ["[fonts]", "[library]", "pin =", "path =", "mode =", "entry =", "output ="] {
+            assert!(!t.contains(absent), "{absent} should be omitted:\n{t}");
+        }
+        let mut m = Manifest::default();
+        m.project.mode = Some(Mode::FlashTeX);
+        m.project.flashtex_version = Some("1.0".into());
+        m.fonts.sans = Some("Inter".into());
+        let t = m.to_toml();
+        assert!(t.contains("mode = \"flashtex\"") && t.contains("flashtex_version = \"1.0\""), "{t}");
+        assert!(t.contains("[fonts]\nsans = \"Inter\"\n"), "{t}");
+        assert_eq!(Manifest::parse(&t).unwrap().manifest, m);
+    }
+
+    #[test]
+    fn with_packages_dedupes_and_replaces_placeholders() {
+        // A duplicated key line collapses to one with the new value.
+        let t = Manifest::with_packages("[packages]\nfetch = \"ask\"\nfetch = \"ask\"\n", Some(FetchPolicy::Never), None);
+        assert_eq!(t, "[packages]\nfetch = \"never\"\n");
+        // A commented-out key is replaced in place, not appended beside.
+        let mut pins = BTreeMap::new();
+        pins.insert("siunitx".to_string(), "3.3.24".to_string());
+        let t = Manifest::with_packages("[packages]\n# fetch = \"ask\"\n# pin = {}\n", Some(FetchPolicy::Always), Some(&pins));
+        let p = Manifest::parse(&t).unwrap();
+        assert_eq!(p.manifest.packages.fetch, FetchPolicy::Always);
+        assert_eq!(p.manifest.packages.pin, pins);
+        assert_eq!(t.lines().filter(|l| l.contains("fetch =")).count(), 1);
+        assert!(t.lines().any(|l| l.starts_with("fetch = \"always\"")), "{t}");
+        // An empty file grows just the table.
+        assert_eq!(Manifest::with_packages("", Some(FetchPolicy::Never), None), "[packages]\nfetch = \"never\"\n");
+    }
+
+    #[test]
+    fn with_mode_ignores_lookalike_tables_and_keeps_crlf_comments() {
+        // `[projectx]` is not `[project]`: a real table is appended.
+        let w = check_with_mode("[projectx]\nmode = \"z\"\n", Mode::Unicode);
+        assert_eq!(w, "[projectx]\nmode = \"z\"\n\n[project]\nmode = \"unicode\"\n");
+        // Replacing in place keeps CRLF and the trailing comment.
+        let w = check_with_mode("[project]\r\nmode = \"classic\" # chosen\r\n", Mode::Unicode);
+        assert_eq!(w, "[project]\r\nmode = \"unicode\" # chosen\r\n");
+        // A file of only comments grows a table after a blank line.
+        assert_eq!(
+            check_with_mode("# just a comment\n", Mode::Classic),
+            "# just a comment\n\n[project]\nmode = \"classic\"\n"
+        );
+    }
+
+    #[test]
+    fn quoting_helpers_quote_only_when_needed() {
+        assert_eq!(quote_key("siunitx"), "siunitx");
+        assert_eq!(quote_key("a-b_c9"), "a-b_c9");
+        assert_eq!(quote_key("odd name"), "\"odd name\"");
+        assert_eq!(quote_key("a.b"), "\"a.b\"");
+        assert_eq!(quote_key(""), "\"\"");
+        assert_eq!(quote("plain"), "\"plain\"");
+        assert_eq!(trailing_comment("k = \"a\\\"#b\" # real"), " # real");
+        assert_eq!(trailing_comment("k = \"#\""), "");
+        assert_eq!(trailing_comment("k = \"a\\\\\" # c"), " # c");
+    }
+
+    /// `[fonts ]` is the fonts table (TOML allows the spaces), but
+    /// `with_fonts`/`with_packages` only match the unspaced header, so they
+    /// append a second table and the result no longer parses. `with_mode`
+    /// trims inside the brackets and gets this right.
+    #[test]
+    #[ignore = "#2021: spaced `[fonts ]` / `[packages ]` headers are not recognized; the rewrite appends a duplicate table"]
+    fn spaced_table_headers_are_recognized() {
+        let fonts = Fonts { text: Some("New".into()), math: None, mono: None, sans: None };
+        let t = Manifest::with_fonts("[fonts ]\ntext = \"Old\"\n", &fonts);
+        assert_eq!(Manifest::parse(&t).unwrap().manifest.fonts, fonts);
+        let t = Manifest::with_packages("[packages ]\nfetch = \"ask\"\n", Some(FetchPolicy::Never), None);
+        assert_eq!(Manifest::parse(&t).unwrap().manifest.packages.fetch, FetchPolicy::Never);
+    }
+
+    /// A dotted `project.mode` with no `[project]` table gets a second
+    /// `project.mode` line appended after it — a duplicate key, so the
+    /// result no longer parses.
+    #[test]
+    #[ignore = "#2022: with_mode duplicates a pre-existing dotted project.mode instead of replacing it"]
+    fn with_mode_replaces_a_dotted_project_mode() {
+        let t = Manifest::with_mode("project.entry = \"a.tex\"\nproject.mode = \"classic\"\n", Mode::Unicode);
+        assert_eq!(Manifest::parse(&t).unwrap().manifest.project.mode, Some(Mode::Unicode));
+    }
 }
