@@ -1409,6 +1409,78 @@ class PTWithOracle(unittest.TestCase):
             if name == "bytes":
                 self.assertFalse(r["accounting"]["equal"])
 
+    def test_no_halt_on_error_measures_a_recoverable_error(self):
+        """--no-halt-on-error: a document with a recoverable error compiles (exit 1,
+        its own PDF, the error in the trace); one whose fatal error writes no PDF
+        is still not compiled, even beside a shipped PDF of the same name."""
+        src = os.path.join(self.d, "err")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write(DOC % r"Before \undefinedmacro after.")
+        fatal = os.path.join(self.d, "fatal")
+        os.makedirs(fatal)
+        with open(os.path.join(fatal, "main.tex"), "w") as f:
+            f.write(DOC % r"\input{no-such-file-anywhere}")
+        with open(os.path.join(fatal, "main.pdf"), "wb") as f:
+            f.write(b"%PDF-1.5 shipped\n")
+        halting_key = tiers.oracle_key({"entry": "main.tex"}, "v", True, "t")
+        m, _, _ = tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "err-halt"))
+        self.assertFalse(m["ok"])
+        try:
+            parity.set_shell_escape("default", worker=False, halt_on_error=False)
+            self.assertNotIn("-halt-on-error", capture.interaction_args())
+            self.assertNotEqual(tiers.oracle_key({"entry": "main.tex"}, "v", True, "t"), halting_key)
+            m, cap, pdf = tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "err-run"))
+            self.assertTrue(m["ok"])
+            self.assertTrue(pdf and os.path.isfile(pdf))
+            self.assertIn("! Undefined control sequence.", cap.log)
+            m, _, _ = tiers.run_tex({"dir": fatal, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "fatal-run"))
+            self.assertFalse(m["ok"])
+        finally:
+            parity.set_shell_escape("default", worker=False)
+        self.assertTrue(capture.HALT_ON_ERROR)
+        self.assertEqual(tiers.oracle_key({"entry": "main.tex"}, "v", True, "t"), halting_key)
+
+    def test_no_halt_on_error_a_different_error_count_fails(self):
+        """--no-halt-on-error (daniel-parent's review of #1998): a candidate that
+        ends with another number of errors than pdfTeX fails L0 and P-T2, even
+        with the same PDF; with the same number it passes both."""
+        docs = {}
+        for name, body in (("one", r"A \undefinedmacro B."), ("two", r"A \undefinedmacro\undefinedmacro B.")):
+            src = os.path.join(self.d, "count-" + name)
+            os.makedirs(src)
+            with open(os.path.join(src, "main.tex"), "w") as f:
+                f.write(DOC % body)
+            docs[name] = {"id": name, "tier": "t", "dir": src, "entry": "main.tex"}
+        try:
+            parity.set_shell_escape("default", worker=False, halt_on_error=False)
+            ref, ref_cap, ref_pdf = tiers.run_tex(docs["one"], PDFTEX, os.path.join(self.d, "count-ref"),
+                                                  trace=False)
+            self.assertEqual((ref["ok"], ref["exit"], ref["errors"]), (True, 1, 1))
+            cands = {n: parity.run_tex_candidate(d, PDFTEX, os.path.join(self.d, "count-cand-" + n), trace=False)
+                     for n, d in docs.items()}
+        finally:
+            parity.set_shell_escape("default", worker=False)
+        self.assertEqual({n: (c["exit"], c["errors"]) for n, c in cands.items()}, {"one": (1, 1), "two": (1, 2)})
+        with open(ref_pdf, "rb") as a, open(cands["two"]["pdf"], "rb") as b:
+            self.assertEqual(a.read(), b.read())  # the same PDF: only the error count tells them apart
+        self.assertTrue(parity.same_errors(cands["one"], ref))
+        self.assertFalse(parity.same_errors(cands["two"], ref))  # L0
+        self.assertFalse(parity.same_errors(cands["two"], {}))  # a halting reference compiled: 0 errors
+        real = tiers.oracle
+        tiers.oracle = lambda *a, **k: (dict(ref), None, ref_pdf)
+        try:
+            cfg = {"pt": "pt2", "oracle_pdftex": PDFTEX, "cache": self.d, "engine_kind": "tex",
+                   "qpdf": shutil.which("qpdf")}
+            pt = {n: parity.score_pt(docs[n], cfg, c, os.path.join(self.d, "count-pt-" + n))
+                  for n, c in cands.items()}
+        finally:
+            tiers.oracle = real
+        if cfg["qpdf"]:
+            self.assertIs(pt["two"]["P-T2"], False)
+            self.assertIn("error count 2 (exit 1), pdfTeX's 1 (exit 1)", pt["two"]["pt2"]["why"])
+            self.assertIs(pt["one"]["P-T2"], True)
+
     def test_shell_escape_is_the_engines_default_mode(self):
         """Owner decision #1209: no shell-escape flag, so pdfTeX runs in TeX
         Live's default mode: restricted, \\pdfshellescape=2 (l3kernel's
