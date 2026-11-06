@@ -2314,14 +2314,24 @@ static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
 /// file opened is listed in `<program><pid>.fls` (renamed to
 /// `<jobname>.fls` when the log file opens), after a `PWD` line.
 fn record_file(prefix: &str, name: &str) {
+    record_file_as(prefix, name, name)
+}
+
+/// [`record_file`] of the file at `path`, listed in the `.fls` as `listed`.
+/// The incremental journal (and so S₀'s and S₁'s keys, `host::make_key_from`)
+/// notes `path`, the path found; the `.fls` gets what pdfTeX records, which
+/// for `open_input` is `nameoffile + 1` after the open: without the `./` a
+/// lookup puts in front of a file in the current directory (`INPUT sub.tex`
+/// for `\input sub`, `INPUT ./sub.tex` for `\input ./sub`).
+fn record_file_as(prefix: &str, path: &str, listed: &str) {
     if prefix == "INPUT" {
         // a file the run wrote, read back: as a cut would have left it
-        if logical_len(name).is_some() {
-            cut_to_logical(name);
+        if logical_len(path).is_some() {
+            cut_to_logical(path);
         }
-        note_file(name);
+        note_file(path);
     } else {
-        note_output(name);
+        note_output(path);
     }
     let r = run();
     if !r.recorder {
@@ -2344,7 +2354,7 @@ fn record_file(prefix: &str, name: &str) {
         *g = Some(Recorder { name: fname, file });
     }
     if let Some(rec) = g.as_mut() {
-        let _ = writeln!(rec.file, "{prefix} {name}");
+        let _ = writeln!(rec.file, "{prefix} {listed}");
         let _ = rec.file.flush();
     }
 }
@@ -2707,7 +2717,8 @@ impl Globals {
             _ => found.as_str(),
         };
         self.set_name_of_file(shown);
-        record_file("INPUT", &found);
+        // (openclose.c: `recorder_record_input (nameoffile + 1)`)
+        record_file_as("INPUT", &found, shown);
         read_set_open(&found);
         Some(found)
     }
