@@ -1136,6 +1136,17 @@ impl Engine {
                 .set_cancel(Some(std::rc::Rc::new(move |_pass, _pages| {
                     c.is_cancelled(id)
                 })));
+            // The protection ends once the client has a changed page of this
+            // compile (lane TYPING-50MS): the page the engine sees changed is
+            // the one that differs from the last complete run, which the
+            // client may not hold.
+            let live = self.live.clone();
+            doc.session.set_painted(Some(std::rc::Rc::new(move || {
+                live.try_borrow()
+                    .ok()
+                    .and_then(|l| l.target.as_ref().map(|t| t.changed_sent))
+                    .unwrap_or(false)
+            })));
             // Nothing new against the run a newer keystroke stopped (a letter
             // typed and deleted again): the pages that run shipped are this
             // compile's. Deliver them now and say they are current, instead
@@ -1277,6 +1288,7 @@ impl Engine {
         let _busy = crate::busy::enter(crate::busy::Part::Done);
         doc.session.set_preempt(None);
         doc.session.set_cancel(None);
+        doc.session.set_painted(None);
         doc.session.set_on_continue(None);
         doc.session.set_progress(None);
         doc.session.set_defer(None);
