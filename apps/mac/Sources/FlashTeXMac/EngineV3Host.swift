@@ -183,6 +183,25 @@ final class EngineV3HostProcess: @unchecked Sendable {
     private var buffer = Data()
     private let lock = NSLock()
 
+    /// Where a host of `mode` persists each document's S0 (`--s0-cache`), so
+    /// that a reopened document runs only its body. Each mode has its own
+    /// folder: the two hosts' files are not each other's.
+    static func s0Directory(mode: EngineV3Mode) -> URL {
+        EngineV3.cacheDirectory.appendingPathComponent(mode == .unicode ? "s0-unicode" : "s0", isDirectory: true)
+    }
+
+    /// The host's command line. `--once`: serve one connection, then exit
+    /// (the app's connection closes when the app quits or dies, so the host
+    /// never outlives it once connected). Both hosts are resident (the
+    /// Unicode one since XETEX-INCR): each takes its S0 cache and the
+    /// performance mode it starts in. Only the pdfTeX host has a checkpoint
+    /// interval (`--timed`, from `FLASHTEX_V3_TIMED`).
+    static func arguments(socketPath: String, mode: EngineV3Mode, s0Directory: URL, profile: String, timed: String?) -> [String] {
+        var a = ["--socket", socketPath, "--once", "--s0-cache", s0Directory.path, "--profile", profile]
+        if mode == .classic, let t = timed, Double(t) != nil { a += ["--timed", t] }
+        return a
+    }
+
     /// `confineRoots`: the host compiles text from a Live Share session and
     /// may read only inside these folders besides the job's own
     /// (`confinedEnvironment`); nil for an ordinary host.
@@ -193,20 +212,13 @@ final class EngineV3HostProcess: @unchecked Sendable {
         self.confineRoots = confineRoots
         let dir = NSTemporaryDirectory()
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
-        let s0 = EngineV3.cacheDirectory.appendingPathComponent("s0", isDirectory: true)
+        let s0 = Self.s0Directory(mode: mode)
         try? FileManager.default.createDirectory(at: s0, withIntermediateDirectories: true)
         process.executableURL = executable
-        // --once: serve one connection, then exit. The app's connection closes
-        // when the app quits or dies (the kernel closes the socket), so the
-        // host never outlives it once connected.
-        process.arguments = ["--socket", socketPath, "--once"]
-        // The resident pdfTeX host's S0 cache, performance mode and checkpoint
-        // interval. The Unicode host compiles cold and takes none of them.
-        if mode == .classic {
-            process.arguments! += ["--s0-cache", s0.path]
-            process.arguments! += ["--profile", PerformanceMode.current.hostProfile]
-            if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
-        }
+        process.arguments = Self.arguments(
+            socketPath: socketPath, mode: mode, s0Directory: s0,
+            profile: PerformanceMode.current.hostProfile,
+            timed: ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"])
         process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }
             ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()

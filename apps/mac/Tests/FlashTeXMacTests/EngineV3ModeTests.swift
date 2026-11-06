@@ -23,6 +23,23 @@ final class EngineV3ModeTests: XCTestCase {
         XCTAssertNil(EngineV3Mode.magicComment("% !TEX root = main.tex\n"))
     }
 
+    /// Both hosts are resident and take the S0 cache (each mode its own
+    /// folder) and the performance mode; only the pdfTeX host takes the
+    /// checkpoint interval. (The Unicode host was started without either,
+    /// so a reopened Unicode document ran its preamble again.)
+    func testBothHostsTakeTheS0CacheAndTheProfile() {
+        for mode in [EngineV3Mode.classic, .unicode] {
+            let s0 = EngineV3HostProcess.s0Directory(mode: mode)
+            let a = EngineV3HostProcess.arguments(socketPath: "/tmp/x.sock", mode: mode, s0Directory: s0, profile: "low-memory", timed: "0.05")
+            XCTAssertEqual(Array(a.prefix(3)), ["--socket", "/tmp/x.sock", "--once"], "\(mode)")
+            XCTAssertEqual(a.firstIndex(of: "--s0-cache").map { a[$0 + 1] }, s0.path, "\(mode): \(a)")
+            XCTAssertEqual(a.firstIndex(of: "--profile").map { a[$0 + 1] }, "low-memory", "\(mode): \(a)")
+            XCTAssertEqual(a.contains("--timed"), mode == .classic, "\(mode): \(a)")
+        }
+        XCTAssertNotEqual(EngineV3HostProcess.s0Directory(mode: .classic), EngineV3HostProcess.s0Directory(mode: .unicode))
+        XCTAssertFalse(EngineV3HostProcess.arguments(socketPath: "/s", mode: .classic, s0Directory: URL(fileURLWithPath: "/c"), profile: "balanced", timed: "x").contains("--timed"), "a malformed interval is dropped")
+    }
+
     func testResolutionOrder() {
         let doc = "% !TEX program = xelatex\n\\documentclass{article}"
         XCTAssertEqual(EngineV3Mode.resolve(environment: nil, manifest: nil, mainText: doc).mode, .unicode)
