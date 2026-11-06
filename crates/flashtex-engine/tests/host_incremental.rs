@@ -40,6 +40,21 @@ struct Host(Child, PathBuf);
 
 impl Drop for Host {
     fn drop(&mut self) {
+        // (cargo-llvm-cov: `SIGTERM` first, on which a coverage build
+        // writes its profile, `host::crash`; a kill would lose it)
+        #[cfg(coverage)]
+        {
+            let _ = Command::new("kill")
+                .args(["-TERM", &self.0.id().to_string()])
+                .status();
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(20) {
+                if matches!(self.0.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
         let _ = std::fs::remove_file(&self.1);
