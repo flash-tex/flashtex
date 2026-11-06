@@ -175,11 +175,8 @@ enum Owner {
 impl Owner {
     fn error(&self, msg: impl std::fmt::Display) -> Fail {
         match self {
-            Owner::Subr(s) => Fail(format!("Subr ({s}): {msg}")),
-            Owner::Glyph(n) => Fail(format!(
-                "CharString (/{}): {msg}",
-                String::from_utf8_lossy(n)
-            )),
+            Owner::Subr(s) => Fail::from(format!("Subr ({s}): {msg}")),
+            Owner::Glyph(n) => Fail::of(&[b"CharString (/", n, format!("): {msg}").as_bytes()]),
         }
     }
 }
@@ -213,7 +210,7 @@ impl Stack {
     #[inline]
     fn pop(&mut self, n: i32) -> Result<()> {
         if (self.values.len() as i64) < i64::from(n) {
-            return Err(Fail(format!(
+            return Err(Fail::from(format!(
                 "CharString: invalid access ({n}) to stack ({} entries)",
                 self.values.len()
             )));
@@ -548,7 +545,9 @@ impl Charstrings {
             Target::Subr(s) => {
                 let idx = usize::try_from(s).ok().filter(|&i| i < self.subrs.len());
                 let Some(idx) = idx else {
-                    return Err(Fail(format!("Subrs array: entry index out of range ({s})")));
+                    return Err(Fail::from(format!(
+                        "Subrs array: entry index out of range ({s})"
+                    )));
                 };
                 if !self.subrs[idx].valid {
                     return Ok(None);

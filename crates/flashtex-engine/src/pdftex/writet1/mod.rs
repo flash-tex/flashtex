@@ -46,9 +46,24 @@ use crate::generated::Globals;
 use crate::resolver::Format;
 use std::collections::BTreeSet;
 
-/// A font error: the message of pdfTeX's `pdftex_fail`, which ends the run.
+/// A font error: the message of pdfTeX's `pdftex_fail`, which ends the run,
+/// as bytes (it quotes font lines and glyph names, which need not be
+/// UTF-8, and `pdftex_fail` prints each byte as a C `char`).
 #[derive(Debug)]
-pub(super) struct Fail(pub String);
+pub(super) struct Fail(pub Vec<u8>);
+
+impl From<String> for Fail {
+    fn from(s: String) -> Fail {
+        Fail(s.into_bytes())
+    }
+}
+
+impl Fail {
+    /// The message `parts` make.
+    pub(super) fn of(parts: &[&[u8]]) -> Fail {
+        Fail(parts.concat())
+    }
+}
 
 type Result<T, E = Fail> = std::result::Result<T, E>;
 
@@ -112,7 +127,8 @@ impl Globals {
         self.tex_printf(b"{");
         set_cur_file_name(Some(path.as_bytes()));
         self.tex_printf(path.as_bytes());
-        let names = encoding::parse_enc_file(&data).unwrap_or_else(|e| self.pdftex_fail(&e.0));
+        let names =
+            encoding::parse_enc_file(&data).unwrap_or_else(|e| self.pdftex_fail_bytes(&e.0));
         self.tex_printf(b"}");
         set_cur_file_name(None);
         names
@@ -144,7 +160,7 @@ impl Globals {
             persist,
             fb_base: self.fb_offset(),
         };
-        let font = cache::embed(&font, job, self).unwrap_or_else(|e| self.pdftex_fail(&e.0));
+        let font = cache::embed(&font, job, self).unwrap_or_else(|e| self.pdftex_fail_bytes(&e.0));
         self.tex_printf(close);
         set_cur_file_name(None);
         super::with_state(|s| s.out.fb.extend_from_slice(&font.bytes));
