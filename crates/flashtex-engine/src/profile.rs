@@ -61,6 +61,7 @@ pub struct Pinned {
     /// `Some(None)`: segment checkpoints off.
     pub segment_s: Option<Option<f64>>,
     pub dense: Option<usize>,
+    pub far: Option<usize>,
     pub keep_warm_ms: Option<u64>,
     pub prepare: Option<bool>,
     pub trim_after_ms: Option<Option<u64>>,
@@ -82,6 +83,7 @@ impl Pinned {
                 Err(_) => None,
             },
             dense: num("FLASHTEX_DENSE").map(|v| v as usize),
+            far: num("FLASHTEX_FAR").map(|v| (v as usize).max(1)),
             keep_warm_ms: num("FLASHTEX_HOST_KEEP_WARM_MS").map(|v| v as u64),
             prepare: std::env::var_os("FLASHTEX_NO_PREPARE").map(|_| false),
             trim_after_ms: None,
@@ -97,6 +99,9 @@ pub struct Profile {
     pub budget: usize,
     /// Pages around the cursor whose checkpoints all stay (`incr::thin`).
     pub dense: usize,
+    /// Far from the cursor, a page checkpoint kept at most one in this many
+    /// (`incr::Options::far`; 1: every one).
+    pub far: usize,
     /// Segment checkpoints between shipouts at least this far apart in
     /// engine time (`incr::Options::segment_s`); `None`: none.
     pub segment_s: Option<f64>,
@@ -118,6 +123,9 @@ pub struct Profile {
     pub lean: bool,
 }
 
+/// Balanced's far spacing (`Profile::far`; FLASHTEX_FAR another).
+pub const BALANCED_FAR: usize = 4;
+
 /// Balanced's budget: DESIGN.md §5.2's 1 GiB.
 pub const BALANCED_BUDGET: usize = 1 << 30;
 /// Low Memory's budget for the undo logs.
@@ -134,6 +142,7 @@ impl Profile {
                 mode,
                 budget: LOW_BUDGET,
                 dense: 4,
+                far: 8,
                 segment_s: Some(crate::incr::DEFAULT_SEGMENT_S),
                 timed_s: 0.020,
                 keep_warm_ms: 2000,
@@ -145,6 +154,7 @@ impl Profile {
                 mode,
                 budget: BALANCED_BUDGET,
                 dense: crate::incr::DEFAULT_DENSE,
+                far: BALANCED_FAR,
                 segment_s: Some(crate::incr::DEFAULT_SEGMENT_S),
                 timed_s: 0.020,
                 keep_warm_ms: 2000,
@@ -159,6 +169,7 @@ impl Profile {
                 // the first keystroke far from the last restarts near the edit,
                 // not at its page's start (#1573: +39-143 M instructions)
                 dense: 512,
+                far: 1,
                 segment_s: Some(crate::incr::DEFAULT_SEGMENT_S),
                 timed_s: 0.020,
                 keep_warm_ms: 10_000,
@@ -178,6 +189,9 @@ impl Profile {
         }
         if let Some(v) = pinned.dense {
             p.dense = v;
+        }
+        if let Some(v) = pinned.far {
+            p.far = v;
         }
         if let Some(v) = pinned.keep_warm_ms {
             p.keep_warm_ms = v;
@@ -204,6 +218,7 @@ impl Profile {
             ("mode", js(self.mode.name())),
             ("budget", Json::Int(self.budget as i64)),
             ("dense", Json::Int(self.dense as i64)),
+            ("far", Json::Int(self.far as i64)),
             (
                 "segment_ms",
                 self.segment_s.map_or(Json::Null, |s| num(s * 1e3)),
@@ -350,6 +365,7 @@ mod tests {
         assert!(p.prepare);
         assert_eq!(p.trim_after_ms, Some(2000));
         assert!(!p.lean);
+        assert_eq!(p.far, BALANCED_FAR);
     }
 
     #[test]
