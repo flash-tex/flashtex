@@ -1061,6 +1061,13 @@ jobs:
       FLASHTEX_NO_ACTIVATE: "1"
       FLASHTEX_KEYCHAIN_OFF: "1"
       FLASHTEX_REVIEW_HISTORY_DIR: "off"
+      # EditorInstantTests' key budget over the same run's floor (keyBound):
+      # 100 ms on a Mac (whose floor p95 is 8-29 ms), 250 here. On this 3-vCPU
+      # VM's debug build, key -> glyph p95 while 20 compiles each publish 3,000
+      # problems was 60-270 ms over seven runs of main and #1922, against a
+      # floor of 27-256 ms, so floor + 100 failed one run in three. The
+      # freezes the tests guard against cost seconds a key (lane GATES).
+      FLASHTEX_EDITOR_KEY_BUDGET_MS: "250"
     steps:
       - uses: actions/checkout@v4
       - name: Select the newest stable Xcode
