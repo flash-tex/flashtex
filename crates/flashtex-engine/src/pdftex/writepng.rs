@@ -229,8 +229,36 @@ enum Pixel {
     Rgb16,
 }
 
+/// How many of a chunk's `len` bytes are colour, `j mod P < C`.
+fn colour_len<const P: usize, const C: usize>(len: usize) -> usize {
+    len / P * C + (len % P).min(C)
+}
+
+/// The colour bytes of `chunk` (`j mod P < C`) into `dst`, which holds
+/// exactly [`colour_len`] of them, the others pushed onto `smask`, each in
+/// order.
+fn split_alpha<const P: usize, const C: usize>(chunk: &[u8], dst: &mut [i32], smask: &mut Vec<u8>) {
+    let (groups, rem) = chunk.as_chunks::<P>();
+    let tail = rem.len().min(C);
+    smask.reserve(chunk.len() - dst.len());
+    let mut w = 0;
+    for g in groups {
+        for (d, &s) in dst[w..w + C].iter_mut().zip(&g[..C]) {
+            *d = s as i32;
+        }
+        w += C;
+        smask.extend_from_slice(&g[C..]);
+    }
+    for (d, &s) in dst[w..].iter_mut().zip(&rem[..tail]) {
+        *d = s as i32;
+    }
+    smask.extend_from_slice(&rem[tail..]);
+}
+
 impl Pixel {
-    /// Does byte `j` of a chunk go to the alpha mask?
+    /// Does byte `j` of a chunk go to the alpha mask? (the rule
+    /// `split_alpha` applies; the test below compares the two)
+    #[cfg(test)]
     fn is_alpha(self, j: usize) -> bool {
         match self {
             Pixel::Simple => false,
@@ -322,21 +350,37 @@ impl Globals {
             self.c_pdf_room(l as i32);
             let chunk = &row[r..r + l];
             r += l;
-            if let Pixel::Simple = px {
-                self.pdf_buf_store(chunk);
-            } else {
-                let mut color = Vec::with_capacity(l);
-                for (j, &b) in chunk.iter().enumerate() {
-                    if px.is_alpha(j) {
-                        smask.push(b);
-                    } else {
-                        color.push(b);
-                    }
-                }
-                self.pdf_buf_store(&color);
+            match px {
+                Pixel::Simple => self.pdf_buf_store(chunk),
+                Pixel::Gray8 => self.pdf_buf_store_split::<2, 1>(chunk, smask),
+                Pixel::Gray16 => self.pdf_buf_store_split::<4, 2>(chunk, smask),
+                Pixel::Rgb8 => self.pdf_buf_store_split::<4, 3>(chunk, smask),
+                Pixel::Rgb16 => self.pdf_buf_store_split::<8, 6>(chunk, smask),
             }
             k -= l;
         }
+    }
+
+    /// `pdf_buf_store` of the bytes of `chunk` that are not alpha, the
+    /// others pushed onto `smask`, both in order: the bytes `j` of the chunk
+    /// with `j mod P < C` are colour, the rest alpha, which is
+    /// `Pixel::is_alpha` for each pixel layout (Gray8 2/1, Gray16 4/2, Rgb8
+    /// 4/3, Rgb16 8/6). A group at the chunk's end cut short keeps the same
+    /// rule. The caller has made room for the whole chunk.
+    fn pdf_buf_store_split<const P: usize, const C: usize>(
+        &mut self,
+        chunk: &[u8],
+        smask: &mut Vec<u8>,
+    ) {
+        let n = colour_len::<P, C>(chunk.len());
+        let p = self.pdf_ptr as usize;
+        let buf = if self.pdf_buf_is_os {
+            &mut self.pdf_os_buf
+        } else {
+            &mut self.pdf_op_buf
+        };
+        split_alpha::<P, C>(chunk, &mut buf[p..p + n], smask);
+        self.pdf_ptr += n as i32;
     }
 
     /// The decoded image, row by row (`png_read_row`), or read whole first
@@ -771,5 +815,41 @@ impl Globals {
         }
         self.pdf_flush();
         self.write_additional_png_objects(st);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `split_alpha` sends each byte where the original per-byte loop did
+    /// (`Pixel::is_alpha`), for every layout and every chunk length up to
+    /// three of the largest pixel groups, a cut-short group included.
+    fn check<const P: usize, const C: usize>(px: Pixel) {
+        for len in 0..=3 * 8 + 7 {
+            let chunk: Vec<u8> = (0..len).map(|j| (j * 7 + 1) as u8).collect();
+            let (mut colour, mut alpha) = (Vec::new(), Vec::new());
+            for (j, &b) in chunk.iter().enumerate() {
+                if px.is_alpha(j) {
+                    alpha.push(b);
+                } else {
+                    colour.push(b as i32);
+                }
+            }
+            let mut dst = vec![-1; colour_len::<P, C>(len)];
+            let mut smask = vec![9u8];
+            split_alpha::<P, C>(&chunk, &mut dst, &mut smask);
+            assert_eq!(dst, colour, "colour, len {len}");
+            assert_eq!(smask[0], 9);
+            assert_eq!(&smask[1..], &alpha[..], "alpha, len {len}");
+        }
+    }
+
+    #[test]
+    fn split_alpha_is_the_per_byte_loop() {
+        check::<2, 1>(Pixel::Gray8);
+        check::<4, 2>(Pixel::Gray16);
+        check::<4, 3>(Pixel::Rgb8);
+        check::<8, 6>(Pixel::Rgb16);
     }
 }
