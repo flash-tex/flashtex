@@ -1,0 +1,110 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage[breakable,skins]{tcolorbox}
+
+\tcbset{
+  colback=white,
+  colframe=blue!60!black,
+  boxrule=0.8pt,
+  fonttitle=\bfseries,
+  left=4pt, right=4pt, top=4pt, bottom=4pt,
+}
+
+\newtcolorbox{keypoint}{
+  colback=yellow!10,
+  colframe=orange!70!black,
+  title=Key point,
+}
+
+\title{Payments Service: Incident Runbook Excerpts}
+\author{Platform Engineering}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+This document collects the boxed callouts used in the payments service
+runbook. Every box follows the house style set with \verb|\tcbset|:
+a white body, a dark blue frame, and a bold title. Admonitions that
+apply to the whole page use the custom \verb|keypoint| environment,
+which renders with an amber frame so it stands out from ordinary
+notes.
+
+\begin{tcolorbox}[title=Scope]
+These excerpts cover the deploy freeze calendar, the rollback
+checklist, and the on-call escalation path. They do not cover
+database failover, which has its own runbook.
+\end{tcolorbox}
+
+\begin{keypoint}
+During the holiday freeze---the last two weeks of December---no
+production deploys are allowed without written approval from two
+service owners.
+\end{keypoint}
+
+\section{Escalation}
+The escalation path below uses the \verb|skins| library's enhanced
+skin with a soft drop shadow, which the team reserves for boxes that
+must catch the eye during an incident.
+
+\begin{tcolorbox}[enhanced, title=Escalation path, drop fuzzy shadow,
+  colback=red!5, colframe=red!60!black]
+Page the primary on-call first. If there is no acknowledgement within
+ten minutes, page the secondary. If the incident is customer-facing
+and unresolved after thirty minutes, declare a major incident and
+summon the incident commander.
+\end{tcolorbox}
+
+\section{Rollback Checklist}
+The rollback checklist is the longest box in the runbook: it usually
+runs past the page break, so it is declared breakable and allowed to
+split across pages.
+
+\begin{tcolorbox}[breakable, title=Rollback checklist (v14)]
+Confirm that the deploy pipeline is paused before touching anything;
+a second deploy landing mid-rollback has caused two of the last five
+rollback incidents. Announce the rollback in the incidents channel
+with the release number, the reason, and the expected duration, so
+that support can set customer expectations early.
+
+Drain traffic from the new revision one availability zone at a time,
+waiting for the health checks to go green on the old revision before
+moving to the next zone. The load balancer target groups are named
+\texttt{payments-blue} and \texttt{payments-green}; the runbook
+assumes blue is live, but verify against the deploy ticket rather
+than trusting the colour, because the colours swap on every release.
+
+Watch the error budget dashboard while each zone drains. A brief
+spike in 5xx responses is normal as connections migrate, but if the
+burn rate stays above the fast-burn threshold for more than five
+minutes, stop the drain and escalate: the old revision may itself be
+unhealthy, and completing the rollback would only move the incident.
+
+Once all zones serve the old revision, run the smoke suite from the
+operations host, not from a laptop: the suite needs the production
+VPN routes, and the VPN client on laptops drops idle connections
+after fifteen minutes. The suite takes about six minutes; all
+forty-two checks must pass before the rollback is declared complete.
+
+File the rollback report within one business day. The report needs
+the timeline, the graphs, and a link to the deploy diff, plus a
+judgement on whether the release can be re-attempted or must be
+reverted in source control. Attach the report to the original deploy
+ticket so the history stays in one place.
+
+Finally, schedule the retrospective within a week while memories are
+fresh. The template is in the shared drive under \emph{Engineering /
+Incident templates}. Invite the deploy author, the reviewer, and the
+on-call who performed the rollback; incidents without a
+retrospective within two weeks are flagged in the engineering review.
+\end{tcolorbox}
+
+\begin{keypoint}
+A rollback is complete only when the smoke suite passes on the old
+revision and the rollback report is filed. Draining traffic is
+necessary but not sufficient.
+\end{keypoint}
+\end{document}
