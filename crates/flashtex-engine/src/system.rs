@@ -2232,6 +2232,7 @@ pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
 /// `FileResolver::find_pk`). The file found is recorded as read
 /// (`recorder_record_input`); a file mktexpk made is an external effect.
 pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    recorder_fontmaps();
     let g = with_resolver(|r| r.find_pk(name, dpi, true));
     let path = g.as_ref().map(|g| g.path.to_string_lossy().into_owned());
     read_set_lookup(
@@ -2314,19 +2315,69 @@ static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
 /// file opened is listed in `<program><pid>.fls` (renamed to
 /// `<jobname>.fls` when the log file opens), after a `PWD` line.
 fn record_file(prefix: &str, name: &str) {
+    record_file_as(prefix, name, name)
+}
+
+/// [`record_file`] of the file at `path`, listed in the `.fls` as `listed`.
+/// The incremental journal (and so S₀'s and S₁'s keys, `host::make_key_from`)
+/// notes `path`, the path found; the `.fls` gets what pdfTeX records, which
+/// for `open_input` is `nameoffile + 1` after the open: without the `./` a
+/// lookup puts in front of a file in the current directory (`INPUT sub.tex`
+/// for `\input sub`, `INPUT ./sub.tex` for `\input ./sub`).
+fn record_file_as(prefix: &str, path: &str, listed: &str) {
     if prefix == "INPUT" {
         // a file the run wrote, read back: as a cut would have left it
-        if logical_len(name).is_some() {
-            cut_to_logical(name);
+        if logical_len(path).is_some() {
+            cut_to_logical(path);
         }
-        note_file(name);
+        note_file(path);
     } else {
-        note_output(name);
+        note_output(path);
     }
+    recorder_line(prefix, listed);
+}
+
+/// lib/openclose.c's `recorder_record_input` alone, for the C parts that
+/// call it after a lookup of their own (texmfmp.c's `getfilesize`,
+/// `getfilemoddate`, `getfiledump`, `getmd5sum`, writeimg.c's `readimage`,
+/// writet1.c's `t1_open_fontfile`): an `INPUT` line in the `.fls`, the path
+/// spelled as the lookup returned it (`./sub.tex` for a file in the
+/// current directory). The incremental journal is not touched: the caller
+/// notes its read where it reads.
+pub fn recorder_record_input(name: &str) {
+    recorder_line("INPUT", name);
+}
+
+/// kpathsea's own reads, which it lists through `kpse_record_input`: the
+/// first lookup of a TFM, PK, GF or OFM file reads every `texfonts.map` on
+/// the font map path (fontmap.c's `read_all_maps`, from tex-file.c's
+/// `target_fontmaps`), once per process.
+fn recorder_fontmaps() {
+    static READ: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if READ.swap(true, Ordering::SeqCst) || !run().recorder {
+        return;
+    }
+    for p in with_resolver(|r| r.find_all("texfonts.map", Format::Map)) {
+        recorder_line("INPUT", &p.to_string_lossy());
+    }
+}
+
+/// One line of the `.fls`, which the first one starts (lib/openclose.c's
+/// `recorder_start`): its `PWD` line, then the `texmf.cnf` files kpathsea
+/// read when it started, which it lists through `kpse_record_input`
+/// (cnf.c's `read_all_cnf`; texmfmp.c lists the same files itself where
+/// kpathsea starts before the options are parsed).
+fn recorder_line(prefix: &str, listed: &str) {
     let r = run();
     if !r.recorder {
         return;
     }
+    let fresh = RECORDER.lock().unwrap().is_none();
+    let cnf = if fresh {
+        with_resolver(|res| res.find_all("texmf.cnf", Format::Cnf))
+    } else {
+        vec![]
+    };
     let mut g = RECORDER.lock().unwrap();
     if g.is_none() {
         let mut fname = format!("{}{}.fls", r.program_name, std::process::id());
@@ -2341,10 +2392,13 @@ fn record_file(prefix: &str, name: &str) {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         let _ = writeln!(file, "PWD {cwd}");
+        for c in &cnf {
+            let _ = writeln!(file, "INPUT {}", c.to_string_lossy());
+        }
         *g = Some(Recorder { name: fname, file });
     }
     if let Some(rec) = g.as_mut() {
-        let _ = writeln!(rec.file, "{prefix} {name}");
+        let _ = writeln!(rec.file, "{prefix} {listed}");
         let _ = rec.file.flush();
     }
 }
@@ -2696,7 +2750,12 @@ impl Globals {
         let (found, searched) = match found {
             Some(p) => (p, false),
             None if format == Format::Fmt => (find_format(base)?, true),
-            None => (resolve_ex(base, format, must_exist)?, true),
+            None => {
+                if format == Format::Tfm {
+                    recorder_fontmaps();
+                }
+                (resolve_ex(base, format, must_exist)?, true)
+            }
         };
         // openclose.c: `fullnameoffile` is the path found; `nameoffile`
         // loses the `./` kpathsea puts in front of a file in the current
@@ -2707,7 +2766,8 @@ impl Globals {
             _ => found.as_str(),
         };
         self.set_name_of_file(shown);
-        record_file("INPUT", &found);
+        // (openclose.c: `recorder_record_input (nameoffile + 1)`)
+        record_file_as("INPUT", &found, shown);
         read_set_open(&found);
         Some(found)
     }
