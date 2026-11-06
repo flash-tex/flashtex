@@ -21,19 +21,23 @@
 name: portability
 
 on:
+  # Nightly on main, and on a pull request only when the Windows port's own
+  # files change (lane GATES, 2026-11-01). It used to run on every engine
+  # pull request: up to 120 minutes of a Windows runner each, three at once,
+  # out of the organisation's ~20 concurrent hosted jobs, while the merge
+  # queue's 4-minute gate jobs waited hours. It gates nothing (CI required
+  # does not need it), so a nightly run finds a Windows regression as well;
+  # a pull request that wants it first runs
+  #   gh workflow run portability.yml --ref <branch>
+  schedule:
+    - cron: "17 5 * * *"
   pull_request:
     paths:
-      - "crates/flashtex-engine/**"
-      - "crates/flashtex-runtime/**"
-      - "crates/display-list-v3/**"
-      - "third_party/**"
-      - "tools/web2rust/**"
-      - "tools/parity/capture.py"
-      - "scripts/flashtex-trip.sh"
-      - "scripts/flashtex-etrip.sh"
-      - "scripts/pdftex-regression.sh"
       - ".github/portability/**"
       - ".github/workflows/portability.yml"
+      - "crates/flashtex-engine/src/**/*windows*"
+      - "crates/flashtex-runtime/src/**/*windows*"
+      - "crates/display-list-v3/src/**/*windows*"
   workflow_dispatch:
 
 concurrency:
