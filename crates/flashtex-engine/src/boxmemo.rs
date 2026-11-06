@@ -535,6 +535,10 @@ struct Entry {
     last_used: u64,
     hits: u64,
     bytes: usize,
+    /// The stack peaks the call's normal path reached, relative to where it
+    /// was offered (`crate::stackpeak`): a replay raises the statistics'
+    /// high-water marks to them.
+    peaks: crate::stackpeak::Marks,
 }
 
 /// The state a recording compares at its end with its start.
@@ -613,6 +617,11 @@ struct Rec {
     packed: bool,
     /// Verifying the entry of this index (of `store[cs]`).
     verify: Option<usize>,
+    /// The stack shadows it lowered at its start, and its levels then
+    /// (`crate::stackpeak`); the peaks, once it ended.
+    pk_saved: crate::stackpeak::Marks,
+    pk_base: crate::stackpeak::Marks,
+    pk_rel: Option<crate::stackpeak::Marks>,
 }
 
 #[derive(Default)]
@@ -2530,6 +2539,12 @@ impl Globals {
                 let (k2, k4) = (self.bm_k2(), k4_now);
                 return self.bm_start(cs, n, scanner, k1, ctx, k2, k4, Some(i));
             }
+            // (the normal path would stop with `TeX capacity exceeded`: let
+            // it)
+            let peaks = ST.with(|s| s.borrow().store[&cs][i].peaks);
+            if self.peaks_overflow(self.stack_levels(), peaks) {
+                return self.bm_miss("Stack");
+            }
             if let Some(t) = self.bm_replay(cs, i) {
                 self.cur_tok = t;
                 self.back_input();
@@ -2622,7 +2637,12 @@ impl Globals {
         verify: Option<usize>,
     ) {
         let start = self.bm_frame();
+        let pk_base = self.stack_levels();
+        let pk_saved = self.peaks_begin();
         let rec = Rec {
+            pk_saved,
+            pk_base,
+            pk_rel: None,
             cs,
             obj_refs: vec![],
             new_objs: vec![],
@@ -2681,7 +2701,8 @@ impl Globals {
         self.bm_rec_on = false;
         let dbg = debug();
         let rec = ST.with(|s| s.borrow_mut().rec.take());
-        let Some(rec) = rec else { return };
+        let Some(mut rec) = rec else { return };
+        self.bm_rec_peaks_end(&mut rec);
         if rec.verify.is_some() {
             if let Some(fv) = FULL.with(|f| f.borrow_mut().take()) {
                 self.retain_checkpoints(&|id| id != fv.ck);
@@ -2731,6 +2752,7 @@ impl Globals {
                 let k2hash = k2_hash_of(&rec.k2);
                 let bytes = 4 * (rec.k1.len() + rec.k2.len()) + 64;
                 let entry = Entry {
+                    peaks: crate::stackpeak::NO_PEAKS,
                     doomed: true,
                     hash: key_hash(&rec.k1, &rec.ctx, &[], &[]),
                     k2hash,
@@ -3579,6 +3601,11 @@ impl Globals {
     /// that `main_control` is about to run), left out of the recording and
     /// run again after a replay.
     fn bm_finish(&mut self, trailer: Option<i32>) {
+        // (the stack peaks first: what follows pushes nothing)
+        if let Some(mut rec) = ST.with(|s| s.borrow_mut().rec.take()) {
+            self.bm_rec_peaks_end(&mut rec);
+            ST.with(|s| s.borrow_mut().rec = Some(rec));
+        }
         let end = self.bm_frame();
         let (start, scanner) = self.bm_with_rec(|r| (r.start.clone(), r.scanner)).unwrap();
         let why = if end.cur_level != start.cur_level
@@ -3690,6 +3717,14 @@ impl Globals {
         self.bm_commit(rec, last_badness, frag, aux, trailer);
     }
 
+    /// The recording `rec` ends: the stack peaks it reached
+    /// (`crate::stackpeak`), once.
+    fn bm_rec_peaks_end(&mut self, rec: &mut Rec) {
+        if rec.pk_rel.is_none() {
+            rec.pk_rel = Some(self.peaks_end(rec.pk_saved, rec.pk_base));
+        }
+    }
+
     /// Abandon a recording already taken out of the state (its end check).
     fn bm_abort_taken(&mut self, rec: Rec, why: &str) {
         ST.with(|s| s.borrow_mut().rec = Some(rec));
@@ -3791,6 +3826,7 @@ impl Globals {
                 v
             };
             let entry = Entry {
+                peaks: rec.pk_rel.unwrap_or(crate::stackpeak::NO_PEAKS),
                 doomed: false,
                 hash: key_hash(&rec.k1, &rec.ctx, &[], &[]),
                 k2hash,
@@ -4160,6 +4196,11 @@ impl Globals {
             ))
         });
         let (ops, last_badness, rs_locs) = taken?;
+        // the stack marks the normal path would raise from here
+        // (`crate::stackpeak`; an offer checked it would not overflow)
+        let peaks = ST.with(|s| s.borrow().store[&cs][i].peaks);
+        let levels = self.stack_levels();
+        self.peaks_raise(levels, peaks);
         // the body, used up: as `get_next` pops it
         self.end_token_list();
         // the L5 read-set (DESIGN.md §5.5), as D9's `intr_report_reads`

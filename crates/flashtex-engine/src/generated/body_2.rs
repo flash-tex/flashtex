@@ -65,8 +65,13 @@ impl Globals {
                         r = r.wrapping_add(1);
                     }
                 }
-                if (self.last >= self.max_buf_stack) {
-                    self.max_buf_stack = (self.last).wrapping_add(1i32);
+                if (self.last >= self.pk_buf_stack) {
+                    {
+                        self.pk_buf_stack = (self.last).wrapping_add(1i32);
+                        if (self.last >= self.max_buf_stack) {
+                            self.max_buf_stack = (self.last).wrapping_add(1i32);
+                        }
+                    }
                 }
                 while ((self.last > self.first) && (self.buffer[crate::ix::U(((self.last).wrapping_sub(1i32)) as usize)] == 32i32)) {
                     self.last = (self.last).wrapping_sub(1i32);
@@ -447,11 +452,16 @@ impl Globals {
         let mut __av_mem = self.mem.view();
         if (self.cur_level != self.sa_level) {
             {
-                if (self.save_ptr > self.max_save_stack) {
+                if (self.save_ptr > self.pk_save_stack) {
                     {
-                        self.max_save_stack = self.save_ptr;
-                        if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
-                            self.overflow(617i32, save_size);
+                        self.pk_save_stack = self.save_ptr;
+                        if (self.save_ptr > self.max_save_stack) {
+                            {
+                                self.max_save_stack = self.save_ptr;
+                                if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
+                                    self.overflow(617i32, save_size);
+                                }
+                            }
                         }
                     }
                 }
@@ -728,11 +738,16 @@ impl Globals {
         if self.bm_rec_on {
             self.flashtex_bm_group(c);
         }
-        if (self.save_ptr > self.max_save_stack) {
+        if (self.save_ptr > self.pk_save_stack) {
             {
-                self.max_save_stack = self.save_ptr;
-                if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
-                    self.overflow(617i32, save_size);
+                self.pk_save_stack = self.save_ptr;
+                if (self.save_ptr > self.max_save_stack) {
+                    {
+                        self.max_save_stack = self.save_ptr;
+                        if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
+                            self.overflow(617i32, save_size);
+                        }
+                    }
                 }
             }
         }
@@ -803,11 +818,16 @@ impl Globals {
     pub fn eq_save(&mut self, mut p: halfword, mut l: quarterword) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
-        if (self.save_ptr > self.max_save_stack) {
+        if (self.save_ptr > self.pk_save_stack) {
             {
-                self.max_save_stack = self.save_ptr;
-                if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
-                    self.overflow(617i32, save_size);
+                self.pk_save_stack = self.save_ptr;
+                if (self.save_ptr > self.max_save_stack) {
+                    {
+                        self.max_save_stack = self.save_ptr;
+                        if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
+                            self.overflow(617i32, save_size);
+                        }
+                    }
                 }
             }
         }
@@ -972,11 +992,16 @@ impl Globals {
     pub fn save_for_after(&mut self, mut t: halfword) {
         if (self.cur_level > level_one) {
             {
-                if (self.save_ptr > self.max_save_stack) {
+                if (self.save_ptr > self.pk_save_stack) {
                     {
-                        self.max_save_stack = self.save_ptr;
-                        if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
-                            self.overflow(617i32, save_size);
+                        self.pk_save_stack = self.save_ptr;
+                        if (self.save_ptr > self.max_save_stack) {
+                            {
+                                self.max_save_stack = self.save_ptr;
+                                if (self.max_save_stack > (save_size).wrapping_sub(7i32)) {
+                                    self.overflow(617i32, save_size);
+                                }
+                            }
                         }
                     }
                 }
@@ -1567,11 +1592,16 @@ impl Globals {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         {
-            if (self.input_ptr > self.max_in_stack) {
+            if (self.input_ptr > self.pk_in_stack) {
                 {
-                    self.max_in_stack = self.input_ptr;
-                    if (self.input_ptr == stack_size) {
-                        self.overflow(674i32, stack_size);
+                    self.pk_in_stack = self.input_ptr;
+                    if (self.input_ptr > self.max_in_stack) {
+                        {
+                            self.max_in_stack = self.input_ptr;
+                            if (self.input_ptr == stack_size) {
+                                self.overflow(674i32, stack_size);
+                            }
+                        }
                     }
                 }
             }
@@ -1718,11 +1748,16 @@ impl Globals {
             }
         }
         {
-            if (self.input_ptr > self.max_in_stack) {
+            if (self.input_ptr > self.pk_in_stack) {
                 {
-                    self.max_in_stack = self.input_ptr;
-                    if (self.input_ptr == stack_size) {
-                        self.overflow(674i32, stack_size);
+                    self.pk_in_stack = self.input_ptr;
+                    if (self.input_ptr > self.max_in_stack) {
+                        {
+                            self.max_in_stack = self.input_ptr;
+                            if (self.input_ptr == stack_size) {
+                                self.overflow(674i32, stack_size);
+                            }
+                        }
                     }
                 }
             }
@@ -1774,11 +1809,16 @@ impl Globals {
         }
         self.in_open = (self.in_open).wrapping_add(1i32);
         {
-            if (self.input_ptr > self.max_in_stack) {
+            if (self.input_ptr > self.pk_in_stack) {
                 {
-                    self.max_in_stack = self.input_ptr;
-                    if (self.input_ptr == stack_size) {
-                        self.overflow(674i32, stack_size);
+                    self.pk_in_stack = self.input_ptr;
+                    if (self.input_ptr > self.max_in_stack) {
+                        {
+                            self.max_in_stack = self.input_ptr;
+                            if (self.input_ptr == stack_size) {
+                                self.overflow(674i32, stack_size);
+                            }
+                        }
                     }
                 }
             }
@@ -3450,11 +3490,16 @@ impl Globals {
             }
             if (n > 0i32) {
                 {
-                    if ((self.param_ptr).wrapping_add(n) > self.max_param_stack) {
+                    if ((self.param_ptr).wrapping_add(n) > self.pk_param_stack) {
                         {
-                            self.max_param_stack = (self.param_ptr).wrapping_add(n);
-                            if (self.max_param_stack > param_size) {
-                                self.overflow(720i32, param_size);
+                            self.pk_param_stack = (self.param_ptr).wrapping_add(n);
+                            if ((self.param_ptr).wrapping_add(n) > self.max_param_stack) {
+                                {
+                                    self.max_param_stack = (self.param_ptr).wrapping_add(n);
+                                    if (self.max_param_stack > param_size) {
+                                        self.overflow(720i32, param_size);
+                                    }
+                                }
                             }
                         }
                     }
@@ -3960,11 +4005,16 @@ impl Globals {
                                 p = __av_mem[crate::ix::U((r) as usize)].hh().rh();
                                 while (p != null) {
                                     {
-                                        if (j >= self.max_buf_stack) {
+                                        if (j >= self.pk_buf_stack) {
                                             {
-                                                self.max_buf_stack = (j).wrapping_add(1i32);
-                                                if (self.max_buf_stack == buf_size) {
-                                                    self.overflow(258i32, buf_size);
+                                                self.pk_buf_stack = (j).wrapping_add(1i32);
+                                                if (j >= self.max_buf_stack) {
+                                                    {
+                                                        self.max_buf_stack = (j).wrapping_add(1i32);
+                                                        if (self.max_buf_stack == buf_size) {
+                                                            self.overflow(258i32, buf_size);
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }

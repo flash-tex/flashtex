@@ -43,6 +43,9 @@
 # BOX-MEMO (docs/design/engine-v2/BOX-MEMO.md): guarded replay of macro calls
 # that typeset only what they discard (changes nothing the program computes).
 --change crates/flashtex-engine/changes/boxmemo.ch
+# The stack high-water marks a recording reaches, and a replay raises to
+# (changes/stackpeak.ch; the statistics only). Applied last.
+--change crates/flashtex-engine/changes/stackpeak.ch
 # changes/throughput.ch [3]: get_next's fast path inlined into its callers,
 # the rest out of line.
 --inline get_next=always

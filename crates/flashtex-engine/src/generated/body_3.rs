@@ -2242,11 +2242,16 @@ impl Globals {
                             p = __av_mem[crate::ix::U((n) as usize)].hh().rh();
                             while (p != null) {
                                 {
-                                    if (m >= self.max_buf_stack) {
+                                    if (m >= self.pk_buf_stack) {
                                         {
-                                            self.max_buf_stack = (m).wrapping_add(1i32);
-                                            if (self.max_buf_stack == buf_size) {
-                                                self.overflow(258i32, buf_size);
+                                            self.pk_buf_stack = (m).wrapping_add(1i32);
+                                            if (m >= self.max_buf_stack) {
+                                                {
+                                                    self.max_buf_stack = (m).wrapping_add(1i32);
+                                                    if (self.max_buf_stack == buf_size) {
+                                                        self.overflow(258i32, buf_size);
+                                                    }
+                                                }
                                             }
                                         }
                                     }

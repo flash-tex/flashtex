@@ -3637,11 +3637,16 @@ impl Globals {
     /// a new (empty) list is begun; it does not change `mode` or `aux`.
     // §234
     pub fn push_nest(&mut self) {
-        if (self.nest_ptr > self.max_nest_stack) {
+        if (self.nest_ptr > self.pk_nest_stack) {
             {
-                self.max_nest_stack = self.nest_ptr;
-                if (self.nest_ptr == nest_size) {
-                    self.overflow(372i32, nest_size);
+                self.pk_nest_stack = self.nest_ptr;
+                if (self.nest_ptr > self.max_nest_stack) {
+                    {
+                        self.max_nest_stack = self.nest_ptr;
+                        if (self.nest_ptr == nest_size) {
+                            self.overflow(372i32, nest_size);
+                        }
+                    }
                 }
             }
         }

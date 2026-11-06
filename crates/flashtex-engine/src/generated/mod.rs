@@ -25,7 +25,8 @@
 // with the change file crates/flashtex-engine/changes/throughput.ch
 // with the change file crates/flashtex-engine/changes/lineshift.ch
 // with the change file crates/flashtex-engine/changes/fmtimage.ch
-// with the change file crates/flashtex-engine/changes/boxmemo.ch.
+// with the change file crates/flashtex-engine/changes/boxmemo.ch
+// with the change file crates/flashtex-engine/changes/stackpeak.ch.
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]

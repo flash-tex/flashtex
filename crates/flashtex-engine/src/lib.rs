@@ -87,6 +87,8 @@ pub use flashtex_runtime::resolver;
 #[cfg(not(feature = "tex82"))]
 pub mod revalidate;
 #[cfg(not(feature = "tex82"))]
+pub mod stackpeak;
+#[cfg(not(feature = "tex82"))]
 pub mod statediff;
 #[cfg(not(feature = "tex82"))]
 pub mod strsearch;

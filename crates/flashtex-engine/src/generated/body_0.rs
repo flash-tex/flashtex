@@ -310,6 +310,7 @@ impl Globals {
         // §233
         self.nest_ptr = 0i32;
         self.max_nest_stack = 0i32;
+        self.pk_nest_stack = 0i32;
         self.cur_list.mode_field = vmode;
         self.cur_list.head_field = contrib_head;
         self.cur_list.tail_field = contrib_head;
@@ -366,6 +367,7 @@ impl Globals {
         self.cur_group = bottom_level;
         self.cur_boundary = 0i32;
         self.max_save_stack = 0i32;
+        self.pk_save_stack = 0i32;
         // §309
         self.mag_set = 0i32;
         // §390
