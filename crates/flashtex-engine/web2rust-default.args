@@ -12,6 +12,7 @@
 --change crates/flashtex-engine/changes/web2c.ch
 --change crates/flashtex-engine/changes/goto.ch
 --change crates/flashtex-engine/changes/precedence.ch
+--change crates/flashtex-engine/changes/intmin.ch
 --change crates/flashtex-engine/changes/ext.ch
 --change crates/flashtex-engine/changes/filenames.ch
 --change crates/flashtex-engine/changes/virtex.ch
@@ -84,6 +85,10 @@
 # dividend) give what TeX Live's arm64 pdftex gives instead of panicking:
 # `\pdfsnapy 0pt` divides by 0 in `gap_amount` (tools/web2rust/README.md).
 --total-division
+# An integer `abs` that is compared or divided is its exact value, as clang
+# makes it in TeX Live's build (`abs` of -2^31 is undefined in C):
+# `\dimen0=\count0 sp` with `\count0` at -2^31 is "Dimension too large".
+--exact-abs
 # glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h
 # (GLUERATIO_TYPE): the e-trip test against TeX Live's pdftex needs it (see
 # tools/web2rust/README.md). tex.web's trip test needs a float instead.

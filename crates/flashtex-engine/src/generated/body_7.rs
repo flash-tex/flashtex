@@ -6807,7 +6807,7 @@ impl Globals {
                                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.pdf_parent_outline) as usize)].int4).wrapping_add(5i32)) as usize)] = j;
                                     j = self.pdf_parent_outline;
                                     self.pdf_parent_outline = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.pdf_parent_outline) as usize)].int4).wrapping_add(1i32)) as usize)];
-                                    if ((self.pdf_parent_outline == 0i32) || (self.outline_list_count(j) < (self.obj_tab[crate::ix::U((self.pdf_parent_outline) as usize)].int0).wrapping_abs())) { break; }
+                                    if ((self.pdf_parent_outline == 0i32) || (((self.outline_list_count(j)) as i64) < (((self.obj_tab[crate::ix::U((self.pdf_parent_outline) as usize)].int0) as i64).abs()))) { break; }
                                 }
                                 if (self.pdf_parent_outline == 0i32) {
                                     self.pdf_last_outline = self.pdf_first_outline;

@@ -553,7 +553,7 @@ impl Globals {
     /// suffix `_ln` append a new-line character to the PDF output.
     // §686
     pub fn pdf_print_two(&mut self, mut n: i32) {
-        n = ((n).wrapping_abs() % 100i32);
+        n = (((((n) as i64).abs()) % ((100i32) as i64)) as i32);
         {
             {
                 if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
@@ -3826,7 +3826,7 @@ impl Globals {
                     }
                     self.show_box(__av_mem[crate::ix::U((self.nest[crate::ix::U((p) as usize)].head_field) as usize)].hh().rh());
                     // §237
-                    match ((m).wrapping_abs() / 104i32) {
+                    match (((((m) as i64).abs()) / ((104i32) as i64)) as i32) {
                         0 => {
                             {
                                 self.print_nl(386i32);
