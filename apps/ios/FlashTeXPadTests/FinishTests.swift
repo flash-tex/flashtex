@@ -1,8 +1,10 @@
 import FlashTeXPadKit
+import Network
 import NearbyClient
 import Security
 import XCTest
 @testable import FlashTeXPad
+@testable import FlashTeXPadKit
 
 /// The three documented gaps, closed and proven against the in-process
 /// FakeMac: the Mac-side outcome reaches the iPad (`capture_status`, with
@@ -189,6 +191,102 @@ final class FinishTests: XCTestCase {
         XCTAssertTrue(mac.captures.isEmpty, "no re-delivery and no retry of another Mac's payload")
     }
 
+    /// A link that died (the app was suspended, the Mac went away) stops the
+    /// outcome pollers instead of running all `maxPolls` probes against it;
+    /// reconnecting resumes them. Before: every poller kept going, recording
+    /// "not connected" every `pollInterval` until `maxPolls`.
+    func testPollingStopsWhenTheLinkDropsAndResumesOnReconnect() async throws {
+        let model = await pairedModel()
+        let r = model.draft(CaptureRecord(source: .pencil, png: CaptureQueueTests.trianglePNG(), instructions: "x"))
+        await model.send(r.id)
+        XCTAssertTrue(model.isPollingOutcomes)
+        model.link.disconnect()
+        await waitUntil(2) { !model.isPollingOutcomes }
+        XCTAssertFalse(model.isPollingOutcomes, "no polling against a dead link")
+        let pairId = try XCTUnwrap(model.pairedMac?.pairId)
+        mac = try FakeMac.restart(mac, keys: [.init(identity: pairId, psk: mac.longTermPSK, bootstrap: false)])
+        await model.reconnect(host: "127.0.0.1", port: String(mac.port))
+        XCTAssertTrue(model.isPollingOutcomes, "reconnecting resumes the outcome poller")
+    }
+
+    /// Back in the foreground with the link gone (iOS drops the connection
+    /// while the app is suspended): the stored pairing reconnects by itself.
+    /// Before, the app reconnected only at launch, so after any trip to
+    /// another app the person had to find the Reconnect button.
+    func testReturningToTheForegroundReconnectsTheStoredPairing() async throws {
+        let model = await pairedModel()
+        let pair = try XCTUnwrap(model.pairedMac)
+        model.link.disconnect()
+        XCTAssertFalse(model.link.isConnected)
+        mac = try FakeMac.restart(mac, keys: [.init(identity: pair.pairId, psk: mac.longTermPSK, bootstrap: false)])
+        model.rememberEndpoint(host: "127.0.0.1", port: mac.port, fingerprint: pair.fingerprint)
+        defer { UserDefaults.standard.removeObject(forKey: PadModel.lastEndpointKey(pair.fingerprint)) }
+        await model.scenePhaseChanged(to: .active)
+        XCTAssertTrue(model.link.isConnected, model.linkStatus)
+        XCTAssertEqual(mac.hellos.map(\.pairId), [pair.pairId], "one reconnect with the stored key")
+        await model.scenePhaseChanged(to: .active)
+        XCTAssertEqual(mac.hellos.count, 1, "an open link is left alone")
+    }
+
+    /// Review of #2018, finding 1: the destination pin (destination_id,
+    /// base_revision, pair) frozen on a first send must be on disk before the
+    /// capture leaves. With saves off the caller's thread, the pin update was
+    /// only queued, so a kill right after the Mac received it relaunched a
+    /// record without its pin (a retry would query a moved pin, or another Mac).
+    func testThePinIsOnDiskBeforeTheCaptureLeaves() async throws {
+        let store = CaptureStore(directory: tmp)
+        let model = await pairedModel(store: store)
+        model.maxPolls = 0
+        let r = model.draft(CaptureRecord(source: .pencil, png: CaptureQueueTests.trianglePNG(), instructions: "pin first"))
+        await model.queue.flush()
+        store.willSave = { Thread.sleep(forTimeInterval: 0.3) } // a slow disk
+        let dir = tmp!
+        let seen = LockedBox<CaptureRecord?>(nil)
+        mac.onCaptureSubmit = { cap in seen.value = CaptureStore(directory: dir).load().first { $0.id == cap.captureId } }
+        await model.send(r.id)
+        guard case .received? = model.captures.first?.status else { return XCTFail("\(String(describing: model.captures.first?.status))") }
+        let onDisk = try XCTUnwrap(seen.value, "the record was on disk when the Mac got it")
+        XCTAssertEqual(onDisk.destinationId, "dest-1", "the pin was on disk before the bytes left")
+        XCTAssertEqual(onDisk.baseRevision, 4)
+        XCTAssertEqual(onDisk.pairId, model.pairedMac?.pairId)
+    }
+
+    /// Review of #2018, finding 2: a foreground return while the launch
+    /// reconnect is still running was dropped (`reconnecting` was set); when
+    /// that attempt then failed nothing retried. The skipped request now runs
+    /// once the running attempt ends disconnected.
+    func testAReconnectAskedForDuringAnotherRunsAfterItFails() async throws {
+        let model = PadModel(link: MacLink(store: nil, connectTimeout: 1))
+        await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
+                         fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Status Mac", code: code)
+        let pair = try XCTUnwrap(model.pairedMac)
+        model.link.disconnect()
+        mac = try FakeMac.restart(mac, keys: [.init(identity: pair.pairId, psk: mac.longTermPSK, bootstrap: false)])
+        model.rememberEndpoint(host: "127.0.0.1", port: mac.port, fingerprint: pair.fingerprint)
+        defer { UserDefaults.standard.removeObject(forKey: PadModel.lastEndpointKey(pair.fingerprint)) }
+        // The first attempt dials a listener that accepts TCP and never
+        // answers TLS: it fails after the 1 s handshake wait.
+        let silent = try SilentListener()
+        defer { silent.stop() }
+        let first = Task { await model.autoReconnect(endpoint: (host: "127.0.0.1", port: silent.port)) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(model.reconnecting)
+        await model.scenePhaseChanged(to: .active) // back in the foreground meanwhile
+        _ = await first.value
+        await waitUntil(5) { model.link.isConnected }
+        XCTAssertTrue(model.link.isConnected, model.linkStatus)
+    }
+
+    /// Review of #2018, finding 3: the background-task grant must be taken in
+    /// the scene-phase handler itself, not after an async hop.
+    func testGoingToTheBackgroundTakesTheGrantAtOnce() async throws {
+        let model = PadModel(link: MacLink(store: nil))
+        FlashTeXPadApp.sceneChanged(to: .background, model: model)
+        XCTAssertTrue(model.holdsSuspensionGrant, "the grant is held before the handler returns")
+        await waitUntil(2) { !model.holdsSuspensionGrant }
+        XCTAssertFalse(model.holdsSuspensionGrant, "and ended once the writes are flushed")
+    }
+
     // MARK: 2. QR pairing (payload path; the simulator has no camera)
 
     func testPairFromTheMacsQRPayloadWithTypedHostPort() async throws {
@@ -235,6 +333,7 @@ final class FinishTests: XCTestCase {
         await model.send(sent.id)
         await waitUntil { model.captures.first { $0.id == sent.id }?.outcome?.latex == "\\beta" }
 
+        await model.queue.flush() // writes land off the main actor
         // Disk: index + one PNG per capture. Independent of Keychain
         // availability, so this is asserted before the Keychain-dependent
         // part below might skip the rest of the test.
@@ -310,4 +409,42 @@ final class FinishTests: XCTestCase {
         guard case .disconnected(_, let attempt) = r.status else { return XCTFail("\(r.status)") }
         XCTAssertEqual(attempt, 2)
     }
+}
+
+/// A value shared with a callback on another queue (tests).
+final class LockedBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: T
+    init(_ value: T) { _value = value }
+    var value: T {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
+    }
+}
+
+/// Accepts TCP on loopback and never says a word: a TLS handshake against
+/// it waits out its timeout.
+final class SilentListener {
+    private let listener: NWListener
+    private var connections: [NWConnection] = []
+    private let queue = DispatchQueue(label: "silent.listener")
+    private(set) var port: UInt16 = 0
+
+    init() throws {
+        let params = NWParameters.tcp
+        params.requiredInterfaceType = .loopback
+        listener = try NWListener(using: params, on: .any)
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
+        listener.newConnectionHandler = { [weak self] c in
+            guard let self else { return }
+            self.connections.append(c)
+            c.start(queue: self.queue)
+        }
+        listener.start(queue: queue)
+        _ = ready.wait(timeout: .now() + 10)
+        port = listener.port?.rawValue ?? 0
+    }
+
+    func stop() { listener.cancel(); queue.sync { connections.forEach { $0.cancel() } } }
 }

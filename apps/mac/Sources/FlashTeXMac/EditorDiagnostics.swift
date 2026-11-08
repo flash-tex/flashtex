@@ -553,9 +553,26 @@ extension EditorDiagnostics {
     /// when out of range.
     static func lineNumber(ofByte offset: Int, in text: String) -> Int? {
         guard offset >= 0, offset <= text.utf8.count else { return nil }
-        var line = 1
-        for b in text.utf8.prefix(offset) where b == 0x0A { line += 1 }
-        return line
+        return newlines(before: offset, in: text).count + 1
+    }
+
+    /// The line feeds among the first `byte` UTF-8 bytes of `text` (all of
+    /// them when `byte` is past the end) and the byte after the last one (0
+    /// when there is none), found with `memchr`. Caret follow, the math hover
+    /// and a disarmed caret move ask this for the caret's line; a byte loop
+    /// over a 3 MB book was ~30 ms of main thread at its end (debug build).
+    static func newlines(before byte: Int, in text: String) -> (count: Int, lastLineStart: Int) {
+        var copy = text
+        return copy.withUTF8 { b -> (Int, Int) in
+            guard let base = b.baseAddress else { return (0, 0) }
+            let end = min(max(byte, 0), b.count)
+            var count = 0, start = 0
+            while start < end, let hit = memchr(base + start, 0x0A, end - start) {
+                count += 1
+                start = UnsafeRawPointer(base).distance(to: UnsafeRawPointer(hit)) + 1
+            }
+            return (count, start)
+        }
     }
 
     /// Grouping key: `(severity, code, message)` when `code` is present, else
