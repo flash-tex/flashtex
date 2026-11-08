@@ -64,6 +64,9 @@ Where (lane CI-SWEEPS, 2026-11-08): a dispatch runs on the NixOS PC's three runn
 in a `flashtex.slice` scope of its own (MemoryMax 10G); `-f host=hosted`, the switch off, and every
 `run-sweeps` label run (DESIGN §9.3: no self-hosted runner for a pull request) use ubuntu-latest.
 With the switch on and the PC busy or offline, a dispatch waits for it; `host=hosted` goes around.
+On the PC, `ref` and `base_ref` must be this repository's: a branch or tag, a branch's head or a
+commit of main, or `refs/pull/N/head` of a pull request from a branch here. A fork's pull request
+or commit stops the run (DESIGN §9.3); run it with `host=hosted`.
 
 The from-scratch references of a verified run go 3 at a time beside the host
 (`INCR_BENCH_REF_JOBS`, which sweeps.py sets; incr_bench.py's default is 1): the same comparisons,

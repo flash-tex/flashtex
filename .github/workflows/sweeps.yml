@@ -44,8 +44,9 @@
 # 1.40.29; nightly.yml checks it the same way), not the pinned image, which
 # needs docker; the preflight below still compiles every generated document
 # and the extra-package fixtures with it. The engine and its format are kept
-# by SHA and that TeX Live's package database in ~/.cache/flashtex-sweeps
-# (the newest 30), its Cargo target per runner instance and side beside them.
+# by commit and that TeX Live's package database in ~/.cache/flashtex-sweeps
+# (the newest 30), each with a record a read verifies (the cache step), its
+# Cargo target per runner instance and side beside them.
 # The build and every shard run in a scope of their own inside flashtex.slice
 # (MemoryMax 10G, MemoryHigh 9G, no swap, nice 10), never in the runner's own
 # cgroup (nightly.yml's T4, 37423737667); no scope, no run.
@@ -54,14 +55,17 @@
 # checkouts without persisted credentials. A dispatch needs write access; on
 # a fork's pull request the label run gets GitHub's read-only token and the
 # pull request's cache scope. Self-hosted runners take workflow_dispatch only
-# (ci.yml's trusted events), never a `pull_request` run, a fork's or not.
+# (ci.yml's trusted events), never a `pull_request` run, a fork's or not, and
+# a dispatch's ref and base_ref only when they are this repository's commits
+# (the ref guard in `prepare`): `ref=refs/pull/N/head` of a fork's pull
+# request, or a fork commit's SHA, stops the run before anything is fetched.
 name: sweeps
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "branch, tag, SHA or refs/pull/N/head to test"
+        description: "branch, tag, SHA or refs/pull/N/head to test. On the PC (host=auto) only this repository's own: a branch or tag, a branch's head or a commit of main, or a pull request from a branch here; a fork's needs host=hosted"
         required: true
         default: main
       gates:
@@ -69,7 +73,7 @@ on:
         required: false
         default: all
       base_ref:
-        description: "optional: a second ref run with the same gates, as A/B rows"
+        description: "optional: a second ref run with the same gates, as A/B rows (on the PC, the same rule as ref)"
         required: false
         default: ""
       target:
@@ -94,6 +98,7 @@ on:
 permissions:
   contents: read
   actions: read  # the summary reads its own run's creation time (wall time)
+  pull-requests: read  # the PC's ref guard reads a refs/pull/N ref's head repository
 
 concurrency:
   group: sweeps-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
@@ -146,6 +151,99 @@ jobs:
           set -euo pipefail
           echo "pc=$PC" >> "$GITHUB_OUTPUT"
           echo "host: $([[ $PC == true ]] && echo "the NixOS PC ($RUNNER_NAME)" || echo "GitHub-hosted ($RUNNER_NAME)")"
+      # DESIGN §9.3: the PC builds and runs only this repository's code. A
+      # dispatch may name any commit GitHub can fetch, a fork's too (forks
+      # share the object store: refs/pull/N/head, or a fork commit's bare
+      # SHA), and the build runs its build scripts as the runner's user, next
+      # to the engine cache that later runs, main's included, use. So on the
+      # PC each of ref and base_ref is resolved here, before any checkout, to
+      # a commit of this repository: the head of one of its branches or tags,
+      # a commit of main's history, or a pull request whose head branch is in
+      # this repository. Anything else stops the run (host=hosted runs it on
+      # a GitHub-hosted runner instead). The checkouts below take the
+      # resolved SHAs, so nothing else reaches the PC.
+      - name: the refs, this repository's own (the PC)
+        id: guard
+        if: runner.environment == 'self-hosted'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+          BASE_REF: ${{ inputs.base_ref }}
+        shell: python3 {0}
+        run: |
+          import json, os, re, subprocess, sys
+          repo = os.environ['GITHUB_REPOSITORY']
+          url = f"{os.environ['GITHUB_SERVER_URL']}/{repo}.git"
+
+
+          def run(*a):
+              return subprocess.run(a, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+          def api(path):
+              p = run('gh', 'api', path)
+              return json.loads(p.stdout) if p.returncode == 0 else None
+
+
+          def remote(*patterns):
+              p = run('git', 'ls-remote', url, *patterns)
+              if p.returncode:
+                  sys.exit(f'::error::git ls-remote {url}: {p.stderr.strip()}')
+              return [tuple(l.split('\t', 1)) for l in p.stdout.splitlines() if '\t' in l]
+
+
+          def refuse(name, why):
+              print(f"::error::{name}: {why}. The PC builds and runs only this repository's commits "
+                    "(DESIGN 9.3); dispatch again with -f host=hosted to run it on a GitHub-hosted runner.")
+              sys.exit(1)
+
+
+          def resolve(name):
+              m = re.fullmatch(r'refs/pull/(\d+)/(head|merge)', name)
+              if m:
+                  pr = api(f'repos/{repo}/pulls/{m.group(1)}')
+                  if pr is None:
+                      refuse(name, 'no such pull request')
+                  head = (pr.get('head') or {}).get('repo') or {}
+                  if head.get('full_name') != repo:
+                      refuse(name, f"pull request #{m.group(1)} comes from {head.get('full_name') or 'a deleted fork'}")
+                  hits = remote(name)
+                  if not hits:
+                      refuse(name, 'GitHub has no such ref')
+                  return hits[0][0], f"pull request #{m.group(1)} from {repo}:{pr['head']['ref']}"
+              if name.startswith('refs/') and not name.startswith(('refs/heads/', 'refs/tags/')):
+                  refuse(name, 'only branches, tags and refs/pull/N/{head,merge} are taken')
+              short = name.removeprefix('refs/heads/').removeprefix('refs/tags/')
+              hits = remote(f'refs/heads/{short}', f'refs/tags/{short}', f'refs/tags/{short}^{{}}')
+              if hits:
+                  peeled = [h for h, r in hits if r.endswith('^{}')]
+                  return (peeled or [hits[0][0]])[0], f'{hits[0][1]} of {repo}'
+              if not re.fullmatch(r'[0-9a-fA-F]{7,40}', name):
+                  refuse(name, f'not a branch or tag of {repo}, nor a commit SHA')
+              c = api(f'repos/{repo}/commits/{name}')
+              if c is None or 'sha' not in c:
+                  refuse(name, 'no such commit')
+              sha = c['sha']
+              on = [r for h, r in remote('refs/heads/*', 'refs/tags/*') if h == sha]
+              if on:
+                  return sha, f'the head of {on[0]}'
+              cmp = api(f'repos/{repo}/compare/main...{sha}')
+              if cmp and cmp.get('status') in ('behind', 'identical'):
+                  return sha, "a commit of main's history"
+              refuse(name, f"commit {sha[:12]} is neither the head of a branch or tag of {repo} nor in main's "
+                           "history (a fork's commit is fetchable by SHA through this repository)")
+
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              for key, var in (('ref', 'REF'), ('base', 'BASE_REF')):
+                  name = os.environ.get(var, '').strip()
+                  if not name:
+                      continue
+                  sha, why = resolve(name)
+                  if not re.fullmatch(r'[0-9a-f]{40}', sha):
+                      refuse(name, f'resolved to {sha!r}, not a commit')
+                  print(f'{key}: {name} = {sha} ({why})')
+                  out.write(f'{key}={sha}\n')
       - uses: actions/checkout@v4
         with:
           path: harness
@@ -156,13 +254,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: ref
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || steps.guard.outputs.ref || inputs.ref }}
           persist-credentials: false
       - uses: actions/checkout@v4
         if: github.event_name != 'pull_request' && inputs.base_ref != ''
         with:
           path: base
-          ref: ${{ inputs.base_ref }}
+          ref: ${{ steps.guard.outputs.base || inputs.base_ref }}
           persist-credentials: false
       - name: the shards
         id: plan
@@ -225,6 +323,16 @@ jobs:
         with:
           path: ${{ runner.temp }}/engine-base.tar
           key: sweeps-engine-${{ steps.plan.outputs.base_sha }}-${{ env.TEXLIVE_IMAGE }}
+      # The PC's engine cache: one entry per commit and TeX Live, written only
+      # by a run that built that commit (the build step below), each with a
+      # record of its tar's SHA-256, the commit and the TeX Live it was built
+      # for. A read takes an entry only if the record names this commit and
+      # TeX Live, the tar's SHA-256 is the record's, and the engine inside
+      # says it is this commit (gates/HEAD); anything else is deleted and
+      # built again. With the ref guard above no fork's code reaches the PC;
+      # code of this repository's branches runs as the runner's user and so
+      # could still rewrite an entry and its record together, the risk the
+      # owner accepted for in-repo pushers (DESIGN 9.3, decision 6).
       - name: the PC's TeX Live 2026 and engine cache
         id: pc
         if: runner.environment == 'self-hosted'
@@ -247,10 +355,20 @@ jobs:
           for side in ref base; do
             sha=$([[ $side == ref ]] && echo "$REF_SHA" || echo "$BASE_SHA")
             [[ -n "$sha" ]] || continue
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$side: '$sha' is not a commit SHA"; exit 1; }
             f="$state/engines/$sha-$tl.tar"
-            if [[ -s "$f" ]]; then
-              cp "$f" "$RUNNER_TEMP/engine-$side.tar"; touch "$f"
-              echo "${side}_hit=true" >> "$GITHUB_OUTPUT"; echo "$side: cached $f"
+            [[ -e "$f" || -e "$f.record" ]] || continue
+            t="$RUNNER_TEMP/engine-$side.tar"
+            cp "$f" "$t" 2>/dev/null || true
+            sum="$(sha256sum "$t" 2>/dev/null | cut -d' ' -f1)" || true
+            want="${sum:-none} $sha $tl"
+            head="$(tar -xOf "$t" gates/HEAD 2>/dev/null | tr -d '[:space:]')" || true
+            if [[ -s "$t" && "$(cat "$f.record" 2>/dev/null)" == "$want" && ${#head} -ge 7 && "$sha" == "$head"* ]]; then
+              touch "$f" "$f.record"
+              echo "${side}_hit=true" >> "$GITHUB_OUTPUT"; echo "$side: cached $f (sha256 $sum, engine $head)"
+            else
+              echo "::warning::$side: the cached engine $f does not verify (record, SHA-256 or gates/HEAD); building it again"
+              rm -f -- "$f" "$f.record" "$t"
             fi
           done
       - name: which engines to build
@@ -358,14 +476,16 @@ jobs:
             tar -C "$IB" -cf "$RUNNER_TEMP/engine-$side.tar" gates fmt-gates
             if [[ -n "$PC_STATE" ]]; then
               sha=$([[ $side == ref ]] && echo "$REF_SHA" || echo "$BASE_SHA")
-              cp "$RUNNER_TEMP/engine-$side.tar" "$PC_STATE/engines/.$sha-$PC_TL.tar.$$"
-              mv -f "$PC_STATE/engines/.$sha-$PC_TL.tar.$$" "$PC_STATE/engines/$sha-$PC_TL.tar"
+              f="$PC_STATE/engines/$sha-$PC_TL.tar"
+              cp "$RUNNER_TEMP/engine-$side.tar" "$f.$$"
+              echo "$(sha256sum "$f.$$" | cut -d' ' -f1) $sha $PC_TL" > "$f.record.$$"
+              mv -f "$f.$$" "$f"; mv -f "$f.record.$$" "$f.record"
             fi
           done
           if [[ -n "$PC_STATE" ]]; then
             # keep the newest 30 engines
             find "$PC_STATE/engines" -maxdepth 1 -name '*.tar' -printf '%T@ %p\n' | sort -rn | tail -n +31 | cut -d' ' -f2- |
-              while read -r old; do rm -f -- "$old"; done
+              while read -r old; do rm -f -- "$old" "$old.record"; done
             du -sh "$PC_STATE"/engines || true
           fi
       - uses: actions/upload-artifact@v4
