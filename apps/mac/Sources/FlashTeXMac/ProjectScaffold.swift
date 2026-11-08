@@ -264,7 +264,8 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
 /// the first sentence goes. Never on disk until Save As….
 enum UntitledDocument {
     static let path = ProjectTemplate.entryPath
-    static let text = ProjectTemplate.blankArticle.files(projectName: "Untitled")[0].text
+    static let title = "Untitled"
+    static let text = ProjectTemplate.blankArticle.files(projectName: title)[0].text
     /// UTF-16 offset of the line after `\section{Introduction}`.
     static let caretUTF16: Int = {
         let line = (text as NSString).range(of: "\\section{Introduction}\n")

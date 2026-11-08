@@ -241,6 +241,63 @@ fn the_wrapped_text_is_gated_against_the_caret_it_lands_in() {
 }
 
 #[test]
+fn normalized_caret_notation_at_the_start_boundary_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = Bridge::new(Store::open(dir.path()).unwrap());
+    open(&mut b, 1, "$x^$");
+    pin(&mut b, "caret", 1, 3, AnchorMode::Caret);
+    b.receive(capture("c1", "caret", 1)).unwrap();
+    b.convert("c1", vec![], &Fixed(r"$^5cinput{secret.tex}\frac{1}{2}$"))
+        .unwrap();
+    assert_eq!(
+        b.prepare_insert("c1", 1, true).unwrap_err().code,
+        "unsupported_construct_requires_confirmation"
+    );
+}
+
+#[test]
+fn ordinary_superscript_at_a_caret_is_accepted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = Bridge::new(Store::open(dir.path()).unwrap());
+    open(&mut b, 1, "$x$");
+    pin(&mut b, "caret", 1, 2, AnchorMode::Caret);
+    b.receive(capture("c1", "caret", 1)).unwrap();
+    b.convert("c1", vec![], &Fixed("$^2$")).unwrap();
+    let edit = b.prepare_insert("c1", 1, true).unwrap();
+    assert_eq!(edit.replacement, "^2");
+}
+
+#[test]
+fn normalized_caret_notation_at_the_end_boundary_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = Bridge::new(Store::open(dir.path()).unwrap());
+    open(&mut b, 1, "$x^$");
+    pin(&mut b, "caret", 1, 2, AnchorMode::Caret);
+    b.receive(capture("c1", "caret", 1)).unwrap();
+    b.convert("c1", vec![], &Fixed("$2^$")).unwrap();
+    assert_eq!(
+        b.prepare_insert("c1", 1, true).unwrap_err().code,
+        "unsupported_construct_requires_confirmation"
+    );
+}
+
+#[test]
+fn wrap_cannot_form_caret_notation_inside_the_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = Bridge::new(Store::open(dir.path()).unwrap());
+    open(&mut b, 1, "$x$");
+    pin(&mut b, "caret", 1, 2, AnchorMode::Caret);
+    b.receive(capture("c1", "caret", 1)).unwrap();
+    b.convert("c1", vec![], &Fixed("$^2$")).unwrap();
+    assert_eq!(
+        b.prepare_insert_wrapped("c1", 1, true, Some(wrap("^", "", "as_is")))
+            .unwrap_err()
+            .code,
+        "unsupported_construct_requires_confirmation"
+    );
+}
+
+#[test]
 fn a_bare_formula_is_wrapped_at_conversion_even_without_a_structural_command() {
     assert_eq!(caret::shape("x = 2y + 1"), caret::Shape::BareMath);
     assert_eq!(caret::shape("f(x) = 3x - 1"), caret::Shape::BareMath);
