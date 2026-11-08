@@ -38,10 +38,13 @@ use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Run our engine on `t.tex` in `dir`. Returns exit success.
-fn run_ours(dir: &Path) -> bool {
+/// Run our engine on `t.tex` in `dir`, with `args` before the file name.
+/// Returns exit success.
+fn run_ours(dir: &Path, args: &[&str]) -> bool {
     Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
-        .args(["-ini", "-recorder", "t.tex"])
+        .args(["-ini", "-recorder"])
+        .args(args)
+        .arg("t.tex")
         .current_dir(dir)
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
@@ -57,11 +60,13 @@ fn run_ours(dir: &Path) -> bool {
         .success()
 }
 
-/// Run the installed `pdftex -ini -recorder t.tex` in `dir`.
+/// Run the installed `pdftex -ini -recorder <args> t.tex` in `dir`.
 /// Returns exit success.
-fn run_theirs(pdftex: &Path, dir: &Path) -> bool {
+fn run_theirs(pdftex: &Path, dir: &Path, args: &[&str]) -> bool {
     Command::new(pdftex)
-        .args(["-ini", "-recorder", "t.tex"])
+        .args(["-ini", "-recorder"])
+        .args(args)
+        .arg("t.tex")
         .current_dir(dir)
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
@@ -85,9 +90,10 @@ fn texlive_root(texbin: &Path) -> String {
         .into_owned()
 }
 
-/// `t.fls`'s lines, normalized: `PWD <PWD>`, the install root `<TEXLIVE>`.
-fn normalized(dir: &Path, root: &str) -> Vec<String> {
-    std::fs::read_to_string(dir.join("t.fls"))
+/// The `.fls` file `fls` (in `dir`)'s lines, normalized: `PWD <PWD>`, the
+/// install root `<TEXLIVE>`.
+fn normalized(dir: &Path, fls: &str, root: &str) -> Vec<String> {
+    std::fs::read_to_string(dir.join(fls))
         .unwrap_or_default()
         .lines()
         .map(|l| {
@@ -110,6 +116,19 @@ fn pos(fls: &[String], needle: &str) -> Option<usize> {
 /// case-specific install-independent sanity check, run on BOTH sides.
 /// Skips where there is no TeX Live.
 fn check(files: &[(&str, &str)], extra: impl Fn(&[String])) {
+    check_with(files, &[], &[], "t.fls", extra)
+}
+
+/// [`check`], with copies of TeX Live's own files (`kpsewhich`'s path of
+/// the second name, put at the first), engine options `args`, and the
+/// `.fls` at `fls`.
+fn check_with(
+    files: &[(&str, &str)],
+    copies: &[(&str, &str)],
+    args: &[&str],
+    fls: &str,
+    extra: impl Fn(&[String]),
+) {
     let Some(texbin) = find_texlive_bin() else {
         common::no_texlive();
         return;
@@ -125,16 +144,31 @@ fn check(files: &[(&str, &str)], extra: impl Fn(&[String])) {
             }
             std::fs::write(p, body).unwrap();
         }
+        for (to, name) in copies {
+            let o = Command::new(texbin.join("kpsewhich"))
+                .arg(name)
+                .output()
+                .unwrap();
+            let from = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            assert!(!from.is_empty(), "kpsewhich finds no {name}");
+            let p = d.join(to);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::copy(&from, p).unwrap();
+        }
     }
-    assert!(run_ours(&a), "our engine failed; see {}/t.log", a.display());
+    assert!(
+        run_ours(&a, args),
+        "our engine failed; see {}/t.log",
+        a.display()
+    );
     let theirs = texbin.join("pdftex");
     assert!(
-        run_theirs(&theirs, &b),
+        run_theirs(&theirs, &b, args),
         "the pdftex oracle failed; see {}/t.log",
         b.display()
     );
     let root = texlive_root(&texbin);
-    let (got, want) = (normalized(&a, &root), normalized(&b, &root));
+    let (got, want) = (normalized(&a, fls, &root), normalized(&b, fls, &root));
     // The oracle must look like a real run, or the comparison is vacuous.
     assert!(!want.is_empty(), "the pdftex oracle wrote an empty t.fls");
     assert_eq!(want[0], "PWD <PWD>", "oracle t.fls starts oddly: {want:?}");
@@ -161,6 +195,37 @@ fn font_lists_texfonts_map_before_the_tfm() {
             "texfonts.map must precede cmr10.tfm: {fls:?}"
         );
     });
+}
+
+// A TFM in `-output-directory`: openclose.c's `open_input` tries the name
+// there as it is (`cmr10`: tex.ch packs TFM names without `.tfm`) before
+// any kpathsea search, so it is listed as `out/cmr10` and reads no
+// `texfonts.map`; the first TFM kpathsea looks for (`cmr12`) does. Measured
+// with pdfTeX 1.40.29: `INPUT out/cmr10`, then `INPUT .../texfonts.map`,
+// then `INPUT .../cmr12.tfm`. (REVIEW-B's question on #2083: every TFM
+// lookup is `input_path`'s, and this is its other branch.)
+#[test]
+fn a_tfm_in_the_output_directory_reads_no_font_map() {
+    check_with(
+        &[
+            ("t.tex", "\\font\\x=cmr10 \\font\\y=cmr12 \\end\n"),
+            ("out/.keep", ""),
+        ],
+        &[("out/cmr10", "cmr10.tfm")],
+        &["-output-directory=out"],
+        "out/t.fls",
+        |fls| {
+            let (here, map, kpse) = (
+                pos(fls, "INPUT out/cmr10"),
+                pos(fls, "texfonts.map"),
+                pos(fls, "cmr12.tfm"),
+            );
+            assert!(
+                here.is_some() && map.is_some() && kpse.is_some() && here < map && map < kpse,
+                "want out/cmr10, then texfonts.map, then cmr12.tfm: {fls:?}"
+            );
+        },
+    );
 }
 
 // `\input` of a file in a subdirectory: one line, the name as asked for
