@@ -4834,9 +4834,8 @@ impl Session {
     /// The client shows page `page` (0-based; `VIEWPORT`, lane MEMORY): if
     /// it is more than `Options::dense` pages from the retention cursor,
     /// where retention keeps the page checkpoints and no segment ones
-    /// (`thin`), run again with nothing
-    /// changed from a kept page checkpoint `REDENSIFY_BACK` pages or more
-    /// before it, through it and the page after (no convergence test
+    /// (`thin`), run again with nothing changed from a page checkpoint
+    /// `REDENSIFY_BACK` pages or more before it, through it and the page after (no convergence test
     /// before), so that their checkpoints, segment ones too, are taken (the
     /// cursor goes there) and a key there restarts close by. The run then
     /// converges with the old one and jumps to its end, as an edit's run
