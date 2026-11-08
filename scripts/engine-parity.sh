@@ -112,7 +112,15 @@ declare -a T_NAMES=() T_SECS=()
 timed() {
   local name="$1"; shift
   local t0=$SECONDS rc=0
-  ( "$@" ) || rc=$?
+  # `set -e` inside, and NOT as the left side of `||`: there bash ignores
+  # errexit in the whole subshell, so a step's status was its LAST command's
+  # and a failure before it (a `cargo build` that failed, then a stale
+  # cached binary copied) passed the step; the engine tests' shards passed
+  # with FAILED tests in their logs from 2026-10-05 to #2085 (lane GATES).
+  set +e
+  ( set -e; "$@" )
+  rc=$?
+  set -e
   local dt=$(( SECONDS - t0 ))
   echo "TIME $name ${dt}s rc=$rc"
   T_NAMES+=("$name$([[ $rc -eq 0 ]] || echo ' (FAILED)')"); T_SECS+=("$dt")
@@ -198,11 +206,19 @@ step_tests() {
     done
     echo "test targets of slice $SHARD: ${sel[*]}"
   fi
-  FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --no-fail-fast ${sel[@]+"${sel[@]}"}
+  # The status is kept and returned: `timed` runs a step as the left side of
+  # `||`, where `set -e` does not apply, so a step's status is its last
+  # command's. Returning the `if` below's status (0 when it does not run its
+  # body, or the doc tests') made every failing engine test pass the step:
+  # rc=0 with a test FAILED in the log, on every shard, since the step was
+  # sharded (30158e6ab, 2026-10-05).
+  local rc=0
+  FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --no-fail-fast ${sel[@]+"${sel[@]}"} || rc=$?
   # A target selection leaves out the doc tests: slice 0 runs them.
   if (( SHARD_N > 1 && SHARD_K == 0 )); then
-    FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --doc
+    FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --doc || rc=$?
   fi
+  return "$rc"
 }
 
 step_t2() {
