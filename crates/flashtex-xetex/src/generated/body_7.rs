@@ -5932,8 +5932,10 @@ impl Globals {
                     self.flashtex_intr_switch();
                 }
                 self.intr_at_switch = self.intr_verify_on;
+                self.intr_in_switch = self.intr_verify_on;
                 self.get_x_token();
                 self.intr_at_switch = false;
+                self.intr_in_switch = false;
             }
             if __goto_1 <= 2 { // reswitch
                 if (self.interrupt != 0i32) {
