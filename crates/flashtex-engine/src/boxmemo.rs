@@ -163,6 +163,11 @@ pub struct Stats {
     /// many differed.
     pub full_verified: u64,
     pub full_differences: u64,
+    /// Of those, the comparisons the restricted walk settled, and those
+    /// the full walk did (`incr::same_state`: periodic, or the restricted
+    /// one did not hold).
+    pub restricted_walks: u64,
+    pub full_walks: u64,
     /// Control sequences a replay entered again (`Op::NewCs`, §12.3).
     pub entered: u64,
     /// K3's macro bodies compared token by token, the comparisons §12.4's
@@ -859,6 +864,19 @@ thread_local! {
 /// The host: an edit's window opens (`true`) or closes.
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+}
+
+/// `incr::same_state` settled a full-state comparison by the restricted
+/// walk (`true`) or the full one.
+pub(crate) fn note_walk(restricted: bool) {
+    ST.with(|s| {
+        let mut s = s.borrow_mut();
+        if restricted {
+            s.stats.restricted_walks += 1;
+        } else {
+            s.stats.full_walks += 1;
+        }
+    });
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording

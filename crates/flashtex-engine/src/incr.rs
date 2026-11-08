@@ -1987,7 +1987,11 @@ pub(crate) fn same_state(g: &mut Globals, n: CheckpointId) -> Result<usize, Stri
             std::process::abort();
         }
     }
-    if r.is_err() {
+    crate::boxmemo::note_walk(r.is_ok());
+    if let Err(e) = &r {
+        if restricted && (debug || check) {
+            eprintln!("boxmemo verify: the restricted walk did not hold ({e}): the full walk");
+        }
         r = words(g, &mut char_or);
     }
     if r.is_ok() && !char_or.is_empty() {
