@@ -46,6 +46,24 @@ DESIGN.md §12 P6). Main is `3f835f488`; the prototype is `agent/kabir-claude-co
   **cancelled** in the queue. The gates were run instead on #2016's always-on build; see
   CONTIG-TOKENS.md §5.
 
+## Follow-up evidence for #2016 and the review of #2008 (CONTIG-TOKENS.md §5, §6)
+
+- `raw/pc-3/` (VERIFIED; run 41348384137, branch `agent/kabir-claude-contig/pc-3`): #2016's
+  always-on build `254f27869` against its base `c5763d9b8`, the same method as pc-2.
+- `raw/stats-1/` (VERIFIED; run 41349282689, branch `agent/kabir-claude-contig/pcstats-1`,
+  `workflows/contig-stats.yml`): `\tracingstats=2` logs of TeX Live's pdfTeX, the base and #2016
+  on a beamer deck and arXiv 2501.06980v1, re-compared with the fixed `scripts/stats.py --logs`
+  (`report.md`).
+- `raw/ovf-1/` (VERIFIED, 2026-11-08, the PC by ssh): two forced "main memory size" overflows
+  (`ovf1.tex`, `ovf2.tex`, `run.sh`), pdfTeX's and #2016's logs, and pdfTeX against main.
+- `raw/ab-1/` (VERIFIED, 2026-11-08, the PC by ssh inside the agents' slice): #2016's merged head
+  `e0d4f2485` (`lazy`) against main `6e66beddf` built twice (`main`, `mainB`: the A/A control);
+  `engines.txt` has every binary's and format's SHA-256. `host/` holds the socket-host sessions
+  (`scripts/hostab.sh`), `cold/runs.jsonl` the cold compiles (`scripts/bench2.py`, seeded random
+  order, per-compile peak RSS), `absum.md` both summaries (`scripts/absum.py res`). The scripts
+  that ran them, in order: `scripts/run2.sh` (host round 1), `run3.sh` (host round 2),
+  `run6.sh` (papers; its book step was stopped), `run7.sh` (the book with `\tracingstats=2`).
+
 ## Reproduce
 
 Push a branch named `agent/kabir-claude-contig/pc-*` holding `workflows/contig-pc.yml` as

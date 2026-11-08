@@ -169,7 +169,7 @@ inlined copies and `get_avail`'s 93.
    pending segments (`flashtex_merge_free`). Each node it walks was freed since the previous merge,
    so it walks at most the nodes the walking `flush_list` would have, but it walks them in a batch,
    on the edit path (review of #2008, item 3): §6 measures what that does to the host. #2016's
-   gates, all VERIFIED:
+   gates (VERIFIED unless a line says otherwise):
    - perf A/B on the PC against its base `c5763d9b8` (run 41348384137, raw/pc-3/): *Infinite
      Descent ×2* −0.61 % instructions, −6.33 % cycles; 13 papers −0.66 % instructions, −2.69 %
      cycles, fewer cycles on 12 of 13; 140 PDFs identical. Same rotation as §4, so its cycle
@@ -183,8 +183,9 @@ inlined copies and `get_avail`'s 93.
      incremental soundness: 108 documents, 217 compiles, 0 differences.
    - PR CI (trip, etrip, lockstep, the P-T fixtures, the engine's tests) and the soundness sweeps
      `sound-a`, `sound-timed`, `sound-d`, `sound-budget-d` with BOX-MEMO on, verify and off (runs
-     41420459736, 41420480889, 41420501650 on `49a5c303b`; again on its final head after main was
-     merged in).
+     41420459736, 41420480889, 41420501650 on `49a5c303b`). On the head after main was merged in
+     (`e0d4f2485`), PR CI's engine jobs (lockstep, the P-T fixtures, the engine tests, T0) passed
+     (run 42502271950); its sweeps are to be run again there once sweeps run on the PC (#2158).
    - Forced "main memory size" overflow (2026-11-08, the PC, raw/ovf-1/; #2016's merged head
      `e0d4f2485` against main `6e66beddf` and TeX Live 2026's pdfTeX): `ovf1.tex` doubles a macro
      with `\edef` until memory runs out, so every earlier body is freed as a segment; `ovf2.tex`
@@ -216,8 +217,9 @@ BOX-MEMO on), *Infinite Descent ×2*, 20 letters typed 300 ms apart into a prose
 (the book's second copy, `x2/book/number-theory/modular-arithmetic.tex`), each waiting for
 `DONE`; the whole host process under `perf stat`, so a session is the cold open (with its
 `makeindex` passes) plus the 20 keystrokes. Engines in a seeded random order per round. Three
-sessions hit the time limit on the starved PC and are left out (main r2 twice, lazy r2 once
-before its rerun); what is left is main 1, mainB 2 and lazy 2 sessions.
+sessions hit the time limit on the starved PC and are left out (main's round 2 twice, lazy's once,
+which a rerun then completed), and round 3 was stopped to leave the PC to the cold compiles: what
+is left is main 1, mainB 2 and lazy 2 sessions.
 
 | engine | sessions | session instructions | Δ vs main | session cycles | Δ vs main | request CPU ms, p50 / p95 | edited page CPU ms, p50 / p95 |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -239,4 +241,52 @@ before its rerun); what is left is main 1, mainB 2 and lazy 2 sessions.
 (each run records its predecessor), each compile's own peak RSS (`wait4`), the document settled
 once and the settled tree copied to every engine (each engine's own pass must leave it settled).
 
-COLD-RESULTS
+The 13 papers, 5 reps per engine and paper, 195 compiles (raw/ab-1/cold/; the table per paper is
+`absum.py`'s, in raw/ab-1/absum.md):
+
+| engine | instructions (sum of medians) | Δ vs main | cycles (sum of medians) | Δ vs main | papers with fewer cycles than main |
+|---|---:|---:|---:|---:|---|
+| main | 155.09 G | | 89.74 G | | |
+| mainB (A/A) | 155.09 G | −0.00 % | 88.85 G | −1.00 % | 8 of 13 |
+| lazy | 154.15 G | **−0.60 %** | 86.88 G | **−3.19 %** | 12 of 13 |
+
+- VERIFIED: −0.60 % instructions (each paper −0.22 % to −1.28 %; the A/A pair is exact to 0.01 %),
+  the same as #2016's pc-3 run (−0.66 %) and the prototype's (−0.40 %), so the merge-in of main
+  changed nothing here.
+- VERIFIED, with its bound: −3.19 % cycles in the sum, against an A/A difference of −1.00 % in the
+  same run; per paper the 95 % bootstrap intervals are wide on this PC (the A/A's reach −18 % to
+  +29 %), and lazy's interval lies wholly below zero on 3 papers, the A/A's on 1. Cycles were about
+  1.5× pc-3's for the same compiles: the slice was starved and, for part of the run, the PC was
+  short of memory. Order: no run was measurably helped by following its own engine (a run's cycles
+  against its median: lazy after another engine +0.59 %, after itself +0.99 %), so the rotation bias
+  of §4 does not explain the result.
+- Output: all 195 PDFs are main's byte for byte; the logs are main's but for 2501.07084v3, whose
+  warnings print the binary's own path (mainB's differ from main's the same way).
+- Peak RSS per compile (now measured per child): 60–85 MB, within 1 MB of each other for the three
+  engines on every paper.
+
+**What the recomputed `dyn_used` costs (item 2).** *Infinite Descent ×2* with `\tracingstats=2`
+from its first line, so each of its 1,140 shipouts prints a memory-usage line and LAZY-FLUSH
+walks the whole free list twice for it. One settled compile per engine (instructions do not move
+with load; cycles from one rep are not reported):
+
+| engine | instructions | Δ vs main | whole log, PDF |
+|---|---:|---:|---|
+| main | 454.81 G | | |
+| mainB (A/A) | 454.81 G | −0.00 % | main's |
+| lazy | 452.80 G | **−0.44 %** | main's, byte for byte |
+
+- VERIFIED: with the walks the statistics cost, LAZY-FLUSH still retires 0.44 % fewer instructions
+  than main on the book, and every one of the 1,140 memory-usage lines (the whole log) is main's.
+  Without `\tracingstats`, #2016 saved 0.61 % on the book against its old base (pc-3); the
+  difference, about 0.2 points, is a belief about what the walks cost, since the two numbers come
+  from different bases and runs.
+- So lockstep and P-T1, which run under `\tracingall`, pay for the recomputation but remain
+  below main's instruction count on this document. Lockstep's own wall time was not measured.
+
+**What this settles.** On the evidence above, LAZY-FLUSH retires fewer instructions everywhere it
+was measured: cold papers, the book with and without `\tracingstats`, and the host's open plus
+keystrokes. Its cold-compile cycle gain on the papers (−3.19 %) is about three times this run's
+A/A difference (−1.00 %), so it survives the review's bias control. The host's cycles and
+per-keystroke CPU time are within this PC's A/A noise and remain unmeasured to the precision the
+review asked for; so does everything on an M-series Mac.
