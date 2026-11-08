@@ -110,8 +110,11 @@ Given an operation with id `(r, c)` and length n, and the document's state vecto
 Every rejection is deterministic given the same applied set, so all replicas reject alike (the
 fixtures check the error kinds, §6). An id conflict is the exception: which of two versions of an id
 is refused depends on which arrives first, which is why replica binding (§2.1) matters. A refused
-operation blocks its replica's later units in that document; the session must resynchronise that
-participant.
+operation blocks its replica's later units in that document. A replica that refuses an operation for
+good no longer holds what its sender does, and a resync would send the same operation again, so the
+session ends that participant's part rather than going on diverged (§2.4a, §7.4). A refusal changes
+nothing: an implementation checks every rule above before it changes any structure (the Swift core's
+runs included).
 
 A project buffers retryable operations and retries each when the dependency it named arrives. The
 buffer holds each distinct operation once (an exact redelivery is not parked again) and is bounded
@@ -168,10 +171,17 @@ file op: id, varint lamport, file-id, then one of
 ```
 
 Each op consumes one counter. `lamport` ≥ 1; a replica's next op uses `max(lamport seen) + 1`. Fields
-are last-writer-wins registers ordered by stamp `(lamport, replica)`; the kind is fixed at creation;
-`create` sets `path` and `deleted = false` with its stamp. A set on an unknown file waits (**unknown
-file**); a second create of the same file id is an **id conflict**; `set_blob` on a text file and an
-invalid path are **malformed**; a create past the file cap (§2.4a) is **project full**, checked after both. A valid path is 1–1024 bytes, `/`-separated, with no empty, `.` or
+are last-writer-wins registers ordered by stamp `(lamport, replica)`; `create` sets `path` and
+`deleted = false` with its stamp. The kind is the one of the file's create with the lowest stamp. A
+second create of the same file id (random ids make an honest one negligible; only a faulty or hostile
+replica makes one) is applied, not refused: it is a write of `path` and `deleted = false` with its
+stamp, and it sets the kind if its stamp is lower. Refusing it would leave its replica's later
+operations waiting for good and keep whichever create arrived first. For the same reason `set_blob`
+is applied whatever the kind (a later-arriving create can change it), and a text file shows no blob.
+A replica never makes either itself: a local create of an existing file id is an **id conflict**, and
+a local `set_blob` on a text file is **malformed**. A set on an unknown file waits (**unknown file**);
+an invalid path and a media type over 255 bytes are **malformed**; a create of a new file past the
+file cap (§2.4a) is **project full**, checked after both. A valid path is 1–1024 bytes, `/`-separated, with no empty, `.` or
 `..` segment, no `\` and no NUL. **The rule is over UTF-8 bytes**, never over grapheme clusters: a
 combining mark after `/` or `\` forms one grapheme with it, so a grapheme-based check would accept
 `../\u{301}etc/passwd` or `a\\\u{301}b` (the `hostile-paths` fixture has these). Comparisons are
@@ -326,6 +336,12 @@ the hub having 0, modulo 8.
 - **Outbox**: a guest numbers its `update`s from 1 and keeps them until an `ack {through}` covers them;
   on reconnect it resends them after `sync_request`. Duplicates are harmless (§2.4).
 - An integration that reports `pending_full` makes the receiver send `sync_request` to that peer.
+- **Refusals end, never diverge.** The hub relays no operation it did not take (refused for any
+  reason, or over the pending bound). A hub that refuses a guest's operation for good closes that
+  guest's connection with `project_full` (a size cap, §2.4, §2.4a) or `operation_refused` (any other
+  refusal); a guest that refuses an operation from the hub, or receives either code, ends its
+  session and keeps its copy (§2.4a).
+- **Guests share no files.** A guest's session refuses `shareFile` and changes nothing.
 
 ### 7.5 Presence
 
@@ -338,6 +354,7 @@ overwrites `participant_id`, `name` and `colour_index` with the values it assign
 ### 7.6 Errors
 
 `error.code` values the session layer sends: `invite_invalid`, `join_denied`, `token_invalid`,
-`session_full`, `join_timeout`, `removed` (each ends the guest's session for good), and `not_joined`,
+`session_full`, `join_timeout`, `removed`, `project_full`, `operation_refused` (each ends the guest's
+session for good), and `not_joined`,
 `already_joined`, `unknown_kind`, `bad_frame`, `unexpected`. `leave` from the hub ends the session for
 every guest.

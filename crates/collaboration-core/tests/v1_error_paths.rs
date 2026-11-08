@@ -192,9 +192,13 @@ fn file_map_rejects_gaps_replays_and_invalid_ops() {
         kind: FileKind::Text,
         path: "b.tex".into(),
     };
+    // A second create of a file id merges (collab-v1 §2.6), and a blob on a
+    // text file is stored but not shown: both apply, so neither blocks its
+    // replica (`v1_conflicting_creates.rs`). This replica makes neither.
+    assert_eq!(m.apply(&op(Id::new(2, 0), 2, f1, dup)), Ok(Applied::New));
     assert_eq!(
-        m.apply(&op(Id::new(2, 0), 2, f1, dup)),
-        Err(CollabError::IdConflict(Id::new(2, 0)))
+        m.create(f1, FileKind::Blob, "c.bin"),
+        Err(CollabError::IdConflict(Id::new(1, 1)))
     );
     let blob = BlobRef {
         sha256: [0; 32],
@@ -202,7 +206,11 @@ fn file_map_rejects_gaps_replays_and_invalid_ops() {
         media_type: "image/png".into(),
     };
     assert_eq!(
-        m.apply(&op(Id::new(2, 0), 2, f1, FileOpKind::SetBlob(blob))),
+        m.apply(&op(Id::new(2, 1), 2, f1, FileOpKind::SetBlob(blob.clone()))),
+        Ok(Applied::New)
+    );
+    assert_eq!(
+        m.set_blob(f1, blob),
         Err(CollabError::Malformed("blob on a text file"))
     );
     let fb = FileId([3; 16]);

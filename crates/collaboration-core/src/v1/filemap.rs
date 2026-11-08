@@ -1,7 +1,7 @@
 //! The project's file tree: a map CRDT keyed by a stable, random 128-bit
 //! [`FileId`], so a rename never races an edit (the text CRDT is keyed by
 //! `FileId`, not by path). Each field is a last-writer-wins register stamped
-//! `(lamport, replica)`; the kind is fixed at creation. Proposal §2.6.
+//! `(lamport, replica)`; the kind is the earliest create's. Proposal §2.6.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -47,7 +47,12 @@ type Stamp = (u64, u64);
 
 #[derive(Debug, Clone)]
 struct Entry {
+    /// The kind of the create with the lowest stamp, which is `created`.
+    /// A second create of the same file id (only a faulty or hostile
+    /// replica makes one) merges like the registers, so every replica
+    /// ends with the same entry whichever create it saw first.
     kind: FileKind,
+    created: Stamp,
     path: (Stamp, String),
     blob: Option<(Stamp, BlobRef)>,
     deleted: (Stamp, bool),
@@ -155,16 +160,28 @@ impl FileMap {
     }
 
     fn local(&mut self, file: FileId, kind: FileOpKind) -> Result<FileOp, CollabError> {
-        // A local create stops `local_headroom` below the cap (§2.4a); a
-        // remote one may take the cap itself.
-        if matches!(kind, FileOpKind::Create { .. })
-            && !self.entries.contains_key(&file)
-            && self.entries.len() + self.local_headroom.min(self.max_files) >= self.max_files
-        {
-            return Err(CollabError::ProjectFull);
+        let id = Id::new(self.replica, self.sv.get(self.replica));
+        match &kind {
+            // This replica never makes a second create of a file id, nor a
+            // blob on a text file; a remote one is merged (`apply`).
+            FileOpKind::Create { .. } if self.entries.contains_key(&file) => {
+                return Err(CollabError::IdConflict(id));
+            }
+            // A local create stops `local_headroom` below the cap (§2.4a);
+            // a remote one may take the cap itself.
+            FileOpKind::Create { .. }
+                if self.entries.len() + self.local_headroom.min(self.max_files)
+                    >= self.max_files =>
+            {
+                return Err(CollabError::ProjectFull);
+            }
+            FileOpKind::SetBlob(_) if self.kind(file) == Some(FileKind::Text) => {
+                return Err(CollabError::Malformed("blob on a text file"));
+            }
+            _ => {}
         }
         let op = FileOp {
-            id: Id::new(self.replica, self.sv.get(self.replica)),
+            id,
             lamport: self.lamport + 1,
             file,
             kind,
@@ -221,21 +238,38 @@ impl FileMap {
                 if !is_valid_path(path) {
                     return Err(CollabError::Malformed("invalid path"));
                 }
-                if self.entries.contains_key(&op.file) {
-                    return Err(CollabError::IdConflict(op.id));
+                if let Some(e) = self.entries.get_mut(&op.file) {
+                    // A second create of this file id: the earliest create
+                    // sets the kind, and its path and `deleted = false` are
+                    // register writes like any other. Refusing it instead
+                    // would leave its replica's later operations waiting
+                    // here for good, and keep whichever create arrived
+                    // first (collab-v1 §2.6).
+                    if stamp < e.created {
+                        e.created = stamp;
+                        e.kind = *kind;
+                    }
+                    if stamp > e.path.0 {
+                        e.path = (stamp, path.clone());
+                    }
+                    if stamp > e.deleted.0 {
+                        e.deleted = (stamp, false);
+                    }
+                } else {
+                    if self.entries.len() >= self.max_files {
+                        return Err(CollabError::ProjectFull);
+                    }
+                    self.entries.insert(
+                        op.file,
+                        Entry {
+                            kind: *kind,
+                            created: stamp,
+                            path: (stamp, path.clone()),
+                            blob: None,
+                            deleted: (stamp, false),
+                        },
+                    );
                 }
-                if self.entries.len() >= self.max_files {
-                    return Err(CollabError::ProjectFull);
-                }
-                self.entries.insert(
-                    op.file,
-                    Entry {
-                        kind: *kind,
-                        path: (stamp, path.clone()),
-                        blob: None,
-                        deleted: (stamp, false),
-                    },
-                );
             }
             other => {
                 let Some(entry) = self.entries.get_mut(&op.file) else {
@@ -251,9 +285,10 @@ impl FileMap {
                         }
                     }
                     FileOpKind::SetBlob(blob) => {
-                        if entry.kind != FileKind::Blob {
-                            return Err(CollabError::Malformed("blob on a text file"));
-                        }
+                        // Taken whatever the kind: a create arriving later
+                        // can still change it (above), so refusing a blob
+                        // on a text file would depend on arrival order. A
+                        // text file shows no blob (`files`).
                         if blob.media_type.len() > limits::MAX_MEDIA_TYPE_BYTES {
                             return Err(CollabError::Malformed("media type too long"));
                         }
@@ -310,7 +345,10 @@ impl FileMap {
                     },
                     requested_path: path.to_owned(),
                     kind: e.kind,
-                    blob: e.blob.as_ref().map(|(_, b)| b.clone()),
+                    blob: match e.kind {
+                        FileKind::Blob => e.blob.as_ref().map(|(_, b)| b.clone()),
+                        FileKind::Text => None,
+                    },
                     conflict,
                 });
             }

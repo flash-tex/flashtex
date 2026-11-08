@@ -88,7 +88,12 @@ public final class FileMap {
     }
 
     struct Entry {
+        /// The kind of the create with the lowest stamp, which is `created`.
+        /// A second create of the same file id (only a faulty or hostile
+        /// replica makes one) merges like the registers, so every replica
+        /// ends with the same entry whichever create it saw first.
         var kind: FileKind
+        var created: Stamp
         var path: (Stamp, String)
         var blob: (Stamp, BlobRef)?
         var deleted: (Stamp, Bool)
@@ -146,13 +151,22 @@ public final class FileMap {
     public func isDeleted(_ file: FileID) -> Bool? { entries[file]?.deleted.1 }
 
     func local(_ file: FileID, _ kind: FileOpKind) throws -> FileOp {
+        let id = CollabID(replica: replica, counter: stateVector[replica])
+        switch kind {
+        // This replica never makes a second create of a file id, nor a blob
+        // on a text file; a remote one is merged (`apply`).
+        case .create where entries[file] != nil:
+            throw CollabError.idConflict(id)
         // A local create stops `localHeadroom` below the cap (§2.4a); a
         // remote one may take the cap itself.
-        if case .create = kind, entries[file] == nil, entries.count >= maxFiles - min(localHeadroom, maxFiles) {
+        case .create where entries.count >= maxFiles - min(localHeadroom, maxFiles):
             throw CollabError.projectFull
+        case .setBlob where entries[file]?.kind == .text:
+            throw CollabError.malformed("blob on a text file")
+        default:
+            break
         }
-        let op = FileOp(id: CollabID(replica: replica, counter: stateVector[replica]), lamport: lamport + 1,
-                        file: file, kind: kind)
+        let op = FileOp(id: id, lamport: lamport + 1, file: file, kind: kind)
         try apply(op)
         return op
     }
@@ -179,9 +193,21 @@ public final class FileMap {
         switch op.kind {
         case let .create(kind, path):
             guard Self.isValidPath(path) else { throw CollabError.malformed("invalid path") }
-            guard entries[op.file] == nil else { throw CollabError.idConflict(op.id) }
-            guard entries.count < maxFiles else { throw CollabError.projectFull }
-            entries[op.file] = Entry(kind: kind, path: (stamp, path), blob: nil, deleted: (stamp, false))
+            if var e = entries[op.file] {
+                // A second create of this file id: the earliest create sets
+                // the kind, and its path and `deleted = false` are register
+                // writes like any other. Refusing it instead would leave its
+                // replica's later operations waiting here for good, and keep
+                // whichever create arrived first (contract §2.6).
+                if stamp < e.created { e.created = stamp; e.kind = kind }
+                if e.path.0 < stamp { e.path = (stamp, path) }
+                if e.deleted.0 < stamp { e.deleted = (stamp, false) }
+                entries[op.file] = e
+            } else {
+                guard entries.count < maxFiles else { throw CollabError.projectFull }
+                entries[op.file] = Entry(kind: kind, created: stamp, path: (stamp, path), blob: nil,
+                                         deleted: (stamp, false))
+            }
         case let .setPath(path):
             guard var e = entries[op.file] else { throw CollabError.unknownFile(op.file) }
             guard Self.isValidPath(path) else { throw CollabError.malformed("invalid path") }
@@ -189,7 +215,9 @@ public final class FileMap {
             entries[op.file] = e
         case let .setBlob(blob):
             guard var e = entries[op.file] else { throw CollabError.unknownFile(op.file) }
-            guard e.kind == .blob else { throw CollabError.malformed("blob on a text file") }
+            // Taken whatever the kind: a create arriving later can still
+            // change it (above), so refusing a blob on a text file would
+            // depend on arrival order. A text file shows no blob (`files`).
             guard blob.mediaType.utf8.count <= CollabLimits.maxMediaTypeBytes else {
                 throw CollabError.malformed("media type too long")
             }
@@ -224,7 +252,8 @@ public final class FileMap {
                 out.append(FileEntryView(
                     file: id,
                     path: k == 0 ? path : Self.conflictName(path, lamport: stamp.lamport, replica: stamp.replica),
-                    requestedPath: path, kind: e.kind, blob: e.blob?.1, conflict: g.count > 1))
+                    requestedPath: path, kind: e.kind, blob: e.kind == .blob ? e.blob?.1 : nil,
+                    conflict: g.count > 1))
             }
         }
         // Byte order, as Rust's String ordering.
