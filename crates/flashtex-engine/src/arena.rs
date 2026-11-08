@@ -789,6 +789,9 @@ pub(crate) struct Core {
     also: Option<Prepared>,
     /// `prepare_go_on` makes no redo ahead (`prepare_also`).
     no_pre: bool,
+    /// The newest checkpoint, when `checkpoint_nested` took it: the log
+    /// before it is still open.
+    nested: Option<CheckpointId>,
 }
 
 /// A reattach whose last step waits (`Core::reattach_lazy`, lane T7-MARGIN):
@@ -918,6 +921,7 @@ impl Core {
     }
 
     fn checkpoint(&mut self) -> CheckpointId {
+        self.unnest();
         if let Some(i) = self.logs.len().checked_sub(1) {
             self.seal(i);
         }
@@ -929,9 +933,66 @@ impl Core {
         id
     }
 
+    /// A checkpoint its taker drops again soon (`drop_newest`), within one
+    /// stretch of the run: the intrinsics verifier's, one per check. It
+    /// leaves the open log open (`nested`), where `checkpoint` seals it:
+    /// the drop then puts the new log's pre-images of chunks the old one
+    /// lacks into it, instead of making the old one open again from its
+    /// seal (#2141: on a resident run each check sealed, and rewound, every
+    /// chunk written since the last page's checkpoint). Any other change to
+    /// the checkpoints first seals it as `checkpoint` would have
+    /// (`unnest`); in between, every rewind and view reads an open log as
+    /// it reads a sealed one (both rewind a chunk to its value at the
+    /// log's checkpoint).
+    fn checkpoint_nested(&mut self) -> CheckpointId {
+        self.unnest();
+        if self.logs.is_empty() {
+            return self.checkpoint();
+        }
+        let id = self.checkpoint_unsealed();
+        self.nested = Some(id);
+        id
+    }
+
+    /// `checkpoint` without sealing the open log.
+    fn checkpoint_unsealed(&mut self) -> CheckpointId {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.ids.push(id);
+        self.logs.push(Log::default());
+        self.clear_saved();
+        id
+    }
+
+    /// Seal the log a nested checkpoint left open (`checkpoint_nested`)
+    /// against the state at that checkpoint, as `checkpoint` would have.
+    fn unnest(&mut self) {
+        let Some(id) = self.nested.take() else {
+            return;
+        };
+        let k = self.index_of(id).expect("a nested checkpoint is retained");
+        debug_assert!(k > 0 && k + 1 == self.ids.len(), "nested is the newest");
+        let i = k - 1;
+        if self.logs[i].entries.is_empty() {
+            return;
+        }
+        self.logs[i].entries.sort_unstable_by_key(|e| e.0);
+        let cs: Vec<u32> = self.logs[i].entries.iter().map(|e| e.0).collect();
+        let live = |c: u32| self.chunk_ptr(c as usize) as *const u64;
+        let at = rewound(self.nchunks, &cs, &live, &self.logs[k..]);
+        self.seal_against(i, Some(&at));
+    }
+
     /// Seal open log `i` against the live space, which is the state at the
     /// next checkpoint: each whole pre-image becomes the words that differ.
     fn seal(&mut self, i: usize) {
+        self.seal_against(i, None)
+    }
+
+    /// [`seal`](Self::seal) against `at` (the state at the next checkpoint
+    /// of each chunk of the log, in chunk order, CHUNK_WORDS words each)
+    /// instead of the live space.
+    fn seal_against(&mut self, i: usize, at: Option<&[u64]>) {
         let _m = crate::memstat::scope(crate::memstat::tag::LOG);
         let mut entries = std::mem::take(&mut self.logs[i].entries);
         if entries.is_empty() {
@@ -949,7 +1010,9 @@ impl Core {
         let prefetch = |k: usize| {
             if let Some(&(c, p)) = entries.get(k) {
                 prefetch_chunk(p as usize);
-                prefetch_chunk(base + ((c as usize) << CHUNK_SHIFT));
+                if at.is_none() {
+                    prefetch_chunk(base + ((c as usize) << CHUNK_SHIFT));
+                }
             }
         };
         prefetch(0);
@@ -960,10 +1023,13 @@ impl Core {
             let (old, now) = unsafe {
                 (
                     std::slice::from_raw_parts(p as *const u64, CHUNK_WORDS),
-                    std::slice::from_raw_parts(
-                        self.chunk_ptr(c as usize) as *const u64,
-                        CHUNK_WORDS,
-                    ),
+                    match at {
+                        Some(b) => &b[k * CHUNK_WORDS..(k + 1) * CHUNK_WORDS],
+                        None => std::slice::from_raw_parts(
+                            self.chunk_ptr(c as usize) as *const u64,
+                            CHUNK_WORDS,
+                        ),
+                    },
                 )
             };
             // Blocks of 8 words: most are unchanged, and the test for that
@@ -1156,6 +1222,7 @@ impl Core {
     /// the next call for the same target, or the restore, goes on from
     /// there.
     fn prepare_restore(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
+        self.unnest();
         let _m = crate::memstat::scope(crate::memstat::tag::PREPARE);
         self.set_prepared(None);
         let part = self.take_part(id);
@@ -1349,6 +1416,7 @@ impl Core {
     /// and a stopped preparation left as they are; no redo made ahead. A
     /// preparation `stop` ends is dropped (false).
     fn prepare_also(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
+        self.unnest();
         let keep = (self.prepared.take(), self.part.take());
         self.no_pre = true;
         let ok = self.prepare_restore(id, stop);
@@ -1470,6 +1538,10 @@ impl Core {
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
+        if self.nested.is_some_and(|n| n != id) {
+            // an older checkpoint: the log left open goes with the later ones
+            self.nested = None;
+        }
         let later = self.logs.split_off(k);
         self.ids.truncate(k + 1);
         self.rewind(&later, false);
@@ -1484,6 +1556,7 @@ impl Core {
     /// Restore to `id`, keeping the old run's later checkpoints and a redo
     /// log so that `converge` can jump back to the old run's latest state.
     fn restore_branch(&mut self, id: CheckpointId) -> Result<Branch, String> {
+        self.unnest();
         if self.lazy.as_ref().is_some_and(|l| l.target == id) {
             return self.restore_lazy();
         }
@@ -1659,6 +1732,7 @@ impl Core {
     /// nothing written since. Jump to the old run's latest state and keep its
     /// checkpoints from `old` on.
     fn converge(&mut self, branch: Branch, old: CheckpointId) -> Result<(), String> {
+        self.unnest();
         self.drop_part();
         self.set_also(None);
         let Some(j) = branch.ids.iter().position(|&x| x == old) else {
@@ -1733,6 +1807,7 @@ impl Core {
     /// run's latest state (the redo log) and its checkpoints back -- as if
     /// the restore had not happened.
     fn reattach(&mut self, branch: Branch) -> Result<(), String> {
+        self.unnest();
         self.reattach_lazy(branch)?;
         self.materialize();
         Ok(())
@@ -1743,6 +1818,7 @@ impl Core {
     /// `materialize`, or a `restore_branch` to the target takes the redo
     /// back.
     fn reattach_lazy(&mut self, branch: Branch) -> Result<(), String> {
+        self.unnest();
         self.materialize();
         self.drop_part();
         let t0 = std::time::Instant::now();
@@ -1958,6 +2034,7 @@ impl Core {
     /// its parts'), and `reattach`, which puts back a chain with fewer
     /// checkpoints.
     fn retain_branch(&mut self, b: &mut Branch, keep: &dyn Fn(CheckpointId) -> bool) {
+        self.unnest();
         let _m = crate::memstat::scope(crate::memstat::tag::LOG);
         let n = b.ids.len();
         let ids = std::mem::take(&mut b.ids);
@@ -1991,6 +2068,10 @@ impl Core {
         let _m = crate::memstat::scope(crate::memstat::tag::LOG);
         self.drop_part();
         self.set_also(None);
+        if self.nested.is_some() && self.nested == self.ids.last().copied() {
+            return self.drop_nested();
+        }
+        self.unnest();
         if self.ids.pop().is_none() {
             return;
         }
@@ -2023,10 +2104,45 @@ impl Core {
         self.logs.push(log);
     }
 
+    /// `drop_newest` of a nested checkpoint (`checkpoint_nested`): the log
+    /// before it is still open, holding the pre-image at its checkpoint of
+    /// every chunk written up to the nested one; the nested one's log holds
+    /// the pre-images at the nested checkpoint of the chunks written since,
+    /// which for a chunk the older log lacks are its pre-images at the older
+    /// checkpoint too. Those join the older log; the others go. The
+    /// barrier's flags become the older log's again.
+    fn drop_nested(&mut self) {
+        self.nested = None;
+        self.ids.pop();
+        let open = self.logs.pop().expect("a log per checkpoint");
+        self.clear_saved();
+        let mut prev = self
+            .logs
+            .pop()
+            .expect("a nested checkpoint has one before it");
+        debug_assert!(
+            prev.deltas.is_empty(),
+            "the log before a nested checkpoint is open"
+        );
+        for &(c, _) in &prev.entries {
+            self.saved()[c as usize] = 1;
+        }
+        for (c, p) in open.entries {
+            if self.saved()[c as usize] != 0 {
+                self.slab.give(p);
+            } else {
+                self.saved()[c as usize] = 1;
+                prev.entries.push((c, p));
+            }
+        }
+        self.logs.push(prev);
+    }
+
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
     /// dropped log into its predecessor (the older value of a word wins).
     fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
         let _m = crate::memstat::scope(crate::memstat::tag::LOG);
+        self.unnest();
         let n = self.ids.len();
         let ids = std::mem::take(&mut self.ids);
         let logs = std::mem::take(&mut self.logs);
@@ -2289,6 +2405,7 @@ impl Arena {
             lazy: None,
             also: None,
             no_pre: false,
+            nested: None,
         });
         Arena {
             core: Box::into_raw(core),
@@ -2623,6 +2740,8 @@ impl Arena {
         what: &str,
     ) -> Result<usize, String> {
         let core = self.core_mut();
+        // (a nested checkpoint's open log is sealed first: `Core::unnest`)
+        core.unnest();
         for (i, &off) in offs.iter().enumerate() {
             if !off.is_multiple_of(8) || off + 8 > core.bytes {
                 return Err(format!("{what}: word {off} outside the space"));
@@ -2791,6 +2910,12 @@ impl Arena {
         self.core_mut().checkpoint()
     }
 
+    /// A checkpoint to be dropped again soon (`drop_newest`): see
+    /// `Core::checkpoint_nested`.
+    pub fn checkpoint_nested(&mut self) -> CheckpointId {
+        self.core_mut().checkpoint_nested()
+    }
+
     pub fn checkpoint_ids(&self) -> &[CheckpointId] {
         &self.core().ids
     }
@@ -2882,6 +3007,7 @@ impl Arena {
     pub fn forget_checkpoints(&mut self) {
         self.old_cache.borrow_mut().at.clear();
         let core = self.core_mut();
+        core.nested = None;
         let logs = std::mem::take(&mut core.logs);
         for log in logs {
             core.free_log(log);
@@ -4857,6 +4983,106 @@ mod tests {
         // the last one: plain memory again
         a.drop_newest();
         assert!(a.checkpoint_ids().is_empty());
+    }
+
+    /// The intrinsics verifier's checks (#2141): a nested checkpoint, the
+    /// normal path, a restore to it, the replay, a view of it, its drop.
+    /// The older checkpoint stays exact, its log open, and a nested drop
+    /// leaves what a plain checkpoint's drop leaves.
+    #[test]
+    fn nested_checkpoints_drop_as_plain_ones() {
+        let (mut a, mut arr) = space(100_000);
+        let (mut b, mut brr) = space(100_000);
+        scribble(&mut arr, 3, 20_000);
+        scribble(&mut brr, 3, 20_000);
+        let p = a.checkpoint();
+        let q = b.checkpoint();
+        let at_p = arr.to_vec();
+        for k in 0..6 {
+            scribble(&mut arr, 10 + k, 1500);
+            scribble(&mut brr, 10 + k, 1500);
+            let c = a.checkpoint_nested();
+            let d = b.checkpoint();
+            let at_c = arr.to_vec();
+            scribble(&mut arr, 100 + k, 800);
+            scribble(&mut brr, 100 + k, 800);
+            a.restore_discard(c).unwrap();
+            b.restore_discard(d).unwrap();
+            assert!(arr[..] == at_c[..], "check {k}: restored to the nested one");
+            scribble(&mut arr, 200 + k, 300);
+            scribble(&mut brr, 200 + k, 300);
+            // views of either checkpoint, the older one's log still open
+            for (id, want) in [(c, &at_c), (p, &at_p)] {
+                let v = a.view_at(id).unwrap();
+                let start = arr.as_ptr() as usize - a.bytes().as_ptr() as usize;
+                for e in (0..arr.len()).step_by(61) {
+                    let off = start + e * 8;
+                    let w = &v.chunk(off >> CHUNK_SHIFT)[off & (CHUNK_BYTES - 1)..][..8];
+                    assert_eq!(u64::from_le_bytes(w.try_into().unwrap()), want[e]);
+                }
+            }
+            a.drop_newest();
+            b.drop_newest();
+            assert_eq!(a.checkpoint_ids(), &[p]);
+            assert_eq!(a.open_log_len(), b.open_log_len(), "check {k}");
+            let mut x = a.open_log_chunks();
+            let mut y = b.open_log_chunks();
+            x.sort_unstable();
+            y.sort_unstable();
+            assert_eq!(x, y, "check {k}: the chunks the open log holds");
+        }
+        assert!(arr[..] == brr[..]);
+        a.restore_discard(p).unwrap();
+        assert!(arr[..] == at_p[..]);
+    }
+
+    /// A nested checkpoint, then anything else that changes the
+    /// checkpoints: the open log it left is sealed first, as a plain
+    /// checkpoint would have, and every state stays restorable.
+    #[test]
+    fn a_nested_checkpoint_seals_when_others_follow() {
+        let (mut a, mut arr) = space(100_000);
+        scribble(&mut arr, 7, 20_000);
+        let p = a.checkpoint();
+        let at_p = arr.to_vec();
+        scribble(&mut arr, 8, 2000);
+        let c = a.checkpoint_nested();
+        let at_c = arr.to_vec();
+        scribble(&mut arr, 9, 2000);
+        // a page checkpoint in the middle of a check
+        let e = a.checkpoint();
+        let at_e = arr.to_vec();
+        scribble(&mut arr, 10, 2000);
+        a.restore_discard(e).unwrap();
+        assert!(arr[..] == at_e[..]);
+        a.restore_discard(c).unwrap();
+        assert!(arr[..] == at_c[..]);
+        scribble(&mut arr, 11, 500);
+        a.drop_newest();
+        assert_eq!(a.checkpoint_ids(), &[p]);
+        a.restore_discard(p).unwrap();
+        assert!(arr[..] == at_p[..]);
+        // retain, a restore to an older one, and a branch, while nested
+        scribble(&mut arr, 12, 2000);
+        let q = a.checkpoint();
+        let at_q = arr.to_vec();
+        scribble(&mut arr, 13, 2000);
+        let c = a.checkpoint_nested();
+        scribble(&mut arr, 14, 2000);
+        a.retain(&|id| id != q);
+        assert_eq!(a.checkpoint_ids(), &[p, c]);
+        a.restore_discard(p).unwrap();
+        assert!(arr[..] == at_p[..]);
+        scribble(&mut arr, 15, 2000);
+        let c = a.checkpoint_nested();
+        let at_c = arr.to_vec();
+        scribble(&mut arr, 16, 2000);
+        let br = a.restore_branch(p).unwrap();
+        assert!(arr[..] == at_p[..]);
+        a.reattach(br).unwrap();
+        a.restore_discard(c).unwrap();
+        assert!(arr[..] == at_c[..]);
+        let _ = at_q;
     }
 
     #[test]
