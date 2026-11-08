@@ -635,10 +635,11 @@ struct SpanFile {
     lines: Vec<(Vec<u8>, u64)>,
 }
 
-/// Where a span left its file level (§17), counted from its `start`: the
-/// line in the buffer (`buffer[start..=limit]`), `loc`, `limit`, the state;
-/// `first` and, when the span read a line, `last` and the buffer's high
-/// mark; `line`.
+/// Where a span left its file level (§17), counted from its `start`: when
+/// the span read a line, the line in the buffer (`buffer[start..=limit]`;
+/// else empty: the buffer is as it was); `loc`, `limit`, the state; `first`
+/// and, when the span read a line, `last` and the buffer's high mark;
+/// `line`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SpanEnd {
     buf: Vec<i32>,
@@ -5642,9 +5643,18 @@ impl Globals {
         let st = l.start_field;
         let read = !s.file.lines.is_empty();
         SpanEnd {
-            buf: (st..=l.limit_field)
-                .map(|j| self.buffer[j as usize])
-                .collect(),
+            // (the last line read, which `bm_span_pick` compared with the
+            // file; a span that read none leaves the line it began on as it
+            // was, and the text before the call is not in the key: a replay
+            // must not put the recorded run's back, which an error's context
+            // prints)
+            buf: if read {
+                (st..=l.limit_field)
+                    .map(|j| self.buffer[j as usize])
+                    .collect()
+            } else {
+                vec![]
+            },
             loc: l.loc_field - st,
             limit: l.limit_field - st,
             state: l.state_field,
