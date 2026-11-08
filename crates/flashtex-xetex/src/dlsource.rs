@@ -730,7 +730,10 @@ impl Globals {
     /// `dl_hyph_begin(ha)`: the word at node `ha` is about to be rebuilt.
     pub fn dl_hyph_begin(&mut self, ha: i32) {
         if self.host.dl.on == Some(true) {
-            self.host.dl.hyph = Some(self.host.dl.get(ha));
+            // (the nodes made for the word are at its first character, as
+            // the pdfTeX engine's reconstituted characters are: no glyph
+            // of a fragment at a column of its own)
+            self.host.dl.hyph = Some(self.host.dl.get(ha) & !PER_CHAR);
         }
     }
 
