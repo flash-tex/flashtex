@@ -466,7 +466,12 @@ impl<'a, M: Metrics> Builder<'a, M> {
     /// `pdf:bcontent`'s origin (dvi.c's `compensation`), but not a form's
     /// reference point, which dvipdfmx puts in the form's `/Matrix`.
     pub fn dev_rel(&self, x: Fx, y: Fx) -> (Fx, Fx) {
-        let (tx, ty) = self.cur_ref().coords.last().copied().unwrap_or((Fx::ZERO, Fx::ZERO));
+        let (tx, ty) = self
+            .cur_ref()
+            .coords
+            .last()
+            .copied()
+            .unwrap_or((Fx::ZERO, Fx::ZERO));
         (x - tx, y - ty)
     }
 
@@ -476,7 +481,6 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let (x, y) = self.rel(x, y);
         self.cur_ref().gs.ctm.apply(x, y)
     }
-
 
     // ---- the XDV stream ---------------------------------------------------
 
@@ -954,7 +958,12 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let (ox, oy) = (ox.to_f64(), oy.to_f64());
         let [a, b, c, d, _, _] = m.to_f64();
         let linear = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
-        let mut r = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut r = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
         for (dx, dy) in offs {
             let (x, y) = if linear {
                 (ox + dx, oy + dy)
@@ -1070,7 +1079,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
     pub fn add_annot(&mut self, dict: super::pdfobj::Dict, r: [f64; 4], name: Option<Vec<u8>>) {
         if let Some(n) = &name {
             let mut d = dict.clone();
-            d.set(b"Rect", Obj::Array(r.iter().map(|v| Obj::num(*v, 3)).collect()));
+            d.set(
+                b"Rect",
+                Obj::Array(r.iter().map(|v| Obj::num(*v, 3)).collect()),
+            );
             self.doc
                 .named
                 .insert(n.clone(), super::doc::Named::Obj(Obj::Dict(d)));
@@ -1587,8 +1599,7 @@ pub(crate) mod tests {
         let bp = 72.0 / 72.27;
         let (px, py) = (a[1].rect[0], a[1].rect[1] + 2.0 * bp);
         assert!((px - (72.0 + 30.0 * bp)).abs() < 1e-9, "{:?}", a[1].rect);
-        let close =
-            |r: [f64; 4], w: [f64; 4]| r.iter().zip(w).all(|(a, b)| (a - b).abs() < 1e-9);
+        let close = |r: [f64; 4], w: [f64; 4]| r.iter().zip(w).all(|(a, b)| (a - b).abs() < 1e-9);
         // rotated 90 degrees about P
         let want = [px - 10.0 * bp, py, px + 2.0 * bp, py + 20.0 * bp];
         assert!(close(a[0].rect, want), "{:?} {want:?}", a[0].rect);
@@ -1606,7 +1617,10 @@ pub(crate) mod tests {
             pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max),
         ];
         assert!(
-            a[2].rect.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-6),
+            a[2].rect
+                .iter()
+                .zip(want)
+                .all(|(a, b)| (a - b).abs() < 1e-6),
             "{:?} {want:?}",
             a[2].rect
         );

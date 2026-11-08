@@ -354,7 +354,9 @@ impl<M: Metrics> Builder<'_, M> {
         // dvipdfmx's `pdf_dev_concat`: its own CTM follows, about the
         // point as it has it (the same on a page)
         let (dx, dy) = self.dev_rel(ux, uy);
-        let td = Mat::translate(-dx, -dy).then(&m).then(&Mat::translate(dx, dy));
+        let td = Mat::translate(-dx, -dy)
+            .then(&m)
+            .then(&Mat::translate(dx, dy));
         let s = self.cur();
         s.gs.ctm = t.then(&s.gs.ctm);
         s.gs.dev_ctm = td.then(&s.gs.dev_ctm);

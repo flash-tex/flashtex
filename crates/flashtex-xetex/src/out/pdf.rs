@@ -2663,7 +2663,9 @@ mod tests {
         ));
         body.extend(special("pdf:put @w <</V(filled)>>"));
         body.extend(special("pdf:put @afields @w"));
-        body.extend(special("pdf:put @catalog <</AcroForm<</Fields @afields>>>>"));
+        body.extend(special(
+            "pdf:put @catalog <</AcroForm<</Fields @afields>>>>",
+        ));
         let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
         doc.pages.push(std::sync::Arc::new(built));
         let opts = Options {
@@ -2693,7 +2695,10 @@ mod tests {
         let f = obj(&fields);
         assert!(f.contains(&format!("{annot} 0 R")), "{f}\n{text}");
         let w = obj(&annot);
-        assert!(w.contains("/Widget") && w.contains("(filled)") && w.contains("/Rect"), "{w}");
+        assert!(
+            w.contains("/Widget") && w.contains("(filled)") && w.contains("/Rect"),
+            "{w}"
+        );
         assert!(!w.contains("/Annot"), "{w}");
         let pdf = PdfFile::parse(&bytes).unwrap();
         assert_eq!(pdf.pages().unwrap().len(), 1);
