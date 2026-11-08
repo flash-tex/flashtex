@@ -3713,6 +3713,8 @@ impl Globals {
                 k::pdf_unescape_hex_code,
                 k::expanded_code,
                 k::job_name_code,
+                // MUTANT: a file's size read while recording
+                k::pdf_file_size_code,
             ]
             .contains(&chr),
             _ => false,
