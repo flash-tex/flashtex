@@ -40,6 +40,31 @@ final class EngineV3ModeTests: XCTestCase {
         XCTAssertFalse(EngineV3HostProcess.arguments(socketPath: "/s", mode: .classic, s0Directory: URL(fileURLWithPath: "/c"), profile: "balanced", timed: "x").contains("--timed"), "a malformed interval is dropped")
     }
 
+    /// Each S0 folder (Classic's and Unicode's) is kept under its budget by
+    /// one rule: least recently written S0 files first out; files that are
+    /// not a host's S0 or S1 are neither counted nor removed.
+    func testS0FoldersStayUnderTheirBudget() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ftx-s0trim-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let names = ["a.s0", "b.s1", "c.xs0", "d.xs0", "e.s0"] // oldest first
+        let kept = ["old.tmp", "notes.txt", "f.xs0.123.456.0.tmp"]
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for (i, n) in (kept + names).enumerated() {
+            let u = dir.appendingPathComponent(n)
+            try Data(count: 100).write(to: u)
+            try fm.setAttributes([.modificationDate: base.addingTimeInterval(Double(i) * 60)], ofItemAtPath: u.path)
+        }
+        try fm.createDirectory(at: dir.appendingPathComponent("z.s0", isDirectory: true), withIntermediateDirectories: true)
+        EngineV3HostProcess.trimS0(dir, budget: 250)
+        let left = Set(try fm.contentsOfDirectory(atPath: dir.path))
+        XCTAssertEqual(left, Set(kept + ["d.xs0", "e.s0", "z.s0"]), "the two newest S0 files fit 250 bytes")
+        EngineV3HostProcess.trimS0(dir, budget: 1000)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: dir.path)), left, "under the budget nothing goes")
+        XCTAssertEqual(EngineV3HostProcess.s0Extensions, ["s0", "s1", "xs0"])
+    }
+
     func testResolutionOrder() {
         let doc = "% !TEX program = xelatex\n\\documentclass{article}"
         XCTAssertEqual(EngineV3Mode.resolve(environment: nil, manifest: nil, mainText: doc).mode, .unicode)

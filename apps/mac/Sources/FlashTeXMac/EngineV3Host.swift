@@ -190,6 +190,36 @@ final class EngineV3HostProcess: @unchecked Sendable {
         EngineV3.cacheDirectory.appendingPathComponent(mode == .unicode ? "s0-unicode" : "s0", isDirectory: true)
     }
 
+    /// Each S0 folder stays under this many bytes (`trimS0`): some 35–60
+    /// documents' S0s at 17–28 MB each.
+    static let s0BudgetBytes = 1 << 30
+
+    /// The files a host writes in its S0 folder: the pdfTeX host's S0 and
+    /// S1 (`<hash>.s0`, `<hash>.s1`), the Unicode host's S0 (`<hash>.xs0`).
+    static let s0Extensions: Set<String> = ["s0", "s1", "xs0"]
+
+    /// Keeps the S0 files in `dir` under `budget` bytes, least recently
+    /// written first out (`EngineV3Snapshot.trim`'s rule). Only those files
+    /// (`s0Extensions`) are counted or removed; a host's temporary files are
+    /// its own to clean. An S0 removed while a host reads it stays readable
+    /// to that host; one removed before a host opens it costs that document
+    /// one full run, as a first open does.
+    static func trimS0(_ dir: URL, budget: Int = s0BudgetBytes) {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+        guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
+        var files: [(url: URL, date: Date, bytes: Int)] = []
+        for u in urls where s0Extensions.contains(u.pathExtension) {
+            guard let v = try? u.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+            files.append((u, v.contentModificationDate ?? .distantPast, v.fileSize ?? 0))
+        }
+        var total = files.reduce(0) { $0 + $1.bytes }
+        for f in files.sorted(by: { $0.date < $1.date }) where total > budget {
+            try? fm.removeItem(at: f.url)
+            total -= f.bytes
+        }
+    }
+
     /// The host's command line. `--once`: serve one connection, then exit
     /// (the app's connection closes when the app quits or dies, so the host
     /// never outlives it once connected). Both hosts are resident (the
@@ -214,6 +244,7 @@ final class EngineV3HostProcess: @unchecked Sendable {
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
         let s0 = Self.s0Directory(mode: mode)
         try? FileManager.default.createDirectory(at: s0, withIntermediateDirectories: true)
+        Self.trimS0(s0)
         process.executableURL = executable
         process.arguments = Self.arguments(
             socketPath: socketPath, mode: mode, s0Directory: s0,
