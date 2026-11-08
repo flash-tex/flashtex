@@ -512,7 +512,9 @@ fn a_token_that_turns_into_a_parameter_is_a_miss() {
     // holds that it is not a `#` (nor `\outer`, `&`, `\if`, `\fi`). Once it
     // is one, `\def` takes it as a parameter (an error here), so that call
     // must not be replayed. changes/throughput.ch [7] read the body's tokens
-    // in place, unseen by the recording: with that, this log differs.
+    // in place, unseen by the recording: with that, this log differs. (The
+    // `\vbox` of a paragraph after the error: no call is offered until a
+    // paragraph's end sets `error_count` back to 0)
     let s = check(
         "token",
         &[
@@ -520,7 +522,7 @@ fn a_token_that_turns_into_a_parameter_is_a_miss() {
             "\\def\\measure#1{\\def\\tmp{\\x #1}\\begingroup\\setbox0\\hbox{\\vrule width 1pt}\
              \\global\\dimen1=\\wd0 \\endgroup}\n\
              \\let\\x\\relax\\measure{1}\\show\\measure{1}\\show\\let\\x=#\\measure{1}\\show\
-             \\let\\x\\relax\\measure{1}\\show\\end\n",
+             \\setbox9\\vbox{\\indent\\par}\\let\\x\\relax\\measure{1}\\show\\end\n",
         ]
         .concat(),
     );
