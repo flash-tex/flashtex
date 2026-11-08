@@ -3528,6 +3528,16 @@ impl Obs {
     /// the user types, again and again); stopped after it, the next
     /// compile restarts from S₀ or a later checkpoint of this run.
     fn preempt_now(&mut self, g: &mut Globals) -> bool {
+        if kw_on() {
+            let after_s0 = self.preempt_after_s0 && g.layer().s0.is_none();
+            let prot = self.protecting();
+            if after_s0 || prot {
+                kw(format_args!(
+                    "run: a stop point refused (before S0 {after_s0}, protecting {prot}; {} pages)",
+                    self.new_pages.len()
+                ));
+            }
+        }
         if self.preempt_after_s0 && g.layer().s0.is_none() {
             return false;
         }
@@ -4740,6 +4750,15 @@ impl Session {
     /// the reattach waits (`Globals::reattach_pending_lazily`).
     fn abandon_paused(&mut self, lazy: bool) -> Result<(), String> {
         let g = self.g.as_mut().ok_or("no engine")?;
+        if kw_on() {
+            kw(format_args!(
+                "abandon: pending {} before_pass {} blocked {:?} s0_retaken {}",
+                g.pending_ids().len(),
+                self.before_pass.is_some(),
+                g.reattach_blocked(),
+                self.before_pass.as_ref().is_some_and(|b| b.s0_retaken)
+            ));
+        }
         if g.pending_ids().is_empty()
             || self.before_pass.is_none()
             || g.reattach_blocked().is_some()
@@ -4762,10 +4781,17 @@ impl Session {
         // run wrote over, `system::put_back_kept`; #1608's deferral of the
         // rest to the next restore is not needed)
         let g = self.g.as_mut().unwrap();
+        let t_re = Instant::now();
         if lazy {
             g.reattach_pending_lazily()?;
         } else {
             g.reattach_pending()?;
+        }
+        if kw_on() {
+            kw(format_args!(
+                "abandon: reattached (lazy {lazy}) in {:.3} ms",
+                t_re.elapsed().as_secs_f64() * 1e3
+            ));
         }
         system::record_reads_into(None);
         let b = self.before_pass.take().unwrap();

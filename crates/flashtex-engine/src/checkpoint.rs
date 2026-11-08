@@ -2278,6 +2278,11 @@ impl Globals {
             PREEMPT_SEEN.with(|s| s.set(h));
             if self.ckpt_request == 0 && self.ckpt_on_segment != 0 {
                 self.ckpt_request = REQ_PREEMPT;
+            } else if crate::incr::kw_on() {
+                crate::incr::kw(format_args!(
+                    "run: preempt hint seen, not asked (request {}, segments {})",
+                    self.ckpt_request, self.ckpt_on_segment
+                ));
             }
         }
     }
