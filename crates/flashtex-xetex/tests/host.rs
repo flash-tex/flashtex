@@ -2400,3 +2400,54 @@ fn a_font_installed_after_a_lookup_in_the_body_is_found() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `\include{chapters/one}` with the output directory elsewhere (#1654):
+/// xelatex with `-output-directory` stops at `\openout` of
+/// `chapters/one.aux`, and the host makes `chapters/` there, in a compile
+/// in the host process and in a run of its own alike; the second pass
+/// reads it back.
+#[test]
+fn an_include_in_a_subdirectory_writes_its_aux_under_the_output_directory() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-subdir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let main = "\\documentclass{article}\n\\begin{document}\nSee \\ref{one}.\n\
+                \\include{chapters/one}\n\\end{document}\n";
+    let mut auxes = vec![];
+    for inproc in ["1", "0"] {
+        let sub = dir.join(format!("inproc{inproc}"));
+        let (proj, out) = project(&sub, main);
+        std::fs::create_dir_all(proj.join("chapters")).unwrap();
+        std::fs::write(
+            proj.join("chapters/one.tex"),
+            "\\section{One}\\label{one}\nText.\n",
+        )
+        .unwrap();
+        let h = start_with(
+            &sub,
+            &[("FLASHTEX_UNICODE_INPROCESS", inproc)],
+            &sub.join("host.err"),
+        );
+        let mut c = Client::connect(&h.sock).unwrap();
+        for id in 1..=2 {
+            c.compile(&request(id, &proj, &out)).unwrap();
+            let (_, done) = events(&mut c, id);
+            assert_eq!(
+                done.str_field("status"),
+                Some("ok"),
+                "inproc {inproc}, compile {id}: {done}"
+            );
+        }
+        let aux = std::fs::read_to_string(Path::new(&out).join("chapters/one.aux"))
+            .unwrap_or_else(|e| panic!("inproc {inproc}: chapters/one.aux: {e}"));
+        assert!(aux.contains("\\newlabel{one}"), "inproc {inproc}: {aux}");
+        assert!(!proj.join("chapters/one.aux").exists());
+        auxes.push(aux);
+        c.bye().unwrap();
+    }
+    assert_eq!(auxes[0], auxes[1], "in process and a run of its own");
+    let _ = std::fs::remove_dir_all(&dir);
+}
