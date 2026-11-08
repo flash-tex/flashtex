@@ -250,6 +250,9 @@ const SEEN_WRITTEN: i32 = 2;
 const SEEN_WEAK: i32 = 3;
 /// A watch record wanting only "not `\outer`, not a parameter character".
 const WANT_PLAIN: i32 = -1;
+/// A watch record of an e-TeX sparse register its entry let go of: it
+/// never holds again (`flashtex_intr_touch`).
+const WANT_NEVER: i32 = -2;
 const MAC_PARAM: i32 = 6;
 const OUTER_CALL: i32 = 116;
 const MATCHING: i32 = 3;
@@ -885,6 +888,9 @@ impl Globals {
         if t == WANT_PLAIN {
             return t2 != MAC_PARAM && t2 != OUTER_CALL && t2 != LONG_OUTER_CALL;
         }
+        if t == WANT_NEVER {
+            return false;
+        }
         if (CALL..=LONG_OUTER_CALL).contains(&t) {
             return t2 == t && self.same_as_stored(slot, e, e2);
         }
@@ -900,6 +906,18 @@ impl Globals {
             let now = self.holds_for(slot, p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
             if now != self.intr_data[b + 3] {
                 self.intr_data[b + 3] = now;
+                // An e-TeX sparse register is a node: while the entry holds
+                // it, it holds a reference and the node stays that register,
+                // but once let go the node may be freed and made another
+                // register's (`\meaning` prints its number). Never again.
+                let (t, e) = (self.intr_data[b + 1], self.intr_data[b + 2]);
+                if now == 0
+                    && (t == REGISTER || t == TOKS_REGISTER)
+                    && !(MEM_BOT..=LO_MEM_STAT_MAX).contains(&e)
+                {
+                    self.intr_data[b + 1] = WANT_NEVER;
+                    self.intr_data[b + 2] = 0;
+                }
                 let m = self.sf(slot, F_MISMATCH) + if now == 1 { -1 } else { 1 };
                 self.set_sf(slot, F_MISMATCH, m);
             }
