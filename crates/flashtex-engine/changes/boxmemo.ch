@@ -18,6 +18,11 @@
 %   |eq_define| & co., exactly what |main_control| executing the body would
 %   leave -- or starts a recording, or does nothing.
 %
+% * |get_next|, once it has popped a used-up token list: a recording whose
+%   last level that was, popped by |big_switch|'s own |get_x_token| (no
+%   |expand| in progress and no macro's parameters being scanned), ends
+%   there (|flashtex_bm_popped|), before the token after the call is read.
+%
 % * |bm_rec_on|: the recording's observers. The control sequences read
 %   (|get_next|, |\csname|, |\ifcsname|), the assignments and groups
 %   (|eq_define|, |eq_word_define|, |geq_define|, |geq_word_define|, e-TeX's
@@ -25,10 +30,15 @@
 %   registers fetched,
 %   the commands, expansions and internal quantities, conditionals popped,
 %   and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
-%   outside its model. A control sequence |get_next| delivers to a caller
-%   that looks only at the token (|intr_weak|, |matching|, |skipping|) is
-%   keyed by whether it is \.{\\outer}, a \.\# or an alignment tab, or an
-%   \.{\\if} or \.{\\fi} (BOX-MEMO.md \S15).
+%   outside its model. While a recording is in progress, the tokens that
+%   changes/throughput.ch reads in place ([4] skipped conditional text, [5]
+%   a delimited argument, [6] a group, [7] a definition's body; [9] tests
+%   |bm_rec_on| itself) go through |get_next| as they did before those
+%   changes, so that |flashtex_bm_next| sees each control sequence read.
+%   A control sequence |get_next| delivers to a caller that looks only at
+%   the token (|intr_weak|, |matching|, |skipping|) is keyed by whether it
+%   is \.{\\outer}, a \.\# or an alignment tab, or an \.{\\if} or \.{\\fi}
+%   (BOX-MEMO.md \S17).
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
@@ -138,6 +148,14 @@ else begin if intr_rec_on then flashtex_intr_next;
   end;
 @z
 
+@x pdftex.web l.8764 - a recording ends where |big_switch|'s |get_x_token| leaves its last level
+  end_token_list; goto restart; {resume previous level}
+@y
+  end_token_list;
+  if bm_rec_on then flashtex_bm_popped;
+  goto restart; {resume previous level}
+@z
+
 @x pdftex.web l.8961 (after changes/intrinsics.ch) - every expansion a recording makes is checked
 reswitch: intr_at_switch:=false;
 if intr_rec_on then flashtex_intr_expand;
@@ -165,6 +183,22 @@ if bm_on then if bm_at_switch then if expand_depth_count=0 then
   if bm_cand[warning_index] then
     flashtex_bm_call(n,save_scanner_status,save_warning_index);
 exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
+@z
+
+@x changes/throughput.ch [5] - a recording reads a delimited argument's tokens through |get_next|
+  begin if not intr_rec_on then
+    begin d:=info(r);
+@y
+  begin if not(intr_rec_on or bm_rec_on) then
+    begin d:=info(r);
+@z
+
+@x changes/throughput.ch [6] - ... and a group's
+  if state=token_list then if loc<>null then if not intr_rec_on then
+    begin ft:=info(loc);
+@y
+  if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
+    begin ft:=info(loc);
 @z
 
 @x pdftex.web l.9740 (after changes/intrinsics.ch) - a recording fetches an internal quantity
@@ -220,6 +254,22 @@ else  begin scan_register_num; cur_val_level:=m-mem_bot;
 @y
 else  begin scan_register_num; cur_val_level:=m-mem_bot;
   if bm_rec_on then flashtex_bm_reg_read(cur_val_level,cur_val);
+@z
+
+@x changes/throughput.ch [7] - ... and a body's
+  else begin if not intr_rec_on then
+      loop@+  begin if state<>token_list then goto done3;
+@y
+  else begin if not(intr_rec_on or bm_rec_on) then
+      loop@+  begin if state<>token_list then goto done3;
+@z
+
+@x changes/throughput.ch [4] - ... and the skipped text of a conditional
+  if state=token_list then if loc<>null then if not intr_rec_on then
+    begin t:=info(loc);
+@y
+  if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
+    begin t:=info(loc);
 @z
 
 @x pdftex.web l.11842 (after changes/intrinsics.ch) - a recording never ends a conditional it did not begin
@@ -480,6 +530,7 @@ procedure flashtex_bm_after(@!t:halfword); external;
 procedure flashtex_bm_def(@!p:pointer;@!t:quarterword;@!e:integer;@!k:integer); external;
 procedure flashtex_bm_sa_def(@!p:pointer;@!e:integer;@!k:integer); external;
 procedure flashtex_bm_next; external;
+procedure flashtex_bm_popped; external;
 procedure flashtex_bm_expand; external;
 procedure flashtex_bm_read(@!p:pointer); external;
 procedure flashtex_bm_id(@!j:integer;@!l:integer;@!p:pointer); external;
