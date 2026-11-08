@@ -29,11 +29,16 @@ struct Run {
 
 /// Run `\input t` in INITEX with the intrinsics in `mode`.
 fn run(dir: &Path, mode: &str, names: &str) -> Run {
+    run_args(dir, mode, names, &["-ini", "\\input t"])
+}
+
+/// [`run`] with these arguments (`-etex` for e-TeX's mode).
+fn run_args(dir: &Path, mode: &str, names: &str, args: &[&str]) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
-        .args(["-ini", "\\input t"])
+        .args(args)
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
         .env("FLASHTEX_RESOLVER", "cwd")
@@ -71,11 +76,20 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_args(tag, src, &["-ini", "\\input t"])
+}
+
+/// [`check`] in e-TeX's mode.
+fn check_etex(tag: &str, src: &str) -> String {
+    check_args(tag, src, &["-ini", "-etex", "\\input t"])
+}
+
+fn check_args(tag: &str, src: &str, args: &[&str]) -> String {
     let d = scratch(tag);
     std::fs::write(d.join("t.tex"), src).unwrap();
-    let off = run(&d, "off", "hook");
-    let on = run(&d, "on", "hook");
-    let verify = run(&d, "verify", "hook");
+    let off = run_args(&d, "off", "hook", args);
+    let on = run_args(&d, "on", "hook", args);
+    let verify = run_args(&d, "verify", "hook", args);
     assert_eq!(off.log, on.log, "{tag}: log with intrinsics on differs");
     assert_eq!(
         off.log, verify.log,
@@ -174,6 +188,25 @@ fn impure_macro_is_not_replayed() {
         let s = check(tag, &src);
         assert_eq!(stat(&s, "replays"), 0, "{tag}: {s}");
     }
+}
+
+/// `print_cs` prints a control symbol with a space after it when its
+/// character is a letter, so a run that prints one (here e-TeX's
+/// `\detokenize`, which `\edef`'s `scan_toks` runs itself, not through
+/// `expand`) reads that character's category. Before, nothing recorded it:
+/// the hook kept replaying `\@ ` after `\@` stopped being a letter.
+#[test]
+fn a_printed_control_symbol_reads_its_characters_category() {
+    let s = check_etex(
+        "detok",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\scrollmode\\catcode`\\@=11\n\
+         \\def\\hook{\\edef\\w{\\detokenize{\\@}}}\n\
+         \\hook\\hook\\message{[\\meaning\\w]}\\catcode`\\@=12\n\
+         \\hook\\message{[\\meaning\\w]}\\hook\\message{[\\meaning\\w]}\\end\n",
+    );
+    // calls 2 and 4 replay; call 3 sees the new category and records again
+    assert_eq!(stat(&s, "replays"), 2, "{s}");
+    assert_eq!(stat(&s, "Deps"), 1, "{s}");
 }
 
 #[test]
