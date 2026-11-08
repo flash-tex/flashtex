@@ -38,7 +38,7 @@ PINNED_PDFTEX = "1.40.29"
 DEFAULT_ORACLE = "/Library/TeX/texbin/pdftex"
 FMT = "pdflatex"
 PASSES = 6
-PASS_TIMEOUT = 300
+PASS_TIMEOUT = 300  # CPU seconds (capture.cpu_limited)
 # --compress-streams=y: qpdf still decodes every stream it can (Flate, LZW, predictors) and
 # normalises the content streams, then writes them compressed again with its own Flate, so
 # the qdf copy stays about the size of the PDF; Graph decodes one stream at a time, and an
@@ -152,7 +152,7 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=
     stem = os.path.splitext(os.path.basename(entry))[0]
     pdf, logp = os.path.join(workdir, stem + ".pdf"), os.path.join(workdir, stem + ".log")
     args = pcapture.interaction_args() + [f"-jobname={stem}", pcapture.first_line(entry)]
-    meta = {"ok": False, "passes": 0, "traced": bool(trace)}
+    meta = {"ok": False, "passes": 0, "traced": bool(trace), "limit": pcapture.LIMIT_KIND}
     t0 = time.time()
     previous = None
     for _ in range(PASSES):
@@ -182,7 +182,7 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=
         shutil.copyfile(pdf, converged)
         t1 = time.time()
         limit = timeout or pcapture.TIMEOUT
-        meta["trace_timeout"] = limit
+        meta["trace_timeout"], meta["trace_limit"] = limit, pcapture.LIMIT_KIND
         harness = None
         try:
             cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env,
@@ -304,7 +304,8 @@ def stale_entry(meta, odir, src=None):
     the budget but has no fingerprint (cached before streaming) or one of
     another pt1stream.V (a v1 one whose PDF embeds no Type3 font is kept and
     made v2: see pt1stream.V), a traced pass stopped by a shorter time limit
-    than today's (`oracle_pt1_timeout`), or conversions kept under an older
+    than today's (`oracle_pt1_timeout`) or by a limit of another kind than
+    capture.LIMIT_KIND (wall-clock seconds), or conversions kept under an older
     keep_generated rule from a tree (`src`) that ships one."""
     if meta.get("ok") and meta.get("generated_v") != GENERATED_V and src and ships_conversion(src):
         return True
@@ -320,8 +321,11 @@ def stale_entry(meta, odir, src=None):
             write_json(fpp, fp)
         if fp.get("v") != pt1stream.V:
             return True
+    if "(timeout)" in (meta.get("why") or "") and meta.get("limit") != pcapture.LIMIT_KIND:
+        return True  # a pass stopped by a wall-clock limit (capture.LIMIT_KIND)
     stopped = meta.get("trace_timed_out") or "did not finish in the capture's" in (meta.get("trace_incomplete") or "")
-    return bool(stopped and meta.get("trace_timeout", 600) < oracle_pt1_timeout())
+    return bool(stopped and (meta.get("trace_timeout", 600) < oracle_pt1_timeout()
+                             or meta.get("trace_limit") != pcapture.LIMIT_KIND))
 
 
 def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):

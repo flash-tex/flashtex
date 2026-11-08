@@ -599,7 +599,9 @@ class Corpus(unittest.TestCase):
                    "trace_incomplete": tiers.TRACE_TIMEOUT.format(1800), "trace_timed_out": True,
                    "trace_timeout": 1800}
         self.assertTrue(tiers.stale_entry(stopped, "/nonexistent"))  # board run 37121600909's two entries
-        self.assertFalse(tiers.stale_entry(dict(stopped, trace_timeout=7200), "/nonexistent"))
+        # an entry stopped by the oracle's limit is kept only if that limit was CPU seconds
+        self.assertTrue(tiers.stale_entry(dict(stopped, trace_timeout=7200), "/nonexistent"))
+        self.assertFalse(tiers.stale_entry(dict(stopped, trace_timeout=7200, trace_limit="cpu"), "/nonexistent"))
         saved = tiers.engine_version, tiers.run_tex
         with tempfile.TemporaryDirectory() as d:
             doc = {"id": "slow", "entry": "main.tex", "dir": os.path.join(d, "src")}
@@ -618,6 +620,7 @@ class Corpus(unittest.TestCase):
                 with open(pdf, "w") as f:
                     f.write("%PDF")
                 return ({"ok": True, "passes": 2, "trace_timeout": timeout, "trace_timed_out": True,
+                         "trace_limit": capture.LIMIT_KIND, "limit": capture.LIMIT_KIND,
                          "trace_incomplete": tiers.TRACE_TIMEOUT.format(timeout)}, None, pdf)
             try:
                 tiers.engine_version, tiers.run_tex = (lambda _exe: version), run_tex
@@ -3051,6 +3054,52 @@ class RowPadding(unittest.TestCase):
         self.assertEqual(tiers.clear_row_padding(doc, icc, b"\xff" * 10), out)
         mask = {"Subtype": "Image", "Width": 9, "Height": 1, "ImageMask": True}
         self.assertEqual(tiers.clear_row_padding(doc, mask, b"\xff\xff"), b"\xff\x80")
+
+
+class CpuLimits(unittest.TestCase):
+    """Time limits are CPU seconds (capture.cpu_limited), so a slow, loaded
+    host cannot make a timeout: a run that waits past its limit without using
+    the CPU finishes, and one that spins past it is stopped."""
+
+    def fake_engine(self, d, body):
+        exe = os.path.join(d, "engine.sh")
+        with open(exe, "w") as f:
+            f.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(exe, 0o755)
+        return exe
+
+    def test_waiting_is_not_a_timeout_and_spinning_is(self):
+        import capture
+        with tempfile.TemporaryDirectory() as d:
+            # sleeps 2 s of wall time with a 1 s CPU limit: not stopped
+            code, timed_out = capture.run_engine(self.fake_engine(d, "sleep 2; exit 0"), None, [], d, timeout=1)
+            self.assertEqual((code, timed_out), (0, False))
+        with tempfile.TemporaryDirectory() as d:
+            # spins: SIGXCPU after 1 s of CPU, long before the wall-clock backstop
+            exe = self.fake_engine(d, "exec python3 -c 'while True: pass'")
+            t0 = __import__("time").monotonic()
+            code, timed_out = capture.run_engine(exe, None, [], d, timeout=1)
+            self.assertEqual((code, timed_out), (None, True))
+            self.assertLess(__import__("time").monotonic() - t0, capture.WALL_FACTOR)
+
+    def test_argv0_is_still_pdftex(self):
+        import capture
+        with tempfile.TemporaryDirectory() as d:
+            exe = self.fake_engine(d, 'echo "$0 $*" > argv.txt')
+            self.assertEqual(capture.run_engine(exe, "pdflatex", ["x.tex"], d, timeout=5), (0, False))
+            with open(os.path.join(d, "argv.txt")) as f:
+                words = f.read().split()
+            self.assertEqual(os.path.basename(words[0]), capture.PROGRAM)
+            self.assertEqual(words[-2:], ["-fmt=pdflatex", "x.tex"])
+
+    def test_a_wall_clock_timeout_in_the_cache_is_made_again(self):
+        import tiers
+        stopped = {"ok": False, "why": "exit None (timeout)"}
+        self.assertTrue(tiers.stale_entry(stopped, "/nonexistent"))
+        self.assertFalse(tiers.stale_entry(dict(stopped, limit="cpu"), "/nonexistent"))
+        traced = {"ok": True, "trace_timed_out": True, "trace_timeout": tiers.oracle_pt1_timeout()}
+        self.assertTrue(tiers.stale_entry(traced, "/nonexistent"))
+        self.assertFalse(tiers.stale_entry(dict(traced, trace_limit="cpu", limit="cpu"), "/nonexistent"))
 
 
 if __name__ == "__main__":

@@ -94,7 +94,7 @@ POS_TOL = 0.5          # bp, per axis (L3)
 RASTER_DELTA = 64      # grey levels (L4)
 RASTER_FRACTION = 2e-4  # of a page's pixels (L4): 388 px on a 144 dpi US-letter page
 ORACLE_PASSES = 6
-ORACLE_TIMEOUT = 300
+ORACLE_TIMEOUT = 300  # CPU seconds of a pdflatex pass (capture.cpu_limited)
 CANDIDATE_TIMEOUT = 180
 FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
 # The engine under test defaults to the new engine, flashtex-initex
@@ -329,9 +329,11 @@ def oracle_reference(doc, texbin, cache, log):
     if os.path.isfile(meta_path):
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
-        meta["cached"] = True
-        pdf = os.path.join(odir, "reference.pdf")
-        return (pdf if meta.get("ok") and os.path.isfile(pdf) else None), meta
+        # a pass stopped by a wall-clock limit (before capture.LIMIT_KIND) is run again
+        if "(timeout)" not in (meta.get("why") or "") or meta.get("limit") == ptiers.pcapture.LIMIT_KIND:
+            meta["cached"] = True
+            pdf = os.path.join(odir, "reference.pdf")
+            return (pdf if meta.get("ok") and os.path.isfile(pdf) else None), meta
     work = os.path.join(odir, "work")
     shutil.rmtree(work, ignore_errors=True)
     shutil.copytree(doc["dir"], work)
@@ -340,12 +342,15 @@ def oracle_reference(doc, texbin, cache, log):
     produced = os.path.join(work, stem + ".pdf")
     logpath = os.path.join(work, stem + ".log")
     meta = {"ok": False, "key": key, "pdflatex": version, "argv": ["SOURCE_DATE_EPOCH=0", "FORCE_SOURCE_DATE=1",
-            "pdflatex"] + argv[1:], "passes": 0, "seconds": 0.0}
+            "pdflatex"] + argv[1:], "passes": 0, "seconds": 0.0, "limit": ptiers.pcapture.LIMIT_KIND}
     previous = None
     t0 = time.time()
     for _ in range(ORACLE_PASSES):
         ptiers.pcapture.drop_stale_pdf(produced)
-        code, _, _, _, timed_out = harness.run(argv, env=env, timeout=ORACLE_TIMEOUT, cwd=work)
+        code, _, _, _, timed_out = harness.run(ptiers.pcapture.cpu_limited(argv, ORACLE_TIMEOUT), env=env,
+                                               timeout=ptiers.pcapture.WALL_FACTOR * ORACLE_TIMEOUT, cwd=work)
+        if ptiers.pcapture.cpu_stopped(code):  # its CPU limit (capture.cpu_limited)
+            code, timed_out = None, True
         meta["passes"] += 1
         if timed_out or not ptiers.pcapture.compiled_exit(code) or not os.path.isfile(produced):
             txt = harness.read_text(logpath) if os.path.isfile(logpath) else ""
