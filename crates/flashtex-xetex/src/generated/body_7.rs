@@ -6521,6 +6521,7 @@ impl Globals {
                                 self.native_len = 0i32;
                             }
                             if __goto_2 <= 1 { // L71
+                                self.dl_native_char();
                                 self.main_s = (self.eqtb[crate::ix::U((((sf_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh() % 65536i32);
                                 if (self.main_s == 1000i32) {
                                     self.cur_list.aux_field.set_hh_lh(1000i32);

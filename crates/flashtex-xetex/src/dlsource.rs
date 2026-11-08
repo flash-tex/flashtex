@@ -432,6 +432,7 @@ impl DlSource {
             hyph,
             markers,
             last_marked,
+            direct: Default::default(),
         })
     }
 
