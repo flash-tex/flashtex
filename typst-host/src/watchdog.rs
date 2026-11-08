@@ -9,14 +9,18 @@
 //! a slow client must never get a healthy host killed) runs longer than
 //! its wall-time budget, or the process's resident memory passes a ceiling
 //! during it, the thread prints one line saying why to stderr, kills the
-//! host's children ([`track_child`]: package downloads), removes its
-//! temporary directory ([`temp_dir`]) and `_exit`s with [`EXIT_CODE`] (no
+//! host's children ([`spawn_tracked`]: package downloads), removes its
+//! private temporary directory ([`temp_dir`]) and `_exit`s with
+//! [`EXIT_CODE`] (no
 //! destructors, no atexit handlers: the main thread is stuck in the
 //! compile). The client sees the socket close in the middle of a compile;
 //! the app restarts the host, marks the pages it shows stale and compiles
 //! cold. Killing the process is also what frees comemo's caches at once.
 
-use std::sync::{Arc, Mutex};
+use std::io;
+use std::path::PathBuf;
+use std::process::{Child, Command};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 /// The exit status of a host the watchdog stopped.
@@ -41,7 +45,9 @@ impl Default for Limits {
         Limits {
             wall: Duration::from_secs(10),
             wall_cold: Duration::from_secs(180),
-            rss_bytes: Some(4096 << 20),
+            // A healthy 1,000-page document passes 4 GB during an incremental
+            // compile (measured 2026-10-04: 4.1 GB with evict age 3).
+            rss_bytes: Some(8192 << 20),
         }
     }
 }
@@ -54,27 +60,99 @@ struct Running {
 
 static CHILDREN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
-/// A child process (a download) the watchdog must kill before it exits.
-pub fn track_child(pid: u32) {
-    CHILDREN.lock().unwrap().push(pid);
+/// The children registry, never poisoned (the watchdog takes it while
+/// stopping the host).
+fn children() -> MutexGuard<'static, Vec<u32>> {
+    CHILDREN.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The child exited or was reaped.
-pub fn untrack_child(pid: u32) {
-    CHILDREN.lock().unwrap().retain(|&p| p != pid);
+/// Spawn `cmd` (a package download) and register its pid under the same
+/// lock the watchdog's stop holds until the process ends, so no child is
+/// started after the stop began and none is missed.
+pub fn spawn_tracked(cmd: &mut Command) -> io::Result<(Child, Tracked)> {
+    let mut c = children();
+    let child = cmd.spawn()?;
+    c.push(child.id());
+    let id = child.id();
+    Ok((child, Tracked(id)))
 }
 
-/// The host process's own temporary directory (`DONE.pdf` when the client
-/// names no output directory): removed when the watchdog stops the host.
-pub fn temp_dir(pid: u32) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("flashtex-typst-host-{pid}"))
+/// A registered child: unregistered when dropped (after it is reaped).
+pub struct Tracked(u32);
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        children().retain(|&p| p != self.0);
+    }
 }
 
-/// Remove the temporary directories of hosts that no longer run (a host
-/// killed from outside cannot remove its own). Called at start.
+/// The registered children (tests).
+pub fn tracked_children() -> Vec<u32> {
+    children().clone()
+}
+
+/// The process exists (signal 0; EPERM: it exists, not ours).
+pub fn pid_alive(pid: i32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    let r = unsafe { libc::kill(pid, 0) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// This user's id.
+pub fn uid() -> u32 {
+    // SAFETY: getuid has no preconditions.
+    unsafe { libc::getuid() }
+}
+
+static TEMP: OnceLock<PathBuf> = OnceLock::new();
+
+/// Where the host's private temporary directory lives: `$XDG_RUNTIME_DIR`
+/// on Linux when set (per user, mode 0700), else the OS temporary directory
+/// (per user on macOS; on Linux the shared `/tmp`, hence the private
+/// directory below).
+fn temp_base() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    if let Some(x) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from) {
+        if x.is_absolute() && x.is_dir() {
+            return x;
+        }
+    }
+    std::env::temp_dir()
+}
+
+/// The host process's own private temporary directory (`DONE.pdf` when the
+/// client names no output directory), created mode 0700 on first use
+/// (never an existing one: a name that exists gets a suffix), removed when
+/// the watchdog stops the host.
+pub fn temp_dir() -> PathBuf {
+    TEMP.get_or_init(|| {
+        use std::os::unix::fs::DirBuilderExt;
+        let base = temp_base();
+        let pid = std::process::id();
+        for n in 0..1000 {
+            let name = if n == 0 {
+                format!("flashtex-typst-host-{pid}")
+            } else {
+                format!("flashtex-typst-host-{pid}-{n}")
+            };
+            let p = base.join(name);
+            match std::fs::DirBuilder::new().mode(0o700).create(&p) {
+                Ok(()) => return p,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(_) => break,
+            }
+        }
+        base.join(format!("flashtex-typst-host-{pid}"))
+    })
+    .clone()
+}
+
+/// Remove the temporary directories of this user's hosts that no longer run
+/// (a host killed from outside cannot remove its own). Called at start.
 pub fn sweep_stale_temp_dirs() -> usize {
+    use std::os::unix::fs::MetadataExt;
     let mut removed = 0;
-    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+    let Ok(entries) = std::fs::read_dir(temp_base()) else {
         return 0;
     };
     for e in entries.flatten() {
@@ -82,31 +160,47 @@ pub fn sweep_stale_temp_dirs() -> usize {
         let Some(pid) = name
             .to_str()
             .and_then(|n| n.strip_prefix("flashtex-typst-host-"))
+            .and_then(|p| p.split('-').next())
             .and_then(|p| p.parse::<i32>().ok())
         else {
             continue;
         };
-        // SAFETY: signal 0 only checks that the process exists.
-        let alive = unsafe { libc::kill(pid, 0) } == 0
-            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
-        if !alive && std::fs::remove_dir_all(e.path()).is_ok() {
+        // Only a real directory of ours, of a host that is gone.
+        let Ok(md) = std::fs::symlink_metadata(e.path()) else {
+            continue;
+        };
+        if !md.is_dir() || md.uid() != uid() || pid_alive(pid) {
+            continue;
+        }
+        if std::fs::remove_dir_all(e.path()).is_ok() {
             removed += 1;
         }
     }
     removed
 }
 
-/// Stop now: kill the children, remove the temporary directory, `_exit`.
+/// Stop now: say why (a raw, non-blocking write: `eprintln!` panics on a
+/// closed stderr and blocks on a full one), kill the registered children
+/// while holding the registry (no download can start after this), remove
+/// the temporary directory, `_exit`.
 fn stop(why: &str) -> ! {
-    eprintln!("flashtex-typst-host: {why}");
-    // Tracked children, and the package downloads in flight (curl).
-    let mut children = CHILDREN.lock().map(|c| c.clone()).unwrap_or_default();
-    children.extend(crate::packages::running_children());
-    for pid in children {
+    let line = format!("flashtex-typst-host: {why}\n");
+    // SAFETY: fd 2 and a valid buffer; errors are ignored on purpose.
+    unsafe {
+        let fl = libc::fcntl(2, libc::F_GETFL);
+        if fl >= 0 {
+            libc::fcntl(2, libc::F_SETFL, fl | libc::O_NONBLOCK);
+        }
+        libc::write(2, line.as_ptr().cast(), line.len());
+    }
+    let held = children();
+    for &pid in held.iter() {
         // SAFETY: a pid this process started; SIGKILL needs nothing else.
         unsafe { libc::kill(pid as i32, libc::SIGKILL) };
     }
-    let _ = std::fs::remove_dir_all(temp_dir(std::process::id()));
+    if let Some(d) = TEMP.get() {
+        let _ = std::fs::remove_dir_all(d);
+    }
     // SAFETY: _exit ends the process at once; nothing here needs unwinding.
     unsafe { libc::_exit(EXIT_CODE) }
 }
