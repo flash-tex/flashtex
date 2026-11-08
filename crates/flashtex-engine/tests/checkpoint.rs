@@ -226,8 +226,11 @@ fn persisted_s0_reopens() {
 /// which a run takes at its start and S₀ holds) or for a search path
 /// (`TEXINPUTS`, which a lookup in the preamble depends on), and a
 /// database (`ls-R`) of a tree a lookup in the preamble found nothing in,
-/// with the file added (F4). Each fails without `Key::check_config` (the
-/// open restores S₀, as the control with nothing changed does).
+/// with the file added (F4). Without `Key::check_config` the open restored
+/// S₀ for the switch, the job name and `max_print_line`, as the control
+/// with nothing changed does (VERIFIED, PC, 2026-11-08); the `TEXINPUTS`
+/// and `ls-R` cases were refused there by the lookups made again ("finds
+/// another file now"), and stay as guards of the key's own check.
 #[test]
 fn a_persisted_s0_is_not_opened_under_another_configuration() {
     let Some(e) = env() else {
