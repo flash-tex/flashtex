@@ -713,6 +713,66 @@ fn spans_raise_a_copy() {
 }
 
 #[test]
+fn spans_after_an_endinput_on_their_line_are_not_replayed() {
+    // (#2185, REVIEW-A on #1997) a picture file that begins
+    // `\ifdefined\figsoff\endinput\fi\begin{tikzpicture}`: with the flag
+    // set, `\endinput` has ended the file at this line (`force_eof`), and
+    // the normal path reads none of the picture's other lines. A recording
+    // made without the flag would replay all of them (`[1|6.0pt]` instead
+    // of `[0|5.0pt]`, and the caller's `\end{pic}` would close no group).
+    // The flag goes on and off again: replayed without it, refused with it
+    const P: &str =
+        "\\ifx\\stopnow\\relax\\endinput\\fi\\begin{pic}\\vrule width 3pt height 2pt\\kern2pt\n\
+        \\vrule height 5pt width 1pt\\global\\advance\\n by 1 \\def\\x{y}\n\
+        \\end{pic}\n";
+    let s = check_files(
+        "span-endinput",
+        &[
+            ("p.tex", P),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    "\\one\\one\\let\\stopnow\\relax\n\
+                     \\n=0 x \\input p \\end{pic} y \\message{[\\the\\n|\\the\\dimen1]}\n\
+                     \\n=0 x \\input p \\end{pic} y \\message{[\\the\\n|\\the\\dimen1]}\n\
+                     \\let\\stopnow\\undefined \\one\\one\\par\\showlists\\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    );
+    // (the second `\one` and the last two: the picture without the flag)
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn spans_with_a_savepos_are_not_replayed() {
+    // (REVIEW-A on #1997) a `remember picture` picture: its `\pdfsavepos`
+    // node is not one `boxfrag` keeps, so the span is never recorded
+    // (`WhatsitKind`) and every picture takes the normal path
+    let s = check_files(
+        "span-savepos",
+        &[
+            (
+                "p.tex",
+                "\\begin{pic}\\vrule width 3pt height 2pt\\pdfsavepos\n\
+                 \\kern2pt\\vrule height 5pt width 1pt\\global\\advance\\n by 1\n\
+                 \\end{pic}\n",
+            ),
+            (
+                "t.tex",
+                &[SPAN_PRELUDE, "\\one\\one\\one\\par\\showlists\\stop\n"].concat(),
+            ),
+        ],
+        "pic",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    assert!(stat(&s, "WhatsitKind") >= 1, "{s}");
+}
+
+#[test]
 fn spans_copy_then_global_void_is_not_replayed() {
     // (#1997) `\copy9` of a foreign box, then `\global\setbox9=\box3`
     // (box 3 void): the replay rebuilds the copies after every logged op,

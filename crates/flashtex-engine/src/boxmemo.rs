@@ -1082,9 +1082,14 @@ thread_local! {
     static WINDOW: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
-/// The host: an edit's window opens (`true`) or closes.
+/// The host: an edit's window opens (`true`) or closes. At a close the
+/// statistics are written (`FLASHTEX_BOXMEMO_STATS`): the host does not
+/// end the process where the command line writes them.
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+    if !open {
+        write_stats(true);
+    }
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
@@ -4389,6 +4394,10 @@ impl Globals {
             && self.nest[start.nest_ptr as usize].aux_field.0 == start_aux;
         let why = if span_lost {
             Some("SpanFile")
+        } else if span_f.is_some() && self.force_eof {
+            // (an `\endinput` inside the span: the file ends after the
+            // line it is on, which the replay would not make so)
+            Some("ForceEof")
         } else if end.cur_level != start.cur_level
             || end.save_ptr < start.save_ptr
             || !self.bm_saves_only(start.save_ptr, end.save_ptr)
@@ -5212,6 +5221,14 @@ impl Globals {
         // `\read` or a pseudo file)
         if self.input_ptr < 1 {
             return Err(Some("SpanLevel"));
+        }
+        // An `\endinput` already done on the file's current line
+        // (`force_eof`, a figure's `\ifdefined\figsoff\endinput\fi`): the
+        // normal path reads no line of it after this one, which a span's
+        // key does not hold (its lines are the file's), and a replay would
+        // move the file past lines it never reads. Refused (§17.1).
+        if self.force_eof {
+            return Err(Some("ForceEof"));
         }
         let fl = self.input_stack[(self.input_ptr - 1) as usize];
         if fl.state_field == TOKEN_LIST {

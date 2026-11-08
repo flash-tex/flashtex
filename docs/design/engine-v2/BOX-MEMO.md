@@ -960,15 +960,21 @@ What a picture reads, and how each is held:
   and `\pdffilesize` are not admitted);
 - randomness: `\pdfuniformdeviate`, `\pdfnormaldeviate` and `\pdfsetrandomseed` are refused
   (`Expandable`, `Command`); pgfmath's own generator is a register and part of the key;
-- page position: `\pdfsavepos` is a node replayed like any other (its position is the shipout's);
-  `\pdflastxpos`/`\pdflastypos` are refused (`LastItem`); remember-picture's positions come from
-  macros the `.aux` defined, so they are meanings in K3;
+- page position: a span whose output holds a `\pdfsavepos` node is not recorded (`WhatsitKind`:
+  `boxfrag` keeps no such node), so a `remember picture` picture is never memoised (test
+  `spans_with_a_savepos_are_not_replayed`); `\pdflastxpos`/`\pdflastypos` are refused (`LastItem`);
+  remember-picture's positions read elsewhere come from macros the `.aux` defined, meanings in K3;
 - the page and output: `Page`, `OuterList` and output are refused as before (§4);
 - the group: `\currentgrouplevel` and `\currentgrouptype` put the call's `cur_level` and `cur_group`
   into the key (`Entry::group`; inside its own groups the call makes both).
 
 What it writes: the op log (§5, §12.5), the nodes it appends (draw-call fragments, §10.3, now with
 math noads), F's position (below), the line-shift journal and source positions (§17.4).
+
+A span is not offered after an `\endinput` on its file's current line (`force_eof`: a figure's
+`\ifdefined\figsoff\endinput\fi\begin{tikzpicture}`), whose normal path reads none of the
+picture's other lines, and one inside which `\endinput` runs is abandoned (`ForceEof`). #2185,
+found by REVIEW-A; test `spans_after_an_endinput_on_their_line_are_not_replayed`.
 
 ### 17.2 Fast-forwarding the file
 
