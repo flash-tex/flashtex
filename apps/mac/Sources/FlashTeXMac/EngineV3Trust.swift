@@ -22,10 +22,13 @@ import Foundation
 ///   `.sty` downloaded later into a trusted folder: each is recorded when
 ///   the user trusts the prompt that counted it, and a later one asks
 ///   again. The walk is the project copy's (EngineV3Mirror.sync: 20,000
-///   entries, hidden files skipped). A walk cut short at that bound cannot
-///   vouch for the files it did not reach, so the project is not trusted
-///   until the user trusts it as it is (`incompleteSuffix`). The editor's
-///   open documents are checked whatever the walk saw: they are compiled.
+///   entries linked, hidden files skipped; past that it looks only for
+///   quarantined files, up to 200,000 entries, so a later download there
+///   asks again like any other). A walk cut short even so cannot vouch for
+///   the files it did not reach: the project is not trusted until the user
+///   trusts it as it is (`incompleteSuffix`), and files past 200,000
+///   entries are then not checked. The editor's open documents are checked
+///   whatever the walk saw: they are compiled.
 /// - A lone file in a shared folder (`isShared`: Downloads, Desktop, ...)
 ///   is not a project: the folder is never walked for trust. Trust covers
 ///   the file and the files its own download brought (the same quarantine

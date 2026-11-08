@@ -3364,7 +3364,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// into the copy. Bounded: 20,000 entries, hidden directories skipped.
     /// Returns what it saw: the input files (EngineV3Snapshot.inputs(root:),
     /// nil when it could not list them all) and the quarantined files (trust).
-    /// `truncated`: the walk stopped at `EngineV3Snapshot.maxEntries`.
+    /// `truncated`: the walk stopped before seeing every entry (`sync`).
     struct Walk { var inputs: [String: String]?; var quarantined: [URL]; var truncated = false }
 
     /// `fingerprints`/`quarantine`: whether to collect the input files and
@@ -3483,9 +3483,14 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         return out
     }
 
-    /// `bound`: most entries walked (tests use a small one).
+    /// `bound`: most entries linked and fingerprinted (tests use a small
+    /// one). Past it, when `quarantine` is set, the walk goes on looking
+    /// only for quarantined files, up to `quarantineBound` entries (ten
+    /// times `bound` by default): trust must see a file downloaded or
+    /// unpacked there later, even into a project it already trusted (#2060).
+    /// `truncated` only when that look stopped short too.
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true,
-              bound: Int = EngineV3Snapshot.maxEntries) -> Walk {
+              bound: Int = EngineV3Snapshot.maxEntries, quarantineBound: Int? = nil) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
         guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return Walk(inputs: nil, quarantined: []) }
@@ -3493,10 +3498,24 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         var inputs: [String: String]? = fingerprints ? [:] : nil
         var quarantined: [URL] = []
         var truncated = false
+        var linking = true
+        let lookBound = quarantineBound ?? bound * 10
         let prefix = source.standardizedFileURL.path + "/"
         for case let url as URL in e {
             n += 1
-            if n > bound { inputs = nil; truncated = true; break }
+            if linking, n > bound {
+                inputs = nil
+                linking = false
+                if !quarantine { truncated = true; break }
+            }
+            if !linking {
+                // A getxattr per file, nothing written: the copy stays bounded.
+                if n > lookBound { truncated = true; break }
+                if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory != true, EngineV3Trust.isQuarantined(url) {
+                    quarantined.append(url)
+                }
+                continue
+            }
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(prefix) else { continue }
             let rel = String(path.dropFirst(prefix.count))

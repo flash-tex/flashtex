@@ -307,7 +307,12 @@ final class EngineV3TrustTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: mirror.base) }
         let full = mirror.sync(except: ["paper.tex"], fingerprints: false)
         XCTAssertFalse(full.truncated)
-        let short = mirror.sync(except: ["paper.tex"], fingerprints: false, bound: 2)
+        // Past the link bound the walk still finds the quarantined file...
+        let looked = mirror.sync(except: ["paper.tex"], fingerprints: false, bound: 2)
+        XCTAssertFalse(looked.truncated)
+        XCTAssertEqual(looked.quarantined.map(\.lastPathComponent), ["zz-late.tex"])
+        // ...unless its quarantine-only look stops short too.
+        let short = mirror.sync(except: ["paper.tex"], fingerprints: false, bound: 2, quarantineBound: 3)
         XCTAssertTrue(short.truncated)
         let d = EngineV3Trust.decide(root: dir, main: "paper.tex", texts: [:], walkQuarantined: [], walkTruncated: true, store: store)
         XCTAssertFalse(d.trusted, "an incomplete walk fails closed")
@@ -317,6 +322,35 @@ final class EngineV3TrustTests: XCTestCase {
                                            store: store).trusted, "the user trusted it as it is")
         XCTAssertTrue(EngineV3Trust.decide(root: dir, main: "paper.tex", texts: [:], walkQuarantined: [], store: store).trusted)
         _ = file
+    }
+
+    /// REVIEW-C on #2170: a project trusted with more entries than the walk
+    /// links must still ask again for a quarantined file that arrives later
+    /// past that bound (an unpacked `mystyle.sty`, say).
+    func testALaterDownloadPastTheLinkBoundAsksAgain() throws {
+        let (dir, _) = try project()
+        for k in 0..<5 { try "f".write(to: dir.appendingPathComponent("f\(k).tex"), atomically: true, encoding: .utf8) }
+        let mirror = EngineV3Mirror(source: dir, session: 9_000 + Int.random(in: 0 ..< 1000))
+        defer { try? FileManager.default.removeItem(at: mirror.base) }
+        func decision() -> EngineV3Trust.Decision {
+            let w = mirror.sync(except: ["paper.tex"], fingerprints: false, bound: 2)
+            return EngineV3Trust.decide(root: dir, main: "paper.tex", texts: [:], walkQuarantined: w.quarantined,
+                                        walkTruncated: w.truncated, store: store)
+        }
+        XCTAssertTrue(decision().trusted, "made here, nothing quarantined")
+        let sty = dir.appendingPathComponent("zz-mystyle.sty")
+        try "\\def\\x{}".write(to: sty, atomically: true, encoding: .utf8)
+        quarantine(sty)
+        let d = decision()
+        XCTAssertFalse(d.trusted, "the new download past the link bound is seen")
+        XCTAssertEqual(d.need.map(\.path), [EngineV3Trust.canonical(sty).path])
+        EngineV3Trust.record(d.need, store: store)
+        XCTAssertTrue(decision().trusted)
+        // Replaced by another download (a new inode and event): asks again.
+        try FileManager.default.removeItem(at: sty)
+        try "\\def\\y{}".write(to: sty, atomically: true, encoding: .utf8)
+        quarantine(sty)
+        XCTAssertFalse(decision().trusted)
     }
 
     /// #2060: an open document is compiled, so it counts whatever the walk
