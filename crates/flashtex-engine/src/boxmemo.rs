@@ -2910,10 +2910,8 @@ impl Globals {
             *t.entry(f).or_insert(id) != id
         });
         if other {
-            self.bm_font_version = next_version(
-                self.bm_font_version,
-                [-3, f, id as i32, (id >> 32) as i32],
-            );
+            self.bm_font_version =
+                next_version(self.bm_font_version, [-3, f, id as i32, (id >> 32) as i32]);
         }
     }
 
