@@ -578,7 +578,24 @@ impl Job {
     /// runs bibtex there with `BIBINPUTS` starting with the project), then
     /// kpathsea's path for `format`, through the engine's resolver (the
     /// bundle's without a TeX Live).
+    ///
+    /// A confined host (`FLASHTEX_CONFINE_READS`) finds only what read
+    /// confinement allows (`system::tool_input_ok`, #2057): a refused file is
+    /// missing, so it is neither read for the rule's state nor given to the
+    /// tool.
     fn find(&self, name: &str, ext: &str, format: &str) -> Option<PathBuf> {
+        let (p, searched) = self.find_any(name, ext, format)?;
+        self.confined_ok(name, &p, searched).then_some(p)
+    }
+
+    /// `system::tool_input_ok` with the project and the output directory
+    /// for roots.
+    fn confined_ok(&self, name: &str, p: &Path, searched: bool) -> bool {
+        crate::system::tool_input_ok(name, p, searched, &[&self.snap.root, &self.snap.out])
+    }
+
+    /// `find` before confinement; whether the answer is kpathsea's.
+    fn find_any(&self, name: &str, ext: &str, format: &str) -> Option<(PathBuf, bool)> {
         let with = if name.ends_with(&format!(".{ext}")) {
             name.to_string()
         } else {
@@ -586,12 +603,12 @@ impl Job {
         };
         let p = Path::new(&with);
         if p.is_absolute() {
-            return Some(p.to_path_buf()).filter(|p| p.is_file());
+            return Some((p.to_path_buf(), false)).filter(|(p, _)| p.is_file());
         }
         for d in [&self.snap.root, &self.snap.out] {
             let c = d.join(p);
             if c.is_file() {
-                return Some(c);
+                return Some((c, false));
             }
         }
         let key = (format.to_string(), with.clone());
@@ -603,7 +620,7 @@ impl Job {
             .get(&key)
         {
             if r.as_ref().is_none_or(|p| p.is_file()) {
-                return r.clone();
+                return r.clone().map(|p| (p, true));
             }
         }
         let fmt = match format {
@@ -619,7 +636,7 @@ impl Job {
             .unwrap_or_else(|e| e.into_inner())
             .found
             .insert(key, r.clone());
-        r
+        r.map(|p| (p, true))
     }
 
     /// The state of a rule's sources, and the `.bib` files that are
@@ -650,7 +667,7 @@ impl Job {
                     self.snap.root.join(p)
                 };
                 if c.is_file() {
-                    Some(c)
+                    Some(c).filter(|c| self.confined_ok(b, c, false))
                 } else {
                     self.find(b, "bib", "bib")
                 }

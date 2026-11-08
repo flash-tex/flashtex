@@ -1863,7 +1863,11 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
 /// `\openin`, `\font` and its TFM/VF/map/encoding/font files, `\pdfmapfile`,
 /// `\pdfmapline`, images, the file primitives) and `open_input`'s own
 /// output-directory shortcut (`input_path`, `find_input`, which also serve
-/// `\pdfobj file` and the other byte reads). Two rules (`confined_found_ok`):
+/// `\pdfobj file` and the other byte reads). The lookups made outside the
+/// run go through them too (#2057): `lookup_again` (the display-list
+/// writer's font programs and encodings, and the incremental system's
+/// checks of the run's lookups, which so find what the run found) and the
+/// PK lookups (`find_pk`, `find_pk_quietly`). Two rules (`confined_found_ok`):
 ///
 /// - the name asked for may not be absolute, start with `~`, contain `$`
 ///   (kpathsea expands both) or have a `..` component;
@@ -1999,6 +2003,31 @@ pub(crate) fn tool_read_ok(
         roots.push(d);
     }
     confined_path_ok(path, &roots, searched)
+}
+
+/// Both confinement rules for a data file the host finds for an external
+/// tool it runs (`host::external`: a `.bib` or `.bst` file, for the rule's
+/// state and the tool's input, #2057): `name` as the document gave it,
+/// `path` where it was found, `searched` if kpathsea found it; `dirs` (the
+/// project and the output directory) are roots besides
+/// `FLASHTEX_CONFINE_ROOTS`. A refusal is noted. True when confinement is
+/// off.
+pub(crate) fn tool_input_ok(name: &str, path: &Path, searched: bool, dirs: &[&Path]) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !confined_name_ok(name) {
+        note_refused(name, None);
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    roots.extend(dirs.iter().filter_map(|d| std::fs::canonicalize(d).ok()));
+    let ok = confined_path_ok(path, &roots, searched);
+    if !ok {
+        let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        note_refused(name, Some(&real));
+    }
+    ok
 }
 
 /// The second rule on its own (tests call it directly).
@@ -2189,7 +2218,10 @@ pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
 /// `FileResolver::find_pk`). The file found is recorded as read
 /// (`recorder_record_input`); a file mktexpk made is an external effect.
 pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
-    let g = with_resolver(|r| r.find_pk(name, dpi, true));
+    if refused_name(name, Format::Pk) {
+        return None;
+    }
+    let g = with_resolver(|r| r.find_pk(name, dpi, true)).filter(|g| pk_confined_ok(name, g));
     let path = g.as_ref().map(|g| g.path.to_string_lossy().into_owned());
     read_set_lookup(
         &format!("{name}.{dpi}pk"),
@@ -2211,7 +2243,28 @@ pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
 /// `find_pk` without mktexpk and without recording anything: a look at
 /// what is there (the display-list writer's).
 pub fn find_pk_quietly(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
-    with_resolver(|r| r.find_pk(name, dpi, false))
+    if refused_name(name, Format::Pk) {
+        return None;
+    }
+    with_resolver(|r| r.find_pk(name, dpi, false)).filter(|g| pk_confined_ok(name, g))
+}
+
+/// Confined (`input_name_confined_ok`): a PK file kpathsea found for font
+/// `name` (along `PKFONTS`, which starts with `.`) passes as any other
+/// search hit must, so a project's `cmr10.600pk` that is a link out of the
+/// allowed roots is missing, as pdfTeX takes a PK file it cannot find.
+fn pk_confined_ok(name: &str, g: &crate::resolver::PkGlyph) -> bool {
+    confined_found_ok(name, &g.path.to_string_lossy(), Format::Pk, true)
+}
+
+/// Confined: a name the first rule refuses is not looked up at all (no
+/// mktex script runs for it), and is noted as refused.
+fn refused_name(name: &str, format: Format) -> bool {
+    if reads_confined() && format != Format::Fmt && !confined_name_ok(name) {
+        note_refused(name, None);
+        return true;
+    }
+    false
 }
 
 thread_local! {
@@ -5268,11 +5321,20 @@ pub fn lookup_again_deps(l: &Lookup) -> (Option<String>, Vec<(String, StatSig)>)
 /// relative name in `-output-directory` before the resolver, and records a
 /// lookup only when it is not there, so a lookup that now finds the file
 /// there finds something else.
+///
+/// Confined, both answers pass `confined_found_ok` as the run's did
+/// (`input_path`: a refused file in the output directory falls through to
+/// the resolver), so the display-list writer never reads a font program or
+/// an encoding a map line names outside the allowed roots (#2057), and a
+/// check of the run's lookups finds what the run found.
 pub fn lookup_again(l: &Lookup) -> Option<String> {
+    if refused_name(&l.name, l.format) {
+        return None;
+    }
     if let Some(dir) = run().output_directory {
         if !l.name.starts_with('/') {
             let p = format!("{dir}/{}", l.name);
-            if Path::new(&p).is_file() {
+            if Path::new(&p).is_file() && confined_found_ok(&l.name, &p, l.format, false) {
                 return Some(p);
             }
         }
@@ -5281,7 +5343,9 @@ pub fn lookup_again(l: &Lookup) -> Option<String> {
         Some(m) => r.find_ex(&l.name, l.format, m).0,
         None => r.find(&l.name, l.format),
     });
-    found.map(|p| p.to_string_lossy().into_owned())
+    found
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|p| confined_found_ok(&l.name, p, l.format, true))
 }
 
 // ---- files in a checkpoint ---------------------------------------------------
