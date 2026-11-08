@@ -495,10 +495,11 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
     }
 }
 
-/// A PDF FlashTeX's output refuses to write (a BMP image: "BMP images are
-/// not written yet"; a broken Type 1 font) is no PDF either: the compile
-/// is `error` with an error diagnostic, not a warning (the app showed it
-/// as recovered).
+/// A PDF FlashTeX's output refuses to write (`pdf::write` fails: here a
+/// Type 1 font program that is not one) is no PDF either: the compile is
+/// `error` with an error diagnostic, not a warning (the app showed it as
+/// recovered). The project's own `cmr10.pfb`, found before TeX Live's, is
+/// not a font.
 #[test]
 fn a_pdf_the_output_cannot_write_is_an_error() {
     if !texlive() {
@@ -509,31 +510,27 @@ fn a_pdf_the_output_cannot_write_is_an_error() {
     let _ = std::fs::remove_dir_all(&dir);
     let (proj, out) = project(
         &dir,
-        "\\documentclass{article}\n\\begin{document}\nx\\XeTeXpicfile \"img.bmp\"\n\\end{document}\n",
+        "\\documentclass{article}\n\\begin{document}\n\\font\\x=cmr10 \\x A\n\\end{document}\n",
     );
-    // a 1x1 24-bit BMP (BITMAPINFOHEADER)
-    let mut bmp = b"BM".to_vec();
-    for v in [58u32, 0, 54, 40, 1, 1] {
-        bmp.extend(v.to_le_bytes());
-    }
-    bmp.extend(1u16.to_le_bytes());
-    bmp.extend(24u16.to_le_bytes());
-    for v in [0u32, 4, 2835, 2835, 0, 0] {
-        bmp.extend(v.to_le_bytes());
-    }
-    bmp.extend([0, 0, 255, 0]);
-    std::fs::write(proj.join("img.bmp"), bmp).unwrap();
+    std::fs::write(proj.join("cmr10.pfb"), b"not a Type 1 font\n").unwrap();
     let h = start(&dir);
     let alarm = deadline(h.child.id(), 600);
     let mut c = Client::connect(&h.sock).unwrap();
     c.compile(&request(1, &proj, &out)).unwrap();
     let (ev, done) = events(&mut c, 1);
-    assert_eq!(done.str_field("status"), Some("error"), "{done:?}");
+    let errors: Vec<_> = ev
+        .iter()
+        .filter_map(|e| match e {
+            Event::Diagnostic(j) if j.str_field("severity") == Some("error") => {
+                j.str_field("message").map(str::to_string)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(done.str_field("status"), Some("error"), "{done:?} {ev:?}");
     assert!(
-        ev.iter().any(|e| matches!(e, Event::Diagnostic(j)
-            if j.str_field("severity") == Some("error")
-                && j.str_field("message").is_some_and(|m| m.contains("BMP")))),
-        "the refused PDF, as an error: {ev:?}"
+        errors.iter().any(|m| m.contains("CMR10")),
+        "the refused PDF, as an error: {errors:?} {ev:?}"
     );
     drop(alarm);
     c.bye().unwrap();
