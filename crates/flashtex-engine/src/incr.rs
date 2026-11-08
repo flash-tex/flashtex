@@ -3264,8 +3264,18 @@ impl Observer for Obs {
             if self.newer_waiting(g) {
                 self.thin_due = true;
             } else {
+                let t_thin = Instant::now();
                 self.thin(g);
+                let t_mid = t_thin.elapsed();
                 self.thin_pending(g);
+                if kw_on() && t_thin.elapsed().as_secs_f64() > 1e-3 {
+                    kw(format_args!(
+                        "run: thin {:.3} ms, thin_pending {:.3} ms ({} pages)",
+                        t_mid.as_secs_f64() * 1e3,
+                        (t_thin.elapsed() - t_mid).as_secs_f64() * 1e3,
+                        self.new_pages.len()
+                    ));
+                }
             }
         }
         if why != Point::Shipout {
@@ -7888,7 +7898,14 @@ impl Session {
                 lines: obs.shifts.clone(),
             };
             let notes_new = g.record_of(new_id)?.notes;
+            let t_redo = Instant::now();
             g.redo_to_remapped_with(old, &in_remap, adopt.take())?;
+            if kw_on() {
+                kw(format_args!(
+                    "run: redo to the convergence point {:.3} ms",
+                    t_redo.elapsed().as_secs_f64() * 1e3
+                ));
+            }
             // READ-TRACK (`crate::dormant`): the dormant line's new words in
             // every kept state from the convergence point on, before the
             // restore of `rerun_from` below
@@ -7948,7 +7965,15 @@ impl Session {
                 rep.rerun_from = Some(last_pages);
             }
             let rec_last = g.record_of(last)?;
-            if let Err(e) = g.restore_discard(last) {
+            let t_end = Instant::now();
+            let r_end = g.restore_discard(last);
+            if kw_on() {
+                kw(format_args!(
+                    "run: restore to the end point {:.3} ms",
+                    t_end.elapsed().as_secs_f64() * 1e3
+                ));
+            }
+            if let Err(e) = r_end {
                 // (an output file open there was opened for output again
                 // since: its content then is gone)
                 *rep = self.cold(t0, None, Some(format!("cannot restore the end: {e}")))?;

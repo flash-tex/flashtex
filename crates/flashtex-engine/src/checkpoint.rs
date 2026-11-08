@@ -2548,7 +2548,14 @@ impl Globals {
 
     fn hook_checkpoint(&mut self, why: Point) {
         let t = std::time::Instant::now();
-        match self.checkpoint() {
+        let r = self.checkpoint();
+        if crate::incr::kw_on() && t.elapsed().as_secs_f64() > 1e-3 {
+            crate::incr::kw(format_args!(
+                "run: checkpoint {why:?} taken in {:.3} ms",
+                t.elapsed().as_secs_f64() * 1e3
+            ));
+        }
+        match r {
             Ok(id) => {
                 let hash = if self.layer().hash_states {
                     Some(self.state_hash())
