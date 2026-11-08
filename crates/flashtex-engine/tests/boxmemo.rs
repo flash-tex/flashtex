@@ -367,6 +367,161 @@ fn font_parameters_are_part_of_the_key() {
     assert!(stat(&s, "recordings") >= 3, "{s}");
 }
 
+/// The calls below define `\reserved@a` before they read it, as LaTeX's
+/// `\@ifnextchar` and expl3's `\tl_set:Nn` do; between the calls the
+/// document gives it other meanings (BOX-MEMO.md §17).
+const RESERVED: &str =
+    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\@=11 \\scrollmode\n\
+    \\def\\show{\\message{[\\the\\dimen1|\\the\\count1|\\meaning\\reserved@a|\\meaning\\tmp]}}\n";
+
+#[test]
+fn a_meaning_assigned_before_it_is_read_is_not_keyed() {
+    // `\def\reserved@a` first: what it held is not an input (its first
+    // access is a write), so a call hits whatever the document left there;
+    // its new meaning, read later in the call, is the call's own
+    let s = check(
+        "write-first",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\reserved@a{#1}\\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\let\\reserved@a\\relax\\measure{1pt}\\show\\def\\reserved@a{2pt}\\measure{1pt}\\show\
+             \\measure{2pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+    assert!(stat(&s, "k3_written_first") >= 1, "{s}");
+}
+
+#[test]
+fn a_target_passed_as_an_argument_is_not_keyed() {
+    // expl3's `\tl_set:Nn \l__cmd_tmpa_tl {..}`: the control sequence is
+    // matched as an argument, then defined; neither reads its meaning
+    let s = check(
+        "write-first-arg",
+        &[
+            RESERVED,
+            "\\def\\set#1#2{\\def#1{#2}}\n\
+             \\def\\measure#1{\\set\\reserved@a{#1}\\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\let\\reserved@a\\relax\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_meaning_read_before_it_is_assigned_is_keyed() {
+    // `\ifx\reserved@a\relax` reads it before the `\def`, and an `\edef`
+    // reads its target in its own body: both keep the meaning in the key,
+    // so a call after a change is a miss (and the logs agree)
+    let s = check(
+        "read-first",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\ifx\\reserved@a\\relax\\gdef\\tmp{R}\\else\\gdef\\tmp{M}\\fi\\def\\reserved@a{#1}\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\let\\reserved@a\\relax\\measure{1pt}\\show\\let\\reserved@a\\relax\\measure{1pt}\\show\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\let\\reserved@a\\relax\\measure{1pt}\\show\n\
+             \\def\\measure#1{\\edef\\tmp{\\tmp#1}\\begingroup\\setbox0\\hbox{\\vrule width 1pt}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\tmp{a}\\measure{b}\\show\\def\\tmp{a}\\measure{b}\\show\\def\\tmp{c}\\measure{b}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn a_meaning_an_endgroup_brings_back_is_keyed() {
+    // a local `\def` in a group of the call's own is undone at its
+    // `\endgroup`: the read after it sees what the document left, which is
+    // then an input of the call
+    let s = check(
+        "restored",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\begingroup\\def\\reserved@a{#1}\\endgroup\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{1pt}\\measure{9pt}\\show\\measure{9pt}\\show\
+             \\def\\reserved@a{2pt}\\measure{9pt}\\show\\measure{9pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn an_argument_that_turns_outer_is_a_miss() {
+    // `\x`, an argument of `\set` inside the call, is read only as a token:
+    // the key holds that it is not `\outer` (nor `#`, `&`, `\if`, `\fi`).
+    // Once it is, matching `\set`'s argument is an error, so that call must
+    // not be replayed
+    let s = check(
+        "token-outer",
+        &[
+            RESERVED,
+            "\\def\\set#1{\\def\\tmp{#1}}\n\
+             \\def\\measure#1{\\set\\x\\begingroup\\setbox0\\hbox{\\vrule width #1}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\let\\x\\relax\\measure{1pt}\\show\\measure{1pt}\\show\\def\\x{}\\measure{1pt}\\show\
+             \\outer\\def\\x{}\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert!(stat(&s, "k3_tokens") >= 1, "{s}");
+}
+
+#[test]
+fn a_token_that_turns_into_a_parameter_is_a_miss() {
+    // `\x` in a body that is not expanded is read only as a token: the key
+    // holds that it is not a `#` (nor `\outer`, `&`, `\if`, `\fi`). Once it
+    // is one, `\def` takes it as a parameter (an error here), so that call
+    // must not be replayed. changes/throughput.ch [7] read the body's tokens
+    // in place, unseen by the recording: with that, this log differs. (The
+    // `\vbox` of a paragraph after the error: no call is offered until a
+    // paragraph's end sets `error_count` back to 0)
+    let s = check(
+        "token",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\tmp{\\x #1}\\begingroup\\setbox0\\hbox{\\vrule width 1pt}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\let\\x\\relax\\measure{1}\\show\\measure{1}\\show\\let\\x=#\\measure{1}\\show\
+             \\setbox9\\vbox{\\indent\\par}\\let\\x\\relax\\measure{1}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert!(stat(&s, "k3_tokens") >= 1, "{s}");
+}
+
+#[test]
+fn a_meaning_defined_twice_at_the_call_level_is_not_keyed() {
+    // `\@ifnextchar`'s shape, twice in one call: the first `\def` frees
+    // what `\reserved@a` held (the free list then begins with its nodes),
+    // and the second's token list is made of them, at the old address. A
+    // read after that finds the call's own meaning, not the old one come
+    // back: no `\endgroup` of the call could bring it back
+    let s = check(
+        "write-twice",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\reserved@a{#1}\\def\\reserved@a{#1}\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\def\\reserved@a{zzz}\\measure{1pt}\\show\\def\\reserved@a{2pt}\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
 #[test]
 fn boxes_set_at_the_calls_level_replay() {
     // (lane FANCYHDR) fancyhdr's head and foot run `\normalsize` at the
@@ -485,14 +640,40 @@ fn calls_in_math_groups_compare_their_save_stack() {
     // `\\label` in `equation`). The full verifier walks the save stack
     // group by group as `show_save_groups` does; it took the display's
     // nest level for inline math under a math group, read the `$$` as an
-    // `\\eqno` with a saved word, and misread every entry below
+    // `\\eqno` with a saved word, and misread every entry below. (A `\\par`
+    // after each: INITEX has no math fonts, which is an error, and no call
+    // is offered until a paragraph's end sets `error_count` back to 0)
     let s = check(
         "math-group",
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
          \\hsize=100pt \\tracingonline=0\n\
          \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
          \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
-         \\one\\one\\one\\end\n",
+         \\one\\par\\one\\par\\one\\par\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_call_that_ends_a_paragraph_is_not_replayed_after_an_error() {
+    // (beamer-polish, sound-a in verify mode: `\@oddhead` after an edit
+    // that made errors) a call that ends a paragraph -- here in a `\vbox`,
+    // beamer's head in its `\parbox`es -- sets `error_count` to 0
+    // (`end_graf`), which a replay does not. Recorded at 0, then offered
+    // after 99 scrolled errors: replayed, the count stayed at 99 and the
+    // next error was the hundredth ("That makes 100 errors"), where the
+    // normal path counts it as the first. No call is offered while the
+    // count is not 0 (BOX-MEMO.md §17, errors)
+    let s = check(
+        "error-count",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\hsize=100pt \\parfillskip=0pt plus 1fil \\tolerance=10000 \\hbadness=10000 \\vbadness=10000\n\
+         \\hfuzz=16383pt \\vfuzz=16383pt\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\noindent\\vrule width #1 height 2pt\\par}\
+         \\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\errs{\\ifnum\\count9<99 \\advance\\count9 by 1 \\undefinedx\\expandafter\\errs\\fi}\n\
+         \\measure{1pt}\\measure{1pt}\\errs\\measure{1pt}\\undefinedx\\message{[\\the\\count9|\\the\\dimen1]}\
+         \\measure{1pt}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
 }
