@@ -1695,9 +1695,13 @@ fn same_words(
     mut dorm: Option<&mut crate::dormant::Aside>,
 ) -> Result<usize, String> {
     let t = Instant::now();
+    let pt = crate::boxmemo::prof::now();
     let Some(d) = g.diff_pending_until(old, &mut *stop)? else {
         return Err(PREEMPTED.into());
     };
+    let pt = crate::boxmemo::prof::add("4a diff chunks", pt);
+    crate::boxmemo::prof::count("4a chunks compared", d.compared as u64);
+    crate::boxmemo::prof::count("4a chunks differing", d.differing.len() as u64);
     if debug {
         eprintln!(
             "[incr] diff: {} of {} chunks differ, {:.2} ms",
@@ -1713,9 +1717,11 @@ fn same_words(
     // chunks of the live nodes (`crate::iso::SideOld`).
     let side_written = g.pending_side_written(old)?;
     let side_any = side_written.iter().any(|&w| w != 0);
+    let pt = crate::boxmemo::prof::add("4b side written", pt);
     if d.differing.is_empty() && !side_any {
         return Ok(0);
     }
+    crate::boxmemo::prof::count("4c to explain", 1);
     if stop() {
         return Err(PREEMPTED.into());
     }
@@ -1862,6 +1868,8 @@ fn same_words(
         if stop() {
             return Err(PREEMPTED.into());
         }
+        let pt = crate::boxmemo::prof::add("4c words and filters", pt);
+        crate::boxmemo::prof::count("4d words left", left.len() as u64);
         let t = Instant::now();
         let mut fetch = |cs: &[u32]| {
             let mut never = || false;
@@ -1889,6 +1897,7 @@ fn same_words(
         } else {
             check()
         };
+        crate::boxmemo::prof::add("4d iso check", pt);
         if debug {
             eprintln!(
                 "[incr] iso: {} words to explain, {:.2} ms",

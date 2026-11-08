@@ -1082,7 +1082,9 @@ impl Globals {
         let cpu0 = crate::incr::thread_cpu_s();
         // (READ-TRACK: the watch, armed in the state taken)
         self.dorm_arm();
+        let pt = crate::boxmemo::prof::now();
         let ext = self.capture_ext()?;
+        crate::boxmemo::prof::add("c capture_ext", pt);
         let t = std::time::Instant::now();
         let cpu = crate::incr::thread_cpu_s();
         self.spill_scalars();
