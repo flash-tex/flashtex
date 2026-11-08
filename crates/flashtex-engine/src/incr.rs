@@ -4817,8 +4817,8 @@ impl Session {
 
     /// The client shows page `page` (0-based; `VIEWPORT`, lane MEMORY): if
     /// it is more than `Options::dense` pages from the retention cursor,
-    /// where retention keeps a page checkpoint only now and then
-    /// (`Options::far`) and no segment checkpoints, run again with nothing
+    /// where retention keeps the page checkpoints and no segment ones
+    /// (`thin`), run again with nothing
     /// changed from a kept page checkpoint `REDENSIFY_BACK` pages or more
     /// before it, through it and the page after (no convergence test
     /// before), so that their checkpoints, segment ones too, are taken (the
@@ -4826,7 +4826,7 @@ impl Session {
     /// converges with the old one and jumps to its end, as an edit's run
     /// does; its pages are the old ones. `None`: nothing to do. The
     /// caller's `set_preempt` stops it for newer work, and the next compile
-    /// keeps what it typeset.
+    /// drops it (`Paused::idle`).
     pub fn redensify(&mut self, page: usize) -> Result<Option<Report>, String> {
         if self.paused.is_some() || self.g.is_none() || page >= self.pages.len() {
             return Ok(None);
