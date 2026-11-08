@@ -376,11 +376,27 @@ fn intrinsics_verify_in_the_host() {
         }
         drop(h);
         let err = std::fs::read_to_string(&err_path).unwrap();
-        let checks = err.lines().filter(|l| l.starts_with("verify: ")).count();
-        let differing = err
+        // one `verify: N differences ...` line per check (and other
+        // `verify: ` lines of FLASHTEX_INTRINSICS_DEBUG's)
+        let counts: Vec<u64> = err
             .lines()
-            .filter(|l| l.starts_with("verify: ") && !l.starts_with("verify: 0 differences"))
-            .count();
+            .filter_map(|l| {
+                l.strip_prefix("verify: ")?
+                    .split_once(" differences ")?
+                    .0
+                    .parse()
+                    .ok()
+            })
+            .collect();
+        let checks = counts.len();
+        let differing = counts.iter().filter(|&&n| n > 0).count();
+        assert_eq!(
+            differing,
+            err.lines()
+                .filter(|l| l.starts_with("intrinsics verify: "))
+                .count(),
+            "{fault}: each difference reported"
+        );
         seen.push((checks, differing));
     }
     let (checks, differing) = seen[0];
