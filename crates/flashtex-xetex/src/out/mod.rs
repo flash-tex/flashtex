@@ -521,7 +521,9 @@ pub fn finish(g: &mut Globals) -> i32 {
                 }
             }
             Err(e) => {
-                reports.push(format!("FlashTeX output: {e}"));
+                // an error too: the PDF was not made (a BMP image, a
+                // broken Type 1 font)
+                reports.push(format!("! FlashTeX output: {e}"));
                 rc = 1;
             }
         }

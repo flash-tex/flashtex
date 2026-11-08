@@ -495,6 +495,52 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
     }
 }
 
+/// A PDF FlashTeX's output refuses to write (a BMP image: "BMP images are
+/// not written yet"; a broken Type 1 font) is no PDF either: the compile
+/// is `error` with an error diagnostic, not a warning (the app showed it
+/// as recovered).
+#[test]
+fn a_pdf_the_output_cannot_write_is_an_error() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-nopdf-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (proj, out) = project(
+        &dir,
+        "\\documentclass{article}\n\\begin{document}\nx\\XeTeXpicfile \"img.bmp\"\n\\end{document}\n",
+    );
+    // a 1x1 24-bit BMP (BITMAPINFOHEADER)
+    let mut bmp = b"BM".to_vec();
+    for v in [58u32, 0, 54, 40, 1, 1] {
+        bmp.extend(v.to_le_bytes());
+    }
+    bmp.extend(1u16.to_le_bytes());
+    bmp.extend(24u16.to_le_bytes());
+    for v in [0u32, 4, 2835, 2835, 0, 0] {
+        bmp.extend(v.to_le_bytes());
+    }
+    bmp.extend([0, 0, 255, 0]);
+    std::fs::write(proj.join("img.bmp"), bmp).unwrap();
+    let h = start(&dir);
+    let alarm = deadline(h.child.id(), 600);
+    let mut c = Client::connect(&h.sock).unwrap();
+    c.compile(&request(1, &proj, &out)).unwrap();
+    let (ev, done) = events(&mut c, 1);
+    assert_eq!(done.str_field("status"), Some("error"), "{done:?}");
+    assert!(
+        ev.iter().any(|e| matches!(e, Event::Diagnostic(j)
+            if j.str_field("severity") == Some("error")
+                && j.str_field("message").is_some_and(|m| m.contains("BMP")))),
+        "the refused PDF, as an error: {ev:?}"
+    );
+    drop(alarm);
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A CANCEL that names a compile already finished (or one never sent)
 /// is dropped: it does not cancel a later compile that reuses the id.
 #[test]
