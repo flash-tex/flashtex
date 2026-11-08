@@ -184,7 +184,7 @@ fn strip_tex_comments(latex: &str) -> Vec<char> {
     let mut i = 0;
     while i < input.len() {
         let c = input[i];
-        if c == '%' && backslashes % 2 == 0 {
+        if c == '%' && backslashes.is_multiple_of(2) {
             while i < input.len() && !matches!(input[i], '\r' | '\n') {
                 i += 1;
             }
@@ -207,7 +207,8 @@ fn strip_tex_comments(latex: &str) -> Vec<char> {
             continue;
         }
         stripped.push(c);
-        in_control_word = c.is_ascii_alphabetic() && (in_control_word || backslashes % 2 == 1);
+        in_control_word =
+            c.is_ascii_alphabetic() && (in_control_word || !backslashes.is_multiple_of(2));
         backslashes = if c == '\\' { backslashes + 1 } else { 0 };
         i += 1;
     }
@@ -805,8 +806,7 @@ impl CompilerValidator {
                     // The condition clears as soon as that child execs; retry
                     // briefly instead of failing the validation.
                     Err(e)
-                        if e.kind() == std::io::ErrorKind::ExecutableFileBusy
-                            && attempts < 20 =>
+                        if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 =>
                     {
                         attempts += 1;
                         thread::sleep(Duration::from_millis(10));
