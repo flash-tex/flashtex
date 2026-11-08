@@ -90,6 +90,12 @@ impl edit_fuzz::FuzzHost for UnicodeFuzz {
 #[test]
 fn random_edit_sequences_equal_scratch_compiles() {
     if flashtex_engine::resolver::discover_texlive().is_none() {
+        // (edit-fuzz.yml sets FLASHTEX_REQUIRE_TEXLIVE: a run there that
+        // finds no TeX Live fails rather than passing with nothing tested)
+        assert!(
+            std::env::var_os("FLASHTEX_REQUIRE_TEXLIVE").is_none_or(|v| v != "1"),
+            "no TeX Live found, and FLASHTEX_REQUIRE_TEXLIVE=1 says this run must have one"
+        );
         eprintln!("skipped: no TeX Live");
         return;
     }

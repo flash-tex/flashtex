@@ -53,6 +53,10 @@ pub struct Outcome {
     pub progress: usize,
     /// The `file`s the `PROGRESS` heartbeats named, in order.
     pub progress_files: Vec<String>,
+    /// `SPAN_SHIFT` messages (`span-shift-v1`, spec §5.3.1), and the spans
+    /// `SOURCES` declared (new or moved).
+    pub span_shifts: usize,
+    pub declared: usize,
 }
 
 pub fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -70,6 +74,7 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
     let mut first_page = None;
     let mut progress = 0;
     let mut progress_files = vec![];
+    let (mut span_shifts, mut declared) = (0, 0);
     let done = loop {
         let ev = match first.take() {
             Some(e) => e,
@@ -91,6 +96,7 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
                 view.fonts.insert(f.id, f.key);
             }
             Event::Sources(s) => {
+                declared += s.spans.len();
                 for (i, p) in s.files {
                     view.files.insert(i, p);
                 }
@@ -128,6 +134,14 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
             Event::Image(j) => view.images.push(j),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
+            Event::Other(k, body) if k == flashtex_display_list::kind::SPAN_SHIFT => {
+                span_shifts += 1;
+                let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
+                let sh = flashtex_display_list::resource::SpanShifts::from_json(&j).unwrap();
+                for at in view.spans.values_mut() {
+                    *at = sh.apply(*at);
+                }
+            }
             Event::Other(k, body) if k == flashtex_display_list::kind::PROGRESS => {
                 progress += 1;
                 let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
@@ -149,6 +163,8 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
         first_page,
         progress,
         progress_files,
+        span_shifts,
+        declared,
     }
 }
 
@@ -424,11 +440,47 @@ fn inside_words(text: &str, lo: usize) -> Vec<usize> {
             && (b[run - 1] == b'\\'
                 || text[..run].ends_with("\\begin{")
                 || text[..run].ends_with("\\end{"));
-        if !name {
+        if !name && !names_a_file(text, i) {
             v.push(i);
         }
     }
     v
+}
+
+/// Whether offset `i` is in the name of a file that `text` loads there: a
+/// class, a package, a theme, an `\input` or `\include`. A letter typed or
+/// deleted there names a file that does not exist, and TeX stops before
+/// the first page -- on both sides alike, so that the steps until a revert
+/// would compare no page.
+fn names_a_file(text: &str, i: usize) -> bool {
+    let ls = text[..i].rfind('\n').map_or(0, |k| k + 1);
+    let Some(bs) = text[ls..i].rfind('\\').map(|k| ls + k) else {
+        return false;
+    };
+    let name: String = text[bs + 1..i]
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let loads = matches!(
+        name.as_str(),
+        "documentclass"
+            | "usepackage"
+            | "RequirePackage"
+            | "input"
+            | "include"
+            | "includegraphics"
+            | "bibliography"
+            | "bibliographystyle"
+    ) || (name.starts_with("use") && name.ends_with("theme"));
+    // (in its arguments, up to the closing brace)
+    loads && !text[bs + 1 + name.len()..i].contains('}')
+}
+
+/// FNV-1a, 64 bits: a document's name as a number for its sequences' seed.
+fn fnv1a(s: &str) -> u64 {
+    s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// The keys of a `.bib` text's entries (`@type{key,`).
@@ -982,31 +1034,35 @@ fn fuzz_tools(proj: &Path, main: &str) -> bool {
 
 /// A compile and, with `tools`, the follow-up compiles the host runs after
 /// bibtex and makeindex, until it says the cycle is `settled`: the first
-/// compile's mode (with `+tools` when a tool ran), and the last compile's
-/// outcome.
+/// compile's mode (with `+tools` when a tool ran, whatever its status),
+/// the last compile's outcome, and how many tool runs succeeded (status
+/// `ok` or `warnings`: a fuzzed `.bib` may make bibtex fail, on both
+/// sides alike, but a failed run proves nothing about the reruns).
 fn fuzz_cycle(
     c: &mut Client,
     view: &mut View,
     r: &CompileRequest,
     tools: bool,
-) -> (String, Outcome) {
+) -> (String, Outcome, usize) {
     let first = compile(c, view, r);
     let mut mode = first.done.str_field("mode").unwrap_or("?").to_string();
     if !tools {
-        return (mode, first);
+        return (mode, first, 0);
     }
     let mut last = first;
+    let mut ok = 0;
     loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Tool(t)
                 if t.str_field("event") == Some("settled") && t.int_field("id") == Some(r.id) =>
             {
-                return (mode, last);
+                return (mode, last, ok);
             }
             Event::Tool(t) if t.str_field("event") == Some("done") => {
                 if !mode.ends_with("+tools") {
                     mode.push_str("+tools");
                 }
+                ok += matches!(t.str_field("status"), Some("ok" | "warnings")) as usize;
             }
             ev @ Event::Started(_) => last = receive(c, view, Some(ev)),
             Event::Error(e) => panic!("host error: {e}"),
@@ -1043,6 +1099,14 @@ fn fuzz_compare(
     let _ = std::fs::remove_dir_all(base.join(copy));
     copy_dir(proj, &p2);
     copy_dir(out, &o2);
+    let stem = Path::new(main)
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    // (the scratch compile writes its own log: a copy of the host's would
+    // compare equal however the scratch compile went)
+    let _ = std::fs::remove_file(o2.join(format!("{stem}.log")));
     if tools {
         // (the tools' outputs made again: the scratch compile runs bibtex
         // and makeindex itself; the `.aux` files stay, which LaTeX reads
@@ -1061,7 +1125,7 @@ fn fuzz_compare(
         let mut s = Client::connect(sock).map_err(|e| e.to_string())?;
         let mut sv = View::default();
         let rs = host.scratch(&p2, &o2, main, tools);
-        let (mode, so) = fuzz_cycle(&mut s, &mut sv, &rs, tools);
+        let (mode, so, _) = fuzz_cycle(&mut s, &mut sv, &rs, tools);
         let _ = s.bye();
         // (a harness fault, not the host's: say so)
         // (with `tools`, "cold+tools": the scratch compile ran them)
@@ -1083,15 +1147,18 @@ fn fuzz_compare(
                 return Err(format!("page {i}: {}", describe_difference(&a, &b)));
             }
         }
-        let stem = Path::new(main)
-            .file_stem()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
-        let log = |d: &Path| std::fs::read(d.join(format!("{stem}.log"))).unwrap_or_default();
+        // (a log missing on both sides is not a match)
+        let log = |d: &Path, whose: &str| {
+            std::fs::read(d.join(format!("{stem}.log")))
+                .map_err(|e| format!("{whose} {stem}.log: {e}"))
+        };
         let (mine, theirs) = (
-            fuzz_log(&log(out), &base.join("a"), &base.join("a")),
-            fuzz_log(&log(&o2), &base.join(copy), &base.join("a")),
+            fuzz_log(&log(out, "the host's")?, &base.join("a"), &base.join("a")),
+            fuzz_log(
+                &log(&o2, "a scratch compile's")?,
+                &base.join(copy),
+                &base.join("a"),
+            ),
         );
         if mine != theirs {
             let k = mine
@@ -1113,15 +1180,30 @@ fn fuzz_compare(
     r
 }
 
+/// What a replay compiled: the compiles by mode; `live`, the steps whose
+/// compile was incremental (neither cold nor unchanged), `ok`, and had
+/// pages -- the steps that test the incremental host; and the tool runs
+/// that succeeded before the first edit (`baseline_tools`) and after it.
+#[derive(Default, Debug)]
+struct FuzzStats {
+    modes: BTreeMap<String, usize>,
+    live: usize,
+    tools_wanted: bool,
+    baseline_tools: usize,
+    tools: usize,
+}
+
 /// Replay `steps` on a fresh copy of `src` in a fresh host: `Err` names the
-/// first step whose compile differs from a scratch compile (and how).
+/// first step whose compile differs from a scratch compile (and how), or
+/// step 0 when the document itself does not compile `ok` with pages (and,
+/// with tools, a tool run that succeeded).
 fn fuzz_replay(
     fh: &dyn FuzzHost,
     src: &Path,
     main: &str,
     steps: &[FuzzStep],
     tag: &str,
-) -> Result<(), (usize, String)> {
+) -> Result<FuzzStats, (usize, String)> {
     let base = fresh_dir(&format!("flashtex-fuzz-{tag}"));
     let _ = std::fs::remove_dir_all(&base);
     // (the host's directories under `a`, the scratch compile's copies under
@@ -1134,7 +1216,7 @@ fn fuzz_replay(
     let selftest: Option<usize> = std::env::var("FLASHTEX_FUZZ_SELFTEST")
         .ok()
         .and_then(|v| v.parse().ok());
-    let mut modes: BTreeMap<String, usize> = BTreeMap::new();
+    let mut stats = FuzzStats::default();
     let tools = fuzz_tools(&proj, main);
     let request = |id: i64| {
         let mut r = fh.request(id, &proj, &out, main);
@@ -1147,12 +1229,30 @@ fn fuzz_replay(
         let mut c = Client::connect(&host.1).unwrap();
         let mut view = View::default();
         let mut id = 0;
+        let mut status = None;
         for _ in 0..4 {
             id += 1;
-            let (mode, _) = fuzz_cycle(&mut c, &mut view, &request(id), tools);
+            let (mode, o, ran) = fuzz_cycle(&mut c, &mut view, &request(id), tools);
+            status = o.done.str_field("status").map(String::from);
+            stats.baseline_tools += ran;
             if mode == "unchanged" {
                 break;
             }
+        }
+        // (a document that does not compile would compare only its error
+        // log, the same on both sides, at every step; one with tools must
+        // have run them)
+        if status.as_deref() != Some("ok")
+            || view.count == 0
+            || (tools && stats.baseline_tools == 0)
+        {
+            return Err((
+                0,
+                format!(
+                    "the document itself does not compile: status {status:?}, {} pages, {} tool runs ok",
+                    view.count, stats.baseline_tools
+                ),
+            ));
         }
         fuzz_compare(fh, &scratch.1, &view, &base, main, tools).map_err(|e| (0, e))?;
         let files = fuzz_sources(&proj, main);
@@ -1203,13 +1303,20 @@ fn fuzz_replay(
                     }
                 }
             }
-            let (mode, o) = fuzz_cycle(&mut c, &mut view, &r, tools);
+            let (mode, o, ran) = fuzz_cycle(&mut c, &mut view, &r, tools);
             // FLASHTEX_FUZZ_TRACE: each step, its compile's mode and status
             if std::env::var_os("FLASHTEX_FUZZ_TRACE").is_some() {
                 let st = o.done.str_field("status").unwrap_or("?");
-                eprintln!("edit fuzz:   {tag} {:>3}: {mode} {st} {s:?}", k + 1);
+                eprintln!(
+                    "edit fuzz:   {tag} {:>3}: {mode} {st} (tools ok {ran}) {s:?}",
+                    k + 1
+                );
             }
-            *modes.entry(mode).or_insert(0) += 1;
+            let live = !mode.starts_with("cold")
+                && !mode.starts_with("unchanged")
+                && o.done.str_field("status") == Some("ok")
+                && view.count > 0;
+            *stats.modes.entry(mode).or_insert(0) += 1;
             history.push(read_all());
             // FLASHTEX_FUZZ_SELFTEST=N: the harness's own check, a page
             // dropped from the client's view from step N on, which must
@@ -1219,16 +1326,22 @@ fn fuzz_replay(
                 view.pages.remove(&last);
             }
             fuzz_compare(fh, &scratch.1, &view, &base, main, tools).map_err(|e| (k + 1, e))?;
+            stats.live += live as usize;
+            stats.tools += ran;
         }
         let _ = c.bye();
-        eprintln!("edit fuzz:   {tag}: compiles {modes:?}");
+        stats.tools_wanted = tools;
+        eprintln!(
+            "edit fuzz:   {tag}: compiles {:?}, {} incremental ok with pages, {} tool runs ok",
+            stats.modes, stats.live, stats.tools
+        );
         Ok(())
     }));
     drop(host);
     drop(scratch);
     let _ = std::fs::remove_dir_all(&base);
     match r {
-        Ok(r) => r,
+        Ok(r) => r.map(|()| stats),
         Err(p) => {
             let msg = p
                 .downcast_ref::<String>()
@@ -1272,13 +1385,13 @@ fn fuzz_shrink(
                 cur = trial;
                 why = e;
             }
-            Ok(()) => i += 1,
+            Ok(_) => i += 1,
         }
     }
     if why.is_empty() {
         why = match fuzz_replay(fh, src, main, &cur, "shrink") {
             Err((_, e)) => e,
-            Ok(()) => "(the shrunk sequence passed on its last replay: timing-dependent)".into(),
+            Ok(_) => "(the shrunk sequence passed on its last replay: timing-dependent)".into(),
         };
     }
     (cur, why)
@@ -1319,13 +1432,23 @@ pub fn run(fh: &dyn FuzzHost, roots: &[PathBuf], defaults: &[&str]) {
         Some(list) => list.split(',').map(|s| s.trim().to_string()).collect(),
         None => defaults.iter().map(|s| s.to_string()).collect(),
     };
+    // (a dispatch that runs nothing must not pass)
+    assert!(
+        seeds >= 1 && steps_n >= 1 && !docs.is_empty() && docs.iter().all(|d| !d.is_empty()),
+        "edit fuzz: nothing to run (FLASHTEX_FUZZ_SEEDS={seeds}, FLASHTEX_FUZZ_STEPS={steps_n}, FLASHTEX_FUZZ_DOCS={docs:?})"
+    );
+    for doc in &docs {
+        find(doc);
+    }
     let mut failures = vec![];
     for seed in first..first + seeds {
         for (d, doc) in docs.iter().enumerate() {
             let src = find(doc);
             let main = "main.tex";
-            // the sequence: generated against the texts as they evolve
-            let mut rng = Rng::new(seed.wrapping_mul(1_000_003).wrapping_add(d as u64));
+            // the sequence: generated against the texts as they evolve, from
+            // the seed and the document's name (not its place in the list:
+            // the rerun line names the document alone)
+            let mut rng = Rng::new(seed.wrapping_mul(1_000_003).wrapping_add(fnv1a(doc)));
             let tmp = fresh_dir(&format!("flashtex-fuzz-gen-{d}"));
             let _ = std::fs::remove_dir_all(&tmp);
             copy_dir(&src, &tmp);
@@ -1366,25 +1489,44 @@ pub fn run(fh: &dyn FuzzHost, roots: &[PathBuf], defaults: &[&str]) {
             }
             let _ = std::fs::remove_dir_all(&tmp);
             eprintln!("edit fuzz: seed {seed}, {doc}: {} steps", steps.len());
-            if let Err((at, why)) = fuzz_replay(fh, &src, main, &steps, &format!("{seed}-{d}")) {
-                eprintln!("edit fuzz: seed {seed}, {doc}: step {at} differs: {why}; shrinking");
-                let (min, why) = fuzz_shrink(fh, &src, main, steps, at, 40);
-                failures.push(format!(
-                    "seed {seed}, {doc} ({}): {why}\n  shortest failing sequence ({} steps):\n{}",
+            match fuzz_replay(fh, &src, main, &steps, &format!("{seed}-{d}")) {
+                Ok(st) if st.live == 0 => failures.push(format!(
+                    "seed {seed}, {doc} ({}): no step compiled incrementally, ok, with pages (compiles {:?}): the sequence tested nothing",
                     src.display(),
-                    min.len(),
-                    min.iter()
-                        .enumerate()
-                        .map(|(k, s)| format!("    {}: {s:?}", k + 1))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ));
+                    st.modes
+                )),
+                Ok(st) if st.tools_wanted && st.tools == 0 => failures.push(format!(
+                    "seed {seed}, {doc} ({}): no tool run after an edit succeeded (compiles {:?}): the reruns after bibtex and makeindex were not tested",
+                    src.display(),
+                    st.modes
+                )),
+                Ok(_) => {}
+                Err((0, why)) => failures.push(format!(
+                    "seed {seed}, {doc} ({}): before any edit: {why}",
+                    src.display()
+                )),
+                Err((at, why)) => {
+                    eprintln!(
+                        "edit fuzz: seed {seed}, {doc}: step {at} differs: {why}; shrinking"
+                    );
+                    let (min, why) = fuzz_shrink(fh, &src, main, steps, at, 40);
+                    failures.push(format!(
+                        "seed {seed}, {doc} ({}): {why}\n  shortest failing sequence ({} steps):\n{}",
+                        src.display(),
+                        min.len(),
+                        min.iter()
+                            .enumerate()
+                            .map(|(k, s)| format!("    {}: {s:?}", k + 1))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
             }
         }
     }
     assert!(
         failures.is_empty(),
-        "random edit sequences differ from scratch compiles (rerun one: FLASHTEX_FUZZ_SEED=<seed> FLASHTEX_FUZZ_SEEDS=1 FLASHTEX_FUZZ_DOCS=<doc> FLASHTEX_FUZZ_STEPS={steps_n}):\n{}",
+        "random edit sequences: a step differs from a scratch compile, or a sequence tested nothing (rerun one: FLASHTEX_FUZZ_SEED=<seed> FLASHTEX_FUZZ_SEEDS=1 FLASHTEX_FUZZ_DOCS=<doc> FLASHTEX_FUZZ_STEPS={steps_n}):\n{}",
         failures.join("\n")
     );
 }

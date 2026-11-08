@@ -52,9 +52,10 @@ fn run(bin: &Path, dir: &Path, args: &[&str], job: &str, ours: bool) -> Out {
         code: out.status.code(),
         stdout: after_banner(&String::from_utf8_lossy(&out.stdout)),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        log: std::fs::read_to_string(dir.join(format!("{job}.log")))
+        // lossy: a log may hold bytes that are not UTF-8 (`-8bit`)
+        log: std::fs::read(dir.join(format!("{job}.log")))
             .ok()
-            .map(|l| after_banner(&l)),
+            .map(|l| after_banner(&String::from_utf8_lossy(&l))),
         dvi: std::fs::read(dir.join(format!("{job}.dvi"))).ok(),
     }
 }
@@ -156,6 +157,106 @@ fn batchmode_silences_mktextfm() {
     };
     assert_eq!(y.stderr, "", "pdftex's mktextfm was not silent");
     assert_same("batchmode", &x, &y);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// enctex1.ch \[5.59\] and enctex2.ch \[49.1279\], which TeX Live's pdfTeX
+/// has with or without `-enc`: `xprn` decides when a character is printed,
+/// not when the string pool is made (the first 256 strings are pdftex.web's
+/// `^^A` forms), and `\message` makes its string with an unprintable
+/// character in its `^^` form, which the line-length test counts. #2039:
+/// a format built with a TCX file printed `^^A` under `-8bit`, and a
+/// message of unprintable characters broke the line in another place.
+#[test]
+fn xprn_decides_when_a_character_is_printed() {
+    let unprintable = "^^A".repeat(25);
+    let tex = format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\^=7 \\scrollmode\n\
+         \\catcode`\\^^A=12 \\catcode`\\^^e9=12 \\catcode`\\^^7f=12 \\catcode`\\^^0b=12\n\
+         \\message{{x}}\\message{{{unprintable}}}\\message{{x}}\n\
+         \\message{{[^^A][^^e9][^^0b][^^7f]}}\\errmessage{{x^^Ay}}\n\
+         \\immediate\\write16{{[^^A][^^e9]}}\\showthe\\catcode`^^A \\end\n"
+    );
+    for args in [vec![], vec!["-8bit"], vec!["-translate-file=cp227.tcx"]] {
+        let Some((x, y, base)) = both("xprn", tex.as_bytes(), &args, "t") else {
+            return;
+        };
+        assert!(
+            y.log.as_deref().is_some_and(|l| l.contains("! x")),
+            "pdftex's log lacks the \\errmessage:\n{:?}",
+            y.log
+        );
+        assert_same(&format!("{args:?}"), &x, &y);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+/// The same through a format, where it shows: the format is made with
+/// TeX Live's TCX file (as pdflatex.fmt is), so INITEX's `xprn` and the
+/// run's differ under `-8bit`. pdfTeX's format holds pdftex.web's `^^A`
+/// strings and prints `^^A` as the byte 1; the engine's held the byte and,
+/// with `-8bit`, printed `^^A` (#2039).
+#[test]
+fn a_format_s_strings_do_not_decide_what_8bit_prints() {
+    let Some(texbin) = find_texlive_bin() else {
+        common::no_texlive();
+        return;
+    };
+    let base = common::fresh_dir("flashtex-texch-run-xprn-fmt");
+    let fmt =
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\catcode`\\^^A=12 \\catcode`\\^^e9=12 \
+               \\catcode`\\^^7f=12 \\dump\n";
+    let doc = "\\scrollmode\\message{[^^A][^^e9][^^7f]}\\errmessage{x^^Ay}\
+               \\immediate\\write16{[^^A]}\\end\n";
+    let mut out = vec![];
+    for (ours, sub) in [(true, "ours"), (false, "tex")] {
+        let d = base.join(sub);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("f.tex"), fmt).unwrap();
+        std::fs::write(d.join("t.tex"), doc).unwrap();
+        let bin = if ours {
+            let b = d.join("pdftex");
+            common::link_engine(Path::new(env!("CARGO_BIN_EXE_flashtex-initex")), &b);
+            b
+        } else {
+            texbin.join("pdftex")
+        };
+        let pass = |args: &[&str]| {
+            let mut c = Command::new(&bin);
+            c.args(args)
+                .current_dir(&d)
+                .env("SOURCE_DATE_EPOCH", "0")
+                .env("FORCE_SOURCE_DATE", "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if ours {
+                c.env("FLASHTEX_FORMATS", &d).env(
+                    "FLASHTEX_POOL",
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+                );
+            }
+            c.output().unwrap()
+        };
+        let made = pass(&["-ini", "-translate-file=cp227.tcx", "f.tex"]);
+        assert!(d.join("f.fmt").is_file(), "{sub}: no format: {made:?}");
+        let run = pass(&["-fmt=f", "-8bit", "t.tex"]);
+        let log = std::fs::read(d.join("t.log")).unwrap();
+        out.push((
+            run.status.code(),
+            after_banner(&String::from_utf8_lossy(&run.stdout)),
+            after_banner(&String::from_utf8_lossy(&log)),
+        ));
+    }
+    let (x, y) = (&out[0], &out[1]);
+    assert!(
+        y.2.contains("[\u{1}]"),
+        "pdftex printed no byte 1:\n{}",
+        y.2
+    );
+    assert_eq!(x.2, y.2, "the log differs from pdftex's");
+    assert_eq!(x.1, y.1, "the terminal output differs from pdftex's");
+    assert_eq!(x.0, y.0, "the exit status differs from pdftex's");
     let _ = std::fs::remove_dir_all(&base);
 }
 

@@ -311,6 +311,19 @@ alignment of `tools/parity/wordalign.py`, pairs), the first diverging page, and
   `--pt1-timeout 3600` (the 118-page deck's traced pass is the longest).
   The ten `fixtures/real-world/beamer-*` decks stay in the fixtures tier.
 
+- **hunt-arxiv** and **hunt-texlive** (lane PARITY-HUNT, 2026-11-01): corpora
+  beyond T3 and T4, for finding where parity still breaks. Both are `on_demand`.
+  - `corpus/hunt-arxiv-2k.json` is drawn by `select-arxiv-grid` exactly as
+    nightly-5k is, with its own seed (`flashtex-parityhunt-1`) and 20 primary
+    categories nightly-5k doesn't have (math.DG, cs.SE, physics.optics,
+    nucl-th, econ.EM, …): 10 per (category, year) cell, 2016–2025.
+  - `corpus/hunt-texlive-2026.json` holds the templates, theses, slide decks,
+    posters, CVs, letters, exams and journal samples shipped in TeX Live 2026's
+    `doc/latex`, at most 2 per package. The rule is in the manifest's
+    `selection`. Like `templates` it needs a TeX Live with doc files (a Mac).
+  - `.github/workflows/parity-hunt.yml` runs any tier of any ref on the NixOS
+    PC by hand, in a cache of the lane's own, and is never a gate.
+
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
 the hashes and unpacks them. It sends at most one arXiv request every 3 s.
