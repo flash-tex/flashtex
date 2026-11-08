@@ -22,14 +22,14 @@
 //! plain.tex starts), so cases needing braces carry plain.tex's own first
 //! line, `\catcode`\{=1 \catcode`\}=2 `, which reads no file.
 //!
-//! The brief's case (6) (a `-recorder` run after a non-recorder run in the
-//! same process must still list `texfonts.map`) is not here: no existing
-//! helper runs two compiles with different recorder settings in one
-//! process (`flashtex-initex` runs once per process; `flashtex-host iserve`
-//! takes `-recorder` as a startup engine option with no per-compile
-//! toggle), and the brief forbids inventing a harness. The behavior lives
-//! in `system.rs` `recorder_fontmaps`, whose `READ` latches before the
-//! recorder check.
+//! Not here: a `-recorder` run after a non-recorder run in the same
+//! process must still list `texfonts.map`. No existing helper runs two
+//! compiles with different recorder settings in one process
+//! (`flashtex-initex` runs once per process; `flashtex-host iserve` takes
+//! `-recorder` as a startup engine option with no per-compile toggle). That
+//! ordering is `system.rs`'s `fontmaps_due`, which latches only once a
+//! `-recorder` run lists the lines, and its unit test
+//! `fontmaps_wait_for_a_recorder_run`.
 #![cfg(all(unix, feature = "kpathsea"))]
 
 mod common;
