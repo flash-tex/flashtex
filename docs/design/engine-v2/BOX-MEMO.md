@@ -985,6 +985,13 @@ is the recording's high mark if it raised it; if not, the variant is taken only 
 `max_buf_stack` is at least what it was at the recording's call (a restored checkpoint can leave it
 lower), so a replay leaves the high mark the normal path would.
 
+A span whose recording reached its file's end is not kept (`SpanEof`): e-TeX's `\everyeof` keeps
+the file open there (`eof_seen`, a fake empty line) and its tokens can end the picture, but the
+recorded lines do not say the file ends after them (rewritten with a line more, the normal path
+reads it inside the picture), and a replay would not set `eof_seen` (the normal path then closes
+the file; a replay read `\everyeof` again). Lane AUDIT-SPANS,
+`spans_that_reach_the_files_end_are_not_replayed`.
+
 ### 17.3 Paragraphs begun by a picture
 
 `\begin{tikzpicture}` in vertical mode begins a paragraph (`\leavevmode`), which is open at the

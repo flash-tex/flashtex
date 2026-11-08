@@ -759,6 +759,8 @@ struct SpanRec {
     /// `line` at the call, and the line-shift journal's count of entries.
     line0: i32,
     journal: u64,
+    /// A file's F: e-TeX's `eof_seen` for it at the call.
+    eof0: bool,
 }
 
 struct Rec {
@@ -3205,6 +3207,7 @@ impl Globals {
                 etex_aux: self.cur_list.eTeX_aux_field,
                 line0: self.line,
                 journal: crate::lineshift::journal_mark().0,
+                eof0: toks.is_none() && self.eof_seen[(index - 1) as usize],
             })
         } else {
             None
@@ -4391,8 +4394,20 @@ impl Globals {
             && end.mode == k::hmode
             && self.cur_list.eTeX_aux_field == 0
             && self.nest[start.nest_ptr as usize].aux_field.0 == start_aux;
+        // (a span that read to its file's end, which `\everyeof` keeps open
+        // with a fake empty line: its recorded lines do not say the file
+        // ends after them, and a replay would not set `eof_seen`)
+        let span_eof = span_f.is_some_and(|(_, index)| {
+            span_toks.is_none()
+                && self
+                    .bm_with_rec(|r| r.span.as_ref().map(|s| s.eof0))
+                    .flatten()
+                    .is_some_and(|e0| self.eof_seen[(index - 1) as usize] != e0)
+        });
         let why = if span_lost {
             Some("SpanFile")
+        } else if span_eof {
+            Some("SpanEof")
         } else if span_f.is_some() && self.force_eof {
             // (an `\endinput` inside the span: the file ends after the
             // line it is on, which the replay would not make so)
