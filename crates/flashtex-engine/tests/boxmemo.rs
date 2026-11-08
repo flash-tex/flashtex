@@ -518,3 +518,42 @@ fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
     assert_eq!(stat(&s, "Preconditions"), 3, "{s}");
     assert!(stat(&s, "hits") >= 1, "{s}");
 }
+
+#[test]
+fn the_space_factor_at_a_draw_call_is_part_of_the_key() {
+    // the context's `aux` (BOX-MEMO.md §3): a draw call whose first space
+    // is typeset at the space factor of the moment (`\xspaceskip` from
+    // 2000 on, tex.web §1043) appends other glue at another space factor
+    let s = check(
+        "aux",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\spaceskip=1pt \\xspaceskip=5pt\n\
+         \\def\\space{ }\\def\\measure#1{\\begingroup\\space\\vrule width #1\\endgroup}\n\
+         \\def\\one#1{\\setbox1\\hbox{\\vrule width 1pt\\spacefactor=#1 \\measure{2pt}}\\showbox1 }\n\
+         \\one{1000}\\one{1000}\\one{1000}\\one{2000}\\one{2000}\\one{1000}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn hyphenation_exceptions_are_part_of_the_key() {
+    // K5's `bm_hyph_version` (BOX-MEMO.md §3): a `\hyphenation` between
+    // two calls that break the same paragraph gives the second call other
+    // break points, here 1 line before and 4 after
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "hyph",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\f=cmr10 \\hyphenchar\\f=45 \\pretolerance=-1 \\tolerance=10000 \\hyphenpenalty=0\n\
+         \\hbadness=10000 \\vbadness=10000 \\hfuzz=16383pt \\vfuzz=16383pt \\parindent=0pt \\baselineskip=12pt\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\hsize=12pt \\f\\noindent\\hskip0pt #1\\par}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1]}}\n\
+         \\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\n\
+         \\hyphenation{ab-cd-ef-gh}\\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
