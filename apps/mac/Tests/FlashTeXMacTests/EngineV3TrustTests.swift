@@ -275,6 +275,67 @@ final class EngineV3TrustTests: XCTestCase {
         XCTAssertEqual(EngineV3Trust.quarantineEvent("0083;66f0a1b2;Safari"), "66f0a1b2;Safari")
     }
 
+    /// #2060: a Live Share taint follows its folder through a rename or a
+    /// move on the volume. Before, it was looked up only under the old
+    /// path, so the moved project compiled trusted.
+    func testATaintFollowsARenamedOrMovedProject() throws {
+        let (dir, file) = try project()
+        EngineV3Trust.taint(root: dir, event: "session-1", store: store)
+        XCTAssertFalse(trusted(dir, file))
+        let moved = dir.deletingLastPathComponent().appendingPathComponent("engine-v3-trust-moved-\(UUID().uuidString)")
+        try FileManager.default.moveItem(at: dir, to: moved)
+        made.append(moved)
+        let movedMain = moved.appendingPathComponent("paper.tex")
+        XCTAssertFalse(trusted(moved, movedMain), "the guest's edits are still in the moved folder")
+        EngineV3Trust.record(root: moved, main: movedMain, store: store)
+        XCTAssertTrue(trusted(moved, movedMain), "trusted again where it is now")
+        // A new folder at the old path is not that folder: it asks (fails closed).
+        let (fresh, freshMain) = try project(at: dir)
+        XCTAssertFalse(trusted(fresh, freshMain))
+    }
+
+    /// #2060: a walk cut short at its bound (20,000 entries) cannot vouch
+    /// for the files it did not reach. Before, the files it saw decided, so
+    /// a quarantined input past the bound compiled with tools on.
+    func testATruncatedWalkIsUntrustedUntilTrusted() throws {
+        let (dir, file) = try project()
+        for k in 0..<5 { try "f".write(to: dir.appendingPathComponent("f\(k).tex"), atomically: true, encoding: .utf8) }
+        let late = dir.appendingPathComponent("zz-late.tex")
+        try "late".write(to: late, atomically: true, encoding: .utf8)
+        quarantine(late)
+        let mirror = EngineV3Mirror(source: dir, session: 9_000 + Int.random(in: 0 ..< 1000))
+        defer { try? FileManager.default.removeItem(at: mirror.base) }
+        let full = mirror.sync(except: ["paper.tex"], fingerprints: false)
+        XCTAssertFalse(full.truncated)
+        let short = mirror.sync(except: ["paper.tex"], fingerprints: false, bound: 2)
+        XCTAssertTrue(short.truncated)
+        let d = EngineV3Trust.decide(root: dir, main: "paper.tex", texts: [:], walkQuarantined: [], walkTruncated: true, store: store)
+        XCTAssertFalse(d.trusted, "an incomplete walk fails closed")
+        XCTAssertEqual(d.need.map { $0.path.hasSuffix(EngineV3Trust.incompleteSuffix) }, [true])
+        EngineV3Trust.record(d.need, store: store)
+        XCTAssertTrue(EngineV3Trust.decide(root: dir, main: "paper.tex", texts: [:], walkQuarantined: [], walkTruncated: true,
+                                           store: store).trusted, "the user trusted it as it is")
+        XCTAssertTrue(EngineV3Trust.decide(root: dir, main: "paper.tex", texts: [:], walkQuarantined: [], store: store).trusted)
+        _ = file
+    }
+
+    /// #2060: an open document is compiled, so it counts whatever the walk
+    /// reached (here a hidden folder the walk skips).
+    func testAnOpenDocumentTheWalkMissedStillCounts() throws {
+        let (dir, _) = try project()
+        let hidden = dir.appendingPathComponent(".drafts")
+        try FileManager.default.createDirectory(at: hidden, withIntermediateDirectories: true)
+        let draft = hidden.appendingPathComponent("chapter.tex")
+        try "draft".write(to: draft, atomically: true, encoding: .utf8)
+        quarantine(draft)
+        let texts = ["paper.tex": "x", ".drafts/chapter.tex": "draft"]
+        let d = EngineV3Trust.decide(root: dir, main: "paper.tex", texts: texts, walkQuarantined: [], store: store)
+        XCTAssertFalse(d.trusted)
+        XCTAssertEqual(d.need.map(\.path), [EngineV3Trust.canonical(draft).path])
+        XCTAssertTrue(EngineV3Trust.decide(root: dir, main: "paper.tex", texts: ["paper.tex": "x"], walkQuarantined: [],
+                                           store: store).trusted, "not open, not walked: as before")
+    }
+
     /// An instance with its own cache keeps its records beside it; a test
     /// process without one uses a temporary file. Never the app's defaults.
     func testStoreIsolation() throws {

@@ -181,6 +181,83 @@ final class LiveShareSecurityTests: XCTestCase {
         XCTAssertEqual(Set(guest.liveShare.allowed.values), ["main.tex", "notes/a.tex"])
     }
 
+    /// #2060: the guest's copy is the host's text. Before, it carried no
+    /// mark, so a copy of the session folder opened elsewhere (where the
+    /// session pins no longer apply) compiled trusted: restricted shell
+    /// escape and external tools on host-controlled text. Now the folder and
+    /// every file are marked as received, the mark survives a copy, and the
+    /// copy is untrusted until the user trusts it.
+    func testAGuestCopyCopiedOutOfTheSessionStaysUntrusted() async throws {
+        let session = CollabSession(role: .hub, replica: UInt64.random(in: 1...UInt64.max), name: "Host", colourIndex: 0)
+        try session.shareFile(path: "main.tex", text: "\\documentclass{article}\\begin{document}\\input{notes/a}\\end{document}\n")
+        try session.shareFile(path: "notes/a.tex", text: "\\immediate\\write18{echo hostile}\n")
+        session.flush()
+        let pins = CollabControl.SessionPins(main: "main.tex", sourceDateEpoch: 0, randomSeed: 0, shellEscape: "off",
+                                             externalTools: false, readConfinement: true)
+        let hub = CollabHub(session: session, identity: try CollabIdentity(), projectName: "x", pins: pins, environmentDigest: "t")
+        hub.approve = { _, reply in reply(.allowEdit) }
+        hubs.append(hub)
+        try hub.start(loopbackOnly: true, advertise: false)
+        try await waitUntil("hub ready") { hub.port != nil }
+        let guest = ShellModel()
+        models = [guest]
+        guest.liveShare.join(link: hub.makeInvite(addresses: [], hostName: CollabGuest.localHostName).link, name: "Bob",
+                             disposition: .discard)
+        try await waitUntil("guest open") { guest.documentURL != nil }
+        let root = try XCTUnwrap(guest.liveShare.root)
+        let event = guest.liveShare.quarantineEvent
+        for url in [root, root.appendingPathComponent("main.tex"), root.appendingPathComponent("notes/a.tex")] {
+            let value = try XCTUnwrap(EngineV3Trust.quarantineValue(url), "\(url.lastPathComponent) is marked as received")
+            XCTAssertEqual(EngineV3Trust.quarantineEvent(value), event)
+        }
+        // A later remote edit to a file no editor shows keeps the mark.
+        let notes = try XCTUnwrap(session.file(atPath: "notes/a.tex"))
+        try XCTUnwrap(session.binding(for: notes)).localReplace(0..<0, with: "% more\n")
+        let notesURL = root.appendingPathComponent("notes/a.tex")
+        try await waitUntil("remote edit written") {
+            (try? String(contentsOf: notesURL, encoding: .utf8))?.hasPrefix("% more") == true
+        }
+        XCTAssertNotNil(EngineV3Trust.quarantineValue(notesURL))
+        guest.liveShare.leave()
+        // Copied out as the Finder or `cp` copies (extended attributes kept).
+        let copy = temp.appendingPathComponent("copied-project")
+        XCTAssertEqual(copyfile(root.path, copy.path, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_RECURSIVE)), 0)
+        let copyMain = copy.appendingPathComponent("main.tex")
+        XCTAssertFalse(guest.liveShare.forcesPinnedCompile(root: copy), "outside the session folder: no pins")
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: copy, main: copyMain), "host-controlled text, copied out, is untrusted")
+        let walked = [copy.appendingPathComponent("notes/a.tex")]
+        let d = EngineV3Trust.decide(root: copy, main: "main.tex", texts: [:], walkQuarantined: walked)
+        XCTAssertFalse(d.trusted)
+        EngineV3Trust.record(d.need)
+        XCTAssertTrue(EngineV3Trust.decide(root: copy, main: "main.tex", texts: [:], walkQuarantined: walked).trusted,
+                      "until the user trusts it")
+    }
+
+    /// Each session is its own provenance event: before, the event and the
+    /// set of guest-edited files lived as long as the app, so a second
+    /// session in the same run tainted nothing once the first was trusted.
+    func testEachSessionIsANewProvenanceEvent() async throws {
+        let project = temp.appendingPathComponent("project")
+        try "x\n".write(to: project.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
+        let host = ShellModel()
+        models = [host]
+        XCTAssertEqual(host.openTex(at: project.appendingPathComponent("main.tex")), .opened)
+        host.liveShare.startHosting()
+        try await waitUntil("invitation") { host.liveShare.invite != nil }
+        let first = host.liveShare.quarantineEvent
+        host.liveShare.markGuestEdited(project.appendingPathComponent("main.tex"))
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: project, main: project.appendingPathComponent("main.tex")))
+        EngineV3Trust.record(root: project, main: project.appendingPathComponent("main.tex"))
+        host.liveShare.leave()
+        host.liveShare.startHosting()
+        try await waitUntil("second invitation") { host.liveShare.invite != nil }
+        XCTAssertNotEqual(host.liveShare.quarantineEvent, first)
+        XCTAssertTrue(host.liveShare.guestEdited.isEmpty)
+        host.liveShare.markGuestEdited(project.appendingPathComponent("main.tex"))
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: project, main: project.appendingPathComponent("main.tex")),
+                       "the second session's guest edits need trusting again")
+    }
+
     // MARK: Compile pins and the switch
 
     func testSessionCompilesArePinned() async throws {
