@@ -19,11 +19,19 @@ use std::path::{Path, PathBuf};
 /// Column value the display list uses for "unknown".
 const NO_COLUMN: u16 = 0xFFFF;
 
+/// Where the display-list spans a builder's notes name are: (file path,
+/// line). For notes of an engine whose source map is not this process's
+/// pdfTeX engine's (the XeTeX host's, whose engine made the spans): the
+/// `DIAG`s then name the places, not the spans.
+pub type SpanPlaces = HashMap<u32, (String, u32)>;
+
 /// What turns notes into `DIAG`s for one compile.
 pub struct Builder<'a> {
     root: &'a Path,
     /// Give places display-list spans (when a display list is written).
     spans: bool,
+    /// The spans' places, when they are not this process's source map's.
+    places: Option<&'a SpanPlaces>,
     files: HashMap<PathBuf, Option<Vec<usize>>>,
     /// Spans the messages name, in order (to declare before them).
     pub used_spans: Vec<u32>,
@@ -34,6 +42,7 @@ impl<'a> Builder<'a> {
         Builder {
             root,
             spans: crate::displaylist::enabled(),
+            places: None,
             files: HashMap::new(),
             used_spans: Vec::new(),
         }
@@ -67,7 +76,7 @@ impl<'a> Builder<'a> {
     }
 
     fn span(&mut self, name: &[u8], line: i32) -> Option<i64> {
-        if !self.spans || line <= 0 {
+        if !self.spans || self.places.is_some() || line <= 0 {
             return None;
         }
         let s = crate::displaylist::span_for(name, line as u32)?;
@@ -79,6 +88,15 @@ impl<'a> Builder<'a> {
     fn span_loc(&mut self, (span, col): (u32, u16)) -> Option<Loc> {
         if span == 0 {
             return None;
+        }
+        if let Some(places) = self.places {
+            let (path, line) = places.get(&span)?;
+            return Some(Loc {
+                file: Some(path.clone()),
+                line: Some(*line as i64),
+                col: (col != NO_COLUMN).then_some(col as i64),
+                span: None,
+            });
         }
         let (file, line) = crate::displaylist::span_location(span)?;
         let path = crate::displaylist::file_path(file)?;
@@ -291,7 +309,23 @@ pub fn build(
     notes: &[std::sync::Arc<Note>],
     terminal: &[u8],
 ) -> (Vec<Diag>, Vec<u32>) {
+    build_with(root, id, notes, terminal, None)
+}
+
+/// [`build`] for notes whose spans are at `places` (another engine's
+/// source map: [`SpanPlaces`]); `None`: this process's.
+pub fn build_with(
+    root: &Path,
+    id: i64,
+    notes: &[std::sync::Arc<Note>],
+    terminal: &[u8],
+    places: Option<&SpanPlaces>,
+) -> (Vec<Diag>, Vec<u32>) {
     let mut b = Builder::new(root);
+    if places.is_some() {
+        b.spans = true;
+        b.places = places;
+    }
     let mut out: Vec<(usize, Diag)> = Vec::new();
     for n in notes {
         if let Some(d) = b.note(n) {

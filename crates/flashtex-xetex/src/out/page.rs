@@ -349,6 +349,9 @@ pub struct Builder<'a, M: Metrics> {
     marks: Vec<(u32, u32, u16)>,
     mark_next: usize,
     here: (u32, u16),
+    /// The columns of the next glyph string's glyphs, when its marker
+    /// gave each its own (`crate::dlsource::NEXT_GLYPH`), else empty.
+    here_glyphs: Vec<u16>,
 }
 
 /// dvipdfmx's default page origin: one inch from the left and from the
@@ -391,6 +394,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
             marks,
             mark_next: 0,
             here: (0, NO_COLUMN),
+            here_glyphs: Vec::new(),
         };
         // dvipdfmx's MediaBox is the size to 0.01 bp; its content starts
         // with `q 1 0 0 1 72 H-72 cm`, H the size itself (measured).
@@ -492,7 +496,15 @@ impl<'a, M: Metrics> Builder<'a, M> {
         while i < b.len() {
             while self.mark_next < self.marks.len() && self.marks[self.mark_next].0 as usize <= i {
                 let m = self.marks[self.mark_next];
-                self.here = (m.1, m.2);
+                if m.1 & crate::dlsource::NEXT_GLYPH != 0 {
+                    if self.here_glyphs.is_empty() {
+                        self.here_glyphs.push(self.here.1);
+                    }
+                    self.here_glyphs.push(m.2);
+                } else {
+                    self.here = (m.1, m.2);
+                    self.here_glyphs.clear();
+                }
                 self.mark_next += 1;
             }
             let op = b[i];
@@ -778,7 +790,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
             (Col(vec![rgb(24), rgb(16), rgb(8)]), ch(0))
         });
         let upm = l.upm.max(1) as f64;
-        for (&(dx, dy), &g) in xy.iter().zip(gids) {
+        // each glyph's own column, when the marker gave them (once)
+        let cols = std::mem::take(&mut self.here_glyphs);
+        let cols = (cols.len() == gids.len()).then_some(cols);
+        for (k, (&(dx, dy), &g)) in xy.iter().zip(gids).enumerate() {
             let (ux, uy) = (
                 self.dvi_to_bp(self.r.h.wrapping_add(dx)),
                 -self.dvi_to_bp(self.r.v.wrapping_add(dy)),
@@ -811,7 +826,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
                 code: g,
                 x: px,
                 y: py,
-                col: here.1,
+                col: cols.as_ref().map_or(here.1, |c| c[k]),
             });
             if self.doc.tracking.is_some() {
                 // dvipdfmx's box for a native glyph: its advance, and the

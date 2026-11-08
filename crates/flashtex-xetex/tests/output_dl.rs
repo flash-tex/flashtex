@@ -119,9 +119,9 @@ fn pdf_mode_writes_the_display_list_of_a_page() {
     // the path of `pdf:code`, under the page's CTM
     assert_eq!(p.paths.len(), 1);
     assert_eq!(p.paths[0].stroke.as_ref().unwrap().width, 0.5);
-    // The source map (spec §5.3): `AB` is line 7 of t.tex, from byte 3
-    // (`\x AB`), the column of the native word's first character; the
-    // rule is line 8.
+    // The source map (spec §5.3): `AB` is line 7 of t.tex, at bytes 3 and
+    // 4 (`\x AB`), each glyph at its character's column, as the pdfTeX
+    // engine's character nodes are; the rule is line 8.
     assert_eq!(sources.len(), 1, "one SOURCES, before the page");
     let src = flashtex_display_list::json::Json::parse(&sources[0]).unwrap();
     let src = flashtex_display_list::resource::Sources::from_json(&src).unwrap();
@@ -139,7 +139,7 @@ fn pdf_mode_writes_the_display_list_of_a_page() {
             _ => {}
         }
     }
-    assert_eq!(glyph_at, vec![(Some(7), 3), (Some(7), 3)]);
+    assert_eq!(glyph_at, vec![(Some(7), 3), (Some(7), 4)]);
     assert_eq!(rule_line, Some(8));
     let _ = std::fs::remove_dir_all(&dir);
 }

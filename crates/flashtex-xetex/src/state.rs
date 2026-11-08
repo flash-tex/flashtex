@@ -321,6 +321,10 @@ pub struct Host {
     /// The display list's source map (`crate::dlsource`): node positions,
     /// spans and the markers of the page being shipped.
     pub dl: crate::dlsource::DlSource,
+    /// The diagnostics side channel (`crate::diag`): the run's notes and
+    /// the definition sites. A checkpoint's record keeps the notes' count
+    /// (`crate::ckpt::Record`).
+    pub diag: crate::diag::DiagState,
     /// A hot spare's go-ahead (`crate::host::spare`): the descriptor the
     /// run waits on after the format is loaded, taken at that wait. `None`
     /// for every other run.

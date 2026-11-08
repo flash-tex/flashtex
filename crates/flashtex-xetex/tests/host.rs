@@ -2400,3 +2400,325 @@ fn a_font_installed_after_a_lookup_in_the_body_is_found() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `diag-v1` from the engine's own record (`crate::diag`, the pdfTeX
+/// engine's side channel ported): an error's `DIAG` is exact, with the
+/// column of TeX's split, the macro chain TeX's context leaves out under
+/// LaTeX (`\errorcontextlines=-1`) and the macro's definition site; an
+/// overfull box's is placed at its first character; and an incremental
+/// compile (from a page checkpoint, from S₀) sends exactly the `DIAG`s a
+/// compile from scratch of the same text sends.
+#[test]
+fn diags_come_from_the_engine_and_hold_across_edits() {
+    use flashtex_display_list::diag::{Diag, CAPABILITY};
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-diag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=6 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for k in 0..8 {
+            body.push_str(&para.repeat(3));
+            if i == 3 && k == 2 {
+                body.push_str("\n\\wrap{café x}\n");
+            }
+            if i == 5 && k == 1 {
+                body.push_str("\n\\hbox to 1em{overfull naïve box}\n");
+            }
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\
+         \\newcommand{{\\inner}}[1]{{\\undefinedmacro #1}}\n\
+         \\newcommand{{\\wrap}}[1]{{\\inner{{#1}}.}}\n\
+         \\begin{{document}}\n{body}See~\\ref{{p2}} and~\\ref{{nowhere}}.\n\\end{{document}}\n"
+    );
+    let texts = [
+        doc.clone(),
+        doc.replace("See~", "Look at~"),
+        doc.replacen("Words and more", "Wards and more", 1),
+        doc.clone(),
+    ];
+    // (paths in the project's directory, which differs between the hosts,
+    // made relative to it)
+    fn rel(p: &mut Option<String>, root: &str) {
+        if let Some(s) = p {
+            *s = s.replace(root, "<proj>");
+        }
+    }
+    let compile = |c: &mut Client, id: i64, proj: &Path, out: &str, text: &str| {
+        let root = proj.to_str().unwrap().to_string();
+        let mut r = request(id, proj, out);
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        let (ev, done) = events(c, id);
+        let diags: Vec<Diag> = ev
+            .iter()
+            .filter_map(|e| match e {
+                Event::Diag(d) => {
+                    let mut d = d.clone();
+                    d.id = 0;
+                    rel(&mut d.file, &root);
+                    if let Some(e) = d.end.as_mut() {
+                        rel(&mut e.file, &root);
+                    }
+                    for f in d.trace.iter_mut() {
+                        if let Some(l) = f.loc.as_mut() {
+                            rel(&mut l.file, &root);
+                        }
+                        if let Some(l) = f.def.as_mut() {
+                            rel(&mut l.file, &root);
+                        }
+                    }
+                    Some(d)
+                }
+                _ => None,
+            })
+            .collect();
+        let starts = done
+            .get("starts")
+            .and_then(Json::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        (starts, diags)
+    };
+    // one host, a compile per text: incremental after the first
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let envs = [("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+    let h = start_with(&sub, &envs, &sub.join("host.err"));
+    let mut c = Client::connect_accepting(&h.sock, &[CAPABILITY]).unwrap();
+    let got: Vec<(String, Vec<Diag>)> = texts
+        .iter()
+        .enumerate()
+        .map(|(i, t)| compile(&mut c, i as i64 + 1, &proj, &out, t))
+        .collect();
+    c.bye().unwrap();
+    drop(h);
+    let starts: Vec<&str> = got.iter().map(|g| g.0.as_str()).collect();
+    assert!(starts[1].starts_with("page"), "{starts:?}");
+    assert!(starts[2].starts_with("s0"), "{starts:?}");
+
+    // what the first compile says
+    let d = &got[0].1;
+    let err = d
+        .iter()
+        .find(|x| x.code == "tex/undefined-control-sequence")
+        .unwrap_or_else(|| panic!("no undefined control sequence: {d:#?}"));
+    assert!(err.exact, "{err:#?}");
+    let line = doc.lines().position(|l| l.starts_with("\\wrap{")).unwrap() as i64 + 1;
+    assert_eq!(err.line, Some(line), "{err:#?}");
+    // TeX has read the whole call `\wrap{café x}` (a column in UTF-8 bytes)
+    assert_eq!(err.col, Some("\\wrap{café x}".len() as i64), "{err:#?}");
+    assert_eq!(
+        err.range,
+        Some((0, "\\wrap{café x}".len() as i64)),
+        "{err:#?}"
+    );
+    let names: Vec<&str> = err.trace.iter().filter_map(|f| f.name.as_deref()).collect();
+    assert!(
+        names.contains(&"\\inner") && names.contains(&"\\wrap"),
+        "{err:#?}"
+    );
+    let inner = err
+        .trace
+        .iter()
+        .find(|f| f.name.as_deref() == Some("\\inner"))
+        .unwrap();
+    let def_line = doc.lines().position(|l| l.contains("{\\inner}")).unwrap() as i64 + 1;
+    assert_eq!(
+        inner.def.as_ref().and_then(|l| l.line),
+        Some(def_line),
+        "{inner:#?}"
+    );
+    assert!(!err.help.is_empty(), "{err:#?}");
+    let bx = d
+        .iter()
+        .find(|x| x.code == "tex/overfull-hbox")
+        .unwrap_or_else(|| panic!("no overfull box: {d:#?}"));
+    let bline = doc
+        .lines()
+        .position(|l| l.starts_with("\\hbox to 1em"))
+        .unwrap() as i64
+        + 1;
+    assert_eq!(bx.line, Some(bline), "{bx:#?}");
+    assert!(bx.col.is_some() && bx.end.is_some(), "{bx:#?}");
+    assert!(
+        d.iter()
+            .any(|x| x.message.contains("Reference `nowhere' on page")),
+        "{d:#?}"
+    );
+
+    // each text from scratch, in a host of its own
+    for (i, text) in texts.iter().enumerate() {
+        let sub = dir.join(format!("fresh{i}"));
+        let (proj, out) = project(&sub, text);
+        let h = start_with(&sub, &envs, &sub.join("host.err"));
+        let mut c = Client::connect_accepting(&h.sock, &[CAPABILITY]).unwrap();
+        let (_, want) = compile(&mut c, 1, &proj, &out, text);
+        c.bye().unwrap();
+        drop(h);
+        assert_eq!(
+            got[i].1.len(),
+            want.len(),
+            "compile {} ({}): {:#?}\nvs {:#?}",
+            i + 1,
+            got[i].0,
+            got[i].1,
+            want
+        );
+        for (a, b) in got[i].1.iter().zip(&want) {
+            assert_eq!(a, b, "compile {} ({})", i + 1, got[i].0);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// P-T1 with the diagnostics side channel recording (`changes/diagnostics.ch`,
+/// `crate::diag`): its hooks run only in a resident engine's run (the
+/// terminal is captured), which the lockstep gate against TeX Live's xetex
+/// never makes. So compiles in the host's process, for a client that
+/// accepts `diag-v1`, of a document that reaches every hook (errors with
+/// help and `\errhelp`, `\show`, overfull and underfull `\hbox`es and an
+/// overfull `\vbox`, `\def`s, LaTeX's and a package's warnings written to
+/// the terminal, `\write`s to the log and the terminal, undefined references), over a body
+/// edit (from S₀) and a late edit (from a page), write the log and the PDF
+/// byte for byte as the same compiles in processes of their own (the
+/// `flashtex-xetex` program run as xelatex, `FLASHTEX_UNICODE_INPROCESS=0`,
+/// whose terminal is not captured: no hook records there).
+#[test]
+fn the_diagnostics_hooks_change_neither_the_log_nor_the_pdf() {
+    use flashtex_display_list::diag::CAPABILITY;
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-dgpt1-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=5 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for k in 0..6 {
+            body.push_str(&para.repeat(3));
+            match (i, k) {
+                (1, 1) => body.push_str("\n\\wrap{café}\n"),
+                (2, 2) => body.push_str("\n\\hbox to 1em{overfull naïve box}\n"),
+                (2, 3) => body.push_str("\n\\hbox to 30em{under}\n"),
+                (3, 1) => body.push_str("\n\\setbox0\\vbox to 1pt{\\hrule height 5pt}\n"),
+                (3, 4) => body.push_str("\n\\show\\wrap\n"),
+                (4, 0) => body.push_str("\n\\PackageWarning{mine}{Something odd}\n"),
+                (4, 2) => body.push_str("\n\\errhelp{Help of my own.}\\errmessage{My own error}\n"),
+                (4, 5) => body.push_str(
+                    "\n\\immediate\\write-1{to the log only}\\typeout{to the terminal}\n",
+                ),
+                (5, 3) => body.push_str("\n\\textbf{bold} \\ref{nowhere}\n"),
+                _ => {}
+            }
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\
+         \\newcommand{{\\inner}}[1]{{\\undefinedmacro #1}}\n\
+         \\newcommand{{\\wrap}}[1]{{\\inner{{#1}}.}}\n\
+         \\def\\other#1{{(#1)}}\n\
+         \\begin{{document}}\n{body}See~\\ref{{p2}}.\n\\end{{document}}\n"
+    );
+    let texts = [
+        doc.clone(),
+        doc.replacen("Words and more", "Wards and more", 1),
+        doc.replace("See~", "Look at~"),
+    ];
+    type Outs = Vec<(String, Vec<u8>, String, usize, String)>;
+    let run = |inproc: &str| -> Outs {
+        // the same paths every time: the log names them
+        let sub = dir.join("run");
+        let _ = std::fs::remove_dir_all(&sub);
+        let (proj, out) = project(&sub, &doc);
+        let envs = [
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_INPROCESS", inproc),
+        ];
+        let h = start_with(&sub, &envs, &sub.join("host.err"));
+        let mut c = Client::connect_accepting(&h.sock, &[CAPABILITY]).unwrap();
+        let mut outs = vec![];
+        for (i, text) in texts.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.clone())];
+            c.compile(&r).unwrap();
+            let (ev, done) = events(&mut c, id);
+            let exact = ev
+                .iter()
+                .filter(|e| matches!(e, Event::Diag(d) if d.exact))
+                .count();
+            let o = Path::new(&out);
+            outs.push((
+                done.str_field("status").unwrap_or("").to_string(),
+                std::fs::read(o.join("main.pdf")).unwrap_or_default(),
+                std::fs::read_to_string(o.join("main.log")).unwrap(),
+                exact,
+                done.get("starts")
+                    .and_then(Json::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default(),
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run("0");
+    let got = run("1");
+    let starts: Vec<&str> = got.iter().map(|o| o.4.as_str()).collect();
+    // (both edits go on from kept state: S₀, or a page checkpoint where
+    // one is taken; `diags_come_from_the_engine_and_hold_across_edits`
+    // has both)
+    assert!(
+        starts[1..]
+            .iter()
+            .all(|s| s.starts_with("s0") || s.starts_with("page")),
+        "{starts:?}"
+    );
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        // the hooks recorded (exact DIAGs) in the host's process only
+        assert!(a.3 >= 6, "compile {}: {} exact DIAGs", i + 1, a.3);
+        assert_eq!(b.3, 0, "compile {}: a process of its own records", i + 1);
+        assert_eq!(a.0, b.0, "compile {}: the status", i + 1);
+        assert!(!a.1.is_empty(), "compile {}: no PDF", i + 1);
+        assert!(a.1 == b.1, "compile {}: the PDFs differ", i + 1);
+        assert_eq!(a.2, b.2, "compile {}: the logs differ", i + 1);
+    }
+    // every hook's report is in the log
+    for want in [
+        "Undefined control sequence",
+        "Overfull \\hbox",
+        "Underfull \\hbox",
+        "Overfull \\vbox",
+        "> \\wrap=",
+        "Package mine Warning: Something odd",
+        "My own error",
+        "Reference `nowhere' on page",
+    ] {
+        assert!(got[0].2.contains(want), "the log has no {want:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

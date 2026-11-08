@@ -130,8 +130,8 @@ final class EngineV3UnicodeFlowsTests: XCTestCase {
 
     /// Reverse search (a click on a glyph), forward search (a line and
     /// column of the source) and caret follow, from the display list's
-    /// SOURCES, SPAN items and glyph columns (#1789; a native word's glyphs
-    /// carry the column of its first character).
+    /// SOURCES, SPAN items and glyph columns (#1789; a native word read from
+    /// its line gives each glyph its character's column, as Classic does).
     func testReverseAndForwardSearch() async throws {
         let model = try await startedModel()
         defer { model.engineV3.stop() }
@@ -146,6 +146,8 @@ final class EngineV3UnicodeFlowsTests: XCTestCase {
         let line6 = hits.filter { $0.line == 6 }
         XCTAssertTrue(line6.contains { $0.col == 14 }, "naïve: \(line6.map(\.col))")
         XCTAssertTrue(line6.contains { $0.col == 21 }, "café: \(line6.map(\.col))")
+        // and each of its letters at its own byte: `ï` at 16, `v` at 18
+        XCTAssertTrue(line6.contains { $0.col == 16 } && line6.contains { $0.col == 18 }, "naïve's letters: \(line6.map(\.col))")
         // Forward search: the line's word at the column, on its page.
         let naive = try XCTUnwrap(s.place(path: "paper.tex", line: 6, col: 14), "forward search")
         XCTAssertEqual(naive.page, 0)

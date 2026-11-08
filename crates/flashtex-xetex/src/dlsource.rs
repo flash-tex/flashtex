@@ -33,6 +33,21 @@ pub type Loc = u64;
 
 pub const NO_COLUMN: u16 = 0xFFFF;
 const START_FOUND: u64 = 1 << 63;
+/// A native word read from its line itself, character by character: each
+/// of its characters is at its own column, from the word's first one on
+/// (the pdfTeX engine gives each character node the column it was read at).
+const PER_CHAR: u64 = 1 << 62;
+/// With `PER_CHAR`: how many of the word's first characters a macro made
+/// (`\ref{x}.`'s `1` before the `.` read from the line): they are at the
+/// column before the first character read from the line (the macro call's
+/// last), as the pdfTeX engine's nodes for them are; the others from it on.
+const LEAD_SHIFT: u32 = 48;
+const LEAD_MASK: u64 = 0x3FFF << LEAD_SHIFT;
+/// A marker's span with this bit: the column of the next glyph of the glyph
+/// string the marker before it starts (a native word's characters' own
+/// columns, [`Globals::dl_node`]); the reader (`out::page`) gives them to
+/// that string's glyphs in order.
+pub const NEXT_GLYPH: u32 = 1 << 31;
 
 fn pack(span: u32, col: u16) -> Loc {
     (span as u64) << 16 | col as u64
@@ -84,6 +99,11 @@ pub struct DlSource {
     /// Markers not yet taken by a page, in stream order.
     pub markers: Vec<Marker>,
     last_marked: Loc,
+    /// The characters of native words the main loop has collected
+    /// (`dl_native_char`) while the innermost file level read one line:
+    /// the line's (name, line, start) and, for each character, that
+    /// level's `loc` then and the character. Within one command.
+    direct: (i32, i32, i32, Vec<(i32, i32)>),
 }
 
 /// A node's source position as a place: (file path, line, column and
@@ -419,6 +439,7 @@ impl DlSource {
             hyph,
             markers,
             last_marked,
+            direct: Default::default(),
         })
     }
 
@@ -715,7 +736,28 @@ impl Globals {
     /// `dl_hyph_begin(ha)`: the word at node `ha` is about to be rebuilt.
     pub fn dl_hyph_begin(&mut self, ha: i32) {
         if self.host.dl.on == Some(true) {
-            self.host.dl.hyph = Some(self.host.dl.get(ha));
+            // The nodes made for the word are where the pdfTeX engine's
+            // reconstituted characters are: at its `ha`, the node before
+            // the word's first letter (the glue before it), no glyph of a
+            // fragment at a column of its own. XeTeX's `ha` is a native
+            // word itself: then the node before it, from `cur_p` on.
+            let mut at = ha;
+            let w = self.mem[ha.max(0) as usize];
+            if ha >= 0 && ha < self.hi_mem_min && w.hh_b0() == 8 && (40..=41).contains(&w.hh_b1()) {
+                let mut q = self.cur_p;
+                for _ in 0..64 {
+                    if q < 0 || q > self.mem_end {
+                        break;
+                    }
+                    let next = self.mem[q as usize].hh_rh();
+                    if next == ha {
+                        at = q;
+                        break;
+                    }
+                    q = next;
+                }
+            }
+            self.host.dl.hyph = Some(self.host.dl.get(at) & !(PER_CHAR | LEAD_MASK));
         }
     }
 
@@ -739,18 +781,127 @@ impl Globals {
         if self.host.dl.on != Some(true) {
             return;
         }
-        let loc = self.host.dl.get(p) & !START_FOUND;
-        if loc == 0 || loc == self.host.dl.last_marked {
+        let raw = self.host.dl.get(p);
+        let loc = raw & !(START_FOUND | PER_CHAR | LEAD_MASK);
+        // (a word whose glyphs have columns of their own is marked even
+        // where the node before it, a paragraph's indent box, is at its
+        // place)
+        if loc == 0 || loc == self.host.dl.last_marked && raw & PER_CHAR == 0 {
             return;
         }
         let pos = (self.dvi_offset as i64 + self.dvi_ptr as i64).max(0) as u64;
+        let cols = if raw & PER_CHAR != 0 {
+            let lead = ((raw & LEAD_MASK) >> LEAD_SHIFT) as usize;
+            self.dl_glyph_cols(p, loc_col(loc), lead)
+        } else {
+            vec![]
+        };
         let d = &mut self.host.dl;
         d.last_marked = loc;
+        let span = loc_span(loc);
         d.markers.push(Marker {
             pos,
-            span: loc_span(loc),
-            col: loc_col(loc),
+            span,
+            col: cols.first().copied().unwrap_or(loc_col(loc)),
         });
+        if cols.len() > 1 {
+            for &col in &cols[1..] {
+                d.markers.push(Marker {
+                    pos,
+                    span: span | NEXT_GLYPH,
+                    col,
+                });
+            }
+            // (a later node at this place is marked again: the columns
+            // are this string's)
+            d.last_marked = 0;
+        }
+    }
+
+    /// The columns of native word `p`'s glyphs, in the order the XDV
+    /// string draws them, its first character being at `col0` and the
+    /// others after it in its line (`PER_CHAR`): a glyph per character;
+    /// else a glyph that is its character's in the font (its cmap glyph) is
+    /// at that character, and one that is not (a ligature) stands for the
+    /// characters up to the next glyph that is, and is at the character
+    /// after them, where the pdfTeX engine's main loop makes a ligature
+    /// (as it reads the character after it). Empty when `p` is no native
+    /// word.
+    fn dl_glyph_cols(&mut self, p: i32, col0: u16, lead: usize) -> Vec<u16> {
+        // (a whatsit, native_word_node or native_word_node_AT)
+        let w = self.mem[p as usize];
+        if p < 0 || p >= self.hi_mem_min || w.hh_b0() != 8 || !(40..=41).contains(&w.hh_b1()) {
+            return vec![];
+        }
+        let len = self.mem[(p + 4) as usize].qqqq_b2();
+        let glyphs = self.mem[(p + 4) as usize].qqqq_b3().max(0) as usize;
+        let units: Vec<u16> = (0..len)
+            .map(|i| self.get_native_char(p, i) as u16)
+            .collect();
+        let mut chars = vec![];
+        let mut col = col0 as usize;
+        let mut rtl = false;
+        for (i, c) in char::decode_utf16(units.iter().copied()).enumerate() {
+            let c = c.map_or(0xFFFD, |c| c as i32);
+            if !rtl && is_rtl(c) {
+                rtl = true;
+            }
+            if i < lead {
+                chars.push(col0.saturating_sub(1));
+                continue;
+            }
+            chars.push(col.min(NO_COLUMN as usize - 1) as u16);
+            col += utf8_len(c);
+        }
+        if chars.is_empty() || glyphs == 0 {
+            return vec![];
+        }
+        let n = chars.len();
+        if glyphs == n {
+            if rtl {
+                chars.reverse();
+            }
+            return chars;
+        }
+        if rtl {
+            // (no alignment of a right-to-left string's glyphs: each at
+            // the character in its proportion)
+            let mut out: Vec<u16> = (0..glyphs).map(|j| chars[j * n / glyphs]).collect();
+            out.reverse();
+            return out;
+        }
+        let ids = match self.glyph_info_of(p) {
+            Some(g) if g.ids.len() == glyphs => g.ids.clone(),
+            _ => return (0..glyphs).map(|j| chars[j * n / glyphs]).collect(),
+        };
+        let f = self.native_font_of(p);
+        let scalars: Vec<i32> = char::decode_utf16(units.iter().copied())
+            .map(|c| c.map_or(0xFFFD, |c| c as i32))
+            .collect();
+        let cmap: Vec<u16> = scalars
+            .iter()
+            .map(|&c| self.map_char_to_glyph(f, c) as u16)
+            .collect();
+        let end = col.min(NO_COLUMN as usize - 1) as u16;
+        let at = |i: usize| chars.get(i).copied().unwrap_or(end);
+        let mut out = Vec::with_capacity(glyphs);
+        let mut i = 0;
+        for j in 0..glyphs {
+            if i < n && ids[j] == cmap[i] {
+                out.push(chars[i]);
+                i += 1;
+            } else {
+                // a ligature: its characters, up to the next glyph's own
+                let next = ids.get(j + 1).copied();
+                let mut k = (i + 1).min(n);
+                while k < n && Some(cmap[k]) != next {
+                    k += 1;
+                }
+                out.push(at(k));
+                i = k;
+            }
+        }
+        out
     }
 
     /// A native word node `p` is measured: if it was made on the line TeX
@@ -796,14 +947,105 @@ impl Globals {
             }
             k -= 1;
         }
-        let v = match found {
-            Some(s) => {
-                let col: usize = (a..s).map(|k| utf8_len(self.buffer[k])).sum();
-                pack(loc_span(loc), col.min(NO_COLUMN as usize - 1) as u16) | START_FOUND
+        // The pdfTeX engine gives each character node the column TeX had
+        // read to in the file when the character was read (`dl_here`). So:
+        // a word whose characters were each read from this line where they
+        // stand (or read there, backed up and read again: a paragraph's
+        // first letter) gives each glyph its character's column; any other
+        // (a macro's text, `\section{Title}`'s) the column its last
+        // character was read at, not that of the token TeX read after it.
+        let d = &self.host.dl.direct;
+        let same_line = d.0 == self.full_source_filename_stack[self.in_open.max(0) as usize]
+            && d.1 == self.line
+            && d.2 == r.start_field;
+        let read_at = |k: usize| {
+            let i = d.3.partition_point(|x| x.0 < k as i32);
+            d.3.get(i).is_some_and(|x| x.0 == k as i32)
+        };
+        let direct = |s: usize| same_line && (s + 1..=s + n).all(read_at);
+        let last_read = match (same_line, d.3.last(), word.last()) {
+            (true, Some(&(l, c)), Some(&w)) if c == w && l as usize > a => Some(l as usize - 1),
+            _ => None,
+        };
+        let bytes = |s: usize| -> u16 {
+            let col: usize = (a..s.min(self.buffer.len()))
+                .map(|k| utf8_len(self.buffer[k]))
+                .sum();
+            col.min(NO_COLUMN as usize - 1) as u16
+        };
+        // Else the characters a macro made first, then ones read from the
+        // line where they stand: the word's characters as the collection
+        // noted them (the latest run of them), each at the column the file
+        // level had read to then less one, are `k` at one column, then the
+        // others at their own from the next one on.
+        let lead = || -> Option<(usize, usize)> {
+            if !same_line || n < 2 || n > d.3.len() {
+                return None;
             }
-            None => loc | START_FOUND,
+            let i0 = (0..=d.3.len() - n)
+                .rev()
+                .take(256)
+                .find(|&i| d.3[i..i + n].iter().zip(&word).all(|(x, w)| x.1 == *w))?;
+            let c: Vec<usize> = d.3[i0..i0 + n]
+                .iter()
+                .map(|x| (x.0 as usize).saturating_sub(1))
+                .collect();
+            let k = c.iter().position(|&x| x != c[0])?;
+            let s = c[k];
+            let ok = s == c[0] + 1
+                && k < (LEAD_MASK >> LEAD_SHIFT) as usize
+                && (k..n).all(|i| c[i] == s + (i - k) && self.buffer.get(c[i]) == Some(&word[i]));
+            ok.then_some((k, s))
+        };
+        let v = match (found, last_read) {
+            (Some(s), _) if direct(s) => pack(loc_span(loc), bytes(s)) | START_FOUND | PER_CHAR,
+            _ => match (lead(), last_read) {
+                (Some((k, s)), _) => {
+                    pack(loc_span(loc), bytes(s))
+                        | START_FOUND
+                        | PER_CHAR
+                        | (k as u64) << LEAD_SHIFT
+                }
+                (_, Some(e)) => pack(loc_span(loc), bytes(e)) | START_FOUND,
+                _ => loc | START_FOUND,
+            },
         };
         self.host.dl.set(p, v);
+    }
+
+    /// `dl_native_char`: the main loop collects a native word's character
+    /// (`collect_native`, `cur_chr`), just read: note where the innermost
+    /// file level had read to.
+    #[inline(always)]
+    pub fn dl_native_char(&mut self) {
+        if self.host.dl.on == Some(true) {
+            self.dl_note_char();
+        }
+    }
+
+    fn dl_note_char(&mut self) {
+        let Some(r) = (if is_file(&self.cur_input) {
+            Some(self.cur_input)
+        } else {
+            self.dl_file_level()
+        }) else {
+            return;
+        };
+        let key = (
+            self.full_source_filename_stack[self.in_open.max(0) as usize],
+            self.line,
+            r.start_field,
+        );
+        let c = self.cur_chr;
+        let d = &mut self.host.dl.direct;
+        if (d.0, d.1, d.2) != key
+            || d.3.len() >= 4096
+            || d.3.last().is_some_and(|&(l, _)| l > r.loc_field)
+        {
+            d.3.clear();
+            (d.0, d.1, d.2) = key;
+        }
+        d.3.push((r.loc_field, c));
     }
 
     /// The `SOURCES` the reader needs for `spans` that it was not sent yet
@@ -839,6 +1081,13 @@ impl Globals {
 /// or a pseudo file).
 fn is_file(r: &in_state_record) -> bool {
     r.state_field != token_list && r.name_field > 17
+}
+
+/// A character of a right-to-left script (Hebrew, Arabic, Syriac, Thaana,
+/// NKo, Samaritan, Mandaic and their presentation forms): a native word of
+/// them is drawn last character first.
+fn is_rtl(c: i32) -> bool {
+    matches!(c, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF)
 }
 
 #[cfg(test)]
