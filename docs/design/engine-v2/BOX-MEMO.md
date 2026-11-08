@@ -1109,3 +1109,34 @@ level), its body, or a backed-up or inserted list. The key is the line, the list
 macro parameter (`out_param`: the macro's argument, which the key does not hold). Reading a token
 list moves nothing in the buffer or the file; the buffer's high mark is kept as for a file (§17.2),
 counted from 0.
+
+### 17.12 The whole-state verifier in the host (measurement only)
+
+`FLASHTEX_BOXMEMO_FULL_VERIFY_HOST=1`, with `FLASHTEX_BOXMEMO=verify`, runs §7's whole-state verifier
+(`bm_verify_full`) in the host too. **Measurement only: off by default, never set by the app.** Its
+admission checkpoint is left among the host's restart points, which is why the host does not run it
+(a restart point with no page count, a restore that replaced an edit's pending branch: the verify
+sweep, beamer-fragile). A run with it may therefore restart wrongly, so it is only a gate when every
+compile is also compared byte for byte with scratch runs (`incr_bench.py --verify`, the references with
+BOX-MEMO off), which shows such damage as a failure.
+
+Why: a span is never replayed in one command-line run, since pgf's picture serial is in every picture's
+key (§9): the command-line verifier, the only whole-state one, sees none. In the host an edit's re-run
+meets the same keys again.
+
+It found one more difference, fixed: a replay's fast-forward over the span's lines
+(`bm_span_forward`) asked for a timed checkpoint where the normal path's reads, held back (§17.4), had
+not (`ckpt_request` 0 against 5). The fast-forward holds them back too, and a request made before a
+span stays made until the first command after it, on both paths.
+
+Measured on the NixOS PC at a111dee51, spans on, `FLASHTEX_BOXMEMO=verify`,
+`FLASHTEX_BOXMEMO_VERIFY_FAIL=1`, this switch on, every compile's PDF (and, with incr_bench, its log,
+`.aux`, `.out` and `.toc`) compared byte for byte with scratch command-line runs with BOX-MEMO off:
+
+| Document, edits | compiles | equal to scratch | spans replayed and verified on the whole state | differences |
+|---|---|---|---|---|
+| tikzcd-shaded-notes, incr_bench seeds 1 and 2 (10 edits each, within 300 bytes of the first, each reverted) | 40 | 40 | 58 | 0 |
+| arXiv 2501.08950v2, incr_bench seed 1 (stopped after 3 compiles: its edits, on page 6, replayed no picture) | 3 | 3 | 0 | 0 |
+| arXiv 2501.08950v2, a letter typed and deleted after "as we al" and "positive dampening factors", 3 times each | 14 | 14 | 4 | 0 |
+
+All calls verified on the whole state in the last row: 12 433 (`full_verified`), 0 differences.
