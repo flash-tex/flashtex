@@ -5868,13 +5868,31 @@ fn fuzz_sources(proj: &Path, main: &str) -> Vec<String> {
 }
 
 /// Byte offsets inside words (between two ASCII letters) of `text`, from
-/// `lo` on.
+/// `lo` on; not in a control word's name or an environment's (`\begin{..}`,
+/// `\end{..}`): a name broken is an edit kind of its own, and the error
+/// it gives stays until a revert mends it (and not in a file's name,
+/// `names_a_file`).
 fn inside_words(text: &str, lo: usize) -> Vec<usize> {
     let b = text.as_bytes();
-    (lo.max(1)..b.len())
-        .filter(|&i| b[i - 1].is_ascii_alphabetic() && b[i].is_ascii_alphabetic())
-        .filter(|&i| !names_a_file(text, i))
-        .collect()
+    let mut v = vec![];
+    let mut run = 0;
+    for i in 1..b.len() {
+        if !b[i - 1].is_ascii_alphabetic() {
+            run = i;
+        }
+        if i < lo || !b[i - 1].is_ascii_alphabetic() || !b[i].is_ascii_alphabetic() {
+            continue;
+        }
+        // (`run`, the word's first letter, is ASCII: a char boundary)
+        let name = run > 0
+            && (b[run - 1] == b'\\'
+                || text[..run].ends_with("\\begin{")
+                || text[..run].ends_with("\\end{"));
+        if !name && !names_a_file(text, i) {
+            v.push(i);
+        }
+    }
+    v
 }
 
 /// Whether offset `i` is in the name of a file that `text` loads there: a
@@ -6012,11 +6030,16 @@ fn fuzz_step(
             .filter(|&i| i < body - 16)
             .collect();
         Some(match rng.below(3) {
-            0 => step(
-                at,
-                0,
-                format!("\\newcommand\\fuzz{}{{x}}\n", roman_fuzz(*labels)),
-            ),
+            // (a new name each time: `\newcommand` of a defined one is an
+            // error that would stay)
+            0 => {
+                *labels += 1;
+                step(
+                    at,
+                    0,
+                    format!("\\newcommand\\fuzz{}{{x}}\n", roman_fuzz(*labels)),
+                )
+            }
             1 => step(at, 0, "% a preamble comment\n".into()),
             _ => match near(rng, &pre) {
                 Some(p) => step(p, 0, "q".into()),
