@@ -164,6 +164,22 @@ final class EngineV3UntrustedConfinementTests: XCTestCase {
         XCTAssertNil(liveShare["FLASHTEX_CONFINE_SEARCH"], "not inherited from the app's environment")
     }
 
+    /// #2026 review: a project folder named `~/Downloads/:paper` is one
+    /// root, escaped, never `~/Downloads` and `paper` (the engine splits the
+    /// list at `:`). The negative control: a root without `:` or `%` is
+    /// passed as it is.
+    func testARootWithAColonInItsNameStaysOneRoot() {
+        let downloads = (NSHomeDirectory() as NSString).appendingPathComponent("Downloads")
+        let project = downloads + "/:paper"
+        let env = EngineV3HostProcess.confinedEnvironment(["PATH": "/bin"], roots: [project, "/Library/Fonts"])
+        let list = try? XCTUnwrap(env["FLASHTEX_CONFINE_ROOTS"])
+        XCTAssertEqual(list, downloads + "/%3Apaper:/Library/Fonts")
+        XCTAssertFalse(list?.split(separator: ":").map(String.init).contains(downloads + "/") ?? true,
+                       "the folder above is never a root")
+        XCTAssertEqual(EngineV3HostProcess.confineRootList(["/a%b"]), "/a%25b")
+        XCTAssertEqual(EngineV3HostProcess.confineRootList(["/p", "/q"]), "/p:/q", "plain roots as they are")
+    }
+
     func testTheHostEnvironmentNamesTheRefusalsFile() {
         let env = EngineV3HostProcess.confinedEnvironment(["PATH": "/bin"], roots: ["/p"], refusals: "/tmp/r.refused")
         XCTAssertEqual(env["FLASHTEX_CONFINE_REFUSED"], "/tmp/r.refused")

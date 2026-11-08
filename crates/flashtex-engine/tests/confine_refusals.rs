@@ -109,6 +109,7 @@ fn without_confinement_nothing_is_refused_or_written() {
 /// name in a directory of the user's `TEXINPUTS` outside the roots is
 /// refused. Without it such a search-path hit stays readable, as for Live
 /// Share, whose roots are the project alone.
+#[cfg(unix)]
 #[test]
 fn search_hits_outside_the_roots_are_refused_when_the_roots_name_the_trees() {
     let (base, job, outside) = setup("search");
@@ -164,5 +165,107 @@ fn search_hits_outside_the_roots_are_refused_when_the_roots_name_the_trees() {
     assert!(log.contains("[missing]"), "{log}");
     let real = std::fs::canonicalize(outside.join("sec.tex")).unwrap();
     assert_eq!(lines, vec![format!("sec.tex\t{}", real.display())]);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A root whose name has a `:` (#2026 review: a folder `~/Downloads/:paper`)
+/// is one root when the app escapes it (`%3A`): the project's own file is
+/// read, a link to a file beside the folder is refused. The negative
+/// control passes the same root unescaped, as the app did before: the list
+/// splits at the `:` and the folder above becomes a root.
+#[cfg(unix)]
+#[test]
+fn a_root_with_a_colon_in_its_name_is_one_root() {
+    let base = std::env::temp_dir().join(format!("flashtex-confine-colon-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (dl, job) = (base.join("dl"), base.join("job"));
+    let project = dl.join(":paper");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(job.join("out")).unwrap();
+    std::fs::write(project.join("in.tex"), "\\message{[inside]}\n").unwrap();
+    std::fs::write(dl.join("secret.tex"), format!("\\message{{{SECRET}}}\n")).unwrap();
+    std::os::unix::fs::symlink(project.join("in.tex"), job.join("in.tex")).unwrap();
+    std::os::unix::fs::symlink(dl.join("secret.tex"), job.join("s.tex")).unwrap();
+    std::fs::write(
+        job.join("t.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\
+         \\openin1=in.tex \\ifeof1 \\else\\read1 to\\x \\x\\fi\n\
+         \\openin1=s.tex \\ifeof1 \\else\\read1 to\\x \\x\\fi\n\\end\n",
+    )
+    .unwrap();
+    let run = |roots: &str| {
+        Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+            .current_dir(&job)
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FLASHTEX_CONFINE_READS", "1")
+            .env("FLASHTEX_CONFINE_ROOTS", roots)
+            .env_remove("FLASHTEX_CONFINE_REFUSED")
+            .args([
+                "-ini",
+                "-output-directory=out",
+                "-interaction=nonstopmode",
+                "t.tex",
+            ])
+            .output()
+            .expect("run flashtex-initex");
+        std::fs::read_to_string(job.join("out/t.log")).unwrap_or_default()
+    };
+    let raw = project.display().to_string();
+    let escaped = raw.replace('%', "%25").replace(':', "%3A");
+    let log = run(&escaped);
+    assert!(
+        log.contains("[inside]"),
+        "the project's file is read: {log}"
+    );
+    assert_eq!(log.matches(SECRET).count(), 0, "{log}");
+    let log = run(&raw);
+    assert!(
+        log.contains(SECRET),
+        "unescaped, the folder above is a root: {log}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A document that asks for many names confinement refuses (#2026 review):
+/// the refusals file holds at most `MAX_REFUSED` lines; the negative
+/// control, a few names, lists each.
+#[test]
+fn the_refusals_list_is_bounded() {
+    let base = std::env::temp_dir().join(format!("flashtex-confine-many-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("out")).unwrap();
+    let refused = base.join("refused");
+    let run = |n: usize| {
+        let _ = std::fs::remove_file(&refused);
+        std::fs::write(
+            base.join("t.tex"),
+            format!(
+                "\\catcode`\\{{=1 \\catcode`\\}}=2 \\count1=0\n\
+                 \\def\\loop{{\\advance\\count1 by1 \\openin1=/nonexistent/f\\the\\count1.tex \
+                 \\closein1 \\ifnum\\count1<{n} \\expandafter\\loop\\fi}}\\loop\n\\end\n"
+            ),
+        )
+        .unwrap();
+        Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+            .current_dir(&base)
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FLASHTEX_CONFINE_READS", "1")
+            .env("FLASHTEX_CONFINE_ROOTS", &base)
+            .env("FLASHTEX_CONFINE_REFUSED", &refused)
+            .args([
+                "-ini",
+                "-output-directory=out",
+                "-interaction=nonstopmode",
+                "t.tex",
+            ])
+            .output()
+            .expect("run flashtex-initex");
+        std::fs::read_to_string(&refused)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    assert_eq!(run(12), 12, "a few refusals are each listed");
+    assert_eq!(run(1000), flashtex_engine::system::MAX_REFUSED);
     let _ = std::fs::remove_dir_all(&base);
 }

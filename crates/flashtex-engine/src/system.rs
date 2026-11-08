@@ -1991,19 +1991,36 @@ static REFUSED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// there as one line, `name` or `name<TAB>resolved`, for the app, which
 /// lists them in the Problems panel with a way to trust the project.
 /// Nothing is printed: the run's output is the run's.
+///
+/// Bounded (#2026 review): a process notes at most [`MAX_REFUSED`] lines
+/// of at most [`MAX_REFUSED_LINE`] bytes each, and nothing is appended to a
+/// file that holds [`MAX_REFUSED_BYTES`] already (the engines of one host
+/// share it: a Unicode host runs one per compile), so a document that asks
+/// for a million names fills neither memory nor the disk. The app reads
+/// at most that much of it.
 fn note_refused(name: &str, resolved: Option<&Path>) {
     let name = name.trim_matches('"');
-    let line = match resolved {
+    let mut line = match resolved {
         Some(r) => format!("{name}\t{}", r.display()),
         None => name.to_string(),
     };
+    if line.len() > MAX_REFUSED_LINE {
+        let mut end = MAX_REFUSED_LINE;
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        line.truncate(end);
+    }
     let mut seen = REFUSED.lock().unwrap();
-    if seen.contains(&line) {
+    if seen.len() >= MAX_REFUSED || seen.contains(&line) {
         return;
     }
     seen.push(line.clone());
     drop(seen);
     if let Some(p) = std::env::var_os("FLASHTEX_CONFINE_REFUSED") {
+        if std::fs::metadata(&p).is_ok_and(|m| m.len() >= MAX_REFUSED_BYTES) {
+            return;
+        }
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -2014,6 +2031,18 @@ fn note_refused(name: &str, resolved: Option<&Path>) {
     }
 }
 
+/// The most refusals one process notes (`note_refused`).
+pub const MAX_REFUSED: usize = 200;
+/// The longest refusal line noted, in bytes (longer ones are cut).
+pub const MAX_REFUSED_LINE: usize = 4096;
+/// A refusals file this long gets no more lines (the app reads 64 KiB).
+pub const MAX_REFUSED_BYTES: u64 = 64 * 1024;
+
+/// Whether this process's reads are confined (`FLASHTEX_CONFINE_READS=1`).
+pub(crate) fn reads_are_confined() -> bool {
+    reads_confined()
+}
+
 fn reads_confined() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("FLASHTEX_CONFINE_READS").is_some_and(|v| v == "1"))
@@ -2021,16 +2050,47 @@ fn reads_confined() -> bool {
 
 /// The roots a confined read may resolve into besides the job's directory
 /// and the output directory (`FLASHTEX_CONFINE_ROOTS`), with links resolved.
+/// The list is colon-separated, each root with `%` and `:` written `%25`
+/// and `%3A` (`confine_root_list`), so a folder named `:paper` is one
+/// root, never two (#2026 review: `~/Downloads/:paper` made all of
+/// `~/Downloads` a root). A root that is not absolute is dropped.
 fn confine_roots() -> &'static [std::path::PathBuf] {
     static ROOTS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
     ROOTS.get_or_init(|| {
-        std::env::var("FLASHTEX_CONFINE_ROOTS")
-            .unwrap_or_default()
-            .split(':')
-            .filter(|s| !s.is_empty())
+        confine_root_list(&std::env::var("FLASHTEX_CONFINE_ROOTS").unwrap_or_default())
+            .into_iter()
             .filter_map(|s| std::fs::canonicalize(s).ok())
             .collect()
     })
+}
+
+/// `FLASHTEX_CONFINE_ROOTS`' roots, unescaped (`%3A` is `:`, `%25` is `%`);
+/// only absolute ones.
+pub fn confine_root_list(v: &str) -> Vec<String> {
+    v.split(':')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut out = String::with_capacity(s.len());
+            let mut rest = s;
+            while let Some(i) = rest.find('%') {
+                out.push_str(&rest[..i]);
+                let esc = rest.get(i + 1..i + 3);
+                match esc {
+                    Some("3A" | "3a") => out.push(':'),
+                    Some("25") => out.push('%'),
+                    _ => {
+                        out.push('%');
+                        rest = &rest[i + 1..];
+                        continue;
+                    }
+                }
+                rest = &rest[i + 3..];
+            }
+            out.push_str(rest);
+            out
+        })
+        .filter(|s| s.starts_with('/'))
+        .collect()
 }
 
 /// Both confinement rules for a lookup of `name` that found `found` (see
@@ -6065,6 +6125,26 @@ mod os_dependent_tests {
 #[cfg(test)]
 mod confined_read_tests {
     use super::confined_name_ok;
+
+    /// `FLASHTEX_CONFINE_ROOTS` is unescaped root by root (#2026 review).
+    #[test]
+    fn confine_root_lists_are_unescaped() {
+        use super::confine_root_list;
+        // `~/Downloads/:paper` is one root (escaped), never `~/Downloads`
+        assert_eq!(
+            confine_root_list("/u/Downloads/%3Apaper:/tl"),
+            vec!["/u/Downloads/:paper", "/tl"]
+        );
+        assert_eq!(confine_root_list("/a%253Ab:/c%25d"), vec!["/a%3Ab", "/c%d"]);
+        assert_eq!(confine_root_list("/odd%:/odd%4"), vec!["/odd%", "/odd%4"]);
+        // the negative control: joined unescaped, the name splits, and the
+        // part that is not absolute is dropped (the folder above stays)
+        assert_eq!(
+            confine_root_list("/u/Downloads/:paper"),
+            vec!["/u/Downloads/"]
+        );
+        assert_eq!(confine_root_list("rel:/abs"), vec!["/abs"]);
+    }
 
     /// The names a Live Share guest could use to read the host's files are
     /// refused; ordinary project and TeX tree names are not.

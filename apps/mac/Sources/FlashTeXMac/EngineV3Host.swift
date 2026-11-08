@@ -401,7 +401,7 @@ final class EngineV3HostProcess: @unchecked Sendable {
         if searchInRoots { env["FLASHTEX_CONFINE_SEARCH"] = "roots" }
         env.removeValue(forKey: "FLASHTEX_CONFINE_REFUSED")
         if let refusals { env["FLASHTEX_CONFINE_REFUSED"] = refusals }
-        env["FLASHTEX_CONFINE_ROOTS"] = roots.joined(separator: ":")
+        env["FLASHTEX_CONFINE_ROOTS"] = confineRootList(roots)
         for k in ["MKTEXTFM", "MKTEXPK", "MKTEXMF", "MKTEXTEX", "MKOCP", "MKOFM"] { env[k] = "0" }
         env["openin_any"] = "p"
         env["openout_any"] = "p"
@@ -410,6 +410,15 @@ final class EngineV3HostProcess: @unchecked Sendable {
             env.removeValue(forKey: k)
         }
         return env
+    }
+
+    /// `FLASHTEX_CONFINE_ROOTS`: the roots joined by `:`, each with `%` and
+    /// `:` written `%25` and `%3A` (the engine's `confine_root_list`), so a
+    /// folder named `~/Downloads/:paper` stays one root and never makes
+    /// `~/Downloads` one (#2026 review).
+    static func confineRootList(_ roots: [String]) -> String {
+        roots.map { $0.replacingOccurrences(of: "%", with: "%25").replacingOccurrences(of: ":", with: "%3A") }
+            .joined(separator: ":")
     }
 
     var pid: Int32 { process.processIdentifier }

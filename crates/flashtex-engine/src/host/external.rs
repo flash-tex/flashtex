@@ -392,16 +392,21 @@ fn aux_chain(
     }
 }
 
-/// The data sources a `.bcf` names (`parse_bcf`).
-fn bcf_sources(d: &[u8]) -> Vec<String> {
+/// The data sources a `.bcf` names (`parse_bcf`): its local BibTeX files.
+/// `confined` (a confined host, `FLASHTEX_CONFINE_READS`; #2026 review):
+/// every data source, of every type (`file` or `url`, as biblatex writes
+/// for `location=remote`) and data type (`biblatexml`, `ris`, ...), so
+/// each must be found where confinement allows (`Job::find`) or biber does
+/// not run: a `.bltxml` named outside the roots, or a URL, is missing.
+fn bcf_sources(d: &[u8], confined: bool) -> Vec<String> {
     let t = String::from_utf8_lossy(d);
     let mut v = vec![];
     for l in t.lines() {
         let l = l.trim();
-        if !l.starts_with("<bcf:datasource") || !l.contains("type=\"file\"") {
+        if !l.starts_with("<bcf:datasource") {
             continue;
         }
-        if !l.contains("datatype=\"bibtex\"") {
+        if !confined && (!l.contains("type=\"file\"") || !l.contains("datatype=\"bibtex\"")) {
             continue;
         }
         let (Some(a), Some(b)) = (l.find('>'), l.rfind("</bcf:datasource>")) else {
@@ -442,7 +447,7 @@ pub fn snapshot(root: &Path, out: &Path, jobname: &str, journal: Option<&ReadLog
     let bcf = format!("{jobname}.bcf");
     if written.contains(&bcf) {
         if let Some(d) = read(&out.join(&bcf)) {
-            let bib = bcf_sources(&d);
+            let bib = bcf_sources(&d, crate::system::reads_are_confined());
             rules.push(Rule {
                 key: RuleKey {
                     tool: Tool::Biber,
@@ -1405,7 +1410,32 @@ mod tests {
     <bcf:datasource type="file" datatype="bibtex" glob="false">sub/more.bib</bcf:datasource>
   </bcf:bibdata>
 "#;
-        assert_eq!(bcf_sources(bcf), vec!["refs.bib", "sub/more.bib"]);
+        assert_eq!(bcf_sources(bcf, false), vec!["refs.bib", "sub/more.bib"]);
+        assert_eq!(bcf_sources(bcf, true), vec!["refs.bib", "sub/more.bib"]);
+    }
+
+    /// A confined host counts every data source biber would read (#2026
+    /// review): the other data types and remote ones too. The negative
+    /// control: unconfined, only the local BibTeX files, as before.
+    #[test]
+    fn bcf_datasources_of_every_type_when_confined() {
+        let bcf = br#"  <bcf:bibdata section="0">
+    <bcf:datasource type="file" datatype="bibtex" glob="false">refs.bib</bcf:datasource>
+    <bcf:datasource type="file" datatype="biblatexml" glob="false">/outside/secret.bltxml</bcf:datasource>
+    <bcf:datasource type="file" datatype="ris" glob="false">more.ris</bcf:datasource>
+    <bcf:datasource type="url" datatype="bibtex">https://example.invalid/r.bib</bcf:datasource>
+  </bcf:bibdata>
+"#;
+        assert_eq!(bcf_sources(bcf, false), vec!["refs.bib"]);
+        assert_eq!(
+            bcf_sources(bcf, true),
+            vec![
+                "refs.bib",
+                "/outside/secret.bltxml",
+                "more.ris",
+                "https://example.invalid/r.bib"
+            ]
+        );
     }
 
     #[test]
