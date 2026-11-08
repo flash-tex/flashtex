@@ -52,6 +52,8 @@
     {"name": "u10-unicode-math-newcm", "path": "tools/unicode-m3/cases/u10-unicode-math-newcm.tex", "family": "unicode-math"},
     {"name": "u11-beamer-fontspec", "path": "tools/unicode-m3/cases/u11-beamer-fontspec.tex", "family": "fontspec"},
     {"name": "u12-fontspec-long", "path": "tools/unicode-m3/cases/u12-fontspec-long.tex", "family": "fontspec"},
+    {"name": "u13-realdoc-paper", "path": "tools/unicode-m3/cases/u13-realdoc-paper.tex", "family": "realdoc",
+     "files": [["apps/mac/Sources/FlashTeXMac/Resources/Fonts/JetBrainsMono-*.ttf", "fonts"]]},
     {"name": "fontspec-example", "archive": "fontspec.doc", "root": "doc/latex/fontspec", "main": "fontspec-example.tex", "family": "fontspec", "source": "TeX Live doc"},
     {"name": "unimath-example", "archive": "unicode-math.doc", "root": "doc/latex/unicode-math", "main": "unimath-example.ltx", "family": "unicode-math", "source": "TeX Live doc"},
     {"name": "unimath-symbols", "archive": "unicode-math.doc", "root": "doc/latex/unicode-math", "main": "unimath-symbols.ltx", "family": "unicode-math", "source": "TeX Live doc", "trace": "boxes"},

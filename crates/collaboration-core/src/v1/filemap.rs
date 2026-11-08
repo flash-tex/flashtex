@@ -101,10 +101,22 @@ pub struct FileMap {
     ops: HashMap<Id, FileOp>,
     sv: StateVector,
     log: Vec<FileOp>,
+    /// Most entries; a create past it is [`CollabError::ProjectFull`].
+    max_files: usize,
+    /// This replica's own creates stop this far below `max_files` (§2.4a).
+    local_headroom: usize,
 }
 
 impl FileMap {
     pub fn new(replica: u64) -> Self {
+        Self::with_max_files(replica, limits::MAX_FILES)
+    }
+
+    pub fn with_max_files(replica: u64, max_files: usize) -> Self {
+        Self::with_caps(replica, max_files, 0)
+    }
+
+    pub fn with_caps(replica: u64, max_files: usize, local_headroom: usize) -> Self {
         Self {
             replica,
             lamport: 0,
@@ -112,7 +124,18 @@ impl FileMap {
             ops: HashMap::new(),
             sv: StateVector::default(),
             log: Vec::new(),
+            max_files,
+            local_headroom,
         }
+    }
+
+    /// Number of entries, deleted ones included.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn state_vector(&self) -> StateVector {
@@ -132,6 +155,14 @@ impl FileMap {
     }
 
     fn local(&mut self, file: FileId, kind: FileOpKind) -> Result<FileOp, CollabError> {
+        // A local create stops `local_headroom` below the cap (§2.4a); a
+        // remote one may take the cap itself.
+        if matches!(kind, FileOpKind::Create { .. })
+            && !self.entries.contains_key(&file)
+            && self.entries.len() + self.local_headroom.min(self.max_files) >= self.max_files
+        {
+            return Err(CollabError::ProjectFull);
+        }
         let op = FileOp {
             id: Id::new(self.replica, self.sv.get(self.replica)),
             lamport: self.lamport + 1,
@@ -192,6 +223,9 @@ impl FileMap {
                 }
                 if self.entries.contains_key(&op.file) {
                     return Err(CollabError::IdConflict(op.id));
+                }
+                if self.entries.len() >= self.max_files {
+                    return Err(CollabError::ProjectFull);
                 }
                 self.entries.insert(
                     op.file,
