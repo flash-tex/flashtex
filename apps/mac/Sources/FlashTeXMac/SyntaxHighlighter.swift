@@ -142,12 +142,20 @@ final class SyntaxPainter {
     /// `attach` runs from `makeNSView`, before the text view has a window or
     /// a size: the window painted then is only the caret's neighbourhood
     /// (`window(for:)`). Paint the real visible window once the view is on
-    /// screen (a scroll would too, via `scrolled`; the first display may come
-    /// without one). Bounded: about two seconds of run-loop turns.
-    private func paintWhenOnScreen(turns: Int = 120) {
-        DispatchQueue.main.async { [weak self] in
+    /// screen. A scroll does that too (`scrolled`, from the clip view's bounds
+    /// change), and so does the clip view growing (its frame change, observed
+    /// by `SourceEditorView.Coordinator.attach`); this covers a view that gets
+    /// its window and size with neither. Bounded by time: the next run-loop
+    /// turn, then a check every 50 ms for two seconds.
+    private func paintWhenOnScreen(until deadline: DispatchTime = .now() + .seconds(2),
+                                   after delay: DispatchTimeInterval = .milliseconds(0)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, let tv = self.textView else { return }
-            if Self.isOnScreen(tv) { self.scrolled() } else if turns > 0 { self.paintWhenOnScreen(turns: turns - 1) }
+            if Self.isOnScreen(tv) {
+                self.scrolled()
+            } else if DispatchTime.now() < deadline {
+                self.paintWhenOnScreen(until: deadline, after: .milliseconds(50))
+            }
         }
     }
 

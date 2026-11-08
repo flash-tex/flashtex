@@ -86,4 +86,34 @@ final class SyntaxPaintWindowTests: XCTestCase {
         }
         XCTAssertLessThan(paintedUnits(co), 200_000)
     }
+
+    /// daniel-parent on #2017: text that becomes visible because the clip
+    /// view grew (a collapsed editor column shown, a window widened), with no
+    /// scroll, is painted too: the clip view's frame change, not a bounded
+    /// poll, triggers it.
+    func testGrowingTheEditorPaintsTheNewlyVisibleText() async throws {
+        let text = Self.book(bytes: 1_000_000)
+        let ns = text as NSString
+        let probe = Probe(text: text)
+        HostedWindowSupport.prepare()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 200), styleMask: [.titled])
+        var hosting: NSHostingView<Host>? = NSHostingView(rootView: Host(probe: probe))
+        window.contentView = hosting
+        window.orderFrontRegardless() // never makeKey
+        defer { window.orderOut(nil); window.contentView = nil; hosting = nil }
+        var found: NSTextView?
+        try await waitFor(10) { found = TypingBenchDriver.findTextView(in: [window.contentView!]); return found != nil }
+        let tv = try XCTUnwrap(found)
+        let co = try XCTUnwrap(tv.delegate as? SourceEditorView.Coordinator)
+        try await waitFor(10) { tv.textStorage?.length == ns.length && co.syntax.highlighter.length == ns.length }
+        try await waitFor(5) { SyntaxPainter.isOnScreen(tv) && self.covers(co, self.visibleCharacters(tv)) }
+        try await Task.sleep(nanoseconds: 300_000_000) // past any on-screen check still queued
+
+        co.syntax.clear() // as if the visible text had never been painted
+        XCTAssertEqual(paintedUnits(co), 0)
+        window.setContentSize(NSSize(width: 900, height: 700))
+        try await waitFor(5) { self.covers(co, self.visibleCharacters(tv)) }
+        XCTAssertGreaterThan(visibleCharacters(tv).length, 0)
+        XCTAssertTrue(covers(co, visibleCharacters(tv)), "the clip view's growth paints the newly visible text")
+    }
 }

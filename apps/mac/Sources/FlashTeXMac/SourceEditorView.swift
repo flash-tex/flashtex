@@ -691,6 +691,7 @@ struct SourceEditorView: NSViewRepresentable {
         private(set) var announcements: [String] = []
         private weak var scrollView: NSScrollView?
         private var boundsObserver: NSObjectProtocol?
+        private var frameObserver: NSObjectProtocol?
 
         init(_ parent: SourceEditorView) {
             self.parent = parent
@@ -706,6 +707,7 @@ struct SourceEditorView: NSViewRepresentable {
         deinit {
             foldGutterWork?.cancel()
             if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+            if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
             if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
             if let magnifyMonitor { NSEvent.removeMonitor(magnifyMonitor) }
             deferredTimer?.invalidate()
@@ -737,6 +739,18 @@ struct SourceEditorView: NSViewRepresentable {
                     self.hover.dismiss()
                     self.gutter?.needsDisplay = true
                 }
+            }
+            // A clip view that grows without scrolling (a collapsed editor
+            // column shown, a window widened) posts no bounds change (AppKit
+            // posts none for a bounds change caused by a frame change), and
+            // the newly visible text needs its colours: `syntax.scrolled()`
+            // paints whatever of the visible window is missing (nothing when
+            // nothing is) and defers itself when called mid-edit.
+            scroll.contentView.postsFrameChangedNotifications = true
+            frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: nil
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.syntax.scrolled() }
             }
         }
 
