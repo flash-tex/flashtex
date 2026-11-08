@@ -781,6 +781,7 @@ impl Globals {
                                                     if (self.cur_chr == 0i32) {
                                                         {
                                                             {
+                                                                self.dg_mark();
                                                                 if (self.interaction == error_stop_mode) {
                                                                 }
                                                                 if self.file_line_error_style_p {
@@ -891,6 +892,7 @@ impl Globals {
                                                 if (self.trie_o[crate::ix::U((q) as usize)] != min_quarterword) {
                                                     {
                                                         {
+                                                            self.dg_mark();
                                                             if (self.interaction == error_stop_mode) {
                                                             }
                                                             if self.file_line_error_style_p {
@@ -922,6 +924,7 @@ impl Globals {
                                 _ => {
                                     {
                                         {
+                                            self.dg_mark();
                                             if (self.interaction == error_stop_mode) {
                                             }
                                             if self.file_line_error_style_p {
@@ -1028,6 +1031,7 @@ impl Globals {
             // §1014
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -2221,6 +2225,7 @@ impl Globals {
         if (!b) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -2570,6 +2575,7 @@ impl Globals {
                                         if (self.hc[crate::ix::U((0i32) as usize)] == 0i32) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -2724,6 +2730,7 @@ impl Globals {
                                 // §990
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -3001,6 +3008,7 @@ impl Globals {
                                         } else {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -3244,6 +3252,7 @@ impl Globals {
                 if (self.mem[crate::ix::U((v) as usize)].hh().b0() != vlist_node) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -3436,6 +3445,7 @@ impl Globals {
             if (self.mem[crate::ix::U((p) as usize)].hh().b0() == hlist_node) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -3517,6 +3527,7 @@ impl Globals {
             if (self.eqtb[crate::ix::U(((1206822i32) - 1) as usize)].hh().rh() != (268435455i32).wrapping_neg()) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -3758,6 +3769,7 @@ impl Globals {
                     // §1078
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -4003,6 +4015,7 @@ impl Globals {
                                             if ((self.mem[crate::ix::U((q) as usize)].hh().b1() != normal) && (self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].int() != 0i32)) {
                                                 {
                                                     {
+                                                        self.dg_mark();
                                                         if (self.interaction == error_stop_mode) {
                                                         }
                                                         if self.file_line_error_style_p {
@@ -4217,6 +4230,7 @@ impl Globals {
                                 if ((self.mem[crate::ix::U((q) as usize)].hh().b1() != normal) && (self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].int() != 0i32)) {
                                     {
                                         {
+                                            self.dg_mark();
                                             if (self.interaction == error_stop_mode) {
                                             }
                                             if self.file_line_error_style_p {
@@ -4346,6 +4360,7 @@ impl Globals {
         self.back_input();
         self.cur_tok = 6291492i32;
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -4369,6 +4384,7 @@ impl Globals {
     // §1103
     pub fn you_cant(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -4530,6 +4546,7 @@ impl Globals {
             // §1120
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -4553,6 +4570,7 @@ impl Globals {
                 p = self.get_avail();
                 self.mem[crate::ix::U((temp_head) as usize)].set_hh_rh(p);
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -4612,6 +4630,7 @@ impl Globals {
     // §1123
     pub fn extra_right_brace(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -4782,6 +4801,7 @@ impl Globals {
                             } else {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -4990,6 +5010,7 @@ impl Globals {
                         if (!self.scan_keyword(66244i32)) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -5081,6 +5102,7 @@ impl Globals {
             } else {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -5234,6 +5256,7 @@ impl Globals {
             } else {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -5296,6 +5319,7 @@ impl Globals {
                 if (self.cur_val == 255i32) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -5516,6 +5540,7 @@ impl Globals {
                 if ((((self.cur_list.mode_field).wrapping_abs() == mmode) || (((self.cur_list.mode_field).wrapping_abs() == vmode) && (self.mem[crate::ix::U((p) as usize)].hh().b0() != vlist_node))) || (((self.cur_list.mode_field).wrapping_abs() == hmode) && (self.mem[crate::ix::U((p) as usize)].hh().b0() != hlist_node))) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -5680,6 +5705,7 @@ impl Globals {
                                         if ((self.mem[crate::ix::U((p) as usize)].hh().b0() != whatsit_node) || ((!((self.mem[crate::ix::U((p) as usize)].hh().b1() >= native_word_node) && (self.mem[crate::ix::U((p) as usize)].hh().b1() <= native_word_node_AT))) && (self.mem[crate::ix::U((p) as usize)].hh().b1() != glyph_node))) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -5729,6 +5755,7 @@ impl Globals {
                         if ((n > 0i32) && ((self.cur_list.mode_field).wrapping_abs() == mmode)) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -5756,6 +5783,7 @@ impl Globals {
                         } else {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -5905,6 +5933,7 @@ impl Globals {
             // §1182
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -5948,6 +5977,7 @@ impl Globals {
                 if (self.align_state < 0i32) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -5963,6 +5993,7 @@ impl Globals {
                 } else {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -5993,6 +6024,7 @@ impl Globals {
     // §1183
     pub fn no_align_error(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -6017,6 +6049,7 @@ impl Globals {
     // §1183
     pub fn omit_error(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {

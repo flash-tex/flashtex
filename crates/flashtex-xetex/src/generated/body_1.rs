@@ -467,6 +467,7 @@ impl Globals {
     pub fn pdf_error(&mut self, mut t: str_number, mut p: str_number) {
         self.normalize_selector();
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -4443,6 +4444,7 @@ impl Globals {
     // §1457
     pub fn not_aat_font_error(&mut self, mut cmd: i32, mut c: i32, mut f: i32) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -4463,6 +4465,7 @@ impl Globals {
     // §1457
     pub fn not_aat_gr_font_error(&mut self, mut cmd: i32, mut c: i32, mut f: i32) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -4483,6 +4486,7 @@ impl Globals {
     // §1457
     pub fn not_ot_font_error(&mut self, mut cmd: i32, mut c: i32, mut f: i32) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {

@@ -249,6 +249,7 @@ impl Globals {
                             // §602
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -361,6 +362,7 @@ impl Globals {
                                         if (self.arith_error || (z >= 134217728i32)) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -833,6 +835,7 @@ impl Globals {
                 {
                     // §596
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -955,6 +958,7 @@ impl Globals {
                 }
                 if (self.eqtb[crate::ix::U(((7892299i32) - 1) as usize)].int() > 2i32) {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -1321,6 +1325,7 @@ impl Globals {
                     // §602
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -2221,6 +2226,7 @@ impl Globals {
                     // §1435
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -2341,6 +2347,7 @@ impl Globals {
             // §1435
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -2381,8 +2388,10 @@ impl Globals {
                 }
             }
         }
+        self.dg_write_begin(j);
         self.token_show(self.def_ref);
         self.print_ln();
+        self.dg_write_end(j);
         self.flush_list(self.def_ref);
         if (j == 18i32) {
             {
@@ -4495,6 +4504,7 @@ impl Globals {
             if ((((self.mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int() > max_dimen) || (self.mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int() > max_dimen)) || (((self.mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int()).wrapping_add(self.mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int())).wrapping_add(self.eqtb[crate::ix::U(((9006739i32) - 1) as usize)].int()) > max_dimen)) || ((self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int()).wrapping_add(self.eqtb[crate::ix::U(((9006738i32) - 1) as usize)].int()) > max_dimen)) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -5406,8 +5416,9 @@ impl Globals {
             }
             if __goto_1 <= 1 { // common_ending
                 // §689
+                self.dg_box_begin(r);
+                // §705
                 if self.output_active {
-                    // §705
                     self.print(66250i32);
                 } else {
                     {
@@ -5431,6 +5442,7 @@ impl Globals {
                 self.font_in_short_display = null_font;
                 self.short_display(self.mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().rh());
                 self.print_ln();
+                self.dg_box_end(r);
                 self.begin_diagnostic();
                 self.show_box(r);
                 self.end_diagnostic(true);
@@ -5758,8 +5770,9 @@ impl Globals {
                 }
             }
             // §710
+            self.dg_box_begin(r);
+            // §717
             if self.output_active {
-                // §717
                 self.print(66250i32);
             } else {
                 {
@@ -5776,6 +5789,7 @@ impl Globals {
                     self.print_ln();
                 }
             }
+            self.dg_box_end(r);
             self.begin_diagnostic();
             self.show_box(r);
             self.end_diagnostic(true);

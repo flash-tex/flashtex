@@ -15,6 +15,7 @@ impl Globals {
     // §1189
     pub fn cs_error(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -866,6 +867,7 @@ impl Globals {
                 }
             }
             {
+                self.dg_mark();
                 if (self.interaction == error_stop_mode) {
                 }
                 if self.file_line_error_style_p {
@@ -945,6 +947,7 @@ impl Globals {
                 // §1215
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -1010,6 +1013,7 @@ impl Globals {
             // §1220
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -1194,6 +1198,7 @@ impl Globals {
                         if (self.cur_cmd == sup_mark) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -1211,6 +1216,7 @@ impl Globals {
                         } else {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -1253,6 +1259,7 @@ impl Globals {
                     self.scan_dimen(false, false, false);
                 }
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -1323,6 +1330,7 @@ impl Globals {
                     {
                         self.scan_delimiter(garbage, false);
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -1571,6 +1579,7 @@ impl Globals {
         if ((((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1206826i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1206826i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1206826i32) - 1) as usize)].hh().rh()) as usize)])))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207082i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207082i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207082i32) - 1) as usize)].hh().rh()) as usize)]))))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207338i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207338i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207338i32) - 1) as usize)].hh().rh()) as usize)]))))) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -1594,6 +1603,7 @@ impl Globals {
             if ((((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1206827i32) - 1) as usize)].hh().rh()) as usize)] < total_mathex_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1206827i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1206827i32) - 1) as usize)].hh().rh()) as usize)])))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207083i32) - 1) as usize)].hh().rh()) as usize)] < total_mathex_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207083i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207083i32) - 1) as usize)].hh().rh()) as usize)]))))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207339i32) - 1) as usize)].hh().rh()) as usize)] < total_mathex_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207339i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207339i32) - 1) as usize)].hh().rh()) as usize)]))))) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -1627,6 +1637,7 @@ impl Globals {
                     if (self.cur_cmd != math_shift) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -1666,6 +1677,7 @@ impl Globals {
                 if ((((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1206826i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1206826i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1206826i32) - 1) as usize)].hh().rh()) as usize)])))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207082i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207082i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207082i32) - 1) as usize)].hh().rh()) as usize)]))))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207338i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207338i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207338i32) - 1) as usize)].hh().rh()) as usize)]))))) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -1689,6 +1701,7 @@ impl Globals {
                     if ((((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1206827i32) - 1) as usize)].hh().rh()) as usize)] < total_mathex_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1206827i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1206827i32) - 1) as usize)].hh().rh()) as usize)])))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207083i32) - 1) as usize)].hh().rh()) as usize)] < total_mathex_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207083i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207083i32) - 1) as usize)].hh().rh()) as usize)]))))) || ((self.font_params[crate::ix::U((self.eqtb[crate::ix::U(((1207339i32) - 1) as usize)].hh().rh()) as usize)] < total_mathex_params) && (!((self.font_area[crate::ix::U((self.eqtb[crate::ix::U(((1207339i32) - 1) as usize)].hh().rh()) as usize)] == otgr_font_flag) && self.isOpenTypeMathFont(self.font_layout_engine[crate::ix::U((self.eqtb[crate::ix::U(((1207339i32) - 1) as usize)].hh().rh()) as usize)]))))) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -1749,6 +1762,7 @@ impl Globals {
                         if (self.cur_cmd != math_shift) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -1977,6 +1991,7 @@ impl Globals {
             if (((self.cur_cs == 0i32) || (self.cur_cs > eqtb_top)) || ((self.cur_cs > frozen_control_sequence) && (self.cur_cs <= eqtb_size))) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -2051,6 +2066,7 @@ impl Globals {
                             if (self.cur_cmd != register) {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -2224,6 +2240,7 @@ impl Globals {
             if self.arith_error {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -2301,6 +2318,7 @@ impl Globals {
                         if ((self.cur_val <= 0i32) || (self.cur_val > 32767i32)) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -2339,6 +2357,7 @@ impl Globals {
         if (self.cur_val < 0i32) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -2389,6 +2408,7 @@ impl Globals {
                     if ((self.cur_val < batch_mode) || (self.cur_val > error_stop_mode)) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -2501,6 +2521,7 @@ impl Globals {
                     if ((s <= 0i32) || (s >= 134217728i32)) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -2531,6 +2552,7 @@ impl Globals {
                         if ((self.cur_val <= 0i32) || (self.cur_val > 32768i32)) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -2675,6 +2697,7 @@ impl Globals {
                             // §1266
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -2717,6 +2740,7 @@ impl Globals {
                 if ((self.cur_cmd != def) && (((a % 4i32) != 0i32) || (j != 0i32))) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -2781,6 +2805,7 @@ impl Globals {
                             e = (self.cur_chr >= 2i32);
                             self.get_r_token();
                             p = self.cur_cs;
+                            self.dg_def_begin();
                             q = self.scan_toks(true, e);
                             if (j != 0i32) {
                                 {
@@ -2795,6 +2820,7 @@ impl Globals {
                             } else {
                                 self.eq_define(p, (call).wrapping_add((a % 4i32)), self.def_ref);
                             }
+                            self.dg_def(self.def_ref);
                         }
                     }
                     let_ => {
@@ -2978,6 +3004,7 @@ impl Globals {
                             if (!self.scan_keyword(66244i32)) {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -3338,6 +3365,7 @@ impl Globals {
                             if (((self.cur_val < 0i32) && (p < del_code_base)) || (self.cur_val > n)) {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -3439,6 +3467,7 @@ impl Globals {
                             } else {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -3541,6 +3570,7 @@ impl Globals {
                                 self.new_patterns();
                                 break 'l_done_f;
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -3741,6 +3771,7 @@ impl Globals {
             // §1337
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3981,6 +4012,7 @@ impl Globals {
             // §1352
             self.end_diagnostic(true);
             {
+                self.dg_mark();
                 if (self.interaction == error_stop_mode) {
                 }
                 if self.file_line_error_style_p {
@@ -4064,6 +4096,7 @@ impl Globals {
         if (self.save_ptr != 0i32) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -4619,6 +4652,7 @@ impl Globals {
                         {
                             self.print_file_name(self.font_name[crate::ix::U((k) as usize)], 65626i32, 65626i32);
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -4963,6 +4997,7 @@ impl Globals {
                                     if (self.cur_val <= 0i32) {
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -4993,6 +5028,7 @@ impl Globals {
                                         if (self.cur_val <= 0i32) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -5240,6 +5276,7 @@ impl Globals {
         } else {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -5438,6 +5475,7 @@ impl Globals {
                                         if ((self.cur_val < 0i32) || (self.cur_val > 65535i32)) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -5476,6 +5514,7 @@ impl Globals {
                     if (i == XeTeX_input_mode_auto) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -5565,6 +5604,7 @@ impl Globals {
             bottom_level => {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
@@ -5697,6 +5737,7 @@ impl Globals {
                             // §1081
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -5730,6 +5771,7 @@ impl Globals {
                         if (self.eqtb[crate::ix::U(((1206822i32) - 1) as usize)].hh().rh() != (268435455i32).wrapping_neg()) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -5785,6 +5827,7 @@ impl Globals {
                     self.back_input();
                     self.cur_tok = 34749082i32;
                     {
+                        self.dg_mark();
                         if (self.interaction == error_stop_mode) {
                         }
                         if self.file_line_error_style_p {
