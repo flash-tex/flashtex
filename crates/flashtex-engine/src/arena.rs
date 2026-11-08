@@ -5024,6 +5024,7 @@ mod tests {
             a.drop_newest();
             b.drop_newest();
             assert_eq!(a.checkpoint_ids(), &[p]);
+            assert_eq!(b.checkpoint_ids(), &[q]);
             assert_eq!(a.open_log_len(), b.open_log_len(), "check {k}");
             let mut x = a.open_log_chunks();
             let mut y = b.open_log_chunks();
