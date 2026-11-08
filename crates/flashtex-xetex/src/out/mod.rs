@@ -184,7 +184,9 @@ impl Output {
                 .map_err(|e| format!("{}: {e}", self.pdf_name))?;
             self.pdf = Some(f);
         }
+        crate::out::stage("resume_open");
         let pages = self.doc.pages.clone();
+        crate::out::stage("resume_clone");
         for b in &pages {
             // with the source map's files and spans (the engine's map is
             // the checkpoint's, which holds all those of these pages)
