@@ -725,12 +725,14 @@ fn edits_tools_and_preemption_leave_the_output_files_exact() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// A document whose `.aux` names `bib` as its database, made without a
+/// A document whose `.aux` names `bib` as its database and that looks for
+/// its `.bbl` (which makes the `.aux` a bibtex rule's), made without a
 /// class (so a confined compile reads nothing from the TeX tree).
 #[cfg(unix)]
 fn aux_only_doc(bib: &str) -> String {
     format!(
-        "\\makeatletter\\immediate\\openout1=\\jobname.aux\n\
+        "\\makeatletter\\openin2=\\jobname.bbl \\closein2\n\
+         \\immediate\\openout1=\\jobname.aux\n\
          \\immediate\\write1{{\\string\\citation{{knuth84}}}}\n\
          \\immediate\\write1{{\\string\\bibstyle{{plain}}}}\n\
          \\immediate\\write1{{\\string\\bibdata{{{bib}}}}}\n\
