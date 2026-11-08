@@ -413,6 +413,12 @@ pub struct Report {
     pub fatal: bool,
     /// What the run wrote to its terminal.
     pub terminal: Vec<u8>,
+    /// The diagnostics side channel's notes of the run (`crate::diag`),
+    /// at their offsets in `terminal`.
+    pub notes: Vec<Arc<flashtex_engine::diag::Note>>,
+    /// The places (file, line) of the source map's spans that `notes`
+    /// name (a box's first and last character).
+    pub note_spans: HashMap<u32, (String, u32)>,
     /// The output's reports (`FlashTeX output: ...`).
     pub reports: Vec<String>,
     /// Where the run started.
@@ -444,6 +450,8 @@ pub struct Engine {
     texts: HashMap<String, Arc<Vec<u8>>>,
     /// The last run's terminal: a page checkpoint keeps its length only.
     terminal: Vec<u8>,
+    /// The last run's notes (`crate::diag`), as `terminal`.
+    notes: Vec<Arc<flashtex_engine::diag::Note>>,
     /// The session's clock (DESIGN.md §4.5).
     pub clock: (i64, i32),
     fonts: Option<Box<dyn Fonts>>,
@@ -595,6 +603,7 @@ impl Engine {
             opens: vec![],
             texts: HashMap::new(),
             terminal: vec![],
+            notes: vec![],
             clock,
             fonts,
             keep_point: env_on("FLASHTEX_UNICODE_FORMAT_POINT"),
@@ -1326,6 +1335,8 @@ impl Engine {
                     g.restore(p.id).map(|()| {
                         g.visit_files(&mut CloseFiles);
                         p.state.put(g);
+                        // (no note and no definition site yet there)
+                        g.host.diag.clear();
                     })
                 }
                 Start::Page(_) | Start::S0 | Start::Fresh => {
@@ -1347,6 +1358,7 @@ impl Engine {
                             (s0.id, &s0.rec, None, &self.pages[..])
                         }
                     };
+                    let notes_base = base.map(|_| &self.notes[..]);
                     match conv_changes.take() {
                         Some((edits, changed, lookup)) => {
                             let old: Vec<crate::conv::OldPage> = later
@@ -1403,6 +1415,7 @@ impl Engine {
                                         doc_keys,
                                         old_files,
                                         old_terminal: Arc::new(self.terminal.clone()),
+                                        old_notes: Arc::new(self.notes.clone()),
                                         jumped: None,
                                         refused: None,
                                         from_reads,
@@ -1418,13 +1431,13 @@ impl Engine {
                                         dormant: None,
                                     });
                                     g.term_out = AlphaFile::captured_terminal();
-                                    g.restore_record(rec, base)
+                                    g.restore_record(rec, base, notes_base)
                                 }
                             }
                         }
                         None => g.restore(id).and_then(|()| {
                             g.term_out = AlphaFile::captured_terminal();
-                            g.restore_record(rec, base)
+                            g.restore_record(rec, base, notes_base)
                         }),
                     }
                 }
@@ -1549,6 +1562,8 @@ impl Engine {
         // made it alike: `start_for`)
         let mem_len = g.mem.len();
         g.host.dl.set_on(dl_on, mem_len);
+        // the diagnostics side channel: the terminal is captured
+        g.host.diag.on = true;
         system::set_no_pdf(g, c.no_pdf);
         // S₀ is armed by the run's first `big_switch` (`crate::ckpt`); a run
         // from S₀ or a page asks for no S₀
@@ -1624,6 +1639,8 @@ impl Engine {
             }
         }
         rep.terminal = g.term_out.take_captured();
+        rep.notes = g.host.diag.notes_from(0);
+        rep.note_spans = crate::diag::note_spans(g, &rep.notes);
         let mut final_pages = None;
         if let Some(o) = g.host.out.take() {
             final_pages = Some(o.doc.pages.clone());
@@ -1726,6 +1743,7 @@ impl Engine {
         // run's terminal)
         if !(rep.cancelled && start.in_body()) {
             self.terminal = rep.terminal.clone();
+            self.notes = rep.notes.clone();
         }
         if let Some((id, state, format)) = kept {
             self.point = Some(Point {

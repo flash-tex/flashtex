@@ -259,6 +259,18 @@ pub struct RunResult {
     pub fatal: bool,
     /// An in-process run: where it started.
     pub start: Option<crate::resident::Start>,
+    /// An in-process run: the diagnostics side channel's notes, the
+    /// terminal they are in and the places of the spans they name
+    /// (`crate::diag`).
+    pub notes: Option<Notes>,
+}
+
+/// What an in-process run's `DIAG`s are made from (`crate::diag`).
+#[derive(Debug, Default)]
+pub struct Notes {
+    pub notes: Vec<std::sync::Arc<flashtex_engine::diag::Note>>,
+    pub terminal: Vec<u8>,
+    pub places: flashtex_engine::host::diag::SpanPlaces,
 }
 
 /// A running engine the connection can stop (`CANCEL`, a newer `COMPILE`).
@@ -652,6 +664,13 @@ fn run_in_process(
         res.cancelled = false;
     }
     res.start = Some(rep.start);
+    if res.failure.is_none() {
+        res.notes = Some(Notes {
+            notes: rep.notes,
+            terminal: rep.terminal,
+            places: rep.note_spans,
+        });
+    }
     if std::env::var_os("FLASHTEX_UNICODE_DEBUG").is_some() {
         eprintln!(
             "flashtex-host-unicode: run from {} (checked in {:.2} ms){}",
@@ -1027,8 +1046,21 @@ pub fn compile(
     let diags = log_diagnostics(&log);
     let mut count = diags.len();
     if !last.cancelled && accept.diag {
-        // diag-v1: structured, from the same log (`super::diag`)
-        let structured = super::diag::from_log(&log, &job.root, job.id);
+        // diag-v1: structured, from the engine's notes (an in-process run,
+        // `crate::diag`), else from the same log (`super::diag`)
+        let structured = match &last.notes {
+            Some(n) => {
+                flashtex_engine::host::diag::build_with(
+                    &job.root,
+                    job.id,
+                    &n.notes,
+                    &n.terminal,
+                    Some(&n.places),
+                )
+                .0
+            }
+            None => super::diag::from_log(&log, &job.root, job.id),
+        };
         count = structured.len();
         for d in &structured {
             if !send(out, kind::DIAG, &d.encode()) {
