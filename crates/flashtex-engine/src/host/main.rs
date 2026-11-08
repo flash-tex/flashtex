@@ -46,6 +46,11 @@ fn main() {
     #[cfg(target_os = "macos")]
     flashtex_engine::profile::space_efficient_reexec(&argv);
     flashtex_engine::host::crash::install();
+    // The host's output directory is its own: `\include{chapters/one}`
+    // makes `chapters/` there, as pdflatex in the project directory finds
+    // it (`system::make_output_subdir`, #1654). The engine above only with
+    // `FLASHTEX_OUTPUT_SUBDIRS=1` (the host's export runs).
+    flashtex_engine::system::set_output_subdirs(true);
     // BOX-MEMO is on in the host that serves edits (the socket, `serve`,
     // `iserve`), unless `FLASHTEX_BOXMEMO=off`: it records in an edit's
     // window and replays (docs/design/engine-v2/BOX-MEMO.md §11). The

@@ -1249,6 +1249,8 @@ fn start_export(
         .current_dir(&root)
         .env("FLASHTEX_DISPLAY_LIST_HAVE_FONTS", have_fonts.join(","))
         .env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", font_formats.join(","))
+        // (as the resident engine: `system::make_output_subdir`, #1654)
+        .env(crate::system::OUTPUT_SUBDIRS_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

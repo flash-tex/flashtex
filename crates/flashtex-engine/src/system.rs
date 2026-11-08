@@ -2762,7 +2762,8 @@ impl Globals {
         };
         let absolute = name.starts_with('/');
         let mut fname = name.clone();
-        if let Some(dir) = run().output_directory {
+        let out_dir = run().output_directory;
+        if let Some(dir) = &out_dir {
             if !absolute {
                 fname = format!("{dir}/{name}");
             }
@@ -2771,6 +2772,14 @@ impl Globals {
         keep_instance(&fname, &out_key(&fname));
         before_truncate(&fname);
         let mut f = File::create(&fname).ok();
+        if f.is_none() && !absolute {
+            // (the hosts: `chapters/one.aux` under the output directory, #1654)
+            if let Some(dir) = &out_dir {
+                if make_output_subdir(dir, &name) {
+                    f = File::create(&fname).ok();
+                }
+            }
+        }
         if f.is_none() && !absolute {
             if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
                 fname = format!("{out}/{name}");
@@ -5314,6 +5323,51 @@ pub fn mtime_secs(path: &str) -> Option<i64> {
         .map(|d| d.as_secs() as i64)
 }
 
+/// The environment variable that turns [`make_output_subdir`] on in an
+/// engine process the host starts (an export, a Unicode-mode run).
+pub const OUTPUT_SUBDIRS_ENV: &str = "FLASHTEX_OUTPUT_SUBDIRS";
+
+static OUTPUT_SUBDIRS: AtomicBool = AtomicBool::new(false);
+
+/// Turn [`make_output_subdir`] on for this process (the engine hosts).
+pub fn set_output_subdirs(on: bool) {
+    OUTPUT_SUBDIRS.store(on, Ordering::Relaxed);
+}
+
+/// A relative output name with a directory part (`chapters/one.aux`, which
+/// `\include{chapters/one}` opens) could not be created under the output
+/// directory `dir` because `dir/chapters` does not exist: make it, so the
+/// caller can try once more. pdfTeX with `-output-directory` stops there
+/// ("I can't write on file"), and a front end makes the directory and runs
+/// again (latexmk's `$allow_subdir_creation`); the hosts' output directory
+/// is their own, so they make it at once and the run is the one pdflatex
+/// makes in the project directory, where `chapters/` exists (#1654).
+///
+/// Only in the hosts ([`set_output_subdirs`] or [`OUTPUT_SUBDIRS_ENV`]=1):
+/// the engine run as `pdftex` keeps web2c's behaviour. Only below `dir`:
+/// a name with `..`, a root or a prefix makes nothing. Returns whether a
+/// directory was made.
+pub fn make_output_subdir(dir: &str, name: &str) -> bool {
+    if !OUTPUT_SUBDIRS.load(Ordering::Relaxed)
+        && std::env::var_os(OUTPUT_SUBDIRS_ENV).is_none_or(|v| v != "1")
+    {
+        return false;
+    }
+    output_subdir(dir, name).is_some_and(|sub| !sub.is_dir() && std::fs::create_dir_all(&sub).is_ok())
+}
+
+/// The directory below `dir` that the relative output name `name` needs,
+/// if it has one and stays below `dir`.
+fn output_subdir(dir: &str, name: &str) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let parent = Path::new(name).parent()?;
+    let below = parent
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    (below && parent.components().any(|c| matches!(c, Component::Normal(_))))
+        .then(|| Path::new(dir).join(parent))
+}
+
 /// The run opened `path` for output (the read journal's `outputs`).
 pub fn note_output(path: &str) {
     READS.with(|r| {
@@ -6009,6 +6063,24 @@ mod statsig_tests {
         let b = StatSig::of_within(p, 0).unwrap();
         assert!(!a.racy && a == b);
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod output_subdir_tests {
+    use super::output_subdir;
+    use std::path::PathBuf;
+
+    /// Only a directory part that stays below the output directory.
+    #[test]
+    fn only_subdirectories_below_the_output_directory() {
+        let d = |s: &str| Some(PathBuf::from(s));
+        assert_eq!(output_subdir("/o", "chapters/one.aux"), d("/o/chapters"));
+        assert_eq!(output_subdir("/o", "a/b/c.aux"), d("/o/a/b"));
+        assert_eq!(output_subdir("/o", "./a/c.aux"), d("/o/./a"));
+        for name in ["one.aux", "./one.aux", "../one.aux", "a/../../x.aux", "/abs/x.aux", ""] {
+            assert_eq!(output_subdir("/o", name), None, "{name}");
+        }
     }
 }
 
