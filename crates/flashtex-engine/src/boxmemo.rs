@@ -2572,6 +2572,10 @@ impl Globals {
     fn bm_font_identity(&self, f: i32) -> Vec<i32> {
         let u = f as usize;
         let mut v = vec![f];
+        if u < usize::MAX {
+            // MUTANT: a font keyed by its number only
+            return v;
+        }
         v.extend(self.bm_str(self.font_name[u]));
         v.push(-2);
         v.extend(self.bm_str(self.font_area[u]));
