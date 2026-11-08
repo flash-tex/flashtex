@@ -55,10 +55,15 @@ BOOK = ('book-inc',)
 EDIT = {'book-inc': 'ch03.tex'}
 VOL = ('vol-closed', 'vol-open')
 # sound-xdoc's documents, in the order one host serves them (xdoc.py: a docs/ name, rw:FIXTURE or
-# xdoc:NAME): a pair that loads two fonts in the two orders (a font number is another face in each:
-# with fonts keyed by number the gate fails, measured), a T7 subset, the beamer decks and the
-# fixtures whose calls BOX-MEMO replays
-XDOC = ('xdoc:fonts-ab', 'xdoc:fonts-ba', 'plain-10', 'full-10', 'full-100', 'beamer-5', 'beamer-30', 'rw:beamer-madrid', 'rw:beamer-overlays',
+# xdoc:NAME): the synthetic pairs, each alike but for one key part its page head reads (a font
+# number that is another face in each; the job name; a category code; a printed name at one hash
+# location; a file \input in the preamble; a file the head reads; a colour stack only one makes:
+# with that part left out of the key the gate fails, measured), a T7 subset, the beamer decks and
+# the fixtures whose calls BOX-MEMO replays
+XDOC_PAIRS = ('xdoc:fonts-ab', 'xdoc:fonts-ba', 'xdoc:job-a', 'xdoc:job-b', 'xdoc:cat-a', 'xdoc:cat-b',
+              'xdoc:name-a', 'xdoc:name-b', 'xdoc:input-a', 'xdoc:input-b', 'xdoc:size-a', 'xdoc:size-b',
+              'xdoc:stack-a', 'xdoc:stack-b')
+XDOC = XDOC_PAIRS + ('plain-10', 'full-10', 'full-100', 'beamer-5', 'beamer-30', 'rw:beamer-madrid', 'rw:beamer-overlays',
         'rw:beamer-blocks-columns', 'rw:framed-tikz-theorems', 'rw:tikzcd-shaded-notes', 'rw:siunitx-tables')
 # the preamble kinds (edits.py: PREAMBLE-FAST's restarts before S0, PREAMBLE-MIDLINE's in the middle
 # of the line after a package)
@@ -125,7 +130,12 @@ GATES = {
     # round: a key part that held for one document and not for the next (a font by its number, the
     # job name, a name a recording prints) gives a wrong page only here (xdoc.py)
     'sound-xdoc': [X('xdoc', XDOC)],
+    # the synthetic pairs alone, one host: the negative controls' quick run (a mutant that leaves
+    # one key part out fails its pair)
+    'sound-xdoc-pairs': [X('xdoc-pairs', XDOC_PAIRS, estimate=120)],
 }
+# gates `all` leaves out: sound-xdoc runs the same documents
+NOT_IN_ALL = {'sound-xdoc-pairs'}
 
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
 # edit and its revert, each verified), by document; interleaved trials compile twice. Rough, from
@@ -383,7 +393,7 @@ def _run_unit(tree, bench, out, u, timeout):
 def gate_list(text):
     gs = [g.strip() for g in text.split(',') if g.strip()]
     if not gs or gs == ['all']:
-        return list(GATES)
+        return [g for g in GATES if g not in NOT_IN_ALL]
     for g in gs:
         if g not in GATES:
             sys.exit(f'sweeps.py: no gate {g!r} (have: {", ".join(GATES)})')

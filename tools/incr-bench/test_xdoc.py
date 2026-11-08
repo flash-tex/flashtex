@@ -15,7 +15,7 @@ import xdoc  # noqa: E402
 
 
 class XdocGateTests(unittest.TestCase):
-    def run_xdoc(self, boxmemo, rounds=1, docs='xdoc:fonts-ab'):
+    def run_xdoc(self, boxmemo, rounds=1, docs='xdoc:fonts-ab', sent=None):
         class Host:
             def __init__(self, *args, **kwargs):
                 kwargs['stdout'].write('listening\n')
@@ -32,7 +32,9 @@ class XdocGateTests(unittest.TestCase):
                 pass
 
             def send(self, kind, obj):
-                pass
+                if sent is not None and kind == xdoc.COMPILE:
+                    sent.append((obj, {n: open(os.path.join(obj['root'], n), 'rb').read()
+                                       for n in sorted(os.listdir(obj['root']))}))
 
             def until_done(self, cid):
                 return {'stages': {'boxmemo': boxmemo}, 'pages': 1}
@@ -77,6 +79,24 @@ class XdocGateTests(unittest.TestCase):
         code, totals = self.run_xdoc(None)
         self.assertEqual(code, 0)
         self.assertEqual(totals['gate'], 'not exercised (BOX-MEMO off)')
+
+    def test_pairs_write_their_files_and_job(self):
+        # each synthetic pair: its two documents differ (main.tex, a file beside it, or the job
+        # name), and every file and the job reach the host's request
+        sent = []
+        docs = ','.join(f'xdoc:{k}-{s}' for k in xdoc.PAIRS for s in 'ab')
+        code, totals = self.run_xdoc([0, 1, 0, 0, 1], docs=docs, sent=sent)
+        self.assertEqual((code, totals['compiles']), (0, 2 * len(xdoc.PAIRS)))
+        for i, k in enumerate(xdoc.PAIRS):
+            (ra, fa), (rb, fb) = sent[2 * i], sent[2 * i + 1]
+            with self.subTest(pair=k):
+                self.assertNotEqual((fa, ra['jobname']), (fb, rb['jobname']))
+                for r, f, s in ((ra, fa, 'a'), (rb, fb, 'b')):
+                    want = xdoc.SYNTH[f'{k}-{s}']()
+                    self.assertEqual(r['jobname'], want['job'])
+                    self.assertEqual(f['main.tex'], want['text'])
+                    for n, b in want['files'].items():
+                        self.assertEqual(f[n], b)
 
     def test_sweeps_labels_off_as_not_applicable(self):
         unit = {'key': 'sound-xdoc|xdoc|all', 'tool': 'xdoc', 'docs': ['xdoc:fonts-ab'],
