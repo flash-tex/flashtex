@@ -87,6 +87,7 @@ pub struct Report {
     rec: Option<Rec>,
     /// The latest replayable recording, for the next guarded call.
     /// (`Some`: the group it must replay in.)
+    #[allow(clippy::type_complexity)]
     last: Option<(Option<(i32, i32)>, Vec<Op>)>,
     pub(crate) replaying: bool,
     /// Replayable recordings, and their operations.
