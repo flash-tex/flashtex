@@ -3753,4 +3753,68 @@ mod tests {
         }
         assert!(bit(&dead, 4000), "the unrelated node is still dead");
     }
+
+    /// `garbage` over a `mem` of `lo_max + 1` low cells and 10,001 high
+    /// cells (no root reaches any: every cell but 3000's node is free),
+    /// with `stop` asked as it goes. Returns what it found and how many
+    /// times it asked.
+    fn scan_big(lo_max: i32, mut stop: impl FnMut(usize) -> bool) -> (Option<Vec<u64>>, usize) {
+        let (hi_min, end) = (lo_max + 50_000, lo_max + 60_000);
+        let (mut w, l, regions) = dead_space();
+        for (k, v) in [lo_max, hi_min, end].into_iter().enumerate() {
+            w.0.insert(SCALARS + k * 8, v as u32 as u64);
+        }
+        w.put(3000, hh(10, 9, NULL));
+        w.put(3001, halves(NULL, 0));
+        let words = (MEM_TOP as usize + 64) / 64 + 1;
+        let (cov, mut free) = (vec![0u64; words], vec![0u64; words]);
+        for p in (MEM_BOT..=lo_max).chain(hi_min..=end) {
+            if p != 3000 && p != 3001 {
+                set(&mut free, p);
+            }
+        }
+        let s = St {
+            sp: &w,
+            l: &l,
+            hi_mem_min: hi_min,
+        };
+        let mut asked = 0;
+        let r = garbage(&regions, &s, &cov, &free, &[], None, &mut || {
+            asked += 1;
+            stop(asked)
+        });
+        (r, asked)
+    }
+
+    /// Newer work stops the dead-cells scan (#2001, lane TYPING-50MS): over
+    /// more than [`GARBAGE_STOP_EVERY`] cells `garbage` asks its `stop`,
+    /// and when it says so returns `None` (which `Iso::check` turns into
+    /// [`STOPPED`]), never a partial set a test could take as converged.
+    #[test]
+    fn newer_work_stops_the_dead_cells_scan() {
+        // 100,001 + 10,001 cells: asked once in the first scan
+        let (r, asked) = scan_big(100_000, |_| true);
+        assert!(r.is_none(), "a stopped scan returns no dead cells");
+        assert_eq!(
+            asked, 1,
+            "asked at the {GARBAGE_STOP_EVERY}th cell, then stopped"
+        );
+        // not stopped: the same scan ends with the leaked node dead, asked
+        // once per GARBAGE_STOP_EVERY cells or words
+        let (r, asked) = scan_big(100_000, |_| false);
+        let dead = r.expect("not stopped");
+        assert!(
+            bit(&dead, 3000) && bit(&dead, 3001),
+            "the leaked node is dead"
+        );
+        assert!(asked >= 110_002 / GARBAGE_STOP_EVERY, "asked {asked} times");
+        // a stop that comes later in the scan stops it there
+        let (r, asked) = scan_big(300_000, |n| n == 3);
+        assert!(r.is_none());
+        assert_eq!(asked, 3);
+        // a scan of fewer cells never asks (the question costs a lock)
+        let (r, asked) = scan_big(40_000, |_| true);
+        assert!(r.is_some_and(|d| bit(&d, 3000)));
+        assert_eq!(asked, 0, "{} cells: never asked", 40_001 + 10_001);
+    }
 }
