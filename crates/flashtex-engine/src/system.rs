@@ -1275,6 +1275,25 @@ impl Default for Run {
 
 static RUN: Mutex<Option<Run>> = Mutex::new(None);
 
+/// The run as the last [`configure`] left it, with its `-cnf-line`s
+/// ([`configuration`]).
+static CONFIGURED: Mutex<String> = Mutex::new(String::new());
+
+/// The run's configuration as [`configure`] made it (the command line's
+/// switches, as texmf.cnf and a `%&` line resolve them, and its
+/// `-cnf-line`s), before the run changes any of it (the translation file's
+/// full name, `read_tcx_file`): what a stored S₀ was taken under besides
+/// its first line (`host::Key::config`, #2058).
+pub fn configuration() -> String {
+    CONFIGURED.lock().unwrap().clone()
+}
+
+/// The process's resolver, in one line (`FileResolver::describe`): which
+/// TeX distribution or bundle the lookups search.
+pub fn resolver_description() -> String {
+    with_resolver(|r| r.describe())
+}
+
 /// The run's configuration (the default one until `configure` is called).
 pub fn run() -> Run {
     RUN.lock().unwrap().get_or_insert_with(Run::default).clone()
@@ -1582,6 +1601,7 @@ pub fn configure(mut o: RunOptions) {
     if program_changed {
         reset_resolver(&prog, false);
     }
+    *CONFIGURED.lock().unwrap() = format!("{:?} cnf-lines {:?}", run(), o.cnf_lines);
     // kpathsea's `kpse_make_tex_discard_errors` starts false in every run;
     // a resolver kept from an earlier run forgets that run's `\batchmode`.
     set_mktex_discard(false);

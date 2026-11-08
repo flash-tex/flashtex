@@ -219,3 +219,126 @@ fn persisted_s0_reopens() {
         );
     }
 }
+
+/// #2058: S₀ stored under one configuration is not opened under another,
+/// with the same first line: another switch (F1), another job name (F2),
+/// an environment variable kpathsea reads for a setting (`max_print_line`,
+/// which a run takes at its start and S₀ holds) or for a search path
+/// (`TEXINPUTS`, which a lookup in the preamble depends on), and a
+/// database (`ls-R`) of a tree a lookup in the preamble found nothing in,
+/// with the file added (F4). Each fails without `Key::check_config` (the
+/// open restores S₀, as the control with nothing changed does).
+#[test]
+fn a_persisted_s0_is_not_opened_under_another_configuration() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let a = job_dir(&e, "reopen-config");
+    std::fs::write(
+        a.join("doc.tex"),
+        "\\documentclass{article}\n\
+         \\IfFileExists{zzalt.sty}{\\def\\alt{found}}{\\def\\alt{missing}}\n\
+         \\IfFileExists{zzlocal.sty}{\\def\\local{found}}{\\def\\local{missing}}\n\
+         \\begin{document}\nThe alternative is \\alt; the local one is \\local.\n\
+         \\input{body}\n\\end{document}\n",
+    )
+    .unwrap();
+    let alt = a.join("alt");
+    std::fs::create_dir_all(&alt).unwrap();
+    std::fs::write(alt.join("zzalt.sty"), "\\endinput\n").unwrap();
+    let tree = e.dir.join("reopen-config-texmf");
+    let _ = std::fs::remove_dir_all(&tree);
+    std::fs::create_dir_all(tree.join("tex/latex")).unwrap();
+    let ls_r = |files: &str| {
+        format!(
+            "% ls-R -- filename database for kpathsea; do not change this line.\n\
+             ./:\ntex\n\n./tex:\nlatex\n\n./tex/latex:\n{files}"
+        )
+    };
+    std::fs::write(tree.join("ls-R"), ls_r("")).unwrap();
+    let tree_s = tree.to_str().unwrap().to_string();
+    let s0 = a.join("doc.s0");
+    let s0 = s0.to_str().unwrap().to_string();
+    let host_with = |pdftex: &[&str], cmd: &[&str], extra: &[(&str, &str)]| {
+        let mut args: Vec<&str> = cmd.to_vec();
+        args.push("--");
+        args.extend_from_slice(pdftex);
+        let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
+        c.args(&args)
+            .current_dir(&a)
+            .env("FLASHTEX_POOL", &e.pool)
+            .env("FLASHTEX_FORMATS", &e.fmt)
+            .env("SOURCE_DATE_EPOCH", "1700000000")
+            .env("FORCE_SOURCE_DATE", "1")
+            .env("FLASHTEX_PIN_CLOCK", "1700000000.123456")
+            .env("TEXMFLOCAL", &tree_s)
+            .stdin(Stdio::null());
+        for (k, v) in extra {
+            c.env(k, v);
+        }
+        let out = c.output().unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+    // a run first (the next reads its .aux, and the working directory's
+    // listing settles), then S0 saved
+    let (ok, out) = host_with(PDFTEX_ARGS, &["bench", "--reps", "1"], &[]);
+    assert!(ok, "{out}");
+    let (ok, out) = host_with(PDFTEX_ARGS, &["bench", "--reps", "1", "--save", &s0], &[]);
+    assert!(ok, "{out}");
+    let (ok, out) = host_with(PDFTEX_ARGS, &["open", &s0], &[]);
+    assert!(ok && out.contains("\"mode\":\"s0\""), "the control: {out}");
+    let batch: &[&str] = &["-fmt=pdflatex", "-interaction=batchmode", "doc.tex"];
+    let jobname: &[&str] = &[
+        "-fmt=pdflatex",
+        "-interaction=nonstopmode",
+        "-jobname=other",
+        "doc.tex",
+    ];
+    // (what, the command line, the environment added, what the refusal says)
+    type Case<'a> = (&'a str, &'a [&'a str], Vec<(&'a str, &'a str)>, &'a str);
+    let cases: [Case; 4] = [
+        (
+            "another switch",
+            batch,
+            vec![],
+            "configuration changed (run)",
+        ),
+        (
+            "another job name",
+            jobname,
+            vec![],
+            "configuration changed (run)",
+        ),
+        (
+            "max_print_line",
+            PDFTEX_ARGS,
+            vec![("max_print_line", "100")],
+            "variable max_print_line changed",
+        ),
+        (
+            "TEXINPUTS",
+            PDFTEX_ARGS,
+            vec![("TEXINPUTS", "./alt:")],
+            "variable TEXINPUTS changed",
+        ),
+    ];
+    for (what, pdftex, extra, why) in cases {
+        let (ok, out) = host_with(pdftex, &["open", &s0], &extra);
+        assert!(
+            !ok && out.contains(why),
+            "{what}: the stored S0 was opened, or refused for another reason: {out}"
+        );
+    }
+    // a package installed into the tree, its ls-R updated
+    std::fs::write(tree.join("tex/latex/zzlocal.sty"), "\\endinput\n").unwrap();
+    std::fs::write(tree.join("ls-R"), ls_r("zzlocal.sty\n")).unwrap();
+    let (ok, out) = host_with(PDFTEX_ARGS, &["open", &s0], &[]);
+    assert!(
+        !ok && out.contains("ls-R, of kpathsea's configuration, changed"),
+        "ls-R: the stored S0 was opened, or refused for another reason: {out}"
+    );
+}

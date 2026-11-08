@@ -91,6 +91,72 @@ pub struct Key {
     /// opened from a persisted S₀ has no checkpoint before it, so
     /// `check_arm` refuses the S₀ when one changed (review of #1739).
     pub arm: Vec<ArmRead>,
+    /// What the run was configured by besides its first line (#2058), as
+    /// [`config_now`] lists it: the switches, the resolver, and every
+    /// environment variable kpathsea or the engine read for its settings.
+    /// A process that opens S₀ from disk configures its own run; `check_config`
+    /// refuses S₀ where that differs. In a session the configuration is the
+    /// session's (a host's job with other switches is another session).
+    pub config: Vec<Setting>,
+    /// The files kpathsea's configuration came from (texmf.cnf, the `ls-R`
+    /// and alias databases, the fontmaps), signed when kpathsea read them
+    /// (`kpseinputs::inputs`): a process that opens S₀ reads them anew, and
+    /// a lookup the key's directories vouch for is not made again.
+    pub config_files: Vec<(String, StatSig)>,
+}
+
+/// One entry of [`Key::config`]: what (`run`, `resolver`, or `$NAME` for an
+/// environment variable) and its value (`None`: an unset variable).
+pub type Setting = (String, Option<String>);
+
+/// The environment variables the engine itself reads for what a run does
+/// (kpathsea's own are noted as it reads them, `kpseinputs::env_reads`):
+/// the time zone (`\time`, `\day`, the PDF dates), the programs found on
+/// `PATH` (TeX Live, `\write18`'s commands), and the engine's switches
+/// that choose files, formats or tools. (`SOURCE_DATE_EPOCH` and
+/// `FORCE_SOURCE_DATE` have fields of their own.)
+const ENGINE_ENV: &[&str] = &[
+    "TZ",
+    "PATH",
+    "HOME",
+    "TEXMF_OUTPUT_DIRECTORY",
+    "FLASHTEX_RESOLVER",
+    "FLASHTEX_BUNDLE",
+    "FLASHTEX_TEXLIVE_BIN",
+    "FLASHTEX_PROGNAME",
+    "FLASHTEX_POOL",
+    "FLASHTEX_FORMATS",
+    "FLASHTEX_FORMAT_CACHE",
+    "FLASHTEX_FORMAT_CACHE_DIR",
+    "FLASHTEX_CONFINE_READS",
+    "FLASHTEX_CONFINE_ROOTS",
+    "FLASHTEX_BIBTEX",
+    "FLASHTEX_MAKEINDEX",
+];
+
+/// The process's configuration now, as [`Key::config`] and
+/// [`Key::config_files`] hold it.
+pub fn config_now() -> (Vec<Setting>, Vec<(String, StatSig)>) {
+    let mut v: Vec<Setting> = vec![
+        ("run".into(), Some(system::configuration())),
+        ("resolver".into(), Some(system::resolver_description())),
+    ];
+    let mut names: std::collections::BTreeSet<String> =
+        crate::kpseinputs::env_reads().into_iter().collect();
+    names.extend(ENGINE_ENV.iter().map(|n| n.to_string()));
+    for n in names {
+        v.push((format!("${n}"), env_value(&n)));
+    }
+    (v, crate::kpseinputs::inputs())
+}
+
+/// Environment variable `name`'s value now, as the C library's `getenv`
+/// sees it (`None` for a name no variable can have).
+fn env_value(name: &str) -> Option<String> {
+    if name.is_empty() || name.contains(['=', '\0']) {
+        return None;
+    }
+    std::env::var_os(name).map(|v| v.to_string_lossy().into_owned())
 }
 
 crate::codec_struct!(Key {
@@ -106,7 +172,9 @@ crate::codec_struct!(Key {
     barriers,
     written,
     dirs,
-    arm
+    arm,
+    config,
+    config_files
 });
 
 fn format_index(f: Format) -> u8 {
@@ -129,10 +197,30 @@ pub fn pin_clock_from_env() -> Option<(i64, i32)> {
 pub fn engine_build() -> [u64; 2] {
     static BUILD: std::sync::OnceLock<[u64; 2]> = std::sync::OnceLock::new();
     *BUILD.get_or_init(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| crate::persist::hash128_file(p.to_str()?, None).ok())
-            .map_or([0, 0], |(h, _)| h)
+        build_or_unique(
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| crate::persist::hash128_file(p.to_str()?, None).ok())
+                .map(|(h, _)| h),
+        )
+    })
+}
+
+/// The executable's hash, or, where it could not be hashed, a value no
+/// other process has (#2058 F9): a build that cannot be verified opens no
+/// S₀ or S₁ another process stored, rather than passing for every other
+/// unverified build (`[0, 0]` before).
+fn build_or_unique(hash: Option<[u64; 2]>) -> [u64; 2] {
+    hash.unwrap_or_else(|| {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        [
+            u64::MAX,
+            crate::persist::hash128(format!("{} {t} {n}", std::process::id()).as_bytes())[0],
+        ]
     })
 }
 
@@ -211,6 +299,36 @@ impl Key {
             };
             if !same {
                 return Err(format!("{path}, read at the document's start, changed"));
+            }
+        }
+        Ok(())
+    }
+
+    /// For an S₀ opened from disk: the configuration this process's run has
+    /// (the switches `Session::new` configured, the resolver, the
+    /// environment, kpathsea's configuration files) is the one S₀'s run had
+    /// (`config`, #2058). Within a session it is the session's, and is not
+    /// checked.
+    pub fn check_config(&self) -> Result<(), String> {
+        for (what, then) in &self.config {
+            let now = match what.as_str() {
+                "run" => Some(system::configuration()),
+                "resolver" => Some(system::resolver_description()),
+                w => match w.strip_prefix('$') {
+                    Some(name) => env_value(name),
+                    None => return Err(format!("S0's key has an unknown setting {w:?}")),
+                },
+            };
+            if now != *then {
+                return Err(match what.strip_prefix('$') {
+                    Some(name) => format!("the environment variable {name} changed"),
+                    None => format!("the run's configuration changed ({what})"),
+                });
+            }
+        }
+        for (path, sig) in &self.config_files {
+            if StatSig::of(path).as_ref() != Some(sig) {
+                return Err(format!("{path}, of kpathsea's configuration, changed"));
             }
         }
         Ok(())
@@ -773,8 +891,11 @@ pub fn make_key_from(
                 (f.path.clone(), f.size, f.stamp, hash)
             })
             .collect();
+        let (config, config_files) = config_now();
         Ok(Key {
             arm,
+            config,
+            config_files,
             build: engine_build(),
             clock,
             source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),
@@ -823,6 +944,8 @@ impl Session {
         let mut s: Option<Session> = None;
         let (g, s0, rep) = read_s0(path, &mut |key| {
             let t = Session::new(o.clone(), Some(key.clock));
+            // (first: the cheapest, and it names what changed)
+            key.check_config()?;
             key.check(t.clock, &t.first_line)?;
             key.check_format()?;
             key.check_arm()?;
@@ -1361,7 +1484,7 @@ pub fn read_s0(
 // time, `StatSig::ctime_ns`; v7: the records hold READ-TRACK's counts,
 // `crate::dormant::Dorm`; v8: the forms the preamble wrote,
 // `displaylist::KeptForm`)
-const MAGIC: &[u8] = b"flashtex S0 v8";
+const MAGIC: &[u8] = b"flashtex S0 v9";
 
 /// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
 /// every supported system's page size divides (4 KB elsewhere).
@@ -1458,6 +1581,8 @@ mod key_tests {
             written: vec![],
             dirs: vec![(dp.clone(), ds)],
             arm: vec![],
+            config: vec![],
+            config_files: vec![],
         };
         // the tick passes (the files' times put back a minute)
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
@@ -1482,6 +1607,68 @@ mod key_tests {
         key.check_refresh((0, 0), b"main").unwrap();
         std::fs::write(&f, "\\def\\x{2}").unwrap();
         assert!(key.check((0, 0), b"main").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+    /// #2058 F9: an executable that cannot be hashed gets a build of its
+    /// own, which no other process's (stored S₀ or S₁) has; before, every
+    /// such build was `[0, 0]` and passed for any other.
+    #[test]
+    fn an_unhashed_build_matches_no_other() {
+        let h = [7, 9];
+        assert_eq!(build_or_unique(Some(h)), h);
+        let (a, b) = (build_or_unique(None), build_or_unique(None));
+        assert_ne!(a, b);
+        assert_ne!(a, [0, 0]);
+    }
+
+    /// #2058: a stored key's configuration is compared with this process's:
+    /// an environment variable read for it, the run's switches, a file of
+    /// kpathsea's configuration.
+    #[test]
+    fn a_key_holds_only_under_its_own_configuration() {
+        let var = format!("FLASHTEX_KEY_CONFIG_TEST_{}", std::process::id());
+        let d = std::env::temp_dir().join(format!("flashtex-key-config-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("ls-R");
+        std::fs::write(&f, "% ls-R\n").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(
+            (crate::system::RACY_NS / 1_000_000) as u64 + 100,
+        ));
+        let fp = f.to_str().unwrap().to_string();
+        let key = |value: Option<&str>, run: String| Key {
+            build: engine_build(),
+            clock: (0, 0),
+            source_date_epoch: None,
+            force_source_date: None,
+            first_line: vec![],
+            job_name: String::new(),
+            files: vec![],
+            prefixes: vec![],
+            lookups: vec![],
+            barriers: vec![],
+            written: vec![],
+            dirs: vec![],
+            arm: vec![],
+            config: vec![
+                ("run".into(), Some(run)),
+                (format!("${var}"), value.map(str::to_string)),
+            ],
+            config_files: vec![(fp.clone(), StatSig::of(&fp).unwrap())],
+        };
+        let run = system::configuration();
+        key(None, run.clone()).check_config().unwrap();
+        assert!(key(Some("1"), run.clone()).check_config().is_err());
+        assert!(key(None, run.clone() + " -jobname").check_config().is_err());
+        let k = key(None, run);
+        std::fs::write(&f, "% ls-R\n./:\nzz.sty\n").unwrap();
+        assert!(k.check_config().is_err(), "the database changed");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

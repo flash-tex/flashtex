@@ -54,6 +54,7 @@ pub mod fmtimage;
 #[cfg(feature = "distribution")]
 pub use flashtex_runtime::formats;
 pub use flashtex_runtime::fswatch;
+pub use flashtex_runtime::kpseinputs;
 pub mod generated;
 pub mod hashcache;
 #[cfg(not(feature = "tex82"))]

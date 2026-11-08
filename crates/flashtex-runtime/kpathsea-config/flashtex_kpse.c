@@ -175,6 +175,16 @@ void flashtex_kpse_forget_disk_dirs(void *k)
   }
 }
 
+/* The files kpathsea's configuration is read from (texmf.cnf, the fontmaps,
+   ls-R and the alias databases: its `record_input`, which -recorder uses in
+   web2c), noted on the Rust side (resolver.rs, `kpathsea_inputs`). */
+extern void flashtex_kpse_note_input(const char *path);
+
+static void flashtex_record_input(const_string path)
+{
+  flashtex_kpse_note_input(path);
+}
+
 /* ENV is a NULL-terminated list of name, value pairs set in the environment
    before any configuration is read. The bundle resolver uses it; the TeX
    Live one passes none. */
@@ -182,6 +192,7 @@ void *flashtex_kpse_new(const char *argv0, const char *progname, const char *eng
                         const char *const *env, int mktextfm)
 {
   kpathsea kpse = kpathsea_new();
+  kpse->record_input = flashtex_record_input;
   kpathsea_set_program_name(kpse, argv0, progname);
   if (engine && *engine)
     kpathsea_xputenv(kpse, "engine", engine);
