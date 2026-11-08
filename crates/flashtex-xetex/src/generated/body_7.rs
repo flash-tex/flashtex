@@ -3673,6 +3673,9 @@ impl Globals {
         let mut c: i32 = 0; // §1329
         let mut n: i32 = 0; // §1329
         let mut k: i32 = 0; // §1329
+        if self.intr_verify_on {
+            self.flashtex_intr_op(16i32, 0i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_four_bit_int();
         n = self.cur_val;

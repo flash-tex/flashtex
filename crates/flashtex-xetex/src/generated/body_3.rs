@@ -4789,6 +4789,9 @@ impl Globals {
         let mut q: halfword = 0; // §517
         let mut s: i32 = 0; // §517
         let mut m: small_number = 0; // §517
+        if self.intr_verify_on {
+            self.flashtex_intr_op(16i32, 0i32, 0i32, 0i32);
+        }
         self.scanner_status = defining;
         self.warning_index = r;
         self.def_ref = self.get_avail();
