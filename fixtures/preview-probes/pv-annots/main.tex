@@ -1,0 +1,25 @@
+% Preview probe: annotations. pdfTeX writes link borders (\pdfstartlink
+% without /Border: the PDF default [0 0 1]), hyperref's boxes, and an
+% annotation with its own appearance stream (/AP). None of it is in the
+% page's content stream; a viewer that draws annotations draws them over
+% the page. One kind per page.
+\documentclass{article}
+\usepackage[colorlinks=false]{hyperref}
+\pagestyle{empty}
+\begin{document}
+\noindent\pdfstartlink user{/Subtype /Link /A << /S /URI /URI (https://example.org/) >>}%
+A link without /Border\pdfendlink{} and
+\pdfstartlink attr{/Border [0 0 2] /C [0 0 1]} user{/Subtype /Link /A << /S /URI /URI (https://example.org/) >>}%
+one with a 2 bp blue border\pdfendlink.
+\newpage
+
+\noindent hyperref's default boxes: \href{https://example.org/}{a URL}, \hyperlink{t}{an internal link},
+\url{https://example.org/path}.
+\hypertarget{t}{Target.}
+\newpage
+
+\noindent\immediate\pdfobj stream attr{/Type /XObject /Subtype /Form /BBox [0 0 60 20]}{1 0 0 rg 0 0 60 20 re f 0 0 1 RG 2 w 5 5 m 55 15 l S}%
+\edef\AP{\the\pdflastobj}%
+A square annotation with an appearance stream:
+\pdfannot width 60bp height 20bp depth 0bp {/Subtype /Square /C [1 0 0] /AP << /N \AP\space 0 R >>}\hspace{60bp} after it.
+\end{document}

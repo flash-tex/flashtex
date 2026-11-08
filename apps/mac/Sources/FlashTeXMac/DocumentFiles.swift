@@ -952,7 +952,9 @@ extension ShellModel {
         // (ProjectDocuments); the entry with its saved text.
         if activePath != project.entryPath { return project.isDirty(activePath) }
         if let savedText { return !savedText.sameBytes(as: activeText) }
-        return documentURL == nil && editorRevision > 1 && !activeText.isEmpty
+        // A file URL with no saved text: a restored buffer whose file is
+        // gone (or unreadable) — no file holds it, so it is unsaved.
+        return (documentURL != nil || editorRevision > 1) && !activeText.isEmpty
     }
 
     /// Hash of the text the editor last saw on disk for the open document.
@@ -985,7 +987,9 @@ extension ShellModel {
             guard let self else { return }
             switch project.saveDocumentNow(path) {
             case .saved(let p, _): captureNote = "Saved \(p)"
-            case .conflict(let c): captureNote = c.summary
+            case .conflict(let c):
+                captureNote = c.summary
+                if !Self.runningUnderXCTest { resolveDocumentConflictPanel(path) } // ⌘S asks, as for the entry
             case .failed(let why): captureNote = "Save of \(path) failed: \(why)"
             }
         }.value
@@ -1315,6 +1319,11 @@ extension ShellModel {
     /// The reload is reviewed: the alert shows what the disk snapshot would
     /// change and the import is pinned to exactly that snapshot.
     func resolveConflictPanel() {
+        // A member with its own save conflict (active tab) resolves per document.
+        if activePath != project.entryPath, project.saveConflict(for: activePath) != nil {
+            resolveDocumentConflictPanel(activePath)
+            return
+        }
         guard let conflict = files.conflict else { return }
         // Overwrite and Reload act on the active buffer (`activeText`): with
         // another tab active (a queued save that answered after a switch, the
@@ -1339,6 +1348,33 @@ extension ShellModel {
                 guard let self else { return }
                 await confirmReload(review, dirty: review.bufferDirty ? .discard : .none)
             }
+        default: break
+        }
+    }
+
+    /// Modal resolution of a member's save conflict
+    /// (`ProjectDocuments.saveConflict(for:)`): Overwrite writes its buffer
+    /// over the disk file, Reload takes the disk text (the unsaved edits kept
+    /// as a snapshot first), Keep Editing leaves both as they are. Without
+    /// it a member's conflict could never be resolved: every save and the
+    /// quit flow's Save were refused until Don't Save.
+    func resolveDocumentConflictPanel(_ path: String) {
+        guard let conflict = project.saveConflict(for: path) else { return }
+        let alert = NSAlert()
+        alert.messageText = "\(path) changed on disk"
+        alert.informativeText = conflict.summary + "\n\nOverwrite replaces the file with your text. Reload replaces your text with the file's; your unsaved edits are kept (File > Restore Unsaved Snapshot…)."
+        alert.addButton(withTitle: "Overwrite")
+        alert.addButton(withTitle: "Reload")
+        alert.addButton(withTitle: "Keep Editing")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            switch project.overwriteDocumentOnDisk(path) {
+            case .saved(let p, _): captureNote = "Overwrote \(p) on disk"
+            case .conflict(let c): captureNote = c.summary
+            case .failed(let why): captureNote = "Overwrite of \(path) failed: \(why)"
+            }
+        case .alertSecondButtonReturn:
+            captureNote = project.reloadDocumentFromDisk(path).map { "Reload of \(path) refused: \($0)" } ?? "Reloaded \(path) from disk"
         default: break
         }
     }

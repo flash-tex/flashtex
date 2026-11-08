@@ -807,6 +807,13 @@ final class ProjectPackagesState {
 
     private func writePolicy(fetch: String) async -> Bool {
         guard let root else { return false }
+        // As ProjectMode: never over flashtex.toml's unsaved edits, and the
+        // save is pinned to the file as it was before the rewrite.
+        if let why = model.manifestEditRefusal(root: root) {
+            note = "cannot write \(ProjectManifest.fileName): \(why)"
+            return false
+        }
+        let before = model.manifestBeforeRewrite(root: root)
         let entry = model.project.entryPath
         let rewritten = rewriter.map { $0(root, entry, fetch, nil) } ?? model.files.setPackages(for: root, entry: entry, fetch: fetch, pin: nil)
         let reply: ProjectFilesV1.SetPackages
@@ -818,7 +825,7 @@ final class ProjectPackagesState {
         }
         guard reply.changed, let text = reply.text else { model.manifest.refresh(); return true }
         let url = URL(fileURLWithPath: reply.path)
-        switch model.files.save(url, text: text, expected: reply.exists ? .any : .newFile, force: false, recordsState: false) {
+        switch model.files.save(url, text: text, expected: before.expectation(saving: url, exists: reply.exists), force: false, recordsState: false) {
         case .saved: break
         case .conflict(let c):
             note = "cannot write \(ProjectManifest.fileName): \(c.summary)"

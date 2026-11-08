@@ -17,6 +17,7 @@ final class FakeHost: CollabTextHost {
 
     var collabIsComposing: Bool { composing }
     var collabSelection: Range<Int> { selection }
+    var collabText: String { text as String }
     func collabFlushLocalEdits() {}
     var endedCompositions = 0
     func collabEndComposition() {
