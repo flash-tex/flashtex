@@ -170,6 +170,9 @@ jobs:
           TARGET: ${{ github.event_name == 'pull_request' && '15' || inputs.target }}
           REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || inputs.ref }}
           BASE_REF: ${{ github.event_name == 'pull_request' && '' || inputs.base_ref }}
+          # verify mode's costs (sweeps.py load_costs); the shards' step has it too, so that
+          # plan and run cut the same shards
+          FLASHTEX_SWEEP_BOXMEMO: ${{ inputs.boxmemo }}
         # Python, not jq: the PC has no jq.
         shell: python3 {0}
         run: |
