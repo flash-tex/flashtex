@@ -418,3 +418,20 @@ fn a_body_ending_in_an_expansion_is_compared_at_its_end() {
     assert_eq!(count(&s, "semantic.identical"), 4, "{s}");
     assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
 }
+
+/// `\XeTeXinputencoding` sets how the current input file's next lines are
+/// decoded (`set_input_file_encoding`, Host-side state no check compares),
+/// which a replay would not do: not replayable, as `\read` is (#2176's
+/// question 2). Once the name's string exists, nothing compared moves.
+#[test]
+fn input_encoding_changes_are_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\XeTeXinputencoding \"utf8\"\\relax}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.FileInput"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+}

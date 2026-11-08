@@ -6,8 +6,9 @@
 % group boundaries the real path makes are reported to |flashtex_intr_op|
 % (kinds: 1 |eq_define|, 2 |eq_word_define|, plus 8 when global; 3
 % |new_save_level|, 4 |unsave|; 5 a sparse-array definition, 6 a box
-% dimension, 7 |out_what|, which a recording cannot hold; 16 |read_toks|
-% and |open_or_close_in|, whose input files a check does not compare; 17
+% dimension, 7 |out_what|, which a recording cannot hold; 16 |read_toks|,
+% |open_or_close_in| and \.{\\XeTeXinputencoding}, whose input files a check does
+% not compare (the files' positions and encodings); 17
 % |save_for_after| at level |p|), and |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
 
@@ -149,6 +150,16 @@ begin case subtype(p) of
     @!old_setting:0..max_selector;
 begin if intr_verify_on then flashtex_intr_op(7,0,0,0);
 case subtype(p) of
+@z
+
+@x xetex.web - \.{\\XeTeXinputencoding} changes how the current input file is read: not replayable (kind 16)
+@ @<Implement \.{\\XeTeXinputencoding}@>=
+begin
+    scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@y
+@ @<Implement \.{\\XeTeXinputencoding}@>=
+begin if intr_verify_on then flashtex_intr_op(16,0,0,0);
+    scan_and_pack_name; {scan a filename-like arg for the input encoding}
 @z
 
 @x xetex.web - a sparse-array definition ends a recording's replayability
