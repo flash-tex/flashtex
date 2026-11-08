@@ -469,7 +469,21 @@ impl Globals {
             return;
         }
         let size = crate::generated::consts::pool_size;
-        if self.pool_ptr + 2 * len + 1 >= size {
+        // texmfmp.c's `poolptr + 2 * length + 1`, in C's `int`: from a
+        // length of about 2^30 it wraps negative, passes the test, and
+        // `fread` is given `&strpool[poolptr + length]`, far past the pool.
+        // That address is not mapped, so pdfTeX 1.40.29 on TeX Live's macOS
+        // arm64 build (DESIGN §13) reads nothing there (EFAULT) and the
+        // result is empty, with the file looked up and opened as usual --
+        // unless it seeks to an offset short of the end, where stdio's own
+        // buffer is copied there and pdfTeX crashes (SIGSEGV or SIGBUS).
+        // Linux's pdfTeX is empty in both. A crash is not replicated (§13):
+        // empty here too.
+        let need = self
+            .pool_ptr
+            .wrapping_add(len.wrapping_mul(2))
+            .wrapping_add(1);
+        if need >= size {
             self.pool_ptr = size;
             return;
         }
@@ -480,7 +494,7 @@ impl Globals {
             return;
         };
         crate::system::note_whole_read(&path);
-        if offset < 0 {
+        if offset < 0 || need < 0 {
             return;
         }
         let from = (offset as usize).min(data.len());
