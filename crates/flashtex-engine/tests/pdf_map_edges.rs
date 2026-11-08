@@ -7,6 +7,13 @@
 //! exit status, the PDF (bytes, or none from either) and the log from the
 //! `**` line on (lines joined, the program name normalised) must agree.
 //! Skips where there is no TeX Live.
+//!
+//! Three cases hinge on undefined C behaviour: a double out of `int`'s range
+//! cast to `int`, then `abs` of the result. DESIGN §13 (2026-11-01) rules
+//! that FlashTeX matches TeX Live's macOS arm64 build there ([`ARM64_RULED`]).
+//! On macOS arm64 they are compared with the local TeX Live like the rest
+//! (which must also still give the recorded result); elsewhere, with that
+//! build's result as recorded in `map_edges/arm64-oracle.txt`.
 #![cfg(feature = "kpathsea")]
 
 mod common;
@@ -17,6 +24,105 @@ use std::process::{Command, Stdio};
 
 const SETUP: &str = "\\pdfoutput=1 \\pdfcompresslevel=0 \\pdfobjcompresslevel=0 \
                      \\pdfsuppressptexinfo=-1 ";
+
+/// The cases whose expected result is TeX Live macOS arm64's, by the §13
+/// ruling on undefined C behaviour. mapfile.c rounds `d * 1000` with a cast
+/// to `integer` that is out of range here, then tests `abs(x) > 1000`
+/// (`> 2000` for ExtendFont). Measured: TeX Live 2026 on macOS arm64 rejects
+/// all three entries with a warning, as FlashTeX does (run 42501522185);
+/// on x86_64 Linux it accepts them without one and sets the font with the
+/// wrapped value, so its PDFs are 62-63 bytes longer (runs 41499342620 and
+/// 41503402654). Why (belief, not measured): arm64's cast saturates to
+/// INT_MIN or INT_MAX and clang folds the `abs` test into a range test, while
+/// x86_64 gives INT_MIN for both and gcc's `abs(INT_MIN)` stays negative.
+const ARM64_RULED: [&str; 3] = ["slant-min", "extend-min", "extend-max"];
+
+/// Whether this host's TeX Live is the build the §13 ruling names.
+const ARM64_HOST: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+
+/// TeX Live macOS arm64's result on each [`ARM64_RULED`] case, measured on
+/// GitHub's hosted macos-15 with MacTeX 2026 (see the file's header).
+const ARM64_ORACLE: &str = include_str!("map_edges/arm64-oracle.txt");
+
+/// One recorded result: exit status, the PDF's length and FNV-1a 64 hash (or
+/// none), and the normalised log with the paths of [`tl_files`] replaced.
+#[derive(Debug, PartialEq)]
+struct Outcome {
+    exit: Option<i32>,
+    pdf: Option<(usize, u64)>,
+    log: String,
+}
+
+impl Outcome {
+    fn new(exit: Option<i32>, pdf: Option<&[u8]>, log: &str, tl: &[(String, &str)]) -> Outcome {
+        Outcome {
+            exit,
+            pdf: pdf.map(|b| (b.len(), fnv1a(b))),
+            log: tl
+                .iter()
+                .fold(log.to_string(), |l, (path, var)| l.replace(path, var)),
+        }
+    }
+
+    /// The record's lines for case `name`, as `arm64-oracle.txt` has them.
+    fn record(&self, name: &str) -> String {
+        let exit = self.exit.map_or("none".to_string(), |c| c.to_string());
+        let pdf = self
+            .pdf
+            .map_or("none".to_string(), |(n, h)| format!("{n} {h:016x}"));
+        format!("case {name}\nexit {exit}\npdf {pdf}\nlog {}\n", self.log)
+    }
+}
+
+fn fnv1a(b: &[u8]) -> u64 {
+    b.iter().fold(0xcbf2_9ce4_8422_2325, |h, &x| {
+        (h ^ u64::from(x)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// The recorded arm64 result of case `name`.
+fn recorded(name: &str) -> Outcome {
+    let mut lines = ARM64_ORACLE
+        .lines()
+        .skip_while(|l| *l != format!("case {name}"))
+        .skip(1);
+    let mut field = |key: &str| {
+        let l = lines.next().unwrap_or_default();
+        l.strip_prefix(key)
+            .and_then(|r| r.strip_prefix(' '))
+            .unwrap_or_else(|| panic!("arm64-oracle.txt: case {name}: no `{key}` line"))
+            .to_string()
+    };
+    let exit = field("exit");
+    let pdf = field("pdf");
+    let log = field("log");
+    Outcome {
+        exit: (exit != "none").then(|| exit.parse().unwrap()),
+        pdf: (pdf != "none").then(|| {
+            let (n, h) = pdf.split_once(' ').unwrap();
+            (n.parse().unwrap(), u64::from_str_radix(h, 16).unwrap())
+        }),
+        log,
+    }
+}
+
+/// The two TeX Live files these logs name, as the local `kpsewhich` finds
+/// them, and the names the record writes for them (so the record does not
+/// depend on where TeX Live is installed).
+fn tl_files(texbin: &Path) -> Vec<(String, &'static str)> {
+    [("pdftex.map", "$PDFTEX_MAP"), ("cmr10.pfb", "$CMR10_PFB")]
+        .into_iter()
+        .map(|(file, var)| {
+            let out = Command::new(texbin.join("kpsewhich"))
+                .arg(file)
+                .output()
+                .unwrap();
+            let path = String::from_utf8(out.stdout).unwrap().trim().to_string();
+            assert!(!path.is_empty(), "kpsewhich found no {file}");
+            (path, var)
+        })
+        .collect()
+}
 
 /// (name, document). `files` is the directory of [`support_files`], named by
 /// its absolute path (shared by both engines, so their logs name the same
@@ -162,6 +268,7 @@ fn map_edges_match_tex_live() {
             std::fs::write(d.join(format!("{name}.tex")), body).unwrap();
         }
     }
+    let tl = tl_files(&texbin);
     run(ours, &a, &["-ini", "\\input plain \\dump"], true);
     run(&theirs, &b, &["-ini", "\\input plain \\dump"], false);
     let mut failures = vec![];
@@ -169,6 +276,35 @@ fn map_edges_match_tex_live() {
         let arg = format!("&plain {name}");
         let rx = run(ours, &a, &["-fmt=plain", &arg], true);
         let ry = run(&theirs, &b, &[&arg], false);
+        if ARM64_RULED.contains(&name.as_str()) {
+            let read = |d: &Path| {
+                let pdf = std::fs::read(d.join(format!("{name}.pdf"))).ok();
+                let log = std::fs::read_to_string(d.join(format!("{name}.log")));
+                (pdf, normalised_log(&log.unwrap_or_default()))
+            };
+            let ((px, lx), (py, ly)) = (read(&a), read(&b));
+            let x = Outcome::new(rx, px.as_deref(), &lx, &tl);
+            let want = recorded(name);
+            if ARM64_HOST {
+                // the record must still be this TeX Live's result
+                let y = Outcome::new(ry, py.as_deref(), &ly, &tl);
+                if y != want {
+                    failures.push(format!(
+                        "{name}: TeX Live (macOS arm64) no longer gives the recorded result; \
+                         its record is now:\n{}",
+                        y.record(name)
+                    ));
+                }
+            }
+            if x != want {
+                failures.push(format!(
+                    "{name}: ours differs from TeX Live macOS arm64's (§13):\n  ours {}\n  want {}",
+                    x.record(name),
+                    want.record(name)
+                ));
+            }
+            continue;
+        }
         if rx != ry {
             failures.push(format!("{name}: exit {rx:?} vs TeX Live's {ry:?}"));
         }
