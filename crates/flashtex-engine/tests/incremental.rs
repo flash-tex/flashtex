@@ -1978,11 +1978,14 @@ fn newer_work_far_from_the_cursor_stops_at_a_held_segment() {
 }
 
 /// VIEWPORT (lane MEMORY, `Session::redensify`): far from the cursor,
-/// retention keeps one page checkpoint in `far` and no segment ones, so a
-/// key there restarts pages back. After the client shows that page, an
-/// idle run with nothing changed takes the checkpoints around it again: the
-/// key restarts on its own page, and the output is a scratch run's. One
-/// paragraph a page (`\newpage`), so paragraph `k` is page `k`.
+/// retention keeps the page checkpoints and no segment ones. After the
+/// client shows a far page, an idle run with nothing changed takes the
+/// checkpoints around it again; a key that comes while that run is still
+/// going stops it, and its compile drops it: back to the complete run,
+/// with nothing shipped again from the idle run's start, so the key
+/// restarts as if there had been no VIEWPORT. The output is a scratch
+/// run's each time. One paragraph a page (`\newpage`), so paragraph `k`
+/// is page `k`.
 #[test]
 fn a_viewport_far_away_takes_its_checkpoints_again() {
     let Some(e) = env() else {
@@ -2003,11 +2006,7 @@ fn a_viewport_far_away_takes_its_checkpoints_again() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("doc.tex"), body(&[])).unwrap();
-    let env = [
-        ("FLASHTEX_FAR", "8"),
-        ("FLASHTEX_DENSE", "2"),
-        ("FLASHTEX_SEGMENT_S", "0.000001"),
-    ];
+    let env = [("FLASHTEX_DENSE", "2"), ("FLASHTEX_SEGMENT_S", "0.000001")];
     let mut h = Host::start_env(&e, &dir, &env);
     let r = h.cmd("compile");
     assert_eq!(field(&r, "pages"), "120", "{r}");
@@ -2020,7 +2019,7 @@ fn a_viewport_far_away_takes_its_checkpoints_again() {
         "near",
     );
     let restart = |r: &str| field(r, "restart_pages").parse::<usize>().unwrap();
-    // without VIEWPORT, a key 61 pages on restarts at a kept page pages back
+    // a key far from the cursor, without VIEWPORT (the cursor goes there)
     let r = compile_and_check(
         &e,
         &mut h,
@@ -2028,20 +2027,15 @@ fn a_viewport_far_away_takes_its_checkpoints_again() {
         &[("doc.tex", &body(&[(1, "alpha"), (61, "beta")]))],
         "far, no viewport",
     );
-    let c0 = restart(&r);
-    assert!(c0 + 2 < 61, "the far pages were not thinned: {r}");
-    // a page whose page checkpoint before it is kept (one in 8, aligned as
-    // `c0`'s), and the one before that not: a key there restarts a page
-    // before it, at a page retention dropped
-    let k = c0 + 32;
     // nothing to do near the cursor (there now)
     let c = field(&r, "cursor").to_string();
     assert_eq!(h.cmd(&format!("redensify {c}")).trim(), "null");
+    // far from it: the idle run starts pages before the page
+    let k = 91;
     let r = h.cmd(&format!("redensify {k}"));
     assert_ne!(r.trim(), "null", "far from the cursor");
     assert!(restart(&r) + 2 <= k, "{r}");
-    // after it, the key on page k restarts at most a page before it (as
-    // near the cursor: TeX has read on past the page before when it ships)
+    assert_eq!(field(&r, "paused"), "false", "{r}");
     let r = compile_and_check(
         &e,
         &mut h,
@@ -2053,6 +2047,28 @@ fn a_viewport_far_away_takes_its_checkpoints_again() {
         "far, after a viewport",
     );
     assert!(restart(&r) + 1 >= k, "restarted pages back from {k}: {r}");
+    // a key while the idle run at a page as far is going (stopped after its
+    // first page): dropped, the key restarts where it would without it,
+    // not back at the idle run's start
+    let k2 = 31;
+    let r = h.cmd(&format!("redensify-interrupt {k2} 1"));
+    assert_eq!(field(&r, "paused"), "true", "{r}");
+    let idle_start = restart(&r);
+    assert!(idle_start + 2 <= k2, "{r}");
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[(
+            "doc.tex",
+            &body(&[(1, "alpha"), (61, "beta"), (k, "gamma"), (k2, "eps")]),
+        )],
+        "far, a key during the idle run",
+    );
+    assert!(
+        restart(&r) > idle_start && restart(&r) + 1 >= k2,
+        "the dropped idle run's pages were typeset again (it started at {idle_start}): {r}"
+    );
 }
 
 /// `k` in lower-case roman numerals (control sequence names of letters).

@@ -18,7 +18,8 @@
 //!   `save PATH` (persist S₀), `quit`.
 //! * `iserve` likewise for the incremental engine (`crate::incr`), with
 //!   `compile [PAGE]`, `compile-interrupt PASS PAGES [NTH]`,
-//!   `compile-interrupt-at SECONDS`, `redensify PAGE`, `finish`, `save`,
+//!   `compile-interrupt-at SECONDS`, `redensify PAGE`,
+//!   `redensify-interrupt PAGE PAGES`, `finish`, `save`,
 //!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
 //!   compile's `diag-v1` messages, `src/host/diag.rs`).
 //! * `bench` compiles once cold, then `--reps N` times after editing
@@ -337,6 +338,26 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                     .redensify(n)
                     .map(|r| r.map_or_else(|| "null".to_string(), |r| r.json())),
                 Err(_) => Err(format!("redensify PAGE, not {n}")),
+            }
+        } else if let Some(a) = line.strip_prefix("redensify-interrupt ") {
+            // a key comes while that run has shipped PAGES pages: it stops
+            // at its next stop point there, and the next compile drops it
+            let v: Vec<usize> = a
+                .split_whitespace()
+                .filter_map(|x| x.parse().ok())
+                .collect();
+            match v[..] {
+                [page, n] => {
+                    s.set_preempt(Some(std::rc::Rc::new(move |_: usize, pages: usize| {
+                        pages >= n
+                    })));
+                    let r = s
+                        .redensify(page)
+                        .map(|r| r.map_or_else(|| "null".to_string(), |r| r.json()));
+                    s.set_preempt(None);
+                    r
+                }
+                _ => Err(format!("redensify-interrupt PAGE PAGES, not {a}")),
             }
         } else if line == "finish" {
             s.finish().map(|r| r.json())
