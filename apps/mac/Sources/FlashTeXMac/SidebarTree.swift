@@ -124,7 +124,7 @@ struct SidebarTree: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let co = context.coordinator
         co.parent = self
-        guard let outline = co.outline else { return }
+        guard co.outline != nil else { return }
         let scopeChanged = co.expansionScope != expansionScope
         if scopeChanged {
             co.expansionScope = expansionScope

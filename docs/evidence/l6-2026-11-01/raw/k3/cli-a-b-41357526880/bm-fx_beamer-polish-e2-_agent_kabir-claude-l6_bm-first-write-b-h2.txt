@@ -1,0 +1,26 @@
+Stats {
+    offers: 22,
+    hits: 13,
+    replayed_ops: 52,
+    recordings: 9,
+    committed: 8,
+    verified: 0,
+    verify_differences: 0,
+    full_verified: 0,
+    full_differences: 0,
+    entered: 0,
+    meanings_walked: 2,
+    meanings_seen: 24,
+    seen_cleared: 1,
+    k3_written_first: 20,
+    k3_tokens: 20,
+    abandoned: {
+        "Level": 1,
+    },
+    misses: {
+        "NotRecorded": 9,
+    },
+    verify_details: [],
+    entries: 9,
+    bytes: 77092,
+}
