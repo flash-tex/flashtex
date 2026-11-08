@@ -1139,14 +1139,22 @@ impl Engine {
         }
         // the first lookup since S₀ that finds something else now (of
         // those before the newest page checkpoint: the later ones are
-        // made again whatever the restart)
+        // made again whatever the restart). A lookup the journal lists more
+        // than once is made again once, as the pdfTeX host's `changes` does
+        // (a page's fonts and pictures are looked up again on every page).
         let upto = self.pages.iter().map(|c| c.reads.1).max().unwrap_or(0);
+        let mut again: HashMap<(&str, Format, Option<bool>), Option<String>> = HashMap::new();
         let lookup = j.lookups[s0.reads.1.min(j.lookups.len())
             ..upto
                 .min(j.lookups.len())
                 .max(s0.reads.1.min(j.lookups.len()))]
             .iter()
-            .position(|l| flashtex_engine::system::lookup_again(l) != l.found)
+            .position(|l| {
+                let now = again
+                    .entry((l.name.as_str(), l.format, l.must_exist))
+                    .or_insert_with(|| flashtex_engine::system::lookup_again(l));
+                *now != l.found
+            })
             .map(|i| s0.reads.1 + i);
         Some(Changes { files, lookup })
     }
