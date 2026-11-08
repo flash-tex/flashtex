@@ -357,14 +357,22 @@ impl Key {
     /// Write back the files the run wrote and closed before S₀, where they
     /// differ (before resuming from S₀).
     pub fn rewrite_outputs(&self) -> Result<(), String> {
+        self.rewrite_outputs_any().map(|_| ())
+    }
+
+    /// [`Key::rewrite_outputs`], and whether it wrote any file (one the
+    /// last run wrote again after S₀).
+    pub fn rewrite_outputs_any(&self) -> Result<bool, String> {
+        let mut any = false;
         for (p, d) in &self.written {
             if std::fs::read(p).ok().as_deref() != Some(&d[..]) {
                 std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
+                any = true;
             }
             // what S₀'s streams recorded: the engine's again
             crate::system::stamp_output(p);
         }
-        Ok(())
+        Ok(any)
     }
 }
 

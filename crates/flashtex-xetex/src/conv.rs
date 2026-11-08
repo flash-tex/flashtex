@@ -43,7 +43,7 @@ pub struct OldPage {
     /// How many output opens the old run had made (`PageCk::opens`).
     pub opens: usize,
     pub id: CheckpointId,
-    pub rec: Record,
+    pub rec: Arc<Record>,
     /// Its output's state (the document then).
     pub out: Option<Arc<crate::ckpt::OutSnap>>,
     pub reads: (usize, usize, usize),
@@ -455,7 +455,7 @@ impl Globals {
             carried.push(crate::ckpt::PageCk {
                 id: p.id,
                 pages: p.pages,
-                rec,
+                rec: Arc::new(rec),
                 out: None,
                 reads: (
                     shift(p.reads.0, reads_delta.0),
