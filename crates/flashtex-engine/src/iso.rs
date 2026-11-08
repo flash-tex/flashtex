@@ -418,7 +418,9 @@ pub(crate) fn with_dormant<R>(j: i32, f: impl FnOnce() -> R) -> R {
 ///   pairs it with itself, and compares it and what follows it as the full
 ///   walk does from there; a node paired with another address that lies in
 ///   a chunk neither state wrote (a node of C, which the full walk pairs
-///   with itself through its own entry) is a conflict (`pair`);
+///   with itself through its own entry), or that a left-out entry points at
+///   (a shared structure's first node, `left_out_heads`), is a conflict
+///   (`pair`);
 /// * every other root (the static heads, the page, the save, nest and
 ///   input stacks, the arrays, the scalars) is walked in full.
 ///
@@ -898,6 +900,9 @@ pub struct Iso<'a, O: Space, N: Space> {
     /// The restricted walk (`restricted`): the chunks either state wrote
     /// since the restore target, by chunk.
     written: Option<Vec<u64>>,
+    /// The restricted walk: the nodes the `eqtb` entries it leaves out
+    /// point at (the same in both states), by `mem` address.
+    left_out: Option<Vec<u64>>,
 }
 
 /// The hasher of the relocation map (`Iso::fwd`, keyed by `mem` address,
@@ -982,6 +987,7 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             toks_later: None,
             equal_tokens: false,
             written: None,
+            left_out: None,
         }
     }
 
@@ -1020,11 +1026,16 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
         }
         // (the restricted walk: a node of a chunk neither state wrote is a
         // node of the admission point, which the full walk pairs with
-        // itself where a left-out entry reaches it)
+        // itself where a left-out entry reaches it; so is a node a left-out
+        // entry points at, wherever it lies)
         if a != b
             && self.written.is_some()
-            && !(self.written_at(self.o.l.mem + a as usize * 8)
+            && (!(self.written_at(self.o.l.mem + a as usize * 8)
                 && self.written_at(self.n.l.mem + b as usize * 8))
+                || self
+                    .left_out
+                    .as_ref()
+                    .is_some_and(|h| bit(h, a) || bit(h, b)))
         {
             return None;
         }
@@ -2524,6 +2535,9 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             None => (1..INT_BASE).chain(high).collect(),
             Some(w) => {
                 let base = self.o.l.eqtb;
+                // (entries are whole words inside a chunk: the region and
+                // the chunks are 8-aligned)
+                debug_assert!(base % 8 == 0 && CHUNK_BYTES % 8 == 0);
                 let mut ps = vec![];
                 for (i, &x) in w.iter().enumerate() {
                     let mut x = x;
@@ -2562,6 +2576,38 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             }
         }
         let _ = (GLUE_BASE, LOCAL_BASE);
+    }
+
+    /// The restricted walk: the nodes the `eqtb` entries it leaves out (in
+    /// chunks `written` lacks, the same word in both states) point at, by
+    /// `mem` address. A structure is shared through its first node (a
+    /// token list's reference count, a glue specification's, a shape's), so
+    /// a node the full walk would pair with itself through such an entry
+    /// and the restricted walk might pair with another address through
+    /// another root is one of these (review of #2211, REVIEW-C2 M1: a
+    /// replay that swaps which of two macros shares a third's list).
+    fn left_out_heads(&self, written: &[u64]) -> Vec<u64> {
+        let words = (MEM_TOP as usize + 64) / 64 + 1;
+        let mut h = vec![0u64; words];
+        let ho = self.o.sc("hash_high").max(self.n.sc("hash_high"));
+        let base = self.o.l.eqtb;
+        for p in (1..INT_BASE).chain(EQTB_SIZE + 1..=EQTB_SIZE + ho) {
+            let off = base + (p as usize - 1) * 8;
+            let c = off >> CHUNK_SHIFT;
+            if written.get(c >> 6).is_some_and(|x| x >> (c & 63) & 1 == 1) {
+                continue;
+            }
+            let x = self.o.eqtb(p);
+            let t = b0(x);
+            let pointer = matches!(t, CALL..=LONG_OUTER_CALL | GLUE_REF | SHAPE_REF | BOX_REF)
+                || (matches!(t, TOKS_REGISTER | REGISTER)
+                    && !(MEM_BOT..=LO_MEM_STAT_MAX).contains(&rh(x)));
+            let q = rh(x);
+            if pointer && Self::in_mem(q) {
+                set(&mut h, q);
+            }
+        }
+        h
     }
 
     /// The save stack, group by group as `show_save_groups` reads it:
@@ -3166,6 +3212,7 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             for c in d.written() {
                 v[c as usize >> 6] |= 1 << (c & 63);
             }
+            w.left_out = Some(w.left_out_heads(&v));
             w.written = Some(v);
         }
         w.toks_later = Some(Vec::new());

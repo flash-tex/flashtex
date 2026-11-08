@@ -2001,8 +2001,14 @@ pub(crate) fn same_state(g: &mut Globals, n: CheckpointId) -> Result<usize, Stri
 }
 
 thread_local! {
-    /// `same_state`'s calls so far in this thread (its periodic full walk).
+    /// `same_state`'s calls so far in this job (its periodic full walk).
     static FULL_WALKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// A new job in this thread (`crate::pdftex::reset_state`): the periodic
+/// full walk counts from its first call again.
+pub(crate) fn reset_full_walks() {
+    FULL_WALKS.with(|c| c.set(0));
 }
 
 /// `same_state`'s FLASHTEX_BOXMEMO_FULL_EVERY (at least 1) and
