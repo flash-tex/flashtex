@@ -3,11 +3,19 @@
 //! Hebrew, the fonts of `tools/xetex-lockstep/latex-cases/l011-bidi-rtl.tex`,
 //! in a plain INITEX job.
 //!
-//! The expected maps are xdvipdfmx's: TeX Live 2026's `xetex -ini` on
-//! [`INPUT`] (MacTeX, macOS 26.6.2 arm64), each font's `ToUnicode` CMap read
-//! back from its PDF. They hold only for the font files they were measured
-//! on, so the test checks each file's SHA-256 and skips (with a note) on any
-//! other machine. It needs the resolver to find the glyph lists
+//! The expected maps are xdvipdfmx's, from TeX Live's `xetex -ini` on
+//! [`INPUT`] with the same font files. The test runs that oracle itself:
+//! `FLASHTEX_XETEX_ORACLE`, else `/Library/TeX/texbin/xetex`. Without an
+//! oracle it falls back to the maps pinned below (TeX Live 2026, MacTeX,
+//! macOS 26.6.2 arm64), but only when both font files have the SHA-256
+//! they were measured on. When the oracle runs on those files, its maps
+//! must also equal the pinned ones.
+//!
+//! The fonts are macOS system fonts, so the test is `#[ignore]`d. Run it
+//! with `cargo test --release --test tounicode_oracle -- --ignored`, as
+//! `.github/workflows/unicode-tounicode-mac.yml` does on a hosted Mac with
+//! BasicTeX. When run, a missing font, oracle or glyph list fails it rather
+//! than passing. FlashTeX's resolver must find the glyph lists
 //! (`texglyphlist.txt` and the rest, `out/agl.rs`) as xdvipdfmx does.
 
 use flashtex_pdf::reader::{Obj, PdfFile};
@@ -172,78 +180,163 @@ fn expected(rows: &[(u16, &str)]) -> BTreeMap<u16, Vec<u16>> {
         .collect()
 }
 
-#[test]
-fn aat_arabic_tounicode_is_xdvipdfmx_s() {
-    for (path, want) in [(GEEZA, GEEZA_SHA256), (TIMES, TIMES_SHA256)] {
-        match sha256(path) {
-            Some(got) if got == want => {}
-            got => {
-                eprintln!(
-                    "skipped: {path} is {got:?}, not the file the oracle maps were measured on"
-                );
-                return;
-            }
-        }
-    }
-    let dir = std::env::temp_dir().join(format!("flashtex-xetex-tounicode-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+/// Runs `engine` on [`INPUT`] in a fresh `dir` and returns its PDF's
+/// `ToUnicode` maps, one per page: the font's `BaseFont` and its map.
+fn run_and_read(
+    engine: &Path,
+    dir: &Path,
+    path_env: Option<String>,
+) -> Vec<(String, BTreeMap<u16, Vec<u16>>)> {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).unwrap();
     std::fs::write(dir.join("ar.tex"), INPUT).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_flashtex-xetex"))
-        .current_dir(&dir)
+    let mut cmd = Command::new(engine);
+    cmd.current_dir(dir)
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
-        .args(["-ini", "-interaction=nonstopmode", "ar.tex"])
+        .env("TZ", "UTC")
+        .args(["-ini", "-interaction=nonstopmode", "ar.tex"]);
+    if let Some(p) = path_env {
+        cmd.env("PATH", p);
+    }
+    let out = cmd
         .output()
-        .expect("run flashtex-xetex");
+        .unwrap_or_else(|e| panic!("run {}: {e}", engine.display()));
     let log = std::fs::read_to_string(dir.join("ar.log")).unwrap_or_default();
     assert!(
         log.contains("Output written on ar.pdf (2 pages)."),
-        "{log}\n{}",
+        "{}:\n{log}\n{}",
+        engine.display(),
         String::from_utf8_lossy(&out.stderr)
     );
     let bytes = std::fs::read(dir.join("ar.pdf")).unwrap();
     let pdf = PdfFile::parse(&bytes).unwrap();
     let pages = pdf.pages().unwrap();
-    assert_eq!(pages.len(), 2);
-    for (page, name, rows) in [
-        (pages[0], "+GeezaPro", GEEZA_REF),
-        (pages[1], "+TimesNewRomanPSMT", TIMES_REF),
-    ] {
-        let fonts = pdf.page_fonts(page);
-        assert_eq!(fonts.len(), 1, "{name}");
-        let f = *fonts.values().next().unwrap();
-        let base = f.get("BaseFont").and_then(Obj::as_name).unwrap();
-        assert!(base.ends_with(name), "{base}");
-        let tu = f
-            .get("ToUnicode")
-            .unwrap_or_else(|| panic!("{base}: no ToUnicode"));
-        let cmap = pdf.decode_stream(pdf.resolve(tu)).unwrap();
-        let got = read_cmap(&String::from_utf8_lossy(&cmap));
-        let want = expected(rows);
-        let fmt = |m: &BTreeMap<u16, Vec<u16>>, k: &u16| {
-            m.get(k).map(|v| {
-                v.iter()
-                    .map(|u| format!("{u:04X}"))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-        };
-        let diffs: Vec<String> = want
-            .keys()
-            .chain(got.keys())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .filter(|k| got.get(k) != want.get(k))
-            .map(|k| {
-                format!(
-                    "gid {k}: xdvipdfmx {:?}, FlashTeX {:?}",
-                    fmt(&want, k),
-                    fmt(&got, k)
-                )
-            })
-            .collect();
-        assert!(diffs.is_empty(), "{base}:\n{}", diffs.join("\n"));
+    assert_eq!(pages.len(), 2, "{}", engine.display());
+    pages
+        .iter()
+        .map(|&page| {
+            let fonts = pdf.page_fonts(page);
+            assert_eq!(fonts.len(), 1, "{}", engine.display());
+            let f = *fonts.values().next().unwrap();
+            let base = f
+                .get("BaseFont")
+                .and_then(Obj::as_name)
+                .unwrap()
+                .to_string();
+            let tu = f
+                .get("ToUnicode")
+                .unwrap_or_else(|| panic!("{}: {base} has no ToUnicode", engine.display()));
+            let cmap = pdf.decode_stream(pdf.resolve(tu)).unwrap();
+            (base, read_cmap(&String::from_utf8_lossy(&cmap)))
+        })
+        .collect()
+}
+
+fn differences(want: &BTreeMap<u16, Vec<u16>>, got: &BTreeMap<u16, Vec<u16>>) -> Vec<String> {
+    let fmt = |m: &BTreeMap<u16, Vec<u16>>, k: &u16| {
+        m.get(k).map(|v| {
+            v.iter()
+                .map(|u| format!("{u:04X}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+    };
+    want.keys()
+        .chain(got.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|k| got.get(k) != want.get(k))
+        .map(|k| {
+            format!(
+                "gid {k}: xdvipdfmx {:?}, FlashTeX {:?}",
+                fmt(want, k),
+                fmt(got, k)
+            )
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "needs macOS's Geeza Pro and Times New Roman and TeX Live's xetex: \
+            cargo test --release --test tounicode_oracle -- --ignored \
+            (CI: unicode-tounicode-mac.yml)"]
+fn aat_arabic_tounicode_is_xdvipdfmx_s() {
+    assert!(
+        cfg!(target_os = "macos"),
+        "Geeza Pro is a macOS system font: this test runs only on macOS"
+    );
+    let measured = [(GEEZA, GEEZA_SHA256), (TIMES, TIMES_SHA256)]
+        .iter()
+        .all(|&(path, want)| {
+            let got = sha256(path).unwrap_or_else(|| panic!("{path}: not found"));
+            if got != want {
+                eprintln!("{path} is {got}, not the file the pinned maps were measured on");
+            }
+            got == want
+        });
+    let pinned = [
+        ("+GeezaPro", expected(GEEZA_REF)),
+        ("+TimesNewRomanPSMT", expected(TIMES_REF)),
+    ];
+    let base =
+        std::env::temp_dir().join(format!("flashtex-xetex-tounicode-{}", std::process::id()));
+    let oracle = std::env::var_os("FLASHTEX_XETEX_ORACLE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let p = Path::new("/Library/TeX/texbin/xetex");
+            p.exists().then(|| p.to_path_buf())
+        });
+    let want: Vec<(String, BTreeMap<u16, Vec<u16>>)> = match &oracle {
+        Some(xetex) => {
+            // xetex runs xdvipdfmx from its own directory
+            let path = format!(
+                "{}:{}",
+                xetex.parent().unwrap().display(),
+                std::env::var("PATH").unwrap_or_default()
+            );
+            eprintln!("oracle: {} -ini (xdvipdfmx)", xetex.display());
+            let maps = run_and_read(xetex, &base.join("oracle"), Some(path));
+            if measured {
+                for ((b, m), (name, p)) in maps.iter().zip(&pinned) {
+                    assert!(b.ends_with(name), "{b}");
+                    let d = differences(p, m);
+                    assert!(
+                        d.is_empty(),
+                        "the oracle's {b} map is not the pinned one on the same font file \
+                         (a different xdvipdfmx?):\n{}",
+                        d.join("\n")
+                    );
+                }
+            }
+            maps
+        }
+        None => {
+            assert!(
+                measured,
+                "no oracle (set FLASHTEX_XETEX_ORACLE to TeX Live's xetex) and the font \
+                 files are not the ones the pinned maps were measured on"
+            );
+            eprintln!("no oracle: the pinned maps (same font files)");
+            pinned
+                .iter()
+                .map(|(n, m)| (n.to_string(), m.clone()))
+                .collect()
+        }
+    };
+    let got = run_and_read(
+        Path::new(env!("CARGO_BIN_EXE_flashtex-xetex")),
+        &base.join("flashtex"),
+        None,
+    );
+    assert_eq!(got.len(), want.len());
+    for ((wb, wm), (gb, gm)) in want.iter().zip(&got) {
+        let name = &wb[wb.find('+').unwrap_or(0)..];
+        assert!(gb.ends_with(name), "FlashTeX's font {gb}, xdvipdfmx's {wb}");
+        assert!(!wm.is_empty(), "{wb}: the oracle's map is empty");
+        let d = differences(wm, gm);
+        assert!(d.is_empty(), "{gb}:\n{}", d.join("\n"));
+        eprintln!("{gb}: {} ToUnicode entries, equal to xdvipdfmx's", gm.len());
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&base);
 }
