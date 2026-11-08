@@ -1098,7 +1098,7 @@ origin/main at f53095ff2 (BOX-MEMO on in both):
 A span whose F, a macro body, ends with `\end{..}` (F is popped before the span ends: `SpanFile`;
 llncs' ORCID icons); `\scantokens` inside a picture (TikZ's rescanning in `\scalebox` arguments);
 a global box left non-void (pgfplots, register 103 on 2501.08950v2); the plots' one group still kept
-whole; on by default only after the span sweeps show no difference.
+whole. On by default since §17.11.
 
 ### 17.10 A picture in a macro's argument or body
 
@@ -1109,3 +1109,31 @@ level), its body, or a backed-up or inserted list. The key is the line, the list
 macro parameter (`out_param`: the macro's argument, which the key does not hold). Reading a token
 list moves nothing in the buffer or the file; the buffer's high mark is kept as for a file (§17.2),
 counted from 0.
+
+### 17.11 On by default (2026-11-08)
+
+`DEFAULT_SPANS` (`tikzpicture`, `tikzcd`) is offered when `FLASHTEX_BOXMEMO_SPANS` is unset;
+`FLASHTEX_BOXMEMO_SPANS=` (empty) offers none, and sweeps.yml's `boxmemo_spans=none` passes that.
+
+Measured on the NixOS PC (shared with other lanes' jobs; `picbench.py` iserve keystrokes, a letter
+typed after the place and deleted again, four times, two rounds; the host's CPU to the edited page,
+BOX-MEMO on; the steady keys are the 2nd to 4th), at #1997's head ff4c5467f, spans off → on:
+
+| Document, place | first key | steady keys |
+|---|---|---|
+| arXiv 2501.08950v2 (pgfplots, 57 pages), "as we al" (page 27) | 2.30–2.39 s → 4.25–4.41 s | 1 046–1 230 → 678–754 ms |
+| tikzcd-shaded-notes, "induces an equivalence" | 251–253 → 463 ms | 92–106 → 34–41 ms |
+| tikzcd-shaded-notes, "that is constant" | 66–72 → 7 ms | 66–74 → 6–8 ms |
+| tikzcd-shaded-notes, "The three descriptions" | 50 → 7–8 ms | 43–54 → 5–7 ms |
+| tikzcd-shaded-notes, "Show that the composite" | 28–47 → 5 ms | 24–27 → 4–5 ms |
+| tikzcd-shaded-notes, "Text after the diagram" | 100 → 195–198 ms | 34–40 → 5–6 ms |
+
+A first key records the pictures it re-typesets: it costs more (up to 1.9×), once. Before the timed-checkpoint
+hold (§17.4, measured at aaeddcc81), the same tikz-cd rows gained in one round and not in the next: a timed
+checkpoint inside a span abandoned it.
+
+Verification mode on the same host runs (spans on, two keys a place): 2501.08950v2 4 395 calls verified, the
+tikz-cd notes 913, 0 differences, no `LineShift`. (The host's verifier compares outputs and logs, not the
+whole state: `full_verified` 0 there; the whole-state comparison is the command line's and tests/boxmemo.rs's.)
+Before this change: the span sweeps on #1997's head and the PR's own CI, whose engine-parity (P-T1) runs
+take the default and so run with spans on.
