@@ -2704,7 +2704,8 @@ impl Globals {
                         .iter()
                         .all(|&(c, none)| (self.bm_disc(c) == 0) == none)
                     || !e.job.as_ref().is_none_or(|j| *j == self.bm_job_name())
-                    || !e.stacks.is_none_or(|n| n == stacks_now)
+                    // MUTANT: the colour stacks never compared
+                    || !e.stacks.is_none_or(|n| n == stacks_now || n != stacks_now)
                     || !e.names.iter().all(|(p, t)| self.bm_text_is(*p, t))
                 {
                     continue;
