@@ -3951,6 +3951,11 @@ pub fn opens_len() -> usize {
     OPENS.with(|o| o.borrow().len())
 }
 
+/// Whether one of the first `n` output opens is of `k` (an `out_key`).
+pub fn opened_before(n: usize, k: &str) -> bool {
+    OPENS.with(|o| o.borrow().iter().take(n).any(|p| p == k))
+}
+
 /// The files opened for output after the first `n`.
 pub fn opens_since(n: usize) -> Vec<String> {
     OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
