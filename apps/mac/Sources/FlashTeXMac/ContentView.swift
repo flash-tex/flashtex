@@ -24,7 +24,7 @@ struct ContentView: View {
     @AppStorage("FlashTeX.workspace.outlineVisible") private var outlineVisible = false
 
     var body: some View {
-        let _ = ViewBodyProbe.note("ContentView") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("ContentView", of: model) // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: 0) {
             // The single title-bar control row, in the traffic lights' own
@@ -95,7 +95,7 @@ private struct ToolRail: View {
     @Binding var outlineVisible: Bool
 
     var body: some View {
-        let _ = ViewBodyProbe.note("ToolRail") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("ToolRail", of: model) // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: DS.Space.s) {
             RailButton(icon: "folder", label: "Project", isOn: $projectVisible,
@@ -158,7 +158,7 @@ struct EditorPane: View {
     @Bindable private var preferences: EditorPreferences = .shared
 
     var body: some View {
-        let _ = ViewBodyProbe.note("EditorPane") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("EditorPane", of: model) // KeystrokeInvalidationTests
         @Bindable var model = model
         // Live Share: the session file this buffer is (nil outside a session);
         // `generation` changes when a session starts, ends or opens its project.
@@ -331,7 +331,7 @@ struct PreviewPane: View {
     @State private var hudActivity = 0
 
     var body: some View {
-        let _ = ViewBodyProbe.note("PreviewPane") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("PreviewPane", of: model) // KeystrokeInvalidationTests
         VStack(spacing: 0) {
         // No TeX to compile with (RQ20), and the one-time notice for a
         // document last typeset by the retired previous engine
@@ -513,7 +513,7 @@ struct StatusBar: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        let _ = ViewBodyProbe.note("StatusBar") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("StatusBar", of: model) // KeystrokeInvalidationTests
         // Reads the throttled chrome mirror (ShellChrome.swift): the revision,
         // latency, route tooltip, problem counts and notes change on every
         // keystroke / reply, and this bar re-evaluated with each of them.
@@ -590,7 +590,7 @@ private struct StatusBreadcrumb: View {
     @State private var chain: [DocumentOutline.Item] = []
 
     var body: some View {
-        let _ = ViewBodyProbe.note("StatusBreadcrumb") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("StatusBreadcrumb", of: model) // KeystrokeInvalidationTests
         HStack(spacing: DS.Space.xs) {
             // The same colour-coded identity as the tree and the tabs (§6)
             // leads the breadcrumb — one of the deliberate small accents

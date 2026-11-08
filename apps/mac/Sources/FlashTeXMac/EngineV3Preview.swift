@@ -24,7 +24,7 @@ struct PreviewV3Pane: View {
     static func ground(dark: Bool) -> Color { dark ? DS.Preview.darkGround : DS.Colors.surfaceGround }
 
     var body: some View {
-        let _ = ViewBodyProbe.note("PreviewV3Pane") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("PreviewV3Pane", of: model) // KeystrokeInvalidationTests
         // Two children that each read their own state: a compile changes the
         // status line (and the stale count) on every keystroke, which must not
         // re-run the scroll view's update, and a caret-follow request or a
@@ -42,7 +42,7 @@ struct PreviewV3Scroll: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        let _ = ViewBodyProbe.note("PreviewV3Scroll") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("PreviewV3Scroll", of: model) // KeystrokeInvalidationTests
         EngineV3ScrollView(session: model.engineV3, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
             .background(PreviewV3Pane.ground(dark: model.darkPreview)) // the dark preview's ground under the toggle (gap C10)
     }

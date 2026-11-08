@@ -32,7 +32,7 @@ struct WorkspaceSidebar: View {
     static let identifier = "workspace.sidebar"
 
     var body: some View {
-        let _ = ViewBodyProbe.note("WorkspaceSidebar") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("WorkspaceSidebar", of: model) // KeystrokeInvalidationTests
         VStack(spacing: 0) {
             if projectVisible {
                 ProjectSection()
@@ -116,7 +116,7 @@ struct ProjectSection: View {
     @AppStorage(ProjectTreeMode.defaultsKey) private var treeMode = ProjectTreeMode.defaultValue
 
     var body: some View {
-        let _ = ViewBodyProbe.note("ProjectSection") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("ProjectSection", of: model) // KeystrokeInvalidationTests
         // Throttled, change-only copies (ShellChrome.swift): `project.listing`
         // and `discoverClosure()` read `documents`, so this tree re-evaluated
         // on every keystroke otherwise.

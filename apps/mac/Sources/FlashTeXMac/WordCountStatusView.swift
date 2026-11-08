@@ -13,7 +13,7 @@ struct WordCountStatusItem: View {
     @State private var showPopover = false
 
     var body: some View {
-        let _ = ViewBodyProbe.note("WordCountStatusItem") // KeystrokeInvalidationTests
+        let _ = ViewBodyProbe.note("WordCountStatusItem", of: model) // KeystrokeInvalidationTests
         Button {
             showPopover = true
         } label: {

@@ -158,21 +158,34 @@ final class ProjectWindowsHostedTests: XCTestCase {
         type(1, into: tv) // the first edit makes the document dirty (tab, tree, status bar): settle before counting
         settle()
 
+        var keyTimes: [UInt64] = []
         func measure(_ keys: Int) -> (bodies: [String: Int], waits: [Double]) {
             let ping = RunLoopLatencyProbe()
             ViewBodyProbe.start()
             ping.start()
-            type(keys, into: tv)
+            keyTimes = [MonotonicClock.nowNs()]
+            for _ in 0 ..< keys {
+                tv.insertText("x", replacementRange: tv.selectedRange())
+                keyTimes.append(MonotonicClock.nowNs())
+                run(0.03)
+            }
             settle()
             let waits = ping.stop()
             ViewBodyProbe.stop()
             return (ViewBodyProbe.counts, waits)
         }
         let alone = measure(8)
+        do {
+            let t0 = keyTimes[0]
+            func ms(_ ns: UInt64) -> String { String(format: "%.1f", Double(ns &- t0) / 1e6) }
+            print("MultiWindowDiag: alone keys at \(keyTimes.map(ms)) ms; w1 \(ViewBodyProbe.counts(of: a)); events \(ViewBodyProbe.events.map { "\($0.view)@\(ms($0.ns))\($0.model == ObjectIdentifier(a) ? "" : "(other)")" })")
+        }
 
         // Two more projects, each in its own window, both on screen.
+        var others: [ShellModel] = []
         for name in ["two", "three"] {
             guard case .openedNew(let id) = windows.open(try write("\(name)/main.tex", "\\section{\(name)}\n" + body), from: a).result else { return XCTFail(name) }
+            others.append(windows.model(for: id))
             _ = try show(id, of: windows)
         }
         tv.window?.makeFirstResponder(tv)
@@ -180,12 +193,30 @@ final class ProjectWindowsHostedTests: XCTestCase {
         // companion's state, seconds after they appear) is not typing: wait
         // until a whole second passes with no body evaluated (bounded).
         let quietBy = Date().addingTimeInterval(20)
-        var quiet = 0
+        var quiet = 0, quietRounds = 0
         while quiet < 2, Date() < quietBy {
             ViewBodyProbe.start(); run(1); ViewBodyProbe.stop()
+            quietRounds += 1
+            if !ViewBodyProbe.counts.isEmpty { print("MultiWindowDiag: quiet round \(quietRounds): \(ViewBodyProbe.counts)") }
             quiet = ViewBodyProbe.counts.isEmpty ? quiet + 1 : 0
         }
+        print("MultiWindowDiag: quiet after \(quietRounds) rounds (quiet=\(quiet)); key window \(String(describing: NSApp.keyWindow)); tv window key \(tv.window?.isKeyWindow ?? false) main \(tv.window?.isMainWindow ?? false); first responder is tv \(tv.window?.firstResponder === tv); policy \(NSApp.activationPolicy().rawValue) active \(NSApp.isActive)")
+        ViewBodyProbe.recordsStacks = true
         let three = measure(8)
+        ViewBodyProbe.recordsStacks = false
+        do {
+            let names: [ObjectIdentifier: String] = [ObjectIdentifier(a): "w1", ObjectIdentifier(others[0]): "w2", ObjectIdentifier(others[1]): "w3"]
+            let t0 = keyTimes[0]
+            func ms(_ ns: UInt64) -> String { String(format: "%.1f", Double(ns &- t0) / 1e6) }
+            print("MultiWindowDiag: keys at \(keyTimes.map(ms)) ms; w1 \(ViewBodyProbe.counts(of: a)) w2 \(ViewBodyProbe.counts(of: others[0])) w3 \(ViewBodyProbe.counts(of: others[1]))")
+            for (i, e) in ViewBodyProbe.events.enumerated() {
+                let who = e.model.map { names[$0] ?? "other-\($0.hashValue)" } ?? "?"
+                print("MultiWindowDiag: event \(i) \(e.view) \(who) at \(ms(e.ns)) ms")
+                if e.view == "EditorPane" || e.view == "ProjectSection" {
+                    for f in ViewBodyProbe.stacks[i].prefix(70) { print("MultiWindowDiag:   \(f)") }
+                }
+            }
+        }
 
         XCTAssertEqual(windows.entries.count, 3)
         for (view, n) in three.bodies {
