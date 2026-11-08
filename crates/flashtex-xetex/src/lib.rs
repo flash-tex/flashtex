@@ -51,8 +51,8 @@ pub mod fontmgr;
 pub mod generated;
 #[cfg(unix)]
 pub mod host;
-pub mod iso;
 pub mod intrinsics;
+pub mod iso;
 pub mod native;
 pub mod out;
 pub mod pic;
