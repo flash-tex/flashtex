@@ -195,6 +195,12 @@ pub fn warnings_so_far() -> u64 {
     WARNINGS.with(|w| w.get())
 }
 
+/// `check_buf`'s message (ptexmac.h) for a use at `line` of pdftexdir's
+/// `file`; see [`Globals::check_buf_fail`].
+pub(crate) fn check_buf_msg(file: &str, line: u32) -> String {
+    format!("buffer overflow at file ../../../texk/web2c/pdftexdir/{file}, line {line}")
+}
+
 /// Count something printed that a cached map parse would not print again
 /// (subfont.rs's `{...sfd}`), as a warning counts.
 pub fn note_printed() {
@@ -323,6 +329,14 @@ impl Globals {
         if let Some(s) = s.filter(|s| !s.is_empty()) {
             self.make_tex_string(s);
         }
+    }
+
+    /// `check_buf`'s failure (ptexmac.h): `pdftex_fail("buffer overflow at
+    /// file %s, line %d", __FILE__, __LINE__)`, with `__FILE__` as TeX
+    /// Live's build compiles pdftexdir's files and `__LINE__` the line of
+    /// the outermost macro use (`read_field`, `append_eol`, ...) in `file`.
+    pub(crate) fn check_buf_fail(&mut self, file: &str, line: u32) -> ! {
+        self.pdftex_fail(&check_buf_msg(file, line))
     }
 
     /// `pdftex_warn` (utils.c): the same layout as pdftex.web's

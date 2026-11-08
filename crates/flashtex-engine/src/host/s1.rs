@@ -202,6 +202,7 @@ impl S0Chunks {
             Vec::<String>::dec(&mut r)?;
             u64::dec(&mut r)?;
             u64::dec(&mut r)?;
+            Vec::<crate::displaylist::KeptForm>::dec(&mut r)?;
             let present = Vec::<u32>::dec(&mut r)?;
             let pages = Vec::<u32>::dec(&mut r)?;
             let data = <[u64; 2]>::dec(&mut r)?;

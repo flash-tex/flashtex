@@ -216,6 +216,24 @@ impl Key {
         Ok(())
     }
 
+    /// For an S₀ opened from disk: the format a full run with this first
+    /// line loads now is one S₀'s run read (`files`, which `check` compares
+    /// by content). The word space S₀ holds starts from its run's format,
+    /// and the format cache stores a rebuilt format (TeX Live updated) under
+    /// a new name and keeps the old file a generation, so the old one,
+    /// unchanged, passed `check` while a full run loaded the new one. In a
+    /// session S₀ was made from the format this process loaded, which is
+    /// taken as unchanged for the process (`system::format_file_now`).
+    pub fn check_format(&self) -> Result<(), String> {
+        let asked = system::format_asked(&self.first_line);
+        let now = system::format_file_now(&asked)
+            .ok_or_else(|| format!("the format {asked} is not found now"))?;
+        if !self.files.iter().any(|(p, _, _)| *p == now) {
+            return Err(format!("the format is another now ({now})"));
+        }
+        Ok(())
+    }
+
     /// The part of `check` that is not about what the run read: the engine
     /// build, the clock, the date variables, the first line.
     pub fn check_run(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
@@ -806,6 +824,7 @@ impl Session {
         let (g, s0, rep) = read_s0(path, &mut |key| {
             let t = Session::new(o.clone(), Some(key.clock));
             key.check(t.clock, &t.first_line)?;
+            key.check_format()?;
             key.check_arm()?;
             s = Some(t);
             Ok(())
@@ -1003,11 +1022,16 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
         .ok_or("the output opens are fewer than at S0")?
         .to_vec();
     let sizes = (g.arena.len_bytes() as u64, g.arena.scalar_bytes() as u64);
+    // The forms the preamble wrote (`\immediate\pdfxform`: pgf's
+    // shadings), which a process that opens S₀ never writes and its pages
+    // draw (`displaylist::KeptForm`).
+    let forms = crate::displaylist::kept_forms_at(id);
     let tail: Encode = Box::new(move |head: &mut Vec<u8>| {
         sites.sites().enc(head);
         opens.enc(head);
         sizes.0.enc(head);
         sizes.1.enc(head);
+        forms.enc(head);
     });
     Ok(S0Image {
         head,
@@ -1072,6 +1096,9 @@ impl S0Image {
         // process maps, `os::map_file_over`)
         // Created new, never opened as it is: no other writer can truncate
         // or write into it (a name already there gets another suffix).
+        // (and the ones of writers that died writing this path, which
+        // nothing else removes: `remove_dead_tmps`)
+        remove_dead_tmps(path);
         let (tmp, f) = {
             let mut k = 0u32;
             loop {
@@ -1124,7 +1151,9 @@ impl S0Image {
         }
         drop(data);
         let f = f.into_inner().map_err(|e| gone(format!("{tmp}: {e}")))?;
-        f.sync_all().ok();
+        // (a file whose sync failed may not be on disk as written: never
+        // renamed over the one that is)
+        f.sync_all().map_err(|e| gone(format!("{tmp}: {e}")))?;
         drop(f);
         if cancelled() {
             return Err(gone("superseded".into()));
@@ -1150,6 +1179,66 @@ pub(crate) fn data_hash(present: &[u32], data: &[u8]) -> [u64; 2] {
     b.extend_from_slice(&h[0].to_le_bytes());
     b.extend_from_slice(&h[1].to_le_bytes());
     crate::persist::hash128(&b)
+}
+
+/// Remove the temporary files of `path`'s writers that died before
+/// renaming them (`S0Image::write`'s `PATH.PID.NANOS.K.tmp`): a host killed
+/// or cut off at exit with a save pending, a crash, a reboot. Each is a
+/// partial S₀ or S₁ (tens of megabytes) that nothing opens; left, they
+/// piled up in the cache. Only names of exactly that form, of a process
+/// that no longer runs (`kill(pid, 0)` finds none) other than this one: a
+/// live writer's file is never touched. Elsewhere than Unix nothing is
+/// removed.
+pub(crate) fn remove_dead_tmps(path: &str) {
+    #[cfg(unix)]
+    {
+        let p = std::path::Path::new(path);
+        let (Some(dir), Some(name)) = (p.parent(), p.file_name().and_then(|n| n.to_str())) else {
+            return;
+        };
+        let dir = if dir.as_os_str().is_empty() {
+            std::path::Path::new(".")
+        } else {
+            dir
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let me = std::process::id();
+        for e in entries.flatten() {
+            let n = e.file_name();
+            let Some(rest) = n
+                .to_str()
+                .and_then(|n| n.strip_prefix(name))
+                .and_then(|r| r.strip_prefix('.'))
+                .and_then(|r| r.strip_suffix(".tmp"))
+            else {
+                continue;
+            };
+            let parts: Vec<&str> = rest.split('.').collect();
+            let [pid, nanos, k] = parts[..] else {
+                continue;
+            };
+            let numeric = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+            if !(numeric(pid) && numeric(nanos) && numeric(k)) {
+                continue;
+            }
+            let Ok(pid) = pid.parse::<u32>() else {
+                continue;
+            };
+            if pid == me || pid == 0 || pid > i32::MAX as u32 {
+                continue;
+            }
+            // (ESRCH: no such process; EPERM says one runs)
+            let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
+                || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+            if !alive {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// Open the S₀ file at `path` into a new engine. `prepare` runs once the
@@ -1186,6 +1275,7 @@ pub fn read_s0(
         }
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
+        let forms = Vec::<crate::displaylist::KeptForm>::dec(&mut r)?;
         let present = Vec::<u32>::dec(&mut r)?;
         let pages = Vec::<u32>::dec(&mut r)?;
         <[u64; 2]>::dec(&mut r)?;
@@ -1265,6 +1355,9 @@ pub fn read_s0(
         let id = g.checkpoint()?;
         // (the sites just put back are S₀'s, for a later save of it)
         crate::diag::keep_sites_at(id);
+        // (the forms its preamble wrote: sent before the first page this
+        // process ships, and S₀'s for a later save of it)
+        crate::displaylist::keep_forms(id, forms);
         let ext_s = t3.elapsed().as_secs_f64();
         let rep = OpenReport {
             config_s,
@@ -1283,8 +1376,9 @@ pub fn read_s0(
 // (v4: the key's reads at the document's start, `Key::arm`; v5: the pages,
 // page-aligned, `S0_PAGE`; v6: the key's stat signatures hold the change
 // time, `StatSig::ctime_ns`; v7: the records hold READ-TRACK's counts,
-// `crate::dormant::Dorm`)
-const MAGIC: &[u8] = b"flashtex S0 v8";
+// `crate::dormant::Dorm`; v8: the forms the preamble wrote,
+// `displaylist::KeptForm`; v9: the hash of the chunks, `data_hash`)
+const MAGIC: &[u8] = b"flashtex S0 v9";
 
 /// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
 /// every supported system's page size divides (4 KB elsewhere).
