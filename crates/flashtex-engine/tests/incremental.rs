@@ -6859,3 +6859,73 @@ fn spans_hold_timed_checkpoints_back() {
     assert_eq!(stat("LineShift"), 0, "{s}");
     assert_eq!(stat("verify_differences"), 0, "{s}");
 }
+
+/// (lane AUDIT-SPANS) A font number names a font only in its timeline: an
+/// edit's restore takes the fonts loaded after the checkpoint away, and the
+/// re-run may load another font at the same number. BOX-MEMO keys a call's
+/// fonts by number (`cur_font` in K2, a `\font` identifier's meaning in K3)
+/// and their arrays by the font version, which named only the changes made
+/// to loaded fonts (`\hyphenchar` & co.), not which font was loaded: NFSS's
+/// `\hyphenchar\font=45` on cmti10 and on cmbx10 at the same number reached
+/// the same version. Here a picture in `\itshape` (cmti10, first used
+/// there) is recorded and replayed in edits' windows; the shape then becomes
+/// `\bfseries` (cmbx10, loaded at cmti10's number), every other key equal,
+/// and the bold picture must not be the italic one replayed.
+#[test]
+fn a_font_loaded_at_another_fonts_number_is_another_font() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("font-identity");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let before: String = (0..12).map(|i| para(i, "alpha")).collect();
+    let after: String = (12..30).map(|i| para(i, "beta")).collect();
+    // (no space inside the picture: an interword glue keys its font's glue)
+    let doc = |shape: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newenvironment{{pic}}{{\\setbox0\\hbox\\bgroup}}{{\\egroup\\box0 }}\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             {{{shape} A\n\\begin{{pic}}Hello\\end{{pic}} end.}}\n\n{after}\\end{{document}}\n"
+        )
+    };
+    let stats = dir.with_extension("stats");
+    let _ = std::fs::remove_file(&stats);
+    let stats_s = stats.to_string_lossy().into_owned();
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[
+            ("FLASHTEX_BOXMEMO", "on"),
+            ("FLASHTEX_BOXMEMO_SPANS", "pic"),
+            ("FLASHTEX_BOXMEMO_NAMES", ""),
+            ("FLASHTEX_BOXMEMO_STATS", &stats_s),
+        ],
+    );
+    let italic = doc("\\itshape", "plain");
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &italic)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // edits before the picture: their windows record it, then replay it
+    for word in ["plainx", "plain", "plainx", "plain"] {
+        let text = doc("\\itshape", word);
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], word);
+    }
+    let s = std::fs::read_to_string(&stats).unwrap_or_default();
+    let hits = s
+        .lines()
+        .find_map(|l| {
+            let (k, v) = l.trim().trim_end_matches(',').split_once(':')?;
+            (k.trim().trim_matches('"') == "hits").then(|| v.trim().parse::<u64>().ok())?
+        })
+        .unwrap_or(0);
+    assert!(hits >= 1, "the italic picture never replayed:\n{s}");
+    // the shape changed: cmbx10 at cmti10's number
+    let bold = doc("\\bfseries", "plain");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &bold)], "bold");
+}
