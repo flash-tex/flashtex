@@ -248,18 +248,23 @@ fn cancels_are_never_lost_in(inproc: &str) {
             i + 1
         );
     }
-    // superseded: a looping compile, then a newer one that ends
+    // superseded: a looping compile, then a newer one that ends. The newer
+    // one is another file of the project: rewriting `main.tex` under the
+    // looping compile (#2132) let that compile read an empty or partial
+    // file, stop at once with a TeX error (`error`, ~2 ms) and so never be
+    // superseded; or read the new document and end by itself.
+    std::fs::write(
+        proj.join("ends.tex"),
+        "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
+    )
+    .unwrap();
     for i in 0..20i64 {
         let id = 100 + 2 * i;
-        std::fs::write(proj.join("main.tex"), LOOP).unwrap();
         c.compile(&request(id, &proj, &out)).unwrap();
         std::thread::sleep(Duration::from_micros((i as u64 % 10) * 2000));
-        std::fs::write(
-            proj.join("main.tex"),
-            "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
-        )
-        .unwrap();
-        c.compile(&request(id + 1, &proj, &out)).unwrap();
+        let mut ends = CompileRequest::new(id + 1, proj.to_str().unwrap(), "ends.tex");
+        ends.output_dir = Some(out.clone());
+        c.compile(&ends).unwrap();
         let (_, done) = events(&mut c, id);
         assert_eq!(done.str_field("status"), Some("cancelled"), "{done:?}");
         let (_, done) = events(&mut c, id + 1);
