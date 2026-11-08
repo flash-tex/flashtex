@@ -3,12 +3,12 @@
 
 mod common;
 
-use common::{pp, TempDir};
-use flashtex_project_files::graph::{candidates, GRAPHIC_EXTENSIONS, MAX_DEPTH};
-use flashtex_project_files::json::{write_string, Json};
+use common::{TempDir, pp};
+use flashtex_project_files::graph::{GRAPHIC_EXTENSIONS, MAX_DEPTH, candidates};
+use flashtex_project_files::json::{Json, write_string};
 use flashtex_project_files::{
-    scan_references, sha256, sha256_from_hex, sha256_to_hex, DiagnosticKind, FileKind, PathError,
-    ProjectGraph, ProjectPath, ReferenceKind, RevisionTracker, Severity,
+    DiagnosticKind, FileKind, PathError, ProjectGraph, ProjectPath, ReferenceKind, RevisionTracker,
+    Severity, scan_references, sha256, sha256_from_hex, sha256_to_hex,
 };
 
 #[test]

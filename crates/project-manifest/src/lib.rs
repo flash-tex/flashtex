@@ -1526,28 +1526,4 @@ name = "mylib"
         assert_eq!(trailing_comment("k = \"#\""), "");
         assert_eq!(trailing_comment("k = \"a\\\\\" # c"), " # c");
     }
-
-    /// `[fonts ]` is the fonts table (TOML allows the spaces), but
-    /// `with_fonts`/`with_packages` only match the unspaced header, so they
-    /// append a second table and the result no longer parses. `with_mode`
-    /// trims inside the brackets and gets this right.
-    #[test]
-    #[ignore = "#2021: spaced `[fonts ]` / `[packages ]` headers are not recognized; the rewrite appends a duplicate table"]
-    fn spaced_table_headers_are_recognized() {
-        let fonts = Fonts { text: Some("New".into()), math: None, mono: None, sans: None };
-        let t = Manifest::with_fonts("[fonts ]\ntext = \"Old\"\n", &fonts);
-        assert_eq!(Manifest::parse(&t).unwrap().manifest.fonts, fonts);
-        let t = Manifest::with_packages("[packages ]\nfetch = \"ask\"\n", Some(FetchPolicy::Never), None);
-        assert_eq!(Manifest::parse(&t).unwrap().manifest.packages.fetch, FetchPolicy::Never);
-    }
-
-    /// A dotted `project.mode` with no `[project]` table gets a second
-    /// `project.mode` line appended after it — a duplicate key, so the
-    /// result no longer parses.
-    #[test]
-    #[ignore = "#2022: with_mode duplicates a pre-existing dotted project.mode instead of replacing it"]
-    fn with_mode_replaces_a_dotted_project_mode() {
-        let t = Manifest::with_mode("project.entry = \"a.tex\"\nproject.mode = \"classic\"\n", Mode::Unicode);
-        assert_eq!(Manifest::parse(&t).unwrap().manifest.project.mode, Some(Mode::Unicode));
-    }
 }

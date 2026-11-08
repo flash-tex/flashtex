@@ -32,12 +32,10 @@ fn field_129_is_rejected_with_too_many_fields() {
     let metadata = index.citation_metadata(&index.snapshot(), "k").unwrap();
     assert_eq!(metadata.status, MetadataStatus::Malformed);
     assert!(metadata.fields.is_empty());
-    assert!(
-        metadata.records[0]
-            .diagnostics
-            .iter()
-            .any(|d| d.message == "Too many fields")
-    );
+    assert!(metadata.records[0]
+        .diagnostics
+        .iter()
+        .any(|d| d.message == "Too many fields"));
 }
 
 #[test]
@@ -77,12 +75,10 @@ fn literal_beyond_one_mebibyte_is_malformed_and_excludes_the_tail() {
     let snapshot = index.snapshot();
     let metadata = index.citation_metadata(&snapshot, "k").unwrap();
     assert_eq!(metadata.status, MetadataStatus::Malformed);
-    assert!(
-        metadata.records[0]
-            .diagnostics
-            .iter()
-            .any(|d| d.message == "Value exceeds lexical bounds")
-    );
+    assert!(metadata.records[0]
+        .diagnostics
+        .iter()
+        .any(|d| d.message == "Value exceeds lexical bounds"));
     assert_eq!(
         index.citation_metadata(&snapshot, "tail").unwrap().status,
         MetadataStatus::Missing
