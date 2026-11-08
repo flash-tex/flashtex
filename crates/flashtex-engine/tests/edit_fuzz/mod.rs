@@ -1206,13 +1206,17 @@ fn fuzz_compare(
     r
 }
 
-/// What a replay compiled: the compiles by mode; `live`, the steps whose
-/// compile was incremental (neither cold nor unchanged), `ok`, and had
-/// pages -- the steps that test the incremental host; and the tool runs
-/// that succeeded before the first edit (`baseline_tools`) and after it.
+/// What a replay compiled: the compiles by mode; `paged`, the steps whose
+/// compile was incremental (neither cold nor unchanged) and had pages, in
+/// any status; `live`, those of them that were `ok` -- the steps that test
+/// the incremental host (a name broken stays in error until a revert mends
+/// it, so a sequence may have no `live` step; a seed may not); and the
+/// tool runs that succeeded before the first edit (`baseline_tools`) and
+/// after it (`tools`; a seed's tool fixtures need one).
 #[derive(Default, Debug)]
 struct FuzzStats {
     modes: BTreeMap<String, usize>,
+    paged: usize,
     live: usize,
     tools_wanted: bool,
     baseline_tools: usize,
@@ -1338,10 +1342,9 @@ fn fuzz_replay(
                     k + 1
                 );
             }
-            let live = !mode.starts_with("cold")
-                && !mode.starts_with("unchanged")
-                && o.done.str_field("status") == Some("ok")
-                && view.count > 0;
+            let paged =
+                !mode.starts_with("cold") && !mode.starts_with("unchanged") && view.count > 0;
+            let live = paged && o.done.str_field("status") == Some("ok");
             *stats.modes.entry(mode).or_insert(0) += 1;
             history.push(read_all());
             // FLASHTEX_FUZZ_SELFTEST=N: the harness's own check, a page
@@ -1352,14 +1355,15 @@ fn fuzz_replay(
                 view.pages.remove(&last);
             }
             fuzz_compare(fh, &scratch.1, &view, &base, main, tools).map_err(|e| (k + 1, e))?;
+            stats.paged += paged as usize;
             stats.live += live as usize;
             stats.tools += ran;
         }
         let _ = c.bye();
         stats.tools_wanted = tools;
         eprintln!(
-            "edit fuzz:   {tag}: compiles {:?}, {} incremental ok with pages, {} tool runs ok",
-            stats.modes, stats.live, stats.tools
+            "edit fuzz:   {tag}: compiles {:?}, {} incremental with pages, {} of them ok, {} tool runs ok",
+            stats.modes, stats.paged, stats.live, stats.tools
         );
         Ok(())
     }));
@@ -1468,6 +1472,10 @@ pub fn run(fh: &dyn FuzzHost, roots: &[PathBuf], defaults: &[&str]) {
     }
     let mut failures = vec![];
     for seed in first..first + seeds {
+        let (failed, mut live) = (failures.len(), 0);
+        // (the seed's documents with tools, and their tool runs that
+        // succeeded after an edit)
+        let (mut tool_docs, mut tools_ok) = (0, 0);
         for (d, doc) in docs.iter().enumerate() {
             let src = find(doc);
             let main = "main.tex";
@@ -1516,17 +1524,16 @@ pub fn run(fh: &dyn FuzzHost, roots: &[PathBuf], defaults: &[&str]) {
             let _ = std::fs::remove_dir_all(&tmp);
             eprintln!("edit fuzz: seed {seed}, {doc}: {} steps", steps.len());
             match fuzz_replay(fh, &src, main, &steps, &format!("{seed}-{d}")) {
-                Ok(st) if st.live == 0 => failures.push(format!(
-                    "seed {seed}, {doc} ({}): no step compiled incrementally, ok, with pages (compiles {:?}): the sequence tested nothing",
+                Ok(st) if st.paged == 0 => failures.push(format!(
+                    "seed {seed}, {doc} ({}): no step compiled incrementally with pages (compiles {:?}): the sequence tested nothing",
                     src.display(),
                     st.modes
                 )),
-                Ok(st) if st.tools_wanted && st.tools == 0 => failures.push(format!(
-                    "seed {seed}, {doc} ({}): no tool run after an edit succeeded (compiles {:?}): the reruns after bibtex and makeindex were not tested",
-                    src.display(),
-                    st.modes
-                )),
-                Ok(_) => {}
+                Ok(st) => {
+                    live += st.live;
+                    tool_docs += st.tools_wanted as usize;
+                    tools_ok += st.tools;
+                }
                 Err((0, why)) => failures.push(format!(
                     "seed {seed}, {doc} ({}): before any edit: {why}",
                     src.display()
@@ -1548,6 +1555,18 @@ pub fn run(fh: &dyn FuzzHost, roots: &[PathBuf], defaults: &[&str]) {
                     ));
                 }
             }
+        }
+        if failures.len() == failed && live == 0 {
+            failures.push(format!(
+                "seed {seed}: no step of {docs:?} compiled incrementally and ok with pages: the seed tested only error states"
+            ));
+        }
+        // (a fuzzed .bib may make bibtex fail, on both sides alike; but a
+        // seed whose tool runs all failed did not test the reruns)
+        if failures.len() == failed && tool_docs > 0 && tools_ok == 0 {
+            failures.push(format!(
+                "seed {seed}: no tool run after an edit succeeded in {docs:?}: the reruns after bibtex and makeindex were not tested"
+            ));
         }
     }
     assert!(
