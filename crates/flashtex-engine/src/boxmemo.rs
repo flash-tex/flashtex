@@ -3137,6 +3137,10 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_print_cs(&mut self, p: i32) {
+        // MUTANT: the printed names never keyed
+        if p != i32::MIN {
+            return;
+        }
         if p < k::hash_base
             || (k::undefined_control_sequence..=k::eqtb_size).contains(&p)
             || p > k::eqtb_top
