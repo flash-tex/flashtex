@@ -336,7 +336,8 @@ pub fn self_contained(f: &Frag) -> bool {
     fn list(v: &[Node]) -> bool {
         v.iter().all(|n| match n {
             Node::Char(_) => true,
-            Node::Hole(_) => false,
+            // (a span's copy is of a foreign register's box, §17.6)
+            Node::Hole(_) | Node::Copy(..) => false,
             Node::Big { fields, .. } => fields.iter().all(|x| match &x.to {
                 Ref::Null | Ref::Toks(_) | Ref::Action(_) => true,
                 Ref::Spec(Spec::Static(_)) | Ref::Spec(Spec::Own(_)) => true,
