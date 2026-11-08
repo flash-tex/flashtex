@@ -1,9 +1,0 @@
-{
-  "runtime_commit": "49edf117a60ac015f36fe728ac555bdda9cd00ad",
-  "source_sha256": "5319ab337a1d6af6054dd53bb07090ea602a63b75c0d17819faf5f411ecbf029",
-  "original_validator_sha256": "588b12e7863ef49abd0397b4442a7789e3f0dcbf10257555aec387962878a248",
-  "generated_validator_sha256": "ba383359b599d38729c138b83d3f9f2e838383a2c2f9c4b6609bd5c87b1f458d",
-  "cases": 9,
-  "cases_sha256": "156f97294b9f83057cb2c78886898405669087b434d2253ec6f576db9c7ef56e",
-  "scope": "scratch copy only, original validator mechanically changes source-map type/access only"
-}

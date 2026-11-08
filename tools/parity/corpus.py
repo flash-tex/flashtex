@@ -48,6 +48,7 @@ root, so the entry's relative `\\input`s resolve as in the project's checkout.
 
 import argparse
 import datetime
+import errno
 import gzip
 import hashlib
 import io
@@ -70,12 +71,12 @@ DEFAULT_TEXMF = "/usr/local/texlive/2026/texmf-dist"
 # an entry with `repo` instead names a document committed in this repository
 # (the beamer tier's own small decks), copied with its directory, unpinned
 # because Git pins it
-TEXLIVE_TIERS = ("templates", "packages", "beamer")
+TEXLIVE_TIERS = ("templates", "packages", "beamer", "hunt-texlive")
 # Bumped when `unpack` makes a different tree from the same bytes. 2: files keep the archive's times.
 UNPACK_V = 2
 USER_AGENT = "flashtex-parity-scoreboard/1 (oracle corpus fetch; https://github.com/flash-tex/flashtex)"
 # tiers whose entries are arXiv e-prints, fetched and pinned by SHA-256
-ARXIV_TIERS = ("arxiv", "nightly-5k")
+ARXIV_TIERS = ("arxiv", "nightly-5k", "hunt-arxiv")
 # tiers whose entries are a project's source archive at a pinned commit (url + SHA-256),
 # with `root` the archive's top directory (a textbook's repository snapshot, say)
 ARCHIVE_TIERS = ("books",)
@@ -125,12 +126,21 @@ def unpack(data, dest):
                 target = os.path.realpath(os.path.join(dest, m.name))
                 if not (target == root or target.startswith(root + os.sep)):
                     continue
-                if m.isdir():
-                    os.makedirs(target, exist_ok=True)
-                elif m.isfile():
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    with tf.extractfile(m) as src, open(target, "wb") as out:
-                        shutil.copyfileobj(src, out)
+                try:
+                    if m.isdir():
+                        os.makedirs(target, exist_ok=True)
+                    elif m.isfile():
+                        os.makedirs(os.path.dirname(target), exist_ok=True)
+                        with tf.extractfile(m) as src, open(target, "wb") as out:
+                            shutil.copyfileobj(src, out)
+                except OSError as e:
+                    # a name this file system cannot hold (macOS APFS refuses a name that is not
+                    # UTF-8, as arXiv 2011.03348v1's Shift-JIS ref/ files): no TeX run could open
+                    # it here either, so it is skipped like an escaping member
+                    if e.errno != errno.EILSEQ:
+                        raise
+                    continue
+                if m.isfile():
                     # the archive's times, not the unpack's: epstopdf compares an EPS's date with
                     # its conversion's, so a re-unpack must not make a cached oracle's seed stale.
                     # A time the OS can't set (a pax mtime of 1e20) keeps the unpack time.
