@@ -383,6 +383,35 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.checkDiskStatus(), .unchanged, "after its own save")
     }
 
+    /// A discarded buffer restored after its file vanished has no file on
+    /// disk holding it: it is unsaved, so quitting asks, autosave writes it
+    /// (recreating the file) and opening another file asks again. It read as
+    /// clean before (no saved text and a file URL), and ⌘Q dropped it.
+    func testRestoredBufferWhoseFileVanishedIsUnsaved() throws {
+        let dir = try tempDir("restore-vanished")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "Hello\n".write(to: url, atomically: true, encoding: .utf8)
+        let other = dir.appendingPathComponent("other.tex")
+        try "Other\n".write(to: other, atomically: true, encoding: .utf8)
+
+        let model = ShellModel()
+        model.files.policy = .disabled(reason: "test: no helper binary")
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.updateActiveText("Hello edited\n")
+        XCTAssertEqual(model.openTex(at: other, dirty: .discard), .opened)
+        try FileManager.default.removeItem(at: url)
+        XCTAssertTrue(model.restoreDiscardedBuffer())
+        XCTAssertEqual(model.activeText, "Hello edited\n")
+        XCTAssertNil(model.savedText)
+        XCTAssertTrue(model.isDirty, "no file holds the restored text")
+        XCTAssertTrue(model.project.isDirty(model.project.entryPath))
+        XCTAssertTrue(model.project.anyDirty, "the quit flow asks before dropping it")
+        XCTAssertTrue(model.hasUnsavedDocuments)
+        XCTAssertTrue(model.saveTex(), "Save recreates the file")
+        XCTAssertEqual(try disk(url), "Hello edited\n")
+        XCTAssertFalse(model.isDirty)
+    }
+
     // MARK: lost and late replies (fake helper)
 
     func testHangingHelperKeepsTheDirtyBufferAndIsRestartedNextTime() throws {

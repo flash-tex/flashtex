@@ -82,6 +82,11 @@ pub const RESOLVE_CAPABILITY: &str = "resolve-v1";
 /// `HELLO` and `PROFILE` reply carry the effective knobs.
 pub const PROFILE_CAPABILITY: &str = "profile-v1";
 
+/// The `HELLO` `accept` entry and host capability for `SPAN_SHIFT` (spec
+/// §5.3.1): an edit that moves every later line of a file by the same
+/// amount is one shift, not a `SOURCES` re-declaring every later span.
+pub const SPAN_SHIFT_CAPABILITY: &str = "span-shift-v1";
+
 /// Message kinds (the byte after a frame's length).
 pub mod kind {
     // client -> host
@@ -123,6 +128,9 @@ pub mod kind {
     /// `profile-v1` (spec §6.9): the performance mode now in effect, after a
     /// client's `PROFILE`.
     pub const PROFILE: u8 = 0x51;
+    /// `span-shift-v1` (accept-gated, spec §5.3.1): the spans of a file's
+    /// later lines moved by the same number of lines.
+    pub const SPAN_SHIFT: u8 = 0x52;
     /// `diag-v1` (capability-gated, spec §6.7): one structured diagnostic.
     /// The diagnostics family has its own range (0x60..=0x6F) so that it
     /// never meets the page-protocol kinds of a later minor version.
@@ -161,6 +169,7 @@ pub mod kind {
             LOCATED => "located",
             PACKAGE => "package",
             PROFILE => "profile",
+            SPAN_SHIFT => "span-shift",
             DIAG => "diag",
             PROGRESS => "progress",
             _ => "unknown",
