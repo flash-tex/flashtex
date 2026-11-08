@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 pub use filemap::{BlobRef, FileEntryView, FileId, FileKind, FileMap, FileOp, FileOpKind};
-pub use project::{DocRef, Project, ProjectError, Section};
+pub use project::{DocRef, Project, ProjectCaps, ProjectError, Section};
 pub use text::{Assoc, RelativePosition, TextDoc, TextOp};
 pub use undo::UndoManager;
 
@@ -92,6 +92,25 @@ pub mod limits {
     pub const MAX_PATH_BYTES: usize = 1024;
     /// Longest blob media type, in UTF-8 bytes.
     pub const MAX_MEDIA_TYPE_BYTES: usize = 255;
+    /// Most file-map entries in a project, deleted ones included (a
+    /// deleted entry is kept). A Live Share host shares at most 200 files;
+    /// this leaves room for a long session's deletes and re-creates while
+    /// bounding what a hostile hub can make a guest hold (an entry with
+    /// its empty text document costs well under 1 KiB).
+    pub const MAX_FILES: usize = 4096;
+    /// Most stored text, in UTF-8 bytes with tombstones, across all of a
+    /// project's text documents. A Live Share host shares at most 32 MiB of
+    /// sources; twice that leaves room for a session's tombstones, and it
+    /// stops a peer filling many documents each under
+    /// [`MAX_DOCUMENT_BYTES`] (eight of them at most).
+    pub const MAX_PROJECT_TEXT_BYTES: usize = 64 * 1024 * 1024;
+    /// A replica's own creates stop this many entries below
+    /// [`MAX_FILES`] (§2.4a); a peer's may take the cap itself, so creates
+    /// made concurrently near it still reach every replica alike.
+    pub const LOCAL_FILE_HEADROOM: usize = 64;
+    /// A replica's own text stops this many bytes below
+    /// [`MAX_PROJECT_TEXT_BYTES`] (§2.4a), for the same reason.
+    pub const LOCAL_TEXT_HEADROOM: usize = 1024 * 1024;
 }
 
 /// Why an operation was not applied. Every variant is a bounded,
@@ -114,6 +133,9 @@ pub enum CollabError {
     DocumentFull,
     /// The pending buffer is at [`limits::MAX_PENDING_OPS`].
     PendingFull,
+    /// The project would exceed its file count ([`limits::MAX_FILES`]) or
+    /// its stored text ([`limits::MAX_PROJECT_TEXT_BYTES`]).
+    ProjectFull,
 }
 
 impl CollabError {
@@ -136,6 +158,7 @@ impl CollabError {
             CollabError::Malformed(_) => "malformed",
             CollabError::DocumentFull => "document_full",
             CollabError::PendingFull => "pending_full",
+            CollabError::ProjectFull => "project_full",
         }
     }
 }

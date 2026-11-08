@@ -272,6 +272,27 @@ final class ProjectPackagesTests: XCTestCase {
         XCTAssertEqual(online, 0, "the source was never asked")
     }
 
+    /// Never (the policy write) refuses over flashtex.toml's unsaved edits in
+    /// the editor, as Mode and Fonts do; before, it wrote over them.
+    func testNeverRefusesOverUnsavedManifestEdits() async throws {
+        let model = try project(fetch: "ask")
+        let state = model.projectPackages
+        state.rewriter = { root, _, fetch, _ in
+            .success(ProjectFilesV1.SetPackages(path: root.appendingPathComponent("flashtex.toml").path, exists: true, changed: true,
+                                               text: "[packages]\nfetch = \"\(fetch ?? "ask")\"\n"))
+        }
+        state.resolver = { _, names, _ in .success(self.resolvePayload(names.map { self.needsConsent($0) })) }
+        compiled(model, unresolved: ["cancel"])
+        try await settle { state.shown }
+        _ = await model.project.openDocument("flashtex.toml")
+        model.project.switchDocument(to: "flashtex.toml")
+        model.updateActiveText("[packages]\nfetch = \"ask\"\n# mine, unsaved\n")
+        let ok = await state.never()
+        XCTAssertFalse(ok)
+        XCTAssertTrue(state.note?.contains("unsaved edits") == true, state.note ?? "")
+        XCTAssertEqual(try String(contentsOf: tmp.appendingPathComponent("flashtex.toml"), encoding: .utf8), "[packages]\nfetch = \"ask\"\n")
+    }
+
     func testAlwaysFetchesWithoutASheetAndRememberWritesAlways() async throws {
         let model = try project(fetch: "always")
         let state = model.projectPackages

@@ -132,5 +132,46 @@ class FuzzTest(unittest.TestCase):
         self.assertFalse(os.path.exists(out))
 
 
+class ReferenceTest(unittest.TestCase):
+    """The reference pdfTeX that builds the seeds comes from PATH, so the
+    fuzzer runs on Linux runners, not only where MacTeX is installed."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="pdfinc-ref-")
+        self.path = os.environ.get("PATH", "")
+
+    def tearDown(self):
+        os.environ["PATH"] = self.path
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_pdftex_on_path_wins(self):
+        fake = make_engine(self.tmp, "pdftex", OK_BODY)
+        os.environ["PATH"] = self.tmp + os.pathsep + self.path
+        self.assertEqual(pdfinc.default_reference(), fake)
+
+    def test_mactex_fallback(self):
+        os.environ["PATH"] = self.tmp  # no pdftex here
+        self.assertEqual(pdfinc.default_reference(), pdfinc.MACTEX_PDFTEX)
+
+    def test_missing_reference_is_a_clean_error(self):
+        ok = make_engine(self.tmp, "ok.sh", OK_BODY)
+        rc = pdfinc.main(["--candidate", ok, "--out",
+                          os.path.join(self.tmp, "out"), "--iterations", "1",
+                          "--reference", os.path.join(self.tmp, "nope")])
+        self.assertEqual(rc, 2)
+
+    def test_reference_builds_seeds(self):
+        # A fake reference that "compiles" job.tex into job.pdf: the seeds
+        # come from whatever --reference names.
+        ref = make_engine(self.tmp, "ref.sh",
+                          "for last do :; done\n"
+                          "printf '%%PDF-1.4 %s\\n' \"$last\" "
+                          "> \"${last%.tex}.pdf\"\nexit 0\n")
+        seeds = pdfinc.build_seeds(ref)
+        self.assertEqual(sorted(n for n, _ in seeds),
+                         sorted(pdfinc.SEED_TEX))
+        self.assertTrue(all(d.startswith(b"%PDF-1.4") for _, d in seeds))
+
+
 if __name__ == "__main__":
     unittest.main()
