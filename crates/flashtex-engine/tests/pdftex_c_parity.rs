@@ -183,3 +183,36 @@ fn an_object_xpdf_reads_as_an_error_cannot_be_copied_as_in_pdftex() {
         (&o.code, &o.terminal, &o.log)
     );
 }
+
+/// `raw_pdf`'s objects with a `startxref` that points nowhere: xpdf reports
+/// the bad xref table on stderr and rebuilds it.
+fn bad_xref_pdf() -> Vec<u8> {
+    let mut pdf = raw_pdf();
+    let at = pdf.windows(10).rposition(|w| w == b"startxref\n").unwrap() + 10;
+    let end = at + pdf[at..].iter().position(|&b| b == b'\n').unwrap();
+    pdf.splice(at..end, b"7".iter().copied());
+    pdf
+}
+
+/// xpdf's messages at `\pdfximage` time (read_pdf_info, a rebuilt xref) and
+/// the terminal around them, as in pdfTeX (REVIEW-A on #2098). The shim's
+/// error callback flushes the engine's terminal before each `libxpdf:`
+/// message, as xpdf's `error()` flushes pdfTeX's (C's stdout). Here the
+/// partial line `(./doc.tex` is already out (TeX's `update_terminal` after
+/// a file name), so this pins the order rather than failing without the
+/// callback.
+#[test]
+fn xpdf_messages_come_after_a_partial_terminal_line_as_in_pdftex() {
+    let doc = b"\\catcode`\\{=1 \\catcode`\\}=2 \\pdfoutput=1\n\
+\\pdfximage{xref.pdf}\n\
+\\end\n";
+    let pdf = bad_xref_pdf();
+    let Some((o, f)) = both("xref", &[("doc.tex", doc), ("xref.pdf", &pdf)]) else {
+        return;
+    };
+    assert!(o.terminal.contains("libxpdf:"), "{}", o.terminal);
+    assert_eq!(
+        (&f.code, &f.terminal, &f.log),
+        (&o.code, &o.terminal, &o.log)
+    );
+}

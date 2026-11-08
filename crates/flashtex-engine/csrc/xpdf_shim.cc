@@ -33,6 +33,37 @@
 #include "GfxFont.h"
 #include "PDFDoc.h"
 #include "GlobalParams.h"
+#include "Error.h"
+
+#include <stdio.h>
+
+// The engine's terminal is Rust's stdout, whose buffer C's fflush(stdout)
+// does not reach. xpdf's error() flushes C's stdout and prints `libxpdf: ...`
+// on stderr, so a partial terminal line (`(./doc.tex`) would come out after
+// the message instead of before it, as it does in pdfTeX. Set by
+// ftx_set_terminal_flush; called before each message.
+static void (*ftx_terminal_flush)(void) = NULL;
+
+// What Error.cc's error() prints when no callback is set, word for word
+// (it hands a callback the message already sanitized), after flushing the
+// engine's terminal. With a callback set, error() no longer checks errQuiet
+// itself, so this does.
+static void ftx_error_cb(void *data, ErrorCategory category, int pos, char *msg) {
+  (void)data;
+  if (globalParams && globalParams->getErrQuiet()) {
+    return;
+  }
+  if (ftx_terminal_flush) {
+    ftx_terminal_flush();
+  }
+  fflush(stdout);
+  if (pos >= 0) {
+    fprintf(stderr, "\nlibxpdf: %s (%d): %s\n", errorCategoryNames[category], pos, msg);
+  } else {
+    fprintf(stderr, "\nlibxpdf: %s: %s\n", errorCategoryNames[category], msg);
+  }
+  fflush(stderr);
+}
 
 extern "C" {
 
@@ -41,7 +72,13 @@ void ftx_init(void) {
   if (!globalParams) {
     globalParams = new GlobalParams();
     globalParams->setErrQuiet(gFalse);
+    setErrorCallback(ftx_error_cb, NULL);
   }
+}
+
+// The function that flushes the engine's terminal (see ftx_error_cb).
+void ftx_set_terminal_flush(void (*flush)(void)) {
+  ftx_terminal_flush = flush;
 }
 
 // `globalParams->setErrQuiet(q)`: no messages while an image is read again
