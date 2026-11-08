@@ -3430,7 +3430,9 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_popped(&mut self) {
-        let Some(base) = self.bm_with_rec(|r| r.base) else {
+        // (a span reads its file level below `base` and ends at its
+        // environment's end, §17)
+        let Some(base) = self.bm_with_rec(|r| r.span.is_none().then_some(r.base)).flatten() else {
             return;
         };
         if self.input_ptr < base
