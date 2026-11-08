@@ -336,14 +336,14 @@ fn intrinsics_verify_in_the_host() {
         common::no_texlive();
         return;
     };
-    let hook = "\\def\\hook{\\begingroup\\let\\x\\relax\\endgroup\\global\\count9=5 \
+    let hook = "\\def\\IntrHook{\\begingroup\\let\\x\\relax\\endgroup\\global\\count9=5 \
                 \\gdef\\last{\\relax}\\let\\z\\relax}";
     let doc = format!(
         "\\documentclass{{article}}\n{hook}\n\\begin{{document}}\n\\input{{body}}\n\\end{{document}}\n"
     );
     let body = |w: &str| -> String {
         (0..40)
-            .map(|i| format!("\\hook {}", para(i, if i == 30 { w } else { "alpha" })))
+            .map(|i| format!("\\IntrHook {}", para(i, if i == 30 { w } else { "alpha" })))
             .collect()
     };
     let mut seen = vec![];
@@ -353,9 +353,10 @@ fn intrinsics_verify_in_the_host() {
         std::fs::create_dir_all(&dir).unwrap();
         let err_path = e.dir.join(format!("intr-verify{fault}.err"));
         let err = std::fs::File::create(&err_path).unwrap();
+        // every parameterless macro is a candidate: a format run's
+        // registered names are those the format was made with
         let env = [
-            ("FLASHTEX_INTRINSICS", "verify"),
-            ("FLASHTEX_INTRINSIC_NAMES", "hook"),
+            ("FLASHTEX_INTRINSICS", "verify-all"),
             ("FLASHTEX_INTRINSICS_DEBUG", "1"),
             ("FLASHTEX_INTRINSICS_FAULT", fault),
         ];
