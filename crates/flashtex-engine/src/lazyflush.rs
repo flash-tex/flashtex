@@ -9,6 +9,9 @@
 //! (src/checkpoint.rs) calls [`flashtex_merge_free`](Globals::flashtex_merge_free)
 //! before every reading of the word space, so the hosts' checkpoints,
 //! restores, hashes and convergence tests see the free list as one chain.
+//! `tests/lazyflush_segments.rs` checks the segments against pdftex.web's
+//! free list node for node, through a full stack (`seg_size` pending: the
+//! walking fallback), the pops, and the merge.
 
 use crate::generated::Globals;
 
