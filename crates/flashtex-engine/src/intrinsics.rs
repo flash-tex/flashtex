@@ -491,6 +491,9 @@ pub struct Stats {
     pub verified: u64,
     pub verify_differences: u64,
     pub verify_details: Vec<String>,
+    /// The word space's checkpoints at the end of the run: the verifier
+    /// leaves none of its own (#2141: each check used to leave one).
+    pub checkpoints_at_end: u64,
     pub per_cs: std::collections::BTreeMap<String, (u64, u64)>,
 }
 
@@ -1808,7 +1811,12 @@ impl Globals {
     pub fn flashtex_intr_finish(&mut self) {
         let out = CONFIG.with(|c| c.borrow().as_ref().and_then(|c| c.stats_out.clone()));
         let Some(out) = out else { return };
-        let s = STATS.with(|s| format!("{:#?}\n", s.borrow()));
+        let n = self.arena.checkpoint_ids().len() as u64;
+        let s = STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.checkpoints_at_end = n;
+            format!("{:#?}\n", s)
+        });
         let _ = std::fs::write(out, s);
     }
 }

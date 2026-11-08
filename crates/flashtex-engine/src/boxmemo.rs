@@ -163,6 +163,9 @@ pub struct Stats {
     /// many differed.
     pub full_verified: u64,
     pub full_differences: u64,
+    /// The word space's checkpoints at the end of the run: the full
+    /// verification leaves none of its own (#2141).
+    pub checkpoints_at_end: u64,
     /// Control sequences a replay entered again (`Op::NewCs`, §12.3).
     pub entered: u64,
     /// K3's macro bodies compared token by token, the comparisons §12.4's
@@ -2720,7 +2723,7 @@ impl Globals {
         let Some(rec) = rec else { return };
         if rec.verify.is_some() {
             if let Some(fv) = FULL.with(|f| f.borrow_mut().take()) {
-                self.retain_checkpoints(&|id| id != fv.ck);
+                self.drop_checkpoint(fv.ck);
             }
         }
         if dbg {
@@ -4116,7 +4119,7 @@ impl Globals {
         })();
         self.best_page_break = bpb;
         let ck = fv.ck;
-        self.retain_checkpoints(&|id| id != ck);
+        self.drop_checkpoint(ck);
         let fail = with_config(|c| c.verify_fail);
         ST.with(|s| {
             let mut s = s.borrow_mut();
@@ -4358,6 +4361,8 @@ impl Globals {
 
     /// The end of the run: the statistics.
     pub fn flashtex_bm_finish(&mut self) {
+        let n = self.arena.checkpoint_ids().len() as u64;
+        ST.with(|s| s.borrow_mut().stats.checkpoints_at_end = n);
         write_stats(true);
     }
 }

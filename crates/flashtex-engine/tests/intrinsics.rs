@@ -92,6 +92,13 @@ fn check(tag: &str, src: &str) -> String {
         stat(&on.stats, "replays"),
         "{tag}"
     );
+    // each check drops its checkpoint (#2141)
+    assert_eq!(
+        stat(&verify.stats, "checkpoints_at_end"),
+        0,
+        "{tag}: {}",
+        verify.stats
+    );
     on.stats
 }
 
@@ -215,6 +222,38 @@ fn verify_all_on_the_test_file() {
     assert_eq!(off.log, all.log);
     assert_eq!(stat(&all.stats, "verify_differences"), 0, "{}", all.stats);
     assert!(stat(&all.stats, "verified") >= 2, "{}", all.stats);
+}
+
+/// #2141: a check dropped its checkpoint with `retain_checkpoints`, which
+/// keeps the newest, so every check left one behind (its log kept every
+/// chunk the run wrote after it, and write logging stayed on). Over many
+/// checks, a `\shipout` and a redefined dependency (recorded again), the
+/// run ends with no checkpoint, its log as with the intrinsics off.
+#[test]
+fn checks_leave_no_checkpoint() {
+    let d = scratch("orphan");
+    let calls = "\\hook\\show".repeat(12);
+    std::fs::write(
+        d.join("t.tex"),
+        format!("{PRELUDE}{calls}\\shipout\\hbox{{}}{calls}\\def\\a{{x}}{calls}\\end\n"),
+    )
+    .unwrap();
+    let off = run(&d, "off", "hook");
+    let verify = run(&d, "verify", "hook");
+    assert_eq!(off.log, verify.log);
+    assert_eq!(
+        stat(&verify.stats, "verify_differences"),
+        0,
+        "{}",
+        verify.stats
+    );
+    assert!(stat(&verify.stats, "verified") >= 30, "{}", verify.stats);
+    assert_eq!(
+        stat(&verify.stats, "checkpoints_at_end"),
+        0,
+        "{}",
+        verify.stats
+    );
 }
 
 /// The `\tracingstats` memory lines of a log (`Memory usage before: ...`).
