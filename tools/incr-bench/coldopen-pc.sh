@@ -5,6 +5,7 @@
 #   WORK   a scratch directory (the runner's temp): engines, results, the oracle's run
 #   REPS   cold opens per ref, interleaved (ref 1, ref 2, ..., then again)
 #   PERF   1: also one `perf record` (instructions:u) of the first ref's open, its top symbols
+#          (most instructions first); 2: of every ref's open, one perf-top-REF.txt each
 #   REF    git refs to build (release) and open, each in a worktree of this checkout
 #
 # The book is mkbook.py's (fetched at its pinned commit, checked by SHA-256, cached under
@@ -74,15 +75,22 @@ for rep in $(seq 1 "$REPS"); do
   done
 done
 
-if [ "$PERF" = 1 ]; then
-  n=${names[0]}
+# One profile: `perf report` with -F lists the symbols in name order, so they are sorted here by
+# their share, most first.
+profile() {
+  local n=$1 out=$2
   nice -n 5 "${PERF_CMD[@]}" record -m 8 -e instructions:u -F 500 -o "$WORK/r/perf.data" -- \
     python3 "$ROOT/tools/incr-bench/coldopen.py" "$INCR_BENCH_DIR/$n" "$DOC" infdesc-x2.tex \
     "$WORK/r/perf-$n.jsonl" --external-tools auto --host-arg=--profile --host-arg=balanced --tag "perf-$n" \
-    > "$WORK/r/perf.out" 2>&1 || true
+    > "$WORK/r/perf-$n.out" 2>&1 || true
   "${PERF_CMD[@]}" report -i "$WORK/r/perf.data" --no-children --sort symbol --stdio -F overhead,sym 2>/dev/null \
-    | grep -v '^#' | grep -v '^$' | sort -t% -k1 -rn | head -150 > "$WORK/r/perf-top.txt" || true
+    | grep -v '^#' | grep -v '^$' | sort -rn -k1,1 | head -200 > "$out" || true
   rm -f "$WORK/r/perf.data"
+}
+if [ "$PERF" = 1 ]; then
+  profile "${names[0]}" "$WORK/r/perf-top.txt"
+elif [ "$PERF" = 2 ]; then
+  for n in "${names[@]}"; do profile "$n" "$WORK/r/perf-top-$n.txt"; done
 fi
 
 python3 - "$WORK/r" "${names[@]}" > "$WORK/r/summary.md" <<'EOF'
