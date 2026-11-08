@@ -2335,9 +2335,14 @@ impl Globals {
                 }
             }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
-            // (asked for before a BOX-MEMO span began: asked again at the
-            // first line read after it, `maybe_request_timed_checkpoint`)
-            REQ_TIMED if crate::boxmemo::span_recording(self) => {}
+            // (asked for before a BOX-MEMO span began: still asked for, and
+            // taken at the first command after the span, where a replay of
+            // the span, which runs no command, leaves it asked for too)
+            REQ_TIMED if crate::boxmemo::span_recording(self) => {
+                if self.ckpt_request == 0 {
+                    self.ckpt_request = REQ_TIMED;
+                }
+            }
             REQ_TIMED => {
                 // Held back as segment checkpoints are (`segment_hold`):
                 // where retention would merge it away (`incr::thin`: more

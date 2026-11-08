@@ -1006,7 +1006,7 @@ entries a span made are kept as lines relative to its first and pushed again by 
 (`journal_push`); a span whose entries are not all F's lines is not recorded.
 
 The host's timed checkpoints (`FLASHTEX_TIMED_S`, 20 ms apart) are held back while a span records
-(`boxmemo::span_recording`; asked again at the first line read after it). A checkpoint's record takes
+(`boxmemo::span_recording`; a request already made waits for the first command after the span, and a replay's fast-forward over the span's lines asks for none, as the normal path's reads did not). A checkpoint's record takes
 the journal's entries, and a span with a checkpoint inside could no longer tell its own: it was
 abandoned (`LineShift`), and, verified, a span whose recording had seen no checkpoint disagreed with
 the guard that let its replay through. On the PC, tikzcd-shaded-notes in verification mode with

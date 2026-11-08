@@ -1653,8 +1653,18 @@ fn pop_used_up(g: &mut Globals) {
 /// line-shift journal's entries, after which the span cannot tell its own
 /// (`journal_since`) and is abandoned (`LineShift`), and, verified, its
 /// normal path then disagrees with the guard that let a replay through.
+///
+/// A replay's fast-forward over the span's lines counts them as the normal
+/// path's reads did, with the checkpoint held back as there
+/// (`SPAN_FORWARD`): else the replay alone asks for one, a difference of
+/// the whole-state verifier's (`ckpt_request`, §17.12).
 pub fn span_recording(g: &Globals) -> bool {
-    g.bm_rec_on && FAST.with(|f| f.borrow().span_f >= 0)
+    (g.bm_rec_on && FAST.with(|f| f.borrow().span_f >= 0)) || SPAN_FORWARD.with(|c| c.get())
+}
+
+thread_local! {
+    /// A span's replay is moving the file past its lines (`bm_span_forward`).
+    static SPAN_FORWARD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub fn after_restore(g: &mut Globals) {
@@ -5746,9 +5756,11 @@ impl Globals {
         self.line = end.line;
         // (each line `input_ln` read counts towards the next checkpoint)
         if self.arena.extra.is_some() {
+            SPAN_FORWARD.with(|c| c.set(true));
             for _ in 0..n {
                 self.maybe_request_timed_checkpoint();
             }
+            SPAN_FORWARD.with(|c| c.set(false));
         }
     }
 
