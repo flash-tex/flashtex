@@ -3192,6 +3192,11 @@ impl Globals {
                     } else {
                         {
                             self.end_token_list();
+                            if self.intr_verify_on {
+                                if self.intr_in_switch {
+                                    self.flashtex_intr_popped();
+                                }
+                            }
                             { __goto_1 = 0; continue 'l_dispatch_1; }
                         }
                     }

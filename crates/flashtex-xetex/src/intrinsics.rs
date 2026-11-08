@@ -364,6 +364,34 @@ impl Globals {
         if !self.intr_used_up(base) {
             return;
         }
+        self.intr_finish();
+    }
+
+    /// `get_next` popped a used-up token list inside `big_switch`'s own
+    /// `get_x_token` (`changes/intrinsics.ch`). When that was the body's
+    /// level, with no expansion in progress and no macro's parameters
+    /// being scanned, the body's last tokens only expanded (`...\fi`, as
+    /// LaTeX's `\end` does) and the token `get_next` reads next is the
+    /// first after the call: the recording ends here, before it is read,
+    /// where the replay's state was taken. At the next `big_switch` it
+    /// included that token and the command it is, and the check compared
+    /// the two states at different places (#2210). Reads past the call
+    /// anywhere else (a primitive's look-ahead, a macro's parameters, an
+    /// expansion's scan) are as before.
+    pub fn flashtex_intr_popped(&mut self) {
+        let Some(base) = self.host.intrinsics.rec.as_ref().map(|r| r.base) else {
+            return;
+        };
+        if self.input_ptr < base
+            && self.expand_depth_count == 0
+            && self.scanner_status == crate::generated::consts::normal
+        {
+            self.intr_finish();
+        }
+    }
+
+    /// The recording is over: classify it, finish its check, keep it.
+    fn intr_finish(&mut self) {
         let rec = self.host.intrinsics.rec.take().expect("checked");
         let now = self.intr_marks();
         let why = rec.bad.or_else(|| {
