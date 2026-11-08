@@ -561,6 +561,11 @@ def score_pt(doc, cfg, cand, out_dir):
                                         + (cand.get("stderr_tail") or "")[:160]}
         if cand.get("trace_harness_error"):  # a harness limit, never a pass: failed, and counted as a harness error
             pt["pt1"]["harness_error"] = cand["trace_harness_error"]
+    elif not same_errors(cand, meta):
+        # as P-T2: a P-T1 pass needs the oracle's run, so its exit status and error count
+        pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": f"error count {cand.get('errors')} (exit "
+                                        f"{cand.get('exit')}), pdfTeX's {meta.get('errors', 0)} "
+                                        f"(exit {meta.get('exit', 0)})"}
     elif ref_cap is not None:
         pt1 = ptiers.compare_pt1(ref_cap, cand_cap)
         pt["P-T1"], pt["pt1"] = pt1["ok"], pt1

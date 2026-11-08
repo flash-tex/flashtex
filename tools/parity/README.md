@@ -166,8 +166,9 @@ constant memory: about 20 MiB whatever the log's size), and
   passes below. A loaded host cannot turn a slow pass into a timeout: on the
   NixOS PC a pass of arXiv 2211.03354v2 used 25 s of CPU in 250 s of wall
   time, and four hunt-arxiv documents failed on wall-clock limits that way
-  (2026-11-08). Eight times the limit in wall-clock seconds stays as a
-  backstop for a run that stops using the CPU. A cached oracle entry stopped
+  (2026-11-08). Three times the limit in wall-clock seconds stays as a
+  backstop for a run that stops using the CPU (6 h for the oracle's traced
+  pass). A hard limit below a run's is a harness error, not an exit status. A cached oracle entry stopped
   by a wall-clock limit (one without `"limit": "cpu"`) is made again.
 - **Time limit** (`--pt1-timeout S`, default 1800): the oracle's traced
   pass gets `4 × S` (7200 s), a candidate's

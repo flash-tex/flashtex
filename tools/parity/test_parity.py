@@ -1483,6 +1483,18 @@ class PTWithOracle(unittest.TestCase):
             self.assertIs(pt["two"]["P-T2"], False)
             self.assertIn("error count 2 (exit 1), pdfTeX's 1 (exit 1)", pt["two"]["pt2"]["why"])
             self.assertIs(pt["one"]["P-T2"], True)
+        # P-T1 too (REVIEW-C on #2182): identical traced logs pass only after the oracle's error count
+        same = capture.Capture("a log", [], ref_pdf, 5, True)
+        tiers.oracle = lambda *a, **k: (dict(ref), same, ref_pdf)
+        try:
+            cfg = {"pt": "on", "oracle_pdftex": PDFTEX, "cache": self.d, "engine_kind": "tex", "qpdf": None}
+            pt1 = {n: parity.score_pt(docs[n], cfg, dict(c, capture=same), os.path.join(self.d, "count-pt1-" + n))
+                   for n, c in cands.items()}
+        finally:
+            tiers.oracle = real
+        self.assertIs(pt1["one"]["P-T1"], True)
+        self.assertIs(pt1["two"]["P-T1"], False)
+        self.assertIn("error count 2 (exit 1), pdfTeX's 1 (exit 1)", pt1["two"]["pt1"]["why"])
 
     def test_shell_escape_is_the_engines_default_mode(self):
         """Owner decision #1209: no shell-escape flag, so pdfTeX runs in TeX
@@ -2141,7 +2153,7 @@ class PTCandidateCap(unittest.TestCase):
                 cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": cache, "pt1_max_log": budget,
                        "engine_kind": "tex", "qpdf": False}
                 pt = parity.score_pt({"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}, cfg,
-                                     {"capture": cand_cap, "pdf": None}, HERE)
+                                     {"capture": cand_cap, "pdf": None, "exit": 0, "errors": 0}, HERE)
             finally:
                 tiers.oracle, capture.MAX_LOG_BYTES = real, saved
             self.assertTrue(os.path.isfile(os.path.join(odir, tiers.FINGERPRINT)))  # kept for the next run
@@ -3091,6 +3103,18 @@ class CpuLimits(unittest.TestCase):
                 words = f.read().split()
             self.assertEqual(os.path.basename(words[0]), capture.PROGRAM)
             self.assertEqual(words[-2:], ["-fmt=pdflatex", "x.tex"])
+
+    def test_a_limit_the_host_cannot_give_is_a_harness_error(self):
+        import capture
+        import resource
+        real = resource.getrlimit
+        try:
+            resource.getrlimit = lambda _r: (10, 10)
+            with self.assertRaises(capture.CpuLimitError):
+                capture.cpu_limited(["pdftex"], 300)
+            self.assertEqual(capture.cpu_limited(["pdftex"], 5)[-2:], ["5", "pdftex"])
+        finally:
+            resource.getrlimit = real
 
     def test_a_wall_clock_timeout_in_the_cache_is_made_again(self):
         import tiers

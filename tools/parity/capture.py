@@ -72,6 +72,7 @@ import functools
 import hashlib
 import os
 import re
+import resource
 import shutil
 import signal
 import subprocess
@@ -143,8 +144,9 @@ TIMEOUT = 1800
 # pass into a timeout: on the NixOS PC a pass of arXiv 2211.03354v2 used 25 s
 # of CPU in 250 s (lane PARITY-HUNT, 2026-11-08). The same rule holds for the
 # engine and the oracles. WALL_FACTOR times the limit, in wall-clock seconds,
-# is only a backstop for a run that stops using the CPU (blocked on I/O).
-WALL_FACTOR = 8
+# is only a backstop for a run that stops using the CPU (blocked on I/O, say a
+# full pt1stream pipe): at most 6 h for the oracle's traced pass (7200 s).
+WALL_FACTOR = 3
 # The limits' kind, recorded with a cached oracle entry: an entry stopped by a
 # limit of another kind (wall-clock, before 2026-11-08) is made again.
 LIMIT_KIND = "cpu"
@@ -157,9 +159,17 @@ def cpu_limited(argv, seconds):
     limit and `exec`s argv, so argv[0] is the program's name as given and a
     bare name is looked up on the run's PATH. A shell, not preexec_fn,
     because the caller may have threads (pt1stream's pipe reader) when it
-    forks."""
-    return ["/bin/sh", "-c", 'ulimit -S -t "$1" || exit 125; shift; exec "$@"', "sh",
-            str(max(1, int(seconds)))] + list(argv)
+    forks. A hard RLIMIT_CPU below `seconds` cannot be raised: that is a
+    harness error (CpuLimitError), raised here, never a TeX exit status."""
+    s = max(1, int(seconds))
+    hard = resource.getrlimit(resource.RLIMIT_CPU)[1]
+    if hard != resource.RLIM_INFINITY and hard < s:
+        raise CpuLimitError(f"the hard CPU-time limit ({hard} s) is below a run's limit ({s} s)")
+    return ["/bin/sh", "-c", 'ulimit -S -t "$1" || exit 125; shift; exec "$@"', "sh", str(s)] + list(argv)
+
+
+class CpuLimitError(RuntimeError):
+    """A run's CPU-time limit cannot be set (`cpu_limited`)."""
 
 
 def cpu_stopped(code):
