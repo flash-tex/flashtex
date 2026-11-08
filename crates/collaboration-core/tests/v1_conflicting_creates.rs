@@ -151,3 +151,42 @@ fn a_kind_conflict_keeps_the_earliest_create_and_still_takes_set_blob() {
         assert!(p.state_vectors().iter().any(|(d, _)| *d == DocRef::Text(f)));
     }
 }
+
+/// REVIEW-C on #2167: two creates with the same stamp come from one
+/// replica (same lamport, different counters; only a faulty replica makes
+/// them). The earlier counter wins the kind and the path in every delivery
+/// order: a replica's operations apply in counter order (reversed delivery
+/// parks the later one), and the kind's tie-break is that counter.
+#[test]
+fn creates_with_one_stamp_resolve_by_counter_in_every_order() {
+    let f = FileId([0x4f; 16]);
+    let sections = vec![
+        create(B, 5, f, FileKind::Text, "x.tex"),
+        op(
+            B,
+            1,
+            5,
+            f,
+            FileOpKind::Create {
+                kind: FileKind::Blob,
+                path: "y.png".into(),
+            },
+        ),
+        create(A, 9, f, FileKind::Blob, "a.png"),
+    ];
+    let p = assert_converges(&sections, "one stamp");
+    assert_eq!(p.files().kind(f), Some(FileKind::Text), "B's counter 0");
+    let view = p.files().files();
+    assert_eq!(view.len(), 1);
+    assert_eq!(
+        view[0].path, "a.png",
+        "the path register's latest write, (9, A)"
+    );
+    let q = assert_converges(&sections[..2], "one stamp, one replica");
+    assert_eq!(q.files().kind(f), Some(FileKind::Text));
+    assert_eq!(
+        q.files().files()[0].path,
+        "x.tex",
+        "B's counter 0 keeps the path"
+    );
+}

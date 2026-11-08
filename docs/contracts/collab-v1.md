@@ -172,7 +172,8 @@ file op: id, varint lamport, file-id, then one of
 
 Each op consumes one counter. `lamport` ≥ 1; a replica's next op uses `max(lamport seen) + 1`. Fields
 are last-writer-wins registers ordered by stamp `(lamport, replica)`; `create` sets `path` and
-`deleted = false` with its stamp. The kind is the one of the file's create with the lowest stamp. A
+`deleted = false` with its stamp. The kind is the one of the file's create with the lowest stamp, then
+the lowest counter (equal stamps are one replica's, whose operations apply in counter order). A
 second create of the same file id (random ids make an honest one negligible; only a faulty or hostile
 replica makes one) is applied, not refused: it is a write of `path` and `deleted = false` with its
 stamp, and it sets the kind if its stamp is lower. Refusing it would leave its replica's later

@@ -71,6 +71,24 @@ final class RefusalTests: XCTestCase {
         }
     }
 
+    /// REVIEW-C on #2167: creates with one stamp are one replica's (same
+    /// lamport, different counters); the earlier counter wins the kind and
+    /// the path in every delivery order (`v1_conflicting_creates.rs`).
+    func testCreatesWithOneStampResolveByCounterInEveryOrder() {
+        let f = FileID(bytes: Array(repeating: 0x4f, count: 16))
+        let sections = [
+            fileOp(b, 0, 5, f, .create(kind: .text, path: "x.tex")),
+            fileOp(b, 1, 5, f, .create(kind: .blob, path: "y.png")),
+            fileOp(a, 0, 9, f, .create(kind: .blob, path: "a.png")),
+        ]
+        let p = assertConverges(sections, "one stamp")
+        XCTAssertEqual(p.files.kind(f), .text)
+        XCTAssertEqual(p.files.files.map(\.path), ["a.png"])
+        let q = assertConverges(Array(sections.prefix(2)), "one stamp, one replica")
+        XCTAssertEqual(q.files.kind(f), .text)
+        XCTAssertEqual(q.files.files.map(\.path), ["x.tex"])
+    }
+
     /// This replica still makes neither a second create nor a blob on a
     /// text file itself.
     func testLocalCreateOfAnExistingIDAndLocalBlobOnTextAreRefused() throws {

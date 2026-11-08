@@ -88,12 +88,15 @@ public final class FileMap {
     }
 
     struct Entry {
-        /// The kind of the create with the lowest stamp, which is `created`.
+        /// The kind of the create with the lowest stamp, then the lowest
+        /// counter (one replica's creates may share a lamport), which is
+        /// `created` and `createdCounter`.
         /// A second create of the same file id (only a faulty or hostile
         /// replica makes one) merges like the registers, so every replica
         /// ends with the same entry whichever create it saw first.
         var kind: FileKind
         var created: Stamp
+        var createdCounter: UInt64
         var path: (Stamp, String)
         var blob: (Stamp, BlobRef)?
         var deleted: (Stamp, Bool)
@@ -199,13 +202,20 @@ public final class FileMap {
                 // writes like any other. Refusing it instead would leave its
                 // replica's later operations waiting here for good, and keep
                 // whichever create arrived first (contract §2.6).
-                if stamp < e.created { e.created = stamp; e.kind = kind }
+                // Ties in the stamp are one replica's, broken by its counter. A
+                // replica's operations apply in counter order, so the registers'
+                // strict `<` below keeps the earlier one too.
+                if stamp < e.created || (stamp == e.created && op.id.counter < e.createdCounter) {
+                    e.created = stamp
+                    e.createdCounter = op.id.counter
+                    e.kind = kind
+                }
                 if e.path.0 < stamp { e.path = (stamp, path) }
                 if e.deleted.0 < stamp { e.deleted = (stamp, false) }
                 entries[op.file] = e
             } else {
                 guard entries.count < maxFiles else { throw CollabError.projectFull }
-                entries[op.file] = Entry(kind: kind, created: stamp, path: (stamp, path), blob: nil,
+                entries[op.file] = Entry(kind: kind, created: stamp, createdCounter: op.id.counter, path: (stamp, path), blob: nil,
                                          deleted: (stamp, false))
             }
         case let .setPath(path):

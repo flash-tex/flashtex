@@ -47,12 +47,14 @@ type Stamp = (u64, u64);
 
 #[derive(Debug, Clone)]
 struct Entry {
-    /// The kind of the create with the lowest stamp, which is `created`.
+    /// The kind of the create with the lowest stamp, then the lowest
+    /// counter (one replica's creates may share a lamport), which is
+    /// `created`.
     /// A second create of the same file id (only a faulty or hostile
     /// replica makes one) merges like the registers, so every replica
     /// ends with the same entry whichever create it saw first.
     kind: FileKind,
-    created: Stamp,
+    created: (Stamp, u64),
     path: (Stamp, String),
     blob: Option<(Stamp, BlobRef)>,
     deleted: (Stamp, bool),
@@ -245,8 +247,12 @@ impl FileMap {
                     // would leave its replica's later operations waiting
                     // here for good, and keep whichever create arrived
                     // first (collab-v1 §2.6).
-                    if stamp < e.created {
-                        e.created = stamp;
+                    // Ties in the stamp are one replica's, broken by its
+                    // counter. A replica's operations apply in counter
+                    // order, so the registers' strict `>` below keeps the
+                    // earlier one too.
+                    if (stamp, op.id.counter) < e.created {
+                        e.created = (stamp, op.id.counter);
                         e.kind = *kind;
                     }
                     if stamp > e.path.0 {
@@ -263,7 +269,7 @@ impl FileMap {
                         op.file,
                         Entry {
                             kind: *kind,
-                            created: stamp,
+                            created: (stamp, op.id.counter),
                             path: (stamp, path.clone()),
                             blob: None,
                             deleted: (stamp, false),
