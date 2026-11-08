@@ -2436,7 +2436,7 @@ fn diags_come_from_the_engine_and_hold_across_edits() {
     let doc = format!(
         "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\
          \\newcommand{{\\inner}}[1]{{\\undefinedmacro #1}}\n\
-         \\newcommand{{\\wrap}}[1]{{\\inner{{#1}}}}\n\
+         \\newcommand{{\\wrap}}[1]{{\\inner{{#1}}.}}\n\
          \\begin{{document}}\n{body}See~\\ref{{p2}} and~\\ref{{nowhere}}.\n\\end{{document}}\n"
     );
     let texts = [

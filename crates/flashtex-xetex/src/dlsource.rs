@@ -93,10 +93,11 @@ pub struct DlSource {
     /// Markers not yet taken by a page, in stream order.
     pub markers: Vec<Marker>,
     last_marked: Loc,
-    /// The characters of native words the main loop has collected from the
-    /// file's line itself (`dl_native_char`): the line's (name, line,
-    /// start) and, for each, `loc` after it. Within one command.
-    direct: (i32, i32, i32, Vec<i32>),
+    /// The characters of native words the main loop has collected
+    /// (`dl_native_char`) while the innermost file level read one line:
+    /// the line's (name, line, start) and, for each character, that
+    /// level's `loc` then and the character. Within one command.
+    direct: (i32, i32, i32, Vec<(i32, i32)>),
 }
 
 /// A node's source position as a place: (file path, line, column and
@@ -865,52 +866,71 @@ impl Globals {
             }
             k -= 1;
         }
-        // Only a word whose characters the main loop read from this line
-        // itself is at their columns (`dl_native_char`); a word a macro
-        // made (`\section{Title}`'s) keeps the place TeX was reading at, as
-        // the pdfTeX engine's character nodes do.
+        // The pdfTeX engine gives each character node the column TeX had
+        // read to in the file when the character was read (`dl_here`). So:
+        // a word whose characters were each read from this line where they
+        // stand (or read there, backed up and read again: a paragraph's
+        // first letter) gives each glyph its character's column; any other
+        // (a macro's text, `\section{Title}`'s) the column its last
+        // character was read at, not that of the token TeX read after it.
         let d = &self.host.dl.direct;
-        let direct = |s: usize| {
-            d.0 == self.full_source_filename_stack[self.in_open.max(0) as usize]
-                && d.1 == self.line
-                && d.2 == r.start_field
-                && (s + 1..=s + n).all(|k| d.3.binary_search(&(k as i32)).is_ok())
+        let same_line = d.0 == self.full_source_filename_stack[self.in_open.max(0) as usize]
+            && d.1 == self.line
+            && d.2 == r.start_field;
+        let read_at = |k: usize| {
+            let i = d.3.partition_point(|x| x.0 < k as i32);
+            d.3.get(i).is_some_and(|x| x.0 == k as i32)
         };
-        let v = match found {
-            Some(s) if direct(s) => {
-                let col: usize = (a..s).map(|k| utf8_len(self.buffer[k])).sum();
-                pack(loc_span(loc), col.min(NO_COLUMN as usize - 1) as u16)
-                    | START_FOUND
-                    | PER_CHAR
-            }
+        let direct = |s: usize| same_line && (s + 1..=s + n).all(read_at);
+        let last_read = match (same_line, d.3.last(), word.last()) {
+            (true, Some(&(l, c)), Some(&w)) if c == w && l as usize > a => Some(l as usize - 1),
+            _ => None,
+        };
+        let bytes = |s: usize| -> u16 {
+            let col: usize = (a..s.min(self.buffer.len())).map(|k| utf8_len(self.buffer[k])).sum();
+            col.min(NO_COLUMN as usize - 1) as u16
+        };
+        let v = match (found, last_read) {
+            (Some(s), _) if direct(s) => pack(loc_span(loc), bytes(s)) | START_FOUND | PER_CHAR,
+            (_, Some(e)) => pack(loc_span(loc), bytes(e)) | START_FOUND,
             _ => loc | START_FOUND,
         };
         self.host.dl.set(p, v);
     }
 
     /// `dl_native_char`: the main loop collects a native word's character
-    /// (`collect_native`), just read: note where, if it was read from a
-    /// file's line itself.
+    /// (`collect_native`, `cur_chr`), just read: note where the innermost
+    /// file level had read to.
     #[inline(always)]
     pub fn dl_native_char(&mut self) {
-        if self.host.dl.on == Some(true) && is_file(&self.cur_input) {
-            self.dl_note_direct();
+        if self.host.dl.on == Some(true) {
+            self.dl_note_char();
         }
     }
 
-    fn dl_note_direct(&mut self) {
-        let r = self.cur_input;
+    fn dl_note_char(&mut self) {
+        let Some(r) = (if is_file(&self.cur_input) {
+            Some(self.cur_input)
+        } else {
+            self.dl_file_level()
+        }) else {
+            return;
+        };
         let key = (
             self.full_source_filename_stack[self.in_open.max(0) as usize],
             self.line,
             r.start_field,
         );
+        let c = self.cur_chr;
         let d = &mut self.host.dl.direct;
-        if (d.0, d.1, d.2) != key || d.3.len() >= 4096 || d.3.last().is_some_and(|&l| l >= r.loc_field) {
+        if (d.0, d.1, d.2) != key
+            || d.3.len() >= 4096
+            || d.3.last().is_some_and(|&(l, _)| l > r.loc_field)
+        {
             d.3.clear();
             (d.0, d.1, d.2) = key;
         }
-        d.3.push(r.loc_field);
+        d.3.push((r.loc_field, c));
     }
 
     /// The `SOURCES` the reader needs for `spans` that it was not sent yet
