@@ -492,6 +492,9 @@ pub struct Stats {
     pub verify_differences: u64,
     pub verify_details: Vec<String>,
     pub per_cs: std::collections::BTreeMap<String, (u64, u64)>,
+    /// Checkpoints left at the end of the run (`flashtex_intr_finish`): a
+    /// command-line run takes none but the verifier's, which it drops.
+    pub checkpoints_left: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1808,7 +1811,12 @@ impl Globals {
     pub fn flashtex_intr_finish(&mut self) {
         let out = CONFIG.with(|c| c.borrow().as_ref().and_then(|c| c.stats_out.clone()));
         let Some(out) = out else { return };
-        let s = STATS.with(|s| format!("{:#?}\n", s.borrow()));
+        let left = self.arena.checkpoint_ids().len() as u64;
+        let s = STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.checkpoints_left = left;
+            format!("{:#?}\n", s)
+        });
         let _ = std::fs::write(out, s);
     }
 }
