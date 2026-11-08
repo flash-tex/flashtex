@@ -94,7 +94,7 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 |---|---|---|
 | K1 | the macro's meaning and its arguments | `eqtb[warning_index]` by content, and each argument's tokens |
 | K2 | every `eqtb` entry from `glue_base` to `eqtb_size` (glue, local, int and dimen regions) **except the box registers** | **conservatively**: all of them, at the call. Pointer values are taken by content: glue specs by their four fields, token lists by their tokens, `\parshape` by its words. Typesetting reads parameters directly (`hpack` reads `\hbadness`, `append_to_vlist` reads `\baselineskip`, ...); the conservative snapshot covers every such implicit read without a hook per site |
-| K3 | the meaning of every control sequence the recording read before writing it | precisely: `get_next`'s delivered `cur_cs`, `\csname`/`\ifcsname` look-ups (the D9 read points, with BOX-MEMO's own hooks). By content: macros by their tokens, the rest by `(eq_type, equiv)`. A control sequence read only as a token (the one being defined, an argument, a body not expanded, a skipped text) is kept by its kind only, and one assigned before anything read it is not kept: §16 |
+| K3 | the meaning of every control sequence the recording read before writing it | precisely: `get_next`'s delivered `cur_cs`, `\csname`/`\ifcsname` look-ups (the D9 read points, with BOX-MEMO's own hooks). By content: macros by their tokens, the rest by `(eq_type, equiv)`. A control sequence read only as a token (the one being defined, an argument, a body not expanded, a skipped text) is kept by its kind only, and one assigned before anything read it is not kept: §17 |
 | K4 | e-TeX's sparse registers (`\count`, `\dimen`, `\skip`, `\muskip` and `\toks` above 255) | conservatively: every entry of the sparse trees, by (type, number, value), values by content as in K2 |
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
 | K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
@@ -799,7 +799,138 @@ What is left, by the profile:
 - framed's `\MakeFramed`, which puts its pre-penalties and skips on the main vertical list;
 - the text.
 
-## 16. Revision 7: K3 by first access (lane L6, 2026-11-01)
+## 16. Revision 7: boxes left at the call's level, and box registers after a group (lane FANCYHDR, 2026-11-01)
+
+**The problem (measured).** After §15, fancyhdr's head and foot (`\f@nch@head`, `\f@nch@foot`,
+which `\@thehead` and `\@thefoot` reach through `\@oddhead`) were about 12 % of the edited page's
+window on *Infinite Descent* x2's late page. Offered, each recording was abandoned with `OuterBox`:
+`\f@nch@reset` runs `\normalsize` at the call's own level, and its `\size@update` sets `\strutbox`
+there. The box outlives the call (to the end of the group the call is in), and a recording kept no
+box value. The marks the head reads are not a refusal: LaTeX's `\rightmark` and `\leftmark` are
+`\mark_use_first:nn` and kin, which read token-list variables the output routine filled
+(`\g__mark_page_first_2e-right_tl`), so they are K3 meanings like any macro; `\topmark` and its kind
+are never read.
+
+**The rule.** A local `\setbox` at the call's own level is logged as an assignment like any other
+(`Op::Def` of the box register, kind 0), with the box by its node (`Val::BoxNode`). When the call
+ends (`bm_finish`, `bm_outer_boxes`), each such register is taken by value or the recording is
+abandoned:
+- its last assignment in the log must be the box the register holds now: nothing moved it out
+  (`\box`, which voids the register behind `eq_define`'s back) or replaced it since (`OuterBox`);
+- the call moved no box out of a register it did not make and made no object (no hole, no link:
+  `OuterBox`);
+- the box refers to nothing outside itself but the static glue specifications
+  (`boxfrag::self_contained`: no glue an `eqtb` entry, a sparse register or a font holds, no
+  hole, no new object; `OuterBoxShared`), and its lists and specifications are its own
+  (`frag_take`'s reference counts).
+
+The box is then kept by value (`Val::Box`, a `boxfrag::Frag` of the one box node, taken at the end:
+the call's own `\wd`, `\ht` and `\dp` changes to it are in it). A replay makes it fresh where the
+assignment is replayed (`frag_make`) and `eq_define`s it as the normal path's `box_end` did, so the
+save stack gets the same entry (or the same `eq_destroy` of the old box). An earlier assignment of
+the same register at that level is replayed with the same box: the next one at the level destroys
+it on both paths, and a fresh box is never e-TeX's "reassigning". The verifier compares such boxes
+in the bits the program reads (`same_op`, `boxfrag::frag_diff`). Sparse box registers (above 255)
+at the call's level are still refused.
+
+**Why it is sound.** The register's old box is not an input: the assignment overwrites it, and
+`eq_define` saves or destroys whatever is there on both paths. What the call reads of the new box
+it made itself (it is one of `Rec::boxes`). The box a replay makes is the box the normal path left,
+node for node, and refers to no state that the rest of the replay could change before it is made.
+
+**A hole found on the way (fixed).** A box register the call set inside a group gets back, when
+the group ends, the box it held where the group began. `Rec::boxes` kept such a register as the
+call's own after the group, so a read after it (`{\setbox0\hbox{...}}\wd0`) was the register's box
+of before the call, read unkeyed: with BOX-MEMO on, a later call replayed the first call's width
+where the box had changed (reproduced on a 6-line file: off `[1.0pt] [5.0pt]`, on
+`[1.0pt] [1.0pt]`). Now each group of the recording keeps `boxes` as it was where it began
+(`box_stack`), and its `unsave` (`flashtex_bm_unsave`, before `unsave` runs) gives every register
+it puts back (`bm_restored_boxes`: its save-stack entries, and e-TeX's `sa_chain` for sparse ones,
+less those whose value is global, "retaining") the status it had then.
+
+**Tests** (`tests/boxmemo.rs`, off, on and verify, the full-state verifier included):
+- `boxes_set_at_the_calls_level_replay`: a draw call that sets a box register at its level,
+  changes its width, sets it in a group, and sets another register twice; read in the same box
+  after the call and shown after it. Replays, with logs identical.
+- `boxes_at_the_calls_level_not_its_own_never_replay`: a hole (`OuterBox`), a register's glue
+  (`OuterBoxShared`), a box moved out again (`OuterBox`). Nothing replays.
+- `a_box_made_in_a_group_is_not_the_calls_after_it`: the hole above, nested groups and sparse
+  registers. Replays only where the box of before the call is the same.
+
+**Names.** `DEFAULT_NAMES` adds `f@nch@head` and `f@nch@foot`, and cleveref's
+`cref@constructprefix`. The macro profile of the window after the head and foot replayed
+(instruction clock) put about a fifth of it in cleveref: every `\refstepcounter` and every `\label`
+(through hyperref's `firstaid` hooks) makes the counter's prefix again, walking the reset lists
+(`\cref@resetby`, `\cref@isinresetlist`, `\@whilesw`), 1-3 M instructions a call. The call makes
+only assignments at its own level (`\@tempstack`, `\@tempa`, its result macro) and reads counters
+and `\cl@...` lists, all in the key; it needed nothing new.
+
+**Measured** (M5 Pro, engine-thread instructions, `letter@x2-late`: `dl3-keys --edit
+x2/book/real-numbers/inequalities.tex --page 887 --kind letter --keys 8 --gap-ms 300`, one
+`flashtex-host --socket`, steady keys 2-7; on main with §15):
+
+| | §15 | + the head and foot | + `cref@constructprefix` |
+|---|---:|---:|---:|
+| `edited_instr_k` | 125 M | 113 M | 94-95 M |
+| typesetting to the edited page (`typeset_instr_k`) | 107 M | 95 M | 77 M |
+| `rerun_pages` | 3 | 3 | 3 |
+
+The host's verify mode on the same keys compared 9,222 calls' operation logs with their normal
+paths', no difference.
+
+**Two verifier gaps the verify sweep found** (sweep A and budget-d with `boxmemo=verify`, the
+command line's full-state verifier on the scratch runs; the PDFs with BOX-MEMO off and on were
+byte-identical both times).
+
+1. **pdfTeX's protrusion and expansion scratch** (proof-practice-21242: fancyhdr's head under
+   microtype; `\@oddhead`, now recorded, breaks its `\parbox`es). A replay leaves the scalars below
+   as they were before the call; the normal path leaves the call's last values. They join §7's
+   scratch list (`Scratch`: the replay takes the normal path's values before the comparison),
+   because every read follows a write on the same call path, inside one command. No read can see a
+   value from before the call. The readers in the generated code (`src/generated/`, matching
+   pdftex.web) are:
+   - `last_leftmost_char`, `last_rightmost_char`: written only by `char_pw`, which sets the side's
+     pointer (to null first) on every call. There are three readers:
+     - try_break's "Calculate variations of marginal kerns" (body_6.rs). It runs under
+       `pdf_protrude_chars > 1`, right after `total_pw` in the same block and under the same test.
+       `total_pw` ends `left_pw(l) + right_pw(r)` on every path, so both are set.
+     - post_line_break's right margin kern (`new_margin_kern(-w, last_rightmost_char, ...)`), right
+       after `w := char_pw(p, right_side)`.
+     - post_line_break's left margin kern, right after `char_pw(p, left_side)`.
+   - `font_expand_ratio`: `hpack(.., cal_expand_ratio)` zeroes it as it starts and may compute it
+     (`divide_scaled`). Every read is in `hpack(.., subst_ex_font)` (`do_subst_font`, the kern
+     substitution). Its one caller is that same `hpack(cal_expand_ratio)`, just after it set the
+     value.
+   - `max_stretch_ratio`, `max_shrink_ratio`, `cur_font_step`: set as `line_break` starts ("Get
+     ready to start line breaking", under `pdf_adjust_spacing > 1`). They are read only inside that
+     `line_break`: by `check_expand_pars`, whose nine callers are all in `line_break` and its
+     `try_break`, and by try_break's shortfall, both under the same test. Nothing in a line break
+     assigns `\pdfadjustspacing`.
+   - `scaled_out`: `divide_scaled`'s remainder. Each reader follows a `divide_scaled` with no other
+     call in between:
+     - `adv_char_width`;
+     - `pdf_use_font`;
+     - the text-matrix and string starts;
+     - `pdf_set_origin` and `pdf_set_textmatrix`, after `pdf_print_bp`, which is
+       `pdf_print_real(divide_scaled(...))`.
+
+     The display list saves and restores it around its own use (`displaylist/mod.rs`).
+
+   Test: `protrusion_around_a_replayed_call_is_the_normal_paths` (cmr10 with `\rpcode`,
+   `\lpcode`, `\efcode`, `\pdffontexpand`, protrusion and expansion on, paragraphs broken before
+   and after a call that breaks its own). It fails without the two protrusion pointers in the list
+   (`last_leftmost_char: 0x4c4a29 -> 0x4c4a48`).
+2. **The save stack walked as `show_save_groups` walks it** (full-100: cleveref's prefix under
+   `\label` in `equation`). `iso.rs` stepped one nest level back up (`p += 1`) after a math group,
+   a discretionary, a math choice and an insertion. pdftex.web's `show_save_groups` does that only
+   for simple, semi-simple and `\noalign` groups. The other four own a nest level, and the walk has
+   passed it. With the extra step, a math group in a display read the display's level as inline
+   math under it, took the `$$` for an `\eqno` with a saved word, and misread every entry below.
+   The convergence test shares the walk; there such a state compared as different (conservative).
+   Test: `calls_in_math_groups_compare_their_save_stack`. It fails with the old walk (`save entry 2
+   of type 104`).
+
+## 17. Revision 8: K3 by first access (lane L6, 2026-11-01)
 
 **The misses.** On full-100, BOX-MEMO hit 163 of `\pdfstringdefPreHook`'s 226 offers, and D9 198
 (L6.md, lead 5). The debug run (`docs/evidence/l6-2026-11-01/raw/lead5/`) put half of the misses
@@ -858,17 +989,18 @@ in the misses.
 - [6] a braced argument;
 - [7] a body that is not expanded.
 
-They do so whenever D9 is not recording, so a BOX-MEMO recording never sees those control
-sequences. A body's `\x` that became a `#` between calls is therefore replayed past. This is a
-hole that predates this revision, and this revision neither makes it wider nor closes it.
+They did so whenever D9 was not recording, so a BOX-MEMO recording never saw those control
+sequences, and a body's `\x` that became a `#` between calls was replayed past. That hole predates
+this revision, and #1977 (lane THROUGHPUT, `2a4cba429`) closed it: while a recording is in
+progress the loops read through `get_next` (`not(intr_rec_on or bm_rec_on)`), as they do for D9,
+so those control sequences reach K3 as token reads (`skipping`, `matching`, `intr_weak`).
 
 A control sequence this revision leaves out of the key is always assigned in the call, so it was
 first delivered as the assignment's target (`get_r_token`) or looked up. That delivery keeps a
 token read for it, which covers what an in-place read of it could depend on.
 
-The fix and its cost are in the next PR (lane L6, `agent/kabir-claude-l6/bm-inplace`). In that
-PR, `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on while
-the loops stay as they are.
+The regression test for the hole and the measured cost of reading through `get_next` are in the
+next PR (lane L6, #2064, `agent/kabir-claude-l6/bm-inplace`).
 
 **An assignment at the call's own level, or a global one, is final** (lane BEAMER-FRAME). What
 the control sequence held before the call cannot come back inside the call after it: no group of

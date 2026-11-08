@@ -65,6 +65,10 @@ pub struct Glyph {
     /// line width from user space to stream space (spec §11.4); `None`
     /// under a non-uniform scale or a skew.
     pub pen_scale: Option<f64>,
+    /// Shown with a Type 3 font: krilla draws a colour glyph (SVG, COLR,
+    /// bitmap) or a font that cannot be a CID font as Type 3 procedures,
+    /// which an OpenType glyph id does not reproduce.
+    pub type3: bool,
 }
 
 /// The scale of a similarity's linear part `[a b c d]`, or `None`.
@@ -1306,6 +1310,7 @@ impl Interp<'_, '_> {
                 matrix,
                 paint,
                 pen_scale: similarity_scale(&gs.ctm),
+                type3: matches!(w, Widths::Type3 { .. }),
             });
             let wv = match w {
                 Widths::Cid { w, dw } => *w.get(&code).unwrap_or(dw),
@@ -1485,6 +1490,23 @@ mod tests {
         assert!(page("<</FunctionType 2/Domain[0 2]/N 1>>").is_err());
         assert!(page("<</FunctionType 2/N 1>>").is_err());
         assert!(page("<</FunctionType 2/Domain[0 1]/C1[1 0 0]/N 1>>").is_err());
+    }
+
+    /// Glyphs shown with a Type 3 font are marked (colour glyphs).
+    #[test]
+    fn type3_glyphs_are_marked() {
+        let t3 = "<</Type/Font/Subtype/Type3/FirstChar 32/Widths[250 300]/FontMatrix[0.001 0 0 0.001 0 0]>>";
+        let cid = "<</Type/Font/Subtype/Type0/Encoding/Identity-H/DescendantFonts[7 0 R]>>";
+        let bytes = doc(
+            "BT /F0 10 Tf (!) Tj /F1 10 Tf <0001> Tj ET",
+            "/F0 5 0 R/F1 6 0 R",
+            &[t3, cid, "<</Type/Font/Subtype/CIDFontType0/DW 500>>"],
+        );
+        let p = &derive_pdf(&bytes).unwrap()[0];
+        assert_eq!(
+            p.glyphs.iter().map(|g| g.type3).collect::<Vec<_>>(),
+            [true, false]
+        );
     }
 
     /// A stroked glyph's pen scale is the CTM's when it is a similarity.

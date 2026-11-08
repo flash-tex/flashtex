@@ -288,6 +288,147 @@ fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
+/// The host's exit status once `child` exits, within `secs` (else `None`,
+/// and the child is still running).
+fn exit_within(child: &mut Child, secs: u64) -> Option<std::process::ExitStatus> {
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(secs) {
+        if let Ok(Some(s)) = child.try_wait() {
+            return Some(s);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
+/// A host whose engine thread dies (a panic outside the engine's own run,
+/// injected by the debug builds' `FLASHTEX_UNICODE_TEST_PANIC`) exits with
+/// `inproc::FATAL_EXIT` (70), so that the app's restart starts a new one:
+/// at a run, after that compile's `DONE` (`failed`, with the reason). (A
+/// panic in an idle save of S₀ ends the engine thread the same way: the
+/// next compile gets its `DONE` and the host then exits, see
+/// `a_save_panic_still_answers_an_accepted_compile`.) Before, the host
+/// stayed up with no engine thread and failed every later compile ("the
+/// engine thread has ended").
+#[test]
+fn a_host_whose_engine_thread_dies_exits() {
+    if !cfg!(debug_assertions) {
+        eprintln!("skipped: the panic hook is in debug builds only");
+        return;
+    }
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-dies-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // (the first compile is two runs, the second pass for its `.aux`; the
+    // third run is the second compile's)
+    {
+        let what = "run:3";
+        let sub = dir.join(what.replace(':', "-"));
+        let (proj, out) = project(&sub, DOC);
+        let cache = sub.join("s0");
+        let mut h = start_with(
+            &sub,
+            &[
+                ("FLASHTEX_UNICODE_TEST_PANIC", what),
+                ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+            ],
+            &sub.join("host.err"),
+        );
+        let mut c = Client::connect(&h.sock).unwrap();
+        c.compile(&request(1, &proj, &out)).unwrap();
+        let (_, done) = events(&mut c, 1);
+        assert_eq!(done.str_field("status"), Some("ok"), "{what}: {done:?}");
+        if what.starts_with("run") {
+            c.compile(&request(2, &proj, &out)).unwrap();
+            let (ev, done) = events(&mut c, 2);
+            assert_eq!(done.str_field("status"), Some("failed"), "{what}: {done:?}");
+            assert!(
+                ev.iter().any(|e| matches!(e, Event::Diagnostic(j)
+                    if j.str_field("message").is_some_and(|m| m.contains("panicked")))),
+                "{what}: the reason, as a diagnostic"
+            );
+        }
+        let status = exit_within(&mut h.child, 120);
+        let err = std::fs::read_to_string(sub.join("host.err")).unwrap_or_default();
+        assert_eq!(
+            status.and_then(|s| s.code()),
+            Some(70),
+            "{what}: the host did not exit as fatal: {err}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A save panic must not lose an accepted compile: the second compile,
+/// sent after the idle save of S₀ panicked (the engine thread has ended),
+/// still gets its `STARTED` and its `DONE` (`failed`, the engine thread
+/// died), and only then does the host exit with `inproc::FATAL_EXIT` (70).
+/// Before, the save panic called `fatal()` and the host exited at once,
+/// so the accepted compile never got a `DONE`.
+#[test]
+fn a_save_panic_still_answers_an_accepted_compile() {
+    if !cfg!(debug_assertions) {
+        eprintln!("skipped: the panic hook is in debug builds only");
+        return;
+    }
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-savepanic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (proj, out) = project(&dir, DOC);
+    let cache = dir.join("s0");
+    let err_path = dir.join("host.err");
+    let mut h = start_with(
+        &dir,
+        &[
+            ("FLASHTEX_UNICODE_TEST_PANIC", "save:1"),
+            ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ],
+        &err_path,
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    c.compile(&request(1, &proj, &out)).unwrap();
+    let (_, done) = events(&mut c, 1);
+    assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    // the idle save panics (the engine thread ends): wait for its message,
+    // not for the host's exit (after the fix it stays up for the compile)
+    let t = Instant::now();
+    loop {
+        let err = std::fs::read_to_string(&err_path).unwrap_or_default();
+        if err.contains("panicked") {
+            assert!(err.contains("save:1"), "the save hook panicked: {err}");
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(120),
+            "no save panic happened: {err}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // sent after the panic: accepted, then failed, then the host exits
+    c.compile(&request(2, &proj, &out))
+        .expect("the host took the second compile");
+    let (ev, done) = events(&mut c, 2);
+    assert!(
+        matches!(ev.first(), Some(Event::Started(_))),
+        "the second compile was accepted: {ev:?} {done:?}"
+    );
+    assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
+    let status = exit_within(&mut h.child, 120);
+    let err = std::fs::read_to_string(&err_path).unwrap_or_default();
+    assert_eq!(
+        status.and_then(|s| s.code()),
+        Some(70),
+        "the host did not exit as fatal: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A CANCEL that names a compile already finished (or one never sent)
 /// is dropped: it does not cancel a later compile that reuses the id.
 #[test]
@@ -1324,6 +1465,106 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An export (Export PDF…, Print…) between two keystrokes is a run of its
+/// own, in a process of its own (spec §6.3): it leaves the resident engine's
+/// S₀, so the keystroke after it goes on from S₀ or a page, not from the
+/// format (run by the resident engine, the export replaced S₀ and the page
+/// checkpoints with its own, made without the display list's source map),
+/// and every compile writes what the same compiles in processes of their
+/// own write (`FLASHTEX_UNICODE_INPROCESS=0`, the oracle).
+#[test]
+fn an_export_leaves_the_next_keystroke_incremental() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=6 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..8 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}See~\\ref{{p2}}.\n\\end{{document}}\n"
+    );
+    let first = doc.replace("See~", "Look at~");
+    let second = doc.replace("See~", "Look here at~");
+    // (text, export)
+    let steps = [
+        (&doc, false),
+        (&first, false),
+        (&first, true),
+        (&second, false),
+        (&first, false),
+    ];
+    type Out = (String, Option<String>, Vec<u8>, Vec<Vec<u8>>);
+    let run = |tag: &str, envs: &[(&str, &str)]| -> Vec<Out> {
+        let sub = dir.join(tag);
+        let (proj, out) = project(&sub, &doc);
+        let mut e = vec![("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, (text, export)) in steps.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.to_string())];
+            r.export = *export;
+            c.compile(&r).unwrap();
+            let (ev, done) = events(&mut c, id);
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let pages = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Page(p) => Some(p.encode()),
+                    _ => None,
+                })
+                .collect();
+            outs.push((
+                starts,
+                done.str_field("status").map(String::from),
+                std::fs::read(Path::new(&out).join("main.pdf")).unwrap_or_default(),
+                pages,
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run("own", &[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    let got = run("resident", &[]);
+    // (the compile before the export went on from a page: the premise)
+    assert!(got[1].0.starts_with("page"), "{:?}", got[1].0);
+    assert!(
+        got[3].0.starts_with("s0") || got[3].0.starts_with("page"),
+        "the keystroke after the export: {:?}",
+        got[3].0
+    );
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        assert_eq!(a.1.as_deref(), Some("ok"), "compile {}", i + 1);
+        assert_eq!(a.1, b.1, "compile {}: the status ({})", i + 1, a.0);
+        assert!(a.2 == b.2, "compile {}: the PDFs differ ({})", i + 1, a.0);
+        assert!(a.3 == b.3, "compile {}: the pages differ ({})", i + 1, a.0);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A compile cancelled while it runs from S₀ or a page leaves the output
 /// files as the last complete run left them (`resident::Resident::guard`):
 /// the next compile still goes on from S₀ or a page (its `.aux` was cut
@@ -1658,6 +1899,102 @@ fn a_converged_run_writes_what_a_run_of_its_own_writes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The convergence jump with unicode-math (changes/checkpoint.ch, "Dead
+/// native characters"): every script in an OpenType math font leaves a
+/// native character node xetex.web never frees, at a place that moves with
+/// an edit; the test reads those nodes as garbage, so a restarted run still
+/// converges a few pages on, and its PDF, `.aux` and log are a run of its
+/// own's. (Before, every test failed on `mem[..] differs outside what the
+/// walk compared` and the rest of the document was typeset again.)
+#[test]
+fn a_unicode_math_document_converges_past_its_dead_script_glyphs() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-umath-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, with $x_i^2+\\sum_{k=1}^n a_k$ \
+                and $\\hat{y}_j$ in them, again and again, until the paragraph is long \
+                enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=24 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..4 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+        body.push_str(&format!("See~\\ref{{p{}}}.\n\n", 25 - i));
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{unicode-math}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    // A word inserted in the middle of the document, as in a keystroke: the
+    // later allocations of the paragraph move, and with them where its
+    // scripts' dead glyph nodes lie.
+    let at = doc.find("\\section{Part 12}").unwrap();
+    let at = at + doc[at..].find("Words and more").unwrap() + "Words and".len();
+    let edited = format!("{} many{}", &doc[..at], &doc[at..]);
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let err = sub.join("host.err");
+    let o = Path::new(&out);
+    let outputs = || {
+        (
+            std::fs::read(o.join("main.pdf")).unwrap(),
+            std::fs::read_to_string(o.join("main.aux")).unwrap(),
+            std::fs::read_to_string(o.join("main.log")).unwrap(),
+        )
+    };
+    let compile = |c: &mut Client, id: i64, text: &str| {
+        let mut r = request(id, &proj, &out);
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        events(c, id).1
+    };
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_CONV_DEBUG", "1"),
+        ],
+        &err,
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    compile(&mut c, 1, &doc);
+    compile(&mut c, 2, &doc);
+    let done = compile(&mut c, 3, &edited);
+    let got = outputs();
+    c.bye().unwrap();
+    drop(h);
+    let log = std::fs::read_to_string(&err).unwrap();
+    assert!(log.contains("[conv] jumped"), "no jump: {log}");
+    assert!(!log.contains("UNSOUND"), "{log}");
+    assert!(
+        !log.contains("differs outside what the walk compared"),
+        "{log}"
+    );
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_INPROCESS", "0"),
+        ],
+        &sub.join("host2.err"),
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    // (twice: the reference's .aux settles as the measured run's did)
+    compile(&mut c, 1, &edited);
+    compile(&mut c, 2, &edited);
+    let want = outputs();
+    c.bye().unwrap();
+    drop(h);
+    assert!(got.0 == want.0, "the PDFs differ ({done:?})");
+    assert_eq!(got.1, want.1);
+    assert_eq!(got.2, want.2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// READ-TRACK (`crate::dormant`, docs/design/engine-v2/READ-TRACK.md): a
 /// command with an optional argument, alone on its line, peeks at the next
 /// line and then typesets pages. Keystrokes at the start of that line after
@@ -1906,4 +2243,160 @@ fn the_font_lists_name_the_families_a_lookup_finds() {
         "every math family is listed"
     );
     let _ = std::fs::remove_dir_all(&cache);
+}
+
+/// `font` (an sfnt file) with `from` replaced by `to` (as long) in its
+/// `name` table's Mac Roman and UTF-16BE strings: a family no machine has
+/// installed.
+fn renamed_font(font: &[u8], from: &str, to: &str) -> Vec<u8> {
+    assert_eq!(from.len(), to.len());
+    let mut d = font.to_vec();
+    let u16_at = |d: &[u8], i: usize| u16::from_be_bytes([d[i], d[i + 1]]) as usize;
+    let u32_at =
+        |d: &[u8], i: usize| u32::from_be_bytes([d[i], d[i + 1], d[i + 2], d[i + 3]]) as usize;
+    let (off, len) = (0..u16_at(&d, 4))
+        .map(|k| 12 + 16 * k)
+        .find(|&r| &d[r..r + 4] == b"name")
+        .map(|r| (u32_at(&d, r + 8), u32_at(&d, r + 12)))
+        .expect("a name table");
+    let utf16 = |s: &str| -> Vec<u8> { s.encode_utf16().flat_map(u16::to_be_bytes).collect() };
+    let mut n = 0;
+    for (a, b) in [
+        (from.as_bytes().to_vec(), to.as_bytes().to_vec()),
+        (utf16(from), utf16(to)),
+    ] {
+        let mut i = off;
+        while i + a.len() <= off + len {
+            if d[i..i + a.len()] == a[..] {
+                d[i..i + a.len()].copy_from_slice(&b);
+                n += 1;
+                i += a.len();
+            } else {
+                i += 1;
+            }
+        }
+    }
+    assert!(n > 0, "{from} is not in the name table");
+    d
+}
+
+/// A font installed between compiles is found by a lookup by name in the
+/// document's body, as by compiles in processes of their own (the oracle,
+/// `FLASHTEX_UNICODE_INPROCESS=0`). The lookup comes after S₀, whose key
+/// watches the font directories only for a lookup made before it, and the
+/// edit is on the last page: a page checkpoint after the lookup's page
+/// stood for the edit, with the lookup's old answer (the font not found)
+/// and the catalog its run had made, which a run from it used again.
+#[test]
+fn a_font_installed_after_a_lookup_in_the_body_is_found() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-installed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::from("{\\fontspec{TeX Gyre Prob3x}A lookup by name.}\n\n");
+    for i in 1..=6 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..8 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}See~\\ref{{p2}}.\n\\end{{document}}\n"
+    );
+    let edited = doc.replace("See~", "Look at~");
+    let font = renamed_font(
+        &std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/mac/Fonts/texgyrecursor-regular.otf"),
+        )
+        .unwrap(),
+        "Cursor",
+        "Prob3x",
+    );
+    type Out = (String, Option<String>, Vec<Vec<u8>>, Vec<String>);
+    let run = |tag: &str, envs: &[(&str, &str)]| -> Vec<Out> {
+        let sub = dir.join(tag);
+        let fonts = sub.join("fonts");
+        std::fs::create_dir_all(&fonts).unwrap();
+        let (proj, out) = project(&sub, &doc);
+        let cache = sub.join("cache");
+        let mut e = vec![
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_FONT_DIRS", fonts.to_str().unwrap()),
+            ("FLASHTEX_CACHE_DIR", cache.to_str().unwrap()),
+        ];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, text) in [&doc, &doc, &edited, &edited].into_iter().enumerate() {
+            if i == 2 {
+                std::fs::write(fonts.join("prob3x.otf"), &font).unwrap();
+            }
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.clone())];
+            c.compile(&r).unwrap();
+            let (ev, done) = events(&mut c, id);
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            let pages = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Page(p) => Some(p.encode()),
+                    _ => None,
+                })
+                .collect();
+            let fonts = ev
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Font(f) => Some(f.info.str_field("ps_name").unwrap_or("").to_string()),
+                    _ => None,
+                })
+                .collect();
+            outs.push((
+                starts,
+                done.str_field("status").map(String::from),
+                pages,
+                fonts,
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run("own", &[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    let got = run("resident", &[]);
+    // the oracle: not found before, found once installed
+    let found = |o: &Out| o.3.iter().any(|f| f == "TeXGyreProb3x-Regular");
+    assert!(
+        !found(&own[1]) && found(&own[2]),
+        "{:?} / {:?}",
+        own[1].3,
+        own[2].3
+    );
+    // (the second compile went on from a page: the test's premise; the
+    // third, after the install, from S₀; the fourth from a page again)
+    assert!(got[1].0.starts_with("page"), "{:?}", got[1].0);
+    assert!(got[2].0.starts_with("s0"), "{:?}", got[2].0);
+    assert!(got[3].0.starts_with("page"), "{:?}", got[3].0);
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        assert_eq!(a.1, b.1, "compile {}: the status ({})", i + 1, a.0);
+        assert_eq!(a.3, b.3, "compile {}: the fonts ({})", i + 1, a.0);
+        assert!(a.2 == b.2, "compile {}: the pages differ ({})", i + 1, a.0);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
