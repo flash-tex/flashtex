@@ -128,8 +128,13 @@ fn a_cached_parse_writes_what_a_parse_writes() {
             "a parse that warned was stored: {say}"
         );
         let (_, log) = outputs(&job);
+        // pdfTeX's warning names the program as invoked (`pdfTeX warning:
+        // <argv[0]> (file test.map): ...`), here the test binary's whole
+        // path, and TeX breaks log lines at max_print_line characters, not
+        // at spaces: with a long target directory the phrase is cut in two.
+        // Looked for in the log's text with its line breaks taken out.
         assert!(
-            log.contains("duplicates ignored"),
+            log.replace('\n', "").contains("duplicates ignored"),
             "no duplicate warning in the log:\n{log}"
         );
     }
