@@ -25,7 +25,11 @@
 #![cfg(feature = "kpathsea")]
 
 mod common;
+// (what a client holds of a compile, and the random edit sequences: shared
+// with the Unicode host's tests)
+mod edit_fuzz;
 
+use edit_fuzz::{compile, copy_dir, describe_difference, resolve, Outcome, View};
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::page::{Item, Page};
@@ -40,6 +44,21 @@ struct Host(Child, PathBuf);
 
 impl Drop for Host {
     fn drop(&mut self) {
+        // (cargo-llvm-cov: `SIGTERM` first, on which a coverage build
+        // writes its profile, `host::crash`; a kill would lose it)
+        #[cfg(coverage)]
+        {
+            let _ = Command::new("kill")
+                .args(["-TERM", &self.0.id().to_string()])
+                .status();
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(20) {
+                if matches!(self.0.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
         let _ = std::fs::remove_file(&self.1);
@@ -132,257 +151,6 @@ fn start_host_lines(
         }
     });
     Host(child, sock)
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for e in std::fs::read_dir(from).unwrap() {
-        let e = e.unwrap();
-        let t = to.join(e.file_name());
-        if e.file_type().unwrap().is_dir() {
-            copy_dir(&e.path(), &t);
-        } else {
-            std::fs::copy(e.path(), t).unwrap();
-        }
-    }
-}
-
-/// What a client holds: its pages, and what their ids mean.
-#[derive(Default)]
-struct View {
-    pages: BTreeMap<u32, Page>,
-    /// Font id -> key as bound when each page arrived.
-    page_fonts: BTreeMap<u32, HashMap<u16, [u8; 32]>>,
-    fonts: HashMap<u16, [u8; 32]>,
-    spans: HashMap<u32, (u32, u32)>,
-    files: HashMap<u32, String>,
-    /// `IMAGE` messages, in order.
-    images: Vec<Json>,
-    count: usize,
-}
-
-struct Outcome {
-    started: Json,
-    done: Json,
-    /// Indices of the PAGE messages, in order.
-    order: Vec<u32>,
-    pages_msgs: Vec<Json>,
-    first_page: Option<Duration>,
-    /// `PROGRESS` heartbeats received (`progress-v1`, spec §6.8).
-    progress: usize,
-    /// The `file`s the `PROGRESS` heartbeats named, in order.
-    progress_files: Vec<String>,
-    /// `SPAN_SHIFT` messages (`span-shift-v1`, spec §5.3.1), and the spans
-    /// `SOURCES` declared (new or moved).
-    span_shifts: usize,
-    declared: usize,
-}
-
-fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
-    let t0 = Instant::now();
-    c.compile(req).unwrap();
-    let mut started = Json::Null;
-    let mut order = vec![];
-    let mut pages_msgs = vec![];
-    let mut first_page = None;
-    let mut progress = 0;
-    let mut progress_files = vec![];
-    let (mut span_shifts, mut declared) = (0, 0);
-    let done = loop {
-        match c.next_event().unwrap().expect("host closed the connection") {
-            Event::Started(j) => {
-                if j.get("keep").and_then(Json::as_bool) != Some(true) {
-                    *view = View::default();
-                }
-                started = j;
-            }
-            Event::Font(f) => {
-                assert!(
-                    !f.program.is_empty() || f.info.str_field("format") != Some("type1"),
-                    "font {} without its program",
-                    f.id
-                );
-                view.fonts.insert(f.id, f.key);
-            }
-            Event::Sources(s) => {
-                declared += s.spans.len();
-                for (i, p) in s.files {
-                    view.files.insert(i, p);
-                }
-                for (i, f, l) in s.spans {
-                    assert!(
-                        view.files.contains_key(&f),
-                        "span {i} names unknown file {f}"
-                    );
-                    view.spans.insert(i, (f, l));
-                }
-            }
-            Event::Page(p) => {
-                first_page.get_or_insert(t0.elapsed());
-                for it in &p.items {
-                    match it {
-                        Item::Glyph { font, .. } => {
-                            assert!(view.fonts.contains_key(font), "font {font} not sent")
-                        }
-                        Item::Span(s) if *s != 0 => {
-                            assert!(view.spans.contains_key(s), "span {s} not sent")
-                        }
-                        _ => {}
-                    }
-                }
-                order.push(p.index);
-                view.page_fonts.insert(p.index, view.fonts.clone());
-                view.pages.insert(p.index, p);
-            }
-            Event::Pages(j) => pages_msgs.push(j),
-            Event::Image(j) => view.images.push(j),
-            Event::Done(d) => break d,
-            Event::Error(e) => panic!("host error: {e}"),
-            Event::Other(k, body) if k == flashtex_display_list::kind::SPAN_SHIFT => {
-                span_shifts += 1;
-                let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
-                let sh = flashtex_display_list::resource::SpanShifts::from_json(&j).unwrap();
-                for at in view.spans.values_mut() {
-                    *at = sh.apply(*at);
-                }
-            }
-            Event::Other(k, body) if k == flashtex_display_list::kind::PROGRESS => {
-                progress += 1;
-                let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
-                if let Some(f) = j.str_field("file") {
-                    progress_files.push(f.to_string());
-                }
-            }
-            _ => {}
-        }
-    };
-    let count = done.int_field("pages").unwrap_or(0) as usize;
-    view.count = count;
-    view.pages.retain(|&i, _| (i as usize) < count);
-    Outcome {
-        started,
-        done,
-        order,
-        pages_msgs,
-        first_page,
-        progress,
-        progress_files,
-        span_shifts,
-        declared,
-    }
-}
-
-/// A page with its spans resolved to (file relative to `root`, line) and
-/// its glyphs' fonts to keys, for comparing across hosts.
-#[derive(Debug, PartialEq)]
-struct Resolved {
-    hash: [u8; 32],
-    page: Page,
-    spans: Vec<(String, u32)>,
-    fonts: Vec<(u16, [u8; 32])>,
-}
-
-fn resolve(view: &View, i: u32, root: &Path, out: &Path) -> Resolved {
-    let mut page = view
-        .pages
-        .get(&i)
-        .unwrap_or_else(|| panic!("page {i} missing"))
-        .clone();
-    // Files under the project or the output directory, by their place
-    // there (the scratch compile's copies are elsewhere).
-    let prefixes: Vec<(String, &str)> = [(root, ""), (out, "<out>/")]
-        .iter()
-        .flat_map(|(d, tag)| {
-            let canon = std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf());
-            [
-                (format!("{}/", d.display()), *tag),
-                (format!("{}/", canon.display()), *tag),
-            ]
-        })
-        .collect();
-    let loc = |s: u32| -> (String, u32) {
-        if s == 0 {
-            return (String::new(), 0);
-        }
-        let (f, l) = view.spans[&s];
-        let p = view.files[&f].clone();
-        for (pre, tag) in &prefixes {
-            if let Some(rest) = p.strip_prefix(pre.as_str()) {
-                return (format!("{tag}{rest}"), l);
-            }
-        }
-        (p, l)
-    };
-    let mut spans = vec![];
-    for it in page.items.iter_mut() {
-        if let Item::Span(s) = it {
-            spans.push(loc(*s));
-            *s = 0;
-        }
-    }
-    for l in page.links.iter_mut() {
-        spans.push(loc(l.span));
-        l.span = 0;
-    }
-    let bound = &view.page_fonts[&i];
-    let mut fonts: Vec<(u16, [u8; 32])> = page
-        .items
-        .iter()
-        .filter_map(|it| match it {
-            Item::Glyph { font, .. } => Some((*font, bound[font])),
-            _ => None,
-        })
-        .collect();
-    fonts.sort();
-    fonts.dedup();
-    Resolved {
-        hash: page.hash,
-        page,
-        spans,
-        fonts,
-    }
-}
-
-/// What differs between two resolved pages (the first difference).
-fn describe_difference(a: &Resolved, b: &Resolved) -> String {
-    if a.hash != b.hash {
-        return format!(
-            "content hash {:02x?}.. vs {:02x?}..",
-            &a.hash[..4],
-            &b.hash[..4]
-        );
-    }
-    if a.fonts != b.fonts {
-        return format!("fonts {:?} vs {:?}", a.fonts, b.fonts);
-    }
-    if let Some(k) =
-        (0..a.spans.len().max(b.spans.len())).find(|&k| a.spans.get(k) != b.spans.get(k))
-    {
-        return format!(
-            "span #{k}: {:?} vs {:?} (of {} and {})",
-            a.spans.get(k),
-            b.spans.get(k),
-            a.spans.len(),
-            b.spans.len()
-        );
-    }
-    let (p, q) = (&a.page, &b.page);
-    if let Some(k) =
-        (0..p.items.len().max(q.items.len())).find(|&k| p.items.get(k) != q.items.get(k))
-    {
-        return format!("item #{k}: {:?} vs {:?}", p.items.get(k), q.items.get(k));
-    }
-    if p.links != q.links {
-        return format!("links {:?} vs {:?}", p.links, q.links);
-    }
-    if p.dests != q.dests {
-        return format!("dests {:?} vs {:?}", p.dests, q.dests);
-    }
-    format!(
-        "header/other: {:?} vs {:?}",
-        (p.index, p.flags, p.counts),
-        (q.index, q.flags, q.counts)
-    )
 }
 
 fn req(id: i64, root: &Path, out: &Path, main: &str) -> CompileRequest {
@@ -4971,6 +4739,325 @@ fn edits_after_a_reopen_from_s1_equal_scratch_compiles() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+// ---------------------------------------------------------------------------
+// Lane TEST-GAPS: host/server.rs's error and cancellation paths that the CI
+// coverage run (coverage-engine.yml, 2026-11-01) found untaken.
+// ---------------------------------------------------------------------------
+
+/// A raw connection to the host: frames written and read by hand.
+fn raw_connect(sock: &Path) -> std::os::unix::net::UnixStream {
+    std::os::unix::net::UnixStream::connect(sock).unwrap()
+}
+
+fn raw_hello(major: i64) -> Vec<u8> {
+    format!(
+        "{{\"protocol\":\"{}\",\"version\":[{major},{}]}}",
+        flashtex_display_list::PROTOCOL,
+        flashtex_display_list::LATEST_MINOR
+    )
+    .into_bytes()
+}
+
+/// The next frame, decoded as JSON (`Null`: a binary one, PAGE or FONT).
+fn raw_read(s: &mut std::os::unix::net::UnixStream) -> (u8, Json) {
+    let (k, body) = flashtex_display_list::frame::read_frame(s)
+        .unwrap()
+        .expect("the host closed the connection");
+    let j = std::str::from_utf8(&body)
+        .ok()
+        .and_then(|t| Json::parse(t).ok())
+        .unwrap_or(Json::Null);
+    (k, j)
+}
+
+/// `server::connection`'s refusals: a first frame that is not HELLO
+/// ("expected HELLO"), a HELLO of another major version ("this host
+/// speaks ..."), each an ERROR before the host closes the connection; and
+/// a COMPILE whose body is not JSON ("COMPILE is not JSON"), after which
+/// the connection goes on to a compile that runs.
+#[test]
+fn a_connection_refuses_a_bad_hello_and_a_compile_that_is_not_json() {
+    use flashtex_display_list::frame::write_frame;
+    use flashtex_display_list::kind;
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let host = start_host("proto");
+    // (a) COMPILE first
+    let mut s = raw_connect(&host.1);
+    write_frame(&mut s, kind::COMPILE, b"{}").unwrap();
+    let (k, j) = raw_read(&mut s);
+    assert_eq!(k, kind::ERROR, "{j}");
+    assert_eq!(j.str_field("message"), Some("expected HELLO"), "{j}");
+    // (b) another major version
+    let mut s = raw_connect(&host.1);
+    write_frame(&mut s, kind::C_HELLO, &raw_hello(99)).unwrap();
+    let (k, j) = raw_read(&mut s);
+    assert_eq!(k, kind::ERROR, "{j}");
+    assert_eq!(j.str_field("code"), Some("version"), "{j}");
+    assert!(
+        j.str_field("message")
+            .is_some_and(|m| m.starts_with("this host speaks")),
+        "{j}"
+    );
+    // (c) a COMPILE that is not JSON, then one that is
+    let mut s = raw_connect(&host.1);
+    write_frame(
+        &mut s,
+        kind::C_HELLO,
+        &raw_hello(flashtex_display_list::VERSION_MAJOR as i64),
+    )
+    .unwrap();
+    assert_eq!(raw_read(&mut s).0, kind::HELLO);
+    write_frame(&mut s, kind::COMPILE, b"{not json").unwrap();
+    let (k, j) = raw_read(&mut s);
+    assert_eq!(k, kind::ERROR, "{j}");
+    assert_eq!(j.str_field("message"), Some("COMPILE is not JSON"), "{j}");
+    let base = common::fresh_dir("flashtex-host-proto");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    let r = req(1, &proj, &out, "main.tex");
+    write_frame(&mut s, kind::COMPILE, r.to_json().to_string().as_bytes()).unwrap();
+    let done = loop {
+        let (k, j) = raw_read(&mut s);
+        if k == kind::DONE {
+            break j;
+        }
+        assert_ne!(k, kind::ERROR, "{j}");
+    };
+    assert_eq!(done.str_field("status"), Some("ok"), "{done}");
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An export (`server::start_export`) of a document with an error: DONE's
+/// status is "error", and the DIAGNOSTIC names the error the oracle's log
+/// has (TeX Live's pdflatex on the same file: its message and `l.N`).
+#[test]
+fn an_export_with_an_error_reports_it_as_pdflatex_does() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-xerr");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, oracle) = (base.join("proj"), base.join("out"), base.join("oracle"));
+    for d in [&proj, &out, &oracle] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let doc = article(2).replacen(
+        "\\begin{document}\n",
+        "\\begin{document}\nA sentence, then \\undefinedmacro here.\n",
+        1,
+    );
+    std::fs::write(proj.join("main.tex"), &doc).unwrap();
+    std::fs::write(oracle.join("main.tex"), &doc).unwrap();
+    // the oracle: its first error's message and line
+    let bin = find_texlive_bin().unwrap();
+    let _ = Command::new(bin.join("pdflatex"))
+        .args(["-interaction=nonstopmode", "main.tex"])
+        .current_dir(&oracle)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    let log = std::fs::read_to_string(oracle.join("main.log")).unwrap();
+    let mut lines = log.lines().skip_while(|l| !l.starts_with("! "));
+    let message = lines.next().expect("the oracle reports an error")[2..].to_string();
+    let line: i64 = lines
+        .find_map(|l| l.strip_prefix("l.")?.split(' ').next()?.parse().ok())
+        .expect("the oracle's l.N");
+    let host = start_host("xerr");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut r = CompileRequest::new(1, proj.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out.to_str().unwrap().into());
+    r.export = true;
+    c.compile(&r).unwrap();
+    let mut diags = vec![];
+    let done = loop {
+        match c
+            .next_event()
+            .unwrap()
+            .expect("the host closed the connection")
+        {
+            Event::Diagnostic(d) => diags.push(d),
+            Event::Done(d) => break d,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    };
+    assert_eq!(done.str_field("status"), Some("error"), "{done}");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.str_field("severity") == Some("error")
+                && d.str_field("message")
+                    .is_some_and(|m| m.contains(message.trim_end_matches('.')))
+                && d.int_field("line") == Some(line)),
+        "no diagnostic for the oracle's {message:?} at l.{line}: {diags:?}"
+    );
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A CANCEL of a running export (`server::connection`, `ExportRun::cancel`)
+/// ends it: DONE's status is "cancelled", and the connection goes on to a
+/// compile that runs.
+#[test]
+fn a_cancelled_export_says_so_and_the_connection_goes_on() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-xcancel");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), article(400)).unwrap();
+    let host = start_host("xcancel");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut r = CompileRequest::new(1, proj.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out.to_str().unwrap().into());
+    r.export = true;
+    c.compile(&r).unwrap();
+    let done = loop {
+        match c
+            .next_event()
+            .unwrap()
+            .expect("the host closed the connection")
+        {
+            Event::Started(_) => c.cancel(1).unwrap(),
+            Event::Done(d) => break d,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    };
+    // (CANCEL follows STARTED's COMPILE in order, so it cannot precede the
+    // export; but a reader stalled for the whole export sees it finish
+    // first: not a failure of cancelling, review of #2019)
+    if done.str_field("status") == Some("ok") {
+        eprintln!("skipped: the export finished before the CANCEL was read ({done})");
+    } else {
+        assert_eq!(done.str_field("status"), Some("cancelled"), "{done}");
+    }
+    let mut view = View::default();
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    let o = compile(&mut c, &mut view, &req(2, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Every page of `view` draws at least one form.
+fn every_page_draws_a_form(view: &View, proj: &Path, out: &Path, what: &str) {
+    for i in 0..view.count as u32 {
+        assert!(
+            !resolve(view, i, proj, out).forms.is_empty(),
+            "{what}: page {i} draws no form"
+        );
+    }
+}
+
+/// Lane TEST-GAPS: forms (`\pdfxform`) through the resident host
+/// (`host::resident::emit`'s and `deliver`'s form paths, never taken under
+/// the CI coverage run; and the tests' views ignored FORM, so a stale form
+/// went unnoticed). A form made on the first page, drawn on every page,
+/// and its content edited: after each compile every page and every form it
+/// draws equals a scratch compile's. Then a second connection to the same
+/// document gets the kept pages from the cache, with their forms.
+#[test]
+fn an_edited_form_drawn_on_every_page_equals_a_scratch_compile() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let doc = |logo: &str| -> String {
+        let mut s = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\
+             \\setbox0\\hbox{{\\bfseries Logo {logo}}}\\immediate\\pdfxform0\n\
+             \\edef\\logo{{\\the\\pdflastxform}}\n"
+        );
+        for i in 0..60 {
+            s.push_str(&format!(
+                "Paragraph {i} with the logo \\pdfrefxform\\logo{{}} and enough text to \
+                 fill a few lines of the page so that the document ships several pages.\n\n"
+            ));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let base = common::fresh_dir("flashtex-host-forms");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("main.tex"), doc("alpha")).unwrap();
+    let host = start_host("forms");
+    let scratch = start_host("formss");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for (k, logo) in ["alpha", "alpha", "omega", "omega", "alpha"]
+        .iter()
+        .enumerate()
+    {
+        std::fs::write(proj.join("main.tex"), doc(logo)).unwrap();
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        assert!(view.count >= 3, "{} pages", view.count);
+        assert!(!view.forms.is_empty(), "compile {k}: no FORM sent");
+        // (each page draws the logo: if emission dropped every form draw,
+        // the scratch side would lose them too, review of #2019)
+        every_page_draws_a_form(&view, &proj, &out, &format!("compile {k}"));
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("f{k}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            "main.tex",
+            &format!("compile {k}, logo {logo}"),
+        );
+    }
+    // a second client of the same document: the pages from the cache,
+    // with the forms they draw
+    let mut c2 = Client::connect(&host.1).unwrap();
+    let mut v2 = View::default();
+    let mut r = req(1, &proj, &out, "main.tex");
+    r.incremental = true;
+    let o = compile(&mut c2, &mut v2, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    every_page_draws_a_form(&v2, &proj, &out, "a second connection");
+    let (p2, o2) = snapshot(&base, &proj, &out, "fsecond");
+    compare_with_scratch(
+        &scratch.1,
+        &v2,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "a second connection",
+    );
+    let _ = c.bye();
+    let _ = c2.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A `COMPILE` the host may refuse: the ERROR it sent, or the DONE of the
 /// compile it ran (its pages not kept).
 fn compile_or_error(c: &mut Client, r: &CompileRequest) -> Result<Json, Json> {
@@ -5387,4 +5474,55 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
     assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
     assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The pdfTeX host under the edit fuzz (`edit_fuzz`): a scratch compile is
+/// a fresh host's, of a copy of the directory.
+struct PdftexFuzz;
+
+impl edit_fuzz::FuzzHost for PdftexFuzz {
+    fn start(&self, tag: &str, _scratch: bool) -> (Box<dyn std::any::Any>, PathBuf) {
+        let h = start_host(tag);
+        let sock = h.1.clone();
+        (Box::new(h), sock)
+    }
+    fn request(&self, id: i64, proj: &Path, out: &Path, main: &str) -> CompileRequest {
+        req(id, proj, out, main)
+    }
+    fn scratch(&self, proj: &Path, out: &Path, main: &str, tools: bool) -> CompileRequest {
+        let mut r = CompileRequest::new(1, proj.to_str().unwrap(), main);
+        r.output_dir = Some(out.to_str().unwrap().into());
+        if tools {
+            r.incremental = true;
+            r.external_tools = Some("auto".into());
+        }
+        r
+    }
+}
+
+/// Lane TEST-GAPS: random edit sequences against scratch compiles
+/// (`edit_fuzz`), on the parity fixtures and the fuzz's own
+/// (tests/fuzz-fixtures: a `.bib` with natbib, makeindex with `\include`
+/// and `\includeonly`, which run the external tools).
+#[test]
+fn random_edit_sequences_equal_scratch_compiles() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    edit_fuzz::run(
+        &PdftexFuzz,
+        &[
+            manifest.join("../../fixtures/real-world"),
+            manifest.join("tests/fuzz-fixtures"),
+        ],
+        &[
+            "input-bibliography",
+            "hyperref-toc",
+            "beamer-overlays",
+            "natbib-bib",
+            "index-include",
+        ],
+    );
 }
