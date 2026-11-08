@@ -932,9 +932,9 @@ byte-identical both times).
 
 ## 17. Revision 8: spans, a picture read from its file (lane PICTURE-MEMO, 2026-11-01)
 
-DESIGN.md §12 P6's picture memoisation for TikZ and pgfplots. **Off by default**: an environment is
-offered only when `FLASHTEX_BOXMEMO_SPANS` names it (`tikzpicture,tikzcd`); sweeps.yml takes it as
-`boxmemo_spans`. A measure call (§2) is one macro whose arguments are its whole input; a picture is
+DESIGN.md §12 P6's picture memoisation for TikZ and pgfplots. **On by default** (§17.11):
+`tikzpicture` and `tikzcd` are offered (`DEFAULT_SPANS`) unless `FLASHTEX_BOXMEMO_SPANS` names others
+(empty: none); sweeps.yml takes it as `boxmemo_spans` (`none`: none). A measure call (§2) is one macro whose arguments are its whole input; a picture is
 not: `\begin{tikzpicture}` reads its body line by line from the file until `\end{tikzpicture}`.
 
 ### 17.1 The unit, its key, and what it reads and writes

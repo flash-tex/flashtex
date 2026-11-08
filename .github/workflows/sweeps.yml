@@ -64,7 +64,7 @@ on:
         required: false
         default: ""
       boxmemo_spans:
-        description: "environments BOX-MEMO offers as spans (FLASHTEX_BOXMEMO_SPANS, e.g. tikzpicture,tikzcd; BOX-MEMO.md §17; empty: the product's default, none)"
+        description: "environments BOX-MEMO offers as spans (FLASHTEX_BOXMEMO_SPANS, e.g. tikzpicture,tikzcd; BOX-MEMO.md §17; none: no environment; empty: the product's default, tikzpicture,tikzcd)"
         required: false
         default: ""
   pull_request:
