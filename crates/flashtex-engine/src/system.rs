@@ -2005,6 +2005,31 @@ pub(crate) fn tool_read_ok(
     confined_path_ok(path, &roots, searched)
 }
 
+/// Both confinement rules for a data file the host finds for an external
+/// tool it runs (`host::external`: a `.bib` or `.bst` file, for the rule's
+/// state and the tool's input, #2057): `name` as the document gave it,
+/// `path` where it was found, `searched` if kpathsea found it; `dirs` (the
+/// project and the output directory) are roots besides
+/// `FLASHTEX_CONFINE_ROOTS`. A refusal is noted. True when confinement is
+/// off.
+pub(crate) fn tool_input_ok(name: &str, path: &Path, searched: bool, dirs: &[&Path]) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !confined_name_ok(name) {
+        note_refused(name, None);
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    roots.extend(dirs.iter().filter_map(|d| std::fs::canonicalize(d).ok()));
+    let ok = confined_path_ok(path, &roots, searched);
+    if !ok {
+        let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        note_refused(name, Some(&real));
+    }
+    ok
+}
+
 /// The second rule on its own (tests call it directly).
 pub(crate) fn confined_path_ok(found: &Path, roots: &[std::path::PathBuf], searched: bool) -> bool {
     let Ok(real) = std::fs::canonicalize(found) else {

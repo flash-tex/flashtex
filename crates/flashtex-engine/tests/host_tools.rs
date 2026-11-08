@@ -724,3 +724,72 @@ fn edits_tools_and_preemption_leave_the_output_files_exact() {
     }
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A document whose `.aux` names `bib` as its database, made without a
+/// class (so a confined compile reads nothing from the TeX tree).
+fn aux_only_doc(bib: &str) -> String {
+    format!(
+        "\\makeatletter\\immediate\\openout1=\\jobname.aux\n\
+         \\immediate\\write1{{\\string\\citation{{knuth84}}}}\n\
+         \\immediate\\write1{{\\string\\bibstyle{{plain}}}}\n\
+         \\immediate\\write1{{\\string\\bibdata{{{bib}}}}}\n\
+         \\immediate\\closeout1 \\@@end\n"
+    )
+}
+
+/// A confined host (`FLASHTEX_CONFINE_READS`, a Live Share session or an
+/// untrusted project) neither reads nor hashes nor gives bibtex a `.bib`
+/// file outside the allowed roots (#2057): an absolute `\bibdata` outside
+/// is missing, as one that does not exist is. Unconfined, the same
+/// document runs bibtex.
+#[test]
+fn a_confined_host_does_not_read_an_outside_bib_file() {
+    if tex_bin().is_none() {
+        eprintln!("skipped: no TeX Live with bibtex");
+        return;
+    }
+    let d = scratch("confined-bib");
+    let outside = d.join("outside");
+    let proj = d.join("proj");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("refs.bib"), BIB).unwrap();
+    let bib = outside.join("refs");
+    let bib = bib.to_str().unwrap();
+    let refused = d.join("refused");
+    for confine in [false, true] {
+        let _ = std::fs::remove_dir_all(&proj);
+        std::fs::create_dir_all(proj.join("out")).unwrap();
+        std::fs::write(proj.join("main.tex"), aux_only_doc(bib)).unwrap();
+        let env: Vec<(&str, &str)> = if confine {
+            vec![
+                ("FLASHTEX_CONFINE_READS", "1"),
+                ("FLASHTEX_CONFINE_ROOTS", proj.to_str().unwrap()),
+                ("FLASHTEX_CONFINE_REFUSED", refused.to_str().unwrap()),
+            ]
+        } else {
+            vec![]
+        };
+        let host = start_host_env("confined-bib", &[], &env);
+        let mut c = Client::connect(&host.1).unwrap();
+        let cy = cycle(&mut c, &req(1, &proj, "auto"));
+        if confine {
+            assert!(cy.events("run").is_empty(), "{cy:?}");
+            assert!(
+                cy.events("skip").iter().any(|s| s
+                    .str_field("reason")
+                    .is_some_and(|r| r.contains("not found") && r.contains(bib))),
+                "{cy:?}"
+            );
+            let lines = std::fs::read_to_string(&refused).unwrap_or_default();
+            assert!(
+                lines.lines().any(|l| l == bib),
+                "the refusal is noted: {lines:?}"
+            );
+        } else {
+            let runs = cy.events("run");
+            assert_eq!(runs.len(), 1, "{cy:?}");
+            assert_eq!(runs[0].str_field("tool"), Some("bibtex"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
