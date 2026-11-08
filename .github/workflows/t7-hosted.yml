@@ -36,7 +36,7 @@ env:
 
 jobs:
   t7:
-    name: typing@50ms rows, main vs main+3 PRs on one hosted M1
+    name: typing@50ms rows under each process policy, one hosted M1
     runs-on: macos-15
     timeout-minutes: 200
     steps:
@@ -75,7 +75,7 @@ jobs:
           key: realdoc-books-${{ hashFiles('tools/parity/corpus/books.json') }}
       - name: build the hosts (engine and runtime sources of each SHA in ENGINES)
         env:
-          ENGINES: "main=6e66beddf all=HEAD"
+          ENGINES: "all=HEAD"
         run: |
           set -euo pipefail
           sysctl -n machdep.cpu.brand_string hw.ncpu || true
@@ -88,25 +88,35 @@ jobs:
           done
           git checkout HEAD -- crates/flashtex-engine/src crates/flashtex-runtime/src
           python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null
-      - name: t7 typing@50ms and letter rows, interleaved
+      - name: the runner's process policy, and how late a 50 ms sleep wakes under each
+        run: |
+          set +e
+          ps -o pid,ppid,pri,nice,command -p $$ -p $PPID
+          python3 tools/incr-bench/timerprobe.py 40 plain
+          taskpolicy -l 0 -t 0 python3 tools/incr-bench/timerprobe.py 40 "latency tier 0"
+          taskpolicy -a python3 tools/incr-bench/timerprobe.py 40 "app policy (-a)"
+          taskpolicy -B -p $$; python3 tools/incr-bench/timerprobe.py 40 "after -B on the shell"
+          exit 0
+      - name: t7 typing@50ms rows (all) under each process policy, interleaved
         run: |
           set +e
           for i in 1 2; do
-            for e in main all; do
-              python3 tools/incr-bench/t7.py --engine $e --docs infdesc-x2 --gate hosted --keys 8 \
-                --typing-keys 24 --phases letter@site,typing@50ms@site \
-                --out /tmp/ib/t7-$e-$i-book 2>&1 | tee /tmp/ib/t7-$e-$i-book.log
-              { echo "### $e round $i, infdesc-x2"; cat /tmp/ib/t7-$e-$i-book/table.md; } >> "$GITHUB_STEP_SUMMARY" || true
-              python3 tools/incr-bench/t7.py --engine $e --docs full-1000,plain-1000,beamer-30 --gate hosted --keys 8 \
-                --typing-keys 24 --phases letter@middle,typing@50ms \
-                --out /tmp/ib/t7-$e-$i-gen 2>&1 | tee /tmp/ib/t7-$e-$i-gen.log
-              { echo "### $e round $i, generated"; cat /tmp/ib/t7-$e-$i-gen/table.md; } >> "$GITHUB_STEP_SUMMARY" || true
+            for pol in plain lat0 app; do
+              case $pol in plain) pre=() ;; lat0) pre=(taskpolicy -l 0 -t 0) ;; app) pre=(taskpolicy -a) ;; esac
+              "${pre[@]}" python3 tools/incr-bench/t7.py --engine all --docs infdesc-x2 --sites x1-early,x2-late --gate hosted \
+                --typing-keys 24 --phases typing@50ms@site \
+                --out /tmp/ib/t7-$pol-$i-book 2>&1 | tee /tmp/ib/t7-$pol-$i-book.log
+              { echo "### all, $pol, round $i, infdesc-x2"; cat /tmp/ib/t7-$pol-$i-book/table.md; } >> "$GITHUB_STEP_SUMMARY" || true
+              "${pre[@]}" python3 tools/incr-bench/t7.py --engine all --docs plain-1000,beamer-30 --gate hosted \
+                --typing-keys 24 --phases typing@50ms \
+                --out /tmp/ib/t7-$pol-$i-gen 2>&1 | tee /tmp/ib/t7-$pol-$i-gen.log
+              { echo "### all, $pol, round $i, generated"; cat /tmp/ib/t7-$pol-$i-gen/table.md; } >> "$GITHUB_STEP_SUMMARY" || true
             done
           done
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: t7-typing50-1108
+          name: t7-typing50-1108-policy
           path: |
             /tmp/ib/t7-*
