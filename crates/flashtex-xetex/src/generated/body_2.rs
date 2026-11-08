@@ -4087,7 +4087,9 @@ impl Globals {
                             if (self.cur_chr == 0i32) {
                                 // §400
                                 {
+                                    self.intr_weak = true;
                                     self.get_token();
+                                    self.intr_weak = false;
                                     t = self.cur_tok;
                                     self.get_token();
                                     if (self.cur_cmd > max_command) {

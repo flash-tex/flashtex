@@ -16,7 +16,8 @@
 %
 % * |intr_rec_on|: a recording is in progress. Reported are every state the
 %   recorded run reads (the meaning of each control sequence |get_next|
-%   delivers, |intr_weak| when its caller looks only at the token; \.{\\csname}
+%   delivers, |intr_weak| when its caller looks only at the token, |intr_let|
+%   when it is a \.{\\let}'s source, whose meaning is copied; \.{\\csname}
 %   and \.{\\ifcsname} look-ups with the name found; |scan_something_internal|'s
 %   fetches; character codes; the register \.{\\advance} and kin read; the
 %   category code and the name |print_cs| and |sprint_cs| print), every change
@@ -152,6 +153,14 @@ if intr_rec_on then flashtex_intr_expand;
 if cur_cmd<call then @<Expand a nonmacro@>
 @z
 
+@x xetex.web - \.{\\expandafter} only stores the token it skips
+@<Expand the token after...@>=
+begin get_token; t:=cur_tok; get_token;
+@y
+@<Expand the token after...@>=
+begin intr_weak:=true; get_token; intr_weak:=false; t:=cur_tok; get_token;
+@z
+
 @x xetex.web - \.{\\csname} reads the meaning and the name it finds
 flush_list(r);
 if eq_type(cur_cs)=undefined_cs then
@@ -244,6 +253,28 @@ case cur_cmd of
 begin restart: repeat get_token;
 @y
 begin restart: repeat intr_weak:=true; get_token; intr_weak:=false;
+@z
+
+@x xetex.web - a \.{\\let} looks at its source's meaning only to copy it
+  if n=normal then
+    begin repeat get_token;
+    until cur_cmd<>spacer;
+    if cur_tok=other_token+"=" then
+      begin get_token;
+      if cur_cmd=spacer then get_token;
+      end;
+    end
+@y
+  if n=normal then
+    begin intr_let:=true;
+    repeat get_token;
+    until cur_cmd<>spacer;
+    if cur_tok=other_token+"=" then
+      begin get_token;
+      if cur_cmd=spacer then get_token;
+      end;
+    intr_let:=false;
+    end
 @z
 
 @x xetex.web - a recorded run never copies a token register
@@ -346,6 +377,7 @@ recordings themselves live outside the word space.
 @!intr_at_switch:boolean; {|big_switch|'s |get_x_token| is expanding}
 @!intr_rec_on:boolean; {a recording is in progress}
 @!intr_weak:boolean; {|get_next|'s caller looks only at the token, not its meaning}
+@!intr_let:boolean; {|get_next|'s caller is \.{\\let}, reading its source}
 
 @ @<Declare the routines of \XeTeX's C parts@>=
 function flashtex_intr_call:boolean; external;

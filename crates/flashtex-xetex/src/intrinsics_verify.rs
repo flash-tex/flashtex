@@ -420,7 +420,7 @@ impl Globals {
             );
             let (a, b) = (memory_word::from_bits(iv), memory_word::from_bits(nv));
             // (the hash's extension, past `eqtb_size`, holds control sequences)
-            if (q < int_base || q > eqtb_size)
+            if !(int_base..=eqtb_size).contains(&q)
                 && a.hh_b0() == b.hh_b0()
                 && a.hh_b1() == b.hh_b1()
                 && self.intr_is_list(a.hh_b0(), a.hh_rh())

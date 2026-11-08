@@ -878,6 +878,8 @@ pub struct Globals {
     pub intr_rec_on: bool,
     // §1730
     pub intr_weak: bool,
+    // §1730
+    pub intr_let: bool,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
     /// The engine's state outside the word space (`--host-state`).
@@ -1211,6 +1213,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<halfword>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
@@ -1756,6 +1759,7 @@ impl Globals {
             intr_at_switch: false,
             intr_rec_on: false,
             intr_weak: false,
+            intr_let: false,
             arena: __arena,
             host: Default::default(),
         })
@@ -2093,6 +2097,7 @@ impl Globals {
         v.pod(&mut self.intr_at_switch);
         v.pod(&mut self.intr_rec_on);
         v.pod(&mut self.intr_weak);
+        v.pod(&mut self.intr_let);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

@@ -2820,6 +2820,7 @@ impl Globals {
                             p = self.cur_cs;
                             if (n == normal) {
                                 {
+                                    self.intr_let = true;
                                     loop {
                                         self.get_token();
                                         if (self.cur_cmd != spacer) { break; }
@@ -2832,6 +2833,7 @@ impl Globals {
                                             }
                                         }
                                     }
+                                    self.intr_let = false;
                                 }
                             } else {
                                 {

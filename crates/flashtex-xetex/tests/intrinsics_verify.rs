@@ -341,6 +341,45 @@ fn a_change_the_body_does_not_name_is_not_replayed_stale() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// The hook of a `\let` test: `body`, called around a change of `\IntrSrc`.
+fn let_doc(body: &str) -> String {
+    format!(
+        "\\documentclass{{article}}\\def\\IntrSrc{{one}}\n\
+         \\def\\pdfstringdefPreHook{{{body}}}\n\
+         \\begin{{document}}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\def\\IntrSrc{{two}}\n\\pdfstringdefPreHook\n\\IntrC\\par\\relax\n\
+         \\pdfstringdefPreHook\n\\IntrC\\par\\relax\\end{{document}}\n"
+    )
+}
+
+/// A `\let` copies its source's meaning as it is at the replay
+/// (`Val::Cs`): a source the call reads only to copy it is not a
+/// dependency (only its class: not a space, a parameter character,
+/// `\outer` or a sparse register), so a change to it still replays, to the
+/// real path's state.
+#[test]
+fn a_let_source_read_only_to_be_copied_is_not_a_dependency() {
+    let Some((on, verify)) = modes_agree(&let_doc("\\let\\IntrC\\IntrSrc\\let\\IntrE\\relax"))
+    else {
+        return;
+    };
+    assert_eq!(count(&on, "replayed"), 3, "{on}");
+    assert_eq!(count(&on, "missed.Meaning"), 0, "{on}");
+    assert_eq!(count(&verify, "verify.checked"), 3, "{verify}");
+}
+
+/// ... but once the call reads its copy, the source's meaning is.
+#[test]
+fn a_let_copy_the_call_reads_makes_its_source_a_dependency() {
+    let Some((on, verify)) = modes_agree(&let_doc("\\let\\IntrC\\IntrSrc\\edef\\IntrOut{\\IntrC}"))
+    else {
+        return;
+    };
+    assert_eq!(count(&on, "replayed"), 2, "{on}");
+    assert_eq!(count(&on, "missed.Meaning"), 1, "{on}");
+    assert_eq!(count(&verify, "verify.checked"), 2, "{verify}");
+}
+
 /// Each fault makes verify report a difference, and `VERIFY_FAIL` turns
 /// it into exit status 3; the output stays the real path's.
 #[test]

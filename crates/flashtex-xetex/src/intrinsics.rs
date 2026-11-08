@@ -96,8 +96,8 @@ use crate::generated::consts::{
     tracing_commands_code, tracing_groups_code, tracing_ifs_code, tracing_lost_chars_code,
     tracing_macros_code, tracing_nesting_code, tracing_online_code, tracing_output_code,
     tracing_pages_code, tracing_paragraphs_code, tracing_restores_code, tracing_scan_tokens_code,
-    tracing_stack_levels_code, tracing_stats_code, undefined_control_sequence, unless_code,
-    v_template, vmode, XeTeX_revision_code, XeTeX_version_code,
+    tracing_stack_levels_code, tracing_stats_code, undefined_control_sequence, undefined_cs,
+    unless_code, v_template, vmode, XeTeX_revision_code, XeTeX_version_code,
 };
 use crate::Globals;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -233,6 +233,26 @@ enum Read {
     /// The name at location `p` (`None`: none), which `id_lookup` finds
     /// there and only there.
     Name(i32, Option<Vec<i32>>),
+    /// `eqtb[p]`, read as a `\let`'s source (or a space before it), was of
+    /// this [`let_class`]: a replay's `\let` shares the source's meaning as
+    /// it is then (`Val::Cs`), so only the class decides what the run did,
+    /// unless it reads the copy later (`Rec::taint`).
+    Class(i32, i32),
+    /// `\csname` or `\ifcsname` found `eqtb[p]` undefined (or not): all
+    /// they look at.
+    Defined(i32, bool),
+}
+
+/// What a `\let` looks at in its source's meaning (`prefixed_command`):
+/// whether it is a space (skipped before the source), a parameter
+/// character or `\outer` (what weak reads of the copy look at), or a
+/// sparse register (`add_sa_ref`, which a recording refuses).
+fn let_class(t: i32, e: i32) -> i32 {
+    match t {
+        spacer | mac_param | outer_call | long_outer_call => t,
+        register | toks_register if !(mem_bot..=lo_mem_stat_max).contains(&e) => -1,
+        _ => 0,
+    }
 }
 
 #[derive(Clone)]
@@ -283,7 +303,11 @@ impl Entry {
             .reads
             .iter()
             .filter_map(|r| match r {
-                Read::Meaning(p, ..) | Read::Plain(p) | Read::Word(p, _) => Some(*p),
+                Read::Meaning(p, ..)
+                | Read::Plain(p)
+                | Read::Word(p, _)
+                | Read::Class(p, _)
+                | Read::Defined(p, _) => Some(*p),
                 Read::Name(..) => None,
             })
             .collect();
@@ -311,6 +335,10 @@ pub struct Store {
 enum Seen {
     Dep,
     Weak,
+    /// Read first as a `\let`'s source: `Read::Class`.
+    LetSrc,
+    /// Found first by `\csname` or `\ifcsname`: `Read::Defined`.
+    Looked,
     /// Written first; the entry's word before the write.
     Written(u64),
 }
@@ -332,6 +360,13 @@ struct Rec {
     tokens: usize,
     /// `get_next` delivered a `tab_mark` or `car_ret` (`Ctx::align`).
     align_seen: bool,
+    /// A `\let`'s copy: the word it made (`eq_type`, `equiv`) and the full
+    /// read of the meaning it copied from outside the run (`None`: the
+    /// source's meaning is already a dependency, or the run's own). Reading
+    /// the copy while it holds that word makes the read a dependency.
+    taint: HashMap<i32, ((i32, i32), Option<Read>)>,
+    /// The `\let` sources whose taint has been added.
+    tainted: HashSet<i32>,
     /// A check of the admitted variant `id`: the replay's state.
     verify: Option<(u64, crate::intrinsics_verify::Pending)>,
 }
@@ -446,6 +481,7 @@ impl Globals {
         self.intr_on = mode != Mode::Off;
         self.intr_rec_on = false;
         self.intr_weak = false;
+        self.intr_let = false;
         self.intr_at_switch = false;
     }
 
@@ -458,6 +494,7 @@ impl Globals {
         self.intr_on = self.host.intrinsics.mode != Mode::Off;
         self.intr_rec_on = false;
         self.intr_weak = false;
+        self.intr_let = false;
         self.intr_at_switch = false;
     }
 
@@ -612,7 +649,11 @@ impl Globals {
         Err(why)
     }
 
+    /// Every read of `reads` holds. (The macro bodies are compared after the
+    /// rest, several lists a step at a time: each is a chain of dependent
+    /// loads, and walking them side by side overlaps their cache misses.)
     fn intr_reads_hold(&self, reads: &[Read]) -> Result<(), (&'static str, i32)> {
+        let mut lists: Vec<(i32, i32, &[i32])> = Vec::new();
         for r in reads {
             match r {
                 Read::Meaning(p, t, v) => {
@@ -620,7 +661,10 @@ impl Globals {
                     let same = w.hh_b0() == *t
                         && match v {
                             Equiv::Value(e) => w.hh_rh() == *e,
-                            Equiv::Tokens(ts) => self.intr_list_is(w.hh_rh(), ts),
+                            Equiv::Tokens(ts) => {
+                                lists.push((*p, w.hh_rh(), ts));
+                                true
+                            }
                         };
                     if !same {
                         return Err(("Meaning", *p));
@@ -637,6 +681,17 @@ impl Globals {
                         return Err(("Word", *p));
                     }
                 }
+                Read::Defined(p, d) => {
+                    if (self.eqtb[(p - 1) as usize].hh_b0() != undefined_cs) != *d {
+                        return Err(("Meaning", *p));
+                    }
+                }
+                Read::Class(p, k) => {
+                    let w = self.eqtb[(p - 1) as usize];
+                    if let_class(w.hh_b0(), w.hh_rh()) != *k {
+                        return Err(("Meaning", *p));
+                    }
+                }
                 Read::Name(p, n) => {
                     let same = match (self.intr_str(*p), n) {
                         (None, None) => true,
@@ -651,26 +706,52 @@ impl Globals {
                 }
             }
         }
-        Ok(())
+        self.intr_lists_are(&lists).map_err(|p| ("Meaning", p))
     }
 
-    /// Does the list `e` (a reference-count node) hold the tokens `ts`?
-    fn intr_list_is(&self, e: i32, ts: &[i32]) -> bool {
-        if e < 0 || e as usize >= self.mem.len() {
-            return false;
-        }
-        let mut q = self.mem[e as usize].hh().rh();
-        for &t in ts {
-            if q < 0 || q as usize >= self.mem.len() {
-                return false;
+    /// Does each list `e` (a reference-count node) of `lists` hold its
+    /// tokens? `Err`: the location of one that does not.
+    fn intr_lists_are(&self, lists: &[(i32, i32, &[i32])]) -> Result<(), i32> {
+        const LANES: usize = 16;
+        let len = self.mem.len();
+        let ok = |q: i32| q >= 0 && (q as usize) < len;
+        for group in lists.chunks(LANES) {
+            // (position in the list, next node) per lane
+            let mut at = [(0usize, NULL); LANES];
+            for (k, &(p, e, _)) in group.iter().enumerate() {
+                if !ok(e) {
+                    return Err(p);
+                }
+                at[k] = (0, self.mem[e as usize].hh().rh());
             }
-            let h = self.mem[q as usize].hh();
-            if h.lh() != t {
-                return false;
+            loop {
+                let mut busy = false;
+                for (k, &(p, _, ts)) in group.iter().enumerate() {
+                    let (i, q) = at[k];
+                    if i == ts.len() {
+                        continue;
+                    }
+                    if !ok(q) {
+                        return Err(p);
+                    }
+                    let h = self.mem[q as usize].hh();
+                    if h.lh() != ts[i] {
+                        return Err(p);
+                    }
+                    at[k] = (i + 1, h.rh());
+                    busy = true;
+                }
+                if !busy {
+                    break;
+                }
             }
-            q = h.rh();
+            for (k, &(p, _, _)) in group.iter().enumerate() {
+                if at[k].1 != NULL {
+                    return Err(p);
+                }
+            }
         }
-        q == NULL
+        Ok(())
     }
 
     // -- replay ----------------------------------------------------------
@@ -769,6 +850,8 @@ impl Globals {
             ops: vec![],
             tokens: 0,
             align_seen: false,
+            taint: HashMap::new(),
+            tainted: HashSet::new(),
             verify,
         });
         self.intr_rec_on = true;
@@ -847,11 +930,13 @@ impl Globals {
         let w = self.eqtb[(p - 1) as usize];
         match rec.seen.get(&p) {
             Some(Seen::Dep) => return,
-            Some(Seen::Weak) => {}
+            Some(Seen::Weak | Seen::LetSrc | Seen::Looked) => {}
             Some(Seen::Written(pre)) => {
+                let pre = *pre;
+                self.intr_rec_taint(p);
                 // derived from the run's own change, unless an `\endgroup`
                 // brought back what the entry held before it
-                let pre = crate::generated::types::memory_word::from_bits(*pre);
+                let pre = crate::generated::types::memory_word::from_bits(pre);
                 let same = if is_word(p) {
                     pre.int() == w.int()
                 } else {
@@ -907,7 +992,7 @@ impl Globals {
         let Some(rec) = self.host.intrinsics.rec.as_ref() else {
             return;
         };
-        if rec.seen.contains_key(&p) || is_word(p) {
+        if !matches!(rec.seen.get(&p), None | Some(Seen::Looked)) || is_word(p) {
             return;
         }
         if !region_ok(p) {
@@ -940,6 +1025,107 @@ impl Globals {
         rec.seen.insert(p, Seen::Written(w));
     }
 
+    fn intr_seen(&self, p: i32, f: impl Fn(Option<&Seen>) -> bool) -> bool {
+        self.host
+            .intrinsics
+            .rec
+            .as_ref()
+            .is_some_and(|r| f(r.seen.get(&p)))
+    }
+
+    /// A token a `\let` reads for its source (`intr_let`, the spaces before
+    /// it too): its class only, where its meaning comes from outside the
+    /// run (`Read::Class`); where it is the run's own copy of an outside
+    /// meaning, or an `\endgroup` brought one back, as any read.
+    fn intr_rec_let_src(&mut self, p: i32) {
+        let Some(rec) = self.host.intrinsics.rec.as_ref() else {
+            return;
+        };
+        match rec.seen.get(&p) {
+            Some(Seen::Dep | Seen::LetSrc) => {}
+            Some(Seen::Weak | Seen::Written(_)) => self.intr_rec_read(p),
+            None | Some(Seen::Looked) => {
+                if !region_ok(p) || is_word(p) {
+                    return self.intr_rec_abort("Region");
+                }
+                let w = self.eqtb[(p - 1) as usize];
+                let k = let_class(w.hh_b0(), w.hh_rh());
+                if k < 0 {
+                    return self.intr_rec_abort("Sparse");
+                }
+                let rec = self.host.intrinsics.rec.as_mut().expect("checked");
+                rec.seen.insert(p, Seen::LetSrc);
+                rec.reads.push(Read::Class(p, k));
+            }
+        }
+    }
+
+    /// `eqtb[p]` is about to become (`t`, `e`) as `v`: a `\let` of `c`'s
+    /// list (`Val::Cs(c)`) taints the copy with `c`'s meaning when that came
+    /// from outside the run; any other definition clears the taint.
+    fn intr_rec_copied(&mut self, p: i32, t: i32, e: i32, v: &Val) {
+        let Val::Cs(c) = *v else {
+            if let Some(rec) = self.host.intrinsics.rec.as_mut() {
+                rec.taint.remove(&p);
+            }
+            return;
+        };
+        let Some(rec) = self.host.intrinsics.rec.as_ref() else {
+            return;
+        };
+        let w = self.eqtb[(c - 1) as usize];
+        let outside = match rec.seen.get(&c) {
+            Some(Seen::Dep) => false,
+            Some(Seen::Written(pre)) => {
+                let pre = crate::generated::types::memory_word::from_bits(*pre);
+                pre.hh_b0() == w.hh_b0() && pre.hh_rh() == w.hh_rh()
+            }
+            _ => true,
+        };
+        let taint = if outside {
+            Some(Read::Meaning(
+                c,
+                w.hh_b0(),
+                Equiv::Tokens(self.intr_tokens(self.mem[w.hh_rh() as usize].hh().rh())),
+            ))
+        } else {
+            // the run's own copy of a copy: its taint, while it holds it
+            rec.taint
+                .get(&c)
+                .filter(|(word, _)| *word == (w.hh_b0(), w.hh_rh()))
+                .and_then(|(_, r)| r.clone())
+        };
+        let n = match &taint {
+            Some(Read::Meaning(_, _, Equiv::Tokens(ts))) => ts.len(),
+            _ => 0,
+        };
+        let rec = self.host.intrinsics.rec.as_mut().expect("checked");
+        rec.tokens += n;
+        rec.taint.insert(p, ((t, e), taint));
+    }
+
+    /// The run reads `p`, which it wrote: if `p` still holds a `\let`'s
+    /// copy of an outside meaning, that meaning is a dependency.
+    fn intr_rec_taint(&mut self, p: i32) {
+        let w = self.eqtb[(p - 1) as usize];
+        let Some(rec) = self.host.intrinsics.rec.as_mut() else {
+            return;
+        };
+        let Some(((t, e), Some(read))) = rec.taint.get(&p) else {
+            return;
+        };
+        if (*t, *e) != (w.hh_b0(), w.hh_rh()) {
+            return;
+        }
+        let Read::Meaning(c, ..) = read else {
+            return;
+        };
+        if rec.tainted.insert(*c) {
+            let read = read.clone();
+            rec.reads.push(read);
+        }
+    }
+
     /// `changes/intrinsics.ch`: a definition (kind 1, 2; plus 8 when
     /// global) or group boundary (3, 4) the recorded run makes; 6 (`\wd`
     /// and kin write a box node) and 7 (`\immediate` output) abandon it.
@@ -962,7 +1148,16 @@ impl Globals {
                 {
                     return self.intr_rec_abort("Sparse");
                 }
+                let c = self.cur_cs;
                 let v = if !self.intr_is_list(t, e) {
+                    // a `\let` of a value that is not a list keeps the value:
+                    // its source's meaning is a dependency
+                    if c > 0 && self.intr_seen(c, |s| matches!(s, Some(Seen::LetSrc))) {
+                        self.intr_rec_read(c);
+                        if !self.intr_rec_on {
+                            return;
+                        }
+                    }
                     Val::Plain(e)
                 } else if self.mem[e as usize].hh().lh() == NULL {
                     let ts = self.intr_tokens(self.mem[e as usize].hh().rh());
@@ -977,6 +1172,10 @@ impl Globals {
                     }
                     Val::Cs(c)
                 };
+                self.intr_rec_copied(p, t, e, &v);
+                if !self.intr_rec_on {
+                    return;
+                }
                 Op::Def(p, t, v, global)
             }
             2 => {
@@ -1040,6 +1239,8 @@ impl Globals {
         }
         if self.intr_weak || self.scanner_status == matching {
             self.intr_rec_weak(cs)
+        } else if self.intr_let {
+            self.intr_rec_let_src(cs)
         } else {
             self.intr_rec_read(cs)
         }
@@ -1057,8 +1258,28 @@ impl Globals {
         if p == undefined_control_sequence {
             return self.intr_rec_abort("Absent");
         }
-        self.intr_rec_read(p);
         self.flashtex_intr_name(p);
+        let Some(rec) = self.host.intrinsics.rec.as_ref() else {
+            return;
+        };
+        let first = match rec.seen.get(&p) {
+            // the whole meaning is a dependency already, or this is
+            Some(Seen::Dep | Seen::Looked) => return,
+            // the run's own, unless restored or a copy (`intr_rec_read`)
+            Some(Seen::Written(_)) => return self.intr_rec_read(p),
+            // a weak or a `\let` source's read says nothing of it
+            Some(Seen::Weak | Seen::LetSrc) => false,
+            None => true,
+        };
+        if !region_ok(p) || is_word(p) {
+            return self.intr_rec_abort("Region");
+        }
+        let d = self.eqtb[(p - 1) as usize].hh_b0() != undefined_cs;
+        let rec = self.host.intrinsics.rec.as_mut().expect("checked");
+        if first {
+            rec.seen.insert(p, Seen::Looked);
+        }
+        rec.reads.push(Read::Defined(p, d));
     }
 
     /// The name at `p` is looked up or printed.
@@ -1258,12 +1479,13 @@ impl Globals {
                 .collect();
             let total: usize = big.iter().map(|b| b.0).sum();
             big.sort_unstable_by(|a, b| b.cmp(a));
-            let kinds = rec.reads.iter().fold([0usize; 4], |mut k, r| {
+            let kinds = rec.reads.iter().fold([0usize; 5], |mut k, r| {
                 k[match r {
                     Read::Meaning(..) => 0,
                     Read::Plain(_) => 1,
                     Read::Word(..) => 2,
                     Read::Name(..) => 3,
+                    Read::Class(..) | Read::Defined(..) => 4,
                 }] += 1;
                 k
             });
@@ -1273,7 +1495,7 @@ impl Globals {
                 .map(|&(n, p)| format!("\\{} {n}", self.intr_cs_name(p)))
                 .collect();
             eprintln!(
-                "intrinsics: kept \\{}: {} ops, reads meaning/plain/word/name {kinds:?}, {total} tokens; largest {top:?}",
+                "intrinsics: kept \\{}: {} ops, reads meaning/plain/word/name/class {kinds:?}, {total} tokens; largest {top:?}",
                 self.intr_cs_name(rec.cs),
                 rec.ops.len()
             );
