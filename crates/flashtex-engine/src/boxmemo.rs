@@ -496,6 +496,13 @@ struct Entry {
     /// constant, but a host serves several documents on one thread, which
     /// share the store and, from the same format, the fonts' first version.
     job: Option<Vec<i32>>,
+    /// The colour stacks there are (`colorstackused`, utils.c) when the
+    /// recording made a `\pdfcolorstack` whatsit: `\pdfcolorstack`'s
+    /// check of its stack's number reads them, and a stack is C-part state
+    /// that no other key part holds (a document that made fewer gets an
+    /// error and stack 0 where the replay gave a whatsit of a stack it
+    /// does not have).
+    stacks: Option<i32>,
     /// e-TeX's discarded items the call took (`\pagediscards`,
     /// `\splitdiscards`: `disc_ptr[c]`, by `c`), and whether there were
     /// none when it took them (some: a refusal's key).
@@ -608,6 +615,8 @@ struct Rec {
     line_read: bool,
     /// The call expanded `\jobname` (`Entry::job`).
     job_read: bool,
+    /// The call made a `\pdfcolorstack` whatsit (`Entry::stacks`).
+    stacks_read: bool,
     discs: Vec<(i32, bool)>,
     names: Vec<(i32, Vec<i32>)>,
     names_seen: HashSet<i32>,
@@ -2657,6 +2666,7 @@ impl Globals {
         // the state: an offer that hits builds no key.
         let hash = key_hash(&k1, &ctx, &[], &[]);
         let k4_now = self.bm_k4();
+        let stacks_now = self.colorstackused();
         // (the most recent variant whose whole key holds; whether one held
         // up to K3 or K7 but not them)
         ST.with(|s| {
@@ -2694,6 +2704,7 @@ impl Globals {
                         .iter()
                         .all(|&(c, none)| (self.bm_disc(c) == 0) == none)
                     || !e.job.as_ref().is_none_or(|j| *j == self.bm_job_name())
+                    || !e.stacks.is_none_or(|n| n == stacks_now)
                     || !e.names.iter().all(|(p, t)| self.bm_text_is(*p, t))
                 {
                     continue;
@@ -2873,6 +2884,7 @@ impl Globals {
             gwritten: HashSet::new(),
             line_read: false,
             job_read: false,
+            stacks_read: false,
             discs: vec![],
             names: vec![],
             names_seen: HashSet::new(),
@@ -2992,6 +3004,7 @@ impl Globals {
                     voids: rec.voids,
                     line: rec.line_read.then_some(self.line),
                     job: rec.job_read.then(|| self.bm_job_name()),
+                    stacks: rec.stacks_read.then(|| self.colorstackused()),
                     discs: rec.discs,
                     names: rec.names,
                     fast: vec![],
@@ -3846,7 +3859,10 @@ impl Globals {
             true
         };
         if !ok {
-            self.bm_abort("Command");
+            return self.bm_abort("Command");
+        }
+        if c == k::extension && chr == k::pdf_colorstack_node {
+            self.bm_with_rec(|r| r.stacks_read = true);
         }
     }
 
@@ -4202,6 +4218,7 @@ impl Globals {
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
                 job: rec.job_read.then(|| self.bm_job_name()),
+                stacks: rec.stacks_read.then(|| self.colorstackused()),
                 discs: rec.discs,
                 names: rec.names,
                 fast: compress_groups(&rec.ops),

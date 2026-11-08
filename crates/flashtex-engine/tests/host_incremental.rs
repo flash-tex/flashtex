@@ -2628,6 +2628,17 @@ fn a_replayed_call_enters_its_new_control_sequences_again() {
 /// Every document's pages must equal a scratch compile's (a host with
 /// BOX-MEMO off). Returns the hits of each document's compiles.
 fn boxmemo_documents_in_one_host(tag: &str, docs: &[(&str, String)]) -> Vec<i64> {
+    boxmemo_documents_in_one_host_status(tag, docs, &vec!["ok"; docs.len()])
+}
+
+/// [`boxmemo_documents_in_one_host`], each document's compile ending with
+/// the status `status` gives it ("error": a TeX error, which the scratch
+/// compile must show as well).
+fn boxmemo_documents_in_one_host_status(
+    tag: &str,
+    docs: &[(&str, String)],
+    status: &[&str],
+) -> Vec<i64> {
     let base = common::fresh_dir(&format!("flashtex-host-bmdocs-{tag}"));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
@@ -2655,7 +2666,7 @@ fn boxmemo_documents_in_one_host(tag: &str, docs: &[(&str, String)]) -> Vec<i64>
         let mut view = View::default();
         id += 1;
         let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
-        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        assert_eq!(o.done.str_field("status"), Some(status[k]), "{}", o.done);
         let (p2, o2) = snapshot(&base, &proj, &out, &format!("s{k}"));
         compare_with_scratch(
             &scratch.1,
@@ -2733,6 +2744,42 @@ fn a_replay_in_another_document_keys_the_job_name() {
             ("two.tex", a.clone()),
             ("one.tex", a),
         ],
+    );
+    assert!(hits[2] > 0, "the same document did not replay: {hits:?}");
+}
+
+#[test]
+fn a_replay_in_another_document_keys_the_colour_stacks() {
+    // (lane REVIEW-BOXMEMO, audit of 2026-11-08) `\pdfcolorstack`'s check
+    // of its stack's number reads `colorstackused` (utils.c), C-part state
+    // that no key part held. Document 0 makes stack 1, and the call pushes
+    // and pops it; document 1 makes none, with the same `eqtb` (its `\stk`
+    // is document 0's by content). Its compile reports "Unknown color
+    // stack number 1" and uses stack 0, where a replay of document 0's
+    // entry gave stack 1's whatsits and no error. Document 2 is document 0
+    // again: it hits
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let doc = |stack: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             {stack}\n\
+             \\makeatletter\n\
+             \\def\\pgf@parsefunc{{\\pdfcolorstack1 push{{1 0 0 rg}}\\vrule width 7pt height 7pt\\pdfcolorstack1 pop}}\n\
+             \\makeatother\n\
+             \\begin{{document}}\n\
+             A \\makeatletter\\pgf@parsefunc\\makeatother\\ B.\n\
+             \\end{{document}}\n"
+        )
+    };
+    let a = doc("\\edef\\stk{\\pdfcolorstackinit page direct{0 g}}");
+    let b = doc("\\def\\stk{1}");
+    let hits = boxmemo_documents_in_one_host_status(
+        "stacks",
+        &[("doc.tex", a.clone()), ("doc.tex", b), ("doc.tex", a)],
+        &["ok", "error", "ok"],
     );
     assert!(hits[2] > 0, "the same document did not replay: {hits:?}");
 }
