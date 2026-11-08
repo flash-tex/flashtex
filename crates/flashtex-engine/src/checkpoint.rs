@@ -1079,6 +1079,20 @@ impl Globals {
     /// Take a checkpoint now. The engine must be between commands (before
     /// or after a run, or inside `flashtex_checkpoint_hook`).
     pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {
+        self.checkpoint_as(false)
+    }
+
+    /// [`checkpoint`](Self::checkpoint) for one its taker drops again soon
+    /// with [`drop_checkpoint`](Self::drop_checkpoint), within a stretch of
+    /// the run (the intrinsics verifier's, one per check): the word space's
+    /// open log is not sealed (`Arena::checkpoint_nested`), so the check
+    /// costs the chunks it writes, not every chunk written since the last
+    /// page's checkpoint (#2141).
+    pub fn checkpoint_nested(&mut self) -> Result<CheckpointId, String> {
+        self.checkpoint_as(true)
+    }
+
+    fn checkpoint_as(&mut self, nested: bool) -> Result<CheckpointId, String> {
         let cpu0 = crate::incr::thread_cpu_s();
         // (READ-TRACK: the watch, armed in the state taken)
         self.dorm_arm();
@@ -1097,7 +1111,11 @@ impl Globals {
         } else {
             self.arena.open_log_by_region()
         };
-        let id = self.arena.checkpoint();
+        let id = if nested {
+            self.arena.checkpoint_nested()
+        } else {
+            self.arena.checkpoint()
+        };
         let l = self.layer();
         l.stats.seal_s += t.elapsed().as_secs_f64();
         let cpu1 = crate::incr::thread_cpu_s();

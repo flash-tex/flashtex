@@ -588,7 +588,7 @@ fn pop_used_up(g: &mut Globals) {
 
 /// The guard passed in a verifying run: checkpoint, then let the macro expand.
 pub(crate) fn begin(g: &mut Globals, slot: usize) {
-    let ck = match g.checkpoint() {
+    let ck = match g.checkpoint_nested() {
         Ok(id) => id,
         Err(e) => {
             STATS.with(|s| {

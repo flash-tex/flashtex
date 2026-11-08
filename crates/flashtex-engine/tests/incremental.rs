@@ -325,6 +325,86 @@ fn a_failed_run_then_a_revert() {
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
 
+/// #2141: the intrinsics verifier in the host, where the page checkpoints
+/// come before its checks, whose checkpoints are nested ones
+/// (`Arena::checkpoint_nested`). Every check finds no difference, the
+/// outputs equal scratch runs, and a replay broken on purpose
+/// (`FLASHTEX_INTRINSICS_FAULT`) is found in the host as on the command line.
+#[test]
+fn intrinsics_verify_in_the_host() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let hook = "\\def\\IntrHook{\\begingroup\\let\\x\\relax\\endgroup\\global\\count9=5 \
+                \\gdef\\last{\\relax}\\let\\z\\relax}";
+    let doc = format!(
+        "\\documentclass{{article}}\n{hook}\n\\begin{{document}}\n\\input{{body}}\n\\end{{document}}\n"
+    );
+    let body = |w: &str| -> String {
+        (0..40)
+            .map(|i| format!("\\IntrHook {}", para(i, if i == 30 { w } else { "alpha" })))
+            .collect()
+    };
+    let mut seen = vec![];
+    for fault in ["", "drop-last"] {
+        let dir = e.dir.join(format!("intr-verify{fault}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let err_path = e.dir.join(format!("intr-verify{fault}.err"));
+        let err = std::fs::File::create(&err_path).unwrap();
+        // every parameterless macro is a candidate: a format run's
+        // registered names are those the format was made with
+        let env = [
+            ("FLASHTEX_INTRINSICS", "verify-all"),
+            ("FLASHTEX_INTRINSICS_DEBUG", "1"),
+            ("FLASHTEX_INTRINSICS_FAULT", fault),
+        ];
+        let mut h = Host::start_full(&e, &dir, &[], &env, Stdio::from(err));
+        let files = |w: &str| [("doc.tex", doc.clone()), ("body.tex", body(w))];
+        for (k, w) in ["alpha", "alpha", "alphb", "alpha"].iter().enumerate() {
+            let fs = files(w);
+            let fs: Vec<(&str, &str)> = fs.iter().map(|(n, t)| (*n, t.as_str())).collect();
+            if fault.is_empty() {
+                compile_and_check(&e, &mut h, &dir, &fs, &format!("compile {k}"));
+            } else {
+                for (name, text) in &fs {
+                    std::fs::write(dir.join(name), text).unwrap();
+                }
+                h.cmd("compile");
+            }
+        }
+        drop(h);
+        let err = std::fs::read_to_string(&err_path).unwrap();
+        // one `verify: N differences ...` line per check (and other
+        // `verify: ` lines of FLASHTEX_INTRINSICS_DEBUG's)
+        let counts: Vec<u64> = err
+            .lines()
+            .filter_map(|l| {
+                l.strip_prefix("verify: ")?
+                    .split_once(" differences ")?
+                    .0
+                    .parse()
+                    .ok()
+            })
+            .collect();
+        let checks = counts.len();
+        let differing = counts.iter().filter(|&&n| n > 0).count();
+        assert_eq!(
+            differing,
+            err.lines()
+                .filter(|l| l.starts_with("intrinsics verify: "))
+                .count(),
+            "{fault}: each difference reported"
+        );
+        seen.push((checks, differing));
+    }
+    let (checks, differing) = seen[0];
+    assert!(checks >= 39, "{seen:?}: the host's checks");
+    assert_eq!(differing, 0, "{seen:?}");
+    assert!(seen[1].1 > 0, "{seen:?}: the broken replay was not found");
+}
+
 fn para(i: usize, word: &str) -> String {
     format!(
         "Paragraph {i} with the word {word}, and enough text to fill a few lines \
