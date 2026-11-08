@@ -153,6 +153,8 @@ use crate::os::broken_down;
 /// `makepdftime`: `D:YYYYmmddHHMMSS` plus `Z` or `+HH'MM'`.
 pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {
     let lt = broken_down(t, utc);
+    // `strftime(time_str, 30, "D:%Y%m%d%H%M%S", &lt)`, `%Y` as macOS's
+    // (at least four digits, DESIGN §13; glibc's has no padding)
     let mut s = format!(
         "D:{:04}{:02}{:02}{:02}{:02}{:02}",
         lt.tm_year + 1900,
@@ -160,8 +162,22 @@ pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {
         lt.tm_mday,
         lt.tm_hour,
         lt.tm_min,
-        lt.tm_sec.min(59)
+        lt.tm_sec
     );
+    let size = s.len();
+    // "correction for seconds": a `6` at index 14 becomes `59` and the end,
+    // and the time zone goes at index `size`. With a four-digit year that
+    // is a leap second, which a `time_t` never gives; from the year 10000
+    // index 14 is a digit of the minutes, so a minute ending in 6 cuts the
+    // string there and the zone lands after its end, unseen (pdfTeX 1.40.29:
+    // `SOURCE_DATE_EPOCH=253402301160` is `D:10000010100059`).
+    if s.as_bytes().get(14) == Some(&b'6') {
+        s.truncate(14);
+        s.push_str("59");
+        if size != s.len() {
+            return s.into_bytes();
+        }
+    }
     let gmt = broken_down(t, true);
     let mut off = 60 * (lt.tm_hour - gmt.tm_hour) + lt.tm_min - gmt.tm_min;
     if lt.tm_year != gmt.tm_year {
