@@ -105,6 +105,14 @@ under `Contents/Resources/texmf/…`:
 
 - Editor: `NSTextView` (monospaced, undo, no smart substitutions). Footer shows
   UTF-8 byte and UTF-16 unit counts of the active document.
+- Windows (`ProjectWindows.swift`): every window is one project with its own
+  `ShellModel`, editor, preview, Problems and `flashtex-host` process. *File ›
+  Open…* opens a new window unless the current one holds only the untouched
+  untitled document; a file already open (a window's entry, or a member it has
+  open) brings that window forward instead, so no document is open twice. The
+  menus act on the key window (`@FocusedValue`), or the last key one while
+  Settings or Nearby Companion is key; companion captures go to the frontmost
+  window and stay with it. A new project (⌘⌥N) opens the same way.
 - Projects from scratch (`ProjectScaffold.swift`, `ProjectScaffoldViews.swift`):
   *File › New Project…* (⌘⌥N) writes a template (`ProjectTemplate`: Blank article,
   Article with sections via `\input`, Report with chapters via `\include`,
@@ -740,8 +748,9 @@ Navigation (`Navigation.swift`, `Navigate` menu):
 |---|---|
 | ⌘, | Settings window (editor preferences: font, wrapping, tab width, indent, appearance, auto-close brackets & math, completion list; Tab walks the controls top to bottom) |
 | FlashTeX > Check for Updates… | Check for updates: asks GitHub Releases (`flash-tex/flashtex`, `/releases/latest`) for the newest version and shows installed vs available with the release notes; Download opens the release page in the browser, Skip This Version silences the background check for that tag. Nothing is downloaded or installed by the app (#694 slice 1). Settings > Updates > *Check for updates automatically* (off by default) checks once a day after launch and only speaks up when a newer release exists |
-| ⌘O | Open LaTeX file… (becomes the `main.tex` entry document; the engine compiles it) |
+| ⌘O | Open LaTeX file… or project folder, in a window of its own (this window if it holds only the untouched untitled document); a document already open in a window, as its entry or an open member, brings that window forward instead of opening twice |
 | ⌘⌥N | New Project… sheet (folder, name, template: Blank article / Article with sections / Report with chapters / Homework sheet; writes `<folder>/<name>/main.tex` plus its `\input`/`\include` members, opens `main.tex` as the entry document with the include tree in the sidebar; asks before replacing existing template files) |
+| ⌃⌘N | New Window: an untitled document in a new window; each window is its own project with its own engine host |
 | ⌘N | New File… sheet (also the sidebar's + button and the project row's context menu): a rooted `.tex` name, subfolders allowed, never above the project root; "Insert `\input` at the caret" (on by default while the entry document is active) is one undoable edit; the file opens in a tab |
 | File > Move To… | Move file: the active document into another folder of the project (also "Move to…" in a project row's context menu; dragging a row onto another row moves it into that row's folder, onto the tree's empty space to the project root). Every `\input`/`\include`/`\includegraphics`/`\bibliography`/`\addbibresource`/`\lstinputlisting` that resolved to the file is rewritten to the new rooted path — one undoable edit per open document (⌘Z there), closed documents of the include tree on disk; refused for the entry document, with unsaved edits, or onto an existing file |
 | File > Project Fonts… | Project fonts sheet: the manifest's `[fonts]` table as four rows (Text, Math, Sans, Mono), each a searchable picker over the installed families the engine's index finds (Math lists the families with an OpenType MATH table) with a sample line in that family and "Class default" first; Apply writes the table into `flashtex.toml` (created from the template when absent; "Class default" everywhere without a manifest writes nothing) and the preview recompiles. The document's own `\setmainfont`/`\setmathfont`/`\setsansfont`/`\setmonofont` still win |

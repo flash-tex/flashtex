@@ -678,7 +678,7 @@ public struct SyntaxHighlighter {
         }
         // Lines strictly inside the old region (first+1 ... lastOld) are replaced by `fresh`
         // (the line starting at scanEnd, if any, belongs to the old lastOld+1 unless it was lastOld's terminator).
-        var tail = lastOld + 1
+        let tail = lastOld + 1
         if fresh.last == scanEnd, scanEnd <= newLength, tail < lineStarts.count, lineStarts[tail] + delta == scanEnd {
             // The line after lastOld starts exactly at scanEnd: it is an old line, not a fresh one.
             fresh.removeLast()

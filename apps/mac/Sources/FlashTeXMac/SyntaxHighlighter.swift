@@ -112,6 +112,10 @@ final class SyntaxPainter {
     /// Hybrid conceal follows the same edits, windows and repaints
     /// (HybridConcealDisplay.swift); nil while it is not attached.
     weak var conceal: ConcealController?
+    /// Told of every character edit (the pre-edit range and its replacement
+    /// length), whatever its origin, from inside `processEditing`: only
+    /// bookkeeping may happen there (the environment highlight's pair cache).
+    var onCharacterEdit: (@MainActor (_ range: NSRange, _ replacementLength: Int) -> Void)?
     private weak var textView: NSTextView?
     private var observer: NSObjectProtocol?
     private var flushScheduled = false
@@ -130,7 +134,9 @@ final class SyntaxPainter {
                 guard let self, let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
                 let edited = storage.editedRange
                 let delta = storage.changeInLength
-                self.storageEdited(range: NSRange(location: edited.location, length: edited.length - delta), replacementLength: edited.length)
+                let range = NSRange(location: edited.location, length: edited.length - delta)
+                self.onCharacterEdit?(range, edited.length)
+                self.storageEdited(range: range, replacementLength: edited.length)
             }
         }
         reset()
