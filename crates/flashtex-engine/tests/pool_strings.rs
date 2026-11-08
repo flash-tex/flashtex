@@ -76,7 +76,10 @@ fn the_pool_after_dump_and_its_capacities_are_tex_live_s() {
         let y = std::fs::read_to_string(b.join(log)).unwrap();
         let (x, y) = (pool_lines(&x), pool_lines(&y));
         assert_eq!(y.len(), want, "{log}: TeX Live's pool lines: {y:?}");
-        assert_eq!(x, y, "{log}: the string pool differs from TeX Live's pdftex");
+        assert_eq!(
+            x, y,
+            "{log}: the string pool differs from TeX Live's pdftex"
+        );
     }
     let _ = std::fs::remove_dir_all(&base);
 }
