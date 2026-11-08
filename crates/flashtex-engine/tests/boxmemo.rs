@@ -75,7 +75,15 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_with(tag, src, &[])
+}
+
+/// [`check`] with `files` (name, bytes) next to `t.tex`.
+fn check_with(tag: &str, src: &str, files: &[(&str, Vec<u8>)]) -> String {
     let d = scratch(tag);
+    for (n, b) in files {
+        std::fs::write(d.join(n), b).unwrap();
+    }
     std::fs::write(d.join("t.tex"), src).unwrap();
     let off = run(&d, "off", "measure");
     let on = run(&d, "on", "measure");
@@ -215,6 +223,46 @@ fn draw_calls_replay_with_their_hole() {
     assert!(stat(&s, "hits") >= 3, "{s}");
 }
 
+#[test]
+fn calls_ending_in_expansions_replay() {
+    // (lane EDITED-PAGE) a body whose last tokens only expand -- LaTeX's
+    // `\end`: `\if@endpe ... \fi` and its hooks after the last
+    // `\endgroup` -- is used up inside `big_switch`'s `get_x_token`, which
+    // then reads the token after the call: the recording ends where the
+    // last level is popped (`flashtex_bm_popped`), a draw call (a frame
+    // around a box it moves, followed by `\hss`) and a measure call alike,
+    // and replays
+    let s = check(
+        "tail",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\let\\ifendpe\\iffalse\n\
+         \\def\\measure#1{\\begingroup\\vrule width#1\\vbox{\\hrule\\kern 2pt\\box9\\kern2pt\\hrule}\\endgroup\\ifendpe\\relax\\fi\\ifx aa\\fi}\n\
+         \\def\\one#1{\\setbox9\\hbox{\\vrule width #1 height 2pt}\\setbox1\\hbox{\\hss\\measure{1pt}\\hss}\\showbox1 }\n\
+         \\one{3pt}\\one{3pt}\\one{3pt}\\one{4pt}\\one{3pt}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\ifx aa\\fi}\n\
+         \\measure{2pt}\\measure{2pt}\\measure{2pt}\\message{[\\the\\dimen1]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 4, "{s}");
+}
+
+#[test]
+fn a_tail_that_reads_past_the_call_never_replays() {
+    // the same bodies, but their last expansion takes the token after the
+    // call as a parameter (`\gobble`) or a primitive reads past it
+    // (`\number` looking for more digits): the read abandons the recording
+    // (`Level`), as before, and nothing replays
+    let s = check(
+        "tail-reads",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\gobble#1{}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\gobble}\n\
+         \\measure{2pt}x\\measure{2pt}x\\measure{2pt}x\\message{[\\the\\dimen1]}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\count1=\\number 1}\n\
+         \\measure{2pt}2\\measure{2pt}2\\measure{2pt}2\\message{[\\the\\dimen1|\\the\\count1]}\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";
@@ -319,9 +367,38 @@ fn font_parameters_are_part_of_the_key() {
     assert!(stat(&s, "recordings") >= 3, "{s}");
 }
 
+#[test]
+fn call_level_runs_aftergroup_and_fis_before_a_trailing_ignorespaces() {
+    // BOX-MEMO.md §18: a call that defines one macro again and again at the
+    // level it is called at (the run is replayed as one assignment), `\let`s
+    // from it in between (which ends the run), saves an `\aftergroup` token
+    // at that level, and ends in `\ignorespaces` before its own `\fi`. With
+    // `\tracingrestores` on, the caller's group end shows every save-stack
+    // entry the call left, in order, and the saved token runs after it.
+    let call = "{\\measure{q} \\message{[in \\meaning\\tmp|\\meaning\\y|\\the\\count1]}}\n";
+    let s = check(
+        "calllevel",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+             \\tracingrestores=1 \\tracingonline=0\n\
+             \\def\\tmp{old}\\def\\other{old}\\let\\y\\relax\n\
+             \\def\\measure#1{\\def\\tmp{a}\\def\\tmp{#1}\\def\\other{b}\\def\\tmp{#1#1}\\let\\y\\tmp\
+             \\def\\tmp{c}\\def\\tmp{#1c}\\count1=5 \\count1=6 \\aftergroup\\done\\ifnum1=1 \\ignorespaces\\fi}\n\
+             \\def\\done{\\message{[after \\meaning\\tmp|\\meaning\\y|\\meaning\\other|\\the\\count1]}}\n",
+            call,
+            call,
+            call,
+            call,
+            "\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
 /// The calls below define `\reserved@a` before they read it, as LaTeX's
 /// `\@ifnextchar` and expl3's `\tl_set:Nn` do; between the calls the
-/// document gives it other meanings (BOX-MEMO.md §15).
+/// document gives it other meanings (BOX-MEMO.md §17).
 const RESERVED: &str =
     "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\@=11 \\scrollmode\n\
     \\def\\show{\\message{[\\the\\dimen1|\\the\\count1|\\meaning\\reserved@a|\\meaning\\tmp]}}\n";
@@ -432,7 +509,7 @@ fn an_argument_that_turns_outer_is_a_miss() {
 /// The calls below assign a register inside a group of their own before
 /// they read it, as pgf's `\pgfmathsetlength\pgf@x{..}` does (`\begingroup
 /// \pgf@x=..\expandafter\endgroup\expandafter\pgf@x\the\pgf@x`); between
-/// the calls the document leaves other values there (BOX-MEMO.md §15.8).
+/// the calls the document leaves other values there (BOX-MEMO.md §17, registers).
 const REGS: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\def\\show{\\message{[\\the\\dimen1|\\the\\dimen3|\\the\\dimen300|\\the\\count3]}}\n";
 
@@ -474,6 +551,176 @@ fn a_register_a_group_end_brings_back_is_keyed() {
              \\dimen3=3pt \\measure{3pt}\\show\\dimen3=4pt \\measure{3pt}\\show\\measure{3pt}\\show\\end\n",
         ]
         .concat(),
+
+#[test]
+fn a_token_that_turns_into_a_parameter_is_a_miss() {
+    // `\x` in a body that is not expanded is read only as a token: the key
+    // holds that it is not a `#` (nor `\outer`, `&`, `\if`, `\fi`). Once it
+    // is one, `\def` takes it as a parameter (an error here), so that call
+    // must not be replayed. changes/throughput.ch [7] read the body's tokens
+    // in place, unseen by the recording: with that, this log differs.
+    let s = check(
+        "token",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\tmp{\\x #1}\\begingroup\\setbox0\\hbox{\\vrule width 1pt}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\let\\x\\relax\\measure{1}\\show\\measure{1}\\show\\let\\x=#\\measure{1}\\show\
+             \\let\\x\\relax\\measure{1}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert!(stat(&s, "k3_tokens") >= 1, "{s}");
+}
+
+#[test]
+fn a_meaning_defined_twice_at_the_call_level_is_not_keyed() {
+    // `\@ifnextchar`'s shape, twice in one call: the first `\def` frees
+    // what `\reserved@a` held (the free list then begins with its nodes),
+    // and the second's token list is made of them, at the old address. A
+    // read after that finds the call's own meaning, not the old one come
+    // back: no `\endgroup` of the call could bring it back
+    let s = check(
+        "write-twice",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\reserved@a{#1}\\def\\reserved@a{#1}\
+             \\begingroup\\setbox0\\hbox{\\vrule width\\reserved@a}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\reserved@a{x}\\measure{1pt}\\show\\def\\reserved@a{yy}\\measure{1pt}\\show\
+             \\def\\reserved@a{zzz}\\measure{1pt}\\show\\def\\reserved@a{2pt}\\measure{1pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn boxes_set_at_the_calls_level_replay() {
+    // (lane FANCYHDR) fancyhdr's head and foot run `\normalsize` at the
+    // call's own level, whose `\size@update` sets `\strutbox` there: a box
+    // that outlives the call. Taken by value at the end of the call (after
+    // its own changes to it: `\wd`, an inner `\setbox` undone, a second
+    // `\setbox`), it is made again by the replay, and what reads it after
+    // the call -- in the same box and after it, `\showbox` -- sees the
+    // normal path's box
+    let s = check(
+        "outer-box",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\setbox8\\hbox{\\vrule width 9pt}\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\vrule height 7pt depth 3pt width 0pt}\\wd8=#1\
+         \\begingroup\\setbox8\\hbox{\\kern1pt}\\endgroup\\vrule width\\wd8\\copy8\
+         \\setbox7\\hbox{\\kern 2pt\\vrule}\\setbox7\\hbox{\\kern 3pt\\vrule\\penalty5}\\unhcopy7 }\n\
+         \\def\\one#1{\\setbox1\\hbox{\\measure{#1}\\vrule height\\ht8 depth\\dp8\\showbox8 \\showbox7 }\\showbox1 \\showbox8 \\showbox7 }\n\
+         \\one{1pt}\\one{1pt}\\one{1pt}\\one{2pt}\\one{2pt}\\one{1pt}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn boxes_at_the_calls_level_not_its_own_never_replay() {
+    // a box left at the call's level that is not the call's alone: one
+    // moved out of a register it did not make (`\\box9`, a hole), one whose
+    // glue is a register's (`\\hskip\\skip3` shares the specification),
+    // and one the call moved out again (`\\box8` voids the register behind
+    // `eq_define`'s back). Each is abandoned, and nothing replays
+    let s = check(
+        "outer-box-shared",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\skip3=4pt plus 1pt\n\
+         \\def\\measure#1{\\setbox8\\box9 \\kern#1\\relax}\n\
+         \\def\\one{\\setbox9\\hbox{\\vrule width 2pt}\\setbox1\\hbox{\\measure{1pt}\\showbox8 }\\showbox1 }\n\
+         \\one\\one\\one\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\hskip\\skip3 \\kern#1}}\n\
+         \\def\\one{\\setbox1\\hbox{\\measure{1pt}\\showbox8 }\\showbox1 }\n\
+         \\one\\one\\one\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\kern#1}\\box8 }\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn a_box_made_in_a_group_is_not_the_calls_after_it() {
+    // (lane FANCYHDR, a hole found on the way) a box register the call sets
+    // inside a group gets back its old box when the group ends; read after
+    // that (`\\wd0`), it is the box of before the call, an input of the
+    // call, which must be keyed as one: the later keys' box 0 is wider,
+    // and the call must not replay the first width. Nested groups and
+    // e-TeX's sparse registers (above 255) alike
+    let s = check(
+        "group-box",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup{\\setbox0\\hbox{\\kern1pt}}\\global\\dimen1=\\wd0\
+         \\setbox300\\hbox{\\kern2pt}{\\setbox300\\hbox{\\kern3pt}{\\setbox300\\hbox{}}}\\global\\dimen2=\\wd300\
+         {\\setbox301\\hbox{\\kern2pt}}\\global\\dimen3=\\wd301 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1|\\the\\dimen2|\\the\\dimen3]}}\n\
+         \\setbox0\\hbox{\\vrule width 1pt}\\setbox301\\hbox{\\vrule width 7pt}\\measure{a}\\show\\measure{a}\\show\\measure{a}\\show\n\
+         \\setbox0\\hbox{\\vrule width 5pt}\\measure{a}\\show\\measure{a}\\show\n\
+         \\setbox301\\hbox{\\vrule width 8pt}\\measure{a}\\show\\measure{a}\\show\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+/// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
+fn cmr10() -> Option<Vec<u8>> {
+    let bin = flashtex_engine::resolver::find_texlive_bin()?;
+    let out = Command::new(bin.join("kpsewhich"))
+        .arg("cmr10.tfm")
+        .output()
+        .ok()?;
+    std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+}
+
+#[test]
+fn protrusion_around_a_replayed_call_is_the_normal_paths() {
+    // (lane FANCYHDR) pdfTeX's protrusion keeps the character `char_pw`
+    // last looked at (`last_leftmost_char`, `last_rightmost_char`). A call
+    // that breaks a paragraph with protrusion on (fancyhdr's head: its
+    // `\\parbox`es under microtype) leaves them set; a replay does not.
+    // Every read is right after a `char_pw` on the same path (`total_pw`
+    // then try_break's margin-kern variations; post_line_break's margin
+    // kerns), so they are the verifier's scratch. The paragraphs broken
+    // before and after the call, with protrusion and expansion, must be
+    // the normal path's, and the whole state otherwise agree
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "protrusion",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=1000 \\tracingonline=0 \\pdfoutput=1\n\
+         \\font\\f=cmr10 \\f \\rpcode\\f`.=700 \\lpcode\\f`A=600 \\rpcode\\f`d=200\n\
+         \\efcode\\f`A=1000 \\efcode\\f`d=1000 \\pdffontexpand\\f 30 30 10 autoexpand\n\
+         \\pdfprotrudechars=2 \\pdfadjustspacing=2 \\parindent=0pt \\tolerance=10000 \\hsize=80pt\n\
+         \\hbadness=10000 \\vbadness=10000 \\hfuzz=16383pt \\vfuzz=16383pt\n\
+         \\def\\body#1{\\hsize=45pt A word and A word. #1 And A word.\\par}\n\
+         \\setbox9\\vbox{\\body{x}\\body{yy}}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\body{#1}}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\one#1{\\setbox1\\vbox{A b dd. A c dd.\\par\\measure{#1}A d and A word dd. A b.\\par}\\showbox1 \\message{[\\the\\dimen1]}}\n\
+         \\one{x}\\one{x}\\one{x}\\one{yy}\\one{x}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn calls_in_math_groups_compare_their_save_stack() {
+    // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
+    // display, and of a display's `\\eqno` (cleveref's prefix under
+    // `\\label` in `equation`). The full verifier walks the save stack
+    // group by group as `show_save_groups` does; it took the display's
+    // nest level for inline math under a math group, read the `$$` as an
+    // `\\eqno` with a saved word, and misread every entry below
+    let s = check(
+        "math-group",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
+         \\hsize=100pt \\tracingonline=0\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
+         \\one\\one\\one\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
