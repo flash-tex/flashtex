@@ -1403,6 +1403,9 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
         doc.replace("See~", "Look at~"),
         doc.replacen("Words and more", "Wards and more", 1),
         doc.clone(),
+        // a restart from a page whose PDF is shorter than the one the file
+        // holds (written over it, then cut: `Output::resume`)
+        doc.replace("See~\\ref{p2}.", "See."),
     ];
     type Outs = Vec<(String, Vec<u8>, String, String, Vec<Vec<u8>>)>;
     let run = |envs: &[(&str, &str)]| -> Outs {
@@ -1455,6 +1458,8 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
     let starts: Vec<&str> = got.iter().map(|o| o.0.as_str()).collect();
     assert!(starts[1].starts_with("page"), "{starts:?}");
     assert!(starts[2].starts_with("s0"), "{starts:?}");
+    assert!(starts[4].starts_with("page"), "{starts:?}");
+    assert!(got[4].1.len() < got[3].1.len(), "the last PDF is not shorter");
     for (i, (a, b)) in got.iter().zip(&own).enumerate() {
         assert!(a.1 == b.1, "compile {}: the PDFs differ", i + 1);
         assert_eq!(a.2, b.2, "compile {}: the logs differ", i + 1);
