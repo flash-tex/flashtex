@@ -177,6 +177,9 @@ struct Job<'f> {
     /// Which of those pages the client holds INCOMPLETE.
     incomplete: Vec<bool>,
     compiled: bool,
+    /// The compile whose pages the client shows, and its document: what
+    /// RESOLVE and LOCATE answer from (spec §11.6).
+    shown: Option<(i64, PagedDocument)>,
 }
 
 /// A parsed `COMPILE`.
@@ -501,6 +504,12 @@ impl Host {
                         c.flush()?;
                     }
                 }
+                // On-demand source mapping (spec §11.6), from the pages the
+                // client shows; between compiles, never during one.
+                Msg::Frame(k @ (kind::RESOLVE | kind::LOCATE), body) => {
+                    self.answer_mapping(c, job.as_ref(), k, &body)?;
+                    c.flush()?;
+                }
                 // CANCEL: nothing is running between messages; C_HELLO again
                 // and unknown kinds are ignored (spec §7).
                 Msg::Frame(..) => {}
@@ -539,6 +548,7 @@ impl Host {
                         hashes: vec![],
                         incomplete: vec![],
                         compiled: false,
+                        shown: None,
                     })
                 }
                 Err(e) => return c.json(kind::ERROR, &err_json(Some(id), "request", &e)),
@@ -645,6 +655,74 @@ impl Host {
             minor,
             accept,
         )
+    }
+
+    /// Answer a RESOLVE or LOCATE (spec §11.6) from the document whose
+    /// pages the client shows: `stale` when the client names another
+    /// compile, a request error when the JSON is not one.
+    fn answer_mapping(
+        &self,
+        c: &mut Conn,
+        job: Option<&Job>,
+        k: u8,
+        body: &[u8],
+    ) -> io::Result<()> {
+        let j = match std::str::from_utf8(body)
+            .ok()
+            .and_then(|s| Json::parse(s).ok())
+        {
+            Some(j) => j,
+            None => {
+                let m = "RESOLVE/LOCATE: not a JSON object";
+                return c.json(kind::ERROR, &err_json(None, "request", m));
+            }
+        };
+        let int = |key: &str| match j.get(key) {
+            Some(Json::Int(v)) => Some(*v),
+            _ => None,
+        };
+        let Some(qid) = int("id") else {
+            return c.json(
+                kind::ERROR,
+                &err_json(None, "request", "RESOLVE/LOCATE without an id"),
+            );
+        };
+        let reply = if k == kind::RESOLVE {
+            kind::RESOLVED
+        } else {
+            kind::LOCATED
+        };
+        let mut out = vec![("id".to_string(), Json::Int(qid))];
+        let shown = job.and_then(|j| j.shown.as_ref().map(|s| (j, s)));
+        match shown {
+            Some((jb, (cid, doc))) if int("compile") == Some(*cid) => {
+                if k == kind::RESOLVE {
+                    let (Some(page), Some(x), Some(y)) = (int("page"), int("x"), int("y")) else {
+                        let m = "RESOLVE needs compile, page, x and y";
+                        return c.json(kind::ERROR, &err_json(Some(qid), "request", m));
+                    };
+                    let page = usize::try_from(page).unwrap_or(usize::MAX);
+                    out.extend(crate::resolve::resolve(&jb.world, doc, page, x, y));
+                } else {
+                    let (Some(file), Some(byte)) = (j.str_field("file"), int("byte")) else {
+                        let m = "LOCATE needs compile, file and byte";
+                        return c.json(kind::ERROR, &err_json(Some(qid), "request", m));
+                    };
+                    let byte = usize::try_from(byte).unwrap_or(usize::MAX);
+                    let pos = crate::resolve::locate(&jb.world, doc, file, byte);
+                    out.push((
+                        "positions".into(),
+                        Json::Arr(
+                            pos.iter()
+                                .map(|p| Json::Arr(p.iter().map(|v| Json::Int(*v)).collect()))
+                                .collect(),
+                        ),
+                    ));
+                }
+            }
+            _ => out.push(("stale".into(), Json::Bool(true))),
+        }
+        c.json(reply, &Json::Obj(out))
     }
 
     /// The idle re-check of the seeded loop (DESIGN.md §15.3): the standard
@@ -876,6 +954,7 @@ impl Host {
                 j.hashes = hashes;
                 j.incomplete = incomplete;
                 j.compiled = true;
+                j.shown = (!failed).then(|| (id, doc.clone()));
                 // Image ids no held page uses are rebound later (spec §5).
                 j.tables.release_images(count);
                 if failed {
@@ -1072,6 +1151,7 @@ fn hello(minor: u32, fonts: usize, packages: &Json) -> Json {
             "color-spaces",
             "line-state",
             "image-data",
+            flashtex_display_list::RESOLVE_CAPABILITY,
             convert::PROGRAM_REFS,
         ]);
     }
