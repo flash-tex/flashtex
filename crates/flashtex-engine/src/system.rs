@@ -2353,13 +2353,23 @@ pub fn recorder_record_input(name: &str) {
 /// the font map path (fontmap.c's `read_all_maps`, from tex-file.c's
 /// `target_fontmaps`), once per process.
 fn recorder_fontmaps() {
-    static READ: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if READ.swap(true, Ordering::SeqCst) || !run().recorder {
+    static LISTED: AtomicBool = AtomicBool::new(false);
+    if !fontmaps_due(&LISTED, run().recorder) {
         return;
     }
     for p in with_resolver(|r| r.find_all("texfonts.map", Format::Map)) {
         recorder_line("INPUT", &p.to_string_lossy());
     }
+}
+
+/// Whether the `texfonts.map` lines are due now. They are latched only once
+/// a `-recorder` run lists them: in a process whose sessions differ in
+/// `-recorder` (the resident host's warm-up compile has none), a TFM that a
+/// session without it loads first must not keep them out of a later
+/// session's `.fls`; pdfTeX, one run per process, lists them before the
+/// first TFM (`INPUT .../texfonts.map`, then `INPUT .../cmr10.tfm`).
+fn fontmaps_due(listed: &AtomicBool, recorder: bool) -> bool {
+    recorder && !listed.swap(true, Ordering::SeqCst)
 }
 
 /// One line of the `.fls`, which the first one starts (lib/openclose.c's
@@ -6106,5 +6116,22 @@ mod known_content_tests {
         clear_known_content();
         assert!(known_content(&path).is_none());
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod recorder_tests {
+    use super::*;
+
+    /// A TFM loaded without `-recorder` does not use up the `texfonts.map`
+    /// lines; the first `-recorder` run lists them once (#2083's review).
+    #[test]
+    fn fontmaps_wait_for_a_recorder_run() {
+        let listed = AtomicBool::new(false);
+        assert!(!fontmaps_due(&listed, false));
+        assert!(!fontmaps_due(&listed, false));
+        assert!(fontmaps_due(&listed, true));
+        assert!(!fontmaps_due(&listed, true));
+        assert!(!fontmaps_due(&listed, false));
     }
 }
