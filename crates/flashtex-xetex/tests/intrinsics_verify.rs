@@ -375,3 +375,48 @@ fn tracing_writes_are_not_replayable() {
     assert_eq!(count(&s, "not_replayable.Tracing"), 3, "{s}");
     assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
 }
+
+/// A check compares the replay of the previous call's recording with the
+/// real path. When the real path itself is not replayable (here it writes
+/// to a file, which is not compared, after a call that did not), the two
+/// states agree although a replay would be wrong: the check is a
+/// difference (`semantic.differing.not_replayable`), not a pass (#2203).
+/// (The body ends in `\relax`, a command, so that the recording ends at
+/// the body, before the next token is read.)
+#[test]
+fn a_check_whose_real_path_is_not_replayable_is_no_pass() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\newwrite\\IntrW\\immediate\\openout\\IntrW=\\jobname.w\n\
+         \\newcount\\IntrC\\def\\pdfstringdefPreHook{\\ifodd\\IntrC\\immediate\\write\\IntrW{x}\\fi\\relax}\n\
+         \\begin{document}\\relax\n\\IntrC=1 \\pdfstringdefPreHook\n\\IntrC=0 \\pdfstringdefPreHook\n\
+         \\IntrC=1 \\pdfstringdefPreHook\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "semantic.checked"), 1, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing.not_replayable"), 1, "{s}");
+}
+
+/// A reason that only means the recorder could not keep the real path
+/// (`TooManyOps`: the loop makes 10,006 assignments) is no difference when
+/// the states agree: everything such a path changes is compared, and here
+/// it ends where the previous call's one assignment does. The check is
+/// unverified, not a difference (REVIEW-C2 on #2205); a sweep in verify
+/// mode stays green on it.
+#[test]
+fn a_check_whose_real_path_was_too_long_to_record_is_no_difference() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\countdef\\IntrC=200 \\countdef\\IntrK=201\n\
+         \\def\\IntrLoop{\\advance\\IntrK by 1 \\ifnum\\IntrK<10005 \\expandafter\\IntrLoop\\fi}\n\
+         \\def\\pdfstringdefPreHook{\\ifodd\\IntrC\\IntrLoop\\fi\\IntrK=0 \\relax}\n\
+         \\begin{document}\\relax\n\\IntrC=0 \\pdfstringdefPreHook\n\\IntrC=1 \\pdfstringdefPreHook\n\
+         x\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.TooManyOps"), 1, "{s}");
+    assert_eq!(count(&s, "semantic.unverified.TooManyOps"), 1, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
+}

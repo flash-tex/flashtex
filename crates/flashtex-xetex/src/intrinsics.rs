@@ -124,7 +124,7 @@ pub struct Report {
     pub(crate) identical: u64,
     pub(crate) differing: u64,
     pub(crate) classes: BTreeMap<&'static str, u64>,
-    unverified: BTreeMap<&'static str, u64>,
+    pub(crate) unverified: BTreeMap<&'static str, u64>,
     not_replayable: BTreeMap<&'static str, u64>,
     pub(crate) details: Vec<String>,
 }
@@ -365,9 +365,6 @@ impl Globals {
             return;
         }
         let rec = self.host.intrinsics.rec.take().expect("checked");
-        if let Some(p) = rec.verify {
-            self.intr_verify_end(p);
-        }
         let now = self.intr_marks();
         let why = rec.bad.or_else(|| {
             if self.after_token != 0 {
@@ -379,6 +376,11 @@ impl Globals {
                 .find(|(a, b)| a != b)
                 .map(|(a, _)| a.0)
         });
+        // (the verdict knows whether this real path is replayable: one that
+        // is not did what a replay would not, outside the compared state)
+        if let Some(p) = rec.verify {
+            self.intr_verify_end(p, why);
+        }
         let r = &mut self.host.intrinsics;
         match why {
             Some(w) => *r.not_replayable.entry(w).or_default() += 1,
