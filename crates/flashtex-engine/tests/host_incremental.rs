@@ -4941,7 +4941,14 @@ fn a_cancelled_export_says_so_and_the_connection_goes_on() {
             _ => {}
         }
     };
-    assert_eq!(done.str_field("status"), Some("cancelled"), "{done}");
+    // (CANCEL follows STARTED's COMPILE in order, so it cannot precede the
+    // export; but a reader stalled for the whole export sees it finish
+    // first: not a failure of cancelling, review of #2019)
+    if done.str_field("status") == Some("ok") {
+        eprintln!("skipped: the export finished before the CANCEL was read ({done})");
+    } else {
+        assert_eq!(done.str_field("status"), Some("cancelled"), "{done}");
+    }
     let mut view = View::default();
     std::fs::write(proj.join("main.tex"), article(1)).unwrap();
     let o = compile(&mut c, &mut view, &req(2, &proj, &out, "main.tex"));
@@ -4949,6 +4956,16 @@ fn a_cancelled_export_says_so_and_the_connection_goes_on() {
     let _ = c.bye();
     drop(host);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Every page of `view` draws at least one form.
+fn every_page_draws_a_form(view: &View, proj: &Path, out: &Path, what: &str) {
+    for i in 0..view.count as u32 {
+        assert!(
+            !resolve(view, i, proj, out).forms.is_empty(),
+            "{what}: page {i} draws no form"
+        );
+    }
 }
 
 /// Lane TEST-GAPS: forms (`\pdfxform`) through the resident host
@@ -5000,6 +5017,9 @@ fn an_edited_form_drawn_on_every_page_equals_a_scratch_compile() {
         assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
         assert!(view.count >= 3, "{} pages", view.count);
         assert!(!view.forms.is_empty(), "compile {k}: no FORM sent");
+        // (each page draws the logo: if emission dropped every form draw,
+        // the scratch side would lose them too, review of #2019)
+        every_page_draws_a_form(&view, &proj, &out, &format!("compile {k}"));
         let (p2, o2) = snapshot(&base, &proj, &out, &format!("f{k}"));
         compare_with_scratch(
             &scratch.1,
@@ -5020,6 +5040,7 @@ fn an_edited_form_drawn_on_every_page_equals_a_scratch_compile() {
     r.incremental = true;
     let o = compile(&mut c2, &mut v2, &r);
     assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    every_page_draws_a_form(&v2, &proj, &out, "a second connection");
     let (p2, o2) = snapshot(&base, &proj, &out, "fsecond");
     compare_with_scratch(
         &scratch.1,

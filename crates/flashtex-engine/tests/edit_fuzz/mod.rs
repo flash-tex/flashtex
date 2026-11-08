@@ -126,8 +126,18 @@ pub fn receive(c: &mut Client, view: &mut View, mut first: Option<Event>) -> Out
                 view.pages.insert(p.index, p);
             }
             // (a form by its id, as the client keys it: `resolve` compares
-            // the forms a page draws, whose content its hash leaves out)
+            // the forms a page draws, whose content its hash leaves out;
+            // its fonts sent before it, as a page's, spec §5)
             Event::Form(f) => {
+                for it in &f.items {
+                    if let Item::Glyph { font, .. } = it {
+                        assert!(
+                            view.fonts.contains_key(font),
+                            "form {}: font {font} not sent",
+                            f.index
+                        )
+                    }
+                }
                 view.forms.insert(f.index, f);
             }
             Event::Pages(j) => pages_msgs.push(j),
@@ -251,10 +261,21 @@ pub fn resolve(view: &View, i: u32, root: &Path, out: &Path) -> Resolved {
             _ => None,
         })
         .collect();
-    fonts.sort();
-    fonts.dedup();
     let mut forms = vec![];
     forms_drawn(view, &page.items, &format!("page {i}"), &mut forms);
+    // (and the fonts of the forms it draws: a form's font may be used
+    // nowhere else, review of #2019)
+    for (id, _) in &forms {
+        for it in &view.forms[id].items {
+            if let Item::Glyph { font, .. } = it {
+                let key = bound.get(font).or_else(|| view.fonts.get(font));
+                let key = *key.unwrap_or_else(|| panic!("form {id}: font {font} not sent"));
+                fonts.push((*font, key));
+            }
+        }
+    }
+    fonts.sort();
+    fonts.dedup();
     Resolved {
         hash: page.hash,
         page,
