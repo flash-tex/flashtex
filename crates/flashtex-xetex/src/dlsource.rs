@@ -730,10 +730,28 @@ impl Globals {
     /// `dl_hyph_begin(ha)`: the word at node `ha` is about to be rebuilt.
     pub fn dl_hyph_begin(&mut self, ha: i32) {
         if self.host.dl.on == Some(true) {
-            // (the nodes made for the word are at its first character, as
-            // the pdfTeX engine's reconstituted characters are: no glyph
-            // of a fragment at a column of its own)
-            self.host.dl.hyph = Some(self.host.dl.get(ha) & !PER_CHAR);
+            // The nodes made for the word are where the pdfTeX engine's
+            // reconstituted characters are: at its `ha`, the node before
+            // the word's first letter (the glue before it), no glyph of a
+            // fragment at a column of its own. XeTeX's `ha` is a native
+            // word itself: then the node before it, from `cur_p` on.
+            let mut at = ha;
+            let w = self.mem[ha.max(0) as usize];
+            if ha >= 0 && ha < self.hi_mem_min && w.hh_b0() == 8 && (40..=41).contains(&w.hh_b1()) {
+                let mut q = self.cur_p;
+                for _ in 0..64 {
+                    if q < 0 || q > self.mem_end {
+                        break;
+                    }
+                    let next = self.mem[q as usize].hh_rh();
+                    if next == ha {
+                        at = q;
+                        break;
+                    }
+                    q = next;
+                }
+            }
+            self.host.dl.hyph = Some(self.host.dl.get(at) & !PER_CHAR);
         }
     }
 
