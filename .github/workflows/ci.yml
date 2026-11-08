@@ -10,15 +10,18 @@
 # PC's three runners. Owner, 2026-10-05: "30-60 mins per merge is absolutely
 # unacceptable ... can't we merge more stuff in and test later as needed?"
 #
-#   pr (pull_request, and push to any branch but main)       for reviewers
-#     build, the crates the branch touches (fmt/clippy/tests), the licence
-#     boundary, the bundled inventory and the generated-table gates; trip,
-#     etrip, pdfTeX's regression tests (Linux); the engine's parity
-#     (GitHub-hosted, sharded) when the branch touches the engine or its
-#     harnesses (`engine` below). Hosted macOS jobs only when the branch
-#     touches apps/ (`apple` below): the Mac app and the iPad companion, and
-#     the engine's parity fixtures on macOS (against baseline-fixtures.json)
-#     when it also touches their paths (`parity_fixtures` below).
+#   pr (pull_request)                                          for reviewers
+#     LIGHT since 2026-11-01 (lane GATES): plan, the crates the branch
+#     touches (fmt/clippy/tests: quick), the licence boundary, the bundled
+#     inventory and the generated-table gates, trip, etrip and pdfTeX's
+#     regression tests (Linux: checks), and CI required. A pull request
+#     labelled `full-ci` runs the full set instead: the workspace build, the
+#     engine's parity (GitHub-hosted, sharded) when it touches the engine
+#     (`engine` below), and the hosted macOS jobs when it touches apps/
+#     (`apple`, `mac_app`, `ipad`), and the engine's parity fixtures on
+#     macOS (against baseline-fixtures.json) when it also touches their
+#     paths (`parity_fixtures` below). Every pull request used to run that
+#     full set, and the merge queue ran it again.
 #
 #   gate (merge_group; manual with gate_only)       target <= 12 min engine,
 #                                                    <= 5 min otherwise
@@ -26,8 +29,9 @@
 #     check` here), quick, trip, etrip, pdfTeX regression, and the new
 #     engine's parity when the GROUP touches engine-affecting paths, in five
 #     shards (lockstep; the P-T1/P-T2 fixtures in two; the engine's tests in
-#     two). All GitHub-hosted Linux, so nothing in the gate queues for the PC.
-#     Nothing else: no Mac, no iPad, no full workspace. Parity stays gated
+#     two). Since 2026-11-01, as a light pull request no longer runs them,
+#     also the Mac app (`mac_app`) and the iPad companion (`ipad`) when the
+#     GROUP touches their paths. No full workspace. Parity stays gated
 #     before merge (parity > speed).
 #
 #   post (push to main; manual without gate_only; and nightly.yml)
@@ -57,12 +61,15 @@ name: CI
 
 on:
   push:
-    # Every in-repo branch, not just main: an agent gets the fast set from a
-    # push, without needing a pull request, and self-hosted runners only ever
-    # see in-repo code (§9.3). Not the merge queue's own gh-readonly-queue/*
-    # branches: their merge_group run already tests that exact tree, and the
-    # extra push run only queued a second copy of the macOS jobs.
-    branches-ignore: ['gh-readonly-queue/**']
+    # main only. Until 2026-11-01 every in-repo branch push ran the fast set
+    # too; a branch with an open pull request then skipped it as a duplicate,
+    # but branches without one queued ~40 hosted jobs at a time ahead of the
+    # merge queue on the org's hosted runners (free plan: ~10 run at once).
+    # A branch with a pull request is tested by `pull_request`; a branch
+    # without one that needs CI runs it by hand:
+    #   gh workflow run ci.yml --ref <branch> [-f gate_only=true]
+    # The merge queue's gh-readonly-queue/* branches are tested by merge_group.
+    branches: [main]
   pull_request:
   merge_group:
   workflow_dispatch:
@@ -146,6 +153,17 @@ jobs:
       # 'true' when the Xcode jobs (Mac app, iPad) run: after the merge, and
       # on a pull request or branch push that touches apps/.
       apple: ${{ steps.p.outputs.apple }}
+      # Of the Xcode jobs, which this run needs: the Mac app (mac_app) and the
+      # iPad companion (ipad); both after the merge, on a pull request only
+      # when their own app's files change (see `mac_app=` in the script).
+      mac_app: ${{ steps.p.outputs.mac_app }}
+      # 'true' on a pull request without the `full-ci` label: the light tier
+      # (plan, quick, checks, CI required; see `light=` in the script).
+      light: ${{ steps.p.outputs.light }}
+      # 'false' on a light pull request: the workspace build runs in the
+      # merge queue and after the merge.
+      build_ws: ${{ steps.p.outputs.build_ws }}
+      ipad: ${{ steps.p.outputs.ipad }}
       # 'true' when the engine-v3 host tests run (mac-v3-host): after the
       # merge and on manual runs; on a pull request or branch push only when
       # it touches the app's engine-v3 code or tests, the display-list-v3
@@ -154,7 +172,9 @@ jobs:
       # 'true' when the real-document gate runs (real-doc-gate): after the
       # merge, and on a pull request or branch push that touches the engine
       # or its host, the display-list protocol, the Mac app's sources, or the
-      # gate itself (`realdoc_paths` in the script). Never in the merge queue.
+      # gate itself (`realdoc_paths` in the script). Since 2026-11-01 in the
+      # merge queue by the same paths (required there by CI required), and
+      # not on a light pull request.
       realdoc: ${{ steps.p.outputs.realdoc }}
       # JSON `os` lists for the Rust workspace/standalone jobs and for
       # trip/etrip/pdftex-regression: the gate and pull requests run trip and
@@ -187,8 +207,8 @@ jobs:
           REF: ${{ github.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           THIS_REPO: ${{ github.repository }}
-          OWNER: ${{ github.repository_owner }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
           SHA: ${{ github.sha }}
           MG_BASE: ${{ github.event.merge_group.base_sha }}
           MG_HEAD: ${{ github.event.merge_group.head_sha }}
@@ -233,25 +253,10 @@ jobs:
             [ "$linux_switch" = "1" ] && selfhosted_linux=true
           fi
 
-          # Deduplication. An in-repo branch with an open pull request gets two
-          # events for the same commit (`push` and `pull_request`). The
-          # pull_request run is the one that carries the required checks, so the
-          # push run stands down. A branch with no pull request still gets the
-          # full pr set from its push.
+          # Always true now: `push` fires only for main (see `on:`), so a branch
+          # no longer gets a push run beside its pull_request run to stand down.
+          # Kept as an output so every job's `if:` stays as it is.
           run=true
-          if [ "$EVENT" = "push" ] && [ "$REF" != "refs/heads/main" ]; then
-            branch="${REF#refs/heads/}"
-            # The `head` filter is OWNER:branch, not owner/repo:branch. With the
-            # repository name in there it silently matches nothing, and the
-            # deduplication never fires -- every in-repo pull request would run
-            # the whole fast set twice. Verified against a branch that has an
-            # open pull request (1) and one that does not (0).
-            open=$(gh api "repos/$THIS_REPO/pulls?state=open&head=$OWNER:$branch&per_page=1" \
-                     --jq 'length' 2>/dev/null || echo 0)
-            if [ "${open:-0}" != "0" ]; then
-              run=false
-            fi
-          fi
 
           # The files this run changes, fetched at most once, and only when a
           # path filter below needs them. UNKNOWN (the API failed or hit its
@@ -289,6 +294,25 @@ jobs:
             changed_files
             [ "$files" = UNKNOWN ] || grep -qE "$1" <<<"$files"
           }
+
+          # A LIGHT pull-request tier (lane GATES, 2026-11-01: every pull
+          # request ran the whole suite twice, once as itself and again in the
+          # merge queue, on ~20 hosted jobs shared by the organisation; the
+          # merge queue's 4-minute gate jobs waited hours). A pull request runs
+          # plan, quick (fmt, clippy and the tests of the crates it touches),
+          # checks (the licence boundary, inventory, generated tables, trip
+          # and etrip) and CI required. Engine parity (lockstep, P-T1/P-T2,
+          # the engine's tests), the workspace build and the app legs run in
+          # the merge queue, where `CI required` guards main, and after the
+          # merge. A pull request labelled `full-ci` runs the old full set (the
+          # label is read from the event when a run starts: push again after
+          # adding it; a re-run reuses the old event and keeps the light tier).
+          full_ci=false
+          case " $PR_LABELS " in *" full-ci "*) full_ci=true ;; esac
+          light=false
+          if [ "$tier" = "pr" ] && [ "$full_ci" != "true" ]; then
+            light=true
+          fi
 
           # The new engine's parity gates (DESIGN §8 T1, §1.1 P-T1/P-T2): on
           # every push to main and manual run; in the merge queue, on a pull
@@ -331,12 +355,31 @@ jobs:
           # The Xcode jobs and every other hosted macOS job: after the merge
           # (post); on a pull request or branch push only when it touches
           # apps/ (the Mac app, the iPad companion and their fonts) or the
-          # app-parity rows file mac-app checks its log against; never in
-          # the gate.
+          # app-parity rows file mac-app checks its log against, or this file
+          # (a change to the mac-app or ipad job must run them before main
+          # does); never in the gate.
+          # Since lane GATES (2026-11-01) also in the merge queue, by the same
+          # path rules, as a light pull request no longer runs them.
           apple=false
           case "$tier" in
             all) apple=true ;;
-            pr) [ "$run" = "true" ] && touches '^(apps/|tools/parity/app[-_]parity[-_]rows)' && apple=true ;;
+            pr|gate) [ "$run" = "true" ] && touches '^(apps/|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)' && apple=true ;;
+          esac
+          # Which of the two Xcode jobs a pull request needs (lane GATES,
+          # 2026-11-01: GitHub's hosted macOS runs five jobs at once for the
+          # whole organisation, and every Mac-app pull request also queued the
+          # iPad companion's 10-15 minutes). The iPad companion (apps/ios, a
+          # project of its own: it builds nothing of apps/mac) only when
+          # apps/ios or this file changes; the Mac app when anything else under
+          # apps/ (or the app-parity rows) does. After the merge, both.
+          mac_app=false; ipad=false
+          case "$tier" in
+            all) mac_app=true; ipad=true ;;
+            pr|gate)
+              if [ "$apple" = "true" ]; then
+                touches '^(apps/ios/|\.github/workflows/ci\.yml$)' && ipad=true
+                touches '^(apps/([^i]|i[^o]|io[^s]|ios[^/])|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)' && mac_app=true
+              fi ;;
           esac
 
           # The engine-v3 host tests (mac-v3-host): the app's EngineV3* and
@@ -346,12 +389,19 @@ jobs:
           # app's engine-v3 code or tests, the display-list-v3 protocol (both
           # sides), the host itself, or this file. Not on every engine change:
           # engine parity covers the typesetting, and this is a ~20 minute
-          # hosted macOS job. Never in the gate.
+          # hosted macOS job. In the merge queue (Commander, 2026-11-01: it
+          # gates main, as a light pull request no longer runs it; dropping it
+          # is how app lag and freeze bugs reach the owner) when the GROUP
+          # touches apps/, the engine host, the incremental engine (incr*),
+          # the display list on either side, or this file, and `CI required`
+          # needs it there.
           v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice|ProjectMode)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|flashtex-xetex/src/host/|display-list-v3/)|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
+          v3_gate_paths='^(apps/|crates/flashtex-engine/src/(host/|incr|displaylist/)|crates/flashtex-xetex/src/host/|crates/display-list-v3/|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
           v3_app=false
           case "$tier" in
             all) v3_app=true ;;
             pr) [ "$run" = "true" ] && touches "$v3_app_paths" && v3_app=true ;;
+            gate) [ "$run" = "true" ] && touches "$v3_gate_paths" && v3_app=true ;;
           esac
 
           # The real-document gate (real-doc-gate; lane REAL-DOC-GATE, DESIGN
@@ -360,12 +410,14 @@ jobs:
           # on its page 883 taking 32 s and freezing the editor (2026-10-24),
           # which no generated document showed. After the merge, and before it
           # whenever the engine or its host, the protocol, the Mac app's sources
-          # or the gate's own files change. Never in the gate (merge queue).
+          # or the gate's own files change: in the merge queue (Commander,
+          # 2026-11-01: it gates main, and `CI required` needs it there; a light
+          # pull request no longer runs it) and on a `full-ci` pull request.
           realdoc_paths='^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.lock$|apps/mac/(Sources/|Package\.swift$|Tests/FlashTeXMacTests/(EngineV3RealDocTypingTests|MainThreadStall|MainThreadStallMonitor)\.swift$)|tools/incr-bench/(t7|docspec|mkbook|mkreal|mkeng)\.(py|sh)$|tools/incr-bench/realdocs\.json$|tools/parity/corpus/(infdesc_x2\.py|books\.json)$|scripts/realdoc-gate\.sh$|\.github/workflows/ci\.yml$)'
           realdoc=false
           case "$tier" in
             all) realdoc=true ;;
-            pr) [ "$run" = "true" ] && touches "$realdoc_paths" && realdoc=true ;;
+            pr|gate) [ "$run" = "true" ] && touches "$realdoc_paths" && realdoc=true ;;
           esac
 
           # The parity fixtures on macOS (parity-fixtures and its hosted twin):
@@ -385,6 +437,14 @@ jobs:
                 parity_fixtures=true
               fi ;;
           esac
+
+          # The light pull-request tier (above): none of the heavy jobs.
+          build_ws=true
+          if [ "$light" = "true" ]; then
+            engine=false; engine_nixos=false; engine_hosted=false
+            apple=false; mac_app=false; ipad=false; v3_app=false; parity_fixtures=false; realdoc=false
+            build_ws=false
+          fi
 
           # Where the Rust workspace/standalone jobs and trip/etrip/pdftex-
           # regression run: the gate and pull requests run trip and co. on
@@ -421,6 +481,10 @@ jobs:
             echo "engine_hosted=$engine_hosted"
             echo "parity_fixtures=$parity_fixtures"
             echo "apple=$apple"
+            echo "mac_app=$mac_app"
+            echo "light=$light"
+            echo "build_ws=$build_ws"
+            echo "ipad=$ipad"
             echo "v3_app=$v3_app"
             echo "realdoc=$realdoc"
             echo "rust_os=$rust_os"
@@ -464,7 +528,7 @@ jobs:
   build:
     name: build (workspace, all targets)
     needs: [plan]
-    if: needs.plan.outputs.run == 'true'
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.build_ws != 'false'
     # GitHub-hosted on every event since 2026-10-05: on the PC it queued
     # behind the gate's engine-parity shards (30 minutes, measured).
     runs-on: ubuntu-latest
@@ -1048,10 +1112,11 @@ jobs:
     name: mac app (swift build + test)
     needs: [plan]
     # After the merge (push to main, where a failure files `main-red`) and on
-    # manual runs; before it, only on a pull request or branch push that
-    # touches apps/ (plan's `apple`). Not in the merge queue: at 19-24 minutes
-    # it was the gate's slowest job.
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.apple == 'true'
+    # manual runs; before it, in the merge queue when the group touches apps/
+    # outside apps/ios (plan's `mac_app`; lane GATES, 2026-11-01: no longer on
+    # a light pull request, so `CI required` guards it there), and on a
+    # pull request labelled `full-ci`.
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.mac_app == 'true'
     # Xcode 26 / Swift 6.x on the macos-26 GitHub image (plan's mac_runner;
     # never self-hosted, so a fork pull request that touches apps/ is safe).
     runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
@@ -1147,7 +1212,9 @@ jobs:
   # neither, so there every test behind EngineV3TestHost.require() (and the
   # ones that look for a host themselves) SKIPS -- app-parity rows A15, A16,
   # A19, A20, A21 and B3 among them. Here FLASHTEX_REQUIRE_HOST=1 makes a
-  # missing host or TeX a failure, so a green run means they ran.
+  # missing host or TeX a failure, so a green run means they ran. Required
+  # in the merge queue when the group touches the app, the engine host,
+  # incr* or the display list (plan's v3_app; Commander, 2026-11-01).
   #
   # GitHub-hosted macos-26, never a self-hosted Mac: these tests open windows
   # (the team's Macs are laptops, the owner's among them; preview-parity.yml).
@@ -1273,7 +1340,9 @@ jobs:
   # EngineV3RealDocTypingTests: the whole app on that host types into the
   # page during and after the first compile, no main run-loop turn and no
   # key's way into the text storage over 100 ms (main: 1.9 s before #1890 and
-  # #1900). GATING: in `CI required` (lane GATES, 2026-11-01). The budget on
+  # #1900). GATING: in the merge queue, required by `CI required`, for engine
+  # and app changes (lane GATES, 2026-11-01); after the merge; and on a
+  # `full-ci` pull request (a light one does not run it). The budget on
   # instructions from the compile's start to the edited page
   # (pr_gate.to_edited_instr_m_max) is only a warning here: GitHub-hosted VMs
   # have no PMU counters (macOS: thread_selfcounts fails; Ubuntu: perf has no
@@ -1359,7 +1428,7 @@ jobs:
   # compile's start to the edited page, which load and clock speed do not
   # move), where it can be counted: a self-hosted Mac (MacTeX 2026), so only
   # after the merge and on manual runs (plan's selfhosted_mac, §9.3), never
-  # in the merge queue (realdoc is never 'true' there). T7 letter@x2-late
+  # in the merge queue (a laptop must not hold the gate). T7 letter@x2-late
   # with t7.py --gate counted: a missing count misses.
   # A miss on main files `main-red`. The budget is a ratchet at main's value
   # (lane GATES, 2026-11-01: main spends up to 472 M against DESIGN §1.2's
@@ -1367,9 +1436,10 @@ jobs:
   real-doc-instr:
     name: "real-doc instructions (self-hosted Mac: infdesc-x2 late page)"
     needs: [plan]
+    # (never in the merge queue: a self-hosted laptop must not hold the gate)
     if: >-
       needs.plan.outputs.run == 'true' && needs.plan.outputs.realdoc == 'true' &&
-      needs.plan.outputs.selfhosted_mac == 'true'
+      needs.plan.outputs.selfhosted_mac == 'true' && needs.plan.outputs.tier != 'gate'
     runs-on: [self-hosted, macOS, ARM64, flashtex]
     timeout-minutes: 45
     steps:
@@ -1407,8 +1477,9 @@ jobs:
   ipad:
     name: iPad companion (simulator build + tests)
     needs: [plan]
-    # When the Mac app runs (plan's `apple`; see mac-app).
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.apple == 'true'
+    # After the merge; in the merge queue (and on a pull request labelled
+    # `full-ci`) only when apps/ios or this file changes (plan's `ipad`).
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.ipad == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
     timeout-minutes: 60
     steps:
@@ -1501,7 +1572,17 @@ jobs:
   # ===========================================================================
   ci-required:
     name: CI required
-    if: always()
+    # Not `always()`: a job-level always() runs even in a CANCELLED run, so
+    # every pull_request run that a newer push superseded (cancel-in-progress)
+    # stayed queued until a hosted runner was free to run this job, and an
+    # API cancel of a queued run did nothing until then (lane GATES,
+    # 2026-11-01: 100+ cancelled runs stayed queued; only force-cancel
+    # cleared them). A cancelled run reports nothing: the newer run, or the
+    # merge queue's next group, carries the check. A run whose jobs failed or
+    # timed out is not cancelled, so this still runs and fails there. In the
+    # merge queue (and on main) it stays always(): GitHub counts a skipped
+    # required check as passed, so a cancelled gate run must report failure.
+    if: ${{ always() && (github.event_name == 'merge_group' || github.ref == 'refs/heads/main' || !cancelled()) }}
     needs:
       - plan
       - build
@@ -1517,9 +1598,13 @@ jobs:
       - rust-workspace
       - rust-standalone
       - mac-app
+      # the engine-v3 host tests: required in the merge queue when the group
+      # touches the app, the engine host, incr* or the display list (plan's
+      # v3_app), and after the merge
+      - mac-v3-host
       - ipad
-      # the real-document gate (PR and after the merge; never in the merge
-      # queue) and, after the merge, its instruction budget on a self-hosted Mac
+      # the real-document gate (in the merge queue, and after the merge) and,
+      # after the merge, its instruction budget on a self-hosted Mac
       - real-doc-gate
       - real-doc-instr
     runs-on: ubuntu-latest
@@ -1548,6 +1633,16 @@ jobs:
                   and "success" not in (needs["engine-parity"]["result"],
                                         needs["engine-parity-hosted"]["result"])):
               bad["engine-parity (either runner, every shard)"] = "did not run"
+          # The real-document gate in the merge queue: when plan says the group
+          # needs it (realdoc), it must have run and passed.
+          if (os.environ["EVENT"] == "merge_group" and plan_out.get("realdoc") == "true"
+                  and needs["real-doc-gate"]["result"] != "success"):
+              bad["real-doc-gate (infdesc-x2 late page)"] = needs["real-doc-gate"]["result"]
+          # The engine-v3 host tests in the merge queue: when plan says the
+          # group needs them (v3_app), they must have run and passed.
+          if (os.environ["EVENT"] == "merge_group" and plan_out.get("v3_app") == "true"
+                  and needs["mac-v3-host"]["result"] != "success"):
+              bad["mac-v3-host (engine-v3 host tests)"] = needs["mac-v3-host"]["result"]
           # The parity fixtures on macOS: when plan says this run needs them
           # (parity_fixtures), one of their two jobs must have run and passed.
           # Both skipped is a pass only when plan said they were not needed.
