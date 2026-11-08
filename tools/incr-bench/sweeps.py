@@ -60,6 +60,11 @@ VOL = ('vol-closed', 'vol-open')
 # fixtures whose calls BOX-MEMO replays
 XDOC = ('xdoc:fonts-ab', 'xdoc:fonts-ba', 'plain-10', 'full-10', 'full-100', 'beamer-5', 'beamer-30', 'rw:beamer-madrid', 'rw:beamer-overlays',
         'rw:beamer-blocks-columns', 'rw:framed-tikz-theorems', 'rw:tikzcd-shaded-notes', 'rw:siunitx-tables')
+# the documents of XDOC that must each replay an entry another document recorded (xdoc.py
+# --need-xdoc): the run's total alone let one document's replays stand for the others'. Measured
+# (sweeps run 41490502698, verify, 2026-11-02): of the 13 only these four replayed another
+# document's entry (122, 50, 3 and 6 checks); the others' counts are reported, not gated
+XDOC_NEED = ('full-100', 'rw:beamer-madrid', 'rw:beamer-overlays', 'rw:beamer-blocks-columns')
 # the preamble kinds (edits.py: PREAMBLE-FAST's restarts before S0, PREAMBLE-MIDLINE's in the middle
 # of the line after a package)
 PRE = ('pre_title,pre_author,pre_newcommand,pre_setlength,pre_usepackage,pre_nopackage,pre_option,'
@@ -74,10 +79,12 @@ def S(tag, trials, extras=(), fixtures=True, kinds=None, interleave=False, host=
                 allow_no_trials=allow_no_trials, first_open=first_open, env=env or {})
 
 
-def X(tag, docs, rounds=2, edits=2, estimate=300):
+def X(tag, docs, rounds=2, edits=2, estimate=300, need=()):
     """One xdoc.py run: one host serves DOCS in turn, ROUNDS times round, EDITS edits (and their
-    reverts) a visit, every compile against from-scratch runs; ESTIMATE: seconds, until measured."""
-    return dict(tool='xdoc', tag=tag, docs=list(docs), rounds=rounds, edits=edits, estimate=estimate)
+    reverts) a visit, every compile against from-scratch runs; ESTIMATE: seconds, until measured;
+    NEED: the documents that must each replay another document's entry."""
+    return dict(tool='xdoc', tag=tag, docs=list(docs), rounds=rounds, edits=edits, estimate=estimate,
+                need=list(need))
 
 
 def SPAN(doc, edits, seed, frac=None, kinds=None, eol=None):
@@ -124,7 +131,7 @@ GATES = {
     # lane REVIEW-BOXMEMO: one host, so one BOX-MEMO store, serves several documents in turn, twice
     # round: a key part that held for one document and not for the next (a font by its number, the
     # job name, a name a recording prints) gives a wrong page only here (xdoc.py)
-    'sound-xdoc': [X('xdoc', XDOC)],
+    'sound-xdoc': [X('xdoc', XDOC, need=XDOC_NEED)],
 }
 
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
@@ -307,9 +314,15 @@ def _run_unit(tree, bench, out, u, timeout):
             cmd += ['--first-open']
     elif u['tool'] == 'xdoc':
         # (a tree from before xdoc.py: the harness's own, which drives the host's protocol only)
-        x = f'{ib}/xdoc.py' if os.path.exists(f'{ib}/xdoc.py') else os.path.join(HERE, 'xdoc.py')
+        # (and one from before --need-xdoc, which would ignore the per-document requirement: the
+        # harness's too)
+        x = f'{ib}/xdoc.py'
+        if not os.path.exists(x) or u.get('need') and '--need-xdoc' not in open(x).read():
+            x = os.path.join(HERE, 'xdoc.py')
         cmd = [sys.executable, x, ENGINE, '--docs', ','.join(u['docs']), '--rounds', str(u['rounds']),
                '--edits', str(u['edits']), '--fixtures', os.path.join(tree, 'fixtures'), '--out', f'{stem}.jsonl']
+        if u.get('need'):
+            cmd += ['--need-xdoc', ','.join(u['need'])]
     elif u['tool'] == 'span':
         cmd = [sys.executable, f'{ib}/dlspan.py', ENGINE, u['doc'], '--edits', str(u['edits']), '--seed', str(u['seed']),
                '--timeout', '7000']
@@ -350,6 +363,9 @@ def _run_unit(tree, bench, out, u, timeout):
             # BOX-MEMO's replays, and those of another document's entries (None: an engine from
             # before that count, which cannot pass this gate)
             r['hits'], r['xdoc_hits'] = tot.get('hits'), tot.get('xdoc_hits')
+            # each document's, and the documents the gate names that replayed none
+            r['xdoc_by_doc'] = tot.get('xdoc_by_doc')
+            short = [n for n in u.get('need', []) if not (tot.get('xdoc_by_doc') or {}).get(n)]
         if tot['err'] or tot['bad'] or code != 0:
             r['status'] = 'bad' if tot['bad'] else 'error'
             r['note'] = '\n'.join(l for l in so.splitlines() if 'ERROR' in l or 'mismatches' in l
@@ -362,6 +378,8 @@ def _run_unit(tree, bench, out, u, timeout):
         elif u['tool'] == 'xdoc' and not tot.get('xdoc_hits'):
             r.update(status='error', note=('cross-document replay count not measured'
                                           if tot.get('xdoc_hits') is None else 'no cross-document replays'))
+        elif u['tool'] == 'xdoc' and short:
+            r.update(status='error', note=f"no cross-document replays in {', '.join(short)}")
         else:
             r['status'] = 'ok'
     elif u['tool'] == 'span':

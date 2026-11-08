@@ -167,6 +167,8 @@ def main():
     ap.add_argument('--host-args', default='')
     ap.add_argument('--timeout', type=int, default=5400, help='seconds for the whole run')
     ap.add_argument('--keep', action='store_true')
+    ap.add_argument('--need-xdoc', default='',
+                    help='documents (of --docs) that must each replay an entry another document recorded')
     a = ap.parse_args()
 
     def timed_out(*_):
@@ -226,6 +228,9 @@ def main():
 
     tot = dict(compiles=0, ok=0, bad=0, err=0, conv=0, interrupted=0, skipped=0, acct=0, hits=0,
                xdoc_hits=0, docs=len(docs), rounds=a.rounds)
+    # each document's replays of another document's entries (None: not measured): the run's total
+    # alone lets one document's replays stand for another's
+    tot['xdoc_by_doc'] = {d['name']: 0 for d in docs}
     counts = [None]
 
     def reference(pre, d, tag):
@@ -295,6 +300,8 @@ def main():
             tot['xdoc_hits'] += delta[4]
         else:
             tot['xdoc_hits'] = None
+        by = tot['xdoc_by_doc']
+        by[d['name']] = by[d['name']] + delta[4] if len(delta) > 4 and by[d['name']] is not None else None
         line = dict(doc=d['name'], round=rnd, step=step, kind=kind, mode=r.get('mode'), status=r.get('status'),
                     pages=r.get('pages'), ms=round(ms, 1), ref_runs=runs, boxmemo=delta, ok=not bad, bad=bad)
         rec.write(json.dumps(line) + '\n')
@@ -354,12 +361,23 @@ def main():
         print(f'sound-xdoc: {reason}', flush=True)
     if not tot['compiles']:
         print('sound-xdoc: no compiles', flush=True)
+    # each document the gate names (--need-xdoc) replays another document's entry; the others'
+    # replays are reported, not gated
+    by = tot['xdoc_by_doc']
+    unexercised = [n for n, h in by.items() if not h]
+    if unexercised:
+        print(f"sound-xdoc: no cross-document replays in {', '.join(unexercised)}", flush=True)
+    tot['need_xdoc'] = [x for x in a.need_xdoc.split(',') if x]
+    short = [n for n in tot['need_xdoc'] if not by.get(n)]
+    if short and not boxmemo_off:
+        print("sound-xdoc: a document the gate names replays no other document's entry: "
+              + ', '.join(n if n in by else f'{n} (not among --docs)' for n in short), flush=True)
     print(json.dumps(tot), flush=True)
     rec.close()
     if not a.keep:
         shutil.rmtree(W, ignore_errors=True)
     sys.exit(2 if tot['err'] else 1 if tot['bad'] or not tot['compiles']
-             or not boxmemo_off and not tot['xdoc_hits'] else 0)
+             or not boxmemo_off and (not tot['xdoc_hits'] or short) else 0)
 
 
 if __name__ == '__main__':
