@@ -175,6 +175,8 @@ def run_case(name, engines, fmts, tmp, timeout, src=None, keep=True):
         notes.append("reference's first error: %s" % rerr[:200])
     if cc != 0 and cerr:
         notes.append("candidate's first error: %s" % cerr[:200])
+    if meta.get("reference_clean") and rerr:
+        msgs.append("the reference has an error (a reference_clean case): %s" % rerr[:200])
     if cpanic:
         msgs.append("the candidate panicked: %s" % cpanic[0][:300])
         notes.extend("  " + ln[:300] for ln in cpanic[1:])
