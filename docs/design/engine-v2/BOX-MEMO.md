@@ -1050,6 +1050,8 @@ group's `unsave` puts back); merged, both hold: an `unsave` sets a restored regi
 of where its group began, so a register made void by the call and given back its caller's void is
 foreign again too. A box left at the call's own level (§16's `Val::Box`) is taken by value only if
 the span copied no foreign box (its copies are holes).
+A span is not ended where its last level is popped (§15's `flashtex_bm_popped`): it reads its file
+level, below the recording's base, and ends at its environment's end.
 
 The full-state verifier now also compares the math
 scratch scalars `cur_style`, `cur_size`, `cur_mu`, `mlist_penalties` and `head_info` (a push_nest

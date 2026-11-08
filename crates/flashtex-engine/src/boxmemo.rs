@@ -324,9 +324,7 @@ fn ops_bytes(ops: &[Op]) -> usize {
             } => 32 + 4 * l.len(),
             // (and once more in `Entry::new_cs`)
             Op::NewCs { name, .. } => 2 * (32 + 4 * name.len()),
-            Op::Def {
-                v: Val::Box(f), ..
-            } => 32 + f.bytes(),
+            Op::Def { v: Val::Box(f), .. } => 32 + f.bytes(),
             _ => 32,
         })
         .sum()
@@ -3432,7 +3430,10 @@ impl Globals {
     pub fn flashtex_bm_popped(&mut self) {
         // (a span reads its file level below `base` and ends at its
         // environment's end, §17)
-        let Some(base) = self.bm_with_rec(|r| r.span.is_none().then_some(r.base)).flatten() else {
+        let Some(base) = self
+            .bm_with_rec(|r| r.span.is_none().then_some(r.base))
+            .flatten()
+        else {
             return;
         };
         if self.input_ptr < base
