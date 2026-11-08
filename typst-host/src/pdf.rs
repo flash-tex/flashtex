@@ -544,6 +544,12 @@ impl<'a> Pdf<'a> {
 
     /// The decoded data of stream object `n`.
     pub fn stream(&self, n: u32) -> Result<(Dict, Vec<u8>), String> {
+        self.stream_limited(n, MAX_INFLATE)
+    }
+
+    /// [`Pdf::stream`], inflating at most `limit` bytes (more is an
+    /// error, never a larger allocation).
+    pub fn stream_limited(&self, n: u32, limit: usize) -> Result<(Dict, Vec<u8>), String> {
         let ind = self.get(n)?;
         let Obj::Dict(d) = ind.obj else {
             return Err(format!("object {n} is not a stream"));
@@ -553,10 +559,10 @@ impl<'a> Pdf<'a> {
             .ok_or_else(|| format!("object {n} is not a stream"))?;
         let data = match d.get("Filter").map(|f| self.resolve(f)).transpose()? {
             None => raw.to_vec(),
-            Some(Obj::Name(f)) if f == b"FlateDecode" => inflate(raw)?,
+            Some(Obj::Name(f)) if f == b"FlateDecode" => inflate_limited(raw, limit)?,
             Some(Obj::Arr(a)) if a.is_empty() => raw.to_vec(),
             Some(Obj::Arr(a)) if a.len() == 1 && a[0] == Obj::Name(b"FlateDecode".to_vec()) => {
-                inflate(raw)?
+                inflate_limited(raw, limit)?
             }
             Some(f) => return Err(format!("object {n}: filter {f:?} is not read")),
         };
@@ -619,8 +625,24 @@ fn rfind(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).rposition(|w| w == n)
 }
 
-fn inflate(raw: &[u8]) -> Result<Vec<u8>, String> {
-    miniz_oxide::inflate::decompress_to_vec_zlib(raw).map_err(|e| format!("FlateDecode: {e:?}"))
+/// The most a content or ICC stream may inflate to (a decompression bomb
+/// stops here instead of exhausting memory).
+pub const MAX_INFLATE: usize = 256 << 20;
+
+pub fn inflate(raw: &[u8]) -> Result<Vec<u8>, String> {
+    inflate_limited(raw, MAX_INFLATE)
+}
+
+/// Inflate at most `limit` bytes; more is an error, never a larger
+/// allocation.
+pub fn inflate_limited(raw: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(raw, limit).map_err(|e| {
+        if e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput {
+            format!("FlateDecode: more than {limit} bytes")
+        } else {
+            format!("FlateDecode: {:?}", e.status)
+        }
+    })
 }
 
 #[cfg(test)]

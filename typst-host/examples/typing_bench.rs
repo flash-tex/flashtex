@@ -11,6 +11,7 @@
 //! # waits for each compile's DONE; one JSON line per location.
 //! typing_bench run --host BIN --fonts DIR --doc DIR [--keys N] [--label L]
 //!                  [--locs EDITSTART,EDITMID] [--host-arg ARG]... [--rss-every K]
+//!                  [--accept font-program-refs,color-spaces,line-state,image-data]
 //! ```
 //!
 //! Per keystroke it records the time from sending `COMPILE` to the first
@@ -299,6 +300,9 @@ fn run(args: &[String]) {
     let mut locs = vec!["EDITSTART".to_string(), "EDITMID".into(), "EDITEND".into()];
     let mut host_args: Vec<String> = vec![];
     let mut rss_every = 0usize;
+    // The client's HELLO `accept` (spec §11.7); a 3.3 app client also says
+    // color-spaces, line-state and image-data.
+    let mut accept = vec!["font-program-refs".to_string()];
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned().unwrap_or_default();
@@ -311,6 +315,7 @@ fn run(args: &[String]) {
             "--locs" => locs = v.split(',').map(String::from).collect(),
             "--host-arg" => host_args.push(v),
             "--rss-every" => rss_every = v.parse().unwrap(),
+            "--accept" => accept = v.split(',').map(String::from).collect(),
             a => panic!("unknown argument {a}"),
         }
         i += 2;
@@ -342,9 +347,13 @@ fn run(args: &[String]) {
         r: BufReader::new(s.try_clone().unwrap()),
         w: BufWriter::new(s),
     };
+    let accept: Vec<String> = accept.iter().map(|a| format!("{a:?}")).collect();
     c.send(
         kind::C_HELLO,
-        r#"{"protocol":"display-list-v3","version":[3,3],"client":"typing_bench","accept":["font-program-refs"]}"#,
+        &format!(
+            r#"{{"protocol":"display-list-v3","version":[3,3],"client":"typing_bench","accept":[{}]}}"#,
+            accept.join(",")
+        ),
     );
     let _ = c.frame();
     let mut text = std::fs::read_to_string(doc.join("main.typ")).unwrap();

@@ -25,15 +25,15 @@ use flashtex_display_list::json::Json;
 use flashtex_display_list::page::{
     self, Color, Item, Link, LinkKind, Page, Path, Seg, StreamKind, Stroke,
 };
-use flashtex_display_list::resource::{Font as FontRes, Sources};
-use flashtex_display_list::sha256::sha256;
-use typst::layout::{Abs, Frame, FrameItem, GroupItem, Point, Size, Transform};
+use flashtex_display_list::resource::{Font as FontRes, ImageData, Sources};
+use flashtex_display_list::sha256::{hex, sha256};
+use typst::layout::{Abs, Frame, FrameItem, FrameKind, GroupItem, Point, Size, Transform};
 use typst::model::Destination;
 use typst::syntax::{FileId, Span};
 use typst::text::{FontInstance, TextItem};
 use typst::visualize::{
-    Color as TColor, Curve, CurveItem, FillRule, FixedStroke, Geometry, LineCap, LineJoin, Paint,
-    ProcessColorSpace, Shape,
+    Color as TColor, Curve, CurveItem, FillRule, FixedStroke, Geometry, ImageKind, LineCap,
+    LineJoin, Paint, ProcessColorSpace, RasterImage, Shape,
 };
 use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
@@ -69,6 +69,14 @@ pub struct ClientCaps {
     pub color_spaces: bool,
     /// `accept` lists `line-state` (spec §11.4): stroked glyphs are drawn.
     pub line_state: bool,
+    /// `accept` lists `image-data` (spec §11.5): IMAGE with `"data": true`
+    /// and its IMAGE_DATA.
+    pub image_data: bool,
+    /// At most this many IMAGE_DATA bytes per compile (`--image-budget`;
+    /// `None`: [`DEFAULT_IMAGE_BUDGET`]). An image past it, or one whose
+    /// frame would pass the protocol's frame limit, makes its page
+    /// INCOMPLETE instead of ending the connection.
+    pub image_budget: Option<u64>,
     /// Draw what has no 2×/3× pixel gate row yet (DESIGN.md §15.5) as
     /// complete: ICC and Separation colours, alpha, stroked glyphs (the
     /// host's `--draw-ungated`, for measuring those rows). Off: the items
@@ -82,10 +90,15 @@ pub struct Accept {
     pub program_refs: bool,
     pub color_spaces: bool,
     pub line_state: bool,
+    pub image_data: bool,
 }
 
 /// The 3.3 `accept` token for `program_from` (spec §11.1, §11.7).
 pub const PROGRAM_REFS: &str = flashtex_display_list::accept::FONT_PROGRAM_REFS;
+
+/// Default per-compile budget of image bytes sent to a client (the host's
+/// `--image-budget`).
+pub const DEFAULT_IMAGE_BUDGET: u64 = 128 << 20;
 
 /// Default per-compile budget of font-program bytes sent to a client
 /// (the host's `--font-program-budget`).
@@ -135,6 +148,30 @@ pub struct Tables {
     span_lines: Vec<Option<(u32, u32)>>,
     /// Per-span resolution cache for this compile.
     span_cache: HashMap<Span, Option<SpanPos>>,
+    /// Image ids by key (spec §5.2, §11.5); id - 1 → key (zero: free).
+    images: HashMap<[u8; 32], u32>,
+    image_keys: Vec<[u8; 32]>,
+    /// Ids no page the client holds uses any more, to rebind (§5: a later
+    /// IMAGE for an id rebinds it, so the client drops the old one).
+    free_image_ids: Vec<u32>,
+    /// Page index → the image ids its last conversion uses.
+    page_images: HashMap<usize, Vec<u32>>,
+    /// IMAGE_DATA bytes sent in the current compile (the budget).
+    image_bytes: u64,
+    /// Island image ids by the island page's Typst hash (E5).
+    islands: HashMap<u128, u32>,
+}
+
+/// One frame on the way from the page's frame to the item being walked:
+/// its size and kind, where the current item sits in it, and the group
+/// that holds it (`None` for the page's own frame). A PDF island rebuilds
+/// this chain around its one item, so that typst-pdf composes the same
+/// transforms in the same order (E5).
+struct Chain {
+    size: Size,
+    kind: FrameKind,
+    pos: Point,
+    group: Option<(Transform, Option<Curve>)>,
 }
 
 #[derive(Clone, Copy)]
@@ -165,10 +202,57 @@ impl Tables {
         self.programs.len()
     }
 
+    /// Image ids bound now (images and islands the client may hold).
+    pub fn image_count(&self) -> usize {
+        self.images.len()
+    }
+
+    /// The document has `pages` pages now: forget the image ids that no
+    /// page the client holds uses (spec §5), so that a later image rebinds
+    /// one and the client frees the old resource. Only small maps are kept
+    /// on the host (a key and an id per image); what this bounds is the
+    /// client's store and the island cache, which would otherwise grow with
+    /// every reflow (an island's key includes its place on the page).
+    pub fn release_images(&mut self, pages: usize) {
+        self.page_images.retain(|&i, _| i < pages);
+        let used: std::collections::HashSet<u32> =
+            self.page_images.values().flatten().copied().collect();
+        let mut freed = vec![];
+        self.images.retain(|_, id| {
+            let keep = used.contains(id);
+            if !keep {
+                freed.push(*id);
+            }
+            keep
+        });
+        self.islands.retain(|_, id| used.contains(id));
+        for id in freed {
+            self.image_keys[id as usize - 1] = [0; 32];
+            self.free_image_ids.push(id);
+        }
+    }
+
+    /// A new id for an image with `key`: a released one first.
+    fn bind_image(&mut self, key: [u8; 32]) -> u32 {
+        let id = match self.free_image_ids.pop() {
+            Some(id) => {
+                self.image_keys[id as usize - 1] = key;
+                id
+            }
+            None => {
+                self.image_keys.push(key);
+                self.image_keys.len() as u32
+            }
+        };
+        self.images.insert(key, id);
+        id
+    }
+
     /// A new compile begins: spans may have moved.
     pub fn begin_compile(&mut self) {
         self.span_cache.clear();
         self.program_bytes = 0;
+        self.image_bytes = 0;
     }
 }
 
@@ -176,6 +260,8 @@ impl Tables {
 pub struct PageOut {
     /// FONT frames this page needs first (bodies).
     pub fonts: Vec<Vec<u8>>,
+    /// IMAGE and IMAGE_DATA frames this page needs first (bodies).
+    pub images: Vec<(Vec<u8>, Vec<u8>)>,
     /// A SOURCES frame this page needs first, if any.
     pub sources: Option<Json>,
     /// The PAGE body.
@@ -208,6 +294,10 @@ struct Walker<'a, 'w> {
     world: &'a HostWorld<'w>,
     doc: &'a PagedDocument,
     tables: &'a mut Tables,
+    /// The Typst page being converted (its fill, bleed, frame).
+    tpage: &'a typst_layout::Page,
+    chain: Vec<Chain>,
+    pending_group: Option<(Transform, Option<Curve>)>,
     caps: ClientCaps,
     have_fonts: &'a [String],
     /// The first error that stops the compile (the font-id limit).
@@ -227,6 +317,13 @@ struct Walker<'a, 'w> {
     path_misaligned: usize,
     /// Runs not found where the PDF should show them.
     misaligned: usize,
+    /// The PDF's XObjects (`Do`) consumed, and an allowance after an SVG or
+    /// PDF image (whose own raster images the PDF draws inline).
+    image_at: usize,
+    image_op_gap: bool,
+    images_out: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Image ids this page uses.
+    used_images: Vec<u32>,
     page: Page,
     matrices: HashMap<[u64; 6], u32>,
     unsupported: HashMap<String, u32>,
@@ -280,6 +377,9 @@ pub fn page(
         world,
         doc,
         tables,
+        tpage: tp,
+        chain: Vec::new(),
+        pending_group: None,
         caps,
         have_fonts,
         h,
@@ -295,6 +395,10 @@ pub fn page(
         unsupported: HashMap::new(),
         origins: Vec::new(),
         fonts_out: Vec::new(),
+        image_at: 0,
+        image_op_gap: false,
+        images_out: Vec::new(),
+        used_images: Vec::new(),
         sources_out: Sources::default(),
         fill: None,
         stroke: None,
@@ -310,7 +414,7 @@ pub fn page(
     };
     if let Some(fill) = tp.fill_or_transparent() {
         let shape = Geometry::Rect(size).filled(fill);
-        wk.shape(&shape, Span::detached(), Transform::identity());
+        wk.shape(&shape, Span::detached(), Transform::identity(), None);
     }
     let ts = Transform::translate(tp.bleed.left, tp.bleed.top);
     wk.frame(&tp.frame, ts);
@@ -373,10 +477,18 @@ pub fn page(
         ]);
         page.meta = Some(meta.to_string());
     }
+    let used = std::mem::take(&mut wk.used_images);
+    wk.tables.page_images.insert(index, used);
     let font_list = &wk.tables.font_list;
+    let image_keys = &wk.tables.image_keys;
     page.hash = page.content_hash(
         &|id| font_list.get(id as usize).map(|f| f.key).unwrap_or([0; 32]),
-        &|_| [0; 32],
+        &|id| {
+            image_keys
+                .get((id as usize).wrapping_sub(1))
+                .copied()
+                .unwrap_or([0; 32])
+        },
     );
     let body = page.encode();
     let sources = if wk.sources_out.files.is_empty() && wk.sources_out.spans.is_empty() {
@@ -389,6 +501,7 @@ pub fn page(
     }
     Ok(PageOut {
         fonts: wk.fonts_out,
+        images: wk.images_out,
         sources,
         body,
         glyphs,
@@ -398,24 +511,192 @@ pub fn page(
 
 impl<'a> Walker<'a, '_> {
     fn frame(&mut self, frame: &Frame, ts: Transform) {
+        let group = self.pending_group.take();
+        self.chain.push(Chain {
+            size: frame.size(),
+            kind: frame.kind(),
+            pos: Point::zero(),
+            group,
+        });
         for (pos, item) in frame.items() {
+            if let Some(c) = self.chain.last_mut() {
+                c.pos = *pos;
+            }
             let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
             match item {
                 FrameItem::Group(g) => self.group(g, ts),
-                FrameItem::Text(t) => self.text(t, ts),
-                FrameItem::Shape(s, span) => self.shape(s, *span, ts),
-                FrameItem::Image(_, _, span) => {
+                FrameItem::Text(t) => self.text(t, ts, item),
+                FrameItem::Shape(s, span) => self.shape(s, *span, ts, Some(item)),
+                FrameItem::Image(image, size, span) => {
                     // An SVG image's text is drawn inline in the PDF: the
                     // next run may start after glyphs of the image's own.
                     self.image_gap = true;
                     self.path_gap = true;
                     self.set_span(*span, None);
-                    self.unsupported("image (display-list-v3.3 E6)");
+                    match image.kind() {
+                        ImageKind::Raster(r) => self.raster(r, *size, ts),
+                        ImageKind::Svg(_) => {
+                            self.image_op_gap = true;
+                            self.island(Some(item), "SVG image");
+                        }
+                        ImageKind::Pdf(_) => {
+                            self.image_op_gap = true;
+                            self.island(Some(item), "PDF image");
+                        }
+                    }
                 }
                 FrameItem::Link(dest, size) => self.link(dest, *size, ts),
                 FrameItem::Tag(_) => {}
             }
         }
+        self.chain.pop();
+    }
+
+    /// The client draws PDF islands (`image-data`, spec §11.5).
+    fn islands(&self) -> bool {
+        self.caps.minor >= 3 && self.caps.image_data
+    }
+
+    /// A PDF island (E5, spec §11.5) for `item`, or, with `None`, for the
+    /// page's fill: a one-page PDF of the page's size that typst-pdf
+    /// exports with that item alone, inside the same chain of frames,
+    /// groups, transforms and clips as on the page, so that its content
+    /// stream carries the page's own numbers; drawn by an IMAGE item with
+    /// the identity matrix (the island's page space is the page's).
+    /// Without `image-data` the page is INCOMPLETE. Returns whether it is
+    /// drawn.
+    fn island(&mut self, item: Option<&FrameItem>, what: &str) -> bool {
+        if !self.islands() {
+            let m = format!("{what} (display-list-v3.3 E5 island: accept image-data)");
+            self.unsupported(&m);
+            return false;
+        }
+        let tp = self.tpage;
+        let page = match item {
+            None => typst_layout::Page {
+                frame: Frame::new(tp.frame.size(), tp.frame.kind()),
+                bleed: tp.bleed,
+                fill: tp.fill.clone(),
+                numbering: None,
+                supplement: Default::default(),
+                number: tp.number,
+            },
+            Some(item) => {
+                let mut child = item.clone();
+                let mut page_frame = None;
+                for lvl in self.chain.iter().rev() {
+                    let mut f = Frame::new(lvl.size, lvl.kind);
+                    f.push(lvl.pos, child);
+                    match &lvl.group {
+                        Some((t, clip)) => {
+                            let mut g = GroupItem::new(f);
+                            g.transform = *t;
+                            g.clip = clip.clone();
+                            child = FrameItem::Group(g);
+                        }
+                        None => {
+                            page_frame = Some(f);
+                            break;
+                        }
+                    }
+                }
+                let Some(frame) = page_frame else {
+                    let m = format!("{what}: no page frame for its island");
+                    self.unsupported(&m);
+                    return false;
+                };
+                typst_layout::Page {
+                    frame,
+                    bleed: tp.bleed,
+                    fill: typst::foundations::Smart::Custom(None),
+                    numbering: None,
+                    supplement: Default::default(),
+                    number: tp.number,
+                }
+            }
+        };
+        let h = typst::utils::hash128(&page);
+        if let Some(&id) = self.tables.islands.get(&h) {
+            self.gate("PDF island (display-list-v3.3 E5)");
+            self.used_images.push(id);
+            self.page.items.push(Item::Image { id, matrix: 0 });
+            return true;
+        }
+        let doc = PagedDocument::new(
+            typst::ecow::eco_vec![page],
+            typst::model::DocumentInfo::default(),
+        );
+        let opts = typst_pdf::PdfOptions {
+            tagged: false,
+            ..Default::default()
+        };
+        let t_island = std::time::Instant::now();
+        let exported = typst_pdf::pdf(&doc, &opts);
+        island_stats_add(
+            t_island.elapsed().as_secs_f64() * 1e3,
+            exported.as_ref().map_or(0, |b| b.len()),
+        );
+        let bytes = match exported {
+            Ok(b) => b,
+            Err(errs) => {
+                let m: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+                let m = format!("{what}: its island cannot be exported: {}", m.join("; "));
+                self.unsupported(&m);
+                return false;
+            }
+        };
+        // The image budget and the frame limit, as for raster images.
+        let budget = self.caps.image_budget.unwrap_or(DEFAULT_IMAGE_BUDGET);
+        let n = bytes.len() as u64;
+        let frame_room = flashtex_display_list::frame::MAX_FRAME as u64 - 64;
+        if n > frame_room || self.tables.image_bytes.saturating_add(n) > budget {
+            self.unsupported("image data over the per-compile budget (--image-budget)");
+            return false;
+        }
+        self.tables.image_bytes += n;
+        self.gate("PDF island (display-list-v3.3 E5)");
+        let b = self.page.pdf_box;
+        let info = vec![
+            ("type".to_string(), Json::Str("pdf".into())),
+            ("island".into(), Json::Bool(true)),
+            ("data".into(), Json::Bool(true)),
+            ("page".into(), Json::Int(1)),
+            ("page_box".into(), Json::Str("media".into())),
+            ("width".into(), Json::Num(b[2] - b[0])),
+            ("height".into(), Json::Num(b[3] - b[1])),
+            ("orig_x".into(), Json::Num(b[0])),
+            ("orig_y".into(), Json::Num(b[1])),
+        ];
+        let id = self.register_image(info, vec![bytes]);
+        self.tables.islands.insert(h, id);
+        self.used_images.push(id);
+        self.page.items.push(Item::Image { id, matrix: 0 });
+        true
+    }
+
+    /// The id of the image `info` with `parts` (spec §11.5), queueing its
+    /// IMAGE and IMAGE_DATA when the connection does not hold it yet.
+    fn register_image(&mut self, mut info: Vec<(String, Json)>, parts: Vec<Vec<u8>>) -> u32 {
+        let mut h = flashtex_display_list::sha256::Sha256::new();
+        h.update(b"display-list-v3 image\0");
+        h.update(Json::Obj(info.clone()).to_string().as_bytes());
+        for p in &parts {
+            h.update(&sha256(p));
+        }
+        let key = h.finish();
+        if let Some(&id) = self.tables.images.get(&key) {
+            return id;
+        }
+        let id = self.tables.bind_image(key);
+        let mut kv = vec![
+            ("id".to_string(), Json::Int(id as i64)),
+            ("key".into(), Json::Str(hex(&key))),
+        ];
+        kv.append(&mut info);
+        let body = ImageData { id, parts }.encode();
+        self.images_out
+            .push((Json::Obj(kv).to_string().into_bytes(), body));
+        id
     }
 
     fn group(&mut self, g: &GroupItem, ts: Transform) {
@@ -444,11 +725,177 @@ impl<'a> Walker<'a, '_> {
                     self.page.items.push(Item::Clip(n));
                 }
             }
+            self.pending_group = Some((g.transform, g.clip.clone()));
             self.frame(&g.frame, ts);
             self.restore();
         } else {
+            self.pending_group = Some((g.transform, g.clip.clone()));
             self.frame(&g.frame, ts);
         }
+    }
+
+    /// A raster image (spec §5.2, §11.5): the PDF's image XObject and the
+    /// CTM it is drawn with, found where the frame puts the image (the unit
+    /// square's corners within [`ALIGN_BP`]); the pixels are the PDF's
+    /// (`raw` samples after typst-pdf's conversion, or the JPEG it passes
+    /// through), sent once per connection.
+    fn raster(&mut self, raster: &RasterImage, size: Size, ts: Transform) {
+        // typst-pdf draws a JPEG with its EXIF orientation as a transform,
+        // and nothing for an image krilla's size cannot hold (zero, say).
+        let (exif, size) = exif_transform(raster, size);
+        let ts = ts.pre_concat(exif);
+        let (wf, hf) = (size.x.to_pt() as f32, size.y.to_pt() as f32);
+        if !(wf.is_finite() && hf.is_finite() && wf > 0.0 && hf > 0.0) {
+            return;
+        }
+        if self.caps.minor < 3 || !self.caps.image_data {
+            self.unsupported("image (display-list-v3.3 E6: accept image-data)");
+            return;
+        }
+        let Some(pp) = self.pdf else {
+            self.unsupported("image without the PDF's positions");
+            return;
+        };
+        let m = self.ctm6(ts);
+        let pt = |x: f64, y: f64| [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
+        let (w, h) = (size.x.to_pt(), size.y.to_pt());
+        // The unit square's (0,0), (1,0), (0,1): the image's bottom-left,
+        // bottom-right and top-left corners.
+        let want = [pt(0.0, h), pt(w, h), pt(0.0, 0.0)];
+        let fits = |op: &pdfpos::ImageOp| {
+            let c = op.ctm;
+            let got = [
+                [c[4], c[5]],
+                [c[0] + c[4], c[1] + c[5]],
+                [c[2] + c[4], c[3] + c[5]],
+            ];
+            !op.form
+                && got.iter().zip(&want).all(|(g, w)| {
+                    (g[0] - w[0]).abs() <= ALIGN_BP && (g[1] - w[1]).abs() <= ALIGN_BP
+                })
+        };
+        let start = self.image_at;
+        let found = if pp.images.get(start).is_some_and(fits) {
+            Some(start)
+        } else if self.image_op_gap {
+            (start + 1..pp.images.len()).find(|&k| fits(&pp.images[k]))
+        } else {
+            None
+        };
+        self.image_op_gap = false;
+        let Some(k) = found else {
+            self.image_at = start + 1;
+            self.unsupported("image: not where the PDF draws it");
+            return;
+        };
+        self.image_at = k + 1;
+        let op = &pp.images[k];
+        if let Some(st) = &op.unsupported_state {
+            let m = format!("image under {st} (not drawn by display-list v3.3)");
+            self.unsupported(&m);
+            return;
+        }
+        if op.fill_alpha != 1.0 {
+            self.unsupported("image with alpha (display-list-v3.3 E3)");
+            return;
+        }
+        let img = match &op.image {
+            Ok(i) => i.clone(),
+            Err(e) => {
+                let m = format!("image: {e}");
+                self.unsupported(&m);
+                return;
+            }
+        };
+        let Some(id) = self.image_id(&img) else {
+            return;
+        };
+        self.gate("raster image (display-list-v3.3 E6)");
+        let n = self.matrix(op.ctm);
+        self.used_images.push(id);
+        self.page.items.push(Item::Image { id, matrix: n });
+    }
+
+    /// The connection's id for an image, queueing its IMAGE and IMAGE_DATA
+    /// the first time a page uses it (`None`, and the page INCOMPLETE,
+    /// when its data cannot be decoded).
+    fn image_id(&mut self, img: &pdfpos::PdfImage) -> Option<u32> {
+        let jpeg = img.encoding == pdfpos::ImageEncoding::Jpeg;
+        let mut info = vec![
+            (
+                "type".to_string(),
+                Json::Str(if jpeg { "jpeg" } else { "raw" }.into()),
+            ),
+            ("data".into(), Json::Bool(true)),
+            ("width".into(), Json::Int(img.width as i64)),
+            ("height".into(), Json::Int(img.height as i64)),
+            ("components".into(), Json::Int(img.components as i64)),
+            ("bits".into(), Json::Int(img.bits as i64)),
+            ("interpolate".into(), Json::Bool(img.interpolate)),
+            ("smask".into(), Json::Bool(img.mask.is_some())),
+            ("icc".into(), Json::Bool(img.icc.is_some())),
+        ];
+        // The key covers the encoded streams: an image the connection holds
+        // is not decoded again.
+        let mut h = flashtex_display_list::sha256::Sha256::new();
+        h.update(b"display-list-v3 image\0");
+        h.update(Json::Obj(info.clone()).to_string().as_bytes());
+        for part in [
+            Some(img.data.as_slice()),
+            img.mask.as_ref().map(|m| m.1.as_slice()),
+            img.icc.as_ref().map(|p| p.as_slice()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            h.update(&sha256(part));
+        }
+        let key = h.finish();
+        if let Some(&id) = self.tables.images.get(&key) {
+            return Some(id);
+        }
+        // The budget, before anything is decoded: per compile, and below
+        // the frame limit for this one IMAGE_DATA.
+        let budget = self.caps.image_budget.unwrap_or(DEFAULT_IMAGE_BUDGET);
+        let size = img.data_len();
+        let frame_room = flashtex_display_list::frame::MAX_FRAME as u64 - 64;
+        match size {
+            Some(n) if n <= frame_room && self.tables.image_bytes.saturating_add(n) <= budget => {
+                self.tables.image_bytes += n;
+            }
+            _ => {
+                self.unsupported("image data over the per-compile budget (--image-budget)");
+                return None;
+            }
+        }
+        let parts = (|| -> Result<Vec<Vec<u8>>, String> {
+            let mut p = vec![img.data_part()?];
+            if let Some(m) = img.mask_part()? {
+                p.push(m);
+            }
+            if let Some(icc) = &img.icc {
+                p.push(icc.as_ref().clone());
+            }
+            Ok(p)
+        })();
+        let parts = match parts {
+            Ok(p) => p,
+            Err(e) => {
+                let m = format!("image: {e}");
+                self.unsupported(&m);
+                return None;
+            }
+        };
+        let id = self.tables.bind_image(key);
+        let mut kv = vec![
+            ("id".to_string(), Json::Int(id as i64)),
+            ("key".into(), Json::Str(hex(&key))),
+        ];
+        kv.append(&mut info);
+        let body = ImageData { id, parts }.encode();
+        self.images_out
+            .push((Json::Obj(kv).to_string().into_bytes(), body));
+        Some(id)
     }
 
     /// Frame origins of a run's glyphs, stream space (y up).
@@ -504,9 +951,21 @@ impl<'a> Walker<'a, '_> {
         }
     }
 
-    fn text(&mut self, t: &TextItem, ts: Transform) {
+    fn text(&mut self, t: &TextItem, ts: Transform, item: &FrameItem) {
         let frame = self.frame_origins(t, ts);
         let first = self.align(&frame);
+        // Gradient or tiling text: a PDF island (E5) when the client draws
+        // them.
+        if self.islands()
+            && (is_pattern(&t.fill) || t.stroke.as_ref().is_some_and(|s| is_pattern(&s.paint)))
+        {
+            if let Some(g) = t.glyphs.first() {
+                self.set_span(g.span.0, Some(g.span.1));
+            }
+            self.island(Some(item), "gradient or tiling text");
+            self.image_op_gap = true;
+            return;
+        }
         let Some(fill) = self.paint(&t.fill) else {
             return;
         };
@@ -517,6 +976,15 @@ impl<'a> Walker<'a, '_> {
             (Some(pp), Some(k)) => Some(&pp.glyphs[k..k + t.glyphs.len()]),
             _ => None,
         };
+        // Colour glyphs: typst-pdf draws them as Type 3 procedures (SVG,
+        // COLR or bitmap data), which a GLYPH's OpenType id does not
+        // reproduce. Not islanded yet and without a gate row: INCOMPLETE
+        // (DESIGN.md §15.4, §15.5), drawn or not.
+        if from_pdf.is_some_and(|pg| pg.iter().any(|g| g.type3)) {
+            self.unsupported(
+                "colour glyph (Type 3 in the PDF; display-list-v3.3 E5, not islanded yet)",
+            );
+        }
         // The paint state the PDF draws the run with (its first glyph's).
         let pdf_paint = match (self.pdf, from_pdf) {
             (Some(pp), Some(pg)) => pg.first().map(|g| &pp.paints[g.paint as usize]),
@@ -606,7 +1074,7 @@ impl<'a> Walker<'a, '_> {
         }
     }
 
-    fn shape(&mut self, s: &Shape, span: Span, ts: Transform) {
+    fn shape(&mut self, s: &Shape, span: Span, ts: Transform, item: Option<&FrameItem>) {
         let segs = match &s.geometry {
             Geometry::Line(p) => vec![Seg::Move(0.0, 0.0), Seg::Line(p.x.to_pt(), p.y.to_pt())],
             Geometry::Rect(size) => {
@@ -637,6 +1105,20 @@ impl<'a> Walker<'a, '_> {
         } else {
             self.take_paths(&segs, m6, want, 0, krilla_skips(&segs, stroke.is_some()))
         };
+        // A gradient or tiling fill or stroke: the whole shape as a PDF
+        // island (E5) when the client draws them, its PDF paths consumed.
+        if self.islands()
+            && (s.fill.as_ref().is_some_and(is_pattern)
+                || stroke.is_some_and(|st| is_pattern(&st.paint)))
+        {
+            if ops.as_ref().is_some_and(|o| o.is_empty()) {
+                return;
+            }
+            self.set_span(span, None);
+            self.island(item, "gradient or tiling");
+            self.image_op_gap = true;
+            return;
+        }
         let fill = s.fill.as_ref().map(|p| self.paint(p));
         let stroke_paint = stroke.map(|st| self.paint(&st.paint));
         let from_pdf = ops.is_some();
@@ -1516,6 +1998,76 @@ fn fmt(v: f64) -> String {
         "0".into()
     } else {
         s
+    }
+}
+
+thread_local! {
+    static ISLANDS: std::cell::Cell<(usize, f64, f64, usize, usize)> =
+        const { std::cell::Cell::new((0, 0.0, 0.0, 0, 0)) };
+}
+
+fn island_stats_add(ms: f64, bytes: usize) {
+    ISLANDS.with(|c| {
+        let (n, t, tmax, b, bmax) = c.get();
+        c.set((n + 1, t + ms, tmax.max(ms), b + bytes, bmax.max(bytes)));
+    });
+}
+
+/// Islands exported on this thread so far: (count, total ms, max ms, total
+/// bytes, max bytes) -- for measuring their cost (tests, the suite).
+pub fn island_stats() -> (usize, f64, f64, usize, usize) {
+    ISLANDS.with(|c| c.get())
+}
+
+/// A gradient or a tiling: what v3 draws only as a PDF island (E5).
+fn is_pattern(p: &Paint) -> bool {
+    matches!(p, Paint::Gradient(_) | Paint::Tiling(_))
+}
+
+/// typst-pdf's `exif_transform`: a JPEG is not re-encoded, so its EXIF
+/// orientation is drawn as a transform of the image's box, which may swap
+/// its sides.
+///
+/// Adapted from typst-pdf 0.15.1, src/image.rs, `exif_transform`
+/// (Copyright the Typst project authors; Apache License, Version 2.0).
+/// Modified: import paths and comments only. See typst-host/NOTICE.
+fn exif_transform(image: &RasterImage, size: Size) -> (Transform, Size) {
+    use typst::layout::{Angle, Ratio};
+    use typst::visualize::{ExchangeFormat, RasterFormat};
+    if image.format() != RasterFormat::Exchange(ExchangeFormat::Jpg) {
+        return (Transform::identity(), size);
+    }
+    let base = |hp: bool, vp: bool, mut base_ts: Transform, size: Size| {
+        if hp {
+            base_ts = base_ts.pre_concat(
+                Transform::scale(-Ratio::one(), Ratio::one())
+                    .pre_concat(Transform::translate(-size.x, Abs::zero())),
+            )
+        }
+        if vp {
+            base_ts = base_ts.pre_concat(
+                Transform::scale(Ratio::one(), -Ratio::one())
+                    .pre_concat(Transform::translate(Abs::zero(), -size.y)),
+            )
+        }
+        base_ts
+    };
+    let no_flipping = |hp: bool, vp: bool| (base(hp, vp, Transform::identity(), size), size);
+    let with_flipping = |hp: bool, vp: bool| {
+        let base_ts = Transform::rotate_at(Angle::deg(90.0), Abs::zero(), Abs::zero())
+            .pre_concat(Transform::scale(Ratio::one(), -Ratio::one()));
+        let inv_size = Size::new(size.y, size.x);
+        (base(hp, vp, base_ts, inv_size), inv_size)
+    };
+    match image.exif_rotation() {
+        Some(2) => no_flipping(true, false),
+        Some(3) => no_flipping(true, true),
+        Some(4) => no_flipping(false, true),
+        Some(5) => with_flipping(false, false),
+        Some(6) => with_flipping(false, true),
+        Some(7) => with_flipping(true, true),
+        Some(8) => with_flipping(true, false),
+        _ => no_flipping(false, false),
     }
 }
 
