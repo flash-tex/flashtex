@@ -375,3 +375,25 @@ fn tracing_writes_are_not_replayable() {
     assert_eq!(count(&s, "not_replayable.Tracing"), 3, "{s}");
     assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
 }
+
+/// A check compares the replay of the previous call's recording with the
+/// real path. When the real path itself is not replayable (here it writes
+/// to a file, which is not compared, after a call that did not), the two
+/// states agree although a replay would be wrong: the check is a
+/// difference (`semantic.differing.not_replayable`), not a pass (#2203).
+/// (The body ends in `\relax`, a command, so that the recording ends at
+/// the body, before the next token is read.)
+#[test]
+fn a_check_whose_real_path_is_not_replayable_is_no_pass() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\newwrite\\IntrW\\immediate\\openout\\IntrW=\\jobname.w\n\
+         \\newcount\\IntrC\\def\\pdfstringdefPreHook{\\ifodd\\IntrC\\immediate\\write\\IntrW{x}\\fi\\relax}\n\
+         \\begin{document}\\relax\n\\IntrC=1 \\pdfstringdefPreHook\n\\IntrC=0 \\pdfstringdefPreHook\n\
+         \\IntrC=1 \\pdfstringdefPreHook\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "semantic.checked"), 1, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing.not_replayable"), 1, "{s}");
+}

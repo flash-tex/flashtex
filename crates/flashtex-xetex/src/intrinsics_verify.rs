@@ -112,9 +112,20 @@ impl Globals {
         }
     }
 
-    /// The real path is done: compare, count, drop C.
-    pub(crate) fn intr_verify_end(&mut self, p: Pending) {
-        let diffs = self.intr_compare(&p);
+    /// The real path is done: compare, count, drop C. `bad`: why the real
+    /// path is not replayable (`not_replayable.*`), if it is not. It then
+    /// did something a replay does not, outside the compared state (a
+    /// file written or read, output, an `\aftergroup` left behind, ...), so
+    /// equal states are no pass: the check is a difference of the class
+    /// `not_replayable` (#2203).
+    pub(crate) fn intr_verify_end(&mut self, p: Pending, bad: Option<&'static str>) {
+        let mut diffs = self.intr_compare(&p);
+        if let Some(w) = bad {
+            diffs.push((
+                "not_replayable",
+                format!("the real path is not replayable ({w})"),
+            ));
+        }
         self.drop_checkpoint(p.ck);
         let r = &mut self.host.intrinsics;
         r.checked += 1;
