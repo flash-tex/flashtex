@@ -60,6 +60,9 @@ thread_local! {
     /// The differing mem words the last `Iso::check` found only in dead
     /// cells (`garbage`).
     static DEAD_CELLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// `restricted`: the walk leaves out the `eqtb` entries in chunks
+    /// neither state wrote (BOX-MEMO's full-state verifier).
+    static RESTRICTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The differing mem words the last successful `Iso::check` accepted only
@@ -394,6 +397,37 @@ pub(crate) fn with_dormant<R>(j: i32, f: impl FnOnce() -> R) -> R {
     DORMANT.with(|c| c.set(j));
     let r = f();
     DORMANT.with(|c| c.set(-1));
+    r
+}
+
+/// Run `f` with the walk *restricted* (BOX-MEMO's full-state verifier,
+/// `incr::same_state`). Both states come from one state C (the call's
+/// admission point), so a chunk neither path wrote since C holds the same
+/// words in both, and C's: an `eqtb` entry there is the same in both, and
+/// so is the structure it reaches, but for words some path wrote, each of
+/// which is in the differing words the walk must explain (`bad_mem`). The
+/// restricted walk leaves those entries out (on beamer-polish their macro
+/// bodies were 99 % of the walk: 770 k cells a call, of 3 k elsewhere). It
+/// can only conclude "the same" when the full walk would:
+///
+/// * a differing word in a structure left out is reached in both states
+///   only through what the walk compares; reached nowhere, it is
+///   unexplained and the walk fails (`check`'s `bad_mem`);
+/// * reached, it is a node at the same address in both states (the path to
+///   it from the left-out entry is words neither path wrote): the walk
+///   pairs it with itself, and compares it and what follows it as the full
+///   walk does from there; a node paired with another address that lies in
+///   a chunk neither state wrote (a node of C, which the full walk pairs
+///   with itself through its own entry) is a conflict (`pair`);
+/// * every other root (the static heads, the page, the save, nest and
+///   input stacks, the arrays, the scalars) is walked in full.
+///
+/// A restricted walk that fails is not a verdict: the caller runs the full
+/// walk then (`incr::same_state`).
+pub(crate) fn restricted<R>(f: impl FnOnce() -> R) -> R {
+    RESTRICTED.with(|c| c.set(true));
+    let r = f();
+    RESTRICTED.with(|c| c.set(false));
     r
 }
 
@@ -861,6 +895,9 @@ pub struct Iso<'a, O: Space, N: Space> {
     /// the same address in both states is paired without a cover
     /// (`chain_from`), since only differing words are looked up in it.
     equal_tokens: bool,
+    /// The restricted walk (`restricted`): the chunks either state wrote
+    /// since the restore target, by chunk.
+    written: Option<Vec<u64>>,
 }
 
 /// The hasher of the relocation map (`Iso::fwd`, keyed by `mem` address,
@@ -944,7 +981,17 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             steps: 0,
             toks_later: None,
             equal_tokens: false,
+            written: None,
         }
+    }
+
+    /// Whether either state wrote the chunk of byte offset `off` (always,
+    /// outside the restricted walk).
+    fn written_at(&self, off: usize) -> bool {
+        self.written.as_ref().is_none_or(|w| {
+            let c = off >> CHUNK_SHIFT;
+            w.get(c >> 6).is_some_and(|x| x >> (c & 63) & 1 == 1)
+        })
     }
 
     fn in_mem(p: i32) -> bool {
@@ -969,6 +1016,16 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             return (partner == b).then_some(false);
         }
         if bit(&self.head_n, b) {
+            return None;
+        }
+        // (the restricted walk: a node of a chunk neither state wrote is a
+        // node of the admission point, which the full walk pairs with
+        // itself where a left-out entry reaches it)
+        if a != b
+            && self.written.is_some()
+            && !(self.written_at(self.o.l.mem + a as usize * 8)
+                && self.written_at(self.n.l.mem + b as usize * 8))
+        {
             return None;
         }
         set(&mut self.head_o, a);
@@ -2461,7 +2518,34 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         let (ho, hn) = (self.o.sc("hash_high"), self.n.sc("hash_high"));
         self.eq("hash_high", ho, hn);
         let high = EQTB_SIZE + 1..=EQTB_SIZE + ho.max(hn);
-        for p in (1..INT_BASE).chain(high) {
+        // (the restricted walk: only the entries in chunks either state
+        // wrote, `restricted`)
+        let ps: Vec<i32> = match &self.written {
+            None => (1..INT_BASE).chain(high).collect(),
+            Some(w) => {
+                let base = self.o.l.eqtb;
+                let mut ps = vec![];
+                for (i, &x) in w.iter().enumerate() {
+                    let mut x = x;
+                    while x != 0 {
+                        let c = i * 64 + x.trailing_zeros() as usize;
+                        x &= x - 1;
+                        let (lo, hi) = (c << CHUNK_SHIFT, (c + 1) << CHUNK_SHIFT);
+                        if hi <= base {
+                            continue;
+                        }
+                        let first = (lo.max(base) - base).div_ceil(8) as i32 + 1;
+                        let last = ((hi - base) / 8) as i32;
+                        ps.extend(
+                            (first..=last)
+                                .filter(|p| (1..INT_BASE).contains(p) || high.contains(p)),
+                        );
+                    }
+                }
+                ps
+            }
+        };
+        for p in ps {
             let (x, y) = (self.o.eqtb(p), self.n.eqtb(p));
             if x == y {
                 let t = b0(x);
@@ -3077,6 +3161,13 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         // lists first (`roots`), the outcome does not depend on the order:
         // the pairs are those both states reach from the same places, and a
         // token list's walk reads and pairs only its own tokens.
+        if RESTRICTED.with(|c| c.get()) {
+            let mut v = vec![0u64; g.arena.chunks().div_ceil(64)];
+            for c in d.written() {
+                v[c as usize >> 6] |= 1 << (c & 63);
+            }
+            w.written = Some(v);
+        }
         w.toks_later = Some(Vec::new());
         w.roots();
         if w.err.is_none() {
