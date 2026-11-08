@@ -43,9 +43,7 @@ struct Outcome {
 /// TeX Live (a skip that reports as a pass, failing only under
 /// `FLASHTEX_REQUIRE_TEXLIVE=1`); otherwise `(ours, pdftex)`.
 fn run_both(doc: &str) -> Option<(Outcome, Outcome)> {
-    let Some(texbin) = find_texlive_bin() else {
-        return None;
-    };
+    let texbin = find_texlive_bin()?;
     let base = common::fresh_dir("flashtex-initex-only-oracle");
     let fmt = "\\catcode`\\{=1 \\catcode`\\}=2 \\dump\n";
     let mut out = vec![];
@@ -98,11 +96,18 @@ fn run_both(doc: &str) -> Option<(Outcome, Outcome)> {
 /// oracle's log, terminal, exit status and whether `t.fmt` was written.
 fn check(ours: &Outcome, tex: &Outcome, wants: &[&str]) {
     for want in wants {
-        assert!(tex.log.contains(want), "pdftex's log lacks {want:?}:\n{}", tex.log);
+        assert!(
+            tex.log.contains(want),
+            "pdftex's log lacks {want:?}:\n{}",
+            tex.log
+        );
     }
     assert!(!tex.fmt_written, "pdftex wrote t.fmt in a production run");
     assert_eq!(ours.log, tex.log, "the log differs from pdftex's");
-    assert_eq!(ours.term, tex.term, "the terminal output differs from pdftex's");
+    assert_eq!(
+        ours.term, tex.term,
+        "the terminal output differs from pdftex's"
+    );
     assert_eq!(ours.code, tex.code, "the exit status differs from pdftex's");
     assert_eq!(
         ours.fmt_written, tex.fmt_written,
@@ -133,8 +138,7 @@ fn patterns_several_patterns_then_text_after_brace() {
 
 #[test]
 fn patterns_nested_braces() {
-    let doc =
-        "\\catcode`\\{=1 \\catcode`\\}=2 \\patterns{a1b c2d {x} e3f}\nAFTERBRACE\n\\end\n";
+    let doc = "\\catcode`\\{=1 \\catcode`\\}=2 \\patterns{a1b c2d {x} e3f}\nAFTERBRACE\n\\end\n";
     let Some((ours, tex)) = run_both(doc) else {
         common::no_texlive();
         return;
@@ -164,8 +168,7 @@ fn two_patterns_in_a_row() {
 
 #[test]
 fn patterns_inside_group_and_after_it_closes() {
-    let doc =
-        "\\catcode`\\{=1 \\catcode`\\}=2 {\\patterns{a1b}} AFTER \\patterns{c2d}\n\\end\n";
+    let doc = "\\catcode`\\{=1 \\catcode`\\}=2 {\\patterns{a1b}} AFTER \\patterns{c2d}\n\\end\n";
     let Some((ours, tex)) = run_both(doc) else {
         common::no_texlive();
         return;
@@ -197,7 +200,8 @@ fn dump_inside_group() {
 
 #[test]
 fn dump_with_pending_paragraph_ends_job() {
-    let doc = "\\catcode`\\{=1 \\catcode`\\}=2 Some pending text here\n\\dump\nMORE AFTER DUMP\n\\end\n";
+    let doc =
+        "\\catcode`\\{=1 \\catcode`\\}=2 Some pending text here\n\\dump\nMORE AFTER DUMP\n\\end\n";
     let Some((ours, tex)) = run_both(doc) else {
         common::no_texlive();
         return;
@@ -221,8 +225,7 @@ fn dump_after_patterns() {
 
 #[test]
 fn patterns_then_hyphenation() {
-    let doc =
-        "\\catcode`\\{=1 \\catcode`\\}=2 \\patterns{a1b} \\hyphenation{a-b} WORDS\n\\end\n";
+    let doc = "\\catcode`\\{=1 \\catcode`\\}=2 \\patterns{a1b} \\hyphenation{a-b} WORDS\n\\end\n";
     let Some((ours, tex)) = run_both(doc) else {
         common::no_texlive();
         return;
