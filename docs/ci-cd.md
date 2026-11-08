@@ -442,8 +442,10 @@ slowest shard, not the sum. Two jobs carry the shards:
   once), pull requests and every push to `main`. Described below.
 * **`engine parity (NixOS, <shard>)`**, three shards (lockstep, P-T fixtures,
   engine tests), on the `flashtex-linux` runners (the owner's PC, TeX Live 2026
-  first on their `PATH`): only a full manual run (`workflow_dispatch` without
-  `gate_only`, PC switch on) — never a pull request (§9.3). Each shard keeps a **per-runner**
+  first on their `PATH`): a merge group on the PC route (`gate-pc`), every push
+  to `main` (since 2026-11-08) and a full manual run (`workflow_dispatch` without
+  `gate_only`), PC switch on, each supervised by `gate-pc` with the hosted
+  `engine-parity-fallback` after 5 minutes — never a pull request (§9.3). Each shard keeps a **per-runner**
   `CARGO_TARGET_DIR` under `~/.cache/flashtex-ci/<runner>/` (the warm cache: a
   run rebuilds only what changed). Per runner, not one shared directory: cargo
   locks a target directory for a whole build, so shards sharing one would build
@@ -690,8 +692,9 @@ Routing uses the same eligibility as the Macs but its own switch,
 `FLASHTEX_SELFHOSTED_LINUX` (unset: it follows `FLASHTEX_SELFHOSTED_MAC`):
 `plan`'s `selfhosted_linux` output is `true` for merge_group, push to main and
 workflow_dispatch when that switch is `1` — never for `pull_request` or a
-branch push. In `ci.yml` the PC now runs **only engine parity on a full manual
-run** (`engine_nixos` in `plan`); nothing in the merge queue waits for it. Until
+branch push. In `ci.yml` the PC runs the merge queue's Linux legs (`gate-pc`,
+above), and engine parity on every push to `main` and on a full manual run
+(`engine_nixos` in `plan`); nothing waits for it more than 5 minutes. Until
 2026-10-05 it ran the workspace build, the Linux leg of the Rust workspace and
 engine parity in every merge group, and up to 8 groups at a time queued for its
 three runners (up to 50 minutes; with the slice's CPU cap, the three runners also

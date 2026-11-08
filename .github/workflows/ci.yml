@@ -44,7 +44,8 @@
 # Every job of the gate was GitHub-hosted (the repository is public:
 # free). The three NixOS runners on the owner's PC (label flashtex-linux)
 # keep nightly.yml's suites (T2, soundness, T4, the scoreboard); in this file
-# they run engine parity only on a full manual run (`engine_nixos` in plan)
+# they run engine parity on the push to main (since 2026-11-08, with gate-pc's
+# hosted fallback) and on a full manual run (`engine_nixos` in plan)
 # -- never a pull request or a branch push (DESIGN §9.3). Until 2026-10-05
 # they ran the gate's parity, the workspace build and the Rust workspace,
 # and up to 8 merge groups queued for them (up to 50 minutes). The PC and
@@ -144,8 +145,9 @@ jobs:
       # 'true' when this run must run the new engine's parity gates.
       engine: ${{ steps.p.outputs.engine }}
       # Where they run: GitHub-hosted Ubuntu (engine_hosted) on every event;
-      # the NixOS PC (engine_nixos) only on a full manual run, and both when
-      # that run asks (input engine_parity_hosted).
+      # the NixOS PC (engine_nixos) in a merge group on gate_route=pc, on the
+      # push to main and on a full manual run (gate-pc falls back to hosted
+      # shards), and both when a manual run asks (input engine_parity_hosted).
       engine_nixos: ${{ steps.p.outputs.engine_nixos }}
       engine_hosted: ${{ steps.p.outputs.engine_hosted }}
       # 'true' when this run must run the parity fixtures on macOS (a macOS
@@ -337,6 +339,11 @@ jobs:
           # with no queueing, where the PC's three runners queued the gate for
           # up to 50 minutes). The PC twin runs only on a full manual run with
           # its switch on (and the PC keeps nightly.yml's suites).
+          # Since 2026-11-08 (lane GATES) also on the push to main, which waits
+          # for nobody: gate-pc supervises the PC shards there too and falls
+          # back to the hosted ones after gate_pc_wait minutes, so a busy or
+          # offline PC (11-03 to 11-08) costs main's run 5 minutes, and a free
+          # PC takes five hosted Linux jobs off every merge.
           #
           # The gate on the NixOS PC (Commander, 2026-11-01). A merge group's
           # gate waited up to 64 minutes for GitHub-hosted runners (the org's
@@ -389,8 +396,10 @@ jobs:
           if [ "$engine" = "true" ]; then
             if [ "$gate_route" = "pc" ]; then
               engine_nixos=true
-            elif [ "$selfhosted_linux" = "true" ] && [ "$EVENT" = "workflow_dispatch" ] && [ "$tier" = "all" ]; then
-              engine_nixos=true
+            elif [ "$selfhosted_linux" = "true" ] && [ "$tier" = "all" ]; then
+              # A full manual run, or the push to main: selfhosted_linux is
+              # only ever true for those, merge groups and gate-only runs.
+              case "$EVENT" in workflow_dispatch|push) engine_nixos=true ;; esac
             fi
             if [ "$engine_nixos" != "true" ] || [ "$ENGINE_PARITY_HOSTED" = "true" ]; then
               engine_hosted=true
@@ -932,7 +941,9 @@ jobs:
   #                         2026, five shards: every event that needs parity,
   #                         the merge queue included
   #   engine-parity         the NixOS PC (TeX Live 2026 first on its runners'
-  #                         PATH), three shards: only a full manual run (§9.3)
+  #                         PATH), three shards: a merge group on the PC route,
+  #                         the push to main and a full manual run (§9.3),
+  #                         supervised by gate-pc with a hosted fallback
   #
   # `CI required` fails a gate run (merge_group) in which plan's `engine` is
   # 'true' and neither job passed in full (a matrix job passes only when every
@@ -1714,9 +1725,11 @@ jobs:
   # pull requests the push merged; a fully green run on main's tip closes it
   # (scripts/ci/main-red.sh). Policy (docs/ci-cd.md, "main-red"): the PR's
   # owner fixes forward within 2 hours, or the Commander reverts the merge.
+  # The PC's engine-parity shards are judged through gate-pc (and its hosted
+  # fallback), not needed here: one never picked up must not hold the report.
   main-red:
     name: main-red issue
-    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, mac-v3-host, real-doc-gate, real-doc-instr, ipad]
+    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, gate-pc, engine-parity-fallback, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, mac-v3-host, real-doc-gate, real-doc-instr, ipad]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.plan.outputs.run == 'true'
