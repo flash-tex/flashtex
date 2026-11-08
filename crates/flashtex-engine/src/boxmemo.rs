@@ -1644,6 +1644,15 @@ fn pop_used_up(g: &mut Globals) {
     }
 }
 
+/// Whether a span is being recorded (§17.4). The host holds a timed
+/// checkpoint back until it ends: a checkpoint's record takes the
+/// line-shift journal's entries, after which the span cannot tell its own
+/// (`journal_since`) and is abandoned (`LineShift`), and, verified, its
+/// normal path then disagrees with the guard that let a replay through.
+pub fn span_recording(g: &Globals) -> bool {
+    g.bm_rec_on && FAST.with(|f| f.borrow().span_f >= 0)
+}
+
 pub fn after_restore(g: &mut Globals) {
     // (the word space is another state: §12.4's entries say nothing of it)
     seen_clear();

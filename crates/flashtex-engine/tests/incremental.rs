@@ -6778,3 +6778,59 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// BOX-MEMO spans (BOX-MEMO.md §17.4) in the host, at its default timed
+/// checkpoints (20 ms apart: a tikz-cd diagram often takes longer). A timed
+/// checkpoint taken inside a span takes the line-shift journal's entries,
+/// after which the span cannot tell its own and is abandoned (`LineShift`);
+/// verified, a span whose recording saw no checkpoint then disagreed with
+/// the guard that let its replay through ("normal path not pure after the
+/// guard passed: LineShift", every run on the PC at the letters typed after
+/// "that is constant" in fixtures/real-world/tikzcd-shaded-notes). The host
+/// now holds a timed checkpoint back until the span ends. In verification
+/// mode with `FLASHTEX_BOXMEMO_VERIFY_FAIL` a difference ends the host
+/// (status 3), so every compile must report, and equal scratch runs.
+#[test]
+fn spans_hold_timed_checkpoints_back() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/real-world/tikzcd-shaded-notes/main.tex");
+    let Ok(src) = std::fs::read_to_string(&fixture) else {
+        eprintln!("skipped: no {}", fixture.display());
+        return;
+    };
+    let dir = e.dir.join("spans-timed");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let at = src.find("that is constant").unwrap() + "that is constant".len();
+    let typed = format!("{}x{}", &src[..at], &src[at..]);
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[
+            ("FLASHTEX_BOXMEMO", "verify"),
+            ("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1"),
+            ("FLASHTEX_BOXMEMO_SPANS", "tikzcd"),
+        ],
+    );
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &src)], "settle");
+        assert!(r.contains("\"mode\""), "settle: {r}");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for k in 0..3 {
+        for (what, text) in [("typed", &typed), ("reverted", &src)] {
+            let what = format!("key {k} {what}");
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], &what);
+            assert!(
+                r.contains("\"mode\""),
+                "{what}: the host ended (a verification difference?): {r}"
+            );
+        }
+    }
+}

@@ -1005,6 +1005,15 @@ now is. tikz-cd reads `\inputlineno` (`\tikzcd@lineno`), which the line-shift jo
 entries a span made are kept as lines relative to its first and pushed again by the replay
 (`journal_push`); a span whose entries are not all F's lines is not recorded.
 
+The host's timed checkpoints (`FLASHTEX_TIMED_S`, 20 ms apart) are held back while a span records
+(`boxmemo::span_recording`; asked again at the first line read after it). A checkpoint's record takes
+the journal's entries, and a span with a checkpoint inside could no longer tell its own: it was
+abandoned (`LineShift`), and, verified, a span whose recording had seen no checkpoint disagreed with
+the guard that let its replay through. On the PC, tikzcd-shaded-notes in verification mode with
+letters typed after "that is constant": one such difference in each of three runs (at b14affac4 and
+after the merge with main), none with the hold. Test: `spans_hold_timed_checkpoints_back`
+(tests/incremental.rs), which fails without it.
+
 ### 17.5 Memory
 
 pgfplots pictures log tens of thousands of operations. A span's entry keeps only the replay's
