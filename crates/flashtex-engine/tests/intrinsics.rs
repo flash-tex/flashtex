@@ -216,3 +216,54 @@ fn verify_all_on_the_test_file() {
     assert_eq!(stat(&all.stats, "verify_differences"), 0, "{}", all.stats);
     assert!(stat(&all.stats, "verified") >= 2, "{}", all.stats);
 }
+
+/// The `\tracingstats` memory lines of a log (`Memory usage before: ...`).
+fn memory_lines(log: &str) -> Vec<&str> {
+    log.lines()
+        .filter(|l| l.starts_with("Memory usage"))
+        .collect()
+}
+
+/// #2039: a recording kept the lists it read and defined in `mem` (pinned),
+/// so at every shipout `dyn_used` (the one-word nodes in use, the second
+/// number of each pair) was higher than pdfTeX's by their size. With the
+/// lists copied out of `mem`, the memory lines are TeX Live's pdfTeX's at
+/// every shipout while the hook is recorded, replayed, redefined around and
+/// recorded again.
+#[test]
+fn memory_usage_is_pdftex_s_while_replaying() {
+    let Some(texbin) = flashtex_engine::resolver::find_texlive_bin() else {
+        common::no_texlive();
+        return;
+    };
+    let d = scratch("mem");
+    let ship = "\\shipout\\hbox{}";
+    let src = format!(
+        "{PRELUDE}\\tracingstats=2 \\hook{ship}\\hook\\show{ship}\\hook\\hook\\show{ship}\
+         \\def\\a{{AA}}\\hook\\show{ship}\\hook\\hook\\show{ship}\\def\\w{{gone}}\\let\\z\\relax{ship}\
+         \\hook\\hook\\show{ship}\\end\n"
+    );
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let on = run(&d, "on", "hook");
+    assert!(stat(&on.stats, "replays") >= 4, "{}", on.stats);
+    let tex = d.join("tex");
+    std::fs::create_dir_all(&tex).unwrap();
+    std::fs::write(tex.join("t.tex"), &src).unwrap();
+    let out = Command::new(texbin.join("pdftex"))
+        .args(["-ini", "\\input t"])
+        .current_dir(&tex)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run pdftex");
+    assert!(out.status.code().is_some(), "pdftex: {out:?}");
+    let reference = std::fs::read_to_string(tex.join("t.log")).unwrap();
+    let want = memory_lines(&reference);
+    assert_eq!(want.len(), 7, "pdftex's log:\n{reference}");
+    assert_eq!(
+        memory_lines(&on.log),
+        want,
+        "the memory lines differ from pdftex's"
+    );
+}
