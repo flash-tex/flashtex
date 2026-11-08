@@ -83,8 +83,9 @@ env:
   # refs-N compile stopped in the preamble, so the sweeps compared two equal
   # error runs ("cold" 100 of 100) and span's hosts had nothing to keep
   # (measured 2026-10-06). The `prepare` job's preflight now catches that.
-  # siunitx r80609 (3.6.4; re-pinned 2026-10-20: tlnet replaced r80407, 3.6.3,
-  # and the old pin failed every run's `prepare`), cleveref r79618 (0.21.4). framed r77682, ntheorem r79618
+  # siunitx r80998 (3.6.7; re-pinned 2026-11-08: tlnet replaced r80609, 3.6.4,
+  # and every shard that missed the TeX Live cache failed, 42503747421; before
+  # that 2026-10-20, r80407 3.6.3 -> r80609), cleveref r79618 (0.21.4). framed r77682, ntheorem r79618
   # (collection-latexextra) and tikz-cd r77682 (collection-pictures), for the
   # framed/TikZ fixtures that exercise BOX-MEMO (fixtures/real-world/
   # framed-tikz-theorems, tikzcd-shaded-notes): without them every compile of
@@ -93,7 +94,7 @@ env:
   TEXLIVE_EXTRA: |
     sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
     translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
-    siunitx 1a78521a47bf89ecd5e58f3c0327f0c36c9012e13ee4d63e63f8acfdd7e1aef7
+    siunitx 77b2dead25b4fa0a4b475eb473be45436dd758affa2eefdb2f5717cb513f02ee
     cleveref 2d52e8f485c20dd4352dda55d14abf94666e845adeb5f630f73d3c67692d22a1
     framed 55e43198fa63236b7f97cfa6b70d141dc0be1976dc385cac3d6cad3f1610ff25
     ntheorem 030413280971d17decff54f02ac44749010eb127fa684033e811417e391eb84d
