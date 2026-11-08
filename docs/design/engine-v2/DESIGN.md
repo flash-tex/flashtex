@@ -23,8 +23,8 @@ T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 ✔ verified and 
 `2e7203e03` (2026-10-05): preview 669/669 at 0 px, P-T2 86/86, positions 86/86 exact; CI
 `preview-parity.yml` run 37381958089** (§12) · **P4 ✔ met 2026-10-21** under the owner's
 ruling at S4 (T7 reference run #1876, 120/120 gated rows; §12) · **P5: retirement complete
-(S7 #1888, S8 #1902, 2026-11-01); the first board after S7 that has #1915's T3 baseline is
-pending** (§12).
+(S7 #1888, S8 #1902, 2026-11-01); the boards after #1915 are all green (41341639780,
+42357659737); met pending main green** (§12).
 
 *The rest of this block is the 2026-10-05 snapshot, kept as recorded; §12 is current.*
 Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
@@ -1147,15 +1147,18 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
     #1899's S₁, #1907, #1908, #1913 and #1914, all on the restart, restore and convergence
     paths). No reference run has been recorded after it; the review of 2026-11-01 recommends
     one (reviews/2026-11-01.md §5).
-- **P5: retirement complete; met pending the first board after S7 (status 2026-11-01, review
+- **P5: retirement complete; boards green; met pending main green (status 2026-11-08; review
   2026-11-01).** S7 (#1888) and S8 (#1902) landed on 2026-11-01. The first board after S7
   (p5-scoreboard 41306949575) had the new engine at 100 % on every T3 row but read "not all
   green (24 rows)": every T3 old cell was `missing`, since no v1 run exists any more. #1915
   makes T3's old column a committed one-off v1 measurement, as T4's already was
   (`tools/parity/baselines/t3-v1-oneoff.json`, from the last complete green board with v1,
-  41203982275, 2026-10-31). **No board has run with #1915 yet** (the scheduled run 41312997356
-  is on `a6b02e7a7`, before it). P5 is met when that board is all green on main and main is
-  green (it is red today, #1917). Decision 3's gate, item by item:
+  41203982275, 2026-10-31). **Two boards have run with #1915, both all green on main:**
+  p5-scoreboard 41341639780 (dispatch, 2026-11-01, tools `c5763d9b8`: "All green... every run
+  complete") and 42357659737 (scheduled, 2026-11-07, `6e66beddf`: every job success; every T3
+  and T4 row "ahead", arXiv L1, P-T1 and P-T2 127/127, T4 P-T1 193/193 on its 5 % sample, P-T2
+  3790/3790, 0 crashes). P5 is met when main is green too (it is red today, #2144). Updated
+  2026-11-08 from the P5 exit-gate audit. Decision 3's gate, item by item:
   - **Board all green on a complete nightly: met.** S4 asks for 3 consecutive complete green
     boards. They are 39350717288, 39365978113 and 39388695484, on main, ruled on #1319.
   - **P-T2 ≥ 99 %, P-T1 ≥ 98 % on arXiv and T4; zero T4 panics; T2 with 0 unexpected
