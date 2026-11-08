@@ -1288,7 +1288,16 @@ impl Engine {
         live.pay_forms(&mut t);
         let (status, exit_code, count, mode, mut extra) = match &result {
             Ok(rep) => {
-                let count = rep.pages;
+                // A run that ended without its PDF (pdfTeX's fatal "no
+                // output PDF file produced", `pdftex_fail`: a full disk's
+                // `fwrite() failed`, #2218) keeps the pages the client
+                // shows, as a compile that `failed` does, or more if it
+                // sent more: `pages: 0` would blank the preview.
+                let count = if rep.status != 0 && no_output_pdf(&doc.session.terminal()) {
+                    live.pages.len().max(old_count)
+                } else {
+                    rep.pages
+                };
                 live.pages.truncate(count);
                 live.catch_up(&mut t, count as u32);
                 let mut extra = vec![
@@ -2102,6 +2111,14 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
         kv.push(("limit".to_string(), Json::Bool(true)));
     }
     server::send_json(&conn.out, kind::TOOL, &Json::Obj(kv));
+}
+
+/// Whether the run's terminal ends in pdfTeX's fatal error that removes
+/// the PDF (`pdftex_fail`, utils.c): " ==> Fatal error occurred, no
+/// output PDF file produced!".
+fn no_output_pdf(term: &[u8]) -> bool {
+    const LINE: &[u8] = b" ==> Fatal error occurred, no output PDF file produced!";
+    term.windows(LINE.len()).any(|w| w == LINE)
 }
 
 /// Once the engine has been idle for keep-warm + the profile's
