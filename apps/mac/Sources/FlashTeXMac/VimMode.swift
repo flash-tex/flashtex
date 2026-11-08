@@ -374,7 +374,10 @@ final class VimMode {
 
     // MARK: text access
 
-    private var text: NSString { (textView?.string ?? "") as NSString }
+    /// The live storage string. Not `textView.string`: that bridges to a
+    /// Swift `String`, a copy of the whole buffer, and every character read
+    /// below goes through here (a `j` on a 3 MB book did millions of copies).
+    private var text: NSString { (textView?.textStorage?.mutableString as NSString?) ?? "" }
     private var length: Int { text.length }
     private var caret: Int { textView?.selectedRange().location ?? 0 }
 
@@ -402,23 +405,73 @@ final class VimMode {
         return i
     }
 
-    private func lineNumber(of p: Int) -> Int {
-        var n = 0, i = 0
-        let stop = min(p, length)
-        while i < stop { if text.character(at: i) == 0x0A { n += 1 }; i += 1 }
+    /// Start of the line `n` lines below (`n > 0`) or above (`n < 0`) the
+    /// line holding `p`, clamped to the buffer, and how many lines it moved.
+    /// Walks only the lines crossed: relative motions (`j`, `k`, `+`, `-`,
+    /// `H`/`L` counts, `ip`) never need an absolute line number.
+    private func lineStart(movingLines n: Int, from p: Int) -> (start: Int, moved: Int) {
+        let t = text, len = t.length
+        var s = lineStart(p), moved = 0
+        if n > 0 {
+            while moved < n {
+                var i = s
+                while i < len, t.character(at: i) != 0x0A { i += 1 }
+                guard i < len else { break } // the last line: no line below
+                s = i + 1
+                moved += 1
+            }
+        } else {
+            while moved < -n, s > 0 {
+                s = lineStart(s - 1)
+                moved += 1
+            }
+        }
+        return (s, moved)
+    }
+
+    /// Lines from the one holding `a` to the one holding `b` (`a <= b`), both counted.
+    private func linesSpanned(from a: Int, to b: Int) -> Int {
+        let t = text
+        var n = 1, i = max(0, a)
+        let stop = min(b, t.length)
+        while i < stop { if t.character(at: i) == 0x0A { n += 1 }; i += 1 }
         return n
     }
 
-    private func lineStart(ofLine n: Int) -> Int {
-        var i = 0, line = 0
-        while line < n, i < length {
-            if text.character(at: i) == 0x0A { line += 1 }
-            i += 1
+    /// Line starts of the buffer for absolute line numbers (`:42`, `42G`,
+    /// `:a,bs`), built once per buffer change: the storage observer drops it,
+    /// and the storage and length it was built from are checked as well.
+    private var lineTable: (storage: ObjectIdentifier, length: Int, starts: [Int])?
+    private(set) var lineTableBuilds = 0
+
+    private var lineStarts: [Int] {
+        guard let storage = textView?.textStorage else { return [0] }
+        let t = storage.mutableString, len = t.length
+        if let table = lineTable, table.storage == ObjectIdentifier(storage), table.length == len { return table.starts }
+        lineTableBuilds += 1
+        var starts = [0]
+        let chunk = 16_384
+        var buffer = [unichar](repeating: 0, count: chunk)
+        var at = 0
+        while at < len {
+            let n = min(chunk, len - at)
+            buffer.withUnsafeMutableBufferPointer { b in
+                t.getCharacters(b.baseAddress!, range: NSRange(location: at, length: n))
+                for k in 0..<n where b[k] == 0x0A { starts.append(at + k + 1) }
+            }
+            at += n
         }
-        return i
+        lineTable = (ObjectIdentifier(storage), len, starts)
+        return starts
     }
 
-    private var lineCount: Int { lineNumber(of: length) + 1 }
+    private func lineStart(ofLine n: Int) -> Int {
+        let starts = lineStarts
+        if n <= 0 { return 0 }
+        return n < starts.count ? starts[n] : length // past the last line: the end, as before
+    }
+
+    private var lineCount: Int { lineStarts.count }
 
     /// Full-line range of every line touched by `range`, the trailing newline included.
     private func lineRange(_ range: NSRange, includeTrailingNewline: Bool) -> NSRange {
@@ -527,6 +580,7 @@ final class VimMode {
             MainActor.assumeIsolated {
                 guard let self, let storage = note.object as? NSTextStorage,
                       storage.editedMask.contains(.editedCharacters) else { return }
+                self.lineTable = nil
                 // `editedRange` is in the *new* string; the range that was
                 // replaced is the same start with the pre-edit length.
                 let edited = storage.editedRange
@@ -1367,13 +1421,13 @@ final class VimMode {
         case "C", "S", "R":
             // Linewise change: clear the selected lines (indent kept) and insert.
             beginRecording(key); mode = .normal
-            let lines = lineNumber(of: max(sel.location, NSMaxRange(sel) - 1)) - lineNumber(of: sel.location) + 1
+            let lines = linesSpanned(from: sel.location, to: max(sel.location, NSMaxRange(sel) - 1))
             setCaret(sel.location)
             changeLines(count: lines)
         case "Y":
             mode = .normal
             apply(.yank, to: lineRange(sel, includeTrailingNewline: true), linewise: true)
-        case "J": beginRecording(key); mode = .normal; setCaret(sel.location); joinLines(count: max(2, lineNumber(of: NSMaxRange(sel) - 1) - lineNumber(of: sel.location) + 1)); finishRecording()
+        case "J": beginRecording(key); mode = .normal; setCaret(sel.location); joinLines(count: max(2, linesSpanned(from: sel.location, to: NSMaxRange(sel) - 1))); finishRecording()
         case "p", "P":
             beginRecording(key); mode = .normal
             let reg = registerForPaste()
@@ -1624,11 +1678,10 @@ final class VimMode {
         case .down(let n), .up(let n):
             let column = preferredColumn ?? (c - lineStart(c))
             preferredColumn = column
-            let current = lineNumber(of: c)
-            let target: Int
-            if case .down = m { target = min(lineCount - 1, current + n) } else { target = max(0, current - n) }
-            if target == current { return nil }
-            let s = lineStart(ofLine: target)
+            var down = false
+            if case .down = m { down = true }
+            let (s, moved) = lineStart(movingLines: down ? n : -n, from: c)
+            if moved == 0 { return nil }
             let e = lineEnd(s)
             let last = mode == .insert ? e : max(s, e - 1)
             var position = min(last, s + column)
@@ -1688,15 +1741,14 @@ final class VimMode {
             for _ in 1..<max(1, n) where e < length { e = lineEnd(e + 1) }
             return Target(position: e)
         case .lineUpToFirstNonBlank(let n), .lineDownToFirstNonBlank(let n):
-            let current = lineNumber(of: c)
             var down = false
             if case .lineDownToFirstNonBlank = m { down = true }
-            let target = down ? min(lineCount - 1, current + n) : max(0, current - n)
-            guard target != current else { return nil }
-            return Target(position: firstNonBlank(fromLineStart: lineStart(ofLine: target)), linewise: true)
+            let (s, moved) = lineStart(movingLines: down ? n : -n, from: c)
+            guard moved > 0 else { return nil }
+            return Target(position: firstNonBlank(fromLineStart: s), linewise: true)
         case .firstNonBlankDown(let n):
-            let target = min(lineCount - 1, lineNumber(of: c) + n - 1)
-            return Target(position: firstNonBlank(fromLineStart: lineStart(ofLine: target)), linewise: true)
+            let s = lineStart(movingLines: n - 1, from: c).start
+            return Target(position: firstNonBlank(fromLineStart: s), linewise: true)
         case .lastNonBlank(let n):
             var e = lineEnd(c)
             for _ in 1..<max(1, n) where e < length { e = lineEnd(e + 1) }
@@ -1753,8 +1805,8 @@ final class VimMode {
         guard let tv = textView else { return nil }
         let visible = tv.enclosingScrollView?.documentVisibleRect ?? tv.visibleRect
         let idx = tv.characterIndexForInsertion(at: NSPoint(x: visible.minX + tv.textContainerInset.width, y: y(visible)))
-        let line = min(max(0, lineNumber(of: min(idx, length)) + linesInward), lineCount - 1)
-        return Target(position: firstNonBlank(fromLineStart: lineStart(ofLine: line)), linewise: true)
+        let s = lineStart(movingLines: linesInward, from: min(idx, length)).start
+        return Target(position: firstNonBlank(fromLineStart: s), linewise: true)
     }
 
     // MARK: visual rows (line fragments)
@@ -2082,23 +2134,24 @@ final class VimMode {
     /// buffer. Whole lines, trailing newline included.
     private func paragraphObject(inner: Bool) -> NSRange? {
         guard length > 0 else { return nil }
-        let startLine = lineNumber(of: caret)
-        let onBlank = isBlankLine(at: lineStart(ofLine: startLine))
+        // Line starts, walked outward from the caret's line (never from 0).
+        func previous(_ s: Int) -> Int? { s > 0 ? lineStart(s - 1) : nil }
+        func next(_ s: Int) -> Int? { let e = lineEnd(s); return e < length ? e + 1 : nil }
+        let startLine = lineStart(caret)
+        let onBlank = isBlankLine(at: startLine)
         var first = startLine
-        while first > 0, isBlankLine(at: lineStart(ofLine: first - 1)) == onBlank { first -= 1 }
+        while let p = previous(first), isBlankLine(at: p) == onBlank { first = p }
         var last = startLine
-        while last + 1 < lineCount, isBlankLine(at: lineStart(ofLine: last + 1)) == onBlank { last += 1 }
+        while let q = next(last), isBlankLine(at: q) == onBlank { last = q }
         if !inner {
-            if last + 1 < lineCount {
-                var l = last
-                while l + 1 < lineCount, isBlankLine(at: lineStart(ofLine: l + 1)) == !onBlank { l += 1 }
-                last = l
+            if next(last) != nil {
+                while let q = next(last), isBlankLine(at: q) == !onBlank { last = q }
             } else if !onBlank {
-                while first > 0, isBlankLine(at: lineStart(ofLine: first - 1)) { first -= 1 }
+                while let p = previous(first), isBlankLine(at: p) { first = p }
             }
         }
-        let s = lineStart(ofLine: first)
-        var e = lineEnd(lineStart(ofLine: last))
+        let s = first
+        var e = lineEnd(last)
         if e < length { e += 1 }
         return NSRange(location: s, length: e - s)
     }
