@@ -206,6 +206,21 @@ impl Shared {
                     }
                 };
                 loop {
+                    // the restore the next keystroke likely makes, worked out
+                    // now (`Engine::prepare_next`), unless a request waits; it
+                    // stops for one that comes meanwhile
+                    if engine.has_pending_prepare() && !waiting() {
+                        let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                            engine.prepare_next(&mut || waiting())
+                        }));
+                        if let Err(p) = r {
+                            eprintln!(
+                                "flashtex-host-unicode: the engine thread panicked: {}",
+                                panic_message(&p)
+                            );
+                            break;
+                        }
+                    }
                     // an asked-for save of S₀ is made when no request comes
                     // for a while, and stops for one that comes meanwhile
                     let req = if engine.has_pending_save() {

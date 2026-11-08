@@ -491,6 +491,10 @@ pub struct Engine {
     /// or removed since changes what those lookups find, so no page
     /// checkpoint is restored then, and a run from S₀ looks them up again.
     named_dirs: Option<[u64; 2]>,
+    /// The page checkpoint the last run restarted from, whose restore the
+    /// engine thread works out while it waits for the next run
+    /// ([`Engine::prepare_next`], the pdfTeX host's `Session::prepare_next`).
+    prepare: Option<CheckpointId>,
 }
 
 /// A save of S₀ asked for after a compile's DONE: what it writes, taken
@@ -612,6 +616,7 @@ impl Engine {
             lean_save: false,
             pending_save: None,
             named_dirs: None,
+            prepare: None,
         }
     }
 
@@ -635,6 +640,7 @@ impl Engine {
         self.opens.clear();
         self.g = None;
         self.named_dirs = None;
+        self.prepare = None;
     }
 
     /// Open the document's persisted S₀ at `path` (`crate::s0file`) for a
@@ -814,6 +820,33 @@ impl Engine {
     /// A save of S₀ is asked for and not made yet.
     pub fn has_pending_save(&self) -> bool {
         self.pending_save.is_some()
+    }
+
+    /// A restore to work out while the engine waits ([`Engine::prepare_next`]).
+    pub fn has_pending_prepare(&self) -> bool {
+        self.prepare.is_some()
+    }
+
+    /// While the engine waits for the next run: work out the restore to the
+    /// page checkpoint the last run restarted from now
+    /// (`Arena::prepare_restore`, as the pdfTeX host's engine does), so
+    /// that the next keystroke there copies the state in instead of
+    /// rewinding the logs from the document's end (about 1.1 ms of the
+    /// Unicode host's restart on T7's `full-120` with fontspec, lane
+    /// BEAMER). `stop` ends it early (a run waiting); what it did is kept
+    /// for that run's restore. Nothing it does changes what the engine
+    /// computes: a restore elsewhere, or after the checkpoints changed, does
+    /// not use it.
+    pub fn prepare_next(&mut self, stop: &mut dyn FnMut() -> bool) -> bool {
+        let Some(id) = self.prepare.take() else {
+            return false;
+        };
+        if !self.pages.iter().any(|c| c.id == id) {
+            return false;
+        }
+        self.g
+            .as_mut()
+            .is_some_and(|g| g.arena.prepare_restore(id, stop))
     }
 
     /// Make the save [`Engine::save_s0`] asked for: the engine thread takes
@@ -1186,6 +1219,8 @@ impl Engine {
 
     /// Run the engine once, as `spec` asks.
     pub fn run(&mut self, spec: Spec) -> Report {
+        // (a restore worked out for another run is not this one's to make)
+        self.prepare = None;
         let retention = spec.retention;
         self.lean_save = retention.low;
         if let Err(e) = std::env::set_current_dir(&spec.root) {
@@ -1802,7 +1837,14 @@ impl Engine {
             self.pages.clear();
             self.journal = None;
         }
+        // the next keystroke, typed where this one was, restarts there (the
+        // checkpoint's id taken before the thinning, which may drop it)
+        let restarted_at = match start {
+            Start::Page(i) => self.pages.get(i).map(|c| c.id),
+            _ => None,
+        };
         self.retain(retention);
+        self.prepare = restarted_at;
         if start == Start::Fresh {
             // the pages `initialize` cleared and the format left empty
             // (the pdfTeX engine's host gives them back at its idle trim;
