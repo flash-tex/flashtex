@@ -94,8 +94,8 @@ pub enum Mode {
 struct Config {
     mode: Mode,
     names: Vec<Vec<u8>>,
-    /// The environments offered as spans (§17): `FLASHTEX_BOXMEMO_SPANS`,
-    /// none by default.
+    /// The environments offered as spans (§17): `FLASHTEX_BOXMEMO_SPANS`
+    /// (empty: none), [`DEFAULT_SPANS`] when it is unset.
     spans: Vec<Vec<u8>>,
     stats_out: Option<String>,
     debug: bool,
@@ -143,6 +143,10 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // assignments, 1-3 M instructions a call
     "cref@constructprefix",
 ];
+
+/// The environments offered as spans (§17) when `FLASHTEX_BOXMEMO_SPANS`
+/// is unset: TikZ's pictures and tikz-cd's diagrams.
+pub const DEFAULT_SPANS: &[&str] = &["tikzpicture", "tikzcd"];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
 /// engine host (`set_default_on`, where it records only in an edit's
@@ -893,7 +897,12 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                         .map(|s| s.as_bytes().to_vec())
                         .collect()
                 })
-                .unwrap_or_default();
+                .unwrap_or_else(|_| {
+                    DEFAULT_SPANS
+                        .iter()
+                        .map(|s| s.as_bytes().to_vec())
+                        .collect()
+                });
             *c = Some(Config {
                 mode,
                 names,
