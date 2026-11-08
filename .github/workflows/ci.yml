@@ -611,6 +611,14 @@ jobs:
           command -v qpdf >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf >/dev/null; }
           python3 -m unittest discover -s tools/parity -p 'test_*.py'
           python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+          # the Python tools that CI, a gate or a nightly workflow runs: their pure-logic
+          # unit tests (no network, TeX Live or display needed)
+          python3 -m unittest discover -s tools/displaylist -p 'test_*.py'
+          python3 -m unittest discover -s tools/xetex-lockstep -p 'test_*.py'
+          python3 -m unittest discover -s tools/unicode-m3 -p 'test_*.py'
+          python3 -m unittest discover -s tools/web2rust -p 'test_*.py'
+          python3 -m unittest discover -s tools/font-census -p 'test_*.py'
+          python3 -m unittest discover -s tools/rewrite -p 'test_*.py'
           scripts/tests/p5-pick-t4.test.sh
       # RQ5: the vocabulary generated from measured package support (pdflatex is the
       # oracle; the probe itself is the supported-latex workflow's), and the two

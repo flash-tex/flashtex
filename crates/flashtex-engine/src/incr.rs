@@ -3218,6 +3218,22 @@ impl Observer for Obs {
         take
     }
 
+    /// Elsewhere than in an edit's first pass until the edited page has
+    /// shipped (all taken there, as before), only within `dense` pages of
+    /// the cursor: `thin` merges the others away at once (only page
+    /// checkpoints stay farther out). In a cold open of Infinite Descent x2
+    /// a heavy page took one every page, and their logs' merges were half
+    /// of `thin` (lane COLD-FIRST-2). A held one counts as one taken for
+    /// retention's pace, as a held segment does.
+    fn take_held_timed(&mut self, _g: &mut Globals) -> bool {
+        let take = (self.first_incremental && !self.edit_out)
+            || self.pages_so_far().abs_diff(self.cursor) <= self.dense;
+        if !take {
+            self.ticks += 1;
+        }
+        take
+    }
+
     /// (`REQ_PREEMPT`: the checkpoint it takes stops the run, as a held
     /// segment taken for newer work does; `preempt_now` consumed the news)
     fn stops_now(&mut self, g: &mut Globals) -> bool {
@@ -3931,6 +3947,8 @@ impl Session {
             clock = key.clock;
             crate::pdftex::utils::pin_clock(Some(key.clock));
             key.check(key.clock, &first_line)?;
+            // (the format a full run loads now: `Key::check_format`)
+            key.check_format()?;
             // (no checkpoint before S₀ here: a changed read at the
             // document's start refuses it, `Key::check_arm`)
             key.check_arm()
@@ -4224,13 +4242,20 @@ impl Session {
         // `\end{document}`'s re-read of the `.aux` may follow)
         let aux = g.layer().aux_done.and_then(pos);
         let mut why = "no page checkpoint before the viewport".to_string();
+        // (each candidate skipped says why, the last one tried wins: what
+        // DONE's `s1_save` shows)
+        let mut kept = 0;
         for k in (S1_MIN_PAGES..=want.min(self.pages.len().saturating_sub(1))).rev() {
             let Some(id) = self.pages[k - 1].ckpt else {
                 continue;
             };
-            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a))
-                || self.ck_pages.get(&id) != Some(&k)
-            {
+            kept += 1;
+            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a)) {
+                why = format!("page {k}'s checkpoint is before the end of the .aux read");
+                continue;
+            }
+            if self.ck_pages.get(&id) != Some(&k) {
+                why = format!("page {k}'s checkpoint has another page count");
                 continue;
             }
             let reading_aux = g.record_of(id).is_ok_and(|r| {
@@ -4242,7 +4267,15 @@ impl Session {
                 why = "an .aux is being read there".into();
                 continue;
             }
-            if self.stale_midline.contains(&id) || !g.restorable(id) {
+            if self.stale_midline.contains(&id) {
+                why = format!("page {k}'s checkpoint holds a line read again");
+                continue;
+            }
+            if !g.restorable(id) {
+                why = format!(
+                    "page {k}'s checkpoint is not restorable ({})",
+                    g.unrestorable_why(id).unwrap_or_default()
+                );
                 continue;
             }
             // (L5: a state that lacks meanings its restores patch in)
@@ -4283,6 +4316,12 @@ impl Session {
             };
             // (a refusal holds for every earlier checkpoint too)
             return host::s1::prepare(g, input).map(|img| (k, img));
+        }
+        if kept == 0 {
+            why = format!(
+                "no page checkpoint of pages {S1_MIN_PAGES}..={want} is retained ({} pages)",
+                self.pages.len()
+            );
         }
         Err(why)
     }
@@ -6064,9 +6103,15 @@ impl Session {
             return Ok(());
         };
         let n = g.record_of(s0.id)?.reads.2.min(j.outputs.len());
+        if n == 0 {
+            return Ok(());
+        }
+        // (each read's key once: a book's journal lists thousands of reads,
+        // and the preamble writes a few dozen files, lane FIND-PHASE)
+        let read: std::collections::HashSet<String> =
+            j.files.iter().map(|f| system::out_key(&f.path)).collect();
         for o in &j.outputs[..n] {
-            let k = system::out_key(o);
-            if j.files.iter().any(|f| system::out_key(&f.path) == k) {
+            if read.contains(&system::out_key(o)) {
                 if let Some(why) = system::outside_change(o) {
                     return Err(why);
                 }

@@ -1,0 +1,23 @@
+% Preview probe: page attributes the content stream does not show. A page
+% transparency /Group (as pdfTeX adds for an image with alpha, here set by
+% \pdfpageattr on a page of plain text and rules), and pdflscape's /Rotate 90
+% landscape page (a viewer shows that page turned). One kind per page.
+\documentclass{article}
+\usepackage{xcolor}
+\usepackage{pdflscape}
+\pagestyle{empty}
+\begin{document}
+\noindent A page without attributes: text, \textcolor{blue}{colour},
+\rule{3cm}{0.3pt} and \rule{3cm}{4pt}.
+\newpage
+
+\pdfpageattr{/Group << /S /Transparency /I true /CS /DeviceRGB >>}
+\noindent A page with a transparency group: text, \textcolor{blue}{colour},
+\textcolor[cmyk]{0,0.5,1,0}{CMYK}, \rule{3cm}{0.3pt} and \rule{3cm}{4pt}.
+\newpage
+\pdfpageattr{}
+
+\begin{landscape}
+\noindent A landscape page (pdflscape: /Rotate 90 on this page).
+\end{landscape}
+\end{document}
