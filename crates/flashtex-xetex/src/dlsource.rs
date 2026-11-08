@@ -835,7 +835,9 @@ impl Globals {
         }
         let len = self.mem[(p + 4) as usize].qqqq_b2();
         let glyphs = self.mem[(p + 4) as usize].qqqq_b3().max(0) as usize;
-        let units: Vec<u16> = (0..len).map(|i| self.get_native_char(p, i) as u16).collect();
+        let units: Vec<u16> = (0..len)
+            .map(|i| self.get_native_char(p, i) as u16)
+            .collect();
         let mut chars = vec![];
         let mut col = col0 as usize;
         let mut rtl = false;
@@ -966,7 +968,9 @@ impl Globals {
             _ => None,
         };
         let bytes = |s: usize| -> u16 {
-            let col: usize = (a..s.min(self.buffer.len())).map(|k| utf8_len(self.buffer[k])).sum();
+            let col: usize = (a..s.min(self.buffer.len()))
+                .map(|k| utf8_len(self.buffer[k]))
+                .sum();
             col.min(NO_COLUMN as usize - 1) as u16
         };
         // Else the characters a macro made first, then ones read from the

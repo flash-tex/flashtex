@@ -36,7 +36,9 @@
 
 use crate::generated::consts as web;
 use crate::generated::Globals;
-use flashtex_engine::diag::{Frame, Kind, Note, Pos, Site, FLAG_NOT_ON_TERMINAL, FLAG_OUTPUT_ACTIVE};
+use flashtex_engine::diag::{
+    Frame, Kind, Note, Pos, Site, FLAG_NOT_ON_TERMINAL, FLAG_OUTPUT_ACTIVE,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -617,7 +619,9 @@ impl Globals {
         let (a, e) = (self.str_start[k] as usize, self.str_start[k + 1] as usize);
         if let Some((cs, pool, id)) = &self.host.diag.name_cache {
             // the string may have been freed and remade since
-            if *cs == s && pool.len() == e - a && (a..e).zip(pool).all(|(i, &c)| self.str_pool[i] == c)
+            if *cs == s
+                && pool.len() == e - a
+                && (a..e).zip(pool).all(|(i, &c)| self.str_pool[i] == c)
             {
                 return *id;
             }
@@ -1345,7 +1349,10 @@ mod tests {
             "self.eqtb[crate::ix::U((({END_LINE_CHAR_LOC}i32) - 1) as usize)].int()"
         )));
         assert!(sc.contains("if ((self.cur_input.name_field > 19i32) || (self.base_ptr == 0i32))"));
-        assert!(sc.contains(&format!("self.cur_input.loc_field != ({}i32).wrapping_neg()", -NULL)));
+        assert!(sc.contains(&format!(
+            "self.cur_input.loc_field != ({}i32).wrapping_neg()",
+            -NULL
+        )));
         assert!(body("show_token_list").contains("max_char_val"));
         assert!(body("print").contains(&format!("{NEW_LINE_CHAR_LOC}i32")));
     }
@@ -1361,7 +1368,11 @@ mod tests {
         t.push(b'\n');
         t.extend_from_slice(b"bc\n\nd");
         unwrap_lines(&mut t, 79, 0);
-        assert!(t.ends_with("ébc\n\nd".as_bytes()), "{:?}", String::from_utf8_lossy(&t));
+        assert!(
+            t.ends_with("ébc\n\nd".as_bytes()),
+            "{:?}",
+            String::from_utf8_lossy(&t)
+        );
     }
 
     #[test]

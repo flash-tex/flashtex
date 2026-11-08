@@ -2521,7 +2521,11 @@ fn diags_come_from_the_engine_and_hold_across_edits() {
     assert_eq!(err.line, Some(line), "{err:#?}");
     // TeX has read the whole call `\wrap{café x}` (a column in UTF-8 bytes)
     assert_eq!(err.col, Some("\\wrap{café x}".len() as i64), "{err:#?}");
-    assert_eq!(err.range, Some((0, "\\wrap{café x}".len() as i64)), "{err:#?}");
+    assert_eq!(
+        err.range,
+        Some((0, "\\wrap{café x}".len() as i64)),
+        "{err:#?}"
+    );
     let names: Vec<&str> = err.trace.iter().filter_map(|f| f.name.as_deref()).collect();
     assert!(
         names.contains(&"\\inner") && names.contains(&"\\wrap"),
