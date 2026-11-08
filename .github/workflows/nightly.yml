@@ -843,9 +843,11 @@ jobs:
   # row (each key after DONE) and typing@50ms and typing@150ms rows, target
   # <= 20 ms to the edited page, every key painted by its own compile; the
   # external tools on, as the app compiles (the host's page count is then the
-  # oracle's: 1,152 for infdesc-x2). A miss fails the job (and files main-red).
-  # GitHub-hosted macos-15 with MacTeX (the beamer deck is a TeX Live
-  # document): a non-reference run; the reference one is t7-reference.yml's.
+  # oracle's: 1,152 for infdesc-x2). GitHub-hosted macos-15 with MacTeX (the
+  # beamer deck is a TeX Live document) is not reference hardware (DESIGN §1.2,
+  # T7), so this job reports only (Commander ruling, 2026-11-08): a miss or a
+  # harness error is a warning in the summary, never a red job or main-red.
+  # T7's gate is the reference run, scripts/t7-reference.sh (t7-reference.yml).
   t7-real-documents:
     name: "T7 real documents (infdesc-x2, arXiv, beamer, thesis)"
     runs-on: macos-15
@@ -875,8 +877,14 @@ jobs:
           code=${PIPESTATUS[0]}
           { echo "### T7 real documents (hosted, non-reference; exit $code)"; echo
             cat "$RUNNER_TEMP/t7-real/table.md" 2>/dev/null || echo "(no table)"; } >> "$GITHUB_STEP_SUMMARY"
-          # 0 and 3 (non-reference, nothing missed) pass; 1 (a miss) and 2 (a harness error) fail.
-          case $code in 0|3) exit 0 ;; *) exit 1 ;; esac
+          # Report only: 0 and 3 (non-reference, nothing missed) are quiet; 1 (a miss) and
+          # 2 (a harness error) are warnings. The gate is scripts/t7-reference.sh.
+          case $code in
+            0|3) ;;
+            1) echo "::warning title=T7 real documents (non-reference)::a row missed its target on hosted macOS; report only, the gate is scripts/t7-reference.sh" ;;
+            *) echo "::warning title=T7 real documents (non-reference)::t7.py exited $code (harness error); report only" ;;
+          esac
+          exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -891,7 +899,7 @@ jobs:
   # post-merge jobs, and only a green ci.yml run on main's tip covers them all.
   main-red:
     name: main-red issue
-    needs: [macos-legs, workspace-debug, t7-real-documents]
+    needs: [macos-legs, workspace-debug]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -904,4 +912,4 @@ jobs:
       - name: open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'macos|debug profile|T7 real' --no-close
+        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'macos|debug profile' --no-close
