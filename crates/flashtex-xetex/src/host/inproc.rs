@@ -17,6 +17,7 @@
 
 use crate::fontmgr::FontCatalog;
 use crate::resident::{Engine, Fonts, Report, Spec};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -85,8 +86,13 @@ type Dirs = Vec<(PathBuf, Option<super::spare::Ident>)>;
 struct KeptFonts {
     /// The last walk of the directories.
     walked: Option<Dirs>,
+    /// Which walk `walked` is (one more at each walk).
+    walk: u64,
+    /// `dirs()` of `walked`, made once a walk: hashing the walk's text took
+    /// about 0.3 ms a keystroke on T7's `full-120` (lane UNICODE).
+    hash: Option<[u64; 2]>,
     /// The catalog made from them, and the walk it was made after.
-    kept: Option<(Dirs, Arc<FontCatalog>)>,
+    kept: Option<(u64, Arc<FontCatalog>)>,
 }
 
 impl KeptFonts {
@@ -98,6 +104,8 @@ impl KeptFonts {
             .is_some_and(|w| super::spare::font_dirs_unchanged(w));
         if !same {
             self.walked = Some(super::spare::font_dirs());
+            self.walk += 1;
+            self.hash = None;
         }
         self.walked.as_ref().expect("walked above")
     }
@@ -105,20 +113,26 @@ impl KeptFonts {
 
 impl Fonts for KeptFonts {
     fn catalog(&mut self) -> Arc<FontCatalog> {
-        let dirs = self.now().clone();
-        if let Some((d, c)) = &self.kept {
-            if *d == dirs {
+        self.now();
+        if let Some((w, c)) = &self.kept {
+            if *w == self.walk {
                 return c.clone();
             }
         }
         let c = Arc::new(FontCatalog::for_lookup());
-        self.kept = Some((dirs, c.clone()));
+        self.kept = Some((self.walk, c.clone()));
         c
     }
 
     fn dirs(&mut self) -> [u64; 2] {
-        let d = format!("{:?}", self.now());
-        flashtex_engine::persist::hash128(d.as_bytes())
+        self.now();
+        if let Some(h) = self.hash {
+            return h;
+        }
+        let d = format!("{:?}", self.walked.as_ref().expect("walked by now()"));
+        let h = flashtex_engine::persist::hash128(d.as_bytes());
+        self.hash = Some(h);
+        h
     }
 }
 
@@ -162,12 +176,34 @@ impl Shared {
                 let mut engine = Engine::new(clock, Some(Box::new(KeptFonts::default())));
                 let waiting = || queued.load(Ordering::Acquire) > 0;
                 let idle = save_when_idle();
-                let save = |engine: &mut Engine, stop: &dyn Fn() -> bool| match engine
-                    .save_pending(stop)
-                {
-                    Ok(Some(n)) if debug() => eprintln!("flashtex-host-unicode: {n}"),
-                    Ok(_) => {}
-                    Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
+                // `test_panic`'s count, this engine thread's (no process state)
+                let test_count = std::cell::Cell::new(0u64);
+                // (a panic in a save, whose engine is then in no known
+                // state, ends the engine thread: a waiting or next compile
+                // takes the path where it has ended, a failed DONE, and the
+                // host exits after it, `FATAL_EXIT`; `true` to leave the loop)
+                let save = |engine: &mut Engine, stop: &dyn Fn() -> bool| -> bool {
+                    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        test_panic("save", &test_count);
+                        engine.save_pending(stop)
+                    })) {
+                        Ok(Ok(Some(n))) if debug() => {
+                            eprintln!("flashtex-host-unicode: {n}");
+                            false
+                        }
+                        Ok(Ok(_)) => false,
+                        Ok(Err(e)) => {
+                            eprintln!("flashtex-host-unicode: saving S0: {e}");
+                            false
+                        }
+                        Err(p) => {
+                            eprintln!(
+                                "flashtex-host-unicode: the engine thread panicked: {}",
+                                panic_message(&p)
+                            );
+                            true
+                        }
+                    }
                 };
                 loop {
                     // an asked-for save of S₀ is made when no request comes
@@ -176,7 +212,9 @@ impl Shared {
                         match rx.recv_timeout(idle) {
                             Ok(r) => r,
                             Err(mpsc::RecvTimeoutError::Timeout) => {
-                                save(&mut engine, &waiting);
+                                if save(&mut engine, &waiting) {
+                                    break;
+                                }
                                 continue;
                             }
                             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -193,18 +231,58 @@ impl Shared {
                     queued.fetch_sub(1, Ordering::AcqRel);
                     match req {
                         Req::Run { spec, reply } => {
-                            let rep = engine.run(spec);
-                            let _ = reply.send(rep);
+                            // (the engine's own panics end its run,
+                            // `Engine::run`; one outside it leaves the engine
+                            // in no known state: the run fails as fatal and
+                            // the host exits, `FATAL_EXIT`)
+                            let rep = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                test_panic("run", &test_count);
+                                engine.run(spec)
+                            }));
+                            match rep {
+                                Ok(rep) => {
+                                    let _ = reply.send(rep);
+                                }
+                                Err(p) => {
+                                    let why = format!(
+                                        "the engine thread panicked: {}",
+                                        panic_message(&p)
+                                    );
+                                    eprintln!("flashtex-host-unicode: {why}");
+                                    let _ = reply.send(Report {
+                                        failure: Some(why),
+                                        fatal: true,
+                                        ..Report::default()
+                                    });
+                                    break;
+                                }
+                            }
                         }
-                        Req::SaveS0(p, root) => match engine.save_s0(&p, &root) {
-                            Ok(Some(n)) if debug() => eprintln!("flashtex-host-unicode: {n}"),
-                            Ok(_) => {}
-                            Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
-                        },
+                        Req::SaveS0(p, root) => {
+                            let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                                engine.save_s0(&p, &root)
+                            }));
+                            match r {
+                                Ok(Ok(Some(n))) if debug() => {
+                                    eprintln!("flashtex-host-unicode: {n}")
+                                }
+                                Ok(Ok(_)) => {}
+                                Ok(Err(e)) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
+                                Err(p) => {
+                                    eprintln!(
+                                        "flashtex-host-unicode: the engine thread panicked: {}",
+                                        panic_message(&p)
+                                    );
+                                    break;
+                                }
+                            }
+                        }
                         Req::Flush(done) => {
                             // (the host ends: the asked-for save is made
                             // now, whole)
-                            save(&mut engine, &|| false);
+                            if save(&mut engine, &|| false) {
+                                break;
+                            }
                             engine.flush_writes();
                             let _ = done.send(());
                         }
@@ -266,7 +344,82 @@ fn debug() -> bool {
     std::env::var_os("FLASHTEX_UNICODE_DEBUG").is_some()
 }
 
+/// The host's exit status when its engine thread died (`EX_SOFTWARE`): the
+/// app restarts a host on any exit, and a new one starts with a new
+/// engine.
+pub const FATAL_EXIT: i32 = 70;
+
+/// A panic's message.
+fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
+    p.downcast_ref::<String>()
+        .cloned()
+        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_else(|| "a panic".into())
+}
+
+/// Debug builds only (the tests' builds): `FLASHTEX_UNICODE_TEST_PANIC=WHAT:N`
+/// panics at the `N`th (from 1) point `what` of the engine thread (`run`:
+/// before a run, outside the engine's own catch; `save`: an idle save of
+/// S₀), so that the recovery from an engine thread that died is tested.
+/// `count` is the engine thread's own count of matching points.
+fn test_panic(what: &str, count: &std::cell::Cell<u64>) {
+    #[cfg(debug_assertions)]
+    {
+        let Ok(v) = std::env::var("FLASHTEX_UNICODE_TEST_PANIC") else {
+            return;
+        };
+        let Some((w, n)) = v.split_once(':') else {
+            return;
+        };
+        if w != what {
+            return;
+        }
+        let k = count.get() + 1;
+        count.set(k);
+        if n.parse::<u64>().ok() == Some(k) {
+            panic!("FLASHTEX_UNICODE_TEST_PANIC={v}");
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = (what, count);
+}
+
 /// A new run's cancel flag.
 pub fn cancel_flag() -> Arc<AtomicBool> {
     Arc::new(AtomicBool::new(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `KeptFonts::dirs` is the hash of the walk's text, made once a walk:
+    /// the same while the directories are unchanged, made again (of the
+    /// new walk) after one changes.
+    #[test]
+    fn the_font_directories_hash_is_made_once_a_walk() {
+        let dir = std::env::temp_dir().join(format!("flashtex-keptfonts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let walked: Dirs = vec![(dir.clone(), super::super::spare::ident(&dir))];
+        let of = |w: &Dirs| flashtex_engine::persist::hash128(format!("{w:?}").as_bytes());
+        let mut k = KeptFonts {
+            walked: Some(walked.clone()),
+            ..KeptFonts::default()
+        };
+        let h = k.dirs();
+        assert_eq!(h, of(&walked));
+        assert_eq!(k.dirs(), h);
+        assert_eq!(k.walk, 0, "no walk while the directory is unchanged");
+        // a font installed: the directory changes, the next check walks the
+        // directories again (the system's now) and hashes that walk
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.join("new.otf"), b"x").unwrap();
+        let h2 = k.dirs();
+        assert_eq!(k.walk, 1);
+        assert_eq!(h2, of(k.walked.as_ref().unwrap()));
+        assert_ne!(h2, h);
+        assert_eq!(k.dirs(), h2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
