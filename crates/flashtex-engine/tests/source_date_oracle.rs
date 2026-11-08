@@ -6,7 +6,10 @@
 //! `perl -e 'alarm 20; exec @ARGV' /Library/TeX/texbin/pdftex -ini t.tex`
 //! with stdin `/dev/null` (locale `en_US.UTF-8`, `TZ` unset, system zone PST).
 //! Only FlashTeX runs here, with the same document bytes and arguments, so
-//! the file needs no TeX Live and has no feature gate.
+//! the file needs no TeX Live and has no feature gate. Every run sets `TZ`
+//! (`PST8PDT`, a POSIX rule that needs no zoneinfo files, unless the case
+//! sets its own): a hosted runner's zone is UTC, where a clock date is
+//! `D:...Z` with no numeric offset, so the measured zone is set, not assumed.
 //!
 //! The document prints `[Y \the\year-\the\month-\the\day \the\time]` (the
 //! space after `\the\day` dies as the control-word terminator, so e.g.
@@ -62,7 +65,8 @@ impl Engine {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         c.env_remove("SOURCE_DATE_EPOCH")
-            .env_remove("FORCE_SOURCE_DATE");
+            .env_remove("FORCE_SOURCE_DATE")
+            .env("TZ", "PST8PDT");
         for (k, v) in env {
             c.env(k, v);
         }
@@ -134,6 +138,30 @@ fn assert_local_p(p: &str) {
             && b[22] == b'\'',
         "local P shape: {p:?}"
     );
+}
+
+/// `P` from the living clock in UTC: `D:` + 14 digits + `Z`, as pdfTeX
+/// writes an offset of 0 (what a hosted runner with `TZ` unset prints).
+fn assert_utc_p(p: &str) {
+    let b = p.as_bytes();
+    assert!(
+        p.starts_with("D:20")
+            && b.len() == 17
+            && b[2..16].iter().all(|c| c.is_ascii_digit())
+            && b[16] == b'Z',
+        "UTC P shape: {p:?}"
+    );
+}
+
+#[test]
+fn sde_unset_in_utc_has_no_numeric_offset() {
+    let e = Engine::new("utc");
+    let (code, stdout, stderr) = e.run(&[("TZ", OsStr::new("UTC0"))]);
+    assert_eq!(code, Some(0));
+    assert_eq!(stderr, b"", "stderr");
+    let (y, p) = yp(&stdout);
+    assert_clock_y(&y);
+    assert_utc_p(&p);
 }
 
 #[test]
