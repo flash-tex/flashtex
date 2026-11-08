@@ -2039,6 +2039,10 @@ impl Globals {
             if *mt != t {
                 return false;
             }
+            // MUTANT: a macro's meaning by its type only
+            if !toks.is_empty() || toks.is_empty() {
+                return true;
+            }
             if seen_is(self, p, t, e, toks) {
                 return true;
             }
