@@ -355,6 +355,14 @@ fn image_errors_match_tex_live() {
             ),
         ),
         (
+            "uncopyable-cmd",
+            format!("{}\\img{{}}{{pdf-cmd.pdf}}\\bye\n", setup(7, "")),
+        ),
+        (
+            "uncopyable-errobj",
+            format!("{}\\img{{}}{{pdf-errobj.pdf}}\\bye\n", setup(7, "")),
+        ),
+        (
             "no-file",
             format!("{}\\img{{}}{{nothere.png}}\\bye\n", setup(7, "")),
         ),

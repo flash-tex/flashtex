@@ -1542,20 +1542,19 @@ impl Obs {
         // run's whole future, which a restart at `P2` does not keep:
         // compared here)
         let last_byte_dead = false;
-        // The dimensions `\pdfdest` leaves unset (`crate::iso`) hold
-        // whatever the memory held, which differs between runs that
-        // allocated differently (on Infinite Descent x2 the keystroke after
-        // the first at a new place failed here on a destination's words,
-        // and typeset 4 pages instead of 1; lane LATE-EDIT). They are read
-        // only with a `\pdfsetmatrix` in effect (`matrix_uses`). What a
-        // restart at `P2` keeps of the old run past `P1` is its pages up to
-        // `P2`: when the old run found no matrix in effect between them,
-        // those pages never read the words, and from `P2` on the run is
-        // live from the old run's state there, as from any restart point
-        // (whose unset words are the old run's too).
-        let dest_dims_dead = g
-            .pending_record(pr.p2)
-            .is_some_and(|r| r.matrix_uses == o.matrix_uses);
+        // ... nor the dimensions `\pdfdest` leaves unset (`crate::iso`),
+        // which hold whatever the memory held and differ between runs that
+        // allocated differently. #1908 left them out when the old run had no
+        // `\pdfsetmatrix` in effect between `P1` and `P2`, but from `P2` on
+        // the run is live from the old run's state, with the old run's words
+        // in every destination still in it, and a destination shipped later
+        // under a matrix reads them (`set_rect_dimens`) where a scratch run
+        // reads its own: one kept in a box register and shipped after the
+        // edit took the old run's coordinates, whether the old run had the
+        // matrix there or the edit put it in (review of #1908, lane REVIEW:
+        // `a_kept_destination_shipped_under_a_matrix_after_a_revalidation`).
+        // What the run from `P2` will do is not known here: compared.
+        let dest_dims_dead = false;
         let mut char_or = vec![];
         let mut stages = self
             .old_lines
@@ -3222,6 +3221,22 @@ impl Observer for Obs {
         take
     }
 
+    /// Elsewhere than in an edit's first pass until the edited page has
+    /// shipped (all taken there, as before), only within `dense` pages of
+    /// the cursor: `thin` merges the others away at once (only page
+    /// checkpoints stay farther out). In a cold open of Infinite Descent x2
+    /// a heavy page took one every page, and their logs' merges were half
+    /// of `thin` (lane COLD-FIRST-2). A held one counts as one taken for
+    /// retention's pace, as a held segment does.
+    fn take_held_timed(&mut self, _g: &mut Globals) -> bool {
+        let take = (self.first_incremental && !self.edit_out)
+            || self.pages_so_far().abs_diff(self.cursor) <= self.dense;
+        if !take {
+            self.ticks += 1;
+        }
+        take
+    }
+
     /// (`REQ_PREEMPT`: the checkpoint it takes stops the run, as a held
     /// segment taken for newer work does; `preempt_now` consumed the news)
     fn stops_now(&mut self, g: &mut Globals) -> bool {
@@ -3935,6 +3950,8 @@ impl Session {
             clock = key.clock;
             crate::pdftex::utils::pin_clock(Some(key.clock));
             key.check(key.clock, &first_line)?;
+            // (the format a full run loads now: `Key::check_format`)
+            key.check_format()?;
             // (no checkpoint before S₀ here: a changed read at the
             // document's start refuses it, `Key::check_arm`)
             key.check_arm()
@@ -4228,13 +4245,20 @@ impl Session {
         // `\end{document}`'s re-read of the `.aux` may follow)
         let aux = g.layer().aux_done.and_then(pos);
         let mut why = "no page checkpoint before the viewport".to_string();
+        // (each candidate skipped says why, the last one tried wins: what
+        // DONE's `s1_save` shows)
+        let mut kept = 0;
         for k in (S1_MIN_PAGES..=want.min(self.pages.len().saturating_sub(1))).rev() {
             let Some(id) = self.pages[k - 1].ckpt else {
                 continue;
             };
-            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a))
-                || self.ck_pages.get(&id) != Some(&k)
-            {
+            kept += 1;
+            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a)) {
+                why = format!("page {k}'s checkpoint is before the end of the .aux read");
+                continue;
+            }
+            if self.ck_pages.get(&id) != Some(&k) {
+                why = format!("page {k}'s checkpoint has another page count");
                 continue;
             }
             let reading_aux = g.record_of(id).is_ok_and(|r| {
@@ -4246,7 +4270,15 @@ impl Session {
                 why = "an .aux is being read there".into();
                 continue;
             }
-            if self.stale_midline.contains(&id) || !g.restorable(id) {
+            if self.stale_midline.contains(&id) {
+                why = format!("page {k}'s checkpoint holds a line read again");
+                continue;
+            }
+            if !g.restorable(id) {
+                why = format!(
+                    "page {k}'s checkpoint is not restorable ({})",
+                    g.unrestorable_why(id).unwrap_or_default()
+                );
                 continue;
             }
             // (L5: a state that lacks meanings its restores patch in)
@@ -4287,6 +4319,12 @@ impl Session {
             };
             // (a refusal holds for every earlier checkpoint too)
             return host::s1::prepare(g, input).map(|img| (k, img));
+        }
+        if kept == 0 {
+            why = format!(
+                "no page checkpoint of pages {S1_MIN_PAGES}..={want} is retained ({} pages)",
+                self.pages.len()
+            );
         }
         Err(why)
     }
@@ -6068,9 +6106,15 @@ impl Session {
             return Ok(());
         };
         let n = g.record_of(s0.id)?.reads.2.min(j.outputs.len());
+        if n == 0 {
+            return Ok(());
+        }
+        // (each read's key once: a book's journal lists thousands of reads,
+        // and the preamble writes a few dozen files, lane FIND-PHASE)
+        let read: std::collections::HashSet<String> =
+            j.files.iter().map(|f| system::out_key(&f.path)).collect();
         for o in &j.outputs[..n] {
-            let k = system::out_key(o);
-            if j.files.iter().any(|f| system::out_key(&f.path) == k) {
+            if read.contains(&system::out_key(o)) {
                 if let Some(why) = system::outside_change(o) {
                     return Err(why);
                 }

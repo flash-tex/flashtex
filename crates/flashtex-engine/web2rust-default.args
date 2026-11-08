@@ -83,6 +83,10 @@
 --index-type crate::ix::U
 
 --stat                        # stat/tats null: statistics compiled in, as in web2c
+# `div` and `mod` by a divisor that may be 0 (or -1 with the most negative
+# dividend) give what TeX Live's arm64 pdftex gives instead of panicking:
+# `\pdfsnapy 0pt` divides by 0 in `gap_amount` (tools/web2rust/README.md).
+--total-division
 # glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h
 # (GLUERATIO_TYPE): the e-trip test against TeX Live's pdftex needs it (see
 # tools/web2rust/README.md). tex.web's trip test needs a float instead.
