@@ -48,9 +48,17 @@ const MAX_SAFE_INTEGER: u64 = (1u64 << 53) - 1;
 /// escape (`write`/`immediate`), file I/O (`input`/`include`/`openin`/
 /// `openout`/`closein`/`closeout`/`read`), anything that changes how
 /// subsequent characters or names are read or expand (`catcode`, the
-/// `\def`-family, `\let`, `\csname`), the `@`-namespace unlock that reaches
-/// internal kernel commands (`\makeatletter`/`\makeatother`), and the
-/// top-level document declarations (`\documentclass`/`\usepackage`) that a
+/// `\def`-family, `\let`, `\csname`), every other way to reach a control
+/// sequence by a name built at run time, which would bypass this list as
+/// `\csname` would (LaTeX's `\UseName`/`\ExpandArgs`, eTeX's
+/// `\scantokens` rescanning `\string` output, etoolbox's `\cs...` family),
+/// case rewriting after scanning (`\lowercase`/`\uppercase` and
+/// `\MakeLowercase`/`\MakeUppercase`),
+/// the `@`-namespace unlock that reaches internal kernel commands
+/// (`\makeatletter`/`\makeatother`) and its expl3 counterpart
+/// (`\ExplSyntaxOn` and `\ProvidesExpl*`, under which `\sys_shell_now:n` is
+/// one word), and the top-level document declarations
+/// (`\documentclass`/`\usepackage`) that a
 /// body-only edit has no business emitting (packages belong in
 /// `required_dependencies` for a human to add).
 const DENIED_CONTROL_WORDS: &[&str] = &[
@@ -63,6 +71,13 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
     "closein",
     "closeout",
     "read",
+    "readline",
+    "InputIfFileExists",
+    "IfFileExists",
+    "pdffiledump",
+    "pdfobj",
+    "enddocument",
+    "endinput",
     "catcode",
     "def",
     "edef",
@@ -70,6 +85,13 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
     "xdef",
     "let",
     "futurelet",
+    "NewCommandCopy",
+    "RenewCommandCopy",
+    "DeclareCommandCopy",
+    "NewEnvironmentCopy",
+    "RenewEnvironmentCopy",
+    "DeclareEnvironmentCopy",
+    "LetLtxMacro",
     "chardef",
     "mathchardef",
     "countdef",
@@ -79,8 +101,27 @@ const DENIED_CONTROL_WORDS: &[&str] = &[
     "toksdef",
     "csname",
     "endcsname",
+    "lowercase",
+    "uppercase",
+    "MakeLowercase",
+    "MakeUppercase",
+    "UseName",
+    "ExpandArgs",
+    "scantokens",
+    "csuse",
+    "csdef",
+    "csgdef",
+    "csedef",
+    "csxdef",
+    "cslet",
+    "csletcs",
+    "letcs",
     "makeatletter",
     "makeatother",
+    "ExplSyntaxOn",
+    "ProvidesExplFile",
+    "ProvidesExplPackage",
+    "ProvidesExplClass",
     "documentclass",
     "usepackage",
     "pdfximage",
@@ -309,6 +350,18 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
         BridgeError::new("invalid_proposal", message)
     }
 
+    // TeX's `^^` notation (two superscript characters, then two lowercase
+    // hex digits or any one character) is reduced while input is read,
+    // before control sequence names are scanned: `^^5cinput` and
+    // `\in^^70ut` are both `\input` to the engine, so the denylist below
+    // would be blind to them. A transcribed snippet never needs it. This is
+    // the authoritative `^^` check; the file readers' own is a second guard.
+    if latex.contains("^^") {
+        return Err(invalid(
+            "LaTeX uses ^^ character notation, which can spell any control sequence and is not permitted in an inserted snippet",
+        ));
+    }
+
     // Catcode changes are denied, so comments can be removed before scanning
     // command names, grouping, and literal reader arguments.
     let chars = strip_tex_comments(latex);
@@ -362,43 +415,76 @@ pub fn scan_latex(latex: &str) -> Result<LatexScan> {
                         seen_soft_words.insert(word.clone());
                     }
                     if word == "begin" || word == "end" {
-                        // Resolve `\begin{name}` / `\end{name}` by looking
-                        // past optional spaces/tabs for a brace-delimited
-                        // name, without introducing state carried across
-                        // loop iterations.
+                        // TeX ignores whitespace and comments before the
+                        // environment name. Require a plain literal name;
+                        // expansion inside it would evade the denylist.
                         let mut j = i;
-                        while matches!(chars.get(j), Some(' ') | Some('\t')) {
-                            j += 1;
-                        }
-                        if chars.get(j) == Some(&'{') {
-                            let name_start = j + 1;
-                            let mut k = name_start;
-                            while chars.get(k).is_some_and(|c| !matches!(c, '}' | '{' | '\\')) {
-                                k += 1;
-                            }
-                            if chars.get(k) == Some(&'}') {
-                                let name: String = chars[name_start..k].iter().collect();
-                                i = k + 1;
-                                if name == "document" {
-                                    return Err(invalid(format!(
-                                        "LaTeX contains \\{word}{{document}}, which would truncate or corrupt the surrounding document"
-                                    )));
-                                }
-                                if word == "begin" {
-                                    envs.push(name);
-                                } else {
-                                    match envs.pop() {
-                                        Some(top) if top == name => {}
-                                        _ => {
-                                            return Err(invalid(format!(
-                                            "LaTeX has \\end{{{name}}} with no matching \\begin{{{name}}} in this snippet"
-                                        )))
-                                        }
+                        loop {
+                            match chars.get(j) {
+                                Some(' ' | '\t' | '\r' | '\n') => j += 1,
+                                Some('%') => {
+                                    while chars.get(j).is_some_and(|&c| c != '\r' && c != '\n') {
+                                        j += 1;
                                     }
                                 }
-                                continue;
+                                _ => break,
                             }
                         }
+                        if chars.get(j) != Some(&'{') {
+                            return Err(invalid(format!(
+                                "LaTeX \\{word} requires a literal environment name in braces"
+                            )));
+                        }
+                        let name_start = j + 1;
+                        let mut k = name_start;
+                        while chars
+                            .get(k)
+                            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '*')
+                        {
+                            k += 1;
+                        }
+                        if k == name_start || chars.get(k) != Some(&'}') {
+                            return Err(invalid(format!(
+                                "LaTeX \\{word} requires a literal environment name using only letters, digits, or *"
+                            )));
+                        }
+                        let name: String = chars[name_start..k].iter().collect();
+                        i = k + 1;
+                        if name == "document" {
+                            return Err(invalid(format!(
+                                "LaTeX contains \\{word}{{document}}, which would truncate or corrupt the surrounding document"
+                            )));
+                        }
+                        if ["begin", "end", "filecontents", "filecontents*"]
+                            .contains(&name.as_str())
+                        {
+                            return Err(invalid(format!(
+                                "LaTeX uses \\{word}{{{name}}}, which is not permitted in an inserted snippet"
+                            )));
+                        }
+                        // LaTeX resolves environment names through \csname,
+                        // including the end<name> command at \end.
+                        let end_name = format!("end{name}");
+                        if DENIED_CONTROL_WORDS.contains(&name.as_str())
+                            || DENIED_CONTROL_WORDS.contains(&end_name.as_str())
+                        {
+                            return Err(invalid(format!(
+                                "LaTeX uses \\{word}{{{name}}}, which names a disallowed control sequence"
+                            )));
+                        }
+                        if word == "begin" {
+                            envs.push(name);
+                        } else {
+                            match envs.pop() {
+                                Some(top) if top == name => {}
+                                _ => {
+                                    return Err(invalid(format!(
+                                        "LaTeX has \\end{{{name}}} with no matching \\begin{{{name}}} in this snippet"
+                                    )))
+                                }
+                            }
+                        }
+                        continue;
                     }
                     continue;
                 }
