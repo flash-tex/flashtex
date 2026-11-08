@@ -32,7 +32,7 @@ mod edit_fuzz;
 use edit_fuzz::{compile, copy_dir, describe_difference, resolve, Outcome, View};
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;
-use flashtex_display_list::page::Item;
+use flashtex_display_list::page::{Item, Page};
 use flashtex_engine::resolver::find_texlive_bin;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader};
