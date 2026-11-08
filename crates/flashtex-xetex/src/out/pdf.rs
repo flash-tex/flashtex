@@ -470,11 +470,20 @@ impl<'a> Writer<'a> {
         let resources = self.resources(&res, &b.sup)?;
         // annotations
         let mut annots = Vec::new();
+        // dvipdfmx's `pdf_doc_add_annot`: the dictionary as the special gave
+        // it (no `/Type` added) with its `/Rect`.
         for a in &b.sup.annots {
-            let mut d = a.dict.clone();
-            if d.get(b"Type").is_none() {
-                d.0.insert(0, (b"Type".to_vec(), Obj::Name(b"Annot".to_vec())));
+            // `pdf:ann @name`: the named object, written once wherever it
+            // is named (its dictionary already has the `/Rect`)
+            if let Some(n) = &a.name {
+                if self.resolve(n).is_some() {
+                    if let Some(&o) = self.named.get(n.as_slice()) {
+                        annots.push(o);
+                        continue;
+                    }
+                }
             }
+            let mut d = a.dict.clone();
             d.set(
                 b"Rect",
                 Obj::Array(a.rect.iter().map(|v| Obj::num(*v, 3)).collect()),

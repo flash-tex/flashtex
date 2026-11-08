@@ -50,6 +50,13 @@ pub struct Annot {
     pub rect: [f64; 4],
     /// The display-list link this annotation is, if it is one.
     pub link: Option<usize>,
+    /// `pdf:ann @name` (and the first part of `pdf:bann @name`): the
+    /// annotation is the named object `name` of [`Doc::named`], whose
+    /// dictionary (with its `/Rect`, and whatever `pdf:put @name` adds
+    /// later) is written once, for both the page's `/Annots` and every
+    /// `@name` (an AcroForm's `/Fields`), as dvipdfmx's
+    /// `spc_push_object` makes it one object.
+    pub name: Option<Vec<u8>>,
 }
 
 /// Content of a page or form that the display list cannot express (an
@@ -146,6 +153,10 @@ pub struct Tracking {
     /// The rectangle so far on this page (stream space, bp): llx, lly,
     /// urx, ury, or `None` when nothing has been drawn yet.
     pub rect: Option<[f64; 4]>,
+    /// `pdf:bann @name`, until the link's first part is written: that part
+    /// is the named object, and later parts are copies of its dictionary
+    /// (dvipdfmx's `pdf_doc_break_annot`).
+    pub name: Option<Vec<u8>>,
 }
 
 /// `dvipdfmx:catch_phantom` (dvipdfmx's dvi.c, `catch_phantom`): whether a

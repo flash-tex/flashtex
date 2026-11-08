@@ -52,6 +52,13 @@ pub trait Metrics {
 #[derive(Clone, Debug)]
 pub struct GState {
     pub ctm: Mat,
+    /// dvipdfmx's own CTM (pdf_dev's graphics state): only what specials
+    /// tell it (`pdf:btrans`, `x:scale`, `x:rotate`, `pdf:bcontent`), not
+    /// the `cm` operators of literal PDF code, which dvipdfmx writes without
+    /// reading. Annotation rectangles go through it (`pdf_dev_set_rect`,
+    /// spc_pdfm.c's `set_rect_for_annot`), so a link inside `\rotatebox`
+    /// gets the rotated box's bounds and one inside a TikZ `cm` does not.
+    pub dev_ctm: Mat,
     pub fill: Col,
     pub stroke: Col,
     pub fill_alpha: f64,
@@ -81,6 +88,7 @@ impl GState {
     fn new(ctm: Mat) -> GState {
         GState {
             ctm,
+            dev_ctm: ctm,
             fill: Col::black(),
             stroke: Col::black(),
             fill_alpha: 1.0,
@@ -333,7 +341,7 @@ pub struct Builder<'a, M: Metrics> {
     pub metrics: &'a M,
     /// bp per DVI unit, as the fraction num/den: `mag` · 100 /
     /// (6578176 · 1000).
-    mag: i32,
+    pub mag: i32,
     pub r: Regs,
     pub stack: Vec<Regs>,
     pub font: Option<i32>,
@@ -398,6 +406,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let mut page = Stream::new(StreamKind::Page, page_no - 1, bh, Mat::IDENTITY);
         page.save();
         page.gs.ctm = Mat::translate(Fx(ORIGIN), h - Fx(ORIGIN));
+        page.gs.dev_ctm = page.gs.ctm;
         page.dl.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
         page.dl.width = clamp_i32(w.to_sp());
         page.dl.height = clamp_i32(h.to_sp());
@@ -453,6 +462,14 @@ impl<'a, M: Metrics> Builder<'a, M> {
         (x - tx, y - ty)
     }
 
+    /// User-space point (x, y) as dvipdfmx's own CTM takes it: less
+    /// `pdf:bcontent`'s origin (dvi.c's `compensation`), but not a form's
+    /// reference point, which dvipdfmx puts in the form's `/Matrix`.
+    pub fn dev_rel(&self, x: Fx, y: Fx) -> (Fx, Fx) {
+        let (tx, ty) = self.cur_ref().coords.last().copied().unwrap_or((Fx::ZERO, Fx::ZERO));
+        (x - tx, y - ty)
+    }
+
     /// The current point in stream space.
     pub fn stream_point(&self) -> (Fx, Fx) {
         let (x, y) = self.user_point();
@@ -460,16 +477,6 @@ impl<'a, M: Metrics> Builder<'a, M> {
         self.cur_ref().gs.ctm.apply(x, y)
     }
 
-    /// The current point in page space without the transformations of
-    /// the specials (dvipdfmx's device coordinates): for link rectangles
-    /// and destinations.
-    fn device_point(&self, dx: i32, dy: i32) -> (Fx, Fx) {
-        let (x, y) = (
-            self.dvi_to_bp(self.r.h + dx),
-            -self.dvi_to_bp(self.r.v + dy),
-        );
-        (x + Fx(ORIGIN), self.page_height - Fx(ORIGIN) + y)
-    }
 
     // ---- the XDV stream ---------------------------------------------------
 
@@ -820,9 +827,12 @@ impl<'a, M: Metrics> Builder<'a, M> {
                 let adv = l.advance(g) as f64 * sz * extend / upm;
                 let asc = l.ascent as f64 * sz / upm;
                 let desc = -(l.descent as f64) * sz / upm;
-                let (bx, by) = self.device_point(dx, dy);
-                let (bx, by) = (bx.to_f64(), by.to_f64());
-                self.expand_annot([bx, by - desc, bx + adv, by + asc]);
+                let (ux, uy) = (
+                    self.dvi_to_bp(self.r.h.wrapping_add(dx)),
+                    -self.dvi_to_bp(self.r.v.wrapping_add(dy)),
+                );
+                let r = self.dev_rect(ux, uy, rect_corners(0.0, -desc, adv, asc));
+                self.expand_annot(r);
             }
         }
     }
@@ -921,14 +931,39 @@ impl<'a, M: Metrics> Builder<'a, M> {
         if self.doc.tracking.is_none() {
             return;
         }
-        let (x, y) = self.device_point(dx, 0);
-        let (x, y) = (x.to_f64(), y.to_f64());
+        let (ux, uy) = (
+            self.dvi_to_bp(self.r.h.wrapping_add(dx)),
+            -self.dvi_to_bp(self.r.v),
+        );
         let w = self.dvi_to_bp(wd).to_f64();
         let h = self.dvi_to_bp(ht).to_f64();
         let d = self.dvi_to_bp(dp).to_f64();
-        let (x0, x1) = (x.min(x + w), x.max(x + w));
-        let (y0, y1) = ((y - d).min(y + h), (y - d).max(y + h));
-        self.expand_annot([x0, y0, x1, y1]);
+        let r = self.dev_rect(ux, uy, rect_corners(0.0, -d, w, h));
+        self.expand_annot(r);
+    }
+
+    /// The bounds in stream space (bp) of the quadrilateral whose corners
+    /// are `offs` (bp) from user-space point (`ux`, `uy`), through
+    /// dvipdfmx's own CTM ([`GState::dev_ctm`]): `pdf_dev_set_rect` and
+    /// `set_rect_for_annot`, which transform the four corners and take the
+    /// least and greatest of each coordinate.
+    pub fn dev_rect(&self, ux: Fx, uy: Fx, offs: [(f64, f64); 4]) -> [f64; 4] {
+        let (rx, ry) = self.dev_rel(ux, uy);
+        let m = self.cur_ref().gs.dev_ctm;
+        let (ox, oy) = m.apply(rx, ry);
+        let (ox, oy) = (ox.to_f64(), oy.to_f64());
+        let [a, b, c, d, _, _] = m.to_f64();
+        let linear = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
+        let mut r = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        for (dx, dy) in offs {
+            let (x, y) = if linear {
+                (ox + dx, oy + dy)
+            } else {
+                (ox + a * dx + c * dy, oy + b * dx + d * dy)
+            };
+            r = [r[0].min(x), r[1].min(y), r[2].max(x), r[3].max(y)];
+        }
+        r
     }
 
     /// A move to the right by `d` (DVI's `right`, `w` and `x`): dvipdfmx's
@@ -1000,7 +1035,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
         }
     }
 
-    /// Emit the part of the tracked link drawn so far on this page.
+    /// Emit the part of the tracked link drawn so far on this page. The
+    /// first part of a `pdf:bann @name` is the named object (with what
+    /// `pdf:put @name` has added since), and the later parts copies of its
+    /// dictionary as it is then (dvipdfmx's `pdf_doc_break_annot`).
     pub fn break_annot(&mut self) {
         let Some(t) = self.doc.tracking.as_mut() else {
             return;
@@ -1008,12 +1046,35 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let Some(r) = t.rect.take() else {
             return;
         };
-        let dict = t.dict.clone();
-        self.add_link(dict, r);
+        let name = t.name.take();
+        let mut dict = t.dict.clone();
+        if let Some(n) = &name {
+            if let Some(super::doc::Named::Obj(Obj::Dict(d))) = self.doc.named.get(n) {
+                dict = d.clone();
+            }
+            if let Some(t) = self.doc.tracking.as_mut() {
+                t.dict = dict.clone();
+            }
+        }
+        self.add_annot(dict, r, name);
     }
 
     /// A link annotation with rectangle `r` (stream space, bp).
     pub fn add_link(&mut self, dict: super::pdfobj::Dict, r: [f64; 4]) {
+        self.add_annot(dict, r, None);
+    }
+
+    /// An annotation with rectangle `r` (stream space, bp); with a name,
+    /// it is that named object (`pdf:ann @name`), its `/Rect` set in it as
+    /// dvipdfmx's `pdf_doc_add_annot` sets it.
+    pub fn add_annot(&mut self, dict: super::pdfobj::Dict, r: [f64; 4], name: Option<Vec<u8>>) {
+        if let Some(n) = &name {
+            let mut d = dict.clone();
+            d.set(b"Rect", Obj::Array(r.iter().map(|v| Obj::num(*v, 3)).collect()));
+            self.doc
+                .named
+                .insert(n.clone(), super::doc::Named::Obj(Obj::Dict(d)));
+        }
         let page = self.streams.first_mut().expect("the page");
         let (l, t) = page.to_page(fx(r[0]), fx(r[3]));
         let (rr, b) = page.to_page(fx(r[2]), fx(r[1]));
@@ -1034,6 +1095,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
             dict,
             rect: r,
             link: link_index,
+            name,
         });
     }
 
@@ -1241,6 +1303,12 @@ fn page_size(doc: &mut Doc, bytes: &[u8]) -> (Fx, Fx) {
     doc.paper
         .or(doc.default_paper)
         .unwrap_or((Fx(612 * ONE), Fx(792 * ONE)))
+}
+
+/// The corners of a box `w` wide from `x` and from `y0` up to `y1` (bp
+/// offsets), in `pdf_dev_set_rect`'s order.
+pub fn rect_corners(x: f64, y0: f64, w: f64, y1: f64) -> [(f64, f64); 4] {
+    [(x, y0), (x + w, y0), (x + w, y1), (x, y1)]
 }
 
 #[cfg(test)]
