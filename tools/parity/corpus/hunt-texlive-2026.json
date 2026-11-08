@@ -1,0 +1,2068 @@
+{
+ "schema": "flashtex-parity-corpus/1",
+ "tier": "hunt-texlive",
+ "on_demand": true,
+ "licence_note": "Templates, theses, slide decks, posters, CVs, letters, exams and journal samples shipped in TeX Live 2026 (texmf-dist/doc), each under its package's own licence (mostly LPPL). They are copied from the local TeX Live installation into the cache; nothing is committed. `sha256` pins the exact file; a different TeX Live release is reported as a mismatch.",
+ "selection": "Lane PARITY-HUNT (kabir-claude-parityhunt), 2026-11-01, from MacTeX 2026's texmf-dist: every package directory under doc/latex whose name matches thesis|these|dissert|beamertheme|beamerposter|poster|(^|-)cv|cv$|letter|exam|aastex|mnras|revtex|elsarticle|acmart|ieeetran|llncs|ametsoc|tufte|memoir|koma|kaobook|lecture|book|aa$|copernicus|jss|amsart|amscls|sigplan|nature|iopart|achemso|biochem|apa|rsc|svjour|powerdot|prosper|seminar|leaflet|flyer|scrjrnl|novel|report|article|template (case-insensitive); in each, the .tex files of at most 200 kB with \\documentclass and \\begin{document} outside comments, that load none of fontspec, unicode-math, xeCJK, luatexja, ctex or polyglossia, use no ctex/ltj class and have no `% !TEX program = xe/lua` line, and that are not already a templates, packages or beamer entry; sorted by (name has sample|example|demo|template|test|main|thesis|skeleton|minimal first, path depth, path) and the first 2 kept. Each copies its whole directory (copy_dir). Files pdflatex itself cannot compile are excluded by the oracle at run time, not here.",
+ "texmf": "/usr/local/texlive/2026/texmf-dist",
+ "entries": [
+  {
+   "id": "a0poster-a0",
+   "path": "doc/latex/a0poster/a0.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "12d2d3e4cbecdf159920b99338b49eaa41b1f8e24d3ae5e3b548d74a995d785c"
+  },
+  {
+   "id": "a0poster-a0_eng",
+   "path": "doc/latex/a0poster/a0_eng.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "622ed83640cdfee0d61f6b8ed92118f9c61eced4e8a513256683710e9f7bab4d"
+  },
+  {
+   "id": "aastex-aastex701-sample",
+   "path": "doc/latex/aastex/aastex701-sample.tex",
+   "class": "aastex701",
+   "copy_dir": true,
+   "sha256": "d4b909ec33db438076e79ce6f8d819479f61d47bc9bafdb9bdcc79db799b3869"
+  },
+  {
+   "id": "achemso-achemso-demo",
+   "path": "doc/latex/achemso/achemso-demo.tex",
+   "class": "achemso",
+   "copy_dir": true,
+   "sha256": "a67f1ec5da959c57fda32ffd0a5ec59b08a806f10433f5f5756a73a8ef6ea4fd"
+  },
+  {
+   "id": "acmart-sample-acmcp",
+   "path": "doc/latex/acmart/samples/sample-acmcp.tex",
+   "class": "acmart",
+   "copy_dir": true,
+   "sha256": "7fb3c9fd9dd532d04e3dd95d4ca3d280d92223faba4a744e7abea27b58e7467c"
+  },
+  {
+   "id": "acmart-sample-acmengage",
+   "path": "doc/latex/acmart/samples/sample-acmengage.tex",
+   "class": "acmart",
+   "copy_dir": true,
+   "sha256": "1870a18becdcade7c96e9b789ba688e3a129ae771cba83ce8bef70f88462d4b4"
+  },
+  {
+   "id": "adfathesis-template",
+   "path": "doc/latex/adfathesis/template.tex",
+   "class": "adfathesis",
+   "copy_dir": true,
+   "sha256": "434b275407b3ddc616c4c1fdb99fc448ee44561fd22bc53ffcf6d63f8bf165a7"
+  },
+  {
+   "id": "afthesis-usethesis",
+   "path": "doc/latex/afthesis/usethesis.tex",
+   "class": "afthesis",
+   "copy_dir": true,
+   "sha256": "e969b60a0b29eadbd0b92bc14240593f36e40a980d6623c43ad70cc33c5248da"
+  },
+  {
+   "id": "aiaa-template_advanced",
+   "path": "doc/latex/aiaa/template_advanced.tex",
+   "class": "aiaa-tc",
+   "copy_dir": true,
+   "sha256": "cddee064281b618a9042816e4032f03efc29d41bc8848e4bae760a6d70b58b47"
+  },
+  {
+   "id": "aiaa-template_basic",
+   "path": "doc/latex/aiaa/template_basic.tex",
+   "class": "aiaa-tc",
+   "copy_dir": true,
+   "sha256": "dfb5d4c54994bfa17cc9760cb62cca68ec1b268a5d869464754de0e80dc6a8dc"
+  },
+  {
+   "id": "akletter-akletter",
+   "path": "doc/latex/akletter/akletter.tex",
+   "class": "akletter",
+   "copy_dir": true,
+   "sha256": "ba60b60b54b492e46a7b2f71cf82ef767b781ab8b033b44f33df4d236fa92940"
+  },
+  {
+   "id": "akletter-letterdoc",
+   "path": "doc/latex/akletter/letterdoc.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "2c8d25e6d6a5cad92c61c7c3843aa64f565b9bcab3e5103fb18befdd177b586c"
+  },
+  {
+   "id": "amnestyreport-amnestytemplate",
+   "path": "doc/latex/amnestyreport/amnestytemplate.tex",
+   "class": "amnestyreport",
+   "copy_dir": true,
+   "sha256": "01b6e131ad95889a0a5109802d0efa61535a1e46f2297942c42676f8c044b1d4"
+  },
+  {
+   "id": "amnestyreport-sample",
+   "path": "doc/latex/amnestyreport/sample.tex",
+   "class": "amnestyreport",
+   "copy_dir": true,
+   "sha256": "ad83459a8a2c677f2d285f8ceae2df9cbecdc01592e8458fa6277f72af163c2c"
+  },
+  {
+   "id": "amscls-doc-Author_Handbook_Body",
+   "path": "doc/latex/amscls-doc/Author_Handbook_Body.tex",
+   "class": "memo-l",
+   "copy_dir": true,
+   "sha256": "6b80e1c92c012b6fdccb892bdd7c16f7a4f1bf9c6eb3c5ecbf353c4ec3844dc0"
+  },
+  {
+   "id": "amscls-doc-ams-author-handbook-doc",
+   "path": "doc/latex/amscls-doc/ams-author-handbook-doc.tex",
+   "class": "amsart",
+   "copy_dir": true,
+   "sha256": "f34953ddada9edb24458ef399a9becdc696e034c3224d67b9ee4eafb42f70ca8"
+  },
+  {
+   "id": "anufinalexam-ANUfinalexam",
+   "path": "doc/latex/anufinalexam/ANUfinalexam.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "c1e9a96bee82da0e511947acd50ca218e038682fbc2df1b4786fb3d8f9c0840c"
+  },
+  {
+   "id": "apa-apaexample",
+   "path": "doc/latex/apa/apaexample.tex",
+   "class": "apa",
+   "copy_dir": true,
+   "sha256": "17bcfd81a4a2870074e901cbad6acd442010de13325a6200a09476728e2aa131"
+  },
+  {
+   "id": "apa6-longsample",
+   "path": "doc/latex/apa6/samples/longsample.tex",
+   "class": "apa6",
+   "copy_dir": true,
+   "sha256": "e75da55b7e7d5dbd03ff4c281e30a6b48385bcafb2226b008a2dc37a63ea31fc"
+  },
+  {
+   "id": "apa6-shortsample",
+   "path": "doc/latex/apa6/samples/shortsample.tex",
+   "class": "apa6",
+   "copy_dir": true,
+   "sha256": "5a607cc3cf1347e4f04fcfb05e448e3981b4ff85fd95d3c959dbd183432f6286"
+  },
+  {
+   "id": "apa7-longsample",
+   "path": "doc/latex/apa7/samples/longsample.tex",
+   "class": "apa7",
+   "copy_dir": true,
+   "sha256": "e54c81d3d8eb684b07370e09d00295d41d45c70303212ea2c61719f3978f388f"
+  },
+  {
+   "id": "apa7-shortsample",
+   "path": "doc/latex/apa7/samples/shortsample.tex",
+   "class": "apa7",
+   "copy_dir": true,
+   "sha256": "0bb64f61a293ec7fc2a3ac852fc2d8db0754e89563108ed9714e08577240903a"
+  },
+  {
+   "id": "arsclassica-ArsClassica",
+   "path": "doc/latex/arsclassica/ArsClassica.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "b883dcafa10395c559e6c2241972bcb6aed802d7084d1b877568dc45fe9c788e"
+  },
+  {
+   "id": "arsclassica-Fundamentals",
+   "path": "doc/latex/arsclassica/Chapters/Fundamentals.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "641397a84d191ff248c27628c5ed70959d8456020d7ce01354c8420ecded06a2"
+  },
+  {
+   "id": "articleingud-template",
+   "path": "doc/latex/articleingud/template.tex",
+   "class": "articleingud",
+   "copy_dir": true,
+   "sha256": "6a8a4eb7e80acea2bcdb354a2ad8cf9e43dc634fcae18027da3f51ad8ee89428"
+  },
+  {
+   "id": "articleingud-plantilla",
+   "path": "doc/latex/articleingud/plantilla.tex",
+   "class": "articleingud",
+   "copy_dir": true,
+   "sha256": "839ad3aefe22a2f78106765b0b903f0e71a6eeea15b65aaca7a53d9ab53d3f10"
+  },
+  {
+   "id": "aucklandthesis-template",
+   "path": "doc/latex/aucklandthesis/template.tex",
+   "class": "aucklandthesis",
+   "copy_dir": true,
+   "sha256": "0260bec1bb3cc2a1ced6b3677273b8c52c82310e524bb3370acdffb687572a21"
+  },
+  {
+   "id": "basque-book-basque-book_EUS",
+   "path": "doc/latex/basque-book/basque-book_EUS.tex",
+   "class": "ltxdoc",
+   "copy_dir": true,
+   "sha256": "7faebe9241e4f298d4cad2e77e02b8cffb2f0b545263cb3ef5a457f8b45354b8"
+  },
+  {
+   "id": "beamer2thesis-beamer2thesis",
+   "path": "doc/latex/beamer2thesis/beamer2thesis.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "22bacf55c5f0ce0c8f015d6a04a35cc3d27f6ccedc7815ef8efef3339a2f96b8"
+  },
+  {
+   "id": "beamer2thesis-beamer2thesis_ita",
+   "path": "doc/latex/beamer2thesis/beamer2thesis_ita.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "ab73e1777db3e8e41d1164e6b79e56161f44058c1f280ec3515541f466f773c0"
+  },
+  {
+   "id": "beamerposter-example",
+   "path": "doc/latex/beamerposter/example.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "4dc3b2b0c1910c2bb5ccee3a9a61500a64c6cf73c224504ad0d8d8a856fb1e38"
+  },
+  {
+   "id": "beamerposter-beamerposter",
+   "path": "doc/latex/beamerposter/beamerposter.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "e1b0488c19b95db6cecf3b339e47c85e1057e6ebcdd038ba6a6fc878dd7485f5"
+  },
+  {
+   "id": "beamertheme-arguelles-demo-arguelles",
+   "path": "doc/latex/beamertheme-arguelles/demo/demo-arguelles.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "e4d2a194cf715a0cfca07a77a74aab2a404005cd43eb90b82f79b8f908c0fe3a"
+  },
+  {
+   "id": "beamertheme-bilkent-econ-BilkentEconTemplateGuide",
+   "path": "doc/latex/beamertheme-bilkent-econ/BilkentEconTemplateGuide.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "af799685243976189e7ed688484a58bad6187a2fb51e20cc22fa69a642fb0bc5"
+  },
+  {
+   "id": "beamertheme-bilkent-econ-beamertheme-bilkent-econ-example",
+   "path": "doc/latex/beamertheme-bilkent-econ/beamertheme-bilkent-econ-example.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "5f2c35e42962b9f4d47009a307a3e722569be1bae5efe3909fb7fab8b8778598"
+  },
+  {
+   "id": "beamertheme-cleaneasy-CleanEasy",
+   "path": "doc/latex/beamertheme-cleaneasy/CleanEasy.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "a48c7b2b742da9bc4a1633598f5844d5c4a65ce934d76f0fd33b9b3abcd75836"
+  },
+  {
+   "id": "beamertheme-csh-example-csh",
+   "path": "doc/latex/beamertheme-csh/example-csh.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "41f0ab2341780acf34ffe4267616e988cf1fd37efac8f5355e9e6065761b3900"
+  },
+  {
+   "id": "beamertheme-cuerna-template",
+   "path": "doc/latex/beamertheme-cuerna/template.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "ece83536c552ed89f517b13ceaf4097be1664185a1c0f22815315caaea79eaaa"
+  },
+  {
+   "id": "beamertheme-detlevcm-beamertheme-detlevcm",
+   "path": "doc/latex/beamertheme-detlevcm/beamertheme-detlevcm.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "b14461ac8ba1b681461a37afa9253d90794d9b28e5562febd036c3b565575c30"
+  },
+  {
+   "id": "beamertheme-durham-durham-demo",
+   "path": "doc/latex/beamertheme-durham/durham-demo.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "48fea6cb1df73436481a696396e5845e42ccbc8e1b022e4773a0cb2011482384"
+  },
+  {
+   "id": "beamertheme-durham-durham-manual",
+   "path": "doc/latex/beamertheme-durham/durham-manual.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "19bf2c5956d372f6219b9584686438004b0738e44bcb072ebd07e6fe7693d6f9"
+  },
+  {
+   "id": "beamertheme-gotham-gotham-example169transp",
+   "path": "doc/latex/beamertheme-gotham/gotham-example169transp.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "c8a667a1b699e330e97f5b269d96bbc9df45751c93da554cfdf15f401b72ab37"
+  },
+  {
+   "id": "beamertheme-gotham-gotham-example43dark",
+   "path": "doc/latex/beamertheme-gotham/gotham-example43dark.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "a9cfd9470b625d589c650ca47c75c4714c73d5ac55d00fa24da755abe0160ff9"
+  },
+  {
+   "id": "beamertheme-npbt-NPBT_exsamle",
+   "path": "doc/latex/beamertheme-npbt/example/NPBT_exsamle.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "78f478d39445731d2306312657087189b77b33fee2facaf05960ce41284919aa"
+  },
+  {
+   "id": "beamertheme-phnompenh-beamerthemePhnomPenh",
+   "path": "doc/latex/beamertheme-phnompenh/beamerthemePhnomPenh.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "2ad84641361af73820a8eaceb848c1a8b6b68435f3f2d470756ae88be60f8aeb"
+  },
+  {
+   "id": "beamertheme-pure-minimalistic-beamertheme-pure-minimalistic-demo",
+   "path": "doc/latex/beamertheme-pure-minimalistic/beamertheme-pure-minimalistic-demo.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "6695db3d3b724fe25008203119322685ac903556e196bc9f10bb9bb11e6de0ed"
+  },
+  {
+   "id": "beamertheme-rainbow-beamertheme-rainbow-doc",
+   "path": "doc/latex/beamertheme-rainbow/beamertheme-rainbow-doc.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "5f645857b7ce5a84fccaa0c8c2c975ba558107b2f0f8c4ecb1dbd87f98402148"
+  },
+  {
+   "id": "beamertheme-simpledarkblue-beamertheme-simpledarkblue-sample",
+   "path": "doc/latex/beamertheme-simpledarkblue/beamertheme-simpledarkblue-sample.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "9d1b433c2f0f4e216fd67247de07fb8dc2b75cdfae983e37a0eacfb3f416b458"
+  },
+  {
+   "id": "beamertheme-simpleplus-beamertheme-simpleplus-sample",
+   "path": "doc/latex/beamertheme-simpleplus/beamertheme-simpleplus-sample.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "3df73402c1fd913a5d608663d676dce7817d3bda2fd2aae7c74ea16fb9268e12"
+  },
+  {
+   "id": "beamertheme-spectrum-beamertheme-spectrum-doc",
+   "path": "doc/latex/beamertheme-spectrum/beamertheme-spectrum-doc.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "ac9b9c067433db42e3a7c9cd2c079b80bb7a23c3abe40fc2749072748be41989"
+  },
+  {
+   "id": "beamertheme-tcolorbox-beamertheme-tcolorbox-doc",
+   "path": "doc/latex/beamertheme-tcolorbox/beamertheme-tcolorbox-doc.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "431a41072ed91410dc1fd770d10aa1e6dd4d85be70a9f2ef970fc02aa5913b14"
+  },
+  {
+   "id": "beamertheme-trigon-trigon_demo",
+   "path": "doc/latex/beamertheme-trigon/trigon_demo.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "eb88f2f4733055b32cf0e84ee3f1c05fe2bf0f95a5b72c607bcff79c5a9619e9"
+  },
+  {
+   "id": "beamertheme-upenn-bc-beamerBCstyle",
+   "path": "doc/latex/beamertheme-upenn-bc/beamerBCstyle.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "156df3829083f5062f503f3edf6a964f48275e7fda2f70d43f19d25d24832958"
+  },
+  {
+   "id": "beamertheme-westlake-beamertheme-westlake-demo",
+   "path": "doc/latex/beamertheme-westlake/beamertheme-westlake-demo.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "cd26ffbcec5cd1b1d55265fcccb4fdde40fe410c1609691463b926a83b2c6c89"
+  },
+  {
+   "id": "beamerthemeamurmaple-beamer-amurmaple-doc",
+   "path": "doc/latex/beamerthemeamurmaple/beamer-amurmaple-doc.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "24eee7262cb04180bb04302bcb9dbd67cf5ee355e9acb0078ca34c89794afefe"
+  },
+  {
+   "id": "beamerthemecelestia-celestia-demo-en",
+   "path": "doc/latex/beamerthemecelestia/celestia-demo-en.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "b2fddcd02977d4412035f6af8989004333b172b7240bdee01949d6d4a5cce140"
+  },
+  {
+   "id": "beamerthemecelestia-celestia-demo-fr",
+   "path": "doc/latex/beamerthemecelestia/celestia-demo-fr.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "01d873496e04514731d779faab0e3c895e7d54e8757459c4c51d9c18d9a3fca9"
+  },
+  {
+   "id": "beamerthemeconcrete-demo-cbernoulli",
+   "path": "doc/latex/beamerthemeconcrete/demo-cbernoulli.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "834d59c923ba54dd72b8a4dcff18ee75a810ffd1f3114b6fa0f2a4dc247894de"
+  },
+  {
+   "id": "beamerthemeconcrete-demo-cdirichlet",
+   "path": "doc/latex/beamerthemeconcrete/demo-cdirichlet.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "d64f48fe38195f5d10c1a4a8ec3a47bc439c3ea8f215ee429b9560ce2ea288f6"
+  },
+  {
+   "id": "beamerthemelalic-beamerthemelalic-exemplo",
+   "path": "doc/latex/beamerthemelalic/beamerthemelalic-exemplo.tex",
+   "class": "beamer",
+   "copy_dir": true,
+   "sha256": "e76e5d1d63e34c409ee178d0e14b317f6f98eb120c7946d94b37bc21568037bd"
+  },
+  {
+   "id": "beautybook-beautybook-cn",
+   "path": "doc/latex/beautybook/beautybook-cn.tex",
+   "class": "beautybook",
+   "copy_dir": true,
+   "sha256": "d0da557f0d978a24571838223ca89046e08637156fed284d285aca537b1f4cc7"
+  },
+  {
+   "id": "beautybook-beautybook-en",
+   "path": "doc/latex/beautybook/beautybook-en.tex",
+   "class": "beautybook",
+   "copy_dir": true,
+   "sha256": "945fb541cf3cc80a6287f2cb18ddb4b4f0be32293f1d357a462f19960837f5a3"
+  },
+  {
+   "id": "biblatex-cv-cv",
+   "path": "doc/latex/biblatex-cv/cv.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "f40b0cf95ff870ce56cc22010936d048cc80bfa9a309a2dfbe22cb0b8784d69b"
+  },
+  {
+   "id": "biblatex-nature-biblatex-nature",
+   "path": "doc/latex/biblatex-nature/biblatex-nature.tex",
+   "class": "ltxdoc",
+   "copy_dir": true,
+   "sha256": "e86970920990f8930de30c56b07de01f204dc94467d25f405caf5812d14bdf33"
+  },
+  {
+   "id": "bjfuthesis-bjfuthesis",
+   "path": "doc/latex/bjfuthesis/documentation/bjfuthesis.tex",
+   "class": "bjfuthesis",
+   "copy_dir": true,
+   "sha256": "458f88cfbaeff40c3d70c9bc5eba22a80c41e5b56b56a91a6a814486e733bebf"
+  },
+  {
+   "id": "bjfuthesis-thesis",
+   "path": "doc/latex/bjfuthesis/example/thesis.tex",
+   "class": "bjfuthesis",
+   "copy_dir": true,
+   "sha256": "ee4b24504949aafc6ff4db63c44d610942784786d1a1225820213306eda1c918"
+  },
+  {
+   "id": "book-of-common-prayer-book-of-common-prayer",
+   "path": "doc/latex/book-of-common-prayer/book-of-common-prayer.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "6bacb0d87ee73eac8fc50503d9a15cf201a19cf677c24bb913f62bce4cb0df77"
+  },
+  {
+   "id": "bookcover-bookcover-example1",
+   "path": "doc/latex/bookcover/bookcover-example1.tex",
+   "class": "bookcover",
+   "copy_dir": true,
+   "sha256": "b0528c39ba3b1aee8265501868b992d388a9fe6e22f612d91f61ebf4dc152ed4"
+  },
+  {
+   "id": "bookcover-bookcover-example2",
+   "path": "doc/latex/bookcover/bookcover-example2.tex",
+   "class": "bookcover",
+   "copy_dir": true,
+   "sha256": "1ebab5c5a9f73fd514d76523c42c923b60d5628b3afc6878ec92c6512a02750a"
+  },
+  {
+   "id": "bookest-bookestdoc-en",
+   "path": "doc/latex/bookest/bookestdoc-en.tex",
+   "class": "bookest",
+   "copy_dir": true,
+   "sha256": "7e7495c9a1e0ff7f1b046838b94e0ea7fe104d00234ee738d9dd6b0e719e8bb5"
+  },
+  {
+   "id": "bookest-bookestdoc-it",
+   "path": "doc/latex/bookest/bookestdoc-it.tex",
+   "class": "bookest",
+   "copy_dir": true,
+   "sha256": "dc3b2158d2d6a23cd82ce382f8db4d412802802d9a41f40e1604957b25cc7970"
+  },
+  {
+   "id": "bookmark-bookmark-example",
+   "path": "doc/latex/bookmark/bookmark-example.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "26a8189dc4b4cfb0b79728ee82be1cfa4273803b256dcf1051cf942fdd8d594b"
+  },
+  {
+   "id": "cesenaexam-cesenaexam_example",
+   "path": "doc/latex/cesenaexam/cesenaexam_example.tex",
+   "class": "cesenaexam",
+   "copy_dir": true,
+   "sha256": "ff81a795db51191763f636a238dfc91550d572212ab817eb5eeb651bca4ca4a5"
+  },
+  {
+   "id": "chletter-chlettmp",
+   "path": "doc/latex/chletter/chlettmp.tex",
+   "class": "chletter",
+   "copy_dir": true,
+   "sha256": "93e2a37594aff756088804ed40cfdc5e31c4eaaae0b219ef2a7b12f47032dd0a"
+  },
+  {
+   "id": "cidarticle-cidarticle-author-template",
+   "path": "doc/latex/cidarticle/cidarticle-author-template.tex",
+   "class": "cidarticle",
+   "copy_dir": true,
+   "sha256": "fc27209c5b111f5f6ce6cc8ca94f620fff70013702ed2401d563a8bd386cca90"
+  },
+  {
+   "id": "cjs-rcs-article-cjs-template",
+   "path": "doc/latex/cjs-rcs-article/cjs-template.tex",
+   "class": "cjs-rcs-article",
+   "copy_dir": true,
+   "sha256": "f52164b94912b466a5c23fa7df966c94a5441afbcdafe1e8223d22dc03462002"
+  },
+  {
+   "id": "cjs-rcs-article-rcs-gabarit",
+   "path": "doc/latex/cjs-rcs-article/rcs-gabarit.tex",
+   "class": "cjs-rcs-article",
+   "copy_dir": true,
+   "sha256": "2e64ff68d3fe0991ffaed1d71bd3b3a11a5a73769ae49bb089164f4d9d8f46fa"
+  },
+  {
+   "id": "classicthesis-ClassicThesis",
+   "path": "doc/latex/classicthesis/ClassicThesis.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "1489c76830baa5b9517266c4bf763cd59cbdf328d843084ae46330f382de9dbf"
+  },
+  {
+   "id": "classicthesis-classicthesis-arsclassica-book",
+   "path": "doc/latex/classicthesis/Examples/classicthesis-arsclassica-book.tex",
+   "class": "scrbook",
+   "copy_dir": true,
+   "sha256": "a4459a03aded2acb93ec2d0e9459ee126bf2c67d148127e4844ee105e419a640"
+  },
+  {
+   "id": "cleanthesis-my-thesis",
+   "path": "doc/latex/cleanthesis/my-thesis.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "4a1f0665d9766d63e7294af1884419a76393d577d058daed20984b19f6cb3f9b"
+  },
+  {
+   "id": "cleanthesis-cleanthesis-doc",
+   "path": "doc/latex/cleanthesis/doc/cleanthesis-doc.tex",
+   "class": "ltxdockit",
+   "copy_dir": true,
+   "sha256": "64d75083141eaf242d3fbacb8d445f15f1fc6fdb7bfe0646bd58d1b113181de0"
+  },
+  {
+   "id": "clrscode-clrscode",
+   "path": "doc/latex/clrscode/clrscode.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "f962119f783865db6c7b1adb36bafd3ec277156a183b55b9581ab3d17da59960"
+  },
+  {
+   "id": "clrscode3e-clrscode3e",
+   "path": "doc/latex/clrscode3e/clrscode3e.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "3706dca4ecda3cc6414b084cf0c65a7451014eaf11fe0d46ca6737887079ba25"
+  },
+  {
+   "id": "cqjtuthesis-cqjtuthesis-bachelor",
+   "path": "doc/latex/cqjtuthesis/examples/cqjtuthesis-bachelor.tex",
+   "class": "../tex/cqjtuthesis",
+   "copy_dir": true,
+   "sha256": "573c844151d0771a71837f8f0c589d459c31552584c34bd95e9ad46453290090"
+  },
+  {
+   "id": "cqjtuthesis-cqjtuthesis-doctor",
+   "path": "doc/latex/cqjtuthesis/examples/cqjtuthesis-doctor.tex",
+   "class": "../tex/cqjtuthesis",
+   "copy_dir": true,
+   "sha256": "e4a8e841b9caa5ac99b5c547ff21ab0ef90470dd9a8a4745c733355b9571177a"
+  },
+  {
+   "id": "cquthesis-main",
+   "path": "doc/latex/cquthesis/main.tex",
+   "class": "cquthesis",
+   "copy_dir": true,
+   "sha256": "0cde27e7e0683ae1565173a3e4dcbea88a4defc0e4aaf71c7e6a98f313e09694"
+  },
+  {
+   "id": "cv-ApplicationLetter",
+   "path": "doc/latex/cv/ApplicationLetter.tex",
+   "class": "g-brief",
+   "copy_dir": true,
+   "sha256": "a588de33d398d1b67db61497d15ab9e912ea0d5b57f42d9688cc7350209a3fe8"
+  },
+  {
+   "id": "cv-CVCTAN",
+   "path": "doc/latex/cv/CVCTAN.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "3125c504ba0e6c95ce0007cea6cb5373e2ddb8fbee36b4635ceb980c6048aaf0"
+  },
+  {
+   "id": "diabetes-logbook-dmlb-template",
+   "path": "doc/latex/diabetes-logbook/dmlb-template.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "76e34537d928e5bc15d8fe4d4388d5b5329040d4f479fa7ef200d6d956058ee4"
+  },
+  {
+   "id": "diabetes-logbook-dmlb-graphme",
+   "path": "doc/latex/diabetes-logbook/dmlb-graphme.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "eecc985e81fd35f8cffd423a365dcb4f56465a4cff7a066df31ee9cd0eafd71b"
+  },
+  {
+   "id": "ditaa-example",
+   "path": "doc/latex/ditaa/example.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "7f927fa79b4e92222fe2ea2c49e68592605c85dd79cce04f4894470775f8f2ac"
+  },
+  {
+   "id": "ditaa-ditaa",
+   "path": "doc/latex/ditaa/ditaa.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "2281af2c5e2f67aff20f146fa53066e682f9717694e2cd886b7aa55f455e5a53"
+  },
+  {
+   "id": "dithesis-sample",
+   "path": "doc/latex/dithesis/sample.tex",
+   "class": "dithesis",
+   "copy_dir": true,
+   "sha256": "b6b5675e891e742f9fd12bfc25db62d017a9f622fe16b83ffd3e7661050d88de"
+  },
+  {
+   "id": "dlrg-templates-dlrg",
+   "path": "doc/latex/dlrg-templates/dlrg.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "65fcf70ca29604c85a16867f50b206502bef8be200af4b4bee84377520d01089"
+  },
+  {
+   "id": "dlrg-templates-modulAdler",
+   "path": "doc/latex/dlrg-templates/modulAdler.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "0f1e4949672a3678e7694da255de7c58e4e00d3abe63912f98dfc27f1425b161"
+  },
+  {
+   "id": "ecothesis-ecothesis",
+   "path": "doc/latex/ecothesis/ecothesis.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "080baa24dd2fe5e6a299e9ffdf6013098edd1fdd165a2e420f25442b2c1d9ef4"
+  },
+  {
+   "id": "ecothesis-main",
+   "path": "doc/latex/ecothesis/main.tex",
+   "class": "report",
+   "copy_dir": true,
+   "sha256": "12de7053e315c6e032a6554c454bb5764821bebc509ef70d230f935d3a65db03"
+  },
+  {
+   "id": "ecv-CV-template_de",
+   "path": "doc/latex/ecv/template/CV-template_de.tex",
+   "class": "ecv",
+   "copy_dir": true,
+   "sha256": "eadcb648a28475f03beac1a654b8004869d6615657a4c45f74d97410507ae9b8"
+  },
+  {
+   "id": "ecv-CV-template_en",
+   "path": "doc/latex/ecv/template/CV-template_en.tex",
+   "class": "ecv",
+   "copy_dir": true,
+   "sha256": "e0d0c3daf6fdeaa9dfd28983e93517eb00f3ae911a1642b2624cf4b2a7df4624"
+  },
+  {
+   "id": "elegantbook-elegantbook-cn",
+   "path": "doc/latex/elegantbook/elegantbook-cn.tex",
+   "class": "elegantbook",
+   "copy_dir": true,
+   "sha256": "382a313758f9fb623720eea3bd374f61aae376e9e18d332ffc95a5eb38bcff46"
+  },
+  {
+   "id": "elegantbook-elegantbook-en",
+   "path": "doc/latex/elegantbook/elegantbook-en.tex",
+   "class": "elegantbook",
+   "copy_dir": true,
+   "sha256": "eff7a526d005b8d3731d4ac0f00f5afae2fb320de507d8c861b829eb6c40d8c5"
+  },
+  {
+   "id": "els-cas-templates-cas-dc-sample",
+   "path": "doc/latex/els-cas-templates/cas-dc-sample.tex",
+   "class": "cas-dc",
+   "copy_dir": true,
+   "sha256": "64a7cc47a85800c72c7322a90d7de757b2619d3a5b5fb2ffdb9efc4faed69256"
+  },
+  {
+   "id": "els-cas-templates-cas-dc-template",
+   "path": "doc/latex/els-cas-templates/cas-dc-template.tex",
+   "class": "cas-dc",
+   "copy_dir": true,
+   "sha256": "9254a386abf657baaa296579de1094be7c17dc2bc21d706fcc06fda4149affb2"
+  },
+  {
+   "id": "elsarticle-elsarticle-template-harv",
+   "path": "doc/latex/elsarticle/elsarticle-template-harv.tex",
+   "class": "elsarticle",
+   "copy_dir": true,
+   "sha256": "b154487ec96ed096d8c114c074849c42fe91ba111315ccfea6ed2ce9a6143671"
+  },
+  {
+   "id": "elsarticle-elsarticle-template-num-names",
+   "path": "doc/latex/elsarticle/elsarticle-template-num-names.tex",
+   "class": "elsarticle",
+   "copy_dir": true,
+   "sha256": "06f9a44d39f057b9d4a7285d77176319b79a02fe1aeb08570c39ccae60a1b120"
+  },
+  {
+   "id": "elteikthesis-elteikthesis_en",
+   "path": "doc/latex/elteikthesis/elteikthesis_en.tex",
+   "class": "elteikthesis",
+   "copy_dir": true,
+   "sha256": "1cc10fe38c93637f23ed05f1792f64e2127f5c4a207343e7b0de8200f13dfd42"
+  },
+  {
+   "id": "elteikthesis-elteikthesis_hu",
+   "path": "doc/latex/elteikthesis/elteikthesis_hu.tex",
+   "class": "elteikthesis",
+   "copy_dir": true,
+   "sha256": "e6e444da47251de5a3cd5d57ad33eab1c1ba7b5c44c0a8d4534789e9a41af392"
+  },
+  {
+   "id": "envelope-letter-envelope-letter-documentation",
+   "path": "doc/latex/envelope-letter/envelope-letter-documentation.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "44b4aee1d9c1cc6c857bce0ef455dad285757025d24d55c1c0b5fdbec6a96908"
+  },
+  {
+   "id": "esieecv-cvtest",
+   "path": "doc/latex/esieecv/cvtest.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "709c8fdc8ce18a0a6efe01827a16a52ed0b6558fe461c5ff155d155fd6bb4682"
+  },
+  {
+   "id": "europasscv-europasscv_bib_en",
+   "path": "doc/latex/europasscv/example/europasscv_bib_en.tex",
+   "class": "europasscv",
+   "copy_dir": true,
+   "sha256": "7e01a8737de65be7c6cfab6f3ee7b08ef6d6ff99b8f880532b7307c4f639e05d"
+  },
+  {
+   "id": "europasscv-europasscv_en",
+   "path": "doc/latex/europasscv/example/europasscv_en.tex",
+   "class": "europasscv",
+   "copy_dir": true,
+   "sha256": "a37b2b86a274e4dc9ab8990e2067eec0f58461574d089c5994b3dac768e00900"
+  },
+  {
+   "id": "europecv-minimal",
+   "path": "doc/latex/europecv/examples/minimal.tex",
+   "class": "europecv",
+   "copy_dir": true,
+   "sha256": "7965801a6a9c7451c3a7b47f3f845a04b05673db564dabf67bd792f870efa5c2"
+  },
+  {
+   "id": "europecv-cv_template_academic_en",
+   "path": "doc/latex/europecv/templates/cv_template_academic_en.tex",
+   "class": "europecv",
+   "copy_dir": true,
+   "sha256": "19b77930cc66f6ac9277c693eaa0ffb720afb7f04a86aca848b75264d7215fbd"
+  },
+  {
+   "id": "exam-lite-exam-lite",
+   "path": "doc/latex/exam-lite/exam-lite.tex",
+   "class": "exam-lite",
+   "copy_dir": true,
+   "sha256": "0fcad298a2a061ac5f5c73463b1281303ae5acd8193edb732536326e23810034"
+  },
+  {
+   "id": "exam-n-exam-n-example",
+   "path": "doc/latex/exam-n/exam-n-example.tex",
+   "class": "exam-n",
+   "copy_dir": true,
+   "sha256": "63e3bb316929c3856c092a1fb4294517ff57d4b94c5d665a2b18301b5bb1b46e"
+  },
+  {
+   "id": "exam-n-template-master",
+   "path": "doc/latex/exam-n/template-master.tex",
+   "class": "exam-n",
+   "copy_dir": true,
+   "sha256": "40e78217e7bf9aa7f2bdbf3c76bdc91f776b4024a4cb7c849ce2ba3152a094b5"
+  },
+  {
+   "id": "exam-randomizechoices-exam-randomizechoices-doc",
+   "path": "doc/latex/exam-randomizechoices/exam-randomizechoices-doc.tex",
+   "class": "exam",
+   "copy_dir": true,
+   "sha256": "d765d8ed6bbb7f191093e4fb22c96e608d9c24f6f7881faeee78070ed5148c53"
+  },
+  {
+   "id": "exam-randomizechoices-exam-randomizechoices",
+   "path": "doc/latex/exam-randomizechoices/exam-randomizechoices.tex",
+   "class": "exam",
+   "copy_dir": true,
+   "sha256": "2cba7d88b6d74cc4e2193b9d87e0483e54a5bc7570f052bb515f42148d035354"
+  },
+  {
+   "id": "examdesign-examplea",
+   "path": "doc/latex/examdesign/examplea.tex",
+   "class": "examdesign",
+   "copy_dir": true,
+   "sha256": "4c4bb51022c3c6d4a2dcbaff4d2636e6901e2c3d150a90c122d567dc11802651"
+  },
+  {
+   "id": "examdesign-exampleb",
+   "path": "doc/latex/examdesign/exampleb.tex",
+   "class": "examdesign",
+   "copy_dir": true,
+   "sha256": "d7358936ea66838543add5c49b0623828afe95a733e3a2f881ce98997f9b587f"
+  },
+  {
+   "id": "examplep-eurotex_2005_examplep",
+   "path": "doc/latex/examplep/eurotex_2005_examplep.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "8c0fdf800149a56585559de4013d3336dc6a4f35b321407773e7d80e7eec9de2"
+  },
+  {
+   "id": "fbithesis-example",
+   "path": "doc/latex/fbithesis/example.tex",
+   "class": "fbithesis",
+   "copy_dir": true,
+   "sha256": "3ed264ea40cd412a5ca1c4a20c7fdc114d0f37dc02b1d4c6488cbd18e7a4d081"
+  },
+  {
+   "id": "fduthesis-fdulogo-example",
+   "path": "doc/latex/fduthesis/fdulogo-example.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "41ff997a22e2259abc7d26b3f303a0c925846af67113b78df2c841180a32f866"
+  },
+  {
+   "id": "fduthesis-fduthesis-cover",
+   "path": "doc/latex/fduthesis/fduthesis-cover.tex",
+   "class": "standalone",
+   "copy_dir": true,
+   "sha256": "67a2399a4f6d0b4c56d7345ab63d8cf7de872ef3dd6fe6868983a35f748563be"
+  },
+  {
+   "id": "flipbook-flipbook-doc",
+   "path": "doc/latex/flipbook/flipbook-doc.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "523551f62c99bc83dfb0bba4779b690977a715776687ce3794c8c563f8ac4f7b"
+  },
+  {
+   "id": "flipbook-flipbook-ex",
+   "path": "doc/latex/flipbook/flipbook-ex.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "b052eecc66775d376dcdba649a8a136076e667fb120f6e88761eea5a409711ab"
+  },
+  {
+   "id": "ftc-notebook-example-notebook",
+   "path": "doc/latex/ftc-notebook/example-notebook.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "71f4c72ee6bb39a84670f067887371e5111643841a1ae2c22b15844012cacf70"
+  },
+  {
+   "id": "ftc-notebook-ftc-notebook",
+   "path": "doc/latex/ftc-notebook/ftc-notebook.tex",
+   "class": "ltxdoc",
+   "copy_dir": true,
+   "sha256": "12cd569ec7d4ae1ff1afcfea13eafc197754871fb37d3ae5345ea82aaff8c27d"
+  },
+  {
+   "id": "gamebook-gamebook-example",
+   "path": "doc/latex/gamebook/gamebook-example.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "9661c6644882f84db503c5d3a791099dcfbc294a7a07cdd5275b090df25d3724"
+  },
+  {
+   "id": "gamebooklib-gamebooklib_test",
+   "path": "doc/latex/gamebooklib/gamebooklib_test.tex",
+   "class": "report",
+   "copy_dir": true,
+   "sha256": "22126554fbc6e25f4d6bdf0934e9e53b91438a7466517c8261f91e90a41058b9"
+  },
+  {
+   "id": "ha-prosper-HAPBigtest",
+   "path": "doc/latex/ha-prosper/HAPBigtest.tex",
+   "class": "prosper",
+   "copy_dir": true,
+   "sha256": "681c7d7b80836bff7afb1c5ceaf4d0516556fbaafe9f254507286eba4ccf51ad"
+  },
+  {
+   "id": "ha-prosper-HAPDualslide",
+   "path": "doc/latex/ha-prosper/HAPDualslide.tex",
+   "class": "prosper",
+   "copy_dir": true,
+   "sha256": "2cca80351d9b61418a5c9cc1518244300ec88c5468501c9e2a93d615871bf655"
+  },
+  {
+   "id": "hagenberg-thesis-hagenberg-thesis",
+   "path": "doc/latex/hagenberg-thesis/hagenberg-thesis.tex",
+   "class": "hgbarticle",
+   "copy_dir": true,
+   "sha256": "a4d019f47fcf6943afe88f6cecdac3eaf3c1900f8a9ccec772221c7f3ec0d7b7"
+  },
+  {
+   "id": "harnon-cv-sample",
+   "path": "doc/latex/harnon-cv/sample.tex",
+   "class": "harnon-cv",
+   "copy_dir": true,
+   "sha256": "e9f1a90ae4ffed6296d2f25c7376a5b4bd7b6615e7e338b0b9b944af2986aacf"
+  },
+  {
+   "id": "hduthesis-hduthesis-bachelor",
+   "path": "doc/latex/hduthesis/example/hduthesis-bachelor.tex",
+   "class": "",
+   "copy_dir": true,
+   "sha256": "632883ea29908804018d5397fe14e3a693387db07654b4d84152add0deb222e6"
+  },
+  {
+   "id": "hduthesis-hduthesis-beamer",
+   "path": "doc/latex/hduthesis/example/hduthesis-beamer.tex",
+   "class": "hduthesis",
+   "copy_dir": true,
+   "sha256": "b1e867879e27beacb17b68f527a26b064ce2b572782ac9ae6bf1f4e33e5bdf00"
+  },
+  {
+   "id": "hecthese-template-msc-articles",
+   "path": "doc/latex/hecthese/template-msc-articles.tex",
+   "class": "hecthese",
+   "copy_dir": true,
+   "sha256": "11e45e83f6f5e478ac32636957bfb945c6dca327e99a032f479c4c13bc836d7d"
+  },
+  {
+   "id": "hecthese-template-msc-classic",
+   "path": "doc/latex/hecthese/template-msc-classic.tex",
+   "class": "hecthese",
+   "copy_dir": true,
+   "sha256": "15c95c6eb9a67d2d0acda79fbcc522539d11c3981c3677a4cc9e7c7d429a1f98"
+  },
+  {
+   "id": "hepparticles-testhepparticles",
+   "path": "doc/latex/hepparticles/testhepparticles.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "8cdcab074ab9cc8dd645e98fb4f1bb2a0221f6a1ede744418dca044785578911"
+  },
+  {
+   "id": "hepparticles-hepparticles",
+   "path": "doc/latex/hepparticles/hepparticles.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "f3ad139fd8c785a352d5c608b7f56c50831f233508819e8ea11ba308ccacc3e4"
+  },
+  {
+   "id": "hepthesis-hepthesis",
+   "path": "doc/latex/hepthesis/hepthesis.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "78c55d7a83224877303eacfee0c8aa12ff37701a3eefb5471d68ff49568c8988"
+  },
+  {
+   "id": "hepthesis-example",
+   "path": "doc/latex/hepthesis/example/example.tex",
+   "class": "hepthesis",
+   "copy_dir": true,
+   "sha256": "b6f2d97de7cd774a275b5b53ef225870f5df8f4fd1b9b9f904249893e7876261"
+  },
+  {
+   "id": "hfutexam-hfutexam",
+   "path": "doc/latex/hfutexam/hfutexam.tex",
+   "class": "hfutexam",
+   "copy_dir": true,
+   "sha256": "1f6059bad12677abb7ee55c4515f19cec5fc45eb39aeaedc3868860052a7fa8a"
+  },
+  {
+   "id": "hfutexam-hfutexam_cankaodaan",
+   "path": "doc/latex/hfutexam/hfutexam_cankaodaan.tex",
+   "class": "hfutexam",
+   "copy_dir": true,
+   "sha256": "f6dea81ff9eec9732c94db22166e0dcdc52e2e1b97a0b03170ad68d930e9ec1c"
+  },
+  {
+   "id": "hindawi-latex-template-hindawi_latex_template",
+   "path": "doc/latex/hindawi-latex-template/hindawi_latex_template.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "d95ea08601abb429bb20d2cecedf46582e44a9007cf9f031cf7a675ac39212d8"
+  },
+  {
+   "id": "hletter-Testheader",
+   "path": "doc/latex/hletter/Testheader.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "330ab480b497c975cdd9828f5311a986a74b62445f231e2b242e0224a8b0be0a"
+  },
+  {
+   "id": "hletter-Testletter1",
+   "path": "doc/latex/hletter/Testletter1.tex",
+   "class": "hletter",
+   "copy_dir": true,
+   "sha256": "e65d6c1c3605ae2c750ad4fdc00e093b29f044db19562c9f4664fdc34973a7a8"
+  },
+  {
+   "id": "ieeetran-testflow",
+   "path": "doc/latex/ieeetran/testflow.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "ad798fc6cecf81f60d47dde4757c5324dd35d7a06d87015d34a022de8c155ada"
+  },
+  {
+   "id": "ieeetran-bare_adv",
+   "path": "doc/latex/ieeetran/bare_adv.tex",
+   "class": "IEEEtran",
+   "copy_dir": true,
+   "sha256": "7df2595a68d8124ac0d24dff093f74c1f538c4dc4c96ed9aaeff00a3bf9b1428"
+  },
+  {
+   "id": "interactiveworkbook-interactiveworkbookmanual",
+   "path": "doc/latex/interactiveworkbook/documentation/interactiveworkbookmanual.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "a57faab2a622348b907e8d45359c5c6848bc17767cc66045eb25a9721933924e"
+  },
+  {
+   "id": "interactiveworkbook-check",
+   "path": "doc/latex/interactiveworkbook/samplefiles/check.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "8e0b0fdb9cdc089f6e343aab30697f5cde23e2a5420e89db9d065e1207473916"
+  },
+  {
+   "id": "jouthesis-main",
+   "path": "doc/latex/jouthesis/examples/main.tex",
+   "class": "styles/jouthesis",
+   "copy_dir": true,
+   "sha256": "cb69cf3cc2294073a1423db54bac144390fb6514ba89b598cae69fd75b4ec5ba"
+  },
+  {
+   "id": "jslectureplanner-jslectureplanner",
+   "path": "doc/latex/jslectureplanner/jslectureplanner.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "66d175e37fbda161baf4cfda572e02ff057a68b357bd8439c5a746c91f1a4fba"
+  },
+  {
+   "id": "jslectureplanner-lecturebib-english",
+   "path": "doc/latex/jslectureplanner/examples/English/lecturebib-english.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "ea128b9a05024afe8c6a14f68e87a621f65038e9a647ab24ca1234d6fe104d74"
+  },
+  {
+   "id": "jyu-chem-thesis-jyu-chem-thesis-template",
+   "path": "doc/latex/jyu-chem-thesis/jyu-chem-thesis-template.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "8f1edcd0b9417852ead40f734a60228280f9d53c96fac2c7665a050654995b1e"
+  },
+  {
+   "id": "kfupm-math-exam-kfupm-math-exam",
+   "path": "doc/latex/kfupm-math-exam/kfupm-math-exam.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "5357bd91bffa3633e41fad48df50c4a27518a935ddd178927c056224135ef62b"
+  },
+  {
+   "id": "koma-moderncvclassic-cvbasic",
+   "path": "doc/latex/koma-moderncvclassic/cvbasic.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "9152be32f5a47a7a1abe534e24a8301714d4151f8213e3ee3ad9b07b6128e378"
+  },
+  {
+   "id": "koma-script-letter-example-00-de",
+   "path": "doc/latex/koma-script/examples/letter-example-00-de.tex",
+   "class": "scrlttr2",
+   "copy_dir": true,
+   "sha256": "e3f72fd1bd7f16dde297b8c8296d1163d57389cfcd41825ee89675a519c31ba3"
+  },
+  {
+   "id": "koma-script-letter-example-01-de",
+   "path": "doc/latex/koma-script/examples/letter-example-01-de.tex",
+   "class": "scrlttr2",
+   "copy_dir": true,
+   "sha256": "e8454e29a06babca008e984bb27cee40f609d2897d36a73e17217be6d3a99037"
+  },
+  {
+   "id": "koma-script-examples-chapterthumbexample",
+   "path": "doc/latex/koma-script-examples/Anhang-B/source/chapterthumbexample.tex",
+   "class": "scrbook",
+   "copy_dir": true,
+   "sha256": "11f145cbf8b533850d72a142482ed8f4309d6a187239b4184f173e0f3dc7b904"
+  },
+  {
+   "id": "koma-script-examples-scrjuraexample",
+   "path": "doc/latex/koma-script-examples/Kapitel-11/source/scrjuraexample.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "9a5b4b58913f05dc0774012259e41a232877b453114f7bb15cab1fa74df0fe56"
+  },
+  {
+   "id": "koma-script-sfs-SFSesim",
+   "path": "doc/latex/koma-script-sfs/SFSesim.tex",
+   "class": "scrlttr2",
+   "copy_dir": true,
+   "sha256": "8798caa158d46ef4ff847655868cb4a26f2351cb0a3ce1a5e4f75aa40f187e25"
+  },
+  {
+   "id": "komacv-komacv_example",
+   "path": "doc/latex/komacv/examples/komacv_example.tex",
+   "class": "komacv",
+   "copy_dir": true,
+   "sha256": "1644d2cf9a994cc94e1a7655ae5b2ddb59e81a656d74e5144070276a4b15ccea"
+  },
+  {
+   "id": "ksp-thesis-ksp-thesis",
+   "path": "doc/latex/ksp-thesis/ksp-thesis.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "2b0da0a3d11eca7ad89275620b724fe52c83580a604e3bd45080100678894038"
+  },
+  {
+   "id": "ksp-thesis-example",
+   "path": "doc/latex/ksp-thesis/demo/full/example.tex",
+   "class": "ksp-thesis",
+   "copy_dir": true,
+   "sha256": "9b398714cb1f03de140eaff05f7b8e718024f0dbc3cb2281e9cf483f8f597cc5"
+  },
+  {
+   "id": "labbook-examplen",
+   "path": "doc/latex/labbook/examplen.tex",
+   "class": "labbook",
+   "copy_dir": true,
+   "sha256": "d230bb607f21ae2e105af4e1b64673bfba7a276b675773c5ad5a099c21f89ceb"
+  },
+  {
+   "id": "labbook-examplde",
+   "path": "doc/latex/labbook/examplde.tex",
+   "class": "labbook",
+   "copy_dir": true,
+   "sha256": "5da76ca2dba83e6080f2450c8a97d323e52bc30a2586aaed586319dc626d76a9"
+  },
+  {
+   "id": "leaflet-leaflet-manual",
+   "path": "doc/latex/leaflet/leaflet-manual.tex",
+   "class": "leaflet",
+   "copy_dir": true,
+   "sha256": "0b048cc7e7a2a1b4fb413201614317c740cdfcf9d72d42c7881c107e1bce9b89"
+  },
+  {
+   "id": "lectures-example",
+   "path": "doc/latex/lectures/example.tex",
+   "class": "lectures",
+   "copy_dir": true,
+   "sha256": "fe788db4f7f0288dffcff048da415bca3acb0df9a5cfc6b305f47daa5e3f68e4"
+  },
+  {
+   "id": "lectureslides-lectureslides-doc",
+   "path": "doc/latex/lectureslides/lectureslides-doc.tex",
+   "class": "ltxdoc",
+   "copy_dir": true,
+   "sha256": "13ce152f4c3b5aa0eb57bc116106dd0faf2dd4db8056e7599501fb5a029d2389"
+  },
+  {
+   "id": "limecv-mwe-latex",
+   "path": "doc/latex/limecv/examples/mwe-latex.tex",
+   "class": "limecv",
+   "copy_dir": true,
+   "sha256": "f9735f7e651d67caf2103afe41f2a4336880ac7766a5446fa6a42506e2dd93be"
+  },
+  {
+   "id": "llncsconf-example",
+   "path": "doc/latex/llncsconf/example/example.tex",
+   "class": "llncs",
+   "copy_dir": true,
+   "sha256": "e8e7b39e27ad44737fa3b653c67a3ccb052366f9f42b15abb6e895f7ab7373f9"
+  },
+  {
+   "id": "maine-thesis-maine-thesis-example",
+   "path": "doc/latex/maine-thesis/maine-thesis-example.tex",
+   "class": "maine-thesis",
+   "copy_dir": true,
+   "sha256": "bf35685c14ef2aed7b13cd27e69397c30d72ed29ac61b28e05255dc68cae0c3a"
+  },
+  {
+   "id": "mathexam-sample",
+   "path": "doc/latex/mathexam/sample.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "6cb061bdb966786a5b76d1ef5000b95eb4b62cc19718e718f39a3eb33cb34928"
+  },
+  {
+   "id": "mcexam-mcexam_example",
+   "path": "doc/latex/mcexam/mcexam_example.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "6e711d0a8d826b78476e31be16caf270fa785d058df477778c62ee1d7afb85a6"
+  },
+  {
+   "id": "mcexam-mcexam",
+   "path": "doc/latex/mcexam/mcexam.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "8a09d0bb385870c8b20d160757450cb9466276cfdab69c52eceb02618c6fc736"
+  },
+  {
+   "id": "mcmthesis-mcmthesis-demo",
+   "path": "doc/latex/mcmthesis/mcmthesis-demo.tex",
+   "class": "mcmthesis",
+   "copy_dir": true,
+   "sha256": "73b564c01321580885ca2b2804f2fd390c56a4e632bac764f7c8d350f603d468"
+  },
+  {
+   "id": "memoirchapterstyles-MemoirChapStyles",
+   "path": "doc/latex/memoirchapterstyles/MemoirChapStyles.tex",
+   "class": "memoir",
+   "copy_dir": true,
+   "sha256": "819651fceb2e8ba4ad181ba5574f899bd7d62fa1e6a645483f429d4db5f6581f"
+  },
+  {
+   "id": "mitthesis-MIT-Thesis",
+   "path": "doc/latex/mitthesis/MIT-thesis-template/MIT-Thesis.tex",
+   "class": "mitthesis",
+   "copy_dir": true,
+   "sha256": "14d2bc1966e69374dd1e7a099438119be62794be5427e2ae2d4555fdbcdd2b3e"
+  },
+  {
+   "id": "mitthesis-MIT-Thesis_libertinus_headings_UA2",
+   "path": "doc/latex/mitthesis/examples/design_examples/latex_sources/MIT-Thesis_libertinus_headings_UA2.tex",
+   "class": "mitthesis",
+   "copy_dir": true,
+   "sha256": "049508ee5a86e96f31325e61599eecfd288fdcf5c1a3f4b3ab71ef1d708c1205"
+  },
+  {
+   "id": "mnras-mnras_template",
+   "path": "doc/latex/mnras/mnras_template.tex",
+   "class": "mnras",
+   "copy_dir": true,
+   "sha256": "504f681b615d4e101c7bd22c13fb4a046ee71418363b54155e0c0443bd720dc1"
+  },
+  {
+   "id": "mnras-mnras_guide",
+   "path": "doc/latex/mnras/mnras_guide.tex",
+   "class": "mnras",
+   "copy_dir": true,
+   "sha256": "491adde8d64f12638765ac2c20002f69b606a60df47b385e62952d443e1056a3"
+  },
+  {
+   "id": "moderncv-moderncv_userguide",
+   "path": "doc/latex/moderncv/manual/moderncv_userguide.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "5dce6eed0fb44689ec0b7a1057997d6b0654bf1d5d4d52e1255cb61585b2d7cf"
+  },
+  {
+   "id": "modernposter-demo",
+   "path": "doc/latex/modernposter/demo.tex",
+   "class": "modernposter",
+   "copy_dir": true,
+   "sha256": "3504e884a81b8aa10b4cc51a2c36b8d2d23baa2e5fbe78f19dd5a437648b3f4b"
+  },
+  {
+   "id": "modernposter-modernposter",
+   "path": "doc/latex/modernposter/modernposter.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "2de8b2a1ce756f07c14ea9713c71b7ccabe580ecbbf02a71cd1a332544457f0b"
+  },
+  {
+   "id": "mslapa-examp",
+   "path": "doc/latex/mslapa/examp.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "19caf18a317251ba22d0ea9b56f756d1d62dc9a3a1e67f95fa4da88be0ecf140"
+  },
+  {
+   "id": "mslapa-mslapa",
+   "path": "doc/latex/mslapa/mslapa.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "0a8b9a937c9f557a61dc86722834ef923da3d62ac8ca6131d7dfdaaf14434a77"
+  },
+  {
+   "id": "msu-thesis-MSU-thesis-chapterbib-testfile",
+   "path": "doc/latex/msu-thesis/samples/MSU-thesis-chapterbib-testfile.tex",
+   "class": "msu-thesis",
+   "copy_dir": true,
+   "sha256": "ed2dc7f50254874622951ffd55507b120d76bac262733299c9aeb75295fe5de2"
+  },
+  {
+   "id": "msu-thesis-MSU-thesis-template",
+   "path": "doc/latex/msu-thesis/samples/MSU-thesis-template.tex",
+   "class": "msu-thesis",
+   "copy_dir": true,
+   "sha256": "5f6586e6e4f0b0239cb314cc1b6158744efd7568ae7e62efeaa1abc01f66299b"
+  },
+  {
+   "id": "mugsthesis-mugsthesis_sample",
+   "path": "doc/latex/mugsthesis/sample/mugsthesis_sample.tex",
+   "class": "mugsthesis",
+   "copy_dir": true,
+   "sha256": "3e10e95d8e33c0faa2d3ab9f710d32438cf3b0a8d125df32f52bc9bc6c1be463"
+  },
+  {
+   "id": "mycv-mycv",
+   "path": "doc/latex/mycv/Doc/mycv.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "6b609a0da8ceb78728210730d834647e76b7b223de34619506d448881d8c95f6"
+  },
+  {
+   "id": "nature-nature-template",
+   "path": "doc/latex/nature/nature-template.tex",
+   "class": "nature",
+   "copy_dir": true,
+   "sha256": "d00b58c41c52e1f0e48d2b418178ceb9315bc0fc460dd83e1b20d18271bf70bf"
+  },
+  {
+   "id": "ndsu-thesis-ndsu-thesis",
+   "path": "doc/latex/ndsu-thesis/ndsu-thesis.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "5776bc5cadc592aaf112896a82a45f6f66d1415973fa4a61b5cf91bba1b65cd0"
+  },
+  {
+   "id": "ndsu-thesis-2022-NDSU-Thesis-Extended",
+   "path": "doc/latex/ndsu-thesis-2022/NDSU-Thesis-Extended.tex",
+   "class": "ndsu-thesis-2022",
+   "copy_dir": true,
+   "sha256": "ad878d1337bb2ed5ae8e83634fda9ef4dc693c8c05745a6328fa31800a309a1e"
+  },
+  {
+   "id": "ndsu-thesis-2022-ndsu-example",
+   "path": "doc/latex/ndsu-thesis-2022/ndsu-example.tex",
+   "class": "ndsu-thesis-2022",
+   "copy_dir": true,
+   "sha256": "16a2363a169260ca2e67c2ab8f53cd74649402035f17e220bd9aecbe9333b34a"
+  },
+  {
+   "id": "nxuthesis-nxuthesis-example",
+   "path": "doc/latex/nxuthesis/nxuthesis-example.tex",
+   "class": "nxuthesis",
+   "copy_dir": true,
+   "sha256": "f8679e089ad1b5b13d07093ecce6c1d97815558efb2502a4f20cd37607a999a7"
+  },
+  {
+   "id": "oup-authoring-template-oup-authoring-template",
+   "path": "doc/latex/oup-authoring-template/oup-authoring-template.tex",
+   "class": "oup-authoring-template",
+   "copy_dir": true,
+   "sha256": "4fb3b9995478d75d4249fac053902472f2d78b97b129ae4b34475271dee68589"
+  },
+  {
+   "id": "oup-authoring-template-oup-authoring-template-doc",
+   "path": "doc/latex/oup-authoring-template/doc/oup-authoring-template-doc.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "1b8fb5ac54df3096d02b18a813ad4d579ae9ac9d62d599eab36b76bc8d79cf17"
+  },
+  {
+   "id": "pas-cv-pas-cv",
+   "path": "doc/latex/pas-cv/pas-cv.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "ea4b4edd49353f841f6406ce6cac4459d8e4be9fdff75d351b2fe4d2f72dbf61"
+  },
+  {
+   "id": "pas-cv-cv-andromede",
+   "path": "doc/latex/pas-cv/examples/cv-andromede.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "9e4bde2c316565957c114ec13aabf063736cecab1fa3c8d4a8f1bfafd1d76c93"
+  },
+  {
+   "id": "powerdot-powerdot-example",
+   "path": "doc/latex/powerdot/powerdot-example.tex",
+   "class": "powerdot",
+   "copy_dir": true,
+   "sha256": "dbb193925e8c7aa1ab638cf2c129a3f603876b5ad29bfa3cfff6e3272ddfaadd"
+  },
+  {
+   "id": "powerdot-powerdot-example1",
+   "path": "doc/latex/powerdot/powerdot-example1.tex",
+   "class": "powerdot",
+   "copy_dir": true,
+   "sha256": "47d87aeca922efc1e4815aecad9a5610f9c64e3ccee214d7d59a478fe6c8b1ba"
+  },
+  {
+   "id": "powerdot-fuberlin-demo-powerdotFU",
+   "path": "doc/latex/powerdot-fuberlin/demo-powerdotFU.tex",
+   "class": "pst-powerdot",
+   "copy_dir": true,
+   "sha256": "f1c9d1fac54798b637d77bb91aa421d6249c543e3d9fc3c1b30312d19555f494"
+  },
+  {
+   "id": "powerdot-fuberlin-exampleClass",
+   "path": "doc/latex/powerdot-fuberlin/exampleClass.tex",
+   "class": "FUpowerdot",
+   "copy_dir": true,
+   "sha256": "c6878983e2d8ae5bacf5edd836a29fb6c11ebe40ba9cc8922f61531c80b2d02a"
+  },
+  {
+   "id": "powerdot-tuliplab-tuliplab-P00",
+   "path": "doc/latex/powerdot-tuliplab/tuliplab-P00.tex",
+   "class": "powerdot",
+   "copy_dir": true,
+   "sha256": "2566ad3a9a43daa7c5773a5f3ed4ecb9af98b1e3b625f6efc2ae073fd1cfe6d6"
+  },
+  {
+   "id": "powerdot-tuliplab-tuliplab-P01",
+   "path": "doc/latex/powerdot-tuliplab/tuliplab-P01.tex",
+   "class": "powerdot",
+   "copy_dir": true,
+   "sha256": "8b301388333f7d5010778ecbdb22fd1656ce0237ed219663cb1c06bd0b6ce661"
+  },
+  {
+   "id": "practicalreports-practicalreports",
+   "path": "doc/latex/practicalreports/practicalreports.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "47d3154a47302aacb56d7bb7ade5ad51b098e1f754f22f831ad4d1ea4468a943"
+  },
+  {
+   "id": "prosper-Example",
+   "path": "doc/latex/prosper/Example.tex",
+   "class": "prosper",
+   "copy_dir": true,
+   "sha256": "2c0bb9bd42574f75d1df0e894b5807c3890ebf73d77ea6e88e5773b5c65cd285"
+  },
+  {
+   "id": "prosper-ExampleAlienglow",
+   "path": "doc/latex/prosper/ExampleAlienglow.tex",
+   "class": "prosper",
+   "copy_dir": true,
+   "sha256": "4d295b5175b929487d46f702f1008500d655d59e4781717a549bb24a613f6572"
+  },
+  {
+   "id": "przechlewski-book-p21",
+   "path": "doc/latex/przechlewski-book/p21.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "57cdc8529e8fb67623173c58ee8fd7de23c91161043b7f1440207e7d80b5fa34"
+  },
+  {
+   "id": "przechlewski-book-p22",
+   "path": "doc/latex/przechlewski-book/p22.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "80876f7b5a3b644d5293ef3f18f55eba05a60e5db1cfc379813449613764fa44"
+  },
+  {
+   "id": "pynotebook-pynotebook-examples-pitonpyluatex",
+   "path": "doc/latex/pynotebook/pynotebook-examples-pitonpyluatex.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "5d2114424617c1dd7fad397b4e5e2e6bae94924bbe3bc6dafbcd049101a8d8c8"
+  },
+  {
+   "id": "pynotebook-pynotebook-doc",
+   "path": "doc/latex/pynotebook/pynotebook-doc.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "e204f3071134bca2a1f4023350c57af48839e7fa216b33312c34e4ee07c7eeee"
+  },
+  {
+   "id": "quantumarticle-quantum-bibliographystyle-demo",
+   "path": "doc/latex/quantumarticle/quantum-bibliographystyle-demo.tex",
+   "class": "quantumarticle",
+   "copy_dir": true,
+   "sha256": "3540a7c6adc65939c6005af143d468fd6ef418f215cc747169b0b073af236362"
+  },
+  {
+   "id": "quantumarticle-quantum-template",
+   "path": "doc/latex/quantumarticle/quantum-template.tex",
+   "class": "quantumarticle",
+   "copy_dir": true,
+   "sha256": "1ad76dfc87f4ca2d14b418af0dc84044435fd6f80b5fc86cdafc02ac2e7a2ad1"
+  },
+  {
+   "id": "randexam-randexam",
+   "path": "doc/latex/randexam/randexam.tex",
+   "class": "randexam",
+   "copy_dir": true,
+   "sha256": "f5c8db6e77ec1ab6747d071db0478ee57f5b91c4f998280415532bedeca1e005"
+  },
+  {
+   "id": "readablecv-ReadableCV",
+   "path": "doc/latex/readablecv/ReadableCV.tex",
+   "class": "ReadableCV",
+   "copy_dir": true,
+   "sha256": "24c36fcd9dc8cf3b2b9a9c6ecbc371f74194b2e146ab6afc79d899986d9da3bb"
+  },
+  {
+   "id": "recipebook-LongSample",
+   "path": "doc/latex/recipebook/LongSample.tex",
+   "class": "RecipeBook",
+   "copy_dir": true,
+   "sha256": "ca3ccf329c3f094118ac2055480c18f5c44e70f65e9362ee266dff5ab89d5fd9"
+  },
+  {
+   "id": "recipebook-ShortSample",
+   "path": "doc/latex/recipebook/ShortSample.tex",
+   "class": "RecipeBook",
+   "copy_dir": true,
+   "sha256": "a42ff3c54c55687e4b0e3fee6f0e32e8783f7731f6e96d30976e74442eb4ae2b"
+  },
+  {
+   "id": "revtex-aapmtemplate",
+   "path": "doc/latex/revtex/sample/aapm/aapmtemplate.tex",
+   "class": "revtex4-2",
+   "copy_dir": true,
+   "sha256": "701a6c8173795065f7a29b8c15371798975a3c1b0c6ff822dcca1c64e9a9304c"
+  },
+  {
+   "id": "revtex-aiptemplate",
+   "path": "doc/latex/revtex/sample/aip/aiptemplate.tex",
+   "class": "revtex4-2",
+   "copy_dir": true,
+   "sha256": "0db73a65d38c80ddd2e1f877bf1939e1194e190b044cec07e460a72b092ee952"
+  },
+  {
+   "id": "revtex4-apssamp",
+   "path": "doc/latex/revtex4/apssamp.tex",
+   "class": "revtex4",
+   "copy_dir": true,
+   "sha256": "de008df64cfaff22fabd6a2c38a3bc407aaf3abce0b4e6466f52016ed9eb2fb6"
+  },
+  {
+   "id": "revtex4-auguide",
+   "path": "doc/latex/revtex4/auguide.tex",
+   "class": "revtex4",
+   "copy_dir": true,
+   "sha256": "ef5eac8499efd16221aeb6f75f3c1f757e0d7e9eb08ba5a6dd37b2f3f1fbe667"
+  },
+  {
+   "id": "revtex4-1-aiptemplate",
+   "path": "doc/latex/revtex4-1/sample/aip/aiptemplate.tex",
+   "class": "revtex4-1",
+   "copy_dir": true,
+   "sha256": "b234d89e5eec7b90d730fa81deae590cfe307c0ea6abd4fd94635b54fdc16edf"
+  },
+  {
+   "id": "revtex4-1-apstemplate",
+   "path": "doc/latex/revtex4-1/sample/aps/apstemplate.tex",
+   "class": "revtex4-1",
+   "copy_dir": true,
+   "sha256": "f463fb15d6a2bc336c2a6ee656503ba8acd68709b1592b2375e8f5174a90e22b"
+  },
+  {
+   "id": "ryersonsgsthesis-rsgs-example",
+   "path": "doc/latex/ryersonsgsthesis/rsgs-example.tex",
+   "class": "ryersonSGSThesis",
+   "copy_dir": true,
+   "sha256": "a5d1abe12c02291d2e9876b292f3f607ff3e9085c413da70b9db982ceff99996"
+  },
+  {
+   "id": "ryethesis-ryesample",
+   "path": "doc/latex/ryethesis/ryesample.tex",
+   "class": "ryethesis",
+   "copy_dir": true,
+   "sha256": "a9b0e1e5f95164d46e4097f6b4a074022bce8386847d1c3f92f7440ec026b52b"
+  },
+  {
+   "id": "sapthesis-sapthesis-doc",
+   "path": "doc/latex/sapthesis/sapthesis-doc.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "5c1d63480782d9117ac9b32e6472b496741cf0acdb8a826ed5fca2983a48197d"
+  },
+  {
+   "id": "scientific-thesis-cover-demo",
+   "path": "doc/latex/scientific-thesis-cover/demo.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "f51c02cdfefec6feb938709148789b63ee729318249f13adb72a30622692c7cd"
+  },
+  {
+   "id": "sciposter-sciposter-example",
+   "path": "doc/latex/sciposter/sciposterexample/sciposter-example.tex",
+   "class": "sciposter",
+   "copy_dir": true,
+   "sha256": "cb83f1762408368021e275ba03587a953d2fcbb69de71c292067fa0dfa56ae4b"
+  },
+  {
+   "id": "sduthesis-sduthesis-demo",
+   "path": "doc/latex/sduthesis/sduthesis-demo.tex",
+   "class": "sduthesis",
+   "copy_dir": true,
+   "sha256": "3710e033f42f1339dba4110f7e738b43c88db61914e1054ed685e43b0c251291"
+  },
+  {
+   "id": "se2thesis-se2thesis-master-thesis-example",
+   "path": "doc/latex/se2thesis/se2thesis-master-thesis-example.tex",
+   "class": "se2thesis",
+   "copy_dir": true,
+   "sha256": "9434f3bc6f193b09a3ca00db5ea823144a0bb7389d730ccb053dd57631fe908c"
+  },
+  {
+   "id": "se2thesis-se2thesis",
+   "path": "doc/latex/se2thesis/se2thesis.tex",
+   "class": "l3doc",
+   "copy_dir": true,
+   "sha256": "3274310168714c08c66c0b10bae91da6f848a566e76a1c2bef3181607b0a9d79"
+  },
+  {
+   "id": "seminar-semsamp1",
+   "path": "doc/latex/seminar/semsamp1.tex",
+   "class": "seminar",
+   "copy_dir": true,
+   "sha256": "af822088f1a93a24575dc8c685e9d5f78475d973b11816e1be027c081465c0e6"
+  },
+  {
+   "id": "seminar-semsamp2",
+   "path": "doc/latex/seminar/semsamp2.tex",
+   "class": "seminar",
+   "copy_dir": true,
+   "sha256": "36b837b809f69d66b2f86087246e68353e2696a6d9df6fb3c5dd9d408d467d44"
+  },
+  {
+   "id": "seuthesis-sample",
+   "path": "doc/latex/seuthesis/sample.tex",
+   "class": "seuthesis",
+   "copy_dir": true,
+   "sha256": "e291f94d0f6447517d1458bd51aab67a5187006ea378fc94750e0b257cb77031"
+  },
+  {
+   "id": "seuthesis-A3cover",
+   "path": "doc/latex/seuthesis/a3cover/A3cover.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "88eab7c0ea6c88dac63c653dce31e7277b4427846e91502ada1e9895a92e7ace"
+  },
+  {
+   "id": "shtthesis-shtthesis-user-guide",
+   "path": "doc/latex/shtthesis/shtthesis-user-guide.tex",
+   "class": "shtthesis",
+   "copy_dir": true,
+   "sha256": "54d624d3759c502c56f356a0da9cfe976714c9536eada1686e453a9ebbaccc98"
+  },
+  {
+   "id": "simplecv-testcv",
+   "path": "doc/latex/simplecv/testcv.tex",
+   "class": "simplecv",
+   "copy_dir": true,
+   "sha256": "cb961469bb9b9bca5f10272ea8b752c7e0a48ff01664e1ded340038c72dd6036"
+  },
+  {
+   "id": "songbook-sample-sb",
+   "path": "doc/latex/songbook/sample-sb.tex",
+   "class": "book",
+   "copy_dir": true,
+   "sha256": "035533d9aa7b32216e1de321b2feaa5f1101c6556239f9015110b247434b5af4"
+  },
+  {
+   "id": "songbook-sampleAdx",
+   "path": "doc/latex/songbook/sampleAdx.tex",
+   "class": "book",
+   "copy_dir": true,
+   "sha256": "582ae2f7301b339bc80fad9d7a58df15c0749f7076812f4c133de024d1a34f67"
+  },
+  {
+   "id": "sphdthesis-SPhdThesis",
+   "path": "doc/latex/sphdthesis/SPhdThesis.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "7e40efdb90a67116f816e6dbf0ff328466dd783f25885923a6a21fe6e63855f7"
+  },
+  {
+   "id": "sphdthesis-thesis",
+   "path": "doc/latex/sphdthesis/example/thesis.tex",
+   "class": "SPhdThesis",
+   "copy_dir": true,
+   "sha256": "fc53d41f3d4870e81217a861f252d3cb7f9ac797c6b811caa48c58cee409d012"
+  },
+  {
+   "id": "srbook-mem-Test",
+   "path": "doc/latex/srbook-mem/Test.tex",
+   "class": "memoir",
+   "copy_dir": true,
+   "sha256": "35d735b767504a1d379d39a6ec29a631607c25fdba9faee51f1d471cf46963e7"
+  },
+  {
+   "id": "srbook-mem-TestLight",
+   "path": "doc/latex/srbook-mem/TestLight.tex",
+   "class": "memoir",
+   "copy_dir": true,
+   "sha256": "6fd8d31359b34eaa157b41c4a2fe121cfd9d7dea920dbe8e5767d602642f8354"
+  },
+  {
+   "id": "templates-fenn-diabetes",
+   "path": "doc/latex/templates-fenn/diabetes.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "e0561b8f82ab1704f732d6702e919de3fc810a500f8fa6c7954b85f74d4e418c"
+  },
+  {
+   "id": "templates-fenn-dinbrief",
+   "path": "doc/latex/templates-fenn/dinbrief.tex",
+   "class": "dinbrief",
+   "copy_dir": true,
+   "sha256": "203eecf7be2befdd57f5f30bb4427b304a60d06971e15d0498d9d1bb46a2078c"
+  },
+  {
+   "id": "templates-sommer-Hausarbeit",
+   "path": "doc/latex/templates-sommer/Hausarbeit.tex",
+   "class": "scrartcl",
+   "copy_dir": true,
+   "sha256": "9af79ae28ad65ee9737aeb8f654bc19590a37fe37e0d95f2c88a33be7bab5caa"
+  },
+  {
+   "id": "templates-sommer-Psycho-Dipl",
+   "path": "doc/latex/templates-sommer/Psycho-Dipl.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "379d7d2332821033aa1d55f53e0f028e8d994e0d58ba31b74ed47058669630e8"
+  },
+  {
+   "id": "tengwarscript-tengtest",
+   "path": "doc/latex/tengwarscript/tengtest.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "4c30b0ba9095cab405f7416287001c92c7a358d95f4876f8349214b6d8668cb4"
+  },
+  {
+   "id": "tengwarscript-tengfonts",
+   "path": "doc/latex/tengwarscript/tengfonts.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "51f78f1fd85a8943b07073b3662b227425c99b5eb4cda00ab4a2e93a61d064c6"
+  },
+  {
+   "id": "thesis-gwu-thesis-sample",
+   "path": "doc/latex/thesis-gwu/thesis-sample.tex",
+   "class": "thesis-gwu",
+   "copy_dir": true,
+   "sha256": "0bd200ddb57128ac6ab5b676968e6d41889ec060d1db9d4cb4e033c5e7ce7999"
+  },
+  {
+   "id": "thesis-gwu-manual-ex",
+   "path": "doc/latex/thesis-gwu/tex/manual-ex.tex",
+   "class": "thesis-gwu.cls",
+   "copy_dir": true,
+   "sha256": "eb44ffc564383c6b02b19a5a7a589244e05adde01013350910a6d9be2a53a868"
+  },
+  {
+   "id": "thesis-titlepage-fhac-doxygen_header",
+   "path": "doc/latex/thesis-titlepage-fhac/doxygen_header.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "7ae4094db680407d48e64be54b31fcf8cb0ba82df39ce6b244adbd56243d701c"
+  },
+  {
+   "id": "tikzposter-tikzposter-example",
+   "path": "doc/latex/tikzposter/tikzposter-example.tex",
+   "class": "tikzposter",
+   "copy_dir": true,
+   "sha256": "5a4e10ded7fca561845720d3c924a13e8f3f1fd3d8a9cb34c4e771fbd68b16e4"
+  },
+  {
+   "id": "tikzposter-tikzposter-template",
+   "path": "doc/latex/tikzposter/tikzposter-template.tex",
+   "class": "tikzposter",
+   "copy_dir": true,
+   "sha256": "33016dafd8c77ce50a94523cabca5a9088897e9d8ac1f2daf5cd815aa7f2f767"
+  },
+  {
+   "id": "tlc-article-tlc-article",
+   "path": "doc/latex/tlc-article/tlc-article.tex",
+   "class": "tlc-article",
+   "copy_dir": true,
+   "sha256": "6dc0c898efb692dea63c4bf143a3c10eeba22869967a83ab992743a63c66752e"
+  },
+  {
+   "id": "topletter-ExampleLetter",
+   "path": "doc/latex/topletter/ExampleLetter.tex",
+   "class": "TOPletter",
+   "copy_dir": true,
+   "sha256": "9f58adc832cd591270119923c5c02d29d5239a18cf8c859fd35a26590a526003"
+  },
+  {
+   "id": "topletter-EsempioLettera",
+   "path": "doc/latex/topletter/EsempioLettera.tex",
+   "class": "TOPletter",
+   "copy_dir": true,
+   "sha256": "5a380512cf45c9354bf55bb3cfc11f0a8653be91f2e92562cabebcbef0000423"
+  },
+  {
+   "id": "translation-arsclassica-de-ArsClassica-de",
+   "path": "doc/latex/translation-arsclassica-de/ArsClassica-de.tex",
+   "class": "scrreprt",
+   "copy_dir": true,
+   "sha256": "26281e7fdc1513aa851155e4ef25853e0b7fa8af8c0182b0236efc87c0c4daee"
+  },
+  {
+   "id": "tucv-tucv_ex",
+   "path": "doc/latex/tucv/tucv_ex.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "5d6768fe076bd3561fd6c51f7c59d6200c7bd16efab54475b08119d79f6d3c0f"
+  },
+  {
+   "id": "tufte-latex-sample-book",
+   "path": "doc/latex/tufte-latex/sample-book.tex",
+   "class": "tufte-book",
+   "copy_dir": true,
+   "sha256": "16d1cf67deeb5de985e4b9c12c87efa05c8ea5b5c58a2425851036e65b4b4ce7"
+  },
+  {
+   "id": "uafthesis-example",
+   "path": "doc/latex/uafthesis/example/example.tex",
+   "class": "../uafthesis",
+   "copy_dir": true,
+   "sha256": "e1fb47f8c6aabcfbe7080f7bd740c29955b701cd4b2ad07113fb2dfb5d514e89"
+  },
+  {
+   "id": "uafthesis-ch2",
+   "path": "doc/latex/uafthesis/example/ch2.tex",
+   "class": "uafthesis",
+   "copy_dir": true,
+   "sha256": "e593eaf1ced7bf40735ba13a6947e1570b9b43f5abb24885ef630ad839d91337"
+  },
+  {
+   "id": "ucalgmthesis-sample-thesis",
+   "path": "doc/latex/ucalgmthesis/sample-thesis.tex",
+   "class": "ucalgmthesis",
+   "copy_dir": true,
+   "sha256": "69163db25b64f67b1580a5632d39283fb9b9e68f007d752f18b0060f3f9fd43e"
+  },
+  {
+   "id": "ucbthesis-ucbthesis",
+   "path": "doc/latex/ucbthesis/ucbthesis.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "4d4cd87dafb5b457dbc52f61716fbd21dd8c9acb2b32d6fa0f8b3c05542df052"
+  },
+  {
+   "id": "ucbthesis-thesis",
+   "path": "doc/latex/ucbthesis/example/thesis.tex",
+   "class": "ucbthesis",
+   "copy_dir": true,
+   "sha256": "7197593bccc271aa9a816b7608f181c480c6ec62328cd0d269b3e0941bcdd574"
+  },
+  {
+   "id": "ucdavisthesis-ucdavisthesis_example_main",
+   "path": "doc/latex/ucdavisthesis/example/ucdavisthesis_example_main.tex",
+   "class": "ucdavisthesis",
+   "copy_dir": true,
+   "sha256": "0f5614f05ee606fb440b017920c0b1d4830b3335de84bbc13a3e4d7566158bfa"
+  },
+  {
+   "id": "ucthesis-uctest",
+   "path": "doc/latex/ucthesis/uctest.tex",
+   "class": "ucthesis",
+   "copy_dir": true,
+   "sha256": "0768aeedf724be64c2f47f07f493feaa6e14bb90f5efbd78d1fb825e0e335080"
+  },
+  {
+   "id": "udes-genie-these-document",
+   "path": "doc/latex/udes-genie-these/Exemple/document.tex",
+   "class": "udes-genie-these",
+   "copy_dir": true,
+   "sha256": "ef658586fe07ad7ddd87e1dc73d8004db3a7f3d9dec8b2179c8229e3f31ee47d"
+  },
+  {
+   "id": "uestcthesis-uestcthesis-doc",
+   "path": "doc/latex/uestcthesis/doc/uestcthesis-doc.tex",
+   "class": "uestcthesis",
+   "copy_dir": true,
+   "sha256": "120167d650454d5e4892822690507d71cc39b69a6232e0aa90625bca222145a0"
+  },
+  {
+   "id": "uiucthesis-thesis-ex",
+   "path": "doc/latex/uiucthesis/thesis-ex.tex",
+   "class": "uiucthesis",
+   "copy_dir": true,
+   "sha256": "169e0c1f45cad2af3f2415d21ed3f715a7f86626a1764f5e74bdd0cc9472e861"
+  },
+  {
+   "id": "ulthese-gabarit-doctorat-articles",
+   "path": "doc/latex/ulthese/gabarit-doctorat-articles.tex",
+   "class": "ulthese",
+   "copy_dir": true,
+   "sha256": "c54813823e898f7dda003f27ee2df7b8b970bb62a65b475d9f4b38797be2b863"
+  },
+  {
+   "id": "ulthese-gabarit-doctorat-cotutelle",
+   "path": "doc/latex/ulthese/gabarit-doctorat-cotutelle.tex",
+   "class": "ulthese",
+   "copy_dir": true,
+   "sha256": "d48f2a3baef12a9273c63fc2fe3bcc0549b5bdd0cda2952277ec6237924c32ab"
+  },
+  {
+   "id": "umthesis-example",
+   "path": "doc/latex/umthesis/example.tex",
+   "class": "umthesis",
+   "copy_dir": true,
+   "sha256": "8a6aa1c2af479137a4569836967c69352d753e6481250afa7f951edc3c291c53"
+  },
+  {
+   "id": "unamth-template-tesis",
+   "path": "doc/latex/unamth-template/tesis.tex",
+   "class": "Latex/Classes/PhDthesisPSnPDF",
+   "copy_dir": true,
+   "sha256": "9cf3391693cf93ee2af296359c5a4566f3c501b8cc833c158e22c34f44bbc123"
+  },
+  {
+   "id": "unamthesis-UNAMThesis",
+   "path": "doc/latex/unamthesis/UNAMThesis.tex",
+   "class": "report",
+   "copy_dir": true,
+   "sha256": "1a1ee6a98153400b7871f3fea39cebe18ee7fe00e55e66feb5f698609c854e16"
+  },
+  {
+   "id": "unamthesis-UNAMThesisSWP",
+   "path": "doc/latex/unamthesis/UNAMThesisSWP.tex",
+   "class": "report",
+   "copy_dir": true,
+   "sha256": "a0a60455c3cc355b9bb113fce7c8bee38d74397ecbee9c97948384c90d2a0411"
+  },
+  {
+   "id": "underscore-underscore",
+   "path": "doc/latex/underscore/underscore.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "c3a0a6bfb2f26bc465bdc46ab08680b4ff07be487e817ffd08b273d086e8343b"
+  },
+  {
+   "id": "uowthesis-mythesis",
+   "path": "doc/latex/uowthesis/mythesis.tex",
+   "class": "UoWthesis",
+   "copy_dir": true,
+   "sha256": "81f74517f2307c493355795ee75150a50f42c8f92bbc94c4f2c2af250f292fb1"
+  },
+  {
+   "id": "uvaletter-uvaletter-demo",
+   "path": "doc/latex/uvaletter/demo/uvaletter-demo.tex",
+   "class": "letter",
+   "copy_dir": true,
+   "sha256": "ef10aae74b654410f031a401abcbc858ad0a525fc92ff90b8ea9c6a5309911ad"
+  },
+  {
+   "id": "uwa-letterhead-uwa-letterhead-example",
+   "path": "doc/latex/uwa-letterhead/uwa-letterhead-example.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "98da91a35349a31b4ce11ca91cb64d2b3d26dd6e17e23c126ac0328aa9d5ce91"
+  },
+  {
+   "id": "uwthesis-uwthesis",
+   "path": "doc/latex/uwthesis/uwthesis.tex",
+   "class": "uwthesis",
+   "copy_dir": true,
+   "sha256": "57174e42c84fe32732581919a6c095944cf52ae1ab3d4ad075e9ba8a1ca45c71"
+  },
+  {
+   "id": "willowtreebook-willowtreebook",
+   "path": "doc/latex/willowtreebook/willowtreebook.tex",
+   "class": "willowtreebook",
+   "copy_dir": true,
+   "sha256": "be188e43669cd9289b763c2b8f0007a76ab958416c3fc22af702c987b57b1b8f"
+  },
+  {
+   "id": "xcookybooky-example",
+   "path": "doc/latex/xcookybooky/example/example.tex",
+   "class": "article",
+   "copy_dir": true,
+   "sha256": "bb563c4ca3e1db80032283e21ab31302affbdf20d0c2055be65d820237cff31b"
+  },
+  {
+   "id": "xduthesis-thesis-bachelor",
+   "path": "doc/latex/xduthesis/examples/thesis-bachelor.tex",
+   "class": "xduthesis",
+   "copy_dir": true,
+   "sha256": "7bbad48c0d1560a50db399c768fea6f6bbd585c56969e5f3b332c1aa8ddfd952"
+  },
+  {
+   "id": "xduthesis-thesis-doctor",
+   "path": "doc/latex/xduthesis/examples/thesis-doctor.tex",
+   "class": "xduthesis",
+   "copy_dir": true,
+   "sha256": "3e1989fabd15d721fbdf277d63a279b0666177355e320a34101e8d041246e318"
+  },
+  {
+   "id": "xebaposter-poster-fa",
+   "path": "doc/latex/xebaposter/poster-fa.tex",
+   "class": "xebaposter",
+   "copy_dir": true,
+   "sha256": "3590148bf319f254afb81e9fe8e8988817b42803e542fc51cea99b1e07ab249f"
+  },
+  {
+   "id": "xebaposter-poster",
+   "path": "doc/latex/xebaposter/poster.tex",
+   "class": "xebaposter",
+   "copy_dir": true,
+   "sha256": "8751f81de28fd0c61a0f39803e73c93fe02288429546cc9dd00fe58f4cda4a04"
+  },
+  {
+   "id": "xtufte-sample-book",
+   "path": "doc/latex/xtufte/sample-book.tex",
+   "class": "xtufte-book",
+   "copy_dir": true,
+   "sha256": "ac55d2a35eef66689e6111bba1a7fd9ab1494f545e34c38447f451a0d32e2a49"
+  },
+  {
+   "id": "xtufte-sample-handout",
+   "path": "doc/latex/xtufte/sample-handout.tex",
+   "class": "xtufte-handout",
+   "copy_dir": true,
+   "sha256": "5d4ec28da7e77ac9ea7cba2f4c232122be234080fc32cdda004fbc27c07a56c7"
+  },
+  {
+   "id": "yathesis-yathesis-fr",
+   "path": "doc/latex/yathesis/french/documentation/yathesis-fr.tex",
+   "class": "yathesis",
+   "copy_dir": true,
+   "sha256": "c1a46a75c6fab0cdbdbaaab7f076fd25166bb4e9d86065adc4a07c7c4bc33085"
+  },
+  {
+   "id": "yathesis-personnalisation",
+   "path": "doc/latex/yathesis/french/documentation/corps/personnalisation.tex",
+   "class": "yathesis",
+   "copy_dir": true,
+   "sha256": "110ce1a7ea21184889c8c86803a839f9664a1c5a86f81773ca68724f9398f3d3"
+  },
+  {
+   "id": "york-thesis-york-thesis-Template",
+   "path": "doc/latex/york-thesis/york-thesis-Template.tex",
+   "class": "york-thesis",
+   "copy_dir": true,
+   "sha256": "1403e7b7e7bb9944c5d20332a54e094f01a0ff2ad4f5b7a7cab1960ad5e448fb"
+  }
+ ]
+}

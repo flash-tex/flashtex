@@ -1031,10 +1031,8 @@ Rules:
     (`crates/flashtex-build`) is now `flashtex`, the packaged CLI (RQ6), and
     `supported-latex.json` is generated from the new engine's measured package support
     (RQ5).
-  - *Open (review 2026-11-01):* `crates/document-runtime` (5.5k LOC), the old compiler's
-    stdio session manager, has no consumer left: no workspace crate, app, script or
-    workflow refers to it. The retirement plan kept it as an IDE crate; it is a deletion
-    candidate under the same rules (reference check, revert check).
+  - The old compiler's `document-runtime` stdio session manager was deleted after S8:
+    it had no remaining consumer (review 2026-11-01, §5 item 5).
 - **Old-pane work stops (adopted 2026-09-30, §13).** No new features go into the v2 preview
   pane or its producer routes (D13); #1228's renderer-agnostic tile core moves to the v3
   pane (§6.2). The v3 pane still lacks features the v2 pane has, and **each of these app
@@ -1301,6 +1299,7 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-11-01 | **S7 and S8 landed** (§10, §12): the old engine deleted at once (#1888), `flashtex-v3` renamed `flashtex` (RQ6), `supported-latex.json` generated (RQ5); the oracle crates moved to `tests/oracles/` (#1902). Retirement is complete | Commander (kabir-claude), from the stage preconditions |
 | 2026-11-01 | **T3's old column comes from a committed one-off v1 measurement** (#1915), as T4's does: `tools/parity/baselines/t3-v1-oneoff.json`, copied from the last complete green board with v1 (41203982275, 2026-10-31), with input hashes and an oracle record; a missing, malformed or uncovered baseline makes a cell `missing`, never green. A technique refinement within decision 3 (new ≥ old and the owner bars unchanged) | Commander (kabir-claude) |
 | 2026-11-01 | **Persisted body checkpoint S₁** (§5.1, #1899): a reopen at a stored viewport runs from S₁ instead of typesetting the pages before it, and fills them from S₀ with a pass that must converge. An implementation of decision 8's reopen goal within §5's soundness rules, not a change to them | Commander (kabir-claude), on review (reviews/2026-11-01.md) |
+| 2026-11-01 | **Undefined C behaviour in pdfTeX** (INT_MIN negation, division by 0): FlashTeX matches TeX Live's macOS arm64 build; other compilers may differ; never a crash (web2rust `--total-division` #2080, `--exact-abs` and `changes/intmin.ch` #2089) | Commander (kabir-claude), from lane WEB2RUST-AUDIT's evidence |
 
 ---
 
@@ -1532,7 +1531,7 @@ The LaTeX host is never required to emit any of it.
 | E2 | section `ORIGINS_F64` | per-glyph f64 bp origins as the PDF viewer computes them (§15.5) |
 | E3 | section `COLORSPACES` + `FILL/STROKE_COLOR_CS`, `ALPHA` | ICC profile bytes, Separation (spot), constant alpha; components as the PDF's u8-quantised values |
 | E4 | `LINE_STATE` | stroked text (or via E5) |
-| E5 | **PDF islands** — no protocol change | constructs v3 can't express are exported by typst-pdf as a one-page frame of their bounding box (`page_ranges`, `tagged: false`) and sent as `IMAGE` type `pdf`: gradients (incl. conic), tilings, SVG images, colour glyphs, gradient-filled text. Parity by construction is **belief** until its gate row passes |
+| E5 | **PDF islands** — no protocol change | constructs v3 can't express are exported by typst-pdf as a one-page PDF **of the page's own size and bleed**, holding only that construct inside the same chain of frames, groups, transforms and clips as on the page (`tagged: false`), and sent as `IMAGE` type `pdf` drawn with the **identity matrix**, so its content stream carries the page's own numbers (spec §11.5): gradients (incl. conic), tilings, SVG and PDF images, gradient-filled or -stroked text, a gradient page fill. *Commander ruling 2026-10-04 (#1528): this whole-page, identity-matrix design replaces "a one-page frame of their bounding box", which would need another matrix and other numbers.* Measured: 828 of 828 islands in Typst's test suite show the page's own glyphs, paths and XObjects bit for bit (`docs/evidence/typst-t1-2026-10-04/islands.md`). Pixel parity of the app's drawing is **belief** until its gate row passes; colour glyphs are not islanded yet (gated INCOMPLETE) |
 | E6 | `IMAGE` from bytes (`IMAGE_DATA`), types `gif`/`webp`, `interpolate`, `icc` | the pixels the PDF has, not the source file |
 | E7 | section `PAGE_META` | page label, logical number, bleed, trim box, `engine`; `counts` stays TeX-only |
 | E8 | `RESOLVE`/`LOCATE` messages | on-demand span → source and source → page; eager re-declaration of all spans costs 507 ms at 300 pages (`TE/raw-a/jumps-d300.jsonl`), click → source 4–37 µs, forward search 2.9–3.2 ms |
