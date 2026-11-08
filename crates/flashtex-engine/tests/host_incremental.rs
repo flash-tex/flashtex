@@ -5452,9 +5452,10 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
     let pages = first.done.int_field("pages");
     assert!(pages >= Some(2), "{:?}", first.done);
     // the disk is full: no file grows past 4 KB (the PDF is ~20 KB)
+    // (the edit is saved first: the host could not write a buffer now)
+    std::fs::write(proj.join("main.tex"), text.replacen("Start", "Begin", 1)).unwrap();
     fsize(4096);
-    let mut r = req(2, &proj, &out, "main.tex");
-    r.buffers = vec![("main.tex".into(), text.replacen("Start", "Begin", 1))];
+    let r = req(2, &proj, &out, "main.tex");
     eprintln!("{:?}: compile 2 (the disk is full)", t0.elapsed());
     let full = compile(&mut c, &mut view, &r);
     eprintln!("{:?}: DONE {:?}", t0.elapsed(), full.done);
