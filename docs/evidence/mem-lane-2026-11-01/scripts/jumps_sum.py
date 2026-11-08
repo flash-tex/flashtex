@@ -15,7 +15,7 @@ for r in rows:
     rest[k].extend(r['rest_ms'])
 med = lambda v: round(st.median(v), 1) if v else None  # noqa: E731
 verdict = []
-for (doc, step, page, cfg) in sorted(first, key=lambda k: (k[0], k[1], ['main', 'far2', 'vp300', 'vp0', 'vp65', 'vp80', 'vp100'].index(k[3]))):
+for (doc, step, page, cfg) in sorted(first, key=lambda k: (k[0], k[1], ['main', 'far2', 'vp300', 'vp0', 'vp65', 'vp80', 'vp100', 'vp65y', 'vp80y', 'vp100y'].index(k[3]))):
     f, m = first[(doc, step, page, cfg)], first.get((doc, step, page, 'main'))
     ratio = med(f) / med(m) if m and med(m) else None
     print(f"{doc:11} jump {step} (page {page}) {cfg:5}: first {med(f):>8} ms {sorted(f)}  rest {med(rest[(doc, step, page, cfg)])} ms"

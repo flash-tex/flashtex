@@ -783,7 +783,8 @@ impl Obs {
         for &(c, n) in &self.taken {
             ck.insert(c, n);
         }
-        thin(
+        let mut stop = self.thin_stop(g);
+        let done = thin(
             g,
             self.budget,
             self.dense,
@@ -792,7 +793,11 @@ impl Obs {
             self.keep_r,
             &pages,
             &ck,
+            &mut stop,
         );
+        if !done {
+            self.thin_due = true;
+        }
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         for p in self.new_pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
@@ -819,6 +824,16 @@ impl Obs {
     /// newer work) then still restarts and converges near any page, a block
     /// at most from it. Their logs are merged, never dropped
     /// (`Arena::retain_branch`): every old state kept stays exact.
+    /// Newer work waits, as `preempt_now` would ask where it may stop the
+    /// run: a merge in `thin` or `thin_pending` gives way to it between
+    /// batches (`retain_yielding`).
+    fn thin_stop(&self, g: &mut Globals) -> impl FnMut() -> bool {
+        let may = !self.protecting() && !(self.preempt_after_s0 && g.layer().s0.is_none());
+        let p = self.preempt.clone().filter(|_| may);
+        let (pass, pages) = (self.pass, self.new_pages.len());
+        move || p.as_ref().is_some_and(|p| p(pass, pages))
+    }
+
     fn thin_pending(&mut self, g: &mut Globals) {
         let Some(window) = self.branch_window else {
             return;
@@ -836,17 +851,26 @@ impl Obs {
         ];
         let old_pages: std::collections::HashSet<CheckpointId> =
             self.old_pages.iter().filter_map(|p| p.ckpt).collect();
+        let mut stop = self.thin_stop(g);
         let branch_ck = &self.branch_ck;
         let before = g.pending_ids().len();
-        g.retain_pending(&|id| {
-            let Some(&ck) = branch_ck.get(&id) else {
-                return true;
-            };
-            ck <= lo
-                || ck >= j
-                || pinned.contains(&Some(id))
-                || (ck % BRANCH_BLOCK == 0 && old_pages.contains(&id))
-        });
+        let done = retain_yielding(
+            g,
+            &|id| {
+                let Some(&ck) = branch_ck.get(&id) else {
+                    return true;
+                };
+                ck <= lo
+                    || ck >= j
+                    || pinned.contains(&Some(id))
+                    || (ck % BRANCH_BLOCK == 0 && old_pages.contains(&id))
+            },
+            &mut stop,
+            true,
+        );
+        if !done {
+            self.thin_due = true;
+        }
         let gone = before - g.pending_ids().len();
         BRANCH_THINNED.fetch_add(gone as u64, std::sync::atomic::Ordering::Relaxed);
         if self.debug && gone > 0 {
@@ -8230,6 +8254,7 @@ impl Session {
             self.s1_open,
             &pages,
             &self.ck_pages,
+            &mut || false,
         );
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
@@ -8541,7 +8566,8 @@ fn thin(
     keep_also: Option<CheckpointId>,
     pages: &HashMap<CheckpointId, usize>,
     ck_pages: &HashMap<CheckpointId, usize>,
-) {
+    stop: &mut dyn FnMut() -> bool,
+) -> bool {
     let (aux_done, aux_point) = (g.layer().aux_done, g.layer().aux_point);
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
@@ -8582,11 +8608,13 @@ fn thin(
                 .get(&id)
                 .is_some_and(|&p| p.abs_diff(cursor) <= dense)
     };
-    if g.checkpoints().iter().any(|&id| !pinned(id) && !near(id)) {
-        g.retain_checkpoints(&|id| pinned(id) || near(id));
+    if g.checkpoints().iter().any(|&id| !pinned(id) && !near(id))
+        && !retain_yielding(g, &|id| pinned(id) || near(id), stop, false)
+    {
+        return false;
     }
     if g.arena.log_bytes() <= budget {
-        return;
+        return true;
     }
     // The octave of a page's distance from the cursor beyond `dense`.
     let octave = |d: usize| (usize::BITS - 1 - (d / dense.max(1)).leading_zeros()) as usize;
@@ -8647,6 +8675,70 @@ fn thin(
             break;
         }
     }
+    true
+}
+
+/// Dropped checkpoints merged a batch at a time by `retain_yielding`.
+const THIN_BATCH: usize = 16;
+
+/// `Globals::retain_checkpoints(keep)` (`pending`: `retain_pending`, the old
+/// run's future), the checkpoints `keep` rejects merged `THIN_BATCH` at a
+/// time with `stop` asked before each batch: newer work waits no longer
+/// than a batch's merges (lane MEMORY: a VIEWPORT's idle run moves the
+/// cursor, and merging the old dense window away took tens of
+/// milliseconds that nothing stopped). False when it stopped: the rest is
+/// merged at the next thin. Merging in batches keeps every state kept
+/// exact, as merging them at once does (`retain_checkpoints`).
+fn retain_yielding(
+    g: &mut Globals,
+    keep: &dyn Fn(CheckpointId) -> bool,
+    stop: &mut dyn FnMut() -> bool,
+    pending: bool,
+) -> bool {
+    static YIELD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let on = *YIELD
+        .get_or_init(|| std::env::var_os("FLASHTEX_THIN_YIELD").is_some_and(|v| !v.is_empty()));
+    let ids = if pending {
+        g.pending_ids()
+    } else {
+        g.checkpoints()
+    };
+    let gone: Vec<CheckpointId> = ids.into_iter().filter(|&id| !keep(id)).collect();
+    if gone.is_empty() {
+        return true;
+    }
+    let t = Instant::now();
+    let batches: Vec<&[CheckpointId]> = if on {
+        gone.chunks(THIN_BATCH).collect()
+    } else {
+        vec![&gone[..]]
+    };
+    let n = batches.len();
+    for (k, b) in batches.into_iter().enumerate() {
+        if on && stop() {
+            if kw_on() {
+                kw(format_args!(
+                    "thin: gave way after {k} of {n} batches, {:.3} ms (pending {pending})",
+                    t.elapsed().as_secs_f64() * 1e3
+                ));
+            }
+            return false;
+        }
+        let set: std::collections::HashSet<CheckpointId> = b.iter().copied().collect();
+        if pending {
+            g.retain_pending(&|id| !set.contains(&id));
+        } else {
+            g.retain_checkpoints(&|id| !set.contains(&id));
+        }
+    }
+    if kw_on() && t.elapsed().as_secs_f64() > 1e-3 {
+        kw(format_args!(
+            "thin: {} checkpoints merged in {n} batches, {:.3} ms (pending {pending})",
+            gone.len(),
+            t.elapsed().as_secs_f64() * 1e3
+        ));
+    }
+    true
 }
 
 fn pdf_len(r: &ExtRecord) -> u64 {

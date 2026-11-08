@@ -31,7 +31,7 @@ J=$OUT/jumps.jsonl
 read -r -a CFGS <<< "${CFGS:-main far2 vp300 vp0}"
 N=${#CFGS[@]}
 run() {  # run CFG ROUND DOC
-  local c=$1 r=$2 d=$3 eng=prof far= jm=-1 extra=() kw=
+  local c=$1 r=$2 d=$3 eng=prof far= jm=-1 extra=() kw= ty=
   case $c in
     main) eng=base ;;
     far2) far=2 ;;
@@ -40,13 +40,14 @@ run() {  # run CFG ROUND DOC
     vp80) far=${VP_FAR:-4}; jm=80; kw=1 ;;
     vp65) far=${VP_FAR:-4}; jm=65; kw=1 ;;
     vp100) far=${VP_FAR:-4}; jm=100; kw=1 ;;
+    vp65y|vp80y|vp100y) far=${VP_FAR:-4}; jm=${c#vp}; jm=${jm%y}; kw=1; ty=1 ;;
   esac
   case $d in
     full-1000) extra=(--pages 0,300,600) ;;
     infdesc-x2) extra=(--src "$IB/docs/infdesc-x2" --pages 0,0,0 --edit "$ed,x2/$ed,$ed") ;;
   esac
   # (the keys mid-run log where they wait: FLASHTEX_KEYWAIT_DEBUG, kw_sum.py)
-  FLASHTEX_KEYWAIT_DEBUG=$kw JUMPS_LOG=$OUT/kw.log FLASHTEX_FAR=$far python3 "$S/jumps.py" "$eng" "$d" "$J" --cfg "$c" --round "$r" --jump-ms "$jm" \
+  FLASHTEX_THIN_YIELD=$ty FLASHTEX_KEYWAIT_DEBUG=$kw JUMPS_LOG=$OUT/kw.log FLASHTEX_FAR=$far python3 "$S/jumps.py" "$eng" "$d" "$J" --cfg "$c" --round "$r" --jump-ms "$jm" \
     --keys "${KEYS:-6}" "${extra[@]}" || echo "$d $c r$r failed"
 }
 for r in $(seq 1 "${ROUNDS:-3}"); do
