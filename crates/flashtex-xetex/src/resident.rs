@@ -1325,6 +1325,7 @@ impl Engine {
                     Some(ch) => Some(ch),
                     None => self.changes(now),
                 };
+                crate::out::stage("conv_changes");
                 let edits: Vec<crate::conv::Edit> = now
                     .iter()
                     .filter_map(|(p, new)| {
@@ -1390,6 +1391,7 @@ impl Engine {
                                     dorm: c.dorm,
                                 })
                                 .collect();
+                            crate::out::stage("conv_oldpages");
                             let tables = g.host.dl.tables();
                             // the old run's files as it left them, before
                             // the restore cuts them back
@@ -1405,6 +1407,7 @@ impl Engine {
                                     }
                                 }
                             }
+                            crate::out::stage("conv_oldfiles");
                             let old_out = self.pages.last().and_then(|p| p.out.as_ref());
                             let doc_pages =
                                 old_out.map(|o| o.doc.pages.clone()).unwrap_or_default();
