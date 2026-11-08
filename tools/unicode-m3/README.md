@@ -17,6 +17,10 @@ only from TeX Live's `xelatex`/`xetex`, never from FlashTeX.
 | `[fonts]` fixtures: P-T1 + XDV against xelatex on the effective source; precedence | `fonts-cases/` through `latex.py` (first line from `fonts_line`, expected and forbidden fonts per fixture), and `crates/flashtex-xetex/tests/host.rs` |
 | Classic lockstep, P-T1/P-T2, latency, `flashtex-host` size and start-up unchanged | `host_startup.py` at each U3 merge and its first parent (the `classic` job); Classic's own gates in `ci.yml` |
 
+`mode_gap.py` (`.github/workflows/unicode-mode-gap.yml`) is outside the M3
+table: keystroke latency of the Unicode mode against the pdfTeX mode on T7's
+120-page `full-120`, both hosts driven by `dl3-keys` on one machine.
+
 ## The corpus
 
 `corpus.json`: the existing xelatex cases (`tools/xetex-lockstep/latex-cases`,
@@ -37,6 +41,15 @@ python3 tools/xetex-lockstep/latex.py --engine BIN --cases-dir DIR --json pt1.js
 python3 tools/xetex-pdfparity/run.py --engine BIN --cases-dir DIR --no-visual --pdf-dir PDFS --json export.json
 python3 tools/unicode-m3/summarize.py RESULTS-DIR
 ```
+
+`u13-realdoc-paper` is a real document rather than a feature probe: one
+paper that loads fontspec by family name, a project font from its own
+`fonts/` folder (JetBrains Mono, OFL, copied from the app's resources by the
+case's `files` entry: `[[repository glob, directory in the case], ...]`),
+unicode-math, polyglossia with Greek, Hebrew and Arabic, xeCJK and hyperref
+together. Its macOS counterpart on system fonts is
+`tools/displaylist/unicode-cases/u14-realdoc-system.tex` (Unicode preview
+parity).
 
 A case directory may set `trace` to `boxes` (box dumps at every `\shipout`,
 no `\tracingall`) for documents too long to trace in full; the P-T1 results

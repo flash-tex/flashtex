@@ -889,6 +889,18 @@ mod tests {
         assert_eq!(read_expected(&f), None);
         write_expected(&f, 482);
         assert_eq!(read_expected(&f), Some(482));
+        for (t, want) in [
+            ("pages=abc\n", None),
+            ("pages=0\n", None),
+            ("pages=-3\n", None),
+            ("hello\n", None),
+            ("", None),
+            ("x=1\npages=7\n", Some(7)),
+            ("pages= 42 \n", Some(42)),
+        ] {
+            std::fs::write(&f, t).unwrap();
+            assert_eq!(read_expected(&f), want, "{t:?}");
+        }
         let _ = std::fs::remove_dir_all(&d);
         let a = cache_file(Path::new("/p/a.tex"));
         let b = cache_file(Path::new("/p/b.tex"));

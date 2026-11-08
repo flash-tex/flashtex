@@ -245,14 +245,29 @@ final class EngineV3HostProcess: @unchecked Sendable {
             let d = h.availableData
             if !d.isEmpty { onEvent(.line("stderr: " + String(decoding: d, as: UTF8.self).trimmingCharacters(in: .newlines))) }
         }
+        // The pid file is written after `run` and removed at the exit, which
+        // may come first (a host that fails at once): under one lock, so a
+        // host that already exited leaves no file naming its pid, which a
+        // later process may reuse (`killStaleHosts`).
+        let pidFile = PidFileState()
         process.terminationHandler = { p in
             out.fileHandleForReading.readabilityHandler = nil
             err.fileHandleForReading.readabilityHandler = nil
+            pidFile.lock.lock()
+            pidFile.exited = true
             Self.forget(pid: p.processIdentifier)
+            pidFile.lock.unlock()
             onEvent(.exited(pid: p.processIdentifier, status: p.terminationStatus))
         }
         try process.run()
-        Self.remember(pid: process.processIdentifier)
+        pidFile.lock.lock()
+        if !pidFile.exited { Self.remember(pid: process.processIdentifier) }
+        pidFile.lock.unlock()
+    }
+
+    private final class PidFileState: @unchecked Sendable {
+        let lock = NSLock()
+        var exited = false
     }
 
     /// What a host printed after its name (`flashtex-host: ` or
@@ -276,22 +291,38 @@ final class EngineV3HostProcess: @unchecked Sendable {
     /// Kills hosts started by an app process that no longer runs (their pid
     /// files name the app's pid); only processes whose executable is a
     /// `flashtex-host`.
+    ///
+    /// Pids are reused, so a pid alone proves nothing: both the app and the
+    /// host a file names started before the file was written (`remember`
+    /// runs after `run`, in the running app). A process with that pid that
+    /// started later is another one: an app pid taken by any later process
+    /// does not keep its hosts alive (nor does this app's own pid, if a dead
+    /// app had it before), and a host pid taken by a later `flashtex-host`
+    /// (another app's, a bench's, a test's) is never signalled.
     static func killStaleHosts(log: (String) -> Void) {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: pidDirectory.path) else { return }
         for name in names {
             guard let pid = Int32(name) else { continue }
             let file = pidDirectory.appendingPathComponent(name)
             let owner = (try? String(contentsOf: file, encoding: .utf8)).flatMap { Int32($0) } ?? 0
-            if owner != 0, owner != getpid(), kill(owner, 0) == 0 { continue } // its app is alive
-            if owner == getpid() { continue }
+            let written = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+            if owner != 0, startedBy(owner, written) { continue } // its app is alive
             var buf = [CChar](repeating: 0, count: 4096)
-            if proc_pidpath(pid, &buf, UInt32(buf.count)) > 0,
+            if startedBy(pid, written), proc_pidpath(pid, &buf, UInt32(buf.count)) > 0,
                String(cString: buf).hasSuffix("/flashtex-host") || String(cString: buf).hasSuffix("/flashtex-host-unicode") {
                 kill(pid, SIGTERM)
                 log("killed stale host \(pid) (its app \(owner) is gone)")
             }
             try? FileManager.default.removeItem(at: file)
         }
+    }
+
+    /// Whether `pid` runs and started no later than `date` (nil: no date
+    /// known, running is enough).
+    static func startedBy(_ pid: Int32, _ date: Date?) -> Bool {
+        guard let s = EngineV3.processStart(pid) else { return false }
+        guard let date else { return true }
+        return Double(s.0) + Double(s.1) / 1_000_000 <= date.timeIntervalSince1970
     }
 
     /// The host's environment: this process's, with the string pool and,
