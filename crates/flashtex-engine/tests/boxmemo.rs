@@ -551,6 +551,9 @@ fn a_register_a_group_end_brings_back_is_keyed() {
              \\dimen3=3pt \\measure{3pt}\\show\\dimen3=4pt \\measure{3pt}\\show\\measure{3pt}\\show\\end\n",
         ]
         .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
 
 #[test]
 fn a_token_that_turns_into_a_parameter_is_a_miss() {
