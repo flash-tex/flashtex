@@ -8,6 +8,12 @@
 % |new_save_level|, 4 |unsave|; 5 a sparse-array definition, 6 a box
 % dimension, 7 |out_what|, which a recording cannot hold), and |big_switch| asks |flashtex_intr_switch|
 % whether an observed body is used up. Off and `on' never call either.
+%
+% The verifier compares every |mem| word either path wrote but those of the
+% cells a path allocated or freed (|flashtex_intr_cell|, |flashtex_intr_flush|
+% in |get_avail|, |fast_get_avail|, |free_avail|, |flush_list|, |get_node|,
+% |free_node|): an in-place change of a node the call found (|\limits|'s
+% |subtype(tail)|) is a difference.
 
 @x xetex.web - a group boundary, for the recording
 @p procedure new_save_level(@!c:group_code); {begin a new level of grouping}
@@ -68,6 +74,60 @@ begin a:=false;
 @y
 @!a:boolean; {have we already processed an \.{\\aftergroup} ?}
 begin a:=false; if intr_verify_on then flashtex_intr_op(4,0,0,0);
+@z
+
+@x after changes/displaylist.ch - get_avail: a cell the path allocates (verify)
+dl_new_node(p);
+get_avail:=p;
+@y
+dl_new_node(p);
+if intr_verify_on then flashtex_intr_cell(p,1);
+get_avail:=p;
+@z
+
+@x xetex.web - free_avail: a cell the path frees (verify)
+@d free_avail(#)== {single-word node liberation}
+  begin link(#):=avail; avail:=#;
+@y
+@d free_avail(#)== {single-word node liberation}
+  begin if intr_verify_on then flashtex_intr_cell(#,1);
+  link(#):=avail; avail:=#;
+@z
+
+@x after changes/displaylist.ch - fast_get_avail: a cell the path allocates (verify)
+    dl_new_node(#);
+    end;
+@y
+    dl_new_node(#);
+    if intr_verify_on then flashtex_intr_cell(#,1);
+    end;
+@z
+
+@x xetex.web - flush_list: the cells the path frees (verify)
+begin if p<>null then
+  begin r:=p;
+  repeat q:=r; r:=link(r); @!stat decr(dyn_used);@+tats@/
+@y
+begin if p<>null then
+  begin if intr_verify_on then flashtex_intr_flush(p);
+  r:=p;
+  repeat q:=r; r:=link(r); @!stat decr(dyn_used);@+tats@/
+@z
+
+@x after changes/displaylist.ch - get_node: the cells the path allocates (verify)
+found: link(r):=null; {this node is now nonempty}
+dl_new_node(r);
+@y
+found: link(r):=null; {this node is now nonempty}
+dl_new_node(r);
+if intr_verify_on then flashtex_intr_cell(r,s);
+@z
+
+@x xetex.web - free_node: the cells the path frees (verify)
+begin node_size(p):=s; link(p):=empty_flag;
+@y
+begin if intr_verify_on then flashtex_intr_cell(p,s);
+node_size(p):=s; link(p):=empty_flag;
 @z
 
 @x xetex.web - expansion other than big_switch's direct macro
@@ -163,6 +223,8 @@ add_sa_ref(p);
 procedure flashtex_intr_observe; external;
 procedure flashtex_intr_switch; external;
 procedure flashtex_intr_op(@!k,@!p,@!t,@!e:integer); external;
+procedure flashtex_intr_cell(@!p,@!s:integer); external;
+procedure flashtex_intr_flush(@!p:integer); external;
 
 @* \[55] Index.
 @z

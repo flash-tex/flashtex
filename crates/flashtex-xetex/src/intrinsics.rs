@@ -90,6 +90,10 @@ pub struct Report {
     #[allow(clippy::type_complexity)]
     last: Option<(Option<(i32, i32)>, Vec<Op>)>,
     pub(crate) replaying: bool,
+    /// The cells each path of a check allocated or freed (`[replay, real]`,
+    /// `crate::intrinsics_verify`), and which path is running (0: none).
+    pub(crate) churn: [std::collections::HashSet<i32>; 2],
+    pub(crate) churn_on: u8,
     /// Replayable recordings, and their operations.
     kept: u64,
     kept_ops: u64,
@@ -139,6 +143,7 @@ impl Globals {
             return;
         };
         self.host.intrinsics.last = None;
+        self.intr_churn_stop();
         if let Some(p) = rec.verify {
             *self.host.intrinsics.unverified.entry(why).or_default() += 1;
             self.drop_checkpoint(p.ck());
