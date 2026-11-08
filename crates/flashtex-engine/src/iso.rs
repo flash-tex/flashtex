@@ -104,6 +104,12 @@ pub fn dead_cells_enabled() -> bool {
 /// rule errs only on the side of failing a test. The remaining trust is
 /// the walk's own node model: a reached node's pointer fields are followed.
 /// `FLASHTEX_DEAD_CELLS_VERIFY` checks the rule against live runs.
+///
+/// `stop` is asked every [`GARBAGE_STOP_EVERY`] cells or words scanned (two
+/// scans of the whole of `mem` and of every region the walk does not
+/// interpret, a third of a convergence test's time at *Infinite Descent*
+/// x2's late page, which newer work waited for: lane TYPING-50MS); `None`
+/// when it said to stop. The scans read and change nothing else.
 fn garbage<S: Space>(
     regions: &[crate::arena::RegionInfo],
     s: &St<'_, S>,
@@ -111,20 +117,29 @@ fn garbage<S: Space>(
     free: &[u64],
     slots: &[ScalarSlot],
     why_p: Option<i32>,
-) -> Vec<u64> {
+    stop: &mut dyn FnMut() -> bool,
+) -> Option<Vec<u64>> {
+    let mut ticks = 0usize;
+    let mut tick = |stop: &mut dyn FnMut() -> bool| {
+        ticks += 1;
+        ticks.is_multiple_of(GARBAGE_STOP_EVERY) && stop()
+    };
     let words = (MEM_TOP as usize + 64) / 64 + 1;
     let mut unr = vec![0u64; words];
     let (lo_max, hi_min, end) = (s.sc("lo_mem_max"), s.sc("hi_mem_min"), s.sc("mem_end"));
     let in_range = |p: i32| (MEM_BOT..=lo_max).contains(&p) || (hi_min..=end).contains(&p);
     let mut any = false;
     for p in (MEM_BOT..=lo_max.min(MEM_TOP)).chain(hi_min.max(0)..=end.min(MEM_TOP)) {
+        if tick(stop) {
+            return None;
+        }
         if !bit(cov, p) && !bit(free, p) {
             set(&mut unr, p);
             any = true;
         }
     }
     if !any {
-        return unr;
+        return Some(unr);
     }
     let is_unr = |p: i32| in_range(p) && (MEM_BOT..=MEM_TOP).contains(&p) && bit(&unr, p);
     // the unreached cells words outside the walk point at
@@ -158,6 +173,9 @@ fn garbage<S: Space>(
         }
         let mut k = 0;
         while k + 4 <= r.bytes {
+            if tick(stop) {
+                return None;
+            }
             let off = r.off + k;
             let rel = k;
             k += 4;
@@ -188,6 +206,9 @@ fn garbage<S: Space>(
     // point at (both halves; a one-word node's info half is a token or a
     // character, not a pointer)
     while let Some((p, span)) = todo.pop() {
+        if tick(stop) {
+            return None;
+        }
         if span > 1 && p < hi_min && p < MEM_TOP && is_unr(p + 1) {
             mark(
                 p + 1,
@@ -254,8 +275,12 @@ fn garbage<S: Space>(
     for (u, l) in unr.iter_mut().zip(&live) {
         *u &= !l;
     }
-    unr
+    Some(unr)
 }
+
+/// How many cells or words `garbage` scans between two questions to its
+/// `stop` (a question is an atomic load and a lock in the host).
+const GARBAGE_STOP_EVERY: usize = 1 << 16;
 
 /// The most words a node takes (pdfTeX's largest, a `\pdfstartlink` or
 /// `\pdfannot` whatsit, with SyncTeX's two): a pointer into an unreached
@@ -3119,8 +3144,13 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         }
         // Dead cells (INFDESC-883): allocated cells no root reaches and
         // nothing outside the walk points at (`garbage`), computed once per
-        // side when a differing word needs it.
+        // side when a differing word needs it; newer work stops it.
         let dead_rule = dead_cells_enabled() && !ALIGN_BY_WORDS.with(|c| c.get());
+        let mut never = || false;
+        let stop: &mut dyn FnMut() -> bool = match w.stop.take() {
+            Some(s) => s,
+            None => &mut never,
+        };
         // (outer: computed yet; inner: the free lists could be read)
         type Dead = Option<Option<Vec<u64>>>;
         let (mut dead_o, mut dead_n): (Dead, Dead) = (None, None);
@@ -3135,16 +3165,28 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             let mut ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
             if !(ok_o && ok_n) && dead_rule {
                 if !ok_o {
-                    let d = dead_o.get_or_insert_with(|| {
-                        free_o.map(|f| garbage(&g.arena.regions, &w.o, &w.cov_o, f, slots, None))
-                    });
-                    ok_o = d.as_ref().is_some_and(|d| bit(d, p));
+                    if dead_o.is_none() {
+                        dead_o = Some(match free_o {
+                            Some(f) => Some(
+                                garbage(&g.arena.regions, &w.o, &w.cov_o, f, slots, None, stop)
+                                    .ok_or_else(|| STOPPED.to_string())?,
+                            ),
+                            None => None,
+                        });
+                    }
+                    ok_o = dead_o.as_ref().unwrap().as_ref().is_some_and(|d| bit(d, p));
                 }
                 if !ok_n {
-                    let d = dead_n.get_or_insert_with(|| {
-                        free_n.map(|f| garbage(&g.arena.regions, &w.n, &w.cov_n, f, slots, None))
-                    });
-                    ok_n = d.as_ref().is_some_and(|d| bit(d, p));
+                    if dead_n.is_none() {
+                        dead_n = Some(match free_n {
+                            Some(f) => Some(
+                                garbage(&g.arena.regions, &w.n, &w.cov_n, f, slots, None, stop)
+                                    .ok_or_else(|| STOPPED.to_string())?,
+                            ),
+                            None => None,
+                        });
+                    }
+                    ok_n = dead_n.as_ref().unwrap().as_ref().is_some_and(|d| bit(d, p));
                 }
                 if ok_o && ok_n {
                     n_dead += 1;
@@ -3154,11 +3196,27 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
                 if dead_rule && std::env::var_os("FLASHTEX_DEAD_CELLS_WHY").is_some() {
                     if let (false, Some(f)) = (ok_o, free_o) {
                         eprint!("[dead-cells] old: ");
-                        garbage(&g.arena.regions, &w.o, &w.cov_o, f, slots, Some(p));
+                        garbage(
+                            &g.arena.regions,
+                            &w.o,
+                            &w.cov_o,
+                            f,
+                            slots,
+                            Some(p),
+                            &mut || false,
+                        );
                     }
                     if let (false, Some(f)) = (ok_n, free_n) {
                         eprint!("[dead-cells] new: ");
-                        garbage(&g.arena.regions, &w.n, &w.cov_n, f, slots, Some(p));
+                        garbage(
+                            &g.arena.regions,
+                            &w.n,
+                            &w.cov_n,
+                            f,
+                            slots,
+                            Some(p),
+                            &mut || false,
+                        );
                     }
                 }
                 return Err(format!(
@@ -3654,7 +3712,7 @@ mod tests {
             l,
             hi_mem_min: HI_MIN,
         };
-        garbage(regions, &s, &cov, &free, &[], None)
+        garbage(regions, &s, &cov, &free, &[], None, &mut || false).expect("never stopped")
     }
 
     /// A line's end TeX leaked (pdfTeX does, for a link broken across lines:
