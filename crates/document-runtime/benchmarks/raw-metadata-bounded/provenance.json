@@ -1,8 +1,0 @@
-{
-  "schema_version": 1,
-  "baseline_commit": "dcac0108",
-  "binary_sha256": "18eebfaf670d474a33d101933d791eeb337eb7254ef4c0a9ccd6e2ffafc79d6a",
-  "build": "cargo build --offline --manifest-path crates/document-runtime/Cargo.toml --example raw_metadata_probe",
-  "captures": "/tmp/ft049-metadata-bounded",
-  "scope": "Three separate-process residency observations; not allocation count, timing, native memory guarantee, or calibrated benchmark. Unchanged fixture frame digests compared to baseline."
-}

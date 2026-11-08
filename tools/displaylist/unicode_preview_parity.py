@@ -52,15 +52,39 @@ def env():
     return e
 
 
+# The files whose change makes flashtex-host-unicode run the engine again
+# (crates/flashtex-xetex/src/host/compile.rs, PASS_FILES and MAX_PASSES):
+# the oracle runs xelatex by the same rule, so a document whose contents
+# need a third run (a table of contents that moves a section to the next
+# page) is compared converged with converged.
+PASS_FILES = ("aux", "toc", "lof", "lot", "out", "nav", "snm", "vrb", "loa", "thm")
+MAX_PASSES = 5
+
+
+def pass_state(d):
+    state = []
+    for e in PASS_FILES:
+        try:
+            with open(os.path.join(d, "main." + e), "rb") as f:
+                state.append(f.read())
+        except OSError:
+            state.append(None)
+    return state
+
+
 def oracle(xelatex, case_tex, work):
-    """xelatex twice (cross references), its PDF to <work>/oracle.pdf."""
+    """xelatex until its auxiliary files stop changing (at most five runs,
+    as the host), its PDF to <work>/oracle.pdf."""
     d = os.path.join(work, "xelatex")
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     shutil.copy(case_tex, os.path.join(d, "main.tex"))
-    for _ in range(2):
+    for _ in range(MAX_PASSES):
+        before = pass_state(d)
         r = subprocess.run([xelatex, "-interaction=nonstopmode", "main.tex"], cwd=d, env=env(),
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        if pass_state(d) == before:
+            break
     pdf = os.path.join(d, "main.pdf")
     if not os.path.exists(pdf):
         return "xelatex wrote no PDF (exit %d)" % r.returncode

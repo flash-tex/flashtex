@@ -167,15 +167,16 @@ final class ProjectScaffoldState {
             note = f.text
             return .refused(f.text)
         case .success(let created):
-            switch model.openTex(at: created.entry, dirty: dirty) {
+            let (outcome, opened) = model.openForUser(created.entry, dirty: dirty) // this window, or a new one (ProjectWindows.swift)
+            switch outcome {
             case .opened:
                 sheet = nil
-                model.captureNote = "Created \(created.written.count) file\(created.written.count == 1 ? "" : "s") in \(created.root.lastPathComponent): " + created.written.joined(separator: ", ")
+                opened.captureNote = "Created \(created.written.count) file\(created.written.count == 1 ? "" : "s") in \(created.root.lastPathComponent): " + created.written.joined(separator: ", ")
                     + (keptOpen.isEmpty ? "" : "; the previous text of \(keptOpen.joined(separator: ", ")) is kept (File > Restore Unsaved Snapshot…)")
                 // The include tree is in the sidebar already (discovery); open
                 // it so every member compiles and gets a tab.
-                // (`model` is unowned: a window closed before the task runs must not trap.)
-                Task { [weak model] in await model?.project.openDiscoveredIncludes() }
+                // (Weak: a window closed before the task runs must not be kept or trap.)
+                Task { [weak opened] in await opened?.project.openDiscoveredIncludes() }
                 return .opened(created.entry)
             case .blockedByUnsavedEdits:
                 note = "The files were written, but the current buffer has unsaved edits. Save or discard it, then open \(created.entry.path) with ⌘O."
@@ -315,7 +316,9 @@ struct NewProjectSheet: View {
 
     private func create() {
         let state = model.scaffold
-        guard model.hasUnsavedDocuments else { state.createProject(); return }
+        // With windows the project opens in a new window (ProjectWindows.swift):
+        // nothing here is replaced, so there is nothing to save first.
+        guard model.hasUnsavedDocuments, model.windows == nil else { state.createProject(); return }
         let alert = NSAlert()
         alert.messageText = "Save changes to \(model.unsavedDocumentsDescription) before creating the project?"
         alert.informativeText = "Discarded text stays recoverable: \(model.discardRecoveryRoutes)"

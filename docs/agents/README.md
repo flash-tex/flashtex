@@ -1,9 +1,11 @@
 # Working with agents
 
 Relocated verbatim from the root `README.md` (its former "Working with agents"
-section) so the landing page can describe the product. Only the relative link
-targets were adjusted for this directory; the rules are unchanged and remain
-governed by [AGENTS.md](../../AGENTS.md).
+section) so the landing page can describe the product. The relative link targets
+were adjusted for this directory, and the Commander and master-plan pointers were
+brought up to date on 2026-11-01; the rules remain governed by
+[AGENTS.md](../../AGENTS.md) and the governing
+[engine-v2 design](../design/engine-v2/DESIGN.md).
 
 **Executable tools:** [coordination CLI](../coordination-cli.md).
 Run `python3 scripts/coord.py checkpoint` to fetch updates and discover assignments.
@@ -17,9 +19,10 @@ on merge (`coord.py close <task-id> --actor <id> --gh-ref <url>`) — see
 `coordination-claims` branch; never claim on main.
 
 Start with the [orchestration master plan](../../ORCHESTRATION.md) and the
-[Commander bulletin](../../coordination/COMMANDER.md). The user designated the primary
-Codex agent on `linux-primary` as Commander. Workers register, acknowledge bounded
-assignments, and publish progress to their own branches; Commander integrates main.
+[Commander bulletin](../../coordination/COMMANDER.md). The Commander is `kabir-claude`
+(mac-m5pro-kabir), by the owner's transfer (DESIGN.md header; Appendix A is its master
+prompt); every other session is an engineer under it. Workers register, acknowledge
+bounded assignments, and publish progress to their own branches; Commander integrates main.
 
 **Every agent must read [AGENTS.md](../../AGENTS.md) before planning or editing.** It
 defines task ownership, frequent Git checkpoints, adaptation to other agents'
@@ -32,8 +35,10 @@ Start each agent with:
 > Publish your task ownership and handoff on your own branch. At each checkpoint,
 > review relevant changes and adapt your implementation before continuing.
 
-See the [product and engineering master plan](../../latex-master-plan.md) for product
-requirements. Active agents publish their own handoffs under `coordination/` on
+The [engine-v2 design](../design/engine-v2/DESIGN.md) is the governing design and
+the source of truth for goals and phases. The
+[original product master plan](../../latex-master-plan.md) is the founders' first plan:
+its compiler written from scratch was retired at P5 (S7, 2026-11-01). Active agents publish their own handoffs under `coordination/` on
 their task branches; those updates can be read before they merge into main.
 
 Use [the shared knowledge index](../INDEX.md) to recover context after a restart
