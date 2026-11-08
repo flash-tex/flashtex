@@ -1292,6 +1292,8 @@ pub struct Globals {
     pub bm_font_version: i32,
     // §1924
     pub bm_hyph_version: i32,
+    // §1924
+    pub bm_span_cs: halfword,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
 }
@@ -1814,7 +1816,8 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
-    + crate::arena::slot::<i32>();
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<halfword>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -2639,6 +2642,7 @@ impl Globals {
             bm_cand: __arena.arr(__r_bm_cand, 630193),
             bm_font_version: 0,
             bm_hyph_version: 0,
+            bm_span_cs: 0,
             arena: __arena,
         })
     }
@@ -3163,6 +3167,7 @@ impl Globals {
         v.pod(&mut self.bm_at_switch);
         v.pod(&mut self.bm_font_version);
         v.pod(&mut self.bm_hyph_version);
+        v.pod(&mut self.bm_span_cs);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

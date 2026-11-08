@@ -2335,6 +2335,14 @@ impl Globals {
                 }
             }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
+            // (asked for before a BOX-MEMO span began: still asked for, and
+            // taken at the first command after the span, where a replay of
+            // the span, which runs no command, leaves it asked for too)
+            REQ_TIMED if crate::boxmemo::span_recording(self) => {
+                if self.ckpt_request == 0 {
+                    self.ckpt_request = REQ_TIMED;
+                }
+            }
             REQ_TIMED => {
                 // Held back as segment checkpoints are (`segment_hold`):
                 // where retention would merge it away (`incr::thin`: more
@@ -2780,9 +2788,12 @@ impl Globals {
             self.layer().lines += 1;
             return;
         }
+        // (not inside a BOX-MEMO span: the next line read after it)
+        let span = crate::boxmemo::span_recording(self);
         let l = self.layer();
         l.lines += 1;
         if l.timed_s > 0.0
+            && !span
             && l.last_checkpoint
                 .max(l.timed_held_at)
                 .is_some_and(|t| t.elapsed().as_secs_f64() >= l.timed_s)
@@ -2863,6 +2874,13 @@ impl Globals {
                 self.ckpt_request = REQ_PREAMBLE_LINE;
             }
         }
+    }
+
+    /// BOX-MEMO's spans are not offered where `input_ln`'s reads note the
+    /// preamble's lines (`maybe_request_timed_checkpoint`): a replay reads
+    /// its lines without those notes.
+    pub(crate) fn span_in_preamble(&mut self) -> bool {
+        self.in_preamble()
     }
 
     /// Before `\document` is expanded, in a run that takes S₀ and asks for

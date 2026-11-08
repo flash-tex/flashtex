@@ -652,6 +652,7 @@ impl Globals {
         self.bm_at_switch = false;
         self.bm_font_version = 0i32;
         self.bm_hyph_version = 0i32;
+        self.bm_span_cs = 0i32;
         self.bm_on = self.flashtex_bm_enabled();
         // §182
         {
