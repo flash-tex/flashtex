@@ -299,16 +299,6 @@ name = "flashtex-docstrip"
 version = "0.1.0"
 
 [[package]]
-name = "flashtex-document-runtime"
-version = "0.1.0"
-dependencies = [
- "flashtex-project-files",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "flashtex-document-style"
 version = "0.1.0"
 

@@ -12,8 +12,12 @@ candidate with `FLASHTEX_POOL`, `FLASHTEX_FORMATS`, `SOURCE_DATE_EPOCH=0`.
 
 ```sh
 python3 tools/fuzz/parsers/pdfinc.py --out DIR --iterations 300 \
-  --seed 1 --timeout 10 [--candidate ~/engine/bin/pdftex]
+  --seed 1 --timeout 10 [--candidate ~/engine/bin/pdftex] [--reference PDFTEX]
 ```
+
+The reference pdfTeX (seed PDFs and the unmutated-seed sanity run) is
+`--reference`, else the first `pdftex` on PATH, else MacTeX's
+`/Library/TeX/texbin/pdftex`. A missing reference exits 2 with an error.
 
 Classes: `crash` (signal, exit 101, or `panicked at`), `hang`
 (timeout), `ok` (exit 0), `graceful-error` (other nonzero). Crash/hang

@@ -48,6 +48,7 @@ fn redirector_urls_try_redirector_then_fallback_while_others_try_once() {
 
     assert_eq!(candidate_urls("https://ctan.org/json/2.0/pkg/cancel"), ["https://ctan.org/json/2.0/pkg/cancel"]);
     assert_eq!(candidate_urls("https://registry.example/tex/macros/latex/contrib/p/p.sty"), ["https://registry.example/tex/macros/latex/contrib/p/p.sty"]);
+    assert_eq!(candidate_urls("https://mirrors.ctan.org.evil.com/x"), ["https://mirrors.ctan.org.evil.com/x"], "a lookalike host is not the redirector");
 }
 
 #[test]
