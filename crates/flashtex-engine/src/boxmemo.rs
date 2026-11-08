@@ -1696,7 +1696,11 @@ impl Globals {
     /// K2 leaves out (the box registers, and the registers KR keys
     /// precisely, BOX-MEMO.md §10.1).
     fn bm_k2_kind(p: i32) -> Option<K2Kind> {
-        if (BOX_BASE..BOX_BASE + 256).contains(&p) || Self::bm_is_register(p) {
+        if (BOX_BASE..BOX_BASE + 256).contains(&p)
+            || Self::bm_is_register(p)
+            // MUTANT: the category codes left out of K2
+            || (k::cat_code_base..k::cat_code_base + 256).contains(&p)
+        {
             None
         } else if p < LOCAL_BASE {
             Some(K2Kind::Glue)
