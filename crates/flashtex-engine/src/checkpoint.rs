@@ -2335,6 +2335,9 @@ impl Globals {
                 }
             }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
+            // (asked for before a BOX-MEMO span began: asked again at the
+            // first line read after it, `maybe_request_timed_checkpoint`)
+            REQ_TIMED if crate::boxmemo::span_recording(self) => {}
             REQ_TIMED => {
                 // Held back as segment checkpoints are (`segment_hold`):
                 // where retention would merge it away (`incr::thin`: more
@@ -2780,9 +2783,12 @@ impl Globals {
             self.layer().lines += 1;
             return;
         }
+        // (not inside a BOX-MEMO span: the next line read after it)
+        let span = crate::boxmemo::span_recording(self);
         let l = self.layer();
         l.lines += 1;
         if l.timed_s > 0.0
+            && !span
             && l.last_checkpoint
                 .max(l.timed_held_at)
                 .is_some_and(|t| t.elapsed().as_secs_f64() >= l.timed_s)

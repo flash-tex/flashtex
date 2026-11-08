@@ -132,7 +132,14 @@ else begin if intr_rec_on then flashtex_intr_next;
   end;
 @z
 
-<<<<<<< HEAD
+@x pdftex.web l.8764 - a recording ends where |big_switch|'s |get_x_token| leaves its last level
+  end_token_list; goto restart; {resume previous level}
+@y
+  end_token_list;
+  if bm_rec_on then flashtex_bm_popped;
+  goto restart; {resume previous level}
+@z
+
 @x pdftex.web l.8836 - a span's recording keeps each line its file level reads
   begin if input_ln(cur_file,true) then {not end of file}
     firm_up_the_line {this sets |limit|}
@@ -141,14 +148,6 @@ else begin if intr_rec_on then flashtex_intr_next;
     begin firm_up_the_line; {this sets |limit|}
     if bm_rec_on then flashtex_bm_line_read;
     end
-=======
-@x pdftex.web l.8764 - a recording ends where |big_switch|'s |get_x_token| leaves its last level
-  end_token_list; goto restart; {resume previous level}
-@y
-  end_token_list;
-  if bm_rec_on then flashtex_bm_popped;
-  goto restart; {resume previous level}
->>>>>>> origin/main
 @z
 
 @x pdftex.web l.8961 (after changes/intrinsics.ch) - every expansion a recording makes is checked
