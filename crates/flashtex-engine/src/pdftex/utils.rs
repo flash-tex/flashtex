@@ -959,21 +959,15 @@ impl Globals {
     /// numbers.
     pub fn pdfsetmatrix(&mut self, p: i32, cur_h: i32, cur_v: i32) -> i32 {
         let text = self.pool_bytes_from(p);
-        let text = String::from_utf8_lossy(&text);
         with_state(|st| {
             if !st.utils.page_mode {
                 return 1;
             }
-            let nums: Vec<&str> = text.split_whitespace().collect();
-            if nums.len() != 4 {
-                return 0;
-            }
-            let mut v = [0f64; 4];
-            for (i, n) in nums.iter().enumerate() {
-                match n.parse::<f64>() {
-                    Ok(x) => v[i] = x,
-                    Err(_) => return 0,
-                }
+            // C's own sscanf, not Rust's float parsing: it splits `1-0` and
+            // `.5.5` into two numbers and reads hexadecimal ones
+            let (n, v) = super::cfmt::scan_matrix(&text);
+            if n != 4 {
+                return 0; // failure
             }
             let [a, b, c, d] = v;
             let e = cur_h as f64 * (1.0 - a) - cur_v as f64 * c;
