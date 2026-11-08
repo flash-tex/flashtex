@@ -985,6 +985,11 @@ is the recording's high mark if it raised it; if not, the variant is taken only 
 `max_buf_stack` is at least what it was at the recording's call (a restored checkpoint can leave it
 lower), so a replay leaves the high mark the normal path would.
 
+A span that read no line (it ends on the line it began on) leaves the buffer's line alone: the
+text before the call is not in the key, and a replay that put the recorded run's back showed in
+the next error's context on that line (`\show`'s "l.1 ..."; lane AUDIT-SPANS,
+`spans_on_one_line_keep_the_text_before_them`).
+
 ### 17.3 Paragraphs begun by a picture
 
 `\begin{tikzpicture}` in vertical mode begins a paragraph (`\leavevmode`), which is open at the

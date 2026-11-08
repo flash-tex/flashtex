@@ -861,6 +861,34 @@ fn spans_fall_back_when_the_file_changed() {
 }
 
 #[test]
+fn spans_on_one_line_keep_the_text_before_them() {
+    // (lane AUDIT-SPANS) a picture that ends on the line it began on reads
+    // no line, and its key holds the line from `\begin{pic}` on, not the
+    // text before it. With that text rewritten between inputs (to the same
+    // length: `\relax` to `\empty`) the picture replays, and must leave the
+    // buffer's line as the file has it: `\show`'s error context after it on
+    // that line prints the line ("l.1 \empty ...", short enough to be
+    // printed whole), not the recorded run's
+    let s = check_files(
+        "span-prefix",
+        &[(
+            "t.tex",
+            &[
+                SPAN_PRELUDE,
+                "\\def\\empty{}\n\
+                 \\def\\pv#1{\\toks0={#1\\begin{pic}\\end{pic}\\show a}\
+                 \\immediate\\openout3=p.tex \\immediate\\write3{\\the\\toks0}\\immediate\\closeout3 }\n\
+                 \\pv\\relax\\one\\one\\pv\\empty\\one\\one\\par\\showlists\\stop\n",
+            ]
+            .concat(),
+        )],
+        "pic",
+    );
+    // the second input before the rewrite, both after it
+    assert_eq!(stat(&s, "hits"), 3, "{s}");
+}
+
+#[test]
 fn calls_in_math_groups_compare_their_save_stack() {
     // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
     // display, and of a display's `\\eqno` (cleveref's prefix under
