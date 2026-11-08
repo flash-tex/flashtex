@@ -496,3 +496,29 @@ fn calls_in_math_groups_compare_their_save_stack() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+#[test]
+fn a_font_identifier_made_by_a_call_never_replays() {
+    // (#2184) `\\font\\b=cmr10` of a font already loaded makes `\\b` the
+    // font's identifier (`eqtb[font_id_base+f]`, `font_id_text(f)`, what
+    // `\\the\\font` and box displays name) outside `eq_define`; `\\font\\c`
+    // between the calls makes it `\\c`. A replay would leave `\\c` where the
+    // call makes it `\\b` again, so the recording is abandoned and nothing
+    // replays
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "font-id",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\font\\a=cmr10 \\a\n\
+         \\def\\measure#1{\\begingroup\\font\\b=cmr10 \\setbox0\\hbox{\\b #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\show{\\setbox1\\hbox{x}\\showbox1 \\message{[\\expandafter\\string\\the\\font|\\the\\dimen1]}}\n\
+         \\measure{x}\\show\\measure{x}\\show\\font\\c=cmr10 \\show\\measure{x}\\show\
+         \\font\\c=cmr10 \\measure{x}\\show\\measure{x}\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}

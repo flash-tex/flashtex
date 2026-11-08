@@ -159,7 +159,10 @@ later.
   refused.
 - **Assignments that change K5's arrays** (`\fontdimen`, `\hyphenchar`, `\skewchar`, the pdfTeX font
   codes, `\hyphenation`). A new font, string or control sequence (`font_ptr`, `fmem_ptr`, `str_ptr`,
-  `pool_ptr`, `hash_used` changed).
+  `pool_ptr`, `hash_used` changed). `\font`, `\letterspacefont` and `\pdfcopyfont` even when they
+  name a font already loaded: they make the identifier just defined the font's own
+  (`eqtb[font_id_base+f]`, `font_id_text(f)`, which `\the\font` and box displays show) outside
+  `eq_define` (#2184).
 - **A local assignment at the call's own group level.** The save stack below the call must be
   untouched; inside its groups anything goes.
 - **Output of any kind** (log and terminal length, `file_offset`, `term_offset`). Errors (`history`,

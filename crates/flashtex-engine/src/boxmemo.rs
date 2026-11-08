@@ -3518,6 +3518,13 @@ impl Globals {
             k::set_page_dimen,
             k::set_page_int,
             k::set_prev_graf,
+            // `\\font`, `\\letterspacefont`, `\\pdfcopyfont` make the font's
+            // identifier the one just defined (`eqtb[font_id_base+f]`,
+            // `font_id_text(f)`, which `\\the\\font` and box displays show)
+            // outside `eq_define`, which a replay would not do again (#2184)
+            k::def_font,
+            k::letterspace_font,
+            k::pdf_copy_font,
         ]
         .contains(&c)
         {
