@@ -999,8 +999,14 @@ A control sequence this revision leaves out of the key is always assigned in the
 first delivered as the assignment's target (`get_r_token`) or looked up. That delivery keeps a
 token read for it, which covers what an in-place read of it could depend on.
 
-The regression test for the hole and the measured cost of reading through `get_next` are in the
-next PR (lane L6, #2064, `agent/kabir-claude-l6/bm-inplace`).
+**The regression test and the cost** (lane L6, #2064). The test
+`a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on when the
+loops are left as they were. The cost falls on recordings: E3's fit puts a recording at 0.80 M →
+1.09 M instructions (run 41355152102). A run that records nothing is unchanged.
+
+Reporting each control sequence from the loops instead (`if bm_rec_on then flashtex_bm_token(q)`
+beside the read-set's hook) halved that. It cost every run 0.2–0.7 %, BOX-MEMO off included
+(run 41357526880), so it was not kept.
 
 **An assignment at the call's own level, or a global one, is final** (lane BEAMER-FRAME). What
 the control sequence held before the call cannot come back inside the call after it: no group of
@@ -1023,7 +1029,8 @@ and 668 → 571 hits a window, 172.9 → 246.2 M a keystroke (PC runs 4137741723
 - `\ifx\reserved@a` before the `\def`, and an `\edef` that reads its own target, which are keyed;
 - a `\def` in a group of the call's own and a read after its `\endgroup`, which is keyed;
 - an argument (`get_next`, `matching`) that becomes `\outer`, which is a miss; while it only
-  changes meaning, it hits.
+  changes meaning, it hits;
+- a body's token, read in place, that turns into a `#`, which is a miss (`bm-inplace`).
 
 ## 18. Revision 9: xkeyval's `\setkeys`, `\usebeamercolor`, and cheaper replays (lane BEAMER-FRAME, 2026-11-01)
 

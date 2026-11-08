@@ -507,6 +507,28 @@ fn an_argument_that_turns_outer_is_a_miss() {
 }
 
 #[test]
+fn a_token_that_turns_into_a_parameter_is_a_miss() {
+    // `\x` in a body that is not expanded is read only as a token: the key
+    // holds that it is not a `#` (nor `\outer`, `&`, `\if`, `\fi`). Once it
+    // is one, `\def` takes it as a parameter (an error here), so that call
+    // must not be replayed. changes/throughput.ch [7] read the body's tokens
+    // in place, unseen by the recording: with that, this log differs.
+    let s = check(
+        "token",
+        &[
+            RESERVED,
+            "\\def\\measure#1{\\def\\tmp{\\x #1}\\begingroup\\setbox0\\hbox{\\vrule width 1pt}\
+             \\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\let\\x\\relax\\measure{1}\\show\\measure{1}\\show\\let\\x=#\\measure{1}\\show\
+             \\let\\x\\relax\\measure{1}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    assert!(stat(&s, "k3_tokens") >= 1, "{s}");
+}
+
+#[test]
 fn a_meaning_defined_twice_at_the_call_level_is_not_keyed() {
     // `\@ifnextchar`'s shape, twice in one call: the first `\def` frees
     // what `\reserved@a` held (the free list then begins with its nodes),
