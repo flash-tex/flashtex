@@ -4843,7 +4843,12 @@ impl Session {
         };
         self.reemit_from = Some(ck);
         self.tests_from = Some(page + 2);
+        // Never protected from newer work (`Obs::protect_edit`: it ships no
+        // edit), and its stop says nothing of the keys' compiles: the next
+        // one is protected as it would be without it (`starved`).
+        let starved = std::mem::take(&mut self.starved);
         let r = self.compile(None);
+        self.starved = starved;
         // (never the next edit's: a run that returned before its tests)
         self.tests_from = None;
         if let Some(p) = self.paused.as_mut() {
