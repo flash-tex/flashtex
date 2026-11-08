@@ -727,6 +727,7 @@ fn edits_tools_and_preemption_leave_the_output_files_exact() {
 
 /// A document whose `.aux` names `bib` as its database, made without a
 /// class (so a confined compile reads nothing from the TeX tree).
+#[cfg(unix)]
 fn aux_only_doc(bib: &str) -> String {
     format!(
         "\\makeatletter\\immediate\\openout1=\\jobname.aux\n\
@@ -741,7 +742,8 @@ fn aux_only_doc(bib: &str) -> String {
 /// untrusted project) neither reads nor hashes nor gives bibtex a `.bib`
 /// file outside the allowed roots (#2057): an absolute `\bibdata` outside
 /// is missing, as one that does not exist is. Unconfined, the same
-/// document runs bibtex.
+/// document runs bibtex. (Unix: the path is written into TeX as it is.)
+#[cfg(unix)]
 #[test]
 fn a_confined_host_does_not_read_an_outside_bib_file() {
     if tex_bin().is_none() {
