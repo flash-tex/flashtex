@@ -1,6 +1,7 @@
 //! FS-WATCH (lane T7-LAST12; DESIGN.md §5.1, §1.2): the signatures the
-//! host's per-compile checks take of files outside the document, vouched
-//! for by the kernel's file events instead of a `stat` each.
+//! host's per-compile checks take of the files a run read, TeX Live's and
+//! the document's own, vouched for by the kernel's file events instead of a
+//! `stat` each.
 //!
 //! At every keystroke the host checks that nothing S₀ and the later
 //! checkpoints read has changed: S₀'s key (`host::Key::check_files`), the
@@ -8,25 +9,50 @@
 //! the resolver's on-disk directories (`refresh_disk_dirs`). A beamer
 //! preamble reads 189 files of TeX Live's tree, and with the directories and
 //! the lookups' answers that is about 600 `stat` calls a keystroke (PC
-//! strace, beamer-30).
+//! strace, beamer-30). A book's own files are as many again: on *Infinite
+//! Descent* ×2 the key and the journal list 262 of the document's files and
+//! directories, read relative to it (`./book/...`), and the lookups' proofs
+//! ask whether 885 of them are readable (an `open` each): about 60 M of the
+//! 100 M instructions before the restore (lane FIND-PHASE).
 //!
 //! **What is vouched for.** Inside a check ([`check`], which first drains
 //! the kernel's queue of events, [`sync`]), [`sig`] gives a path's
 //! signature as a `stat` at an earlier check gave it, when no event has
-//! arrived since for the path itself or for any directory on the way to it
-//! (as written, and as its canonical path: the directories a symbolic link
-//! on the way points into). Anything else is a `stat`:
+//! arrived since that can change it (on the path as written, and as its
+//! canonical path: the directories a symbolic link on the way points into):
+//! * any event on the object itself, and on the directory holding it (an
+//!   entry renamed over it);
+//! * past a missing component, any event on the deepest existing directory
+//!   (the component's creation) and on the one holding it;
+//! * on every directory further up, an event about the directory itself
+//!   only: renamed, moved, removed, revoked, its attributes changed
+//!   (`Dep::whole` false). Its other entries being made and removed -- a
+//!   home directory or `/tmp` above the document, where other programs
+//!   write all the time -- cannot change what the path names: only the one
+//!   entry on the way can, and that entry is a directory watched itself,
+//!   whose rename or removal is an event on it (`NOTE_RENAME`,
+//!   `NOTE_DELETE`; `IN_MOVE_SELF`, `IN_DELETE_SELF`; a directory can be
+//!   renamed over only an empty one, which then has no entry on the way);
+//! * except where the entry on the way is a symbolic link: replacing a link
+//!   raises an event only on the directory holding it, which then counts
+//!   every event.
+//!
+//! A relative path is taken in the working directory of the check (the
+//! hosts change it only between compiles, `os::cwd_scope`). Anything else
+//! is a `stat`:
 //! * a path never seen (the watches are made *before* the `stat` that is
 //!   kept, so a change between them shows as an event: the startup case);
 //! * the queue overflowed or could not be read (every path is then
 //!   unvouched until its next `stat`);
 //! * a watch could not be made (descriptor or watch limits), the file is on
 //!   a volume that is not local (NFS, SMB, FUSE, overlayfs: changes made
-//!   elsewhere raise no event), or the path is relative, or under the
-//!   document's directory or output directory ([`exclude`]), which the
-//!   host and the run write at every compile;
+//!   elsewhere raise no event), or the path has a `.` or `..` component
+//!   inside it, or is under the output directory ([`exclude`]), which the
+//!   run writes at every compile;
 //! * the kept signature is racy (`StatSig::racy`): it equals nothing, and
-//!   the caller compares content; a later `stat` may give one that is not.
+//!   the caller compares content; a later `stat` may give one that is not
+//!   (taken under the watches already made while they all hold: the file
+//!   the user types in is racy at every keystroke).
 //!
 //! Outside a check [`sig`] is `StatSig::of`: the run's own recording (a
 //! lookup's directories as it makes them) is never served from here, so a
@@ -38,14 +64,20 @@
 //! sees it and the path is `stat`ed again; a change after the drain is a
 //! change after the check, which the `stat`s can miss as well. Not seen:
 //! a write through a shared `mmap`, which raises no event (TeX Live's
-//! installers do not write so).
+//! installers and editors do not write so).
 //!
 //! **Platforms.** Linux: `inotify`, one watch per directory and per file
 //! (a write through another hard link reaches the file's own watch); a
 //! directory's events about its entries' data are ignored, each file
-//! looked at having its own watch. macOS: `kqueue` `EVFILT_VNODE` on a
-//! descriptor opened `O_EVTONLY` per directory and file (a directory's
-//! `NOTE_WRITE` is a change of its entries). Elsewhere: off (every call a
+//! looked at having its own watch; one with a name is about its entries,
+//! one without (`IN_ATTRIB`, `IN_DELETE_SELF`, `IN_MOVE_SELF`) about the
+//! directory itself. macOS: `kqueue` `EVFILT_VNODE` on a descriptor opened
+//! `O_EVTONLY` per directory and file (a directory's `NOTE_WRITE` and
+//! `NOTE_LINK` are changes of its entries; `NOTE_RENAME`, `NOTE_DELETE`,
+//! `NOTE_REVOKE` and `NOTE_ATTRIB` its own; as measured on APFS: an entry
+//! renamed over a file posts `NOTE_DELETE` on the file and `NOTE_WRITE` on
+//! its directory, a directory renamed `NOTE_RENAME` on it, a symbolic link
+//! replaced `NOTE_WRITE` on its directory only). Elsewhere: off (every call a
 //! `stat`). The host turns it on ([`enable`]); `FLASHTEX_FSWATCH=off`
 //! keeps it off.
 
@@ -61,10 +93,15 @@ const MAX_WATCHES: usize = 8192;
 thread_local! {
     /// Inside [`check`] on this thread.
     static IN_CHECK: Cell<bool> = const { Cell::new(false) };
-    /// The check's own answers for paths no watch vouches for (the
-    /// document's files): one `stat` each per check, the check taken as of
-    /// one moment (a change between two `stat`s of one check is a change
-    /// after it, as for one `stat`). Emptied by every [`check`].
+    /// The working directory of the check, in which a relative path is
+    /// watched (`os::cwd`, taken at the check's first relative path; `None`
+    /// until then, `Some(None)`: not known).
+    static CWD: std::cell::RefCell<Option<Option<String>>> = const { std::cell::RefCell::new(None) };
+    /// The check's own answers for paths no watch vouches for (the output
+    /// directory's files, racy signatures): one `stat` each per check, the
+    /// check taken as of one moment (a change between two `stat`s of one
+    /// check is a change after it, as for one `stat`). Emptied by every
+    /// [`check`].
     #[allow(clippy::type_complexity)]
     static MEMO: std::cell::RefCell<HashMap<String, (Option<Option<StatSig>>, [Option<bool>; 2])>> =
         std::cell::RefCell::new(HashMap::new());
@@ -106,8 +143,8 @@ pub fn enabled() -> bool {
     W.lock().unwrap().is_some()
 }
 
-/// Paths under `prefix` (the document's directory, its output directory)
-/// are never watched: `stat`ed every time.
+/// Paths under `prefix` (the output directory) are never watched:
+/// `stat`ed at every check.
 pub fn exclude(prefix: &str) {
     if let Some(w) = W.lock().unwrap().as_mut() {
         let p = prefix.trim_end_matches('/').to_string();
@@ -131,19 +168,76 @@ pub fn sync() {
 /// answers on this thread until the guard is dropped.
 pub struct Check {
     was: bool,
+    cwd: Option<Option<String>>,
 }
 
+#[track_caller]
 pub fn check() -> Check {
+    if debug() {
+        eprintln!("[fswatch] check at {}", std::panic::Location::caller());
+    }
     sync();
     MEMO.with(|m| m.borrow_mut().clear());
+    let cwd = CWD.with(|c| c.replace(None));
     let was = IN_CHECK.with(|c| c.replace(true));
-    Check { was }
+    Check { was, cwd }
 }
 
 impl Drop for Check {
     fn drop(&mut self) {
         IN_CHECK.with(|c| c.set(self.was));
+        CWD.with(|c| *c.borrow_mut() = self.cwd.take());
     }
+}
+
+/// `path` as the watches know it: absolute, a relative path in the check's
+/// working directory (leading `./` dropped). `None`: not watched (a `.` or
+/// `..` component inside it, or no working directory known).
+fn watched_as(path: &str) -> Option<std::borrow::Cow<'_, str>> {
+    use std::borrow::Cow;
+    let p = if path.starts_with('/') {
+        Cow::Borrowed(path)
+    } else {
+        let mut rest = path;
+        while let Some(r) = rest.strip_prefix("./") {
+            rest = r.trim_start_matches('/');
+        }
+        let rest = rest.trim_end_matches('/');
+        let p = CWD.with(|c| {
+            let mut c = c.borrow_mut();
+            let cwd = c.get_or_insert_with(|| {
+                crate::os::cwd()
+                    .ok()
+                    .and_then(|c| c.to_str().map(str::to_string))
+                    .filter(|c| names_here(c))
+            });
+            let cwd = cwd.as_deref()?.trim_end_matches('/');
+            Some(match rest {
+                "" | "." if cwd.is_empty() => "/".to_string(),
+                "" | "." => cwd.to_string(),
+                r => format!("{cwd}/{r}"),
+            })
+        })?;
+        Cow::Owned(p)
+    };
+    if p.contains("/./") || p.contains("/../") || p.ends_with("/.") || p.ends_with("/..") {
+        return None;
+    }
+    Some(p)
+}
+
+/// Whether `dir` (absolute) names the process's working directory now, in
+/// which the system resolves a relative path: the watches are on the name
+/// (`os::cwd` is taken once per compile, `os::cwd_scope`), so a name that
+/// went elsewhere -- the directory renamed under the process -- watches
+/// nothing relative. (A rename after this is an event of the directory's
+/// own on its watch, and this is asked again at the next check.)
+fn names_here(dir: &str) -> bool {
+    dir.starts_with('/')
+        && match (std::fs::metadata("."), std::fs::metadata(dir)) {
+            (Ok(a), Ok(b)) => a.is_dir() && file_id(&a) == file_id(&b),
+            _ => false,
+        }
 }
 
 /// `path`'s signature: inside a [`check`], the kept one where the events
@@ -157,7 +251,9 @@ pub fn sig(path: &str) -> Option<StatSig> {
         drop(g);
         return StatSig::of(path);
     };
-    if let Some(s) = w.kept(path).and_then(|e| e.sig) {
+    let key = watched_as(path);
+    let kept = key.as_deref().and_then(|k| w.kept(k));
+    if let Some(s) = kept.and_then(|e| e.sig) {
         count(0);
         return s;
     }
@@ -165,7 +261,12 @@ pub fn sig(path: &str) -> Option<StatSig> {
         return s;
     }
     count(1);
-    let deps = w.arm(path);
+    // (an entry whose watches all hold needs none made again: the racy
+    // file the user types in, at every keystroke)
+    let deps = match kept {
+        Some(e) => Some(e.deps.clone()),
+        None => key.as_deref().and_then(|k| w.arm(k)),
+    };
     let s = StatSig::of(path);
     if debug() {
         eprintln!(
@@ -179,8 +280,8 @@ pub fn sig(path: &str) -> Option<StatSig> {
             }
         );
     }
-    match deps {
-        Some(deps) if !s.is_some_and(|s| s.racy) => w.entry(path, deps).sig = Some(s),
+    match (deps, &key) {
+        (Some(deps), Some(k)) if !s.is_some_and(|s| s.racy) => w.entry(k, deps).sig = Some(s),
         _ => MEMO.with(|m| m.borrow_mut().entry(path.to_string()).or_default().0 = Some(s)),
     }
     s
@@ -216,7 +317,9 @@ pub fn readable_as(path: &str, kind: Readable, test: impl FnOnce(&str) -> bool) 
         drop(g);
         return test(path);
     };
-    if let Some(r) = w.kept(path).and_then(|e| e.readable[k]) {
+    let key = watched_as(path);
+    let kept = key.as_deref().and_then(|kk| w.kept(kk));
+    if let Some(r) = kept.and_then(|e| e.readable[k]) {
         count(0);
         return r;
     }
@@ -224,11 +327,24 @@ pub fn readable_as(path: &str, kind: Readable, test: impl FnOnce(&str) -> bool) 
         return r;
     }
     count(1);
-    let deps = w.arm(path);
+    let deps = match kept {
+        Some(e) => Some(e.deps.clone()),
+        None => key.as_deref().and_then(|kk| w.arm(kk)),
+    };
     let r = test(path);
-    match deps {
-        Some(deps) => w.entry(path, deps).readable[k] = Some(r),
-        None => MEMO.with(|m| m.borrow_mut().entry(path.to_string()).or_default().1[k] = Some(r)),
+    if debug() {
+        eprintln!(
+            "[fswatch] readable{k} {path}: {}",
+            if deps.is_none() {
+                "not watched"
+            } else {
+                "kept"
+            }
+        );
+    }
+    match (deps, &key) {
+        (Some(deps), Some(kk)) => w.entry(kk, deps).readable[k] = Some(r),
+        _ => MEMO.with(|m| m.borrow_mut().entry(path.to_string()).or_default().1[k] = Some(r)),
     }
     r
 }
@@ -241,11 +357,28 @@ struct Entry {
     /// Each readable test's answer (`Readable`), if taken under `deps`.
     readable: [Option<bool>; 2],
     /// The watches it depends on, with their generations when it was kept.
-    deps: Vec<(u32, u64)>,
+    deps: Vec<Dep>,
+}
+
+/// A watch an entry depends on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Dep {
+    target: u32,
+    /// Every event on it counts (`Target::gen`), not only those about the
+    /// object itself (`Target::own`): see the module's documentation.
+    whole: bool,
+    /// That generation when the entry was kept.
+    gen: u64,
 }
 
 struct Target {
+    /// Every event so far.
     gen: u64,
+    /// The events about the object itself (renamed, moved, removed,
+    /// revoked, its attributes changed), not about a directory's entries.
+    own: u64,
+    /// The object's device and inode when the watch was made.
+    id: (u64, u64),
     /// Dead (the kernel dropped it, or its object was moved or deleted): a
     /// later arm makes the watch again.
     dead: bool,
@@ -286,17 +419,17 @@ impl Watch {
         let e = self.entries.get(path)?;
         e.deps
             .iter()
-            .all(|&(i, g)| {
+            .all(|d| {
                 self.targets
-                    .get(i as usize)
-                    .is_some_and(|t| !t.dead && t.gen == g)
+                    .get(d.target as usize)
+                    .is_some_and(|t| !t.dead && (if d.whole { t.gen } else { t.own }) == d.gen)
             })
             .then_some(e)
     }
 
     /// `path`'s entry under `deps`: the one kept if it was taken under the
     /// same watches and generations, else a new one.
-    fn entry(&mut self, path: &str, deps: Vec<(u32, u64)>) -> &mut Entry {
+    fn entry(&mut self, path: &str, deps: Vec<Dep>) -> &mut Entry {
         let e = self.entries.entry(path.to_string()).or_default();
         if e.deps != deps {
             *e = Entry {
@@ -307,51 +440,92 @@ impl Watch {
         e
     }
 
-    /// The watches `path` depends on, made where missing: every directory
-    /// on its way (as written and as its canonical path) and the object
-    /// itself if it exists, or, past a missing component, the deepest
-    /// existing directory. `None`: the path is not watched, or a watch could
-    /// not be made.
-    fn arm(&mut self, path: &str) -> Option<Vec<(u32, u64)>> {
-        if !path.starts_with('/')
-            || path.contains("/./")
-            || path.contains("/../")
-            || path.ends_with("/.")
-            || path.ends_with("/..")
-        {
+    /// The watches `path` (absolute, [`watched_as`]) depends on, made
+    /// where missing: every directory on its way (as written and as its
+    /// canonical path) and the object itself if it exists, or, past a
+    /// missing component, the deepest existing directory; each counting
+    /// every event or only those about itself (`Dep::whole`, [`Watch::walk`]).
+    /// `None`: the path is not watched, or a watch could not be made.
+    fn arm(&mut self, path: &str) -> Option<Vec<Dep>> {
+        if !path.starts_with('/') {
             return None;
         }
         if self.excluded.iter().any(|x| under(path, x)) {
             return None;
         }
-        let mut chain: Vec<String> = ancestors(path);
-        // (a link on the way: the directories it points into)
+        let mut deps = self.walk(path)?;
+        // (a link on the way: the directories it points into, taken once
+        // the path's own watches are made, so that a link changed since is
+        // an event on the directory holding it)
         let canon = std::fs::canonicalize(path).ok().or_else(|| {
             let parent = std::path::Path::new(path).parent()?;
             std::fs::canonicalize(parent).ok()
         });
         if let Some(c) = canon.and_then(|c| c.to_str().map(str::to_string)) {
             if c != path {
-                for a in ancestors(&c) {
-                    if !chain.contains(&a) {
-                        chain.push(a);
+                for d in self.walk(&c)? {
+                    match deps.iter_mut().find(|x| x.target == d.target) {
+                        Some(x) if x.whole || !d.whole => {}
+                        Some(x) => *x = d,
+                        None => deps.push(d),
                     }
                 }
             }
         }
-        let mut deps = Vec::with_capacity(chain.len());
-        for t in &chain {
-            // (a missing component: the deepest existing directory above
-            // it is watched, and the component's creation is an event there)
-            let Ok(m) = std::fs::metadata(t) else {
-                continue;
+        Some(deps)
+    }
+
+    /// The watches on the way to `path` (absolute, no `.` or `..`
+    /// components), top down, made where missing, as far as its components
+    /// exist; each counting every event (`Dep::whole`) where it is the
+    /// object or the directory holding it, or past a missing component the
+    /// deepest existing directory or the one holding it, or a directory
+    /// holding a symbolic link on the way; elsewhere only events about the
+    /// directory itself (the module's documentation). A component is
+    /// looked at (`lstat`) before its watch is made and after: one that
+    /// changed meanwhile leaves the path unwatched.
+    fn walk(&mut self, path: &str) -> Option<Vec<Dep>> {
+        let mut v: Vec<Dep> = vec![];
+        for a in ancestors(path) {
+            // (a missing component: nothing past it exists, and its
+            // creation is an event on the deepest existing directory)
+            let Ok(before) = std::fs::symlink_metadata(&a) else {
+                break;
             };
-            if !self.is_local(t, &m) {
+            let m = if before.file_type().is_symlink() {
+                std::fs::metadata(&a).ok()?
+            } else {
+                before.clone()
+            };
+            if !self.is_local(&a, &m) {
                 return None;
             }
-            deps.push(self.target(t)?);
+            let i = self.target(&a, file_id(&m))?;
+            let after = std::fs::symlink_metadata(&a).ok()?;
+            if !same_entry(&before, &after) {
+                return None;
+            }
+            if before.file_type().is_symlink() {
+                if let Some(d) = v.last_mut() {
+                    d.whole = true;
+                }
+            }
+            v.push(Dep {
+                target: i,
+                whole: false,
+                gen: 0,
+            });
         }
-        Some(deps)
+        let n = v.len();
+        for d in v.iter_mut().skip(n.saturating_sub(2)) {
+            d.whole = true;
+        }
+        // (no event is counted before the next check's drain)
+        for d in &mut v {
+            let t = &self.targets[d.target as usize];
+            d.gen = if d.whole { t.gen } else { t.own };
+        }
+        Some(v)
     }
 
     #[cfg(not(unix))]
@@ -371,30 +545,41 @@ impl Watch {
         l
     }
 
-    /// The watch on `p`, made if missing: (index, generation).
-    fn target(&mut self, p: &str) -> Option<(u32, u64)> {
+    /// The watch on `p`, made if missing or if it watches another object
+    /// than `p` names now (`id`: its device and inode, followed): its index.
+    fn target(&mut self, p: &str, id: (u64, u64)) -> Option<u32> {
         if let Some(&i) = self.by_path.get(p) {
             let t = &self.targets[i as usize];
+            if !t.dead && t.id == id {
+                return Some(i);
+            }
             if !t.dead {
-                return Some((i, t.gen));
+                self.bump(i as usize, true, true);
             }
         }
         if self.live >= MAX_WATCHES {
             return None;
         }
         let i = self.targets.len() as u32;
-        let t = self.add(p, i)?;
+        let mut t = self.add(p, i)?;
+        t.id = id;
         self.targets.push(t);
         self.live += 1;
         self.by_path.insert(p.to_string(), i);
-        Some((i, 0))
+        Some(i)
     }
 
-    fn bump(&mut self, i: usize, gone: bool) {
+    /// An event on watch `i`: about the object itself (`own`) or about a
+    /// directory's entries; the watch is gone (`gone`: an event of its own
+    /// too, and it is made again by the next [`Watch::target`]).
+    fn bump(&mut self, i: usize, own: bool, gone: bool) {
         let Some(t) = self.targets.get_mut(i) else {
             return;
         };
         t.gen += 1;
+        if own || gone {
+            t.own += 1;
+        }
         if gone && !t.dead {
             t.dead = true;
             self.live -= 1;
@@ -409,9 +594,30 @@ impl Watch {
     fn bump_all(&mut self) {
         for t in &mut self.targets {
             t.gen += 1;
+            t.own += 1;
         }
         count(3);
     }
+}
+
+/// A file's device and inode, as `metadata` gives them (0 where unknown).
+fn file_id(m: &std::fs::Metadata) -> (u64, u64) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (m.dev(), m.ino())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = m;
+        (0, 0)
+    }
+}
+
+/// Two `lstat`s of one path found the same entry: the same object, of the
+/// same type.
+fn same_entry(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    file_id(a) == file_id(b) && a.file_type() == b.file_type()
 }
 
 /// `path` is `dir` or under it.
@@ -501,6 +707,8 @@ impl Watch {
         self.by_wd.entry(wd).or_default().push(i);
         Some(Target {
             gen: 0,
+            own: 0,
+            id: (0, 0),
             dead: false,
         })
     }
@@ -560,8 +768,10 @@ impl Watch {
                 let Some(ids) = self.by_wd.get(&ev.wd).cloned() else {
                     continue;
                 };
+                // (one without a name is about the watched object itself)
+                let own = ev.len == 0;
                 for i in ids {
-                    self.bump(i as usize, gone);
+                    self.bump(i as usize, own, gone);
                 }
                 if gone {
                     self.by_wd.remove(&ev.wd);
@@ -637,6 +847,8 @@ impl Watch {
         }
         Some(Target {
             gen: 0,
+            own: 0,
+            id: (0, 0),
             dead: false,
             fd,
         })
@@ -676,7 +888,11 @@ impl Watch {
             for &ev in &evs[..n as usize] {
                 let gone = ev.flags & libc::EV_ERROR != 0
                     || ev.fflags & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE) != 0;
-                self.bump(ev.udata as usize, gone);
+                // (a directory's `NOTE_WRITE` and `NOTE_LINK` are about its
+                // entries; on a file every event is the file's own, and a
+                // file is always watched whole)
+                let own = ev.fflags & libc::NOTE_ATTRIB != 0;
+                self.bump(ev.udata as usize, own, gone);
             }
             if (n as usize) < evs.len() {
                 break;
@@ -801,5 +1017,163 @@ mod tests {
             assert_eq!(sig(&p).map(|s| s.len), Some(1));
         }
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Lane FIND-PHASE: a document's own files, deep under directories
+    /// other programs write in. Entries
+    /// made and removed further up leave a path served (no `stat`); every
+    /// change that can change what it names is seen at the next check: the
+    /// file rewritten in place with its time put back, another file renamed
+    /// over it, a directory on the way replaced, a symbolic link on the way
+    /// pointed elsewhere, a missing file made.
+    #[test]
+    fn the_documents_own_files_are_watched_and_their_changes_seen() {
+        let d = std::env::temp_dir().join(format!("fswatch-doc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("doc/a/b")).unwrap();
+        std::fs::create_dir_all(d.join("doc/real")).unwrap();
+        std::fs::create_dir_all(d.join("doc/real2")).unwrap();
+        let d = std::fs::canonicalize(&d).unwrap();
+        let doc = d.join("doc");
+        let s = |p: &std::path::Path| p.to_str().unwrap().to_string();
+        let f = doc.join("a/b/f.tex");
+        std::fs::write(&f, b"one").unwrap();
+        std::fs::write(doc.join("real/h.tex"), b"hh").unwrap();
+        std::fs::write(doc.join("real2/h.tex"), b"other").unwrap();
+        std::os::unix::fs::symlink(doc.join("real"), doc.join("ln")).unwrap();
+        let (pf, ph) = (s(&f), s(&doc.join("ln/h.tex")));
+        let missing = s(&doc.join("a/b/new.tex"));
+        std::env::set_var("FLASHTEX_RACY_MS", "0");
+        enable();
+        assert!(enabled());
+        let vouched = |path: &str| {
+            W.lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|w| w.kept(path).is_some_and(|e| e.sig.is_some()))
+        };
+        let all = || {
+            (
+                sig(&pf).map(|s| s.len),
+                sig(&ph).map(|s| s.len),
+                sig(&missing).map(|s| s.len),
+            )
+        };
+        let start = std::time::Instant::now();
+        loop {
+            let _c = check();
+            assert_eq!(all(), (Some(3), Some(2), None));
+            if [&pf, &ph, &missing].iter().all(|p| vouched(p)) {
+                break;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "served from the watches"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Entries made and removed above the file's directory: still served.
+        for k in 0..3 {
+            for dir in [&d, &doc, &doc.join("a")] {
+                let junk = dir.join(format!("junk{k}"));
+                std::fs::write(&junk, b"j").unwrap();
+                std::fs::remove_file(&junk).unwrap();
+            }
+            let _c = check();
+            assert!(vouched(&pf), "an entry made further up unvouched it");
+            assert_eq!(all(), (Some(3), Some(2), None));
+        }
+        // in place, the same length, the time put back
+        {
+            let mtime = std::fs::metadata(&f).unwrap().modified().unwrap();
+            use std::io::Write;
+            let mut h = std::fs::File::options().write(true).open(&f).unwrap();
+            h.write_all(b"two").unwrap();
+            h.set_modified(mtime).unwrap();
+        }
+        let old = StatSig::of_within(&pf, 0).unwrap();
+        {
+            let _c = check();
+            assert!(!vouched(&pf));
+            assert!(sig(&pf).is_some_and(|s| s.same_fields(&old)));
+        }
+        // another file renamed over it
+        std::fs::write(doc.join("a/b/tmp"), b"three!").unwrap();
+        std::fs::rename(doc.join("a/b/tmp"), &f).unwrap();
+        {
+            let _c = check();
+            assert_eq!(all(), (Some(6), Some(2), None));
+        }
+        // a directory on the way replaced
+        std::fs::rename(doc.join("a"), doc.join("a-old")).unwrap();
+        std::fs::create_dir_all(doc.join("a/b")).unwrap();
+        std::fs::write(&f, b"four").unwrap();
+        {
+            let _c = check();
+            assert_eq!(all(), (Some(4), Some(2), None));
+        }
+        // a symbolic link on the way pointed elsewhere
+        std::fs::remove_file(doc.join("ln")).unwrap();
+        std::os::unix::fs::symlink(doc.join("real2"), doc.join("ln")).unwrap();
+        {
+            let _c = check();
+            assert_eq!(all(), (Some(4), Some(5), None));
+        }
+        // a missing file made
+        std::fs::write(&missing, b"new!!!!").unwrap();
+        {
+            let _c = check();
+            assert_eq!(all(), (Some(4), Some(5), Some(7)));
+            assert!(readable(&missing));
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A relative path is watched as the working directory's entry, while
+    /// the check's name for the directory is the process's (`names_here`).
+    #[test]
+    fn relative_paths_are_watched_in_the_working_directory() {
+        let here = std::env::current_dir().unwrap();
+        let here = here.to_str().unwrap().to_string();
+        assert!(names_here(&here));
+        assert!(!names_here(std::env::temp_dir().to_str().unwrap()));
+        assert!(!names_here("relative"));
+        enable();
+        {
+            let _c = check();
+            assert_eq!(
+                watched_as("./src/fswatch.rs").as_deref(),
+                Some(format!("{here}/src/fswatch.rs").as_str())
+            );
+            assert_eq!(
+                watched_as("././src").as_deref(),
+                Some(format!("{here}/src").as_str())
+            );
+            assert_eq!(watched_as(".").as_deref(), Some(here.as_str()));
+            assert_eq!(watched_as("src/../src"), None);
+            assert_eq!(watched_as("/a/./b"), None);
+        }
+        // (the crate's own source, which nothing writes while the tests run)
+        let abs = format!("{here}/src/fswatch.rs");
+        let start = std::time::Instant::now();
+        loop {
+            let _c = check();
+            let s = sig("./src/fswatch.rs");
+            assert!(s.is_some());
+            let served = W
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|w| w.kept(&abs).is_some_and(|e| e.sig.is_some()));
+            if served {
+                assert_eq!(sig(&abs).map(|s| s.len), s.map(|s| s.len));
+                break;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "a relative path served from the watches"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }

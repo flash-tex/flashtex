@@ -223,6 +223,14 @@ struct Target {
     /// open_s1`, ships from S₁'s page on; the pages before it come with the
     /// fill): stale until sent.
     missing: std::collections::BTreeSet<u32>,
+    /// Forms the pages shipped this compile draw (`Live::deliver` without
+    /// their forms): the engine writes a form after the first page that
+    /// uses it, and sends it then, unless that compile's output was not
+    /// wanted (superseded: a run from the format stopped in its preamble
+    /// still writes the preamble's `\immediate\pdfxform`s, pgf's shadings,
+    /// unsent). Those the client still lacks go from the cache before the
+    /// next page and before DONE (`Live::pay_forms`; spec §5).
+    owed: Vec<u32>,
 }
 
 impl Target {
@@ -381,17 +389,39 @@ impl Live {
         }
         t.missing.remove(&j);
         if forms {
-            for n in &c.e.forms {
-                if let Some(f) = self.forms.get(n) {
-                    if t.ps.forms.get(n) != Some(&f.e.hash) {
-                        if !t.send(&f.e) {
-                            return;
-                        }
-                        t.ps.forms.insert(*n, f.e.hash);
+            self.send_forms(t, &c.e.forms);
+        } else {
+            t.owed.extend(&c.e.forms);
+        }
+    }
+
+    /// Send the cached forms of `ids` that the client lacks.
+    fn send_forms(&self, t: &mut Target, ids: &[u32]) {
+        for n in ids {
+            if let Some(f) = self.forms.get(n) {
+                if t.ps.forms.get(n) != Some(&f.e.hash) {
+                    if !t.send(&f.e) {
+                        return;
                     }
+                    t.ps.forms.insert(*n, f.e.hash);
                 }
             }
         }
+    }
+
+    /// The forms owed to pages shipped this compile (`Target::owed`) that
+    /// the engine has not sent since: from the cache, which holds what the
+    /// engine wrote last under each id. Called before the next page and
+    /// before DONE, when the engine has written the forms of the pages
+    /// before (a page's new forms are written within its ship-out); also
+    /// when the compile's output is no longer wanted, since the client holds
+    /// the pages that draw them.
+    fn pay_forms(&self, t: &mut Target) {
+        if t.owed.is_empty() || t.broken {
+            return;
+        }
+        let owed = std::mem::take(&mut t.owed);
+        self.send_forms(t, &owed);
     }
 
     /// Deliver the cached pages from `t.next` up to (not including) `end`.
@@ -455,6 +485,8 @@ impl Live {
         let Some(mut t) = self.target.take() else {
             return;
         };
+        // (the forms of the pages shipped before this one are written by now)
+        self.pay_forms(&mut t);
         t.emitted += 1;
         t.forms_after = false;
         self.catch_up(&mut t, i as u32);
@@ -541,7 +573,15 @@ struct Doc {
     /// is to be persisted for it once the host is idle.
     viewport: Option<usize>,
     s1_when_idle: bool,
+    /// How the last save of S₁ went (`save_s1`: the page it was taken at,
+    /// or why there is none), which every later DONE says (`s1_save`): a
+    /// refusal is otherwise only in the host's stderr. Shared with the
+    /// writer thread, whose write may fail.
+    s1_saved: S1Saved,
 }
+
+/// [`Doc::s1_saved`].
+type S1Saved = std::sync::Arc<std::sync::Mutex<Option<Result<usize, String>>>>;
 
 /// The external tools of the resident document (`super::external`).
 #[derive(Default)]
@@ -847,11 +887,14 @@ impl Engine {
     fn open(&mut self, job: Job) -> Result<(), String> {
         self.doc = None;
         std::env::set_current_dir(&job.root).map_err(|e| format!("{}: {e}", job.root.display()))?;
-        // (the document's own directories, which the host and the run write
-        // at every compile, are stat'ed at every check: `fswatch`)
-        for d in [job.root.clone(), job.root.join(&job.out_dir)] {
-            crate::fswatch::exclude(&d.to_string_lossy());
-            if let Ok(c) = std::fs::canonicalize(&d) {
+        // (the document's own files are watched like TeX Live's; the output
+        // directory, which the run writes at every compile, is stat'ed at
+        // every check, unless it is the document's directory: `fswatch`)
+        let out = job.root.join(&job.out_dir);
+        let out_c = std::fs::canonicalize(&out).ok();
+        if out_c.is_none() || out_c != std::fs::canonicalize(&job.root).ok() {
+            crate::fswatch::exclude(&out.to_string_lossy());
+            if let Some(c) = out_c {
                 crate::fswatch::exclude(&c.to_string_lossy());
             }
         }
@@ -873,6 +916,7 @@ impl Engine {
             s0_when_idle: false,
             viewport: None,
             s1_when_idle: false,
+            s1_saved: Default::default(),
         });
         Ok(())
     }
@@ -1001,6 +1045,7 @@ impl Engine {
         ps.peer.font_formats = Some(displaylist::parse_font_formats(
             &server::font_formats(&req).join(","),
         ));
+        ps.peer.span_shift = conn.span_shift;
         // (a save of this S₀ still being written by this process: wait for it)
         // (`FLASHTEX_S1=off`: a reopen never uses a stored S₁, which is
         // still saved)
@@ -1034,8 +1079,9 @@ impl Engine {
             vec![("incremental".to_string(), Json::Bool(incremental))],
         );
         if keep {
-            if let Some(src) = ps.peer.moved_spans() {
-                server::send(&out, kind::SOURCES, &src);
+            // Where the spans the client holds went (SPAN_SHIFT and/or SOURCES).
+            for (k, body) in ps.peer.moved() {
+                server::send(&out, k, &body);
             }
         }
         let old_count = self.live.borrow().pages.len().max(s1_head.unwrap_or(0));
@@ -1070,6 +1116,7 @@ impl Engine {
             first_restores: Vec::new(),
             first_io: [(0, 0); 8],
             missing: Default::default(),
+            owed: Vec::new(),
         });
         let stop_at = req
             .int_field("viewport")
@@ -1077,6 +1124,8 @@ impl Engine {
             .map(|v| v as usize + 1);
         let doc = self.doc.as_mut().unwrap();
         doc.viewport = stop_at.map(|s| s - 1);
+        // (the last save of S₁, for this DONE: `Doc::s1_saved`)
+        let s1_saved = doc.s1_saved.lock().unwrap().clone();
         // Preemption: a newer COMPILE from this client (typing) or its
         // CANCEL stops the run at its next page or segment checkpoint; the
         // next compile keeps what it typeset, or goes back to the run it was
@@ -1253,6 +1302,8 @@ impl Engine {
         let stopped = matches!(&result, Ok(r) if r.paused);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
+        // (the forms the shipped pages draw, before DONE: spec §5)
+        live.pay_forms(&mut t);
         let (status, exit_code, count, mode, mut extra) = match &result {
             Ok(rep) => {
                 let count = rep.pages;
@@ -1352,6 +1403,18 @@ impl Engine {
                 }
                 if let Some(n) = rep.s1_fill_converged {
                     extra.push(("s1_fill_converged".to_string(), Json::Int(n as i64)));
+                }
+                // how the document's last save of S₁ went, before this
+                // compile: the page it was taken at, or why there is none
+                // (`save_s1`; a refusal is otherwise only in stderr)
+                if let Some(s) = &s1_saved {
+                    extra.push((
+                        "s1_save".to_string(),
+                        match s {
+                            Ok(p) => obj([("page", Json::Int(*p as i64))]),
+                            Err(e) => obj([("error", js(e.as_str()))]),
+                        },
+                    ));
                 }
                 if !rep.s1_ms.is_empty() {
                     extra.push((
@@ -1827,6 +1890,8 @@ impl Engine {
         let t = Instant::now();
         let r = doc.session.prepare_s1(v, &p0.to_string_lossy());
         let engine_ms = (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
+        let saved = doc.s1_saved.clone();
+        *saved.lock().unwrap() = Some(r.as_ref().map(|x| x.0).map_err(|e| e.clone()));
         let (page, image) = match r {
             Ok(x) => x,
             Err(e) => {
@@ -1851,7 +1916,10 @@ impl Engine {
                     ("write_ms", Json::Num((write_s * 1e4).round() / 10.0)),
                 ])
             )),
-            Err(e) => eprintln!("flashtex-host: saving S1: {e}"),
+            Err(e) => {
+                eprintln!("flashtex-host: saving S1: {e}");
+                *saved.lock().unwrap() = Some(Err(format!("writing it: {e}")));
+            }
         });
         if self.profile.lean {
             let t = Instant::now();

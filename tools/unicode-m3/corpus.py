@@ -20,6 +20,7 @@ both engines run the same effective source (PROPOSAL.md §4.5). Without it the
 """
 import argparse
 import fnmatch
+import glob
 import hashlib
 import json
 import os
@@ -138,6 +139,17 @@ def assemble_case(c, corpus, out, cache, fonts_line):
         meta["source_path"] = c["fonts"]
     else:
         raise SystemExit("%s: no source" % name)
+    # project files beside the main file (a project's own fonts, say):
+    # [[repository glob, directory in the case], ...]
+    for pattern, rel in c.get("files", []):
+        got = sorted(glob.glob(os.path.join(REPO, pattern)))
+        if not got:
+            raise SystemExit("%s: no file matches %s" % (name, pattern))
+        dest = os.path.join(d, rel)
+        os.makedirs(dest, exist_ok=True)
+        for f in got:
+            shutil.copy(f, dest)
+        meta.setdefault("files", []).extend(os.path.join(rel, os.path.basename(f)) for f in got)
     with open(os.path.join(d, META), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=1, ensure_ascii=False)
     return meta

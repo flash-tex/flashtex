@@ -1,0 +1,109 @@
+# Cold command-line compiles, ref against ref and variant against variant, in instructions and
+# cycles (`perf stat`), on the NixOS PC's runner (lane L6; docs/design/engine-v2/L6.md §4;
+# DESIGN.md §5.6 item 1, "every item needs a measured win"). Measurement only, by hand:
+# workflow_dispatch, or a push to an `l6-ab/**` branch, whose tools/incr-bench/l6ab.request
+# (shell assignments of the inputs below, upper case) says what to run. No pull request runs
+# here (DESIGN §9.3). What it runs: tools/incr-bench/l6ab.sh and l6ab.py. Instruction counts do
+# not move with load; cycles and CPU seconds are a reference only when the PC is quiet (each
+# run's load1 is in runs.jsonl).
+name: l6-ab
+
+on:
+  workflow_dispatch:
+    inputs:
+      refs:
+        description: "git refs to build and compare, space-separated (the first is the baseline)"
+        default: "main"
+      docs:
+        description: "l6ab.py --docs (empty: plain-100, full-100, beamer-30, two fixtures)"
+        default: ""
+      variants:
+        description: "NAME=VAR=VALUE VAR=VALUE;NAME=... environments each engine runs in (empty: one)"
+        default: ""
+      reps:
+        description: "measured compiles per cell"
+        default: "3"
+      perf:
+        description: "1: also a perf record (instructions) of the first ref per document"
+        default: "0"
+      macro:
+        description: "documents for a FLASHTEX_MACRO_PROFILE run per engine and variant"
+        default: ""
+  push:
+    branches: ["l6-ab/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: l6-ab-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ab:
+    name: "cold compiles on the PC, ref against ref"
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 240
+    env:
+      CARGO_BUILD_JOBS: "4"
+      REFS: ${{ github.event.inputs.refs || 'main' }}
+      L6AB_DOCS: ${{ github.event.inputs.docs }}
+      L6AB_VARIANTS: ${{ github.event.inputs.variants }}
+      L6AB_REPS: ${{ github.event.inputs.reps || '3' }}
+      L6AB_PERF: ${{ github.event.inputs.perf || '0' }}
+      L6AB_MACRO: ${{ github.event.inputs.macro }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: the request (a push to l6-ab/**)
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          f=tools/incr-bench/l6ab.request
+          [ -f "$f" ] || { echo "::error::a push to l6-ab/** needs $f"; exit 1; }
+          # only these names, so the file cannot set anything else
+          grep -E '^(REFS|L6AB_DOCS|L6AB_VARIANTS|L6AB_REPS|L6AB_PERF|L6AB_MACRO|L6AB_TESTS|L6AB_HOST_DOCS|L6AB_HOST_REPS)=' "$f" \
+            | sed -E "s/^([A-Z0-9_]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
+          cat "$f"
+      - name: perf, this runner's build directories
+        run: |
+          set -euo pipefail
+          if ! command -v perf >/dev/null; then
+            p=$(nix build --no-link --print-out-paths nixpkgs#perf 2>/dev/null | head -1)
+            echo "$p/bin" >> "$GITHUB_PATH"
+          fi
+          echo "CARGO_TARGET_DIR_BASE=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-l6ab" >> "$GITHUB_ENV"
+      - name: build each ref, then the compiles
+        run: |
+          set -o pipefail
+          refs=()
+          for r in $REFS; do
+            if git rev-parse -q --verify "origin/$r^{commit}" >/dev/null; then refs+=("origin/$r"); else refs+=("$r"); fi
+          done
+          tools/incr-bench/l6ab.sh "$RUNNER_TEMP/l6ab" "${refs[@]}" 2>&1 | tee "$RUNNER_TEMP/l6ab.log"
+      - name: summary
+        if: always()
+        run: |
+          r=$RUNNER_TEMP/l6ab/r
+          if [ -f "$r/tests.txt" ]; then { echo '### tests'; echo '```'; cat "$r/tests.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          [ -f "$r/summary.md" ] || exit 0
+          { echo '### L6 A/B (PC)'; cat "$r/engines.txt"; echo; cat "$r/summary.md"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l6-ab
+          path: |
+            ${{ runner.temp }}/l6ab/r/
+            ${{ runner.temp }}/l6ab.log
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: clean up
+        if: always()
+        run: |
+          git worktree prune || true
+          rm -rf "$RUNNER_TEMP/l6ab"
