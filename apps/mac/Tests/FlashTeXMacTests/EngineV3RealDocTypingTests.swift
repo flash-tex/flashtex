@@ -15,8 +15,9 @@ import XCTest
 ///     timing goes on until that compile has settled again (or 120 s), since a freeze may come
 ///     when its results arrive.
 /// It fails when, in either phase, any main run-loop turn is longer than one frame
-/// (`MainThreadStall.frameMs`, 16 ms; `FLASHTEX_REALDOC_STALL_MS` overrides it, 100 in the PR CI),
-/// or any key is not in the editor's text storage within that of being posted, or a key is never handled.
+/// (`MainThreadStall.frameMs`, 16 ms), or any key is not in the editor's text storage within that
+/// of being posted, or a key is never handled. `FLASHTEX_REALDOC_STALL_MS` (100 in the PR CI's
+/// hosted job) makes the frame a soft budget with a hard limit, a count and a total (`Limits`).
 ///
 /// The document: `FLASHTEX_REALDOC_DIR` (an unpacked infdesc-x2 tree: `tools/incr-bench/mkbook.py
 /// infdesc-x2`), entry `FLASHTEX_REALDOC_MAIN` (default `infdesc-x2.tex`), the edited chapter
@@ -83,57 +84,121 @@ final class EngineV3RealDocTypingTests: XCTestCase {
     }
 
     /// The budget: one frame (`MainThreadStall.frameMs`), or `FLASHTEX_REALDOC_STALL_MS` (the PR
-    /// CI's hosted job uses 100 ms: a shared 3-vCPU VM has frame-sized hiccups of its own, and 100 ms
-    /// still catches the owner's freeze, 1.9 s on main; the one-frame bound stays the nightly's and
-    /// the reference's).
+    /// CI's hosted job uses 100 ms as a soft budget, see `Limits`: a shared 3-vCPU VM has hiccups
+    /// of its own; the one-frame bound stays the nightly's and the reference's).
     private var budgetMs: Double {
         ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init) ?? MainThreadStall.frameMs
     }
 
-    /// With `FLASHTEX_REALDOC_STALL_MS` set (the hosted PR job), at most this many keys, and at most
-    /// this many main-run-loop turns, per phase may exceed the soft budget (the env value) as long
-    /// as they stay under `hardLimitMs`. Hosted 3-vCPU VMs have 100-250 ms hiccups unrelated to
-    /// the PR (#2146: 6 of 7 PR runs failed, several on PRs that never touch the app).
-    private static let hostedTolerated = 3
+    /// The gate's limits for one phase. Without `FLASHTEX_REALDOC_STALL_MS` (the nightly, the
+    /// reference Mac) one bound, the one-frame budget, and nothing may cross it. With it (the PR
+    /// job on a GitHub-hosted 3-vCPU VM, #2146: 100 ms there failed 6 of 7 runs, on PRs that never
+    /// touch the app, by 107-470 ms) the env value is a SOFT budget and three limits apply:
+    ///   - `hard`, max(5 x budget, 500 ms): no key and no turn may cross it. The owner's freeze was
+    ///     1.9 s on main (before #1890 and #1900), about 4 x over;
+    ///   - `allowed`, an eighth of the phase's keys and at least 3 (5 of the 40): at most that many
+    ///     keys, and at most that many turns, over the soft budget. One VM pause late-delivers every
+    ///     key posted during it (run 41432961769: turns of 123, 124 and 470 ms back to back made 5
+    ///     keys late), while a regression that costs every key or every compile a long turn shows
+    ///     up about 40 times;
+    ///   - `totalMs`, 3 x `hard`: the turns over the soft budget may add up to at most that, so a
+    ///     freeze cut into turns under `hard` (1.9 s as 5 x 380 ms) still fails. The worst VM noise
+    ///     measured adds up to 0.99 s.
+    struct Limits {
+        var soft: Double
+        var hard: Double
+        var allowed: Int
+        var totalMs: Double
 
-    /// With the env budget set, the hard limit is `max(hardLimitFactor x budget, hardLimitFloorMs)`:
-    /// any key or turn over it fails outright. 500 ms still catches the owner's 1.9 s freeze by
-    /// about 4x. Unset (nightly, reference), there is one limit, the one-frame budget.
-    private static let hardLimitFactor = 5.0
-    private static let hardLimitFloorMs = 500.0
+        static func of(budgetMs: Double, hosted: Bool, wanted: Int) -> Limits {
+            guard hosted else { return Limits(soft: budgetMs, hard: budgetMs, allowed: 0, totalMs: .infinity) }
+            let hard = max(5 * budgetMs, 500)
+            return Limits(soft: budgetMs, hard: hard, allowed: max(3, wanted / 8), totalMs: 3 * hard)
+        }
 
-    private var hostedBudgetMs: Double? {
-        ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init)
+        var text: String {
+            allowed == 0 ? "budget \(soft) ms"
+                : "soft budget \(soft) ms, \(allowed) allowed over it, hard limit \(hard) ms, \(totalMs) ms in all"
+        }
+    }
+
+    /// The misses of one phase: each key's way into the text storage (ms, in the order typed) and
+    /// main's run-loop turns (ms, and when from the phase's start). Empty: the phase passed.
+    nonisolated static func misses(_ name: String, keysMs: [Double], turns: [(ms: Double, atMs: Double)], _ l: Limits) -> [String] {
+        var out: [String] = []
+        let late = keysMs.enumerated().filter { $0.element > l.soft }
+        let lateText = late.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element)) ms" }.joined(separator: ", ")
+        if late.contains(where: { $0.element > l.hard }) {
+            out.append("\(name): a key reached the text storage after the hard limit (\(l.text)): " + lateText)
+        } else if late.count > l.allowed {
+            out.append("\(name): \(late.count) of \(keysMs.count) keys reached the text storage later than the budget (\(l.text)): " + lateText)
+        }
+        let stalls = turns.filter { $0.ms > l.soft }.sorted { $0.ms > $1.ms }
+        let stallText = stalls.prefix(8).map { String(format: "%.1f ms at +%.0f ms", $0.ms, $0.atMs) }.joined(separator: ", ")
+        let total = stalls.reduce(0) { $0 + $1.ms }
+        if stalls.contains(where: { $0.ms > l.hard }) {
+            out.append("\(name): a main run-loop turn over the hard limit (\(l.text)), longest " + stallText)
+        } else if stalls.count > l.allowed {
+            out.append("\(name): \(stalls.count) main run-loop turns over the budget (\(l.text)), longest " + stallText)
+        } else if total > l.totalMs {
+            out.append("\(name): main run-loop turns over the budget add up to \(String(format: "%.0f", total)) ms (\(l.text)): " + stallText)
+        }
+        return out
     }
 
     private func gate(_ p: Phase) {
-        let frame = budgetMs
-        let hard: Double? = hostedBudgetMs.map { max(Self.hardLimitFactor * $0, Self.hardLimitFloorMs) }
-        let allowed = hard == nil ? 0 : Self.hostedTolerated
-        let limits = hard.map { "soft budget \(frame) ms (up to \(allowed) allowed), hard limit \($0) ms" } ?? "budget \(frame) ms"
+        let hosted = ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init) != nil
+        let limits = Limits.of(budgetMs: budgetMs, hosted: hosted, wanted: p.wanted)
         XCTAssertEqual(p.keys.count, p.wanted, "\(p.name): \(p.wanted - p.keys.count) of \(p.wanted) keys never handled")
-        let late = p.keys.enumerated().filter { $0.element.ms > frame }
-        let lateList = late.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element.ms)) ms" }.joined(separator: ", ")
-        let lateHard = late.filter { $0.element.ms > (hard ?? .infinity) }
-        if !lateHard.isEmpty {
-            XCTFail("\(p.name): HARD limit crossed by \(lateHard.count) keys (\(limits)): "
-                    + lateHard.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element.ms)) ms" }.joined(separator: ", "))
-        } else {
-            XCTAssertLessThanOrEqual(late.count, allowed, "\(p.name): \(late.count) of \(p.keys.count) keys reached the text storage later than the "
-                                     + "budget, more than the \(allowed) allowed (\(limits)): " + lateList)
-        }
         let missing = p.keys.filter { !$0.inStorage }.count
         XCTAssertEqual(missing, 0, "\(p.name): \(missing) keys not in the editor's text storage")
-        let stalls = p.report.over(frame)
-        let stallList = stalls.prefix(8).map { String(format: "%.1f ms at +%.0f ms", $0.ms, Double($0.startNs &- p.report.startNs) / 1e6) }
-            .joined(separator: ", ")
-        let stallHard = stalls.filter { $0.ms > (hard ?? .infinity) }
-        if !stallHard.isEmpty {
-            XCTFail("\(p.name): HARD limit crossed by \(stallHard.count) main run-loop turns (\(limits)); turns over budget: " + stallList)
-        } else {
-            XCTAssertLessThanOrEqual(stalls.count, allowed, "\(p.name): \(stalls.count) main run-loop turns over the budget, more than the "
-                                     + "\(allowed) allowed (\(limits)), longest " + stallList)
+        let turns = p.report.over(limits.soft).map { (ms: $0.ms, atMs: Double($0.startNs &- p.report.startNs) / 1e6) }
+        for miss in Self.misses(p.name, keysMs: p.keys.map(\.ms), turns: turns, limits) { XCTFail(miss) }
+    }
+
+    /// The limits themselves, on the numbers #2146 measured (no TeX or book needed: this runs in
+    /// the mac-app job): every hosted noise run passes, and the freeze fails however it comes.
+    func testTheHostedLimitsPassTheMeasuredNoiseAndFailTheFreeze() {
+        let hosted = Limits.of(budgetMs: 100, hosted: true, wanted: 40)
+        XCTAssertEqual([hosted.hard, Double(hosted.allowed), hosted.totalMs], [500, 5, 1500])
+        func keys(_ late: [Double]) -> [Double] { late + Array(repeating: 5, count: 40 - late.count) }
+        func turns(_ ms: [Double]) -> [(ms: Double, atMs: Double)] { ms.enumerated().map { (ms: $0.element, atMs: Double($0.offset) * 100) } }
+        // Every hosted phase that missed 100 ms in #2146's runs and main's 41510925330: the keys
+        // and the turns over 100 ms, from the runs' RealDocTyping lines and failures.
+        let noise: [(String, [Double], [Double])] = [
+            ("41510925330 (main) cold", [107.1], [120.1]),
+            ("41466466009 late", [], [118.8]),
+            ("41432999342 late", [], [159.3, 121.7, 102.9]),
+            ("41432961769 cold", [], [116.0]),
+            ("41432961769 late", [253.8, 439.4, 354.3, 275.1, 108.2], [470.5, 138.1, 134.0, 124.0, 123.4]),
+            ("41427377621 cold", [], [161.1, 149.7, 142.8]),
+            ("41427377621 late", [], [104.4]),
+            ("41389406318 cold", [], [102.7]),
+            ("41389406318 late", [147.5, 149.5], [197.5, 149.2, 130.5, 116.6]),
+            ("41385226411/2 late", [128.8], [238.1]),
+            ("41385226411/3 cold", [], [119.1]),
+            ("41385226411/3 late", [], [111.1, 103.2]),
+            ("41385296674/2 cold", [], [139.3]),
+            ("41385296674/2 late", [142.9], [232.1, 113.6, 107.2]),
+            ("41385296674/3 cold", [], [143.9]),
+            ("41385296674/3 late", [106.7], [107.1]),
+        ]
+        for (name, k, t) in noise {
+            XCTAssertEqual(Self.misses(name, keysMs: keys(k), turns: turns(t), hosted), [], name)
         }
+        let freezes: [(String, [Double], [Double])] = [
+            ("the owner's freeze: one 1.9 s turn", [1900, 1850, 1800], [1900]),
+            ("1.9 s cut into 5 turns of 380 ms", [380, 340, 300], [380, 380, 380, 380, 380]),
+            ("every compile costs main a 150 ms turn", [], Array(repeating: 150, count: 40)),
+            ("every key 120 ms late", Array(repeating: 120, count: 40), []),
+        ]
+        for (name, k, t) in freezes {
+            XCTAssertFalse(Self.misses(name, keysMs: keys(k), turns: turns(t), hosted).isEmpty, name)
+        }
+        // Without the env (nightly, reference): one frame, nothing over it.
+        let frame = Limits.of(budgetMs: MainThreadStall.frameMs, hosted: false, wanted: 40)
+        XCTAssertFalse(Self.misses("one late turn", keysMs: keys([]), turns: turns([17]), frame).isEmpty)
+        XCTAssertEqual(Self.misses("all within a frame", keysMs: keys([]), turns: turns([16]), frame), [])
     }
 
     func testTypingOnALatePageOfARealBookNeverStallsTheEditor() async throws {

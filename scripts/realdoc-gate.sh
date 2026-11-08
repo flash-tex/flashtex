@@ -14,7 +14,9 @@
 #             the compile's start to the edited page, where the machine counts them: a hosted VM
 #             does not, and the budget is then a warning) and typing@150ms@x2-late (whether every
 #             key is painted by its own compile: reported, as load moves it); the app test with a
-#             100 ms budget for a main run-loop turn and for a key into the text storage
+#             100 ms soft budget for a main run-loop turn and for a key into the text storage
+#             (EngineV3RealDocTypingTests.Limits: none over 500 ms, at most 5 of 40 over 100 ms,
+#             at most 1.5 s in all; #2146)
 #   --counted the default, and a machine without instruction counts misses (t7.py --gate counted;
 #             ci.yml's real-doc-instr job on a self-hosted Mac)
 #   --strict  DESIGN §1.2's wall targets, for a reference Mac: typing@50ms@x2-late <= 20 ms to the
