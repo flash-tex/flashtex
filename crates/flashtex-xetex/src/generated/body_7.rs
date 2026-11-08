@@ -1971,7 +1971,9 @@ impl Globals {
     pub fn get_r_token(&mut self) {
         'l_restart_b: loop {
             loop {
+                self.intr_weak = true;
                 self.get_token();
+                self.intr_weak = false;
                 if (self.cur_tok != space_token) { break; }
             }
             if (((self.cur_cs == 0i32) || (self.cur_cs > eqtb_top)) || ((self.cur_cs > frozen_control_sequence) && (self.cur_cs <= eqtb_size))) {
@@ -2124,6 +2126,13 @@ impl Globals {
                 }
             }
             // §1290
+            if self.intr_rec_on {
+                if (!e) {
+                    if (q != register) {
+                        self.flashtex_intr_read(l);
+                    }
+                }
+            }
             if (q == register) {
                 self.scan_optional_equals();
             } else {
@@ -2424,7 +2433,7 @@ impl Globals {
     pub fn alter_box_dimen(&mut self) {
         let mut c: small_number = 0; // §1301
         let mut b: halfword = 0; // §1301
-        if self.intr_verify_on {
+        if self.intr_rec_on {
             self.flashtex_intr_op(6i32, 0i32, 0i32, 0i32);
         }
         c = self.cur_chr;
@@ -2766,6 +2775,9 @@ impl Globals {
                     }
                 }
                 // §1265
+                if self.intr_rec_on {
+                    self.flashtex_intr_command();
+                }
                 match self.cur_cmd {
                     set_font => {
                         // §1271
@@ -3090,6 +3102,9 @@ impl Globals {
                                             } else {
                                                 q = self.eqtb[crate::ix::U(((self.cur_chr) - 1) as usize)].hh().rh();
                                             }
+                                        }
+                                        if self.intr_rec_on {
+                                            self.flashtex_intr_abort(2i32);
                                         }
                                         if (q == (268435455i32).wrapping_neg()) {
                                             if e {
@@ -5925,10 +5940,10 @@ impl Globals {
                 if (self.ckpt_request != 0i32) {
                     self.flashtex_checkpoint_hook();
                 }
-                if self.intr_verify_on {
+                if self.intr_rec_on {
                     self.flashtex_intr_switch();
                 }
-                self.intr_at_switch = self.intr_verify_on;
+                self.intr_at_switch = self.intr_on;
                 self.get_x_token();
                 self.intr_at_switch = false;
             }
@@ -5951,6 +5966,9 @@ impl Globals {
                     self.show_cur_cmd_chr();
                 }
                 // §1084
+                if self.intr_rec_on {
+                    self.flashtex_intr_command();
+                }
                 match ((self.cur_list.mode_field).wrapping_abs()).wrapping_add(self.cur_cmd) {
                     116 | 117 | 173 => {
                         { __goto_1 = 3; continue 'l_dispatch_1; }

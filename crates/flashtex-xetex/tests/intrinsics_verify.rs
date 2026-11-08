@@ -1,15 +1,26 @@
-//! XeTeX intrinsic observations and semantic checks on real LaTeX packages.
-//! The report is separate from TeX output; no mode replays into the run.
+//! XeTeX's guarded intrinsics on real LaTeX packages (`src/intrinsics.rs`):
+//! `off`, `on` (replay) and `verify` (every admitted call checked against
+//! the real path) give the same log, XDV and PDF; what must not replay does
+//! not; and faults put into the replay or the read set on purpose are seen
+//! by verify.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// siunitx fills hyperref's hook; `\section` and `\label` make
+/// `\pdfstringdef` calls (bookmarks), and so does every page. A unit
+/// declared mid-document (`\DeclareSIUnit`) changes what the hook's
+/// `\cs_set_eq:Nc` copies, through no token of the hook's own body; so
+/// does a redefinition of `\IntrDeep`, which the hook reaches only through
+/// `\IntrMid`.
 const DOC: &str = r#"\documentclass{article}
 \usepackage{siunitx}
 \usepackage[unicode]{hyperref}
 \makeatletter
 \def\測試{\relax}
-\g@addto@macro\pdfstringdefPreHook{\測試}
+\def\IntrDeep{one}
+\def\IntrMid{\edef\IntrSeen{\IntrDeep}}
+\g@addto@macro\pdfstringdefPreHook{\測試\IntrMid}
 \makeatother
 \begin{document}
 \pdfstringdefPreHook
@@ -20,12 +31,21 @@ const DOC: &str = r#"\documentclass{article}
 \afterassignment\relax \pdfstringdefPreHook
 \tracingmacros=2 \pdfstringdefPreHook \tracingmacros=0
 \section{A \SI{1}{\metre}}\label{a}
+\pdfstringdefPreHook [\IntrSeen]
+\def\IntrDeep{two}
+\pdfstringdefPreHook [\IntrSeen]
+\DeclareSIUnit\IntrUnit{iu}
+\section{B \SI{2}{\IntrUnit}}
+\pdfstringdefPreHook
+\pdfstringdefPreHook [\IntrSeen]
+\newpage
+\section{C \SI{3}{\metre}}
+\pdfstringdefPreHook [\IntrSeen]
 \end{document}
 "#;
 
-/// The hook reads `\IntrSrc` only through `\IntrInner`, so the guard's
-/// direct dependencies miss a change to it. (`\relax`: `\begin{document}`
-/// ends in `\ignorespaces`, whose expansion is not `big_switch`'s.)
+/// The hook reads `\IntrSrc` only through `\IntrInner`: the read set holds
+/// it, so the third call is not replayed (stale, it would leave `one`).
 const INDIRECT: &str = r#"\documentclass{article}
 \def\IntrSrc{one}
 \def\IntrInner{\edef\IntrOut{\IntrSrc}\let\IntrCopy\IntrSrc}
@@ -36,52 +56,102 @@ const INDIRECT: &str = r#"\documentclass{article}
 \def\IntrSrc{two}
 \pdfstringdefPreHook
 \IntrOut\IntrCopy
+\pdfstringdefPreHook
+\IntrOut\IntrCopy
+\end{document}
+"#;
+
+/// `INDIRECT`'s hook with a group at its end, whose `unsave` is the last
+/// operation (`drop-last`).
+const FAULTS: &str = r#"\documentclass{article}
+\def\IntrSrc{one}
+\def\IntrInner{\edef\IntrOut{\IntrSrc}\let\IntrCopy\IntrSrc}
+\def\pdfstringdefPreHook{\IntrInner\begingroup\endgroup}
+\begin{document}\relax
+\pdfstringdefPreHook
+\pdfstringdefPreHook
+\def\IntrSrc{two}
+\pdfstringdefPreHook
+\IntrOut\IntrCopy
+\pdfstringdefPreHook
+\IntrOut\IntrCopy
 \end{document}
 "#;
 
 struct Run {
     log: String,
-    xdv: Vec<u8>,
+    out: Vec<u8>,
     stats: String,
     status: Option<i32>,
+    stderr: String,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Opts<'a> {
+    mode: Option<&'a str>,
+    /// a document with TeX errors, run on past them
+    errors: bool,
+    /// FlashTeX's PDF instead of XDV
+    pdf: bool,
+    fault: Option<&'a str>,
+    fail: bool,
 }
 
 fn run(exe: &Path, dir: &Path, format: &Path, mode: Option<&str>) -> Run {
-    run_as(exe, dir, format, mode, false)
+    run_with(
+        exe,
+        dir,
+        format,
+        Opts {
+            mode,
+            ..Opts::default()
+        },
+    )
 }
 
-/// `errors`: a document with TeX errors, run on past them.
-fn run_as(exe: &Path, dir: &Path, format: &Path, mode: Option<&str>, errors: bool) -> Run {
+fn run_with(exe: &Path, dir: &Path, format: &Path, o: Opts) -> Run {
     // Each mode sees the same first-pass document, with no previous aux data.
-    for name in ["main.aux", "main.out", "main.xdv"] {
+    for name in ["main.aux", "main.out", "main.xdv", "main.pdf"] {
         let _ = std::fs::remove_file(dir.join(name));
     }
-    let stats = dir.join(format!("stats-{}.txt", mode.unwrap_or("default")));
+    let stats = dir.join(format!(
+        "stats-{}-{}.txt",
+        o.mode.unwrap_or("default"),
+        o.fault.unwrap_or("none")
+    ));
+    let _ = std::fs::remove_file(&stats);
     let mut cmd = Command::new(exe);
     cmd.current_dir(dir)
-        .args([
-            format!("-fmt={}", format.join("xelatex").display()),
-            "-no-pdf".into(),
-            "-interaction=nonstopmode".into(),
-        ])
-        .args((!errors).then_some("-halt-on-error"))
+        .arg(format!("-fmt={}", format.join("xelatex").display()))
+        .args((!o.pdf).then_some("-no-pdf"))
+        .arg("-interaction=nonstopmode")
+        .args((!o.errors).then_some("-halt-on-error"))
         .arg("main.tex")
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .env("FLASHTEX_INTRINSICS_STATS", &stats)
+        .env_remove("FLASHTEX_INTRINSICS_FAULT")
+        .env_remove("FLASHTEX_INTRINSICS_VERIFY_FAIL")
         .stdin(Stdio::null());
     use std::os::unix::process::CommandExt;
     cmd.arg0("xelatex");
-    if let Some(mode) = mode {
-        cmd.env("FLASHTEX_INTRINSICS", mode);
-    } else {
-        cmd.env_remove("FLASHTEX_INTRINSICS");
+    match o.mode {
+        Some(mode) => cmd.env("FLASHTEX_INTRINSICS", mode),
+        None => cmd.env_remove("FLASHTEX_INTRINSICS"),
+    };
+    if let Some(f) = o.fault {
+        cmd.env("FLASHTEX_INTRINSICS_FAULT", f);
+    }
+    if o.fail {
+        cmd.env("FLASHTEX_INTRINSICS_VERIFY_FAIL", "1");
     }
     let out = cmd.output().expect("run XeTeX");
     let log = std::fs::read_to_string(dir.join("main.log")).expect("main.log");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(
-        out.status.success() || errors,
-        "{mode:?}: status {}; log tail: {}\nstderr: {}",
+        out.status.success() || o.errors || o.fail,
+        "{:?}: status {}; log tail: {}\nstderr: {stderr}",
+        o.mode,
         out.status,
         log.lines()
             .rev()
@@ -91,13 +161,14 @@ fn run_as(exe: &Path, dir: &Path, format: &Path, mode: Option<&str>, errors: boo
             .rev()
             .collect::<Vec<_>>()
             .join(" / "),
-        String::from_utf8_lossy(&out.stderr)
     );
     Run {
         log,
-        xdv: std::fs::read(dir.join("main.xdv")).unwrap_or_default(),
+        out: std::fs::read(dir.join(if o.pdf { "main.pdf" } else { "main.xdv" }))
+            .unwrap_or_default(),
         stats: std::fs::read_to_string(stats).unwrap_or_default(),
         status: out.status.code(),
+        stderr,
     }
 }
 
@@ -107,6 +178,16 @@ fn count(stats: &str, key: &str) -> u64 {
         .find_map(|l| l.split_once(": ").filter(|(k, _)| *k == key))
         .and_then(|(_, n)| n.parse().ok())
         .unwrap_or(0)
+}
+
+/// The sum of the counts whose key starts with `prefix`.
+fn count_all(stats: &str, prefix: &str) -> u64 {
+    stats
+        .lines()
+        .filter_map(|l| l.split_once(": "))
+        .filter(|(k, _)| k.starts_with(prefix))
+        .filter_map(|(_, n)| n.parse::<u64>().ok())
+        .sum()
 }
 
 /// The engine, a fresh directory holding `doc` as main.tex, and the
@@ -158,138 +239,264 @@ fn assert_same_output(a: &Run, b: &Run) {
             .find(|(_, (x, y))| x != y);
         panic!("log changed at {first:?}");
     }
-    assert_eq!(a.xdv, b.xdv, "XDV changed");
+    assert!(a.out == b.out, "output (XDV or PDF) changed");
+}
+
+/// Every check identical.
+fn assert_verified(s: &str) {
+    let checked = count(s, "verify.checked");
+    assert_eq!(count(s, "verify.identical"), checked, "{s}");
+    assert_eq!(count(s, "verify.differing"), 0, "{s}");
 }
 
 #[test]
-fn packages_and_guards_are_observed_without_replay() {
+fn the_packages_hook_replays_to_the_real_paths_output() {
     let Some((exe, dir, format)) = setup(DOC) else {
         return;
     };
-    let default = run(exe, &dir, &format, None);
-    let off = run(exe, &dir, &format, Some("off"));
-    let on = run(exe, &dir, &format, Some("on"));
-    let verify = run(exe, &dir, &format, Some("verify"));
-    let report = run(exe, &dir, &format, Some("report"));
-    for other in [&off, &on, &verify, &report] {
-        assert_same_output(&default, other);
+    for pdf in [false, true] {
+        let o = |mode| Opts {
+            mode,
+            pdf,
+            ..Opts::default()
+        };
+        let default = run_with(exe, &dir, &format, o(None));
+        let off = run_with(exe, &dir, &format, o(Some("off")));
+        let on = run_with(exe, &dir, &format, o(Some("on")));
+        let verify = run_with(exe, &dir, &format, o(Some("verify")));
+        for other in [&off, &on, &verify] {
+            assert_same_output(&default, other);
+        }
+        assert!(default.stats.is_empty() && off.stats.is_empty());
+        eprintln!("on (pdf {pdf}):\n{}\nverify:\n{}", on.stats, verify.stats);
+        assert!(count(&on.stats, "replayed") > 0, "{}", on.stats);
+        assert_eq!(count(&verify.stats, "replayed"), 0, "{}", verify.stats);
+        assert!(count(&verify.stats, "verify.checked") > 0, "{}", verify.stats);
+        assert_verified(&verify.stats);
+        for s in [&on.stats, &verify.stats] {
+            for key in [
+                "recordings.committed",
+                "rejected.GlobalDefs",
+                "rejected.AfterAssignment",
+                "rejected.Tracing",
+                // `\def\測試`, `\def\IntrDeep`, `\DeclareSIUnit`
+                "missed.Meaning",
+            ] {
+                assert!(count(s, key) > 0, "{key}: {s}");
+            }
+        }
+        // what the hook leaves: `one` before the change, `two` after it
+        let log = &on.log;
+        assert!(!log.is_empty());
+        assert_eq!(count(&on.stats, "offers"), count(&verify.stats, "offers"));
     }
-    assert!(default.stats.is_empty() && off.stats.is_empty() && on.stats.is_empty());
-    assert!(
-        verify.stats.contains("replay_enabled: false"),
-        "{}",
-        verify.stats
-    );
-    eprintln!("XeTeX intrinsics verification:\n{}", verify.stats);
-    // the packages' hook replays to the real path's state
-    let checked = count(&verify.stats, "semantic.checked");
-    assert!(checked > 0, "{}", verify.stats);
-    assert_eq!(count(&verify.stats, "semantic.identical"), checked);
-    assert_eq!(count(&verify.stats, "semantic.differing"), 0);
-    for key in [
-        "eligible",
-        "unicode_dependency_tokens",
-        "alternative.siunitx_context_calls",
-        "alternative.bookmark_copy_calls",
-        "recordings_kept",
-        "semantic.unverified.no_recording",
-        "rejected.DependenciesChanged",
-        "rejected.GlobalDefs",
-        "rejected.AfterAssignment",
-        "rejected.Tracing",
-    ] {
-        assert!(count(&verify.stats, key) > 0, "{key}: {}", verify.stats);
-    }
-    assert_eq!(verify.stats, report.stats);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// The second call replays the first's recording to the same state. The
-/// third follows a change the guard cannot see: the replay's `\edef` holds
-/// the old expansion and the verifier reports `\IntrOut`; `\let` shares
-/// the source's value as it is then, so `\IntrCopy` agrees. The output is
-/// the real path's either way.
+/// A change to a macro the hook reads only through another is in the read
+/// set: the call after it is recorded again, not replayed stale, and the
+/// output is the real path's in every mode.
 #[test]
-fn an_indirect_change_is_a_semantic_difference() {
+fn a_change_the_body_does_not_name_is_not_replayed_stale() {
     let Some((exe, dir, format)) = setup(INDIRECT) else {
         return;
     };
-    let default = run(exe, &dir, &format, None);
+    let off = run(exe, &dir, &format, Some("off"));
+    let on = run(exe, &dir, &format, Some("on"));
     let verify = run(exe, &dir, &format, Some("verify"));
-    assert_same_output(&default, &verify);
+    assert_same_output(&off, &on);
+    assert_same_output(&off, &verify);
+    let s = &on.stats;
+    // recorded at 1 and 3, replayed at 2 and 4
+    assert_eq!(count(s, "offers"), 4, "{s}");
+    assert_eq!(count(s, "recordings.committed"), 2, "{s}");
+    assert_eq!(count(s, "replayed"), 2, "{s}");
+    assert_eq!(count(s, "missed.Meaning"), 1, "{s}");
     let s = &verify.stats;
-    assert_eq!(count(s, "semantic.unverified.no_recording"), 1, "{s}");
-    assert_eq!(count(s, "semantic.checked"), 2, "{s}");
-    assert_eq!(count(s, "semantic.identical"), 1, "{s}");
-    assert_eq!(count(s, "semantic.differing"), 1, "{s}");
-    assert_eq!(count(s, "semantic.differing.eqtb"), 1, "{s}");
-    assert!(
-        // (token 0, the same in both, is the body's `end_match`)
-        s.contains("semantic.detail: \\IntrOut: tokens from 1: replay one real two\n"),
-        "{s}"
-    );
-    assert!(!s.contains("IntrCopy"), "{s}");
-    // after two checked calls, as many checkpoints as before them (none)
+    assert_eq!(count(s, "verify.checked"), 2, "{s}");
+    assert_verified(s);
+    // after the checks, as many checkpoints as before them (none)
     assert!(s.contains("\ncheckpoints: 0\n"), "{s}");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// Off-mode and verify-mode runs of `doc` (TeX errors allowed): the same
-/// output and status; the verify report.
-fn verify_matches_off(doc: &str) -> Option<String> {
-    let (exe, dir, format) = setup(doc)?;
-    let off = run_as(exe, &dir, &format, Some("off"), true);
-    let verify = run_as(exe, &dir, &format, Some("verify"), true);
-    assert_eq!(off.status, verify.status, "{}", verify.stats);
-    assert_same_output(&off, &verify);
+/// Each fault makes verify report a difference, and `VERIFY_FAIL` turns
+/// it into exit status 3; the output stays the real path's.
+#[test]
+fn faults_in_the_replay_or_the_read_set_are_seen_by_verify() {
+    let Some((exe, dir, format)) = setup(FAULTS) else {
+        return;
+    };
+    let off = run(exe, &dir, &format, Some("off"));
+    for (fault, class) in [
+        // the group's `unsave` left out: the level differs
+        ("drop-last", "verify.differing"),
+        // `\IntrSrc` left out: the third call replays `one`
+        ("skip-read", "verify.differing.eqtb"),
+        // `\let` without its reference
+        ("no-ref", "verify.differing.refs"),
+    ] {
+        let o = Opts {
+            mode: Some("verify"),
+            fault: Some(fault),
+            ..Opts::default()
+        };
+        let v = run_with(exe, &dir, &format, o);
+        assert_same_output(&off, &v);
+        assert!(count(&v.stats, "verify.differing") > 0, "{fault}: {}", v.stats);
+        assert!(count(&v.stats, class) > 0, "{fault}: {}", v.stats);
+        let fail = run_with(exe, &dir, &format, Opts { fail: true, ..o });
+        assert_eq!(fail.status, Some(3), "{fault}: {}", fail.stderr);
+        assert!(fail.stderr.contains("checked calls differ"), "{}", fail.stderr);
+    }
+    // without a fault, VERIFY_FAIL leaves the status alone
+    let ok = run_with(
+        exe,
+        &dir,
+        &format,
+        Opts {
+            mode: Some("verify"),
+            fail: true,
+            ..Opts::default()
+        },
+    );
+    assert_eq!(ok.status, Some(0), "{}", ok.stderr);
     std::fs::remove_dir_all(dir).unwrap();
-    Some(verify.stats)
 }
 
-/// A recording made inside a group closes and opens one (`[End, Begin]`);
-/// at the top level its replay would `unsave` at level one (TeX's
-/// "confusion"). It is not replayed where the group level differs.
+/// Off, on and verify runs of `doc` (TeX errors allowed): the same output
+/// and status; the reports of on and verify.
+fn modes_agree(doc: &str) -> Option<(String, String)> {
+    let (exe, dir, format) = setup(doc)?;
+    let o = |mode| Opts {
+        mode,
+        errors: true,
+        ..Opts::default()
+    };
+    let off = run_with(exe, &dir, &format, o(Some("off")));
+    let on = run_with(exe, &dir, &format, o(Some("on")));
+    let verify = run_with(exe, &dir, &format, o(Some("verify")));
+    assert_same_output(&off, &on);
+    assert_same_output(&off, &verify);
+    assert_verified(&verify.stats);
+    std::fs::remove_dir_all(dir).unwrap();
+    Some((on.stats, verify.stats))
+}
+
+/// A hook of the given body, called three times in the body.
+fn hook_doc(pre: &str, body: &str, after: &str) -> String {
+    format!(
+        "\\documentclass{{article}}{pre}\n\\def\\pdfstringdefPreHook{{{body}}}\n\
+         \\begin{{document}}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\n{after}\\end{{document}}\n"
+    )
+}
+
+/// Calls that may not replay: none is kept, none replayed, the reason
+/// counted, the output the same.
+fn never_replayed(pre: &str, body: &str, after: &str, why: &str) {
+    let Some((on, verify)) = modes_agree(&hook_doc(pre, body, after)) else {
+        return;
+    };
+    for s in [&on, &verify] {
+        assert_eq!(count(s, "recordings.committed"), 0, "{s}");
+        assert_eq!(count(s, "replayed"), 0, "{s}");
+        assert_eq!(count(s, "verify.checked"), 0, "{s}");
+        assert!(count(s, &format!("abandoned.{why}")) > 0, "{why}: {s}");
+    }
+}
+
+/// `\read` and `\openin` (#2141 item 2): file input is not a pure function
+/// of the state the guard compares; neither command is on the allowlist.
 #[test]
-fn a_group_end_recorded_at_another_level_is_not_replayed() {
-    let Some(s) = verify_matches_off(
+fn file_input_is_never_replayed() {
+    never_replayed(
+        "\\newread\\IntrR\\immediate\\openin\\IntrR=\\jobname.tex",
+        "\\read\\IntrR to\\IntrLine",
+        "",
+        "Command",
+    );
+    never_replayed("\\newread\\IntrR", "\\openin\\IntrR=\\jobname.tex", "", "Command");
+}
+
+/// `\aftergroup` at the call's own level (#2141 item 3) puts a token after
+/// a group the call does not end.
+#[test]
+fn aftergroup_is_never_replayed() {
+    never_replayed("", "\\aftergroup\\relax", "", "Command");
+    never_replayed("", "\\begingroup\\aftergroup\\relax\\endgroup", "", "Command");
+}
+
+/// A write to a tracing parameter (#2141 item 4) could make a replay print.
+#[test]
+fn tracing_writes_are_never_replayed() {
+    never_replayed("", "\\tracingrestores=1 \\tracingrestores=0 ", "", "Tracing");
+    never_replayed("", "\\tracingnesting=0 ", "", "Tracing");
+}
+
+/// A recording made inside a group closes one it did not open: abandoned.
+#[test]
+fn a_group_the_call_did_not_open_is_never_closed_by_a_replay() {
+    let Some((on, _)) = modes_agree(
         "\\documentclass{article}\\def\\pdfstringdefPreHook{\\endgroup\\begingroup}\n\
          \\begin{document}x\\begingroup\\pdfstringdefPreHook\\endgroup\n\
-         \\pdfstringdefPreHook\\end{document}\n",
+         \\begingroup\\pdfstringdefPreHook\\endgroup\\end{document}\n",
     ) else {
         return;
     };
-    assert_eq!(count(&s, "semantic.unverified.other_group"), 1, "{s}");
-    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+    // (`\endgroup` of a group the call did not open is refused as a
+    // command, before its `unsave`)
+    assert!(
+        count(&on, "abandoned.Group") + count(&on, "abandoned.Command") > 0,
+        "{on}"
+    );
+    assert_eq!(count(&on, "replayed"), 0, "{on}");
 }
 
-/// `\wd` writes the box node in `mem`, which is not compared: a call
-/// that sets it is not replayable (else its check would find no change).
+/// `\wd` writes a box node and `\immediate\write` a file: neither is kept.
 #[test]
-fn box_dimensions_are_not_replayable() {
-    let Some(s) = verify_matches_off(
-        "\\documentclass{article}\\setbox0\\hbox{}\n\
-         \\def\\pdfstringdefPreHook{\\wd0=\\dimexpr\\wd0+1pt\\relax}\n\
-         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
-         \\pdfstringdefPreHook\n\\the\\wd0\\end{document}\n",
-    ) else {
-        return;
-    };
-    assert_eq!(count(&s, "not_replayable.BoxDimen"), 3, "{s}");
-    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+fn box_dimensions_and_file_output_are_never_replayed() {
+    never_replayed(
+        "\\setbox0\\hbox{}",
+        "\\wd0=\\dimexpr\\wd0+1pt\\relax",
+        "\\the\\wd0",
+        "Command",
+    );
+    never_replayed(
+        "\\newwrite\\IntrW\\immediate\\openout\\IntrW=\\jobname.w",
+        "\\immediate\\write\\IntrW{x}",
+        "x",
+        "Command",
+    );
 }
 
-/// `\immediate\write` changes a file, which is not compared: a call that
-/// writes is not replayable.
+/// What a recording reads through printing: `\string` of a one-character
+/// control sequence reads its category code; a changed `\escapechar` or
+/// category code is seen.
 #[test]
-fn immediate_writes_are_not_replayable() {
-    let Some(s) = verify_matches_off(
-        "\\documentclass{article}\\newwrite\\IntrW\\immediate\\openout\\IntrW=\\jobname.w\n\
-         \\def\\pdfstringdefPreHook{\\immediate\\write\\IntrW{x}}\n\
-         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
-         \\pdfstringdefPreHook\nx\\end{document}\n",
+fn printing_reads_category_codes_and_the_escape_character() {
+    let Some((on, verify)) = modes_agree(
+        "\\documentclass{article}\\def\\IntrM{\\b}\n\
+         \\def\\pdfstringdefPreHook{\\edef\\IntrS{\\meaning\\IntrM}}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\\pdfstringdefPreHook[\\IntrS]\n\
+         {\\catcode`\\b=12 \\pdfstringdefPreHook[\\IntrS]}\n\
+         {\\escapechar=`\\! \\pdfstringdefPreHook[\\IntrS]}\n\
+         \\pdfstringdefPreHook[\\IntrS]\\end{document}\n",
     ) else {
         return;
     };
-    assert_eq!(count(&s, "not_replayable.FileOutput"), 3, "{s}");
-    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+    assert!(count(&on, "replayed") > 0, "{on}");
+    assert!(count(&on, "missed.Meaning") + count(&on, "missed.Word") > 0, "{on}");
+    assert!(count(&verify, "verify.checked") > 0, "{verify}");
+}
+
+/// An `\ifcsname` that finds nothing is not recorded (no key for absence).
+#[test]
+fn an_absent_name_is_not_recorded() {
+    never_replayed(
+        "",
+        "\\ifcsname IntrNone\\endcsname\\fi",
+        "",
+        "Absent",
+    );
 }

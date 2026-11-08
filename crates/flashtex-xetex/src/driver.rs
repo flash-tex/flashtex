@@ -86,7 +86,7 @@ pub fn run(argv: Vec<String>) -> ! {
     }
     flashtex_engine::system::configure(c.options);
     let mut g = crate::Globals::new();
-    g.set_intrinsics_verify(crate::intrinsics::enabled());
+    g.set_intrinsics(crate::intrinsics::mode());
     #[cfg(unix)]
     {
         g.host.spare_go = child_env.go;
@@ -107,5 +107,9 @@ pub fn run(argv: Vec<String>) -> ! {
     }
     g.tex_body();
     g.write_intrinsics_report();
+    if g.intr_verify_failed() {
+        // `FLASHTEX_INTRINSICS_VERIFY_FAIL=1`: a checked call differed
+        system::exit_process(&mut g, 3)
+    }
     system::final_end(&mut g)
 }

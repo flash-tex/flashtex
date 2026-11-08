@@ -1126,6 +1126,9 @@ impl Globals {
                 } else {
                     {
                         self.print_esc((p).wrapping_sub(1114113i32));
+                        if self.intr_rec_on {
+                            self.flashtex_intr_read(((cat_code_base).wrapping_add(p)).wrapping_sub(1114113i32));
+                        }
                         if (self.eqtb[crate::ix::U(((((cat_code_base).wrapping_add(p)).wrapping_sub(1114113i32)) - 1) as usize)].hh().rh() == letter) {
                             self.print_char(32i32);
                         }
@@ -1146,6 +1149,9 @@ impl Globals {
                     self.print_esc(65812i32);
                 } else {
                     {
+                        if self.intr_rec_on {
+                            self.flashtex_intr_name(p);
+                        }
                         if ((p >= prim_eqtb_base) && (p < frozen_null_font)) {
                             self.print_esc((self.prim[crate::ix::U(((p).wrapping_sub(1194662i32)) as usize)].rh()).wrapping_sub(1i32));
                         } else {
@@ -1180,7 +1186,12 @@ impl Globals {
             if ((p >= prim_eqtb_base) && (p < frozen_null_font)) {
                 self.print_esc((self.prim[crate::ix::U(((p).wrapping_sub(1194662i32)) as usize)].rh()).wrapping_sub(1i32));
             } else {
-                self.print_esc(self.hash[crate::ix::U(((p) - 1179650) as usize)].rh());
+                {
+                    if self.intr_rec_on {
+                        self.flashtex_intr_name(p);
+                    }
+                    self.print_esc(self.hash[crate::ix::U(((p) - 1179650) as usize)].rh());
+                }
             }
         }
     }

@@ -42,7 +42,7 @@ use crate::generated::consts::{
     eqtb_size, int_base, level_boundary, macro_, restore_old_value, token_list, v_template,
 };
 use crate::generated::types::memory_word;
-use crate::intrinsics::{Op, Val, NULL};
+use crate::intrinsics::{Op, NULL};
 use crate::Globals;
 use flashtex_engine::arena::{CheckpointId, CHUNK_BYTES, CHUNK_WORDS};
 use std::collections::{BTreeSet, HashMap};
@@ -66,6 +66,10 @@ pub(crate) struct Pending {
     save_ptr0: i32,
     log0: u64,
     i: Snap,
+    /// The `eqtb` entries the admitted variant reads or defines: compared
+    /// even where neither path wrote their chunk (a `\let` that finds the
+    /// meaning it makes writes only the list's reference count).
+    named: Vec<i32>,
 }
 
 impl Pending {
@@ -84,6 +88,9 @@ struct Snap {
     scalars: Vec<u8>,
     stacks: [Vec<String>; 3],
     log_len: u64,
+    /// The references the used-up input levels at the top hold (lists
+    /// `get_next` releases when it pops them), by list.
+    held: HashMap<i32, i32>,
 }
 
 fn word(bytes: &[u8], k: usize) -> u64 {
@@ -92,13 +99,12 @@ fn word(bytes: &[u8], k: usize) -> u64 {
 
 impl Globals {
     /// Checkpoint, replay `ops`, capture, restore: the run goes on from C.
-    pub(crate) fn intr_verify_begin(&mut self, ops: &[Op]) -> Pending {
+    pub(crate) fn intr_verify_begin(&mut self, ops: &[Op], named: Vec<i32>) -> Pending {
         let save_ptr0 = self.save_ptr;
         let log0 = self.intr_log_len();
         let ck = self.checkpoint();
-        self.host.intrinsics.replaying = true;
+        self.host.intrinsics.verifier_cks.push(ck);
         self.intr_replay(ops);
-        self.host.intrinsics.replaying = false;
         let i = self.intr_capture(save_ptr0, true);
         if let Err(e) = self.restore_in_call(ck) {
             // the replay's state cannot be the run's
@@ -109,80 +115,29 @@ impl Globals {
             save_ptr0,
             log0,
             i,
+            named,
         }
     }
 
-    /// The real path is done: compare, count, drop C.
-    pub(crate) fn intr_verify_end(&mut self, p: Pending) {
+    /// The real path is done: compare, drop C. `Err`: the classes and the
+    /// first details of the differences.
+    pub(crate) fn intr_verify_end(
+        &mut self,
+        p: Pending,
+    ) -> Result<(), (Vec<String>, Vec<String>)> {
         let diffs = self.intr_compare(&p);
         self.drop_checkpoint(p.ck);
-        let r = &mut self.host.intrinsics;
-        r.checked += 1;
         if diffs.is_empty() {
-            r.identical += 1;
-            return;
+            let s = &mut self.host.intrinsics.stats;
+            s.checked += 1;
+            s.identical += 1;
+            return Ok(());
         }
-        r.differing += 1;
         let classes: BTreeSet<&'static str> = diffs.iter().map(|d| d.0).collect();
-        for c in classes {
-            *r.classes.entry(c).or_default() += 1;
-        }
-        for (_, d) in diffs.iter().take(3) {
-            if r.details.len() < 8 {
-                r.details.push(d.clone());
-            }
-        }
-    }
-
-    fn intr_replay(&mut self, ops: &[Op]) {
-        for op in ops {
-            match op {
-                Op::Def(p, t, e, global) => {
-                    let (t, e) = match e {
-                        Val::Plain(v) => (*t, *v),
-                        Val::Tokens(ts) => (*t, self.intr_new_list(ts)),
-                        Val::Cs(c) => {
-                            // `\let`: the source's value now, one more reference
-                            let w = self.eqtb[(c - 1) as usize];
-                            let (t, e) = (w.hh_b0(), w.hh_rh());
-                            if self.intr_is_list(t, e) {
-                                let r = self.mem[e as usize].hh().lh();
-                                self.mem[e as usize].set_hh_lh(r + 1);
-                            }
-                            (t, e)
-                        }
-                    };
-                    if *global {
-                        self.geq_define(*p, t, e)
-                    } else {
-                        self.eq_define(*p, t, e)
-                    }
-                }
-                Op::Word(p, w, global) => {
-                    if *global {
-                        self.geq_word_define(*p, *w)
-                    } else {
-                        self.eq_word_define(*p, *w)
-                    }
-                }
-                Op::Begin(c) => self.new_save_level(*c),
-                Op::End => self.unsave(),
-            }
-        }
-    }
-
-    /// A fresh token list (reference count `null`) holding `ts`.
-    fn intr_new_list(&mut self, ts: &[i32]) -> i32 {
-        let h = self.get_avail();
-        self.mem[h as usize].set_hh_lh(NULL);
-        let mut q = h;
-        for &t in ts {
-            let r = self.get_avail();
-            self.mem[r as usize].set_hh_lh(t);
-            self.mem[q as usize].set_hh_rh(r);
-            q = r;
-        }
-        h
+        Err((
+            classes.into_iter().map(String::from).collect(),
+            diffs.into_iter().map(|d| d.1).take(3).collect(),
+        ))
     }
 
     pub(crate) fn intr_log_len(&mut self) -> u64 {
@@ -222,7 +177,35 @@ impl Globals {
                 self.intr_cond_snap(),
             ],
             log_len: self.intr_log_len(),
+            held: self.intr_held_refs(),
         }
+    }
+
+    /// The token lists the used-up input levels at the top refer to (a
+    /// token type from `macro` on holds a reference to its list, `start`):
+    /// the real path is compared before its body level is popped, the
+    /// replay before the levels `macro_call` would pop first.
+    fn intr_held_refs(&self) -> HashMap<i32, i32> {
+        let mut held = HashMap::new();
+        let mut k = self.input_ptr;
+        loop {
+            let l = if k == self.input_ptr {
+                self.cur_input
+            } else {
+                self.input_stack[k as usize]
+            };
+            if l.state_field != token_list || l.loc_field != NULL || l.index_field == v_template {
+                break;
+            }
+            if l.index_field >= macro_ {
+                *held.entry(l.start_field).or_default() += 1;
+            }
+            if k == 0 {
+                break;
+            }
+            k -= 1;
+        }
+        held
     }
 
     /// The save stack above `save_ptr0`, top first.
@@ -430,6 +413,9 @@ impl Globals {
                 }
             }
         }
+        eqtb_locs.extend(p.named.iter().copied());
+        eqtb_locs.sort_unstable();
+        eqtb_locs.dedup();
         for q in eqtb_locs {
             let (iv, nv) = (
                 iword(eqtb0 + 8 * (q - 1) as usize),
@@ -446,6 +432,22 @@ impl Globals {
                 let real = self.intr_tokens(self.mem[b.hh_rh() as usize].hh().rh());
                 let replay = itokens(a.hh_rh());
                 if replay == real {
+                    // the lists' references, less those of used-up levels
+                    let refs = |w: u64, held: &HashMap<i32, i32>, e: i32| {
+                        memory_word::from_bits(w).hh_lh() as i64
+                            - *held.get(&e).unwrap_or(&0) as i64
+                    };
+                    let ri = refs(iword(mem0 + 8 * a.hh_rh() as usize), &i.held, a.hh_rh());
+                    let rn = refs(self.mem[b.hh_rh() as usize].to_bits(), &n.held, b.hh_rh());
+                    if ri != rn {
+                        d.push((
+                            "refs",
+                            format!(
+                                "\\{}: references replay {ri} real {rn}",
+                                self.intr_cs_name(q)
+                            ),
+                        ));
+                    }
                     continue;
                 }
                 let k = replay.iter().zip(&real).take_while(|(x, y)| x == y).count();

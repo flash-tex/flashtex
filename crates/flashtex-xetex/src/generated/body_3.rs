@@ -706,11 +706,17 @@ impl Globals {
         'l_dispatch_1: loop {
             if __goto_1 <= 0 {
                 m = self.cur_chr;
+                if self.intr_rec_on {
+                    self.flashtex_intr_internal();
+                }
                 match self.cur_cmd {
                     def_code => {
                         // §448
                         {
                             self.scan_usv_num();
+                            if self.intr_rec_on {
+                                self.flashtex_intr_read((m).wrapping_add(self.cur_val));
+                            }
                             if (m == math_code_base) {
                                 {
                                     self.cur_val1 = self.eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
@@ -2346,6 +2352,9 @@ impl Globals {
         let mut v: scaled = 0; // §485
         let mut save_cur_val: i32 = 0; // §485
         'l_L89_f: {
+            if self.intr_rec_on {
+                self.flashtex_intr_abort(1i32);
+            }
             f = 0i32;
             self.arith_error = false;
             self.cur_order = normal;
@@ -4536,7 +4545,9 @@ impl Globals {
                             while true {
                                 {
                                     'l_continue_b: loop {
+                                        self.intr_weak = true;
                                         self.get_token();
+                                        self.intr_weak = false;
                                         if (self.cur_tok < right_brace_limit) {
                                             break 'l_done1_f;
                                         }
@@ -4701,7 +4712,11 @@ impl Globals {
                         }
                     } else {
                         // §512
-                        self.get_token();
+                        {
+                            self.intr_weak = true;
+                            self.get_token();
+                            self.intr_weak = false;
+                        }
                     }
                     if (self.cur_tok < right_brace_limit) {
                         if (self.cur_cmd < right_brace) {
@@ -5364,6 +5379,9 @@ impl Globals {
                             }
                             // §1578
                             self.flush_list(n);
+                            if self.intr_rec_on {
+                                self.flashtex_intr_lookup(self.cur_cs);
+                            }
                             b = (self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0() != undefined_cs);
                             self.is_in_csname = e;
                         }
@@ -5417,6 +5435,9 @@ impl Globals {
                                         if (self.cur_chr == fi_code) {
                                             // §531
                                             {
+                                                if self.intr_rec_on {
+                                                    self.flashtex_intr_pop_cond();
+                                                }
                                                 if (self.if_stack[crate::ix::U((self.in_open) as usize)] == self.cond_ptr) {
                                                     self.if_warning();
                                                 }
@@ -5506,6 +5527,9 @@ impl Globals {
                             if (self.cur_chr == fi_code) {
                                 // §531
                                 {
+                                    if self.intr_rec_on {
+                                        self.flashtex_intr_pop_cond();
+                                    }
                                     if (self.if_stack[crate::ix::U((self.in_open) as usize)] == self.cond_ptr) {
                                         self.if_warning();
                                     }
@@ -5525,6 +5549,9 @@ impl Globals {
             if (self.cur_chr == fi_code) {
                 // §531
                 {
+                    if self.intr_rec_on {
+                        self.flashtex_intr_pop_cond();
+                    }
                     if (self.if_stack[crate::ix::U((self.in_open) as usize)] == self.cond_ptr) {
                         self.if_warning();
                     }
