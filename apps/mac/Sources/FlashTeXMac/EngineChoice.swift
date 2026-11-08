@@ -140,9 +140,9 @@ enum EngineChoiceStore {
     static let documentsKey = "FlashTeX.EngineV3.documents"
     static let maxEntries = 500
     /// The stored `engine` of the retired previous engine.
-    static let retiredEngine = "previous"
+    nonisolated static let retiredEngine = "previous"
     /// The stored `engine` of the one engine.
-    static let currentEngine = "new"
+    nonisolated static let currentEngine = "new"
 
     /// Defaults the app no longer reads (the retirement plan's §5.5): the
     /// old global switch and its migration flag, the app setting for
