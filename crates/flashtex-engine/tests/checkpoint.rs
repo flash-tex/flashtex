@@ -326,19 +326,30 @@ fn a_persisted_s0_is_not_opened_under_another_configuration() {
             "variable TEXINPUTS changed",
         ),
     ];
+    // (every case, then one assertion: which ones failed, and how)
+    let said = |out: &str| {
+        out.lines()
+            .find(|l| l.contains("\"mode\"") || l.contains("\"error\""))
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut bad = vec![];
     for (what, pdftex, extra, why) in cases {
         let (ok, out) = host_with(pdftex, &["open", &s0], &extra);
-        assert!(
-            !ok && out.contains(why),
-            "{what}: the stored S0 was opened, or refused for another reason: {out}"
-        );
+        if ok || !out.contains(why) {
+            bad.push(format!("{what}: {}", said(&out)));
+        }
     }
     // a package installed into the tree, its ls-R updated
     std::fs::write(tree.join("tex/latex/zzlocal.sty"), "\\endinput\n").unwrap();
     std::fs::write(tree.join("ls-R"), ls_r("zzlocal.sty\n")).unwrap();
     let (ok, out) = host_with(PDFTEX_ARGS, &["open", &s0], &[]);
+    if ok || !out.contains("ls-R, of kpathsea's configuration, changed") {
+        bad.push(format!("ls-R: {}", said(&out)));
+    }
     assert!(
-        !ok && out.contains("ls-R, of kpathsea's configuration, changed"),
-        "ls-R: the stored S0 was opened, or refused for another reason: {out}"
+        bad.is_empty(),
+        "the stored S0 was opened, or refused for another reason:\n{}",
+        bad.join("\n")
     );
 }
