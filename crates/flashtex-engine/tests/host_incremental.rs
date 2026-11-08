@@ -6239,12 +6239,15 @@ fn fuzz_compare(sock: &Path, view: &View, base: &Path, main: &str) -> Result<(),
     r
 }
 
-/// What a replay compiled: the compiles by mode, and `live`, the steps
-/// whose compile was incremental (neither cold nor unchanged), `ok`, and
-/// had pages -- the steps that test the incremental host.
+/// What a replay compiled: the compiles by mode; `paged`, the steps whose
+/// compile was incremental (neither cold nor unchanged) and had pages, in
+/// any status; and `live`, those of them that were `ok` -- the steps that
+/// test the incremental host. (A name broken stays in error until a revert
+/// mends it, so a sequence may have no `live` step; a seed may not.)
 #[derive(Default, Debug)]
 struct FuzzStats {
     modes: BTreeMap<String, usize>,
+    paged: usize,
     live: usize,
 }
 
@@ -6346,10 +6349,8 @@ fn fuzz_replay(
             let o = compile(&mut c, &mut view, &r);
             let mode = o.done.str_field("mode").unwrap_or("?");
             *stats.modes.entry(mode.to_string()).or_insert(0) += 1;
-            let live = mode != "cold"
-                && mode != "unchanged"
-                && o.done.str_field("status") == Some("ok")
-                && view.count > 0;
+            let paged = mode != "cold" && mode != "unchanged" && view.count > 0;
+            let live = paged && o.done.str_field("status") == Some("ok");
             history.push(read_all());
             // FLASHTEX_FUZZ_SELFTEST=N: the harness's own check, a page
             // dropped from the client's view from step N on, which must
@@ -6359,12 +6360,13 @@ fn fuzz_replay(
                 view.pages.remove(&last);
             }
             fuzz_compare(&scratch.1, &view, &base, main).map_err(|e| (k + 1, e))?;
+            stats.paged += paged as usize;
             stats.live += live as usize;
         }
         let _ = c.bye();
         eprintln!(
-            "edit fuzz:   {tag}: compiles {:?}, {} incremental ok with pages",
-            stats.modes, stats.live
+            "edit fuzz:   {tag}: compiles {:?}, {} incremental with pages, {} of them ok",
+            stats.modes, stats.paged, stats.live
         );
         Ok(())
     }));
@@ -6472,6 +6474,7 @@ fn random_edit_sequences_equal_scratch_compiles() {
     }
     let mut failures = vec![];
     for seed in first..first + seeds {
+        let (failed, mut live) = (failures.len(), 0);
         for (d, doc) in docs.iter().enumerate() {
             let src = root.join(doc);
             let main = "main.tex";
@@ -6520,11 +6523,11 @@ fn random_edit_sequences_equal_scratch_compiles() {
             let _ = std::fs::remove_dir_all(&tmp);
             eprintln!("edit fuzz: seed {seed}, {doc}: {} steps", steps.len());
             match fuzz_replay(&src, main, &steps, &format!("{seed}-{d}")) {
-                Ok(st) if st.live == 0 => failures.push(format!(
-                    "seed {seed}, fixtures/real-world/{doc}: no step compiled incrementally, ok, with pages (compiles {:?}): the sequence tested nothing",
+                Ok(st) if st.paged == 0 => failures.push(format!(
+                    "seed {seed}, fixtures/real-world/{doc}: no step compiled incrementally with pages (compiles {:?}): the sequence tested nothing",
                     st.modes
                 )),
-                Ok(_) => {}
+                Ok(st) => live += st.live,
                 Err((0, why)) => failures.push(format!(
                     "seed {seed}, fixtures/real-world/{doc}: before any edit: {why}"
                 )),
@@ -6544,6 +6547,11 @@ fn random_edit_sequences_equal_scratch_compiles() {
                     ));
                 }
             }
+        }
+        if failures.len() == failed && live == 0 {
+            failures.push(format!(
+                "seed {seed}: no step of {docs:?} compiled incrementally and ok with pages: the seed tested only error states"
+            ));
         }
     }
     assert!(
