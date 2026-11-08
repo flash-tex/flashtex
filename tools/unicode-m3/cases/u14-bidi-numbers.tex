@@ -1,0 +1,58 @@
+% Unicode corpus (M3): ICU's bidi runs with numbers in native words (#1777).
+% European, Arabic-Indic and Extended Arabic-Indic digits inside right-to-left
+% words, with separators (W4), terminators (W5), signs and brackets; the
+% paragraph level of a word with no strong character (getDefaultDirection:
+% the font's script); \XeTeXinterwordspaceshaping 0, 1 and 2; Amiri and
+% David CLM by file name (TeX Live's amiri and culmus).
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{arabic}
+\setotherlanguage{hebrew}
+\newfontfamily\arabicfont{Amiri-Regular.ttf}[Script=Arabic]
+\newfontfamily\hebrewfont{DavidCLM-Medium.otf}[Script=Hebrew]
+\newfontfamily\ar{Amiri-Regular.ttf}[Script=Arabic]
+\newfontfamily\he{DavidCLM-Medium.otf}[Script=Hebrew]
+\font\arnoscript="[Amiri-Regular.ttf]" at 10pt
+\begin{document}
+% #1777's smallest case: no polyglossia environment, a left-to-right paragraph
+\ar مرحبا
+
+\XeTeXinterwordspaceshaping=0
+{\ar مرحبا123 ١٢٣مرحبا ۱۲۳مرحبا مرحبا12.5\% -3مرحبا 1,000,000مرحبا
+٣٫١٤مرحبا 2026/11/08مرحبا 10:30مرحبا +١٢مرحبا \$5مرحبا \#7مرحبا
+(١٢)مرحبا [34]مرحبا abc123مرحبا}
+
+{\he שלום123 3.14שלום 12\%שלום -5שלום 1,000שלום 2026-11-08שלום 10:30שלום
+(12)שלום [34]שלום abc123שלום ש1ל2ו3ם}
+
+% no strong character: the level comes from the font's script
+{\ar 12.5 (34) ١٢ ۳۴} {\he 12.5 (34)} {\arnoscript 12.5 (34) ١٢}
+
+\XeTeXinterwordspaceshaping=1
+{\ar العدد 123 والعدد ١٢٣ والنسبة 45\% والتاريخ 2026/11/08، نهاية.}
+{\he המספר 123 והאחוז 45\% והתאריך 08.11.2026, סוף.}
+
+\XeTeXinterwordspaceshaping=2
+{\ar العدد 123 456 والعدد ١٢٣ ٤٥٦ و(٧٨) و[9 10] abc 12 def نهاية.}
+{\he המספר 123 456 ו-(78) [9 10] abc 12 def סוף.}
+{\ar 12 34 ١٢ ٣٤} {\he 12 34} {\arnoscript 12 34 ١٢ ٣٤}
+
+\XeTeXinterwordspaceshaping=0
+English with \textarabic{العدد ١٢٣ والعدد 456} and \texthebrew{המספר 789} inline.
+
+\begin{Arabic}
+\XeTeXinterwordspaceshaping=2
+في عام 2026 بلغ عدد السكان ٤٢٢ مليون نسمة، أي بزيادة ٣٫٥٪ عن عام 2020
+(انظر الجدول 3، الصفحة ١٢). الهاتف: 0123-456-789. السعر \$12.50 أو ٤٥ ريالا.
+هذه فقرة أطول قليلا حتى تمتد على أكثر من سطر واحد مع الأرقام 1 2 3 و١ ٢ ٣.
+\end{Arabic}
+
+\begin{hebrew}
+\XeTeXinterwordspaceshaping=1
+בשנת 2026 היו 9.8 מיליון תושבים, עלייה של 1.5\% משנת 2020 (ראו טבלה 3,
+עמוד 12). טלפון: 03-123-4567. המחיר \$12.50 או 45 ש"ח. זוהי פסקה ארוכה מעט
+כדי שתתפרס על יותר משורה אחת עם המספרים 1 2 3 ו-ABC 456.
+\end{hebrew}
+\end{document}
