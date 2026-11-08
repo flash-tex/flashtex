@@ -32,10 +32,11 @@ import Foundation
 ///   the file and the files its own download brought (the same quarantine
 ///   event); a quarantined file from another download counts only if the
 ///   document reads it (`referencedFiles`, found lexically at each
-///   decision). Every other download there never asks. A name built by a
-///   macro is not seen: the worst case is restricted shell escape, and,
-///   since protocol 3.2, bibtex, biber or makeindex (`external_tools`) run on
-///   such a file. Files that appear in or change in the project folder
+///   decision). Every other download there never asks, and the project
+///   copy does not link it (`SharedLinks`), so a name built by a macro,
+///   which the lexical scan does not see, finds no such file. Untrusted,
+///   such a project reads of its folder only the main file and the files
+///   it names (`Decision.shared`). Files that appear in or change in the project folder
 ///   are seen: the session decides trust again before its next compile
 ///   (EngineV3ProjectWatcher). A file outside the folder named by an
 ///   absolute path is not.
