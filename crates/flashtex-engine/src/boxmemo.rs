@@ -2728,9 +2728,16 @@ impl Globals {
         }
         let m = mode();
         ST.with(|s| s.borrow_mut().stats.offers += 1);
-        // preconditions (K6)
+        // preconditions (K6). `error_count` must be 0 (BOX-MEMO.md §17,
+        // errors): a call that ends a paragraph (a `\parbox`, a `\vbox` of
+        // text) sets it to 0 (`end_graf`, tex.web §1096), which a replay
+        // does not. A recording at a nonzero count abandons such a call
+        // ("Error": the count changed), but an entry recorded at 0 says
+        // nothing of it: replayed after a scrolled error, the count stayed
+        // where the normal path makes it 0, and the hundredth error came
+        // early. At 0 the reset changes nothing.
         let globaldefs = self.bm_eq(INT_BASE + k::global_defs_code).int();
-        if globaldefs != 0 || self.after_token != 0 {
+        if globaldefs != 0 || self.after_token != 0 || self.error_count != 0 {
             return self.bm_miss("Preconditions");
         }
         let k1 = self.bm_k1(cs, n);

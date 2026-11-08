@@ -98,7 +98,7 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 | K4 | e-TeX's sparse registers (`\count`, `\dimen`, `\skip`, `\muskip` and `\toks` above 255) | conservatively: every entry of the sparse trees, by (type, number, value), values by content as in K2 |
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
 | K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
-| K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, the mode, and `interaction`. Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
+| K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, `error_count = 0` (§17), the mode, and `interaction`. Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
 
 **Box registers** are not in the key. A box register the recording reads must be one of two kinds:
 - one it wrote first;
@@ -1023,6 +1023,19 @@ missed at every later offer. On the frame-typeset stack (#1992, which offers
 and 668 → 571 hits a window, 172.9 → 246.2 M a keystroke (PC runs 41377417237, 41378361514). Test:
 `a_meaning_defined_twice_at_the_call_level_is_not_keyed` (0 hits before the change, 3 after).
 
+**Errors: no offer while `error_count` is not 0** (sweep A in verify mode, beamer-polish). A call
+that ends a paragraph sets `error_count` to 0 (`end_graf`, tex.web §1096): beamer's `\@oddhead`
+does, in its `\parbox`es. A replay does not. The end check abandons a recording whose count
+changed ("Error"), but an entry recorded at 0 cannot tell whether the call resets it. After an
+edit that made errors (`\begin{frame}` mistyped: an undefined control sequence and "Too many }'s"),
+the guard admitted `\@oddhead` with the count at 2. The normal path reset it, the replay would
+have left it at 2, and the verifier's abandoned recording counted as a difference ("a verification
+found a difference", exit 3, in the CI sweeps of #2041, #2064, #1992 and #2093). The count matters:
+replayed after 99 scrolled errors, the next error is TeX's hundredth and ends the run. A call is
+now offered only while the count is 0 (K6, beside `\globaldefs` and `after_token`), where the
+reset changes nothing. This hole is older than this revision; the higher hit rate of K3 by first
+access made a sweep reach it. Test: `a_call_that_ends_a_paragraph_is_not_replayed_after_an_error`.
+
 **Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
 - a `\def` of `\reserved@a` first, which hits whatever the document left there;
 - a target passed as an argument (`\tl_set:Nn`'s shape), which hits;
@@ -1030,7 +1043,8 @@ and 668 → 571 hits a window, 172.9 → 246.2 M a keystroke (PC runs 4137741723
 - a `\def` in a group of the call's own and a read after its `\endgroup`, which is keyed;
 - an argument (`get_next`, `matching`) that becomes `\outer`, which is a miss; while it only
   changes meaning, it hits;
-- a body's token, read in place, that turns into a `#`, which is a miss (`bm-inplace`).
+- a body's token, read in place, that turns into a `#`, which is a miss (`bm-inplace`);
+- a call that ends a paragraph, offered after 99 scrolled errors, which is not replayed.
 
 ## 18. Revision 9: xkeyval's `\setkeys`, `\usebeamercolor`, and cheaper replays (lane BEAMER-FRAME, 2026-11-01)
 
