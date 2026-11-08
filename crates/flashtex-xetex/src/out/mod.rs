@@ -64,6 +64,10 @@ pub struct Output {
     /// The PDF file, opened by `dvi_open_out` (as xetex opens its pipe).
     pub pdf: Option<std::fs::File>,
     pub pdf_name: String,
+    /// The PDF file was opened again over the bytes it holds (a run
+    /// restarted from a page, [`Output::resume`]): `finish` writes over
+    /// them and cuts the file to the new PDF's length.
+    pdf_over: bool,
     dl: Option<DlSink>,
     /// A resident engine's run: the output's reports (`FlashTeX output:
     /// ...` lines), which a run in a process of its own writes to its
@@ -160,6 +164,7 @@ impl Output {
             doc,
             pdf: None,
             pdf_name: String::new(),
+            pdf_over: false,
             dl,
             reports: None,
             compress: true,
@@ -207,9 +212,19 @@ impl Output {
         self.pdf_name = snap.pdf_name.clone();
         crate::out::stage("resume_docclone");
         if snap.pdf_open {
-            let f = std::fs::File::create(&self.pdf_name)
+            // opened without being emptied, as the pdfTeX host writes its
+            // PDF only at the end of the run: emptying a PDF of many pages
+            // (`File::create`) took 0.7 ms before the restart could
+            // typeset (lane BEAMER, the PC); `finish` writes the new PDF
+            // over the old one and cuts it to its length
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&self.pdf_name)
                 .map_err(|e| format!("{}: {e}", self.pdf_name))?;
             self.pdf = Some(f);
+            self.pdf_over = true;
         }
         crate::out::stage("resume_open");
         let pages = self.doc.pages.clone();
@@ -543,12 +558,26 @@ pub fn finish(g: &mut Globals) -> i32 {
                 for w in warnings {
                     reports.push(format!("FlashTeX output: {w}"));
                 }
-                if let Err(e) = file.write_all(&bytes).and_then(|_| file.flush()) {
+                let over = out.pdf_over;
+                let cut = |f: &mut std::fs::File| match over {
+                    true => f.set_len(bytes.len() as u64),
+                    false => Ok(()),
+                };
+                if let Err(e) = file
+                    .write_all(&bytes)
+                    .and_then(|_| file.flush())
+                    .and_then(|_| cut(&mut file))
+                {
                     reports.push(format!("FlashTeX output: writing {}: {e}", out.pdf_name));
                     rc = 1;
                 }
             }
             Err(e) => {
+                // no PDF: the file is left empty, as a run's from the
+                // start (`dvi_open_out`)
+                if out.pdf_over {
+                    let _ = file.set_len(0);
+                }
                 reports.push(format!("FlashTeX output: {e}"));
                 rc = 1;
             }
