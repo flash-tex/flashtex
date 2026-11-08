@@ -93,6 +93,34 @@ final class CaptureQueueTests: XCTestCase {
         XCTAssertEqual(mac.hellos[0].pairId, pairId, "reconnect uses the pairing's id with the long-term key")
     }
 
+    /// A second tap on Send / Retry while the first delivery is still out
+    /// (the list kept showing the button: `captures` was copied before the
+    /// queue flipped the row to `sending`) must not start a second delivery.
+    /// Before the fix both taps sent a `capture_submit`, the second restarting
+    /// the attempt count at 1 and racing the first's receipt for the row.
+    func testSecondTapWhileSendingDoesNotSendAgain() async throws {
+        let r = model.draft(CaptureRecord(source: .pencil, png: Self.trianglePNG(), instructions: "once"))
+        async let first: Void = model.send(r.id)
+        async let second: Void = model.send(r.id)
+        _ = await (first, second)
+        XCTAssertEqual(mac.captures.map(\.captureId), [r.id], "one capture_submit for two taps")
+        guard case .received(let ack)? = model.captures.first?.status else {
+            return XCTFail("expected received, got \(String(describing: model.captures.first?.status))")
+        }
+        XCTAssertEqual(ack.captureId, r.id)
+    }
+
+    /// The row says `sending…` as soon as the tap is taken, so the list hides
+    /// Send / Retry for the duration of the delivery.
+    func testRowShowsSendingWhileTheDeliveryIsOut() async throws {
+        let r = model.draft(CaptureRecord(source: .pencil, png: Self.trianglePNG(), instructions: "visible"))
+        let work = Task { await model.send(r.id) }
+        await Task.yield()
+        XCTAssertEqual(model.captures.first?.status, .sending(attempt: 1))
+        await work.value
+        guard case .received? = model.captures.first?.status else { return XCTFail("expected received") }
+    }
+
     func testInvalidImageRefusedLocally() {
         XCTAssertNotNil(CaptureQueue.validate(png: Data([1, 2, 3]), instructions: "x"))
         XCTAssertNotNil(CaptureQueue.validate(png: Self.trianglePNG(), instructions: String(repeating: "a", count: 4097)))

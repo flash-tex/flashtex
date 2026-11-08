@@ -10,6 +10,7 @@
 
 use super::reader::{append_char, append_eol, without_eol};
 use super::{Fail, Result};
+use crate::pdftex::check_buf_msg;
 use crate::pdftex::fonts::{notdef_names, GlyphNames, NOTDEF};
 
 /// `standard_glyph_names` (writet1.c): Adobe StandardEncoding.
@@ -175,13 +176,20 @@ impl EncLines<'_> {
                     Some(_) => self.pos += 1,
                     None => self.eof = true,
                 }
+                // append_char_to_buf's check_buf comes before the byte is
+                // stored, and only when it is (a blank after a blank is not)
+                let len = line.len();
                 let c = append_char(c, &mut line);
-                if line.len() + 1 > ENC_BUF_SIZE {
-                    return Err(Fail("buffer overflow at file writet1.c, line 223".into()));
+                if line.len() > len && len + 1 > ENC_BUF_SIZE {
+                    return Err(Fail(check_buf_msg("writet1.c", 223)));
                 }
                 if c == b'\n' {
                     break;
                 }
+            }
+            // append_eol's check_buf: room for its LF and NUL
+            if line.len() + 2 > ENC_BUF_SIZE {
+                return Err(Fail(check_buf_msg("writet1.c", 225)));
             }
             append_eol(&mut line);
             if line.len() >= 2 && line[0] != b'%' {

@@ -185,6 +185,10 @@ final class ProjectFontsState {
             shown = false
             return note(.unchanged("Class default everywhere and no flashtex.toml: nothing to write"))
         }
+        // As ProjectMode: never over flashtex.toml's unsaved edits, and the
+        // save is pinned to the file as it was before the rewrite.
+        if let why = model.manifestEditRefusal(root: root) { return note(.refused(why)) }
+        let before = model.manifestBeforeRewrite(root: root)
         applying = true
         defer { applying = false }
         let entry = model.project.entryPath
@@ -201,7 +205,7 @@ final class ProjectFontsState {
             return note(.unchanged("\(reply.path) already says this"))
         }
         let url = URL(fileURLWithPath: reply.path)
-        switch model.files.save(url, text: text, expected: reply.exists ? .any : .newFile, force: false, recordsState: false) {
+        switch model.files.save(url, text: text, expected: before.expectation(saving: url, exists: reply.exists), force: false, recordsState: false) {
         case .saved: break
         case .conflict(let c): return note(.refused("cannot write \(ProjectManifest.fileName): \(c.summary)"))
         case .failed(let why): return note(.refused("cannot write \(ProjectManifest.fileName): \(why)"))
