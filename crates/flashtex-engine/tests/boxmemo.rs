@@ -518,4 +518,7 @@ fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
          \\measure{1pt}\\message{[\\the\\dimen1]}\\end\n",
     );
     assert!(stat(&s, "recordings") >= 1, "{s}");
+    // (review of #2153) calls 2 and 3 replay, and call 4 misses: without
+    // this the test passes with nothing replayed
+    assert_eq!(stat(&s, "hits"), 2, "{s}");
 }
