@@ -756,7 +756,10 @@ impl Globals {
         }
         let raw = self.host.dl.get(p);
         let loc = raw & !(START_FOUND | PER_CHAR);
-        if loc == 0 || loc == self.host.dl.last_marked {
+        // (a word whose glyphs have columns of their own is marked even
+        // where the node before it, a paragraph's indent box, is at its
+        // place)
+        if loc == 0 || loc == self.host.dl.last_marked && raw & PER_CHAR == 0 {
             return;
         }
         let pos = (self.dvi_offset as i64 + self.dvi_ptr as i64).max(0) as u64;
@@ -789,9 +792,13 @@ impl Globals {
 
     /// The columns of native word `p`'s glyphs, in the order the XDV
     /// string draws them, its first character being at `col0` and the
-    /// others after it in its line (`PER_CHAR`): a glyph per character, else
-    /// each glyph at the character in its proportion of the text. Empty
-    /// when `p` is no native word.
+    /// others after it in its line (`PER_CHAR`): a glyph per character;
+    /// else a glyph that is its character's in the font (its cmap glyph) is
+    /// at that character, and one that is not (a ligature) stands for the
+    /// characters up to the next glyph that is, and is at the character
+    /// after them, where the pdfTeX engine's main loop makes a ligature
+    /// (as it reads the character after it). Empty when `p` is no native
+    /// word.
     fn dl_glyph_cols(&mut self, p: i32, col0: u16) -> Vec<u16> {
         // (a whatsit, native_word_node or native_word_node_AT)
         let w = self.mem[p as usize];
@@ -816,9 +823,49 @@ impl Globals {
             return vec![];
         }
         let n = chars.len();
-        let mut out: Vec<u16> = (0..glyphs).map(|j| chars[j * n / glyphs]).collect();
+        if glyphs == n {
+            if rtl {
+                chars.reverse();
+            }
+            return chars;
+        }
         if rtl {
+            // (no alignment of a right-to-left string's glyphs: each at
+            // the character in its proportion)
+            let mut out: Vec<u16> = (0..glyphs).map(|j| chars[j * n / glyphs]).collect();
             out.reverse();
+            return out;
+        }
+        let ids = match self.glyph_info_of(p) {
+            Some(g) if g.ids.len() == glyphs => g.ids.clone(),
+            _ => return (0..glyphs).map(|j| chars[j * n / glyphs]).collect(),
+        };
+        let f = self.native_font_of(p);
+        let scalars: Vec<i32> = char::decode_utf16(units.iter().copied())
+            .map(|c| c.map_or(0xFFFD, |c| c as i32))
+            .collect();
+        let cmap: Vec<u16> = scalars
+            .iter()
+            .map(|&c| self.map_char_to_glyph(f, c) as u16)
+            .collect();
+        let end = col.min(NO_COLUMN as usize - 1) as u16;
+        let at = |i: usize| chars.get(i).copied().unwrap_or(end);
+        let mut out = Vec::with_capacity(glyphs);
+        let mut i = 0;
+        for j in 0..glyphs {
+            if i < n && ids[j] == cmap[i] {
+                out.push(chars[i]);
+                i += 1;
+            } else {
+                // a ligature: its characters, up to the next glyph's own
+                let next = ids.get(j + 1).copied();
+                let mut k = (i + 1).min(n);
+                while k < n && Some(cmap[k]) != next {
+                    k += 1;
+                }
+                out.push(at(k));
+                i = k;
+            }
         }
         out
     }
