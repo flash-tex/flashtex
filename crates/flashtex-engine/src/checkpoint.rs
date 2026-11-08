@@ -232,6 +232,13 @@ pub trait Observer {
     fn take_held_segment(&mut self, _g: &mut Globals) -> bool {
         true
     }
+    /// A timed checkpoint is due while `Layer::segment_hold` holds segment
+    /// checkpoints back: whether to take it (where retention would keep
+    /// it). A timed checkpoint stops no run, so newer work does not take
+    /// one here: the next segment or preemption point stops the run.
+    fn take_held_timed(&mut self, _g: &mut Globals) -> bool {
+        true
+    }
     /// Newer work may wait ([`REQ_PREEMPT`]): whether the observer would
     /// stop the run at a segment checkpoint taken here (it then takes one).
     fn stops_now(&mut self, _g: &mut Globals) -> bool {
@@ -555,6 +562,9 @@ pub struct Layer {
     pub timed_s: f64,
     /// When the last checkpoint was taken.
     pub last_checkpoint: Option<std::time::Instant>,
+    /// When the last timed checkpoint due was held back
+    /// (`Observer::take_held_timed`): the next is due `timed_s` later.
+    pub timed_held_at: Option<std::time::Instant>,
     /// Segment checkpoints (`Point::Segment`): the least engine time since
     /// the last checkpoint for one to be taken.
     pub segment_s: f64,
@@ -639,6 +649,8 @@ pub struct Stats {
     pub segments_skipped: u64,
     /// Segment checkpoints due but held back (`Layer::segment_hold`).
     pub segments_held: u64,
+    /// Timed checkpoints due but held back (`Observer::take_held_timed`).
+    pub timed_held: u64,
     /// The thread CPU time of the whole of `checkpoint` (the host state,
     /// the scalars, the seal).
     pub total_cpu_s: f64,
@@ -656,11 +668,12 @@ impl Stats {
             .map(|(k, v)| format!("{k:?}:{v}"))
             .collect();
         format!(
-            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"segments_held\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
+            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"segments_held\":{},\"timed_held\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
             self.count,
             self.segments,
             self.segments_skipped,
             self.segments_held,
+            self.timed_held,
             self.total_cpu_s,
             self.files_s,
             self.cstate_s,
@@ -1050,6 +1063,17 @@ impl Globals {
             .rev()
             .find(|(i, _)| *i == id)
             .is_some_and(|(_, r)| rewritten_since(r).is_ok())
+    }
+
+    /// Why [`restorable`](Self::restorable) says no (`None`: it does not):
+    /// the file reopened since whose instance there is not kept.
+    pub fn unrestorable_why(&mut self, id: CheckpointId) -> Option<String> {
+        match self.layer().records.iter().rev().find(|(i, _)| *i == id) {
+            None => Some("no record".into()),
+            Some((_, r)) => rewritten_since(r).err().map(|k| {
+                format!("{k} was opened for output again since, its instance there not kept")
+            }),
+        }
     }
 
     /// Take a checkpoint now. The engine must be between commands (before
@@ -2311,7 +2335,30 @@ impl Globals {
                 }
             }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
-            REQ_TIMED => self.hook_checkpoint(Point::Timed),
+            REQ_TIMED => {
+                // Held back as segment checkpoints are (`segment_hold`):
+                // where retention would merge it away (`incr::thin`: more
+                // than `dense` pages from the cursor only page checkpoints
+                // stay), taking it saved its chunks, sealed and packed its
+                // log, and merged it, for nothing (lane COLD-FIRST-2).
+                let take = !self.layer().segment_hold
+                    || match self.layer().observer.take() {
+                        Some(mut obs) => {
+                            let t = obs.take_held_timed(self);
+                            self.layer().observer = Some(obs);
+                            t
+                        }
+                        None => true,
+                    };
+                if take {
+                    self.hook_checkpoint(Point::Timed);
+                } else {
+                    // (the next one is due `timed_s` from now)
+                    let l = self.layer();
+                    l.stats.timed_held += 1;
+                    l.timed_held_at = Some(std::time::Instant::now());
+                }
+            }
             REQ_AUX => {
                 // L5: the read-set begins when this `.aux` has been read
                 // (`note_aux_close`)
@@ -2529,6 +2576,11 @@ impl Globals {
                     keep.extend(self.pending_ids());
                     self.layer().taken.retain(|(i, _)| keep.contains(i));
                 }
+                if matches!(why, Point::BeginDocument | Point::Aux) {
+                    // (and the forms written by now: a persisted S₀ sends
+                    // them, `displaylist::KeptForm`)
+                    self.dl_keep_forms_at(id);
+                }
                 let l = self.layer();
                 if let Ok(w) = written {
                     l.written_at.push((id, w));
@@ -2732,6 +2784,7 @@ impl Globals {
         l.lines += 1;
         if l.timed_s > 0.0
             && l.last_checkpoint
+                .max(l.timed_held_at)
                 .is_some_and(|t| t.elapsed().as_secs_f64() >= l.timed_s)
         {
             self.ckpt_request = REQ_TIMED;
@@ -2882,6 +2935,7 @@ impl Globals {
         let l = self.layer();
         l.run_started = Some(std::time::Instant::now());
         l.last_checkpoint = l.run_started;
+        l.timed_held_at = None;
         l.shipout_times.clear();
         let r = std::panic::catch_unwind(AssertUnwindSafe(|| f(self)));
         match r {

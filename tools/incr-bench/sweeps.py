@@ -213,7 +213,7 @@ def env():
         if bm == 'verify':
             e['FLASHTEX_BOXMEMO_VERIFY_FAIL'] = '1'
     # FLASHTEX_SWEEP_BOXMEMO_SPANS=tikzpicture,tikzcd offers those environments as spans
-    # (BOX-MEMO.md §15; sweeps.yml's `boxmemo_spans` input); unset, the product's default (none)
+    # (BOX-MEMO.md §17; sweeps.yml's `boxmemo_spans` input); unset, the product's default (none)
     spans = os.environ.get('FLASHTEX_SWEEP_BOXMEMO_SPANS', '')
     if spans:
         e['FLASHTEX_BOXMEMO_SPANS'] = spans

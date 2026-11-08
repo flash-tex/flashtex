@@ -98,7 +98,7 @@ pub enum Node {
     },
     /// The box moved out of the call's `hole`-th foreign register.
     Hole(usize),
-    /// A span's `\copy` of its `i`-th copied foreign register (§15.6):
+    /// A span's `\copy` of its `i`-th copied foreign register (§17.6):
     /// rebuilt by `copy_node_list` of the register's box, as the normal
     /// path made it (its nodes keep that box's SyncTeX tags), then the box
     /// node's own words as the call left them (`box_end`'s shift for
@@ -325,6 +325,27 @@ pub fn frag_diff(a: &Frag, b: &Frag) -> Option<String> {
         return Some(format!("actions {:?} / {:?}", a.actions, b.actions));
     }
     (a.fonts != b.fonts).then(|| format!("fonts {:?} / {:?}", a.fonts, b.fonts))
+}
+
+/// Whether `f` refers to nothing outside itself but the static glue
+/// specifications: no hole, no glue an `eqtb` entry, a sparse register or
+/// a font holds, no object the call made. Such a fragment rebuilds the same
+/// wherever it is made, whatever the state then (BOX-MEMO.md §16: a box
+/// left in a register, rebuilt where its assignment is replayed).
+pub fn self_contained(f: &Frag) -> bool {
+    fn list(v: &[Node]) -> bool {
+        v.iter().all(|n| match n {
+            Node::Char(_) => true,
+            Node::Hole(_) => false,
+            Node::Big { fields, .. } => fields.iter().all(|x| match &x.to {
+                Ref::Null | Ref::Toks(_) | Ref::Action(_) => true,
+                Ref::Spec(Spec::Static(_)) | Ref::Spec(Spec::Own(_)) => true,
+                Ref::Spec(_) | Ref::NewObj(_) => false,
+                Ref::List(l) => list(l),
+            }),
+        })
+    }
+    f.fonts.is_empty() && list(&f.nodes)
 }
 
 struct Ser<'a> {
@@ -694,7 +715,7 @@ impl Globals {
         self.frag_take_span(first, stop, holes, &[], new_objs, None)
     }
 
-    /// [`Globals::frag_take`] for a span (§15.6): `copies` are the copies
+    /// [`Globals::frag_take`] for a span (§17.6): `copies` are the copies
     /// of foreign boxes it made, each kept as `Node::Copy`, and `tag` the
     /// SyncTeX tag every other node it made carries.
     pub(crate) fn frag_take_span(
@@ -768,7 +789,7 @@ impl Globals {
     }
 
     /// [`Globals::frag_make`], with `copies[i]` the node its `Node::Copy(i)`
-    /// stands for, a copy made again (§15.6).
+    /// stands for, a copy made again (§17.6).
     pub(crate) fn frag_make_span(
         &mut self,
         f: &Frag,

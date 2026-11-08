@@ -75,7 +75,7 @@ const MAX_LIST: usize = 1 << 16;
 const MAX_VARIANTS: usize = 1024;
 /// Bytes of recordings kept in all, roughly.
 const MAX_BYTES: usize = 32 << 20;
-/// The most one span's entry may take of it (§15.5).
+/// The most one span's entry may take of it (§17.5).
 const MAX_SPAN_BYTES: usize = MAX_BYTES / 4;
 /// Recordings abandoned in a row before a macro is no longer recorded.
 const ABORT_BUDGET: u32 = 64;
@@ -94,7 +94,7 @@ pub enum Mode {
 struct Config {
     mode: Mode,
     names: Vec<Vec<u8>>,
-    /// The environments offered as spans (§15): `FLASHTEX_BOXMEMO_SPANS`,
+    /// The environments offered as spans (§17): `FLASHTEX_BOXMEMO_SPANS`,
     /// none by default.
     spans: Vec<Vec<u8>>,
     stats_out: Option<String>,
@@ -132,6 +132,16 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // instructions a call): recorded anywhere and taken from the intrinsics
     // (`RECORD_ANYWHERE`, §12.2)
     "pdfstringdefPreHook",
+    // (lane FANCYHDR) fancyhdr's head and foot: LaTeX's `\@thehead` is
+    // `\let` to `\@oddhead` or `\@evenhead`, which fancyhdr makes call
+    // these (a draw call each, whose `\normalsize` leaves `\strutbox` set
+    // at the call's level, §16)
+    "f@nch@head",
+    "f@nch@foot",
+    // cleveref's counter prefix, made again at every `\refstepcounter` and
+    // `\label` (the reset lists walked by `\cref@isinresetlist`): only
+    // assignments, 1-3 M instructions a call
+    "cref@constructprefix",
 ];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
@@ -191,7 +201,7 @@ enum Val {
     FreshGlue([i32; 5]),
     /// A token list made for the assignment (`\def`, `\edef`, `\toks`).
     FreshList(Vec<i32>),
-    /// A span's compressed log (§15.5): the token list the log's operation
+    /// A span's compressed log (§17.5): the token list the log's operation
     /// `.0` made, which a `\let` may have shared; a replay makes it at the
     /// first operation with this `.0` and shares it at the others, so the
     /// lists are shared as on the normal path (their reference counts).
@@ -207,6 +217,15 @@ enum Val {
     /// interword glue as `(0, f)` (beamer's `\beamer@lastskip=\lastskip`
     /// after an interword space).
     GlueFrom(i32, i32),
+    /// A box a local `\setbox` at the call's own level put in a register
+    /// (fancyhdr's `\normalsize`: `\size@update` sets `\strutbox`), by value:
+    /// the box the register holds when the call ends, which nothing outside
+    /// the call made or shares (§16). A replay makes it fresh, as the
+    /// normal path's `box_end` made it.
+    Box(std::rc::Rc<crate::boxfrag::Frag>),
+    /// While recording, such a box by its node; `bm_finish` takes it by
+    /// value ([`Val::Box`]) or abandons the recording. Never in an entry.
+    BoxNode(i32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -240,7 +259,7 @@ enum Op {
     /// A span's `\ht`/`\wd`/`\dp` assignment to box register `n`, which it
     /// did not make (amsmath's `\resetMathstrut@`): word `c` of the box
     /// node becomes `v`, as `alter_box_dimen` does; no group takes it back
-    /// (§15.6).
+    /// (§17.6).
     BoxDim {
         n: i32,
         c: i32,
@@ -256,7 +275,7 @@ thread_local! {
     static TOKENS: RefCell<HashSet<std::rc::Rc<[i32]>>> = RefCell::new(HashSet::new());
     /// The pool's size in bytes, roughly (part of `MAX_BYTES`).
     static TOKEN_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Is the recording's span's F a token list (§15.10)?
+    /// Is the recording's span's F a token list (§17.10)?
     static SPAN_TOKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// During a replay, the lists its `Val::Shared` operations made, by
     /// the recorded operation that made each.
@@ -305,6 +324,9 @@ fn ops_bytes(ops: &[Op]) -> usize {
             } => 32 + 4 * l.len(),
             // (and once more in `Entry::new_cs`)
             Op::NewCs { name, .. } => 2 * (32 + 4 * name.len()),
+            Op::Def {
+                v: Val::Box(f), ..
+            } => 32 + f.bytes(),
             _ => 32,
         })
         .sum()
@@ -522,7 +544,7 @@ struct Entry {
     /// Foreign box registers read for their dimensions or kind, and those
     /// moved into the output (the holes, in order): by `box_key`.
     kb: Vec<(i32, Vec<i32>)>,
-    /// Foreign box registers a span copied, by contents (§15.6).
+    /// Foreign box registers a span copied, by contents (§17.6).
     kc: Vec<(i32, crate::boxfrag::Frag, Positions)>,
     holes: Vec<(i32, Vec<i32>)>,
     /// A draw call's output: the nodes it appended to the current list,
@@ -559,7 +581,7 @@ struct Entry {
     /// packs none leaves it as it was, which a replay must then do too (it
     /// is the state's, not the call's).
     last_badness: Option<i32>,
-    /// A span's file and what it left (§15).
+    /// A span's file and what it left (§17).
     span: Option<Box<SpanEntry>>,
     last_used: u64,
     hits: u64,
@@ -602,7 +624,7 @@ struct ObjRef {
     dims: [i32; 3],
 }
 
-/// What a span (§15) read of its file: the lines `input_ln` read, each raw
+/// What a span (§17) read of its file: the lines `input_ln` read, each raw
 /// with the stream's offset after it, counted from the offset at the call.
 /// Part of the key: the file must hold the same lines there now.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -612,7 +634,7 @@ struct SpanFile {
     lines: Vec<(Vec<u8>, u64)>,
 }
 
-/// Where a span left its file level (§15), counted from its `start`: the
+/// Where a span left its file level (§17), counted from its `start`: the
 /// line in the buffer (`buffer[start..=limit]`), `loc`, `limit`, the state;
 /// `first` and, when the span read a line, `last` and the buffer's high
 /// mark; `line`.
@@ -659,7 +681,7 @@ impl SpanEnd {
     }
 }
 
-/// A span begun in vertical mode inside a box (§15.3): it started a
+/// A span begun in vertical mode inside a box (§17.3): it started a
 /// paragraph (`new_graf`), which is still open at its end. The nodes it
 /// appended to the box's list before (the paragraph skip), the paragraph's
 /// level (`mode_line`, `prev_graf`, `aux`) and its list. (On the main
@@ -675,12 +697,12 @@ struct Graf {
     outer_h: i64,
 }
 
-/// The source positions of a span's output nodes (§15.4), in the order
+/// The source positions of a span's output nodes (§17.4), in the order
 /// [`Globals::bm_node_walk`] visits them: the outer fragment's (or the draw
 /// fragment's), then the paragraph's list head and its fragment's.
 type Positions = Vec<crate::displaylist::SidePos>;
 
-/// What a span keeps besides a call's entry (§15).
+/// What a span keeps besides a call's entry (§17).
 #[derive(Clone, Debug)]
 struct SpanEntry {
     file: SpanFile,
@@ -688,14 +710,14 @@ struct SpanEntry {
     graf: Option<Graf>,
     pos: Positions,
     /// The foreign box registers whose `\copy` its output holds
-    /// (`Node::Copy`, in order, §15.6).
+    /// (`Node::Copy`, in order, §17.6).
     copies: Vec<i32>,
-    /// A token list's F (§15.10): the tokens the span read from it.
+    /// A token list's F (§17.10): the tokens the span read from it.
     toks: Option<Vec<i32>>,
 }
 
 /// A paragraph skip a span's `new_graf` appended to the main vertical
-/// list (§15.3), as it was then: the node, its glue specification and that
+/// list (§17.3), as it was then: the node, its glue specification and that
 /// specification's words, and its source position. The page builder took
 /// it at once (and may have thrown it away), so it is kept from here.
 #[derive(Clone)]
@@ -708,7 +730,7 @@ struct GlueRec {
 }
 
 /// What a span's recording noted of the paragraphs `new_graf` began on the
-/// main vertical list (§15.3). LaTeX begins every paragraph twice (ltpara:
+/// main vertical list (§17.3). LaTeX begins every paragraph twice (ltpara:
 /// `\everypar` ends the paragraph `new_graf` began, empty, and begins it
 /// again with `\noindent`), and each time the page builder runs: the
 /// paragraph skips, in order, the outer list's tail after the page builder's
@@ -725,7 +747,7 @@ struct SpanRec {
     f: i32,
     index: i32,
     file: SpanFile,
-    /// A token list's F (§15.10): its list (`start`) and `loc` at the call.
+    /// A token list's F (§17.10): its list (`start`) and `loc` at the call.
     toks: Option<(i32, i32)>,
     /// The stream's offset at the call, and `max_buf_stack`.
     at: u64,
@@ -767,9 +789,15 @@ struct Rec {
     group_read: bool,
     /// `cur_level` and `cur_group` at the call.
     group0: (i32, i32),
-    /// (register, box) for each box the call put in a register: a register
-    /// holding a box the call did not put there (a group ended) is foreign.
+    /// (register, box) for each box the call put in a register (or made
+    /// void by moving its box out, box 0): read, a register holding one of
+    /// them is the call's own, not an input; a register holding a box the
+    /// call did not put there (a group ended) is foreign.
     boxes: HashSet<(i32, i32)>,
+    /// `boxes` as it was where each open group of the call began: the
+    /// group's `unsave` puts back every register it saved, and with it
+    /// whether the register is the call's (`flashtex_bm_unsave`).
+    box_stack: Vec<HashSet<(i32, i32)>>,
     /// Box registers assigned globally: each must be void when the call
     /// ends, and the replay makes it so (`\global\setbox` to void, at the
     /// end of the log).
@@ -781,10 +809,10 @@ struct Rec {
     /// the value is scanned (`flashtex_bm_box_dimen`).
     alter: Option<i32>,
     kb: Vec<(i32, Vec<i32>)>,
-    /// Foreign box registers a span copied (`\copy`), by contents (§15.6).
+    /// Foreign box registers a span copied (`\copy`), by contents (§17.6).
     kc: Vec<(i32, crate::boxfrag::Frag, Positions)>,
     /// (register, copy) of each `\copy` of a foreign register a span made,
-    /// and the register of the one being made (§15.6).
+    /// and the register of the one being made (§17.6).
     copies: Vec<(i32, i32)>,
     copying: Option<i32>,
     /// (register, box node, key) of each box moved out of a foreign register
@@ -821,7 +849,7 @@ struct State {
 struct Fast {
     base: i32,
     /// A span's file level (`base - 1`), else -1: the one level below the
-    /// body the recording may read (§15).
+    /// body the recording may read (§17).
     span_f: i32,
     stamp: u32,
     seen: Vec<u32>,
@@ -1096,6 +1124,29 @@ struct Scratch {
     // `x_over_n`'s and `xn_over_d`'s remainder (tex.web §106, §107): read
     // only right after the call that sets it (§458, §461, §716, §717)
     remainder: i32,
+    // pdfTeX's protrusion: `char_pw` sets the character it looked at
+    // (`left_pw`, `right_pw`), and both are read only right after, in the
+    // same line break (`total_pw` then try_break's "Calculate variations of
+    // marginal kerns", post_line_break's `new_margin_kern`). fancyhdr's head
+    // breaks its `\parbox`es with microtype's protrusion on (a replay of
+    // `\@oddhead`, proof-practice-21242 in sweep A's verify mode)
+    last_leftmost_char: i32,
+    last_rightmost_char: i32,
+    // pdfTeX's `divide_scaled` remainder, read only right after a call of it
+    // (`adv_char_width`, `pdf_set_origin`, `pdf_set_textmatrix`,
+    // `pdf_use_font`, `pdf_begin_string` after their `divide_scaled` or
+    // `pdf_print_bp`); font expansion's packing sets it
+    scaled_out: i32,
+    // font expansion's ratio: `hpack(cal_expand_ratio)` zeroes and computes
+    // it, and only the `hpack(subst_ex_font)` it then calls reads it
+    font_expand_ratio: i32,
+    // a paragraph's expansion limits and step: `line_break` sets all three
+    // as it starts (pdftex.web "Get ready to start line breaking", when
+    // `pdf_adjust_spacing > 1`), and only that line break reads them
+    // (`check_expand_pars`, try_break's shortfall), under the same test
+    max_stretch_ratio: i32,
+    max_shrink_ratio: i32,
+    cur_font_step: i32,
     // pseudo-printing scratch (D9's list)
     tally: i32,
     first_count: i32,
@@ -1107,19 +1158,19 @@ struct Scratch {
     // `mlist_penalties`: every caller of `mlist_to_hlist` (`clean_box`, its
     // own sub-list case, `after_math`'s three) sets it just before the
     // call, which reads it on entry and nowhere else (pdftex.web; found by
-    // a span's full verification, BOX-MEMO.md §15)
+    // a span's full verification, BOX-MEMO.md §17)
     mlist_penalties: bool,
     // `cur_style`, `cur_size`, `cur_mu`: likewise every caller of
     // `mlist_to_hlist` sets `cur_style` before the call, which sets the
     // other two from it; only it and its helpers read them (pdftex.web,
-    // `clean_box` to `make_scripts`; a span in display math, §15)
+    // `clean_box` to `make_scripts`; a span in display math, §17)
     cur_style: i32,
     cur_size: i32,
     cur_mu: i32,
     // The current list's head's `info`: `push_nest`'s `get_avail` leaves
     // what the cell held, and nothing reads it (pdftex.web reads a list's
     // head only by `link` and as `tail=head`; `\lastpenalty` & co. test it
-    // with `is_char_node`). A span that began a paragraph (§15) got its
+    // with `is_char_node`). A span that began a paragraph (§17) got its
     // head from another cell than its replay.
     head_info: i32,
 }
@@ -1147,6 +1198,13 @@ impl Scratch {
             def_ref: g.def_ref,
             long_state: g.long_state,
             remainder: g.remainder,
+            last_leftmost_char: g.last_leftmost_char,
+            last_rightmost_char: g.last_rightmost_char,
+            scaled_out: g.scaled_out,
+            font_expand_ratio: g.font_expand_ratio,
+            max_stretch_ratio: g.max_stretch_ratio,
+            max_shrink_ratio: g.max_shrink_ratio,
+            cur_font_step: g.cur_font_step,
             tally: g.tally,
             first_count: g.first_count,
             trick_count: g.trick_count,
@@ -1197,6 +1255,13 @@ impl Scratch {
         g.def_ref = self.def_ref;
         g.long_state = self.long_state;
         g.remainder = self.remainder;
+        g.last_leftmost_char = self.last_leftmost_char;
+        g.last_rightmost_char = self.last_rightmost_char;
+        g.scaled_out = self.scaled_out;
+        g.font_expand_ratio = self.font_expand_ratio;
+        g.max_stretch_ratio = self.max_stretch_ratio;
+        g.max_shrink_ratio = self.max_shrink_ratio;
+        g.cur_font_step = self.cur_font_step;
         g.tally = self.tally;
         g.first_count = self.first_count;
         g.trick_count = self.trick_count;
@@ -1214,6 +1279,28 @@ impl Scratch {
     }
 }
 
+/// Whether two logged operations are the same: a box by value (§16) in
+/// the bits the program reads (`boxfrag::frag_diff`), the rest exactly.
+fn same_op(a: &Op, b: &Op) -> bool {
+    match (a, b) {
+        (
+            Op::Def {
+                p,
+                t,
+                v: Val::Box(x),
+                kind,
+            },
+            Op::Def {
+                p: q,
+                t: u,
+                v: Val::Box(y),
+                kind: l,
+            },
+        ) => p == q && t == u && kind == l && crate::boxfrag::frag_diff(x, y).is_none(),
+        _ => a == b,
+    }
+}
+
 /// A value whose word does not depend on the state where it is made: the
 /// assignment makes the same `equiv` (or word) wherever it is replayed.
 /// `\let` (`LetCs`, the meaning there) and a shared glue (`GlueFrom`, the
@@ -1223,7 +1310,7 @@ fn by_value(v: &Val) -> bool {
 }
 
 /// A span's log with its entered control sequences first, in their order
-/// (§15.5), so that [`compress_groups`] can take the groups holding them by
+/// (§17.5), so that [`compress_groups`] can take the groups holding them by
 /// their effect. `id_lookup` making a name changes the hash and the string
 /// pool and nothing a later assignment or group reads: no `unsave` takes a
 /// name away, no assignment reads the hash (a `\let`'s meaning is read from
@@ -1288,7 +1375,7 @@ fn sa_loc(t: i32, n: i32) -> i32 {
     -(t * 65536 + n) - 1
 }
 
-/// [`compress_groups`]; with `sparse`, a span's (§15.5), a group that
+/// [`compress_groups`]; with `sparse`, a span's (§17.5), a group that
 /// assigns e-TeX's sparse registers globally by value is taken by its
 /// effect too: e-TeX's `sa_save`/`sa_restore` keep a location of level one
 /// at the group's end and put back the others, as `eq_save` and `unsave`
@@ -1344,7 +1431,7 @@ fn compress_groups_with(ops: &[Op], sparse: bool) -> Vec<Op> {
             }
             last.push(Some(o.clone()));
         };
-        // (a span's, §15.5: `cur` holds what each control sequence the
+        // (a span's, §17.5: `cur` holds what each control sequence the
         // group assigned holds now, as a value; a `\let` from one of them
         // takes that value, as the normal path's `\let` takes the meaning
         // it has then. Two locations that shared a token list then hold
@@ -2472,7 +2559,7 @@ impl Globals {
             if self.bm_name_is(p, &names) {
                 self.bm_cand[p as usize] = true;
             }
-            // (§15: LaTeX's `\begin` offers the environments named)
+            // (§17: LaTeX's `\begin` offers the environments named)
             if spans && self.bm_name_is(p, &[b"begin".to_vec()]) {
                 self.bm_cand[p as usize] = true;
                 self.bm_span_cs = p;
@@ -2801,7 +2888,7 @@ impl Globals {
         if call == self.ckpt_arm_cs || self.ckpt_arm_level == self.input_ptr {
             return;
         }
-        // A span (§15): `\begin` of an environment named, read from a
+        // A span (§17): `\begin` of an environment named, read from a
         // file; its entries are kept under the environment's control
         // sequence.
         let mut cs = call;
@@ -2868,7 +2955,7 @@ impl Globals {
             let mut best: Option<(u64, usize)> = None;
             let mut partial = None;
             // (a span's variants whose key holds but for the file, which is
-            // read after: §15)
+            // read after: §17)
             let mut fits: Vec<(u64, usize)> = vec![];
             let mut k2_seen: Vec<(*const i32, bool)> = vec![];
             for (i, e) in ix.iter().map(|&i| (i, &v[i])) {
@@ -3119,6 +3206,7 @@ impl Globals {
             group_read: false,
             group0: (self.cur_level, self.cur_group),
             boxes: HashSet::new(),
+            box_stack: vec![],
             gboxes: vec![],
             pending_box: None,
             alter: None,
@@ -3321,6 +3409,39 @@ impl Globals {
         }
     }
 
+    /// `get_next` popped a used-up token list, during a recording. When it
+    /// was the last of the call's levels and `big_switch`'s own
+    /// `get_x_token` popped it -- `bm_at_switch`, no `expand` in progress,
+    /// no macro's parameters being scanned -- the call is over: the token
+    /// `get_next` reads next is the first after it, which the next command
+    /// reads as it would after a replay. The recording ends here, before
+    /// that token is read (`bm_finish`'s checks as at `big_switch`).
+    ///
+    /// Without this, a body whose last tokens only expand (LaTeX's `\end`:
+    /// `\if@endpe ... \fi`, the `env/.../after` hook, `\if@ignore ...
+    /// \fi` after its last `\endgroup`) was used up inside that
+    /// `get_x_token`, not at `big_switch`, and the read of the next token
+    /// abandoned it (`Level`): every frame on Infinite Descent (ntheorem's
+    /// `*@framecommand`, a TikZ picture ending in `\end{tikzpicture}`),
+    /// about a third of an edited page's instructions there (lane
+    /// EDITED-PAGE). A read past the call anywhere else -- a primitive's
+    /// look-ahead, a macro's parameters, an expansion's scan -- still
+    /// abandons it (`flashtex_bm_next`).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_popped(&mut self) {
+        let Some(base) = self.bm_with_rec(|r| r.base) else {
+            return;
+        };
+        if self.input_ptr < base
+            && self.bm_at_switch
+            && self.expand_depth_count == 0
+            && self.scanner_status == k::normal
+        {
+            self.bm_finish(None);
+        }
+    }
+
     /// The end of `get_next`, during a recording.
     #[cold]
     #[inline(never)]
@@ -3330,7 +3451,7 @@ impl Globals {
             (f.base, f.span_f)
         });
         if self.input_ptr < base {
-            // a span reads its file level (§15): its lines are the key's
+            // a span reads its file level (§17): its lines are the key's
             if self.input_ptr != span_f
                 || (self.cur_input.state_field == TOKEN_LIST) != SPAN_TOKS.with(|t| t.get())
             {
@@ -3389,7 +3510,45 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_group(&mut self, c: i32) {
-        self.bm_with_rec(|r| r.ops.push(Op::Begin(c)));
+        self.bm_with_rec(|r| {
+            r.box_stack.push(r.boxes.clone());
+            r.ops.push(Op::Begin(c));
+        });
+    }
+
+    /// The box registers the `unsave` about to run puts back (tex.web §282,
+    /// e-TeX's `sa_restore`): those the group saved, unless their value is
+    /// now a global one ("retaining").
+    fn bm_restored_boxes(&self) -> Vec<i32> {
+        let mut v = vec![];
+        let mut j = self.save_ptr - 1;
+        while j >= 0 {
+            let w = self.save_stack[j as usize].hh();
+            let t = w.b0();
+            if t == k::level_boundary {
+                break;
+            }
+            let p = w.rh();
+            if (t == k::restore_old_value || t == k::restore_zero)
+                && (BOX_BASE..BOX_BASE + 256).contains(&p)
+                && self.bm_eq(p).hh().b1() != k::level_one
+            {
+                v.push(p - BOX_BASE);
+            }
+            j -= if t == k::restore_old_value { 2 } else { 1 };
+        }
+        if self.sa_level == self.cur_level {
+            let mut c = self.sa_chain;
+            while c != 0 {
+                let q = self.mem[(c + 1) as usize].hh().lh();
+                let h = self.mem[q as usize].hh();
+                if h.b0() / 16 == BOX_VAL && h.b1() != k::level_one {
+                    v.push(self.bm_sa_number(q));
+                }
+                c = self.bm_link(c);
+            }
+        }
+        v
     }
 
     #[cold]
@@ -3399,7 +3558,20 @@ impl Globals {
         if self.cur_level <= level {
             return self.bm_abort("Group");
         }
-        self.bm_with_rec(|r| r.ops.push(Op::End));
+        // A register the group saved gets back the box it held where the
+        // group began, which is the call's own only if it was then: a box
+        // the call made in the group and read after it would otherwise be
+        // taken for the call's, and the register's box of before the call
+        // read unkeyed.
+        let restored = self.bm_restored_boxes();
+        self.bm_with_rec(|r| {
+            let before = r.box_stack.pop().unwrap_or_default();
+            for n in restored {
+                r.boxes.retain(|&(m, _)| m != n);
+                r.boxes.extend(before.iter().filter(|&&(m, _)| m == n));
+            }
+            r.ops.push(Op::End)
+        });
     }
 
     #[cold]
@@ -3555,11 +3727,24 @@ impl Globals {
         // the end of the group it was called in): an effect like a global
         // one, which the replay's `eq_define` at the same level makes again
         // with the same save-stack entry (LaTeX's `\begin` defines
-        // `\reserved@a` before its `\begingroup`). Box registers are not
-        // logged, so a box assigned there is refused.
+        // `\reserved@a` before its `\begingroup`). A box assigned there is
+        // logged by its node, taken by value when the call ends (§16).
         let outer = !global && self.cur_level == level;
         if outer && (BOX_BASE..BOX_BASE + 256).contains(&p) {
-            return self.bm_abort("OuterBox");
+            if t != BOX_REF {
+                return self.bm_abort("OuterBox");
+            }
+            self.bm_with_rec(|r| r.boxes.insert((p - BOX_BASE, e)));
+            if !self.bm_rec_on {
+                return;
+            }
+            let v = if e == 0 {
+                Val::Plain(0)
+            } else {
+                Val::BoxNode(e)
+            };
+            self.bm_with_rec(|r| r.ops.push(Op::Def { p, t, v, kind }));
+            return;
         }
         if (BOX_BASE..BOX_BASE + 256).contains(&p) {
             // A box made inside the call stays inside it (its local
@@ -3705,7 +3890,7 @@ impl Globals {
     }
 
     /// `copy_node_list` made `c`, a `\copy` of box register `n`, during a
-    /// recording: of a foreign one a span copies, kept (§15.6).
+    /// recording: of a foreign one a span copies, kept (§17.6).
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_copied(&mut self, n: i32, c: i32) {
@@ -3718,7 +3903,7 @@ impl Globals {
 
     /// `alter_box_dimen` scanned the value `v` for word `c` of a box node,
     /// during a recording: of a foreign register's box (`r.alter`), an
-    /// operation (§15.6).
+    /// operation (§17.6).
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_box_dimen(&mut self, c: i32, v: i32) {
@@ -3745,7 +3930,7 @@ impl Globals {
         if k == 5 {
             // `\ht n=..` & co. on a box the call did not make: a span keys
             // the box as it is now and replays the assignment
-            // (`Op::BoxDim`, §15.6)
+            // (`Op::BoxDim`, §17.6)
             if !self.bm_with_rec(|r| r.span.is_some()).unwrap_or(false) {
                 return self.bm_abort("BoxContent");
             }
@@ -3768,7 +3953,7 @@ impl Globals {
         if k == 4 {
             // `\copy` of a box the call did not make: a span keys the box
             // by its contents (amsmath's `\Mathstrut@` copies
-            // `\Mathstrutbox@` into every pgfplots label, §15.6)
+            // `\Mathstrutbox@` into every pgfplots label, §17.6)
             if !self.bm_with_rec(|r| r.span.is_some()).unwrap_or(false) {
                 return self.bm_abort("BoxContent");
             }
@@ -3810,7 +3995,7 @@ impl Globals {
     }
 
     /// Box `p` (a register's) by value, with its nodes' source positions:
-    /// what a `\copy` of it reads (§15.6).
+    /// what a `\copy` of it reads (§17.6).
     fn bm_box_contents(&self, p: i32) -> Result<(crate::boxfrag::Frag, Positions), &'static str> {
         let f = self.frag_take(p, self.bm_link(p), &[], &[])?;
         let pos = if crate::displaylist::enabled() {
@@ -4078,7 +4263,7 @@ impl Globals {
     }
 
     /// `big_switch`, during a recording: finish it when the body is done --
-    /// a span's when its group is closed again too (§15: until then the
+    /// a span's when its group is closed again too (§17: until then the
     /// call reads on from its file).
     #[cold]
     #[inline(never)]
@@ -4096,7 +4281,7 @@ impl Globals {
     }
 
     /// `input_ln` read a line of the current file level (tex.web §362),
-    /// during a recording: a span's file level's line is kept (§15).
+    /// during a recording: a span's file level's line is kept (§17).
     /// (A file level above it is refused at its first token.)
     #[cold]
     #[inline(never)]
@@ -4127,8 +4312,8 @@ impl Globals {
     fn bm_finish(&mut self, trailer: Option<i32>) {
         let end = self.bm_frame();
         let (start, scanner) = self.bm_with_rec(|r| (r.start.clone(), r.scanner)).unwrap();
-        // A span (§15): its file level must still be there; begun in
-        // vertical mode inside a box, it may leave a paragraph begun (§15.3)
+        // A span (§17): its file level must still be there; begun in
+        // vertical mode inside a box, it may leave a paragraph begun (§17.3)
         let (span_f, start_aux, start_etex, span_toks) = self
             .bm_with_rec(|r| {
                 (
@@ -4199,7 +4384,7 @@ impl Globals {
         {
             // only in restricted horizontal mode may a call append: no
             // paragraph, no page builder (a span also in a paragraph or in
-            // math, and one that begins a paragraph, §15.3)
+            // math, and one that begins a paragraph, §17.3)
             Some("OuterList")
         } else if span_f.is_some()
             && start.mode.abs() == k::mmode
@@ -4254,7 +4439,7 @@ impl Globals {
                     .is_none())
         {
             // (a span's `\inputlineno` reads of its own lines are made
-            // again by its replay, §15.4)
+            // again by its replay, §17.4)
             Some("LineShift")
         } else {
             None
@@ -4293,13 +4478,20 @@ impl Globals {
                 });
             }
         }
-        // a span's paragraph (§15.3): the paragraph skip appended to the
+        // (a span's foreign copies are holes too, §17.6)
+        if let Err(w) = self.bm_outer_boxes(
+            &mut rec.ops,
+            rec.holes.is_empty() && rec.new_objs.is_empty() && rec.copies.is_empty(),
+        ) {
+            return self.bm_abort_taken(rec, w);
+        }
+        // a span's paragraph (§17.3): the paragraph skip appended to the
         // box's list, and the paragraph's own list, with the holes
         let mut span_graf = None;
         let mut pos: Positions = vec![];
         let dl = crate::displaylist::enabled();
         // (a span's `\copy`s of foreign boxes, and the SyncTeX tag of its
-        // file level, which every other node it made carries, §15.6)
+        // file level, which every other node it made carries, §17.6)
         let copied: Vec<i32> = rec.copies.iter().map(|c| c.1).collect();
         let span_tag = rec.span.as_ref().map(|s| {
             if self.input_ptr == s.f {
@@ -4425,6 +4617,67 @@ impl Globals {
         self.bm_commit(rec, last_badness, frag, aux, trailer, span);
     }
 
+    /// The boxes the call left in registers at its own level
+    /// (`Val::BoxNode`, §16), taken by value. Each such register's last
+    /// assignment must be the box it holds now (nothing moved it out or
+    /// replaced it since), and the box must be the call's alone: no hole
+    /// (`alone`: the call moved no foreign box and made no object), and
+    /// nothing in it shared with the state ([`crate::boxfrag::self_contained`]),
+    /// so that it can be rebuilt where its assignment is replayed. Every
+    /// earlier assignment of the register at that level is replayed with the
+    /// same box: the next one at the level destroys it (`eq_destroy`) on both
+    /// paths, and a fresh box is never "reassigning".
+    fn bm_outer_boxes(&self, ops: &mut [Op], alone: bool) -> Result<(), &'static str> {
+        let mut regs: Vec<i32> = ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::Def {
+                    p,
+                    v: Val::BoxNode(_),
+                    ..
+                } => Some(*p),
+                _ => None,
+            })
+            .collect();
+        if regs.is_empty() {
+            return Ok(());
+        }
+        if !alone {
+            return Err("OuterBox");
+        }
+        regs.sort_unstable();
+        regs.dedup();
+        for p in regs {
+            let last = ops
+                .iter()
+                .rposition(|o| matches!(o, Op::Def { p: q, .. } if *q == p))
+                .expect("a box assignment");
+            let Op::Def {
+                v: Val::BoxNode(e), ..
+            } = &ops[last]
+            else {
+                return Err("OuterBox");
+            };
+            let e = *e;
+            if self.bm_eq(p).hh().rh() != e {
+                return Err("OuterBox");
+            }
+            let f = self.frag_take(e, self.bm_link(e), &[], &[])?;
+            if f.nodes.len() != 1 || !crate::boxfrag::self_contained(&f) {
+                return Err("OuterBoxShared");
+            }
+            let f = std::rc::Rc::new(f);
+            for o in ops.iter_mut() {
+                if let Op::Def { p: q, v, .. } = o {
+                    if *q == p && matches!(v, Val::BoxNode(_)) {
+                        *v = Val::Box(f.clone());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Abandon a recording already taken out of the state (its end check).
     fn bm_abort_taken(&mut self, rec: Rec, why: &str) {
         ST.with(|s| s.borrow_mut().rec = Some(rec));
@@ -4458,7 +4711,7 @@ impl Globals {
         } else {
             compress_groups(&rec.ops)
         };
-        // A span keeps its whole log only to be verified (§15.5): a
+        // A span keeps its whole log only to be verified (§17.5): a
         // pgfplots axis makes some 10^5 to 10^6 operations.
         let keep_ops = span.is_none() || mode() == Mode::Verify;
         let ops_cost = if keep_ops { ops_bytes(&rec.ops) } else { 0 };
@@ -4677,7 +4930,7 @@ impl Globals {
                 ));
             }
             for (j, (a, b)) in e.ops.iter().zip(&rec.ops).enumerate() {
-                if a != b {
+                if !same_op(a, b) {
                     diffs.push(format!("op {j}: recorded {a:?} normal path {b:?}"));
                     break;
                 }
@@ -4699,7 +4952,7 @@ impl Globals {
                 diffs.push("the last \\ignorespaces differs".to_string());
             }
             // a span's file, where it left the file level, its paragraph
-            // and its nodes' source positions (§15)
+            // and its nodes' source positions (§17)
             match (&e.span, span) {
                 (None, None) => {}
                 (Some(a), Some(b)) => {
@@ -4892,7 +5145,7 @@ impl Globals {
         fail_now();
     }
 
-    // -- spans (§15) ---------------------------------------------------------
+    // -- spans (§17) ---------------------------------------------------------
 
     /// `\begin` was called with `n` arguments: is it a span? `Ok`: the
     /// environment's control sequence (the store's key) and the part of the
@@ -4934,7 +5187,7 @@ impl Globals {
         let fl = self.input_stack[(self.input_ptr - 1) as usize];
         if fl.state_field == TOKEN_LIST {
             // (or a token list: a macro's argument, `\scalebox{..}{\begin..}`,
-            // or body, read token by token, §15.10)
+            // or body, read token by token, §17.10)
             if ![k::parameter, k::backed_up, k::inserted, k::macro_].contains(&fl.index_field)
                 || fl.loc_field == 0
             {
@@ -4994,7 +5247,7 @@ impl Globals {
         });
         let fl = self.input_stack[(self.input_ptr - 1) as usize];
         if fl.state_field == TOKEN_LIST {
-            // (§15.10: the list's next tokens are the recorded ones)
+            // (§17.10: the list's next tokens are the recorded ones)
             let high = self.max_buf_stack;
             let found = ST.with(|s| {
                 let s = s.borrow();
@@ -5039,7 +5292,7 @@ impl Globals {
                     && next[..*len] == sp.file.lines[..]
                     && (sp.end.max_buf.is_some() || sp.end.max_buf0 <= high)
                     // (a paragraph begun on the main vertical list: the
-                    // page builder's run there must fire nothing, §15.3)
+                    // page builder's run there must fire nothing, §17.3)
                     && sp
                         .graf
                         .as_ref()
@@ -5052,7 +5305,7 @@ impl Globals {
 
     /// `new_graf` began a paragraph, before (`k` 0) and after (1) the page
     /// builder's run on the main vertical list, during a recording: a
-    /// span's paragraph on its own level is noted (§15.3).
+    /// span's paragraph on its own level is noted (§17.3).
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_new_graf(&mut self, k: i32) {
@@ -5137,7 +5390,7 @@ impl Globals {
     }
 
     /// The paragraph skips a span appended to the main vertical list
-    /// (§15.3), as a fragment: each specification as the replay must share
+    /// (§17.3), as a fragment: each specification as the replay must share
     /// it, decided now (the call's end, where the replay rebuilds them): the
     /// static ones, one an `eqtb` glue location, a sparse register or a
     /// font holds now with the same words, else the fragment's own -- when
@@ -5247,7 +5500,7 @@ impl Globals {
 
     /// Will the page builder, run on the main vertical list's
     /// contributions and then skips of natural width `extra` (each at
-    /// least 0), fire nothing and take no insertion (§15.3)? A span begun
+    /// least 0), fire nothing and take no insertion (§17.3)? A span begun
     /// there replays its run only then: its recording's paragraph was
     /// typeset with no output routine between. Sufficient, not necessary:
     /// no penalty that forces a break, no insertion, and the page's total
@@ -5303,7 +5556,7 @@ impl Globals {
         h <= goal
     }
 
-    /// A token list's F (§15.10): the tokens the span read from it, from
+    /// A token list's F (§17.10): the tokens the span read from it, from
     /// `loc` at the call to `loc` now; refused if one is a macro
     /// parameter (`out_param`: the macro's argument, which the key does not
     /// hold).
@@ -5332,7 +5585,7 @@ impl Globals {
         Ok(Some(v))
     }
 
-    /// Where a span's recording leaves its file level (§15).
+    /// Where a span's recording leaves its file level (§17).
     fn bm_span_end(&self, s: &SpanRec) -> SpanEnd {
         let l = if self.input_ptr == s.f {
             self.cur_input
@@ -5381,7 +5634,7 @@ impl Globals {
     /// The line-shift journal's entries since `mark`, each a read of the
     /// span's file level's line (its SyncTeX tag, the file), as its line's
     /// distance from the span's first line; `None` when one is not, or a
-    /// checkpoint took some (§15.4).
+    /// checkpoint took some (§17.4).
     fn bm_span_journal(&self, f: i32, line0: i32, mark: u64) -> Option<Vec<i32>> {
         let l = if self.input_ptr == f {
             self.cur_input
@@ -5481,7 +5734,7 @@ impl Globals {
         }
     }
 
-    /// A token list's F (§15.10): a span's replay leaves it as the normal
+    /// A token list's F (§17.10): a span's replay leaves it as the normal
     /// path did, `n` tokens further on (the body is popped).
     fn bm_span_forward_toks(&mut self, n: usize, end: &SpanEnd) {
         assert!(
@@ -5591,6 +5844,17 @@ impl Globals {
                 }
                 (None, q)
             }
+            Val::Box(f) => {
+                // (as the draw calls' fragments are made: SyncTeX's and the
+                // display list's fields are `get_node`'s, at the call's
+                // place, which the normal path's nodes have too)
+                let save = self.scanner_status;
+                self.scanner_status = 0;
+                let (b, _) = self.frag_make(f, &[], &[]);
+                self.scanner_status = save;
+                (None, b)
+            }
+            Val::BoxNode(_) => unreachable!("boxmemo: a box by its node in an entry"),
         }
     }
 
@@ -5675,7 +5939,7 @@ impl Globals {
                 e.last_link,
             ))
         });
-        // a span (§15): its paragraph, its nodes' positions, where it left
+        // a span (§17): its paragraph, its nodes' positions, where it left
         // its file level
         let span = ST.with(|s| {
             let s = s.borrow();
@@ -5692,7 +5956,7 @@ impl Globals {
         let dl = crate::displaylist::enabled();
         // (a span's copies of foreign boxes, made as `\copy` made them, of
         // the boxes as they are now: after its `BoxDim`s, before a box is
-        // moved, §15.6)
+        // moved, §17.6)
         let copies: Vec<i32> = span
             .as_ref()
             .map(|sp| {
@@ -5739,7 +6003,7 @@ impl Globals {
             }
         }
         if let (Some((holes, None, _, _, _)), Some((_, _, Some(g), pos, _, _))) = (&draw, &span) {
-            // §15.3: the paragraph skip on the box's list, then the
+            // §17.3: the paragraph skip on the box's list, then the
             // paragraph `new_graf` began, its list with the holes
             let mut nodes = vec![];
             for (n, _) in holes {
@@ -5751,7 +6015,7 @@ impl Globals {
             // (`new_graf`: `prev_graf:=0` on the outer level, its skip,
             // `push_nest`, the paragraph's level; and on the main vertical
             // list the page builder, which reads only what the key and the
-            // recording's checks hold, §15.3)
+            // recording's checks hold, §17.3)
             self.cur_list.pg_field = 0;
             let (first, last) = self.frag_make(&g.outer, &[], &objs);
             if first != 0 {
@@ -5944,7 +6208,7 @@ mod tests {
 
     #[test]
     fn a_spans_let_takes_the_value_its_group_assigned() {
-        // §15.5: `\def\q{..}` (local) then `\global\let\p\q`: in a span's
+        // §17.5: `\def\q{..}` (local) then `\global\let\p\q`: in a span's
         // log the `\let` takes the list; elsewhere the group is kept
         let list = |p: i32, kind: i32, l: Vec<i32>| Op::Def {
             p,

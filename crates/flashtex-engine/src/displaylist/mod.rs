@@ -49,7 +49,7 @@ use flashtex_display_list::frame::write_frame;
 use flashtex_display_list::json::{s as js, Json};
 use flashtex_display_list::kind;
 use flashtex_display_list::page::{flags, Dest, Link, LinkKind, Page, StreamKind, NO_COLUMN};
-use flashtex_display_list::resource::{Font, Sources};
+use flashtex_display_list::resource::{Font, Sources, SpanShifts};
 use flashtex_display_list::sha256::{hex, sha256, Sha256};
 use interp::Marker;
 use std::cell::RefCell;
@@ -171,6 +171,13 @@ struct State {
     /// Spans of lines an edit replaced (`move_lines`): kept, never reused.
     /// A bit per span id.
     retired: Vec<u64>,
+    /// Every `move_lines` as a shift `(file, old_end, new_end - old_end)`:
+    /// the spans of the file from `old_end` on moved by that many lines.
+    /// `span_shifts[0]` is shift number `span_shift_base`; a reader that
+    /// accepts `span-shift-v1` is sent those after the last it was sent
+    /// (`Peer::moved`), not every moved span.
+    span_shifts: Vec<(u32, u32, i64)>,
+    span_shift_base: u64,
     // Resources by key: descriptions that do not depend on engine state.
     fonts: HashMap<[u8; 32], FontRes>,
     images: HashMap<[u8; 32], Json>,
@@ -193,6 +200,10 @@ struct State {
     /// is the same display list, which is then not built again. Names, like
     /// the spans: it outlives restores (each entry checks itself).
     memo: HashMap<(bool, u32), Memo>,
+    /// The forms a persisted S₀ brought (`keep_forms`), to be emitted before
+    /// this process's first page or form (`Globals::dl_send_kept_forms`):
+    /// its run starts after the preamble that wrote them.
+    kept_pending: Vec<KeptForm>,
 }
 
 impl State {
@@ -204,6 +215,8 @@ impl State {
             spans: Vec::new(),
             span_ids: SpanIndex::default(),
             retired: Vec::new(),
+            span_shifts: Vec::new(),
+            span_shift_base: 0,
             fonts: HashMap::new(),
             images: HashMap::new(),
             programs: HashMap::new(),
@@ -217,6 +230,7 @@ impl State {
             capture: None,
             cwd: std::env::current_dir().ok(),
             memo: HashMap::new(),
+            kept_pending: Vec::new(),
         }
     }
 
@@ -369,6 +383,7 @@ pub trait Sink {
 /// one relative file names are taken from.
 pub fn init_with_sink(sink: Box<dyn Sink>) {
     DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+    FORMS_AT.with(|a| a.borrow_mut().clear());
     SINK.with(|s| *s.borrow_mut() = Some(sink));
     forget_engine_state();
     ENABLED.store(true, Ordering::Relaxed);
@@ -506,6 +521,9 @@ impl Sink for StreamSink {
 /// what the reader lacks before it: a `FONT` for an id it has not seen (or
 /// that stood for another font), an `IMAGE` likewise, a `SOURCES` for new
 /// files and spans (or spans that moved).
+/// The shifts `State::span_shifts` keeps for readers behind.
+const SPAN_SHIFT_LOG: usize = 4096;
+
 #[derive(Default)]
 pub struct Peer {
     /// Font keys whose programs the reader holds (`have_fonts`).
@@ -518,6 +536,12 @@ pub struct Peer {
     images: HashMap<u32, [u8; 32]>,
     spans: HashMap<u32, (u32, u32)>,
     files: HashSet<u32>,
+    /// The reader accepts `span-shift-v1` (spec §5.3.1): [`Peer::moved`]
+    /// sends it the shifts since the last, and re-declares only the spans
+    /// they do not place.
+    pub span_shift: bool,
+    /// The number of `State::span_shifts` this reader's spans account for.
+    shift_seq: u64,
 }
 
 impl Peer {
@@ -527,6 +551,7 @@ impl Peer {
         self.images.clear();
         self.spans.clear();
         self.files.clear();
+        self.shift_seq = with(|st| st.span_shift_base + st.span_shifts.len() as u64).unwrap_or(0);
     }
 
     /// Send `e`, preceded by the resources and sources the reader lacks.
@@ -593,6 +618,66 @@ impl Peer {
             }
         });
         (!src.files.is_empty() || !src.spans.is_empty()).then(|| src.to_json_string().into_bytes())
+    }
+
+    /// The frames that tell the reader where the spans it knows went since
+    /// the last time ([`move_lines`]): for a reader that accepts
+    /// `span-shift-v1`, a `SPAN_SHIFT` with the shifts since then and a
+    /// `SOURCES` re-declaring only the spans the shifts do not place (a
+    /// span that moved some other way, or was sent where it already was);
+    /// else [`Peer::moved_spans`]. Applying them gives the reader exactly
+    /// the spans a `SOURCES` of every moved span would.
+    pub fn moved(&mut self) -> Vec<(u8, Vec<u8>)> {
+        if !self.span_shift {
+            return self
+                .moved_spans()
+                .map(|b| vec![(kind::SOURCES, b)])
+                .unwrap_or_default();
+        }
+        let mut out = Vec::new();
+        with(|st| {
+            let end = st.span_shift_base + st.span_shifts.len() as u64;
+            // The reader's shifts, on files it holds spans of; none when
+            // it is too far behind (then every moved span is re-declared).
+            let shifts = SpanShifts {
+                shifts: if self.shift_seq >= st.span_shift_base {
+                    st.span_shifts[(self.shift_seq - st.span_shift_base) as usize..]
+                        .iter()
+                        .copied()
+                        .filter(|(f, _, _)| self.files.contains(f))
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            };
+            self.shift_seq = end;
+            let mut src = Sources::default();
+            for (s, at) in self.spans.iter_mut() {
+                let Some(&now) = st.spans.get(*s as usize - 1) else {
+                    *at = shifts.apply(*at); // (as the reader will have it)
+                    continue;
+                };
+                if shifts.apply(*at) != now {
+                    src.spans.push((*s, now.0, now.1));
+                }
+                *at = now;
+            }
+            src.spans.sort_unstable_by_key(|x| x.0);
+            for &(_, file, _) in &src.spans {
+                if self.files.insert(file) {
+                    if let Some(p) = st.file_paths.get(file as usize - 1) {
+                        src.files.push((file, p.clone()));
+                    }
+                }
+            }
+            if !shifts.shifts.is_empty() {
+                out.push((kind::SPAN_SHIFT, shifts.to_json().to_string().into_bytes()));
+            }
+            if !src.files.is_empty() || !src.spans.is_empty() {
+                out.push((kind::SOURCES, src.to_json_string().into_bytes()));
+            }
+        });
+        out
     }
 
     /// A `SOURCES` body re-declaring the spans the reader knows that have
@@ -687,6 +772,202 @@ pub fn span_for(name: &[u8], line: u32) -> Option<u32> {
 /// Where span `s` is now: (file id, line).
 pub fn span_location(s: u32) -> Option<(u32, u32)> {
     with(|st| st.spans.get((s as usize).checked_sub(1)?).copied()).flatten()
+}
+
+// ---------------------------------------------------------------------------
+// forms written before S₀
+
+/// A form the engine wrote before S₀ or the `.aux` point, as a persisted S₀
+/// carries it (`host::prepare_s0`): the display list it was emitted as, and
+/// the spans its items name by place (a process numbers its spans afresh).
+///
+/// pdfTeX writes a form once, after the first page that uses it, or at once
+/// (`\immediate\pdfxform`: pgf's shadings and fadings, which a beamer theme
+/// or `\usetikzlibrary{fadings}` makes in the preamble). A process that opens
+/// a persisted S₀ starts after the preamble and never writes those, while
+/// its pages draw them: it sends them from the file instead
+/// ([`keep_forms`]), or its client draws those pages without them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeptForm {
+    /// The form's id (pdfTeX's `/Fm` n).
+    pub index: u32,
+    pub body: Vec<u8>,
+    pub hash: [u8; 32],
+    pub fonts: Vec<(u32, [u8; 32])>,
+    pub images: Vec<(u32, [u8; 32])>,
+    pub forms: Vec<u32>,
+    /// The spans the body names: the id it has there, the file's name as
+    /// TeX names it, the line.
+    pub places: Vec<(u32, Vec<u8>, u32)>,
+}
+
+crate::codec_struct!(KeptForm {
+    index,
+    body,
+    hash,
+    fonts,
+    images,
+    forms,
+    places
+});
+
+thread_local! {
+    /// The forms written by S₀ and by the `.aux` point (`dl_keep_forms_at`),
+    /// by checkpoint, as `crate::diag` keeps the definition sites.
+    static FORMS_AT: RefCell<Vec<(u64, Arc<Vec<KeptForm>>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The checkpoints [`FORMS_AT`] keeps (S₀, the `.aux` point, and a few
+/// earlier ones a restart in the preamble replaced).
+const FORMS_KEPT: usize = 8;
+
+fn keep_at(id: u64, forms: Arc<Vec<KeptForm>>) {
+    FORMS_AT.with(|a| {
+        let mut a = a.borrow_mut();
+        a.retain(|(i, _)| *i != id);
+        if a.len() >= FORMS_KEPT {
+            a.remove(0);
+        }
+        a.push((id, forms));
+    });
+}
+
+/// The forms written by checkpoint `id` (S₀ or the `.aux` point), as
+/// [`Globals::dl_keep_forms_at`] kept them; none when it did not.
+pub fn kept_forms_at(id: u64) -> Vec<KeptForm> {
+    FORMS_AT
+        .with(|a| {
+            a.borrow()
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, f)| f.as_ref().clone())
+        })
+        .unwrap_or_default()
+}
+
+/// A persisted S₀ was opened as checkpoint `id`, with the forms its
+/// preamble wrote: they are S₀'s (for a later save of it), and they are
+/// emitted before the first page or form this process ships
+/// (`Globals::dl_send_kept_forms`), unless the engine writes them itself.
+pub fn keep_forms(id: u64, forms: Vec<KeptForm>) {
+    with(|st| st.kept_pending = forms.clone());
+    keep_at(id, Arc::new(forms));
+}
+
+impl Globals {
+    /// At S₀ and the `.aux` point (checkpoint `id`): keep the forms the
+    /// engine has written by now (pdfTeX's `is_obj_written`), each as the
+    /// display list last emitted it, for a persisted S₀ ([`KeptForm`]).
+    pub fn dl_keep_forms_at(&mut self, id: u64) {
+        if !enabled() {
+            return;
+        }
+        // pdfTeX's list of form objects, newest first (`head_tab`,
+        // `obj_link`); `obj_info` is the form's `/Fm` number
+        let mut written = vec![];
+        let head = (crate::generated::consts::obj_type_xform - 1) as usize;
+        let mut k = self.head_tab[head];
+        let mut left = self.obj_ptr.max(0) as usize + 1;
+        while k > 0 && left > 0 && (k as usize) < self.obj_tab.len() {
+            let o = &self.obj_tab[k as usize];
+            if o.int2 > -1 {
+                written.push(o.int0 as u32);
+            }
+            k = o.int1;
+            left -= 1;
+        }
+        written.reverse();
+        let forms = with(|st| {
+            written
+                .iter()
+                .filter_map(|&n| {
+                    let e = &st.memo.get(&(true, n))?.emitted;
+                    let places = e
+                        .spans
+                        .iter()
+                        .filter_map(|&s| {
+                            let &(f, line) = st.spans.get((s as usize).checked_sub(1)?)?;
+                            let name = st.files.get((f as usize).checked_sub(1)?)?;
+                            Some((s, name.clone(), line))
+                        })
+                        .collect();
+                    Some(KeptForm {
+                        index: n,
+                        body: e.body.as_ref().clone(),
+                        hash: e.hash,
+                        fonts: e.fonts.clone(),
+                        images: e.images.clone(),
+                        forms: e.forms.clone(),
+                        places,
+                    })
+                })
+                .collect::<Vec<KeptForm>>()
+        })
+        .unwrap_or_default();
+        keep_at(id, Arc::new(forms));
+    }
+
+    /// Emit the forms a persisted S₀ brought ([`keep_forms`]), once, before
+    /// the first page or form this process ships: each one the engine has
+    /// not emitted itself (a run from the format that followed a refused
+    /// open writes them again), whose fonts and images are the ones it
+    /// named. Its spans are this process's for the same places.
+    fn dl_send_kept_forms(&mut self) {
+        let Some(kept) = with(|st| std::mem::take(&mut st.kept_pending)) else {
+            return;
+        };
+        for kf in kept {
+            if with(|st| st.memo.contains_key(&(true, kf.index))).unwrap_or(true) {
+                continue;
+            }
+            let same = kf.fonts.iter().all(|&(f, k)| self.dl_font_key(f) == k)
+                && kf
+                    .images
+                    .iter()
+                    .all(|&(n, k)| self.dl_image_key(n) == Some(k));
+            if !same {
+                continue;
+            }
+            let map: HashMap<u32, u32> = kf
+                .places
+                .iter()
+                .map(|(s, name, line)| (*s, span_for(name, *line).unwrap_or(0)))
+                .collect();
+            let body = if map.iter().all(|(a, b)| a == b) {
+                kf.body
+            } else {
+                let Ok(mut p) = Page::decode(StreamKind::Form, &kf.body) else {
+                    continue;
+                };
+                for it in p.items.iter_mut() {
+                    if let flashtex_display_list::page::Item::Span(s) = it {
+                        let old = *s;
+                        *s = map.get(&old).copied().unwrap_or(0);
+                    }
+                }
+                p.encode()
+            };
+            let mut spans: Vec<u32> = vec![];
+            for (s, _, _) in &kf.places {
+                if let Some(&n) = map.get(s).filter(|&&n| n != 0) {
+                    if !spans.contains(&n) {
+                        spans.push(n);
+                    }
+                }
+            }
+            let e = Emitted {
+                form: true,
+                index: kf.index,
+                body: Arc::new(body),
+                hash: kf.hash,
+                fonts: kf.fonts,
+                images: kf.images,
+                forms: kf.forms,
+                spans,
+            };
+            with_sink(|s| s.emit(e));
+        }
+    }
 }
 
 /// Whether side-table entries `a` and `b` (of an old run's node and the
@@ -788,6 +1069,15 @@ impl State {
     /// spans that are not retired take their new lines in span order.
     fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
         let delta = new_end as i64 - old_end as i64;
+        if delta != 0 {
+            self.span_shifts.push((f, old_end, delta));
+            if self.span_shifts.len() > SPAN_SHIFT_LOG {
+                // (a reader this far behind is sent every moved span instead)
+                let drop = self.span_shifts.len() - SPAN_SHIFT_LOG / 2;
+                self.span_shifts.drain(..drop);
+                self.span_shift_base += drop as u64;
+            }
+        }
         self.span_ids.clear_from(f, from);
         for i in 0..self.spans.len() {
             let (file, line) = self.spans[i];
@@ -903,7 +1193,7 @@ impl Globals {
         }
     }
 
-    /// BOX-MEMO's spans (docs/design/engine-v2/BOX-MEMO.md §15): node `p`'s
+    /// BOX-MEMO's spans (docs/design/engine-v2/BOX-MEMO.md §17): node `p`'s
     /// source position by what it names, the file and line of its span and
     /// its column, so that a replay can give a rebuilt node the position the
     /// normal path gave it (a span's nodes are made at many places of its
@@ -1215,6 +1505,8 @@ impl Globals {
         let _m = crate::memstat::scope(crate::memstat::tag::DL);
         let t_emit = std::time::Instant::now();
         let saved_scaled_out = self.scaled_out;
+        // (a persisted S₀'s forms, before this process's first stream)
+        self.dl_send_kept_forms();
         let kind = if cap.form {
             StreamKind::Form
         } else {
@@ -1471,6 +1763,7 @@ enum Query {
     Width(u32, u8),
     Advance(u32, u8),
     FontProblem(u32),
+    Typeset(u32, u8),
 }
 
 #[derive(Clone, PartialEq)]
@@ -1478,6 +1771,7 @@ enum Answer {
     Width(Option<i64>),
     Advance(Option<(i64, i64)>),
     FontProblem(Option<String>),
+    Typeset(bool),
 }
 
 impl Query {
@@ -1487,6 +1781,7 @@ impl Query {
             Query::Width(f, c) => Answer::Width(env.width(f, c)),
             Query::Advance(f, c) => Answer::Advance(env.advance(f, c)),
             Query::FontProblem(f) => Answer::FontProblem(env.font_problem(f)),
+            Query::Typeset(f, c) => Answer::Typeset(env.typeset(f, c)),
         }
     }
 }
@@ -1523,6 +1818,15 @@ impl interp::Env for Recording<'_> {
         }
         let a = self.env.font_problem(font);
         self.queries.insert(q, Answer::FontProblem(a.clone()));
+        a
+    }
+    fn typeset(&mut self, font: u32, code: u8) -> bool {
+        let q = Query::Typeset(font, code);
+        if let Some(Answer::Typeset(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.typeset(font, code);
+        self.queries.insert(q, Answer::Typeset(a));
         a
     }
     fn resname_prefix(&self) -> &[u8] {
@@ -1606,6 +1910,21 @@ impl interp::Env for WidthEnv<'_> {
     fn font_problem(&mut self, font: u32) -> Option<String> {
         let key = self.g.dl_font_key(font);
         with(|st| st.fonts.get(&key).and_then(|f| f.problem.clone())).flatten()
+    }
+    fn typeset(&mut self, font: u32, code: u8) -> bool {
+        // pdfTeX marks a character on the font that typeset it; a font
+        // sharing another's PDF object (`pdf_font_num` < 0) has its marks
+        // merged into that font's only when the fonts are written (§801).
+        let g = &mut *self.g;
+        let f = font as i32;
+        if f <= 0 || f > g.font_ptr {
+            return true;
+        }
+        if g.pdf_char_marked(f, code as i32) {
+            return true;
+        }
+        (1..=g.font_ptr)
+            .any(|k| g.pdf_font_num[k as usize] == -f && g.pdf_char_marked(k, code as i32))
     }
     fn resname_prefix(&self) -> &[u8] {
         &self.prefix
@@ -2697,6 +3016,126 @@ mod tests {
         assert_eq!(src.spans, vec![(c, 1, 17)]);
         assert!(src.files.is_empty(), "the reader has the file already");
         assert!(peer.moved_spans().is_none());
+        DL.with(|d| *d.borrow_mut() = None);
+    }
+
+    /// `span-shift-v1` (spec §5.3.1): a reader sent `SPAN_SHIFT`s ends with
+    /// exactly the spans one sent every moved span in `SOURCES` holds, over
+    /// random edits (insertions, deletions, several per compile, two files)
+    /// and new spans between them; and a line inserted near the top of a
+    /// long file is one shift, not every later span.
+    #[test]
+    fn a_span_shift_reader_holds_what_a_full_resend_gives() {
+        type Map = HashMap<u32, (u32, u32)>;
+        fn take(map: &mut Map, frames: &[(u8, Vec<u8>)]) {
+            for (k, body) in frames {
+                let j = Json::parse(std::str::from_utf8(body).unwrap()).unwrap();
+                match *k {
+                    kind::SOURCES => {
+                        for (s, f, l) in Sources::from_json(&j).unwrap().spans {
+                            map.insert(s, (f, l));
+                        }
+                    }
+                    kind::SPAN_SHIFT => {
+                        let sh = SpanShifts::from_json(&j).unwrap();
+                        for at in map.values_mut() {
+                            *at = sh.apply(*at);
+                        }
+                    }
+                    other => panic!("unexpected kind {other:#x}"),
+                }
+            }
+        }
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let paths = ["/p/main.tex", "/p/ch1.tex"];
+        let ids: Vec<u32> =
+            with(|st| paths.iter().map(|p| st.file_id(p.as_bytes())).collect()).unwrap();
+        let (mut full, mut shifted) = (
+            Peer::default(),
+            Peer {
+                span_shift: true,
+                ..Peer::default()
+            },
+        );
+        full.reset();
+        shifted.reset();
+        let (mut a, mut b): (Map, Map) = (HashMap::new(), HashMap::new());
+        let (mut shift_frames, mut full_spans) = (0, 0);
+        for _ in 0..300 {
+            // a compile's pages: new spans, sent where they are
+            let spans: Vec<u32> = with(|st| {
+                (0..8)
+                    .map(|_| st.span_id(ids[rnd(2) as usize], 1 + rnd(80)))
+                    .collect()
+            })
+            .unwrap();
+            for (peer, map) in [(&mut full, &mut a), (&mut shifted, &mut b)] {
+                if let Some(src) = peer.sources_for(&spans) {
+                    take(map, &[(kind::SOURCES, src)]);
+                }
+            }
+            // edits, then the next compile says where the spans went
+            for _ in 0..1 + rnd(3) {
+                let from = 1 + rnd(80);
+                let old_end = from + rnd(4);
+                let new_end = from + rnd(6);
+                move_lines(paths[rnd(2) as usize], from, old_end, new_end);
+            }
+            let (fa, fb) = (full.moved(), shifted.moved());
+            assert!(fa.iter().all(|(k, _)| *k == kind::SOURCES));
+            shift_frames += fb.iter().filter(|(k, _)| *k == kind::SPAN_SHIFT).count();
+            full_spans += fa.len();
+            take(&mut a, &fa);
+            take(&mut b, &fb);
+            assert_eq!(a, b, "the shifted reader's spans are the full re-send's");
+            for (s, at) in &a {
+                assert_eq!(
+                    span_location(*s),
+                    Some(*at),
+                    "and they are where the host has them"
+                );
+            }
+        }
+        assert!(shift_frames > 0 && full_spans > 0);
+        // A long file, a line inserted near its top: one shift, no span re-declared.
+        let long: Vec<u32> =
+            with(|st| (1..=20_000).map(|l| st.span_id(ids[0], 1000 + l)).collect()).unwrap();
+        for (peer, map) in [(&mut full, &mut a), (&mut shifted, &mut b)] {
+            if let Some(src) = peer.sources_for(&long) {
+                take(map, &[(kind::SOURCES, src)]);
+            }
+            let _ = peer.moved();
+        }
+        move_lines(paths[0], 1001, 1001, 1002);
+        let (fa, fb) = (full.moved(), shifted.moved());
+        let declared = |frames: &[(u8, Vec<u8>)]| -> usize {
+            frames
+                .iter()
+                .filter(|(k, _)| *k == kind::SOURCES)
+                .map(|(_, b)| {
+                    Sources::from_json(&Json::parse(std::str::from_utf8(b).unwrap()).unwrap())
+                        .unwrap()
+                        .spans
+                        .len()
+                })
+                .sum()
+        };
+        assert!(
+            declared(&fa) >= 20_000,
+            "the full re-send declares every later span"
+        );
+        assert_eq!(declared(&fb), 0, "the shift places them all");
+        assert_eq!(fb.iter().filter(|(k, _)| *k == kind::SPAN_SHIFT).count(), 1);
+        take(&mut a, &fa);
+        take(&mut b, &fb);
+        assert_eq!(a, b);
         DL.with(|d| *d.borrow_mut() = None);
     }
 

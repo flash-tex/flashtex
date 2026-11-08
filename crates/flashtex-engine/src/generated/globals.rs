@@ -18,6 +18,16 @@ pub struct Globals {
     pub xchr: [u8; 256],
     // §20
     pub xprn: crate::arena::Arr<bool>,
+    // §20
+    pub mubyte_write: crate::arena::Arr<str_number>,
+    // §20
+    pub no_convert: bool,
+    // §20
+    pub active_noconvert: bool,
+    // §20
+    pub special_printing: bool,
+    // §20
+    pub message_printing: bool,
     // §26
     pub name_of_file: [u8; 1024],
     // §26
@@ -1292,6 +1302,10 @@ pub struct Globals {
 pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<[u8; 256]>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<[u8; 1024]>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
@@ -1810,6 +1824,7 @@ impl Globals {
         let mut __plan = crate::arena::Plan::new(SCALAR_BYTES);
         let __r_xord = __plan.reserve::<ASCII_code>("xord", 256);
         let __r_xprn = __plan.reserve::<bool>("xprn", 256);
+        let __r_mubyte_write = __plan.reserve::<str_number>("mubyte_write", 256);
         let __r_buffer = __plan.reserve::<ASCII_code>("buffer", 200001);
         let __r_str_pool = __plan.reserve::<packed_ASCII_code>("str_pool", 6250001);
         let __r_str_start = __plan.reserve::<pool_pointer>("str_start", 500001);
@@ -1990,6 +2005,11 @@ impl Globals {
             xord: __arena.arr(__r_xord, 256),
             xchr: [0u8; 256],
             xprn: __arena.arr(__r_xprn, 256),
+            mubyte_write: __arena.arr(__r_mubyte_write, 256),
+            no_convert: false,
+            active_noconvert: false,
+            special_printing: false,
+            message_printing: false,
             name_of_file: [0u8; 1024],
             name_length: 0,
             buffer: __arena.arr(__r_buffer, 200001),
@@ -2632,6 +2652,10 @@ impl Globals {
     pub fn visit_scalars<V: crate::arena::Visit>(&mut self, v: &mut V) {
         v.pod(&mut self.bad);
         v.pod(&mut self.xchr);
+        v.pod(&mut self.no_convert);
+        v.pod(&mut self.active_noconvert);
+        v.pod(&mut self.special_printing);
+        v.pod(&mut self.message_printing);
         v.pod(&mut self.name_of_file);
         v.pod(&mut self.name_length);
         v.pod(&mut self.first);

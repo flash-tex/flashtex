@@ -151,7 +151,7 @@ pub fn journal_mark() -> (u64, Vec<(i32, i32)>, bool) {
     })
 }
 
-/// For BOX-MEMO's spans (docs/design/engine-v2/BOX-MEMO.md §15.4): the
+/// For BOX-MEMO's spans (docs/design/engine-v2/BOX-MEMO.md §17.4): the
 /// journal entries made since `mark` (a [`journal_mark`]'s count), when no
 /// checkpoint's record has taken any of them since.
 pub fn journal_since(mark: u64) -> Option<Vec<LineRead>> {

@@ -55,6 +55,8 @@ class RetirementRefsTests(unittest.TestCase):
 
     def test_the_repository_config_is_well_formed(self):
         cfg = json.load(open(rr.DEFAULT_CONFIG))
+        self.assertTrue(cfg['stages']['DOCUMENT_RUNTIME']['landed'])
+        self.assertIn('flashtex-document-runtime', cfg['stages']['DOCUMENT_RUNTIME']['names'])
         for sid, st in cfg['stages'].items():
             self.assertTrue(st['names'], sid)
             paths = [a['path'] for a in st.get('allow', [])]
