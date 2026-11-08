@@ -4,8 +4,8 @@ Lane **CONTIG-TOKENS** (DESIGN.md §4.2 "contiguous token-list storage, but only
 full suite", §5.6 item 2, §12 P6). Status: design, measured on main, and one prototype measured
 against it; the prototype's idea is landed always on by PR #2016 (LAZY-FLUSH), whose gates are
 summarised in §5. Evidence: [`docs/evidence/contig-tokens-2026-11-01/`](../../evidence/contig-tokens-2026-11-01/).
-DESIGN.md stays the source of truth: this document's recommendation (§5) is not a decision until
-§13 of DESIGN.md records one.
+DESIGN.md stays the source of truth. §13 of DESIGN.md adopted this document's recommendation (§5)
+on 2026-11-08, with two conditions on #2016: sweeps on its final head and a segment-stack-full test.
 
 ## 1. What is stored today
 

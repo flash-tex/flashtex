@@ -336,7 +336,7 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
     27 ms to load);
   - contiguous token-list storage, but only after P-T1 on the full suite (§12, P6). Studied
     and measured in [CONTIG-TOKENS.md](CONTIG-TOKENS.md): its recommendation (keep linked
-    storage; lazy `flush_list`, #2016) awaits a §13 decision.
+    storage; lazy `flush_list`, #2016) was adopted in §13 on 2026-11-08.
 - **Array reads are bounds-checked in every build that ships or is tested** (adopted
   2026-09-30, §13). Unchecked reads (`get_unchecked`, #1241's `src/ix.rs`) exist only as the
   opt-in measurement feature `unchecked-reads`, never shipped. Reason: they bought 1.3–3.2 %
@@ -662,7 +662,7 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
 
 1. Profile first; every item needs a measured win.
 2. Contiguous token lists and argument matching without allocation (contiguous storage:
-   [CONTIG-TOKENS.md](CONTIG-TOKENS.md), its recommendation awaiting a §13 decision).
+   [CONTIG-TOKENS.md](CONTIG-TOKENS.md); §13, 2026-11-08: tokens stay linked, lazy flush adopted).
 3. A fast `\csname` lookup.
 4. **Guarded intrinsics** (D9). Only pure, non-erroring leaf functions. The dependency
    set is computed when the format is built. An O(1) counter of redefinitions acts as
@@ -1303,6 +1303,7 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-11-01 | **T3's old column comes from a committed one-off v1 measurement** (#1915), as T4's does: `tools/parity/baselines/t3-v1-oneoff.json`, copied from the last complete green board with v1 (41203982275, 2026-10-31), with input hashes and an oracle record; a missing, malformed or uncovered baseline makes a cell `missing`, never green. A technique refinement within decision 3 (new ≥ old and the owner bars unchanged) | Commander (kabir-claude) |
 | 2026-11-01 | **Persisted body checkpoint S₁** (§5.1, #1899): a reopen at a stored viewport runs from S₁ instead of typesetting the pages before it, and fills them from S₀ with a pass that must converge. An implementation of decision 8's reopen goal within §5's soundness rules, not a change to them | Commander (kabir-claude), on review (reviews/2026-11-01.md) |
 | 2026-11-01 | **Undefined C behaviour in pdfTeX** (INT_MIN negation, division by 0): FlashTeX matches TeX Live's macOS arm64 build; other compilers may differ; never a crash (web2rust `--total-division` #2080, `--exact-abs` and `changes/intmin.ch` #2089) | Commander (kabir-claude), from lane WEB2RUST-AUDIT's evidence |
+| 2026-11-08 | **Token storage (CONTIG-TOKENS.md, #2008):** tokens stay linked one-word nodes in `mem`; no contiguous or out-of-`mem` token store and no zero-copy arguments (exact only with per-token phantom accounting and a new consumer per list routine). Lazy flush (#2016) is adopted always on, with no runtime switch, once its sweeps pass on its final head and a test exercises the segment-stack-full fallback; M-series measurement is not a gate (x86 A/A: −0.60 % instructions, −3.19 % cycles, PDFs and `\tracingstats=2` logs unchanged) | Commander (kabir-claude), from evidence |
 
 ---
 
