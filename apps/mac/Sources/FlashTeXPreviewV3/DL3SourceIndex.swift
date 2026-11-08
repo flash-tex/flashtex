@@ -11,38 +11,176 @@ import FlashTeXDisplayListV3
 /// The SOURCES declarations of a connection (or a file of frames): span id →
 /// (file, line). A later entry for a span id replaces the earlier one (spans
 /// move with their lines across edits).
+///
+/// `SPAN_SHIFT`s (`span-shift-v1`, protocol §5.3.1) are taken lazily: a
+/// shift is appended to `shifts` and no span is touched. A line inserted
+/// near the top of a long source moved every later span, each a set removal
+/// and insertion on main (about 30 ms for 60,000 spans, debug build). Each
+/// span keeps the line it had when the map had taken `epoch` shifts, and a
+/// lookup carries a line through the shifts since: forward for a span's
+/// line, backward (the lines that land on it) for a line's spans.
+///
+/// Most spans live in `base`, an immutable table (lines as of epoch 0,
+/// shared, never copied by a mutation); spans declared since are in a
+/// small overlay that supersedes it. `compacted()`, O(spans) and meant for
+/// a background queue (EngineV3Session), folds the overlay and the shifts
+/// into a new base.
 public struct DL3SourceMap: Sendable {
+    /// Spans with their lines as of epoch 0, and their index.
+    final class Base: Sendable {
+        let entries: [UInt32: Line]
+        let byLine: [UInt64: UInt32]
+        let more: [UInt64: [UInt32]]
+        init(entries: [UInt32: Line] = [:], byLine: [UInt64: UInt32] = [:], more: [UInt64: [UInt32]] = [:]) {
+            self.entries = entries; self.byLine = byLine; self.more = more
+        }
+        static let empty = Base()
+        var count: Int { entries.count }
+    }
+    struct Line: Sendable { var file: UInt32, line: UInt32 }
+    private struct Entry: Sendable { var file: UInt32, line: UInt32, epoch: UInt32 }
+    private struct Key: Hashable, Sendable { var file: UInt32, line: UInt32, epoch: UInt32 }
+
     public private(set) var files: [UInt32: String] = [:]
-    public private(set) var spans: [UInt32: (file: UInt32, line: UInt32)] = [:]
-    /// (file id, line) → span ids.
-    private var byLine: [UInt64: Set<UInt32>] = [:]
+    private var base = Base.empty
+    /// The overlay: span → its file and its line as of `epoch` shifts.
+    private var entries: [UInt32: Entry] = [:]
+    /// (file, line, epoch) → a span declared there; the others there (the host
+    /// keeps one live span per line: a retired one may share it) in `more`.
+    private var byLine: [Key: UInt32] = [:]
+    private var more: [Key: [UInt32]] = [:]
+    /// The shifts taken since the base was made: shift `k` takes epoch `k`
+    /// to `k + 1`.
+    public private(set) var shifts: [DL3SpanShifts.Shift] = []
+    private var epoch: UInt32 { UInt32(shifts.count) }
+    /// Spans declared since the base was made (a reason to compact).
+    public var overlayCount: Int { entries.count }
 
     public init() {}
 
     public mutating func apply(_ s: DL3Sources) {
         for (id, path) in s.files { files[id] = path }
         for (span, file, line) in s.spans {
-            if let old = spans[span] { byLine[Self.key(old.file, old.line)]?.remove(span) }
-            spans[span] = (file, line)
-            byLine[Self.key(file, line), default: []].insert(span)
+            let e = Entry(file: file, line: line, epoch: epoch)
+            if let old = entries.updateValue(e, forKey: span) {
+                if old.file == file, old.line == line, old.epoch == e.epoch { continue }
+                unindex(span, Key(file: old.file, line: old.line, epoch: old.epoch))
+            }
+            index(span, Key(file: file, line: line, epoch: e.epoch))
         }
     }
 
+    /// Takes a `SPAN_SHIFT`: O(its shifts), whatever the spans.
+    public mutating func shift(_ s: DL3SpanShifts) { shifts += s.shifts }
+
     public mutating func reset() { self = DL3SourceMap() }
+
+    private mutating func index(_ span: UInt32, _ k: Key) {
+        if byLine[k] == nil { byLine[k] = span } else { more[k, default: []].append(span) }
+    }
+
+    private mutating func unindex(_ span: UInt32, _ k: Key) {
+        if byLine[k] == span {
+            if var m = more[k], let last = m.popLast() {
+                byLine[k] = last
+                more[k] = m.isEmpty ? nil : m
+            } else {
+                byLine[k] = nil
+            }
+        } else if var m = more[k], let i = m.firstIndex(of: span) {
+            m.remove(at: i)
+            more[k] = m.isEmpty ? nil : m
+        }
+    }
 
     static func key(_ file: UInt32, _ line: UInt32) -> UInt64 { UInt64(file) << 32 | UInt64(line) }
 
-    /// Where a span points: the file's path (as the engine read it) and the line.
-    public func location(of span: UInt32) -> (path: String, line: Int)? {
-        guard span != 0, let s = spans[span], let path = files[s.file] else { return nil }
-        return (path, Int(s.line))
+    /// A line of `file` at epoch `from`, carried through the shifts since.
+    private func now(file: UInt32, line: UInt32, from: UInt32) -> UInt32 {
+        var l = line
+        var k = Int(from)
+        while k < shifts.count { l = shifts[k].apply(file: file, line: l); k += 1 }
+        return l
     }
 
-    /// The spans of `line` in files for which `matches(path)` holds.
+    private func place(_ span: UInt32) -> Line? {
+        if let e = entries[span] { return Line(file: e.file, line: now(file: e.file, line: e.line, from: e.epoch)) }
+        if let b = base.entries[span] { return Line(file: b.file, line: now(file: b.file, line: b.line, from: 0)) }
+        return nil
+    }
+
+    /// Every span where it is now (tests; O(spans)).
+    public var spans: [UInt32: (file: UInt32, line: UInt32)] {
+        var out: [UInt32: (file: UInt32, line: UInt32)] = [:]
+        for span in base.entries.keys where entries[span] == nil { if let p = place(span) { out[span] = (p.file, p.line) } }
+        for span in entries.keys { if let p = place(span) { out[span] = (p.file, p.line) } }
+        return out
+    }
+
+    /// Where a span points: the file's path (as the engine read it) and the line.
+    public func location(of span: UInt32) -> (path: String, line: Int)? {
+        guard span != 0, let p = place(span), let path = files[p.file] else { return nil }
+        return (path, Int(p.line))
+    }
+
+    /// The spans of `line` in files for which `matches(path)` holds: at
+    /// each epoch, from now back, the spans declared then on a line the
+    /// shifts since carry to `line` (a shift's preimage of `x` is `x` below
+    /// its `from`, and `x - delta` when that is at or past `from`), and at
+    /// epoch 0 the base's that the overlay does not supersede.
     public func spans(line: Int, where matches: (String) -> Bool) -> Set<UInt32> {
         var out = Set<UInt32>()
-        for (id, path) in files where matches(path) { out.formUnion(byLine[Self.key(id, UInt32(line))] ?? []) }
+        guard line >= 0, line <= Int(UInt32.max) else { return out }
+        for (id, path) in files where matches(path) {
+            var lines: Set<UInt32> = [UInt32(line)]
+            var e = epoch
+            while true {
+                for l in lines {
+                    let k = Key(file: id, line: l, epoch: e)
+                    if let s = byLine[k] { out.insert(s) }
+                    if let m = more[k] { out.formUnion(m) }
+                }
+                if e == 0 {
+                    for l in lines {
+                        let k = Self.key(id, l)
+                        if let s = base.byLine[k], entries[s] == nil { out.insert(s) }
+                        for s in base.more[k] ?? [] where entries[s] == nil { out.insert(s) }
+                    }
+                    break
+                }
+                e -= 1
+                let sh = shifts[Int(e)]
+                guard sh.file == id else { continue }
+                var before = Set<UInt32>()
+                for x in lines {
+                    if x < sh.from { before.insert(x) }
+                    let y = Int(x) - sh.delta
+                    if y >= Int(sh.from), y <= Int(UInt32.max) { before.insert(UInt32(y)) }
+                }
+                lines = before
+                if lines.isEmpty { break }
+            }
+        }
         return out
+    }
+
+    /// The same spans with the overlay and the shifts folded into a new
+    /// base: no shift pending. O(spans), off main.
+    public func compacted() -> DL3SourceMap {
+        var entries: [UInt32: Line] = [:]
+        entries.reserveCapacity(base.count + self.entries.count)
+        for span in base.entries.keys where self.entries[span] == nil { if let p = place(span) { entries[span] = p } }
+        for span in self.entries.keys { if let p = place(span) { entries[span] = p } }
+        var byLine: [UInt64: UInt32] = [:], more: [UInt64: [UInt32]] = [:]
+        byLine.reserveCapacity(entries.count)
+        for (span, p) in entries {
+            let k = Self.key(p.file, p.line)
+            if byLine[k] == nil { byLine[k] = span } else { more[k, default: []].append(span) }
+        }
+        var m = DL3SourceMap()
+        m.files = files
+        m.base = Base(entries: entries, byLine: byLine, more: more)
+        return m
     }
 }
 
