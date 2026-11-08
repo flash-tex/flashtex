@@ -130,4 +130,28 @@ final class EngineV3FormGenerationTests: XCTestCase {
         s.handle(.form(Self.form(7, 0xB7)))
         XCTAssertEqual(drawn(s, page: 0, form: 7), Self.hash(0xB7))
     }
+
+    /// The reader thread rasterises a visible page with its own form table
+    /// (`EngineV3Reader.forms`): `keep: false` empties it too, so a new
+    /// run's page that arrives before its FORM is never drawn on screen with
+    /// the old run's form under the reused id; `keep: true` keeps it.
+    func testTheReaderForgetsTheOldRunsFormsAtKeepFalse() throws {
+        let reader = EngineV3Reader(cache: .shared, plan: EngineV3RasterPlan())
+        let t = DL3Connection.Timing(readNs: 0, decodedNs: 0)
+        func json(_ s: String) throws -> DL3JSON { try DL3JSON.parse(Array(s.utf8)) }
+        func form(_ id: UInt32, _ tag: UInt8) -> DL3Page {
+            var p = DL3Page(kind: .form, index: id)
+            p.hash = Self.hash(tag)
+            return p
+        }
+        _ = reader.handle(.started(try json(#"{"id": 1}"#)), timing: t)
+        _ = reader.handle(.form(form(7, 0xA7)), timing: t)
+        XCTAssertEqual(reader.forms[7]?.page.hash, Self.hash(0xA7))
+        _ = reader.handle(.started(try json(#"{"id": 2, "keep": true}"#)), timing: t)
+        XCTAssertEqual(reader.forms[7]?.page.hash, Self.hash(0xA7), "within one run of ids a form stays")
+        _ = reader.handle(.started(try json(#"{"id": 3, "keep": false}"#)), timing: t)
+        XCTAssertNil(reader.forms[7], "the reader would rasterise the new run's page with the old run's form 7")
+        _ = reader.handle(.form(form(7, 0xB7)), timing: t)
+        XCTAssertEqual(reader.forms[7]?.page.hash, Self.hash(0xB7))
+    }
 }

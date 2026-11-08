@@ -2938,7 +2938,9 @@ final class EngineV3Reader: @unchecked Sendable {
         case error(DL3JSON)
     }
     private var bindings = DL3Bindings()
-    private var forms: [UInt32: DL3PreparedPage] = [:]
+    /// The forms a page rasterised here draws with: the connection's, until
+    /// a `STARTED` with `keep: false` restarts the ids (as the bindings).
+    private(set) var forms: [UInt32: DL3PreparedPage] = [:]
     private let cache: DL3ResourceCache
     private let plan: EngineV3RasterPlan
     private var compileID = 0
@@ -2966,7 +2968,11 @@ final class EngineV3Reader: @unchecked Sendable {
             return nil
         case .started(let j):
             compileID = Int(j["id"]?.int ?? 0)
-            if j["keep"]?.bool == false { bindings.reset() }
+            // Form ids restart with the resource ids: a new run's page that
+            // arrives before its FORM must not be rasterised with the old
+            // run's form under the reused id (the session holds the old forms
+            // for the pages kept on screen; nothing here draws those).
+            if j["keep"]?.bool == false { bindings.reset(); forms = [:] }
             return .started(j)
         case .font(let f): bindings.bind(font: f, cache: cache); return nil
         case .image(let j): bindings.bind(image: j, cache: cache); return nil
