@@ -6760,13 +6760,14 @@ fn settled_env(
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut h = Host::start_env(e, &dir, env);
+    let mut last = String::new();
     for k in 0..4 {
-        let r = compile_and_check(e, &mut h, &dir, if k == 0 { files } else { &[] }, "settle");
-        if r.contains("\"mode\":\"unchanged\"") {
-            break;
+        last = compile_and_check(e, &mut h, &dir, if k == 0 { files } else { &[] }, "settle");
+        if last.contains("\"mode\":\"unchanged\"") {
+            return (dir, h);
         }
     }
-    (dir, h)
+    panic!("{name}: no compile of 4 came back unchanged: {last}")
 }
 
 /// An external command (`\write18`) the edit adds after the restart point:
@@ -7031,10 +7032,15 @@ fn a_changed_file_open_twice_is_no_restart_point() {
 
 /// A file the run writes through the body (open across pages), changed by
 /// another program between compiles, with an edit before its later writes:
-/// no convergence while the run writes it ("... was changed by another
-/// program", `Obs::test`), and the file ends as a scratch run leaves it.
+/// no checkpoint is restored over it ("cannot restore: ... was changed by
+/// another program", `checkpoint::changed_outside`), the compile runs from
+/// scratch, and the file ends as a scratch run leaves it. The control, the
+/// same edit and revert with the file left alone, restores and converges,
+/// so the file's change is what refuses. (`Obs::test`'s own check of an
+/// output changed by another program, during the run, is not reached by a
+/// change between compiles: the restore refuses it first. Review of #1978.)
 #[test]
-fn an_output_changed_by_another_program_blocks_convergence_while_written() {
+fn an_output_changed_by_another_program_is_not_restored_over() {
     let Some(e) = env() else {
         common::no_texlive();
         return;
@@ -7054,6 +7060,20 @@ fn an_output_changed_by_another_program_blocks_convergence_while_written() {
         s
     };
     let (dir, mut h) = settled(&e, "gaps-foreign", &[("doc.tex", &doc("lorem"))]);
+    // (the control: the same edit and revert with the file left alone
+    // restore and converge)
+    for (word, what) in [
+        ("lorme", "control: an edit"),
+        ("lorem", "control: the revert"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert!(field(&r, "converged_at") != "null", "{what}: {r}");
+        assert!(
+            !refused_with(&r, &["was changed by another program"]),
+            "{what}: {r}"
+        );
+    }
     for (word, what) in [
         ("lorme", "an edit, the file changed"),
         ("lorem", "the revert"),
@@ -7063,16 +7083,17 @@ fn an_output_changed_by_another_program_blocks_convergence_while_written() {
         d.extend_from_slice(b"another program's line\n");
         std::fs::write(&p, d).unwrap();
         let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(
+            r.contains(
+                "\"mode\":\"cold\",\"cold_reason\":\"cannot restore: outw.txt was changed by another program\""
+            ),
+            "{what}: {r}"
+        );
         let mine = std::fs::read(&p).unwrap();
         let theirs = std::fs::read(dir.with_extension("ref").join("outw.txt")).unwrap();
         assert!(
             mine == theirs,
             "{what}: outw.txt differs from a scratch run's: {r}"
-        );
-        assert!(
-            field(&r, "converged_at") == "null"
-                || refused_with(&r, &["outw.txt was changed by another program"]),
-            "{what}: {r}"
         );
     }
 }
