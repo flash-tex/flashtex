@@ -5388,3 +5388,82 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
     assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// (lane AUDIT-WRITES) A `\fontdimen` *read* past the parameters of the
+/// last font loaded adds them, as an assignment would (tex.web §578-§580),
+/// but the fonts' version (K5) moved only at assignments. Here
+/// `\ifdim\fontdimen30\fa...` grows `\fa` before `\pgf@parsefunc{25}` is
+/// recorded, which reads parameter 25 (it exists there). The edit deletes
+/// that read; its restore takes `\fa` and the version back, the call's key
+/// holds, and the replay left `\fa` with 7 parameters where the normal path
+/// adds 25. Once another font is loaded, `\fontdimen25\fa=5pt` is an error
+/// and the page shows `[0.0pt]` where a scratch compile shows `[5.0pt]`.
+#[test]
+fn a_font_grown_by_a_parameter_read_has_another_version() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let grow = "\\ifdim\\fontdimen30\\fa>\\maxdimen\\fi";
+    let text = format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n\
+         \\font\\fa=cmr12 at 13.37pt \\makeatletter\n\
+         \\def\\pgf@parsefunc#1{{\\begingroup\\global\\dimen1=\\fontdimen#1\\fa\\endgroup}}\n\
+         \\pgf@parsefunc{{1}}{grow}\\pgf@parsefunc{{25}}\n\
+         \\font\\fz=cmbx12 at 7.77pt \\fontdimen25\\fa=5pt \\makeatother\n\
+         [\\the\\fontdimen25\\fa] [\\the\\dimen1]\n\
+         \\end{{document}}\n"
+    );
+    let base = common::fresh_dir("flashtex-host-fontgrow");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    std::fs::write(proj.join(main), &text).unwrap();
+    // `\pgf@parsefunc` is recorded anywhere, the cold compile included
+    let env = [
+        ("FLASHTEX_BOXMEMO", "on"),
+        ("FLASHTEX_BOXMEMO_NAMES", "pgf@parsefunc"),
+    ];
+    let host = start_host_env("fg", &env);
+    let scratch = start_host_env("fgs", &[("FLASHTEX_BOXMEMO", "off")]);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    // offers, hits, recordings, control sequences entered
+    let hits = |o: &Outcome| -> i64 {
+        o.done
+            .get("stages")
+            .and_then(|s| s.get("boxmemo"))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.get(1).and_then(|n| n.as_i64()))
+            .unwrap_or(0)
+    };
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let before = hits(&o);
+    let mut r = req(2, &proj, &out, main);
+    r.edits = vec![Edit {
+        path: main.into(),
+        offset: text.find(grow).unwrap() as u64,
+        delete: grow.len() as u64,
+        insert: String::new(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    let (p2, o2) = snapshot(&base, &proj, &out, "fg");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        main,
+        &format!("after the edit: {}", o.done),
+    );
+    // `\pgf@parsefunc{1}`, recorded before the read, still replays
+    assert!(hits(&o) > before, "no replay after the edit: {}", o.done);
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
