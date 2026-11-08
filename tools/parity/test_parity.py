@@ -679,6 +679,21 @@ class Corpus(unittest.TestCase):
             self.assertGreater(os.stat(os.path.join(dest, "huge.tex")).st_mtime, before)  # the unpack's time
             self.assertEqual(os.stat(os.path.join(dest, "fine.tex")).st_mtime, 1500000000)
 
+    def test_unpack_survives_a_name_the_file_system_cannot_hold(self):
+        # arXiv 2011.03348v1 ships ref/ files with Shift-JIS names; macOS APFS refuses a name
+        # that is not UTF-8 (EILSEQ), so unpack skips that member there and keeps the rest
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.GNU_FORMAT,
+                          encoding="utf-8", errors="surrogateescape") as tf:
+            for name in (b"ref/\x91\xe5\x8d\xe3w".decode("utf-8", "surrogateescape"), "main.tex"):
+                info = tarfile.TarInfo(name)
+                info.size = 1
+                tf.addfile(info, io.BytesIO(b"x"))
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "src")
+            self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
+            self.assertTrue(os.path.isfile(os.path.join(dest, "main.tex")))
+
     def test_archive_tier_tree_is_its_root_directory(self):
         # a forge's commit archive (the books tier): the tree is the archive's top directory,
         # so the entry's relative \input{book/...} resolves as in the project's checkout

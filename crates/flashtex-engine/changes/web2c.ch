@@ -53,14 +53,6 @@ for i:=0 to 255 do xprn[i]:=(eight_bit_p or ((i>=" ")and(i<="~")));
 if translate_filename_p then read_tcx_file;
 @z
 
-@x pdftex.web l.1449 - tex.ch [4.49]: |xprn| says what is printable
-@<Character |k| cannot be printed@>=
-  (k<" ")or(k>"~")
-@y
-@<Character |k| cannot be printed@>=
-  not xprn[k]
-@z
-
 @x pdftex.web l.2068 - tex.ch [6.84]: `\.E' switches to the editor
 "E": if base_ptr>0 then if input_stack[base_ptr].name_field>=256 then
   begin print_nl("You want to edit file ");
@@ -111,6 +103,61 @@ if font_max>font_base+max_font_max then bad:=16;
   |if abs(mem[p+glue_offset].int)<@'4000000 then print('?.?')|
   |else| }
   if abs(g)>float_constant(20000) then
+@z
+
+@x pdftex.web l.4892 - tex.ch [16.211]: i18n fix, |print_in_mode|
+begin if m>0 then
+  case m div (max_command+1) of
+  0:print("vertical");
+  1:print("horizontal");
+  2:print("display math");
+  end
+else if m=0 then print("no")
+else  case (-m) div (max_command+1) of
+  0:print("internal vertical");
+  1:print("restricted horizontal");
+  2:print("math");
+  end;
+print(" mode");
+end;
+@y
+begin if m>0 then
+  case m div (max_command+1) of
+  0:print("vertical mode");
+  1:print("horizontal mode");
+  2:print("display math mode");
+  end
+else if m=0 then print("no mode")
+else  case (-m) div (max_command+1) of
+  0:print("internal vertical mode");
+  1:print("restricted horizontal mode");
+  2:print("math mode");
+  end;
+end;
+
+procedure print_in_mode(@!m:integer); {prints the mode represented by |m|}
+begin if m>0 then
+  case m div (max_command+1) of
+  0:print("' in vertical mode");
+  1:print("' in horizontal mode");
+  2:print("' in display math mode");
+  end
+else if m=0 then print("' in no mode")
+else  case (-m) div (max_command+1) of
+  0:print("' in internal vertical mode");
+  1:print("' in restricted horizontal mode");
+  2:print("' in math mode");
+  end;
+end;
+@z
+
+@x pdftex.web l.5086 - tex.ch [16.219]: i18n fix
+    print_int(nest[p].pg_field); print(" line");
+    if nest[p].pg_field<>1 then print_char("s");
+@y
+    print_int(nest[p].pg_field);
+    if nest[p].pg_field<>1 then print(" lines")
+    else print(" line");
 @z
 
 @x pdftex.web l.5200 - pdftex.ch: the primitives' own |eqtb| entries must fit
@@ -230,6 +277,61 @@ if cs_token_flag+undefined_control_sequence>max_halfword then bad:=21;
 if cs_token_flag+eqtb_size+hash_extra>max_halfword then bad:=21;
 @z
 
+@x pdftex.web l.7855 - tex.ch [22.306]: i18n fix
+  begin print_nl("Runaway ");
+@.Runaway...@>
+  case scanner_status of
+  defining: begin print("definition"); p:=def_ref;
+    end;
+  matching: begin print("argument"); p:=temp_head;
+    end;
+  aligning: begin print("preamble"); p:=hold_head;
+    end;
+  absorbing: begin print("text"); p:=def_ref;
+    end;
+  end; {there are no other cases}
+@y
+  begin
+@.Runaway...@>
+  case scanner_status of
+  defining: begin print_nl("Runaway definition"); p:=def_ref;
+    end;
+  matching: begin print_nl("Runaway argument"); p:=temp_head;
+    end;
+  aligning: begin print_nl("Runaway preamble"); p:=hold_head;
+    end;
+  absorbing: begin print_nl("Runaway text"); p:=def_ref;
+    end;
+  end; {there are no other cases}
+@z
+
+@x pdftex.web l.8455 - tex.ch [24.338]: i18n fix
+print(" while scanning ");
+@y
+@z
+
+@x pdftex.web l.8477 - tex.ch [24.339]: i18n fix
+defining:begin print("definition"); info(p):=right_brace_token+"}";
+  end;
+matching:begin print("use"); info(p):=par_token; long_state:=outer_call;
+  end;
+aligning:begin print("preamble"); info(p):=right_brace_token+"}"; q:=p;
+  p:=get_avail; link(p):=q; info(p):=cs_token_flag+frozen_cr;
+  align_state:=-1000000;
+  end;
+absorbing:begin print("text"); info(p):=right_brace_token+"}";
+@y
+defining:begin print(" while scanning definition"); info(p):=right_brace_token+"}";
+  end;
+matching:begin print(" while scanning use"); info(p):=par_token; long_state:=outer_call;
+  end;
+aligning:begin print(" while scanning preamble"); info(p):=right_brace_token+"}"; q:=p;
+  p:=get_avail; link(p):=q; info(p):=cs_token_flag+frozen_cr;
+  align_state:=-1000000;
+  end;
+absorbing:begin print(" while scanning text"); info(p):=right_brace_token+"}";
+@z
+
 @x pdftex.web l.8959 - tex.ch [25.366]: expansion depth overflow
 begin cv_backup:=cur_val; cvl_backup:=cur_val_level; radix_backup:=radix;
 @y
@@ -265,6 +367,15 @@ if (t>=cs_token_flag)and(t<>end_write_token) then
     if cur_val_level<>mu_val then mu_error;
     goto attach_sign;
     end;
+@z
+
+@x pdftex.web l.12183 - tex.ch [29.514]: TeX area directories
+@d TEX_area=="TeXinputs:"
+@.TeXinputs@>
+@d TEX_font_area=="TeXfonts:"
+@.TeXfonts@>
+@y
+In C, the default paths are specified separately.
 @z
 
 @x pdftex.web l.13015 - tex.ch's MLTeX |orig_char_info|; without MLTeX it is |char_info|
@@ -376,6 +487,15 @@ else if cur_s<>-2 then
   print_nl("Output written on "); print_file_name(0,output_file_name,0);
 @z
 
+@x pdftex.web l.15111 - tex.ch [32.642]: i18n fix
+  print(" ("); print_int(total_pages); print(" page");
+  if total_pages<>1 then print_char("s");
+@y
+  print(" ("); print_int(total_pages);
+  if total_pages<>1 then print(" pages")
+  else print(" page");
+@z
+
 @x pdftex.web l.17221 - texmfmem.h: |character| is a C |short|
 @d set_char_and_font(#) ==
 if is_char_node(#) then begin
@@ -426,6 +546,12 @@ goto found1;
     if u=max_trie_op then
       overflow("pattern memory ops per language",
       max_trie_op-min_quarterword);
+@z
+
+@x pdftex.web l.29209 - tex.ch [46.1049]: i18n fix, see change to [16.211]
+print("' in "); print_mode(mode);
+@y
+print_in_mode(mode);
 @z
 
 @x pdftex.web l.31695 - tex.ch [49.1215]: |hash_extra|
@@ -513,6 +639,33 @@ for p:=hash_used+1 to undefined_control_sequence-1 do undump_hh(hash[p]);
 for p:=hash_used+1 to undefined_control_sequence-1 do undump_hh(hash[p]);
 if hash_high>0 then for p:=eqtb_size+1 to eqtb_size+hash_high do
   undump_hh(hash[p]);
+@z
+
+@x pdftex.web l.33094 - tex.ch [50.1320]: i18n fix
+print_int(font_ptr-font_base); print(" preloaded font");
+if font_ptr<>font_base+1 then print_char("s")
+@y
+print_int(font_ptr-font_base);
+if font_ptr<>font_base+1 then print(" preloaded fonts")
+else print(" preloaded font")
+@z
+
+@x pdftex.web l.33166 - tex.ch [50.1324]: i18n fix
+print_ln; print_int(hyph_count); print(" hyphenation exception");
+if hyph_count<>1 then print_char("s");
+@y
+print_ln; print_int(hyph_count);
+if hyph_count<>1 then print(" hyphenation exceptions")
+else print(" hyphenation exception");
+@z
+
+@x pdftex.web l.33180 - tex.ch [50.1324]: i18n fix
+print(" has "); print_int(trie_op_ptr); print(" op");
+if trie_op_ptr<>1 then print_char("s");
+@y
+print(" has "); print_int(trie_op_ptr);
+if trie_op_ptr<>1 then print(" ops")
+else print(" op");
 @z
 
 @x pdftex.web l.33205 - tex.ch [50.1325]: ops above 255 in a format (bigtrie)

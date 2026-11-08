@@ -67,8 +67,12 @@ The design extends this machinery; it does not replace it.
   zero; the recorded integer pairs still hold; mode, `align_state`, `par_token` as recorded; and
   the preconditions `\globaldefs=0`, no pending `\afterassignment`, no tracing that would show
   the expansion.
-- **Pins.** Token lists the recording read or created are pinned (reference count raised), so an
-  equal pointer is always the same, unchanged list.
+- **Token copies (were pins).** The token lists the recording read or created are copied, token
+  by token, into the slot's token store in `intr_data`. A watched macro's meaning is compared
+  with its copy, and a `\def`'s body is made again from its copy on each replay. Until #2039
+  (2026-11-01) they were pinned in `mem` (reference count raised), which kept nodes that pdfTeX
+  frees and showed in `\tracingstats`' `dyn_used`. Where the text below speaks of pins, read
+  token copies; their reference-count discounting is then not needed.
 - **Replay.** The recorded operations, through TeX's own `eq_define` & co.; a `\def`'s body is a
   fresh copy (`K_FRESH`), a `\let` takes the meaning from its source as it is now (`K_LETCS`).
 - **Verification.** `FLASHTEX_INTRINSICS=verify` runs both paths for every call the guard admits
@@ -246,7 +250,7 @@ The Commander's list, and every other kind of state, with how each is captured o
 |---|---|---|
 | catcodes | read by `\ifnum\catcode` and friends (`scan_char_num` hook: `flashtex_intr_read(m+cur_val)`); all 256 when a token list is printed (`\string`, `\meaning`, `\detokenize`, `\pdfstrcmp`, ...: `rec_catcodes`); the catcodes of the argument tokens themselves are part of the tokens | watched: guard fails |
 | meanings of tokens it expands or executes | every control sequence `get_next` delivers (`rec_read`), `\csname` and `\ifcsname` look-ups; `\let` sources (`K_LETCS`) | watched: guard fails |
-| bodies of macros it expands | pinned by the recording (same pointer ⇒ same unchanged list) | the pointer differs ⇒ the watched meaning differs |
+| bodies of macros it expands | copied into the token store by the recording (#2039; were pinned) | the tokens differ ⇒ the watched meaning differs |
 | integer parameters, and integers named by `\countdef` and `\chardef` | value pairs (`F_NRW`), read through `scan_something_internal` (`ASSIGN_INT`, `CHAR_GIVEN`); `\advance`, `\multiply`, `\divide` read their register as a pair | guard fails |
 | `\count`*number*, `\dimen`*number* read by number | *reading* one (`REGISTER` in `scan_something_internal`) abandons the recording; *assigning* one (`\count`*n*`=`..., the `REGISTER` command in `prefixed_command`) is allowed and recorded as an operation (`K_WORD`), and `\advance` & co. read the old value as a pair | expanded / recorded |
 | `\escapechar` | read at the start of every recording (`rec_start`: printing a control sequence uses it) | guard fails |
@@ -297,7 +301,7 @@ statistics.
    unless an `\endgroup` restored the old value, which `rec_read` then treats as a read of the
    pre-write value (`intr_pre`) and records as a dependency;
    (d) `\escapechar` — read and watched at every recording's start;
-   (e) token lists through `equiv` pointers — pinned, so an equal pointer is an unchanged list;
+   (e) token lists through `equiv` pointers — compared with the recording's copy of their tokens;
    (f) mode, `align_state`, `par_token`, the preconditions, the capacity margins — checked;
    (g) `eq_level` of entries and `cur_level` — not inputs of the *choices* the run makes (no
    allowlisted primitive reads them: `\currentgrouplevel` abandons), only of how `eq_define` and

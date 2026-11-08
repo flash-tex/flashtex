@@ -255,6 +255,60 @@ final class EngineV3Session {
     static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility, autoreleaseFrequency: .workItem)
     /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
     @ObservationIgnored var sourceMap = DL3SourceMap()
+
+    /// A change to `sourceMap`, as the host's frames make them.
+    enum SourceMapChange { case apply(DL3Sources), shift(DL3SpanShifts), reset }
+    /// The changes since a compaction's snapshot, while it runs (nil: none runs).
+    @ObservationIgnored private var sourceMapJournal: [SourceMapChange]?
+    /// Shifts pending, or spans declared since the base, past which the map is compacted.
+    static let sourceMapCompactShifts = 16, sourceMapCompactOverlay = 4096
+    static let sourceMapQueue = DispatchQueue(label: "flashtex.engine-v3.source-map", qos: .utility)
+
+    /// Applies a change to `sourceMap` (each O(the frame), never O(spans)) and,
+    /// when shifts or newly declared spans have piled up, folds them into the
+    /// map on `sourceMapQueue` (`DL3SourceMap.compacted`): the result is
+    /// installed on main with the changes made meanwhile applied again, and
+    /// the old map is released off main. A reset meanwhile drops the result.
+    func changeSourceMap(_ c: SourceMapChange) {
+        switch c {
+        case .apply(let s): sourceMap.apply(s)
+        case .shift(let s): sourceMap.shift(s)
+        case .reset: sourceMap.reset()
+        }
+        if sourceMapJournal != nil { sourceMapJournal!.append(c); return }
+        compactSourceMapIfDue()
+    }
+
+    private func compactSourceMapIfDue() {
+        guard sourceMapJournal == nil,
+              sourceMap.shifts.count >= Self.sourceMapCompactShifts || sourceMap.overlayCount >= Self.sourceMapCompactOverlay else { return }
+        sourceMapJournal = []
+        let snapshot = sourceMap, ref = EngineV3WeakRef(self)
+        Self.sourceMapQueue.async {
+            let compacted = snapshot.compacted()
+            EngineV3Session.onMain {
+                guard let self = ref.value, let journal = self.sourceMapJournal else { return }
+                self.sourceMapJournal = nil
+                defer { self.compactSourceMapIfDue() } // (what piled up meanwhile)
+                if journal.contains(where: { if case .reset = $0 { true } else { false } }) { return }
+                var m = compacted
+                for c in journal {
+                    switch c {
+                    case .apply(let s): m.apply(s)
+                    case .shift(let s): m.shift(s)
+                    case .reset: break
+                    }
+                }
+                let old = self.sourceMap
+                self.sourceMap = m
+                self.sourceMapCompactions &+= 1
+                Self.sourceMapQueue.async { withExtendedLifetime(old) {} } // its tables are freed there
+            }
+        }
+    }
+
+    /// Compactions installed (tests).
+    @ObservationIgnored private(set) var sourceMapCompactions = 0
     /// Per-page glyph indexes for forward/reverse search, built on first
     /// use, bounded (EngineV3GlyphIndexes.swift).
     @ObservationIgnored var glyphIndexes = EngineV3GlyphIndexes()
@@ -328,7 +382,17 @@ final class EngineV3Session {
     /// Set by a scripted bench just before it edits the text view.
     @ObservationIgnored var nextKeystrokeNs: UInt64?
     @ObservationIgnored private var restarts: [Date] = []
+    /// The window `restarts` are counted in (tests shrink it).
+    nonisolated(unsafe) static var restartWindowSeconds: TimeInterval = 60
+    /// Restarts since the last DONE: a host that dies on every compile but
+    /// slowly (a malformed font that crashes it after a long compile) never
+    /// fits three restarts in the minute, and must stop all the same.
+    @ObservationIgnored private var restartsWithoutDone = 0
     @ObservationIgnored private var stopping = false
+    /// Bumped by every host launch and by `stop()`: an event or a HELLO
+    /// exchange started for an earlier host (replaced, or stopped) carries
+    /// an older number and is dropped (`hostEvent`, `connect`).
+    @ObservationIgnored private var hostGeneration = 0
     /// `FLASHTEX_V3_FAST_EDITS=0` turns the text-storage fast path off (A/B).
     @ObservationIgnored let fastEdits = ProcessInfo.processInfo.environment["FLASHTEX_V3_FAST_EDITS"] != "0"
     @ObservationIgnored let logDone = ProcessInfo.processInfo.environment["FLASHTEX_V3_LOG_DONE"] == "1"
@@ -337,7 +401,7 @@ final class EngineV3Session {
     /// This session's number in the process (its project copy's name).
     @ObservationIgnored let serial: Int = EngineV3Session.takeSerial()
     nonisolated(unsafe) private static var nextSerial = 0
-    private static let serialLock = NSLock()
+    nonisolated private static let serialLock = NSLock()
     nonisolated static func takeSerial() -> Int { serialLock.lock(); defer { serialLock.unlock() }; nextSerial += 1; return nextSerial }
     /// The project copy the host compiles (tests).
     var projectCopy: URL? { project?.root }
@@ -403,7 +467,8 @@ final class EngineV3Session {
 
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-                self?.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp)
+                // Only this window's keys: another project window's typing is not this session's latency.
+                if let self, e.window == nil || e.window === self.view?.window { self.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp) }
                 return e
             }
         }
@@ -411,10 +476,11 @@ final class EngineV3Session {
             // ⌘-click in the editor: forward search to the preview (after the
             // click has moved the caret).
             clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] e in
-                if e.modifierFlags.contains(.command), let tv = e.window?.firstResponder as? NSTextView,
+                // (this window's editor only: every project window has a session)
+                if e.modifierFlags.contains(.command), let self, let w = e.window, w === self.view?.window, let tv = w.firstResponder as? NSTextView,
                    tv.accessibilityLabel() == "LaTeX source", let v = e.window?.contentView?.hitTest(e.locationInWindow),
                    v === tv || v.isDescendant(of: tv) {
-                    DispatchQueue.main.async { self?.model?.revealCaretInPreview() }
+                    DispatchQueue.main.async { [weak self] in self?.model?.revealCaretInPreview() }
                 }
                 return e
             }
@@ -536,11 +602,13 @@ final class EngineV3Session {
             : "Preparing the \(mode.mode.formatName) format from the TeX files (the first use downloads them and builds it)…"
         log("starting \(exe.path) (\(mode.mode.rawValue) mode: \(mode.source))")
         let ref = EngineV3WeakRef(self)
+        hostGeneration &+= 1
+        let generation = hostGeneration
         do {
             // A Live Share session (or a session copy) compiles in a host
             // launched confined; `compile` relaunches when that changes.
             let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, format: mode.format, confineRoots: model.flatMap(Self.confineRoots)) { event in
-                EngineV3Session.onMain { ref.value?.hostEvent(event) }
+                EngineV3Session.onMain { ref.value?.hostEvent(event, generation: generation) }
             }
             host = h
             hostStarts += 1
@@ -599,6 +667,7 @@ final class EngineV3Session {
         connection = nil
         host?.terminate()
         host = nil
+        hostGeneration &+= 1 // a HELLO still in flight is not adopted
         phase = .idle
         EngineV3MemoryPressure.shared.unregister(self)
         sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
@@ -613,6 +682,25 @@ final class EngineV3Session {
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
     }
+
+    /// The window closed (ProjectWindows.closed): stops the session, then,
+    /// once the host has exited (on a utility queue, bounded), releases the
+    /// project copy (`EngineV3Mirror.release`), so reopening the project in
+    /// this run takes it over and compiles from its S₀, not from the format.
+    func end() {
+        let copy = project, host = self.host
+        stop()
+        project = nil
+        guard let copy else { return }
+        Self.releaseQueue.async {
+            let deadline = Date().addingTimeInterval(15)
+            while host?.isRunning == true, Date() < deadline { usleep(20_000) }
+            guard host?.isRunning != true else { return } // still writing it: kept, as an exited instance's would be at the next launch
+            copy.release()
+        }
+    }
+
+    nonisolated static let releaseQueue = DispatchQueue(label: "flashtex.engine-v3.release", qos: .utility)
 
     /// The host died or the connection broke: start another (bounded), keep
     /// the pages on screen as stale until the new host sends them.
@@ -721,8 +809,9 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         guard !stopping, phase != .idle else { return }
-        restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
-        guard restarts.count <= 3 else {
+        restarts = restarts.filter { $0.timeIntervalSinceNow > -Self.restartWindowSeconds } + [Date()]
+        restartsWithoutDone += 1
+        guard restarts.count <= 3, restartsWithoutDone <= 3 else {
             phase = .failed("The preview engine stopped repeatedly (\(why)). Compile (⌘B) to restart it.")
             return
         }
@@ -733,7 +822,13 @@ final class EngineV3Session {
         launchHost()
     }
 
-    private func hostEvent(_ e: EngineV3HostProcess.Event) {
+    private func hostEvent(_ e: EngineV3HostProcess.Event, generation: Int) {
+        // A replaced or stopped host's events: its log lines still show,
+        // nothing else applies (its `.listening` would connect to it).
+        guard generation == hostGeneration, host != nil else {
+            if case .line(let l) = e { log(l) }
+            return
+        }
         switch e {
         case .line(let l):
             log(l)
@@ -760,7 +855,7 @@ final class EngineV3Session {
                 model?.engineV3HostLacksTeXLive()
             }
         case .listening(let socket):
-            connect(socket: socket)
+            connect(socket: socket, generation: generation)
         case .exited(let pid, let status):
             log("host \(pid) exited with status \(status)")
             guard pid == host?.pid else { return } // an earlier host, already replaced
@@ -769,13 +864,17 @@ final class EngineV3Session {
         }
     }
 
-    private func connect(socket: String) {
+    /// HELLO off the main thread, adopted on main only while the host that
+    /// said it was listening is still this session's (`generation`): a
+    /// connection that finishes after `stop()` or a restart is closed, and
+    /// its failure restarts nothing (the restart already happened).
+    private func connect(socket: String, generation: Int) {
         let ref = EngineV3WeakRef(self)
         let plan = rasterPlan
         let profile = PerformanceMode.current.hostProfile // Settings > Performance (spec §6.9)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability, DL3.spanShiftCapability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 let delivery = EngineV3Delivery(ref)
                 c.start(onTimedEvent: { ev, timing in
@@ -785,7 +884,7 @@ final class EngineV3Session {
                     EngineV3Session.onMain { ref.value?.closed(err, connection: c) }
                 })
                 EngineV3Session.onMain {
-                    guard let self = ref.value else { c.bye(); return }
+                    guard let self = ref.value, generation == self.hostGeneration, self.host != nil else { c.bye(); return }
                     self.adopt(c)
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
@@ -796,7 +895,10 @@ final class EngineV3Session {
                     }
                 }
             } catch {
-                EngineV3Session.onMain { ref.value?.restart("could not connect: \(error)") }
+                EngineV3Session.onMain {
+                    guard let self = ref.value, generation == self.hostGeneration else { return }
+                    self.restart("could not connect: \(error)")
+                }
             }
         }
     }
@@ -1059,6 +1161,7 @@ final class EngineV3Session {
             return
         case .idle, .failed:
             restarts = []
+            restartsWithoutDone = 0
             start(model: model)
         }
     }
@@ -1856,7 +1959,7 @@ final class EngineV3Session {
             compileFatal = false
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
-                sourceMap.reset() // span ids restart with the resource ids
+                changeSourceMap(.reset) // span ids restart with the resource ids
                 // Ids restart; the pages on screen stay (each resolved its own
                 // resources when it arrived), stale until they are sent again,
                 // and so do the stored pages of an instant reopen.
@@ -1869,6 +1972,7 @@ final class EngineV3Session {
             }
         case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
+            guard index < Self.maxPages else { log("PAGE \(index) ignored: beyond \(Self.maxPages) pages"); return }
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
@@ -1900,7 +2004,9 @@ final class EngineV3Session {
             if changed, !onScreen { latency.offscreen(compile: compileID) }
             if logDone { log("PAGE \(index) compile \(compileID) changed \(changed) onScreen \(onScreen) image \(image.map { "\(type(of: $0.image)) \($0.pixelsPerPoint)" } ?? "nil") view \(view != nil)") }
         case .sources(let src):
-            sourceMap.apply(src)
+            changeSourceMap(.apply(src))
+        case .spanShift(let s):
+            changeSourceMap(.shift(s)) // O(its shifts): no span is touched (DL3SourceMap)
         case .form(let f):
             forms[f.page.index] = f
             view?.formArrived(f.page.index)
@@ -1910,25 +2016,25 @@ final class EngineV3Session {
             if let n = j["count"]?.int { setCount(Int(n), complete: false) }
             var newStale = Set<Int>()
             for r in j["stale"]?.array ?? [] {
-                if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { newStale.formUnion(Int(lo) ... Int(hi)) }
+                if let range = Self.pageRange(r) { newStale.formUnion(range) }
             }
             for r in j["current"]?.array ?? [] {
-                if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { stale.subtract(Int(lo) ... Int(hi)) }
+                if let range = Self.pageRange(r) { stale = stale.filter { !range.contains($0) } } // O(stale), not O(range)
             }
             // The host's "current" is about the pages it sent, never a stored one.
             markStale(stale.union(newStale))
         case .diag(let d):
             diags.append(d)
             if EngineV3ErrorPolicy.isFatal(d) { compileFatal = true }
-            // (an error can change how the ones before it read: recount; O(errors²) at worst)
-            if d.severity == "error" { recount() } else if d.severity == "warning" { warningCount += 1 }
+            // (an error can change how the ones before it read: recount, bounded: `recountSoon`)
+            if d.severity == "error" { recountSoon() } else if d.severity == "warning" { warningCount += 1 }
         case .diagnostic(let j) where j["source"]?.string != nil:
             toolDiagnostics.append(j) // bibtex/biber/makeindex (3.2), published at the tool's done
         case .diagnostic(let j):
             diagnostics.append(j)
             if j["severity"]?.string == "error" {
                 if EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? "") { compileFatal = true }
-                recount()
+                recountSoon()
             } else { warningCount += 1 }
         case .exportDone(let j):
             exportDone(j)
@@ -1948,7 +2054,7 @@ final class EngineV3Session {
                 Self.walkQueue.async { p.markComplete() }
             }
             if status != "cancelled" {
-                let made = j["pages"]?.int.map(Int.init)
+                let made = j["pages"]?.int.map { Int(min(max($0, 0), Int64(Self.maxPages))) } // (bounded: `setCount`)
                 MainThreadProbe.time("v3.done.recount") { recount() }
                 if compileFatal, let n = made, n < pageCount {
                     // TeX stopped (EngineV3ErrorPolicy): the pages it made
@@ -2014,6 +2120,7 @@ final class EngineV3Session {
             if let t = typesettingID, compileID >= t { typesettingID = nil }
             for k in unanswered.keys where k <= compileID { unanswered[k] = nil }
             if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1; scheduleCaretMark(afterCompile: true) }
+            restartsWithoutDone = 0 // this host finishes compiles
             maybeSendExport()
         case .progress:
             progressFrames += 1 // the stall bound's heartbeat (`lastHostActivityNs`, above)
@@ -2404,10 +2511,55 @@ final class EngineV3Session {
         return .init(error: error, fatal: error && EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? ""), line: j["line"]?.int.map(Int.init))
     }
 
+    /// `recount` after an error arrived mid-run. A recount walks every
+    /// diagnostic so far, so one per error was O(errors × diagnostics) on
+    /// main over a run (a book's thousands of recovered errors: pdfTeX's
+    /// 100-error stop is per paragraph). A short list (`recountAtOnce`) is
+    /// recounted at once; a longer one at most so often that recounting
+    /// takes about a ninth of main's time (`recountSpacing` times its last
+    /// duration apart), the rest coalesced into one later recount. DONE
+    /// always recounts, so its counts are exact.
+    private func recountSoon() {
+        let n = diags.isEmpty ? diagnostics.count : diags.count
+        let now = MonotonicClock.nowNs()
+        if n <= Self.recountAtOnce || now &- lastRecountEndNs >= lastRecountNs &* Self.recountSpacing {
+            recount()
+            return
+        }
+        recountOwed = true
+        guard !recountScheduled else { return }
+        recountScheduled = true
+        let wait = lastRecountNs &* Self.recountSpacing &- (now &- lastRecountEndNs)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(min(wait, 500_000_000)))) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.recountScheduled = false
+                if self.recountOwed { self.recount() }
+            }
+        }
+    }
+
+    static let recountAtOnce = 256
+    static let recountSpacing: UInt64 = 8
+    @ObservationIgnored private var recountOwed = false
+    @ObservationIgnored private var recountScheduled = false
+    @ObservationIgnored private var lastRecountNs: UInt64 = 0
+    @ObservationIgnored private var lastRecountEndNs: UInt64 = 0
+    /// Diagnostics the counts have walked (tests: the cost of a run's DIAGs).
+    @ObservationIgnored private(set) var recountVisits = 0
+
     /// The pane's counts and first error from the compile's diagnostics so
     /// far, under `errorMode`: an error TeX recovered from counts as a
     /// warning under best effort, and is not the pane's first error.
     private func recount() {
+        let startNs = MonotonicClock.nowNs()
+        defer {
+            let end = MonotonicClock.nowNs()
+            lastRecountNs = end &- startNs
+            lastRecountEndNs = end
+            recountOwed = false
+        }
+        recountVisits &+= diags.isEmpty ? diagnostics.count : diags.count
         var e = 0, w = 0
         var first: String?
         if !diags.isEmpty {
@@ -2483,7 +2635,21 @@ final class EngineV3Session {
 
     /// Pages on screen: a complete count is the document's (pages past it
     /// go); an incomplete one (a compile in progress) never hides pages.
+    /// More pages than any document has: a page index or count from the
+    /// host beyond it is a corrupt message, not a page (every `0 ..< pageCount`
+    /// walk on main would otherwise run for billions of steps).
+    nonisolated static let maxPages = 100_000
+
+    /// A PAGES `[lo, hi]` range clamped to `0 ..< maxPages`; nil when empty
+    /// or malformed.
+    nonisolated static func pageRange(_ r: DL3JSON) -> ClosedRange<Int>? {
+        guard let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int else { return nil }
+        let l = max(lo, 0), h = min(hi, Int64(maxPages - 1))
+        return l <= h ? Int(l) ... Int(h) : nil
+    }
+
     private func setCount(_ n: Int, complete: Bool) {
+        let n = min(max(n, 0), Self.maxPages) // a negative count would trap every `0 ..< pageCount`
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
@@ -2760,6 +2926,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case diagnostic(DL3JSON)
         case diag(DL3Diag)
         case sources(DL3Sources)
+        /// `span-shift-v1` (§5.3.1): the spans of a file's later lines moved.
+        case spanShift(DL3SpanShifts)
         case done(DL3JSON, compileID: Int)
         case exportDone(DL3JSON)
         case tool(DL3JSON)
@@ -2834,6 +3002,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
         case .sources(let s): return .sources(s)
+        case .spanShift(let s): return .spanShift(s)
         case .progress(let j): return .progress(j)
         case .hello, .other: return nil
         }
@@ -3060,7 +3229,8 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// The copies of exited instances, by project key (the newest first):
     /// directories `<key>-...` whose owner file names an instance that has
-    /// exited (not this one).
+    /// exited (not this one), or that a running instance released
+    /// (`release`: its window closed and its host exited), this one too.
     static func exitedCopies() -> [String: [(url: URL, owner: String, modified: Date)]] {
         let dir = EngineV3.cacheDirectory.appendingPathComponent("projects", isDirectory: true)
         let fm = FileManager.default
@@ -3068,7 +3238,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
             let base = dir.appendingPathComponent(name)
             guard let owner = try? String(contentsOf: base.appendingPathComponent("owner"), encoding: .utf8),
-                  owner != EngineV3.instanceOwner, !EngineV3.ownerAlive(owner) else { continue }
+                  owner != EngineV3.instanceOwner, owner.hasSuffix(releasedSuffix) || !EngineV3.ownerAlive(owner) else { continue }
             // (not a symbolic link: nothing here is followed out of the cache)
             if (try? fm.attributesOfItem(atPath: base.path))?[.type] as? FileAttributeType == .typeSymbolicLink { continue }
             // the last compile's stamp, else when the owner last wrote its file
@@ -3113,6 +3283,23 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             return c.url
         }
         return nil
+    }
+
+    /// What `release` appends to the owner: the instance is done with the copy.
+    static let releasedSuffix = " released"
+
+    /// This instance is done with the copy: its window closed and its host
+    /// has exited, so nothing writes it any more. The owner file says so,
+    /// and the next session of the project, in this instance or another,
+    /// takes it over (`takeOver`) as it takes over an exited instance's:
+    /// its `.aux` and its paths, and with them the host's persisted S₀, so
+    /// reopening the project compiles warm. Only a copy this instance owns.
+    func release() {
+        let file = base.appendingPathComponent("owner")
+        guard (try? String(contentsOf: file, encoding: .utf8)) == EngineV3.instanceOwner else { return }
+        let tmp = base.appendingPathComponent("owner.release-\(getpid())")
+        guard (try? Data((EngineV3.instanceOwner + Self.releasedSuffix).utf8).write(to: tmp)) != nil else { return }
+        if rename(tmp.path, file.path) != 0 { try? FileManager.default.removeItem(at: tmp) }
     }
 
     /// Whether the copy is still there (something outside may remove it).
