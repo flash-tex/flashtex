@@ -305,8 +305,8 @@ jobs:
           # the engine's tests), the workspace build and the app legs run in
           # the merge queue, where `CI required` guards main, and after the
           # merge. A pull request labelled `full-ci` runs the old full set (the
-          # label is read when a run starts: push again, or re-run, after
-          # adding it).
+          # label is read from the event when a run starts: push again after
+          # adding it; a re-run reuses the old event and keeps the light tier).
           full_ci=false
           case " $PR_LABELS " in *" full-ci "*) full_ci=true ;; esac
           light=false
@@ -355,14 +355,15 @@ jobs:
           # The Xcode jobs and every other hosted macOS job: after the merge
           # (post); on a pull request or branch push only when it touches
           # apps/ (the Mac app, the iPad companion and their fonts) or the
-          # app-parity rows file mac-app checks its log against; never in
-          # the gate.
+          # app-parity rows file mac-app checks its log against, or this file
+          # (a change to the mac-app or ipad job must run them before main
+          # does); never in the gate.
           # Since lane GATES (2026-11-01) also in the merge queue, by the same
           # path rules, as a light pull request no longer runs them.
           apple=false
           case "$tier" in
             all) apple=true ;;
-            pr|gate) [ "$run" = "true" ] && touches '^(apps/|tools/parity/app[-_]parity[-_]rows)' && apple=true ;;
+            pr|gate) [ "$run" = "true" ] && touches '^(apps/|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)' && apple=true ;;
           esac
           # Which of the two Xcode jobs a pull request needs (lane GATES,
           # 2026-11-01: GitHub's hosted macOS runs five jobs at once for the

@@ -35,9 +35,17 @@ on:
     paths:
       - ".github/portability/**"
       - ".github/workflows/portability.yml"
-      - "crates/flashtex-engine/src/**/*windows*"
-      - "crates/flashtex-runtime/src/**/*windows*"
-      - "crates/display-list-v3/src/**/*windows*"
+      # The files with cfg(windows) code (no file name says "windows"):
+      #   grep -rlE 'cfg\((all\(|any\()?windows|target_os = "windows"' \
+      #     crates/{flashtex-engine,flashtex-runtime,display-list-v3}/src
+      # A new one belongs here.
+      - "crates/display-list-v3/src/endpoint.rs"
+      - "crates/display-list-v3/src/transport.rs"
+      - "crates/flashtex-engine/src/host/mod.rs"
+      - "crates/flashtex-engine/src/makeindex.rs"
+      - "crates/flashtex-engine/src/system.rs"
+      - "crates/flashtex-runtime/src/formats.rs"
+      - "crates/flashtex-runtime/src/os.rs"
   workflow_dispatch:
 
 concurrency:
