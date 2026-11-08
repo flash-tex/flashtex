@@ -155,4 +155,47 @@ final class SyntaxLazyRelexTests: XCTestCase {
         fresh.reset(storage.string as NSString)
         XCTAssertEqual(co.syntax.highlighter.modes, fresh.modes)
     }
+
+    /// Hybrid conceal follows the catch-up (daniel-parent on #2024): a line
+    /// whose concealment was cached before a `\begin{comment}` was opened far
+    /// above it conceals nothing once the catch-up has re-lexed it, the first
+    /// line of each catch-up step included.
+    func testCatchUpDropsCachedConcealmentOnEveryRelexedLine() async throws {
+        ConcealController.settingsOverride = HybridConceal.Settings(enabled: true, reveal: .line)
+        defer { ConcealController.settingsOverride = nil }
+        let count = 2 * SyntaxPainter.relexLineBudget + 3 * SyntaxPainter.catchUpLines
+        let s = "\\documentclass{article}\n\\begin{document}\nOpen here.\n"
+            + String(repeating: "Greek $\\alpha$ here.\n", count: count) + "\\end{document}\n"
+        let ns = s as NSString
+        let probe = Probe(text: s)
+        HostedWindowSupport.prepare()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
+        var hosting: NSHostingView<Host>? = NSHostingView(rootView: Host(probe: probe))
+        window.contentView = hosting
+        window.orderFrontRegardless() // never makeKey
+        defer { window.orderOut(nil); window.contentView = nil; hosting = nil }
+        var found: NSTextView?
+        try await waitFor(10) { found = TypingBenchDriver.findTextView(in: [window.contentView!]); return found != nil }
+        let tv = try XCTUnwrap(found)
+        let co = try XCTUnwrap(tv.delegate as? SourceEditorView.Coordinator)
+        try await waitFor(10) { tv.textStorage?.length == ns.length && co.syntax.highlighter.length == ns.length }
+        XCTAssertTrue(co.conceal.isActive)
+
+        let at = ns.range(of: "Open here.").location
+        let opener = co.syntax.highlighter.line(at: at)
+        let lineCount = co.syntax.highlighter.lineCount
+        for line in (opener + 1)..<lineCount { _ = co.conceal.spans(line: line) } // cache every line's concealment
+        XCTAssertFalse(co.conceal.spans(line: opener + 1).isEmpty, "\\alpha in math is concealed")
+
+        tv.setSelectedRange(NSRange(location: at, length: 0))
+        tv.insertText("\\begin{comment}\n", replacementRange: tv.selectedRange())
+        XCTAssertNotNil(co.syntax.highlighter.staleFrom, "the line budget bound")
+        try await waitFor(30) { co.syntax.highlighter.staleFrom == nil }
+        XCTAssertNil(co.syntax.highlighter.staleFrom)
+        XCTAssertGreaterThan(co.syntax.catchUpSteps, 0)
+
+        let lines = co.syntax.highlighter.lineCount
+        let stale = ((opener + 1)..<lines).filter { !co.conceal.spans(line: $0).isEmpty }
+        XCTAssertEqual(stale, [], "every line inside the open comment conceals nothing")
+    }
 }
