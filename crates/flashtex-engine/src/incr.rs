@@ -614,6 +614,10 @@ struct Obs {
     /// at a page, and its outcome (`Ok`: the restart point it allows).
     probe: Option<Box<crate::revalidate::Probe>>,
     probe_result: Option<Result<CheckpointId, String>>,
+    /// ... and when it held, the edits' line shifts it allowed (their tags
+    /// those of the files opened by `P1`): what the old run's checkpoints up
+    /// to `P2` owe (`Session::held_shifts`, #1896).
+    probe_shifts: Vec<crate::lineshift::Shift>,
     /// PREAMBLE-PATCH: the comparison a preamble restart makes at the end
     /// of the `.aux` read (`pre_patch_test`), and its outcome.
     pre_patch: Option<Box<PrePatch>>,
@@ -1583,6 +1587,32 @@ impl Obs {
         if !char_or.is_empty() {
             return Err("the new run shipped characters the old one had not".into());
         }
+        // #1896: from `P1` on the old run is this one's up to `P2` in the
+        // new numbering, which its checkpoints there get (`held_shifts`).
+        // What it read or printed of a line the edit moved between them
+        // (`crate::lineshift`'s journal) is not: a barrier, as after a
+        // convergence (`line_barrier`); nor is a `P2` the shift cannot be
+        // put right in (`Shift::dirty`).
+        if !self.shifts.is_empty() {
+            let recs = g.pending_lines();
+            let pos = |id: CheckpointId| recs.iter().position(|(i, _)| *i == id);
+            let (Some(a), Some(b)) = (pos(old), pos(pr.p2)) else {
+                return Err("no line journal between P1 and P2".into());
+            };
+            if let Some(x) = recs[(a + 1).min(b)..=b].iter().find_map(|(_, r)| {
+                r.here
+                    .iter()
+                    .find(|x| self.shifts.iter().any(|s| s.moves(x)))
+            }) {
+                return Err(format!(
+                    "the old run read or printed a moved line before P2: {x:?}"
+                ));
+            }
+            if self.shifts.iter().any(|s| s.dirty(&recs[b].1)) {
+                return Err("P2 holds a line the shift cannot correct".into());
+            }
+        }
+        self.probe_shifts = self.shifts.clone();
         Ok(())
     }
 
@@ -6370,6 +6400,91 @@ impl Session {
         Some(ids[a])
     }
 
+    /// #1896: a revalidation from `p0` held at `P1` with the edits' line
+    /// shifts `shifts` (`Obs::probe_shifts`), and the run restarts at `p2`.
+    /// The old run's checkpoints after `p0` up to `p2` are now this run's,
+    /// but they number lines as the old run did: an earlier opening of an
+    /// edited file that the window read past a line-moving edit left lines
+    /// of it in the state (a group, a paragraph or a conditional it began),
+    /// which the new run holds moved. Each such checkpoint where every
+    /// stream on an edited file is still before its edit (as at `p2`:
+    /// `revalidate::streams_before_edits`) and where the shift can be put
+    /// right (`Shift::dirty`) owes those lines' shift (`Shift::held_only`,
+    /// applied at every restore, `p2`'s first); the others are dropped. So
+    /// are the old run's diagnostics from `p0` to `p2` moved.
+    fn held_shifts(
+        &mut self,
+        p0: CheckpointId,
+        p2: CheckpointId,
+        shifts: &[crate::lineshift::Shift],
+        edits: &[Edit],
+    ) -> Result<(), String> {
+        let held: Vec<crate::lineshift::Shift> = shifts
+            .iter()
+            .filter(|s| !s.tags.is_empty())
+            .map(|s| crate::lineshift::Shift {
+                held_only: true,
+                ..s.clone()
+            })
+            .collect();
+        if held.is_empty() {
+            return Ok(());
+        }
+        let now: HashMap<String, std::sync::Arc<Vec<u8>>> = self
+            .journal
+            .as_ref()
+            .map(|j| {
+                edits
+                    .iter()
+                    .filter_map(|e| {
+                        let f = j
+                            .files
+                            .iter()
+                            .find(|f| f.path == e.path && f.content.is_some())?;
+                        Some((e.path.clone(), f.content.clone()?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let g = self.g.as_mut().ok_or("no engine")?;
+        let chain = g.checkpoints();
+        let pos = |id: CheckpointId| chain.iter().position(|&i| i == id);
+        let (Some(a), Some(b)) = (pos(p0), pos(p2)) else {
+            return Err("a checkpoint of the window went".into());
+        };
+        let (n0, n2) = (g.record_of(p0)?.notes, g.record_of(p2)?.notes);
+        let step = Step {
+            threshold: 0,
+            delta: 0,
+            overrides: vec![],
+            lines: held.clone(),
+        };
+        let mut gone = std::collections::HashSet::new();
+        for &id in &chain[a + 1..=b] {
+            let rec = g.record_of(id)?;
+            let ok = crate::revalidate::streams_before_edits(&rec, edits, |p| now.get(p).cloned())
+                && !shifts.iter().any(|s| s.dirty(&rec.lines));
+            if ok {
+                self.reloc.entry(id).or_default().push(&step);
+            } else if id == p2 {
+                return Err("P2's lines cannot be put right".into());
+            } else {
+                gone.insert(id);
+            }
+        }
+        if !gone.is_empty() {
+            if self.opts.debug {
+                eprintln!(
+                    "[incr] {} old checkpoints of the window dropped: lines the shift cannot correct",
+                    gone.len()
+                );
+            }
+            g.retain_checkpoints(&|i| !gone.contains(&i));
+        }
+        crate::diag::move_lines_in(n0, n2, &held);
+        Ok(())
+    }
+
     /// READ-REVALIDATE (`crate::revalidate`): for the restart point `p0`,
     /// the old run's first page checkpoint `p1` after it (within
     /// `revalidate::MAX_PAGES` pages) and the newest checkpoint `p2` that
@@ -6679,6 +6794,7 @@ impl Session {
             dormant_off: false,
             probe: None,
             probe_result: None,
+            probe_shifts: vec![],
             pre_patch: None,
             pre_patch_result: None,
             budget: self.opts.budget,
@@ -7085,6 +7201,7 @@ impl Session {
             .old_pages
             .iter()
             .filter_map(|p| p.ckpt)
+            .chain(probe.as_ref().map(|p| p.p1))
             .filter_map(|c| {
                 let v = &self.reloc.get(&c)?.lines;
                 (!v.is_empty()).then(|| (c, v.clone()))
@@ -7250,9 +7367,13 @@ impl Session {
                     (true, Some(Ok(p2))) => {
                         // what the window read left nothing behind: the old
                         // run is this one's up to `p2` (`crate::revalidate`)
+                        let held = std::mem::take(&mut o.probe_shifts);
                         drop(o);
                         let (edits, changed, shifts, fixed_writes) = again.ok_or("no edits")?;
                         if let Err(e) = g.reattach_pending() {
+                            return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
+                        }
+                        if let Err(e) = self.held_shifts(r, p2, &held, &edits) {
                             return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
                         }
                         crate::os::phase_mark('j');

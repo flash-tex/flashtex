@@ -383,6 +383,12 @@ pub fn append(v: &[Arc<Note>], shift: i64) {
 /// convergence test made sure the old run read no moved line into what the
 /// note says.)
 pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
+    move_lines_in(from, usize::MAX, shifts)
+}
+
+/// [`move_lines`] for the notes from `from` up to `to` (excluded): a
+/// READ-REVALIDATE restart kept the old run's notes there (#1896).
+pub fn move_lines_in(from: usize, to: usize, shifts: &[crate::lineshift::Shift]) {
     if shifts.is_empty() {
         return;
     }
@@ -397,7 +403,7 @@ pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
         d != 0
     };
     with(|s| {
-        for n in s.notes.iter_mut().skip(from) {
+        for n in s.notes.iter_mut().take(to).skip(from) {
             let mut m = (**n).clone();
             let mut moved = m.pos.as_mut().is_some_and(mv);
             for f in m.frames.iter_mut() {
