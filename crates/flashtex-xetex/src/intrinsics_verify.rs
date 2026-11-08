@@ -44,8 +44,8 @@
 //! path's writes before it are not among the chunks compared.
 
 use crate::generated::consts::{
-    backed_up, eqtb_size, int_base, level_boundary, macro_, restore_old_value, token_list,
-    v_template,
+    backed_up, eqtb_size, int_base, level_boundary, macro_, mem_top, restore_old_value,
+    token_list, v_template,
 };
 use crate::generated::types::memory_word;
 use crate::intrinsics::{Op, Val, NULL};
@@ -477,8 +477,13 @@ impl Globals {
             k >= 0 && f.get(k as usize >> 6).is_some_and(|b| b >> (k & 63) & 1 == 1)
         };
         let churn = &self.host.intrinsics.churn;
+        // (scratch heads, set before they are read in the command that
+        // uses them, as the convergence test's walk treats them, `crate::iso`:
+        // `temp_head`, `garbage`, `backup_head`)
+        let scratch = [mem_top - 3, mem_top - 12, mem_top - 13];
         let mem_dead = |k: i32| {
-            churn[0].contains(&k)
+            scratch.contains(&k)
+                || churn[0].contains(&k)
                 || churn[1].contains(&k)
                 || is_free(&free_i, k)
                 || is_free(&free_n, k)
