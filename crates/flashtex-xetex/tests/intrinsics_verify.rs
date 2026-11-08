@@ -9,38 +9,56 @@ use std::process::{Command, Stdio};
 
 /// siunitx fills hyperref's hook; `\section` and `\label` make
 /// `\pdfstringdef` calls (bookmarks), and so does every page. A unit
-/// declared mid-document (`\DeclareSIUnit`) changes what the hook's
-/// `\cs_set_eq:Nc` copies, through no token of the hook's own body; so
-/// does a redefinition of `\IntrDeep`, which the hook reaches only through
-/// `\IntrMid`.
+/// declared again mid-document (`\DeclareSIUnit\metre`) changes what the
+/// hook's `\cs_set_eq:Nc` copies, through no token of the hook's own body;
+/// so does a redefinition of `\IntrDeep`, which the hook reaches only
+/// through `\IntrMid`. (Direct calls are made in a group, as
+/// `\pdfstringdef` makes them: the hook's local changes stay inside.)
 const DOC: &str = r#"\documentclass{article}
 \usepackage{siunitx}
 \usepackage[unicode]{hyperref}
 \makeatletter
 \def\測試{\relax}
 \def\IntrDeep{one}
-\def\IntrMid{\edef\IntrSeen{\IntrDeep}}
+\def\IntrMid{\xdef\IntrSeen{\IntrDeep}}
 \g@addto@macro\pdfstringdefPreHook{\測試\IntrMid}
 \makeatother
-\begin{document}
-\pdfstringdefPreHook
-\pdfstringdefPreHook
+\begin{document}\relax
+\begingroup\pdfstringdefPreHook\endgroup
+\begingroup\pdfstringdefPreHook\endgroup
 \def\測試{\relax\relax}
+\begingroup\pdfstringdefPreHook\endgroup
+\section{A \SI{1}{\metre}}\label{a}
+\begingroup\pdfstringdefPreHook\endgroup [\IntrSeen]\par\relax
+\def\IntrDeep{two}
+\begingroup\pdfstringdefPreHook\endgroup [\IntrSeen]\par\relax
+\DeclareSIUnit\metre{mmm}
+\section{B \SI{2}{\metre}}
+\begingroup\pdfstringdefPreHook\endgroup [\IntrSeen]\par\relax
+\newpage
+\section{C \SI{3}{\metre}}\label{c}
+See \ref{a} and \ref{c}.
+\newpage
+D
+\newpage
+E
+\end{document}
+"#;
+
+/// The call's own preconditions: `\globaldefs`, `\afterassignment`, the
+/// tracing parameters (`\tracingstats` above LaTeX's 1).
+const REJECT: &str = r#"\documentclass{article}
+\def\IntrInner{\edef\IntrOut{x}}
+\def\pdfstringdefPreHook{\IntrInner}
+\begin{document}\relax
 \pdfstringdefPreHook
 {\globaldefs=1 \pdfstringdefPreHook}
 \afterassignment\relax \pdfstringdefPreHook
 \tracingmacros=2 \pdfstringdefPreHook \tracingmacros=0
-\section{A \SI{1}{\metre}}\label{a}
-\pdfstringdefPreHook [\IntrSeen]
-\def\IntrDeep{two}
-\pdfstringdefPreHook [\IntrSeen]
-\DeclareSIUnit\IntrUnit{iu}
-\section{B \SI{2}{\IntrUnit}}
+\tracingassigns=1 \pdfstringdefPreHook \tracingassigns=0
+\tracingstats=2 \pdfstringdefPreHook \tracingstats=1
 \pdfstringdefPreHook
-\pdfstringdefPreHook [\IntrSeen]
-\newpage
-\section{C \SI{3}{\metre}}
-\pdfstringdefPreHook [\IntrSeen]
+x
 \end{document}
 "#;
 
@@ -55,7 +73,7 @@ const INDIRECT: &str = r#"\documentclass{article}
 \pdfstringdefPreHook
 \def\IntrSrc{two}
 \pdfstringdefPreHook
-\IntrOut\IntrCopy
+\IntrOut\IntrCopy\par\relax
 \pdfstringdefPreHook
 \IntrOut\IntrCopy
 \end{document}
@@ -72,7 +90,7 @@ const FAULTS: &str = r#"\documentclass{article}
 \pdfstringdefPreHook
 \def\IntrSrc{two}
 \pdfstringdefPreHook
-\IntrOut\IntrCopy
+\IntrOut\IntrCopy\par\relax
 \pdfstringdefPreHook
 \IntrOut\IntrCopy
 \end{document}
@@ -181,6 +199,7 @@ fn count(stats: &str, key: &str) -> u64 {
 }
 
 /// The sum of the counts whose key starts with `prefix`.
+#[allow(dead_code)]
 fn count_all(stats: &str, prefix: &str) -> u64 {
     stats
         .lines()
@@ -274,22 +293,29 @@ fn the_packages_hook_replays_to_the_real_paths_output() {
         assert!(count(&verify.stats, "verify.checked") > 0, "{}", verify.stats);
         assert_verified(&verify.stats);
         for s in [&on.stats, &verify.stats] {
-            for key in [
-                "recordings.committed",
-                "rejected.GlobalDefs",
-                "rejected.AfterAssignment",
-                "rejected.Tracing",
-                // `\def\測試`, `\def\IntrDeep`, `\DeclareSIUnit`
-                "missed.Meaning",
-            ] {
+            // `\def\測試`, `\def\IntrDeep`, `\DeclareSIUnit`
+            for key in ["recordings.committed", "missed.Meaning"] {
                 assert!(count(s, key) > 0, "{key}: {s}");
             }
         }
-        // what the hook leaves: `one` before the change, `two` after it
-        let log = &on.log;
-        assert!(!log.is_empty());
         assert_eq!(count(&on.stats, "offers"), count(&verify.stats, "offers"));
     }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_calls_preconditions_are_checked() {
+    let Some((exe, dir, format)) = setup(REJECT) else {
+        return;
+    };
+    let off = run(exe, &dir, &format, Some("off"));
+    let on = run(exe, &dir, &format, Some("on"));
+    assert_same_output(&off, &on);
+    let s = &on.stats;
+    assert_eq!(count(s, "rejected.GlobalDefs"), 1, "{s}");
+    assert_eq!(count(s, "rejected.AfterAssignment"), 1, "{s}");
+    assert_eq!(count(s, "rejected.Tracing"), 3, "{s}");
+    assert_eq!(count(s, "replayed"), 1, "{s}");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -307,7 +333,9 @@ fn a_change_the_body_does_not_name_is_not_replayed_stale() {
     assert_same_output(&off, &on);
     assert_same_output(&off, &verify);
     let s = &on.stats;
-    // recorded at 1 and 3, replayed at 2 and 4
+    // recorded at 1 and 3, replayed at 2 and 4 (after `\par\relax`: in a
+    // paragraph the main loop's look-ahead expands the hook, and LaTeX's
+    // `\par` ends in expansions; neither is `big_switch`'s own)
     assert_eq!(count(s, "offers"), 4, "{s}");
     assert_eq!(count(s, "recordings.committed"), 2, "{s}");
     assert_eq!(count(s, "replayed"), 2, "{s}");
@@ -478,10 +506,10 @@ fn printing_reads_category_codes_and_the_escape_character() {
     let Some((on, verify)) = modes_agree(
         "\\documentclass{article}\\def\\IntrM{\\b}\n\
          \\def\\pdfstringdefPreHook{\\edef\\IntrS{\\meaning\\IntrM}}\n\
-         \\begin{document}\\relax\n\\pdfstringdefPreHook\\pdfstringdefPreHook[\\IntrS]\n\
-         {\\catcode`\\b=12 \\pdfstringdefPreHook[\\IntrS]}\n\
-         {\\escapechar=`\\! \\pdfstringdefPreHook[\\IntrS]}\n\
-         \\pdfstringdefPreHook[\\IntrS]\\end{document}\n",
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\\pdfstringdefPreHook \\IntrS\\par\n\
+         {\\catcode`\\b=12 \\pdfstringdefPreHook \\IntrS\\par}\n\
+         {\\escapechar=`\\! \\pdfstringdefPreHook \\IntrS\\par}\n\
+         \\pdfstringdefPreHook \\IntrS\\par\\end{document}\n",
     ) else {
         return;
     };

@@ -80,7 +80,7 @@
 // (TeX's names for its codes, matched as they are spelt in xetex.web)
 #![allow(non_upper_case_globals)]
 use crate::generated::consts::{
-    advance, assign_dimen, assign_int, assign_toks, begin_group, box_ref, call,
+    advance, car_ret, tab_mark, assign_dimen, assign_int, assign_toks, begin_group, box_ref, call,
     cat_code_base, char_def_code, char_given, convert, cs_name, def, def_code,
     divide, eTeX_expr, eTeX_revision_code, eTeX_version_code, end_group, end_match_token,
     end_template, eqtb_size, eqtb_top, escape_char_code, etex_pen_base, expand_after,
@@ -118,11 +118,13 @@ const RECORD_BUDGET: u32 = 64;
 pub(crate) const NULL: i32 = -0x0fff_ffff;
 
 /// The tracing parameters that print what a call does (its expansions,
-/// commands, assignments, groups, conditionals, restores) or what it leaves
-/// for `\tracingstats`: a call is offered only while all are `<= 0`. The
-/// others print only for what a recording refuses (characters, paragraphs,
-/// pages, the output routine), and `\tracingonline` only says where.
-const TRACING_GUARD: [i32; 11] = [
+/// commands, assignments, groups, conditionals, restores): a call is
+/// offered only while all are `<= 0`, and `\tracingstats` `<= 1` (LaTeX's
+/// 1 prints the totals at the end; 2 prints the memory in use at every
+/// `\shipout`). The others print only for what a recording refuses
+/// (characters, paragraphs, pages, the output routine), and
+/// `\tracingonline` only says where.
+const TRACING_GUARD: [i32; 10] = [
     tracing_macros_code,
     tracing_commands_code,
     tracing_restores_code,
@@ -133,7 +135,6 @@ const TRACING_GUARD: [i32; 11] = [
     tracing_nesting_code,
     tracing_stack_levels_code,
     tracing_char_sub_def_code,
-    tracing_stats_code,
 ];
 
 /// Every tracing parameter: a recording that writes one is abandoned
@@ -246,9 +247,23 @@ enum Equiv {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Ctx {
     mode: i32,
-    align: i32,
+    /// `align_state`; `None` in a kept variant whose run met no `&`, `\span`
+    /// or `\cr` (`tab_mark`, `car_ret`): only those read it (`get_next`'s
+    /// "an alignment entry has just ended"), the rest counts braces, which
+    /// the run leaves balanced.
+    align: Option<i32>,
     par_token: i32,
     scanner: i32,
+}
+
+impl Ctx {
+    /// Does a kept variant's context hold in `now`?
+    fn holds(&self, now: &Ctx) -> bool {
+        self.mode == now.mode
+            && self.par_token == now.par_token
+            && self.scanner == now.scanner
+            && self.align.is_none_or(|a| now.align == Some(a))
+    }
 }
 
 /// A kept recording.
@@ -316,6 +331,8 @@ struct Rec {
     names: HashSet<i32>,
     ops: Vec<Op>,
     tokens: usize,
+    /// `get_next` delivered a `tab_mark` or `car_ret` (`Ctx::align`).
+    align_seen: bool,
     /// A check of the admitted variant `id`: the replay's state.
     verify: Option<(u64, crate::intrinsics_verify::Pending)>,
 }
@@ -372,6 +389,13 @@ impl Report {
         self.verifier_cks.retain(|&k| k != id);
         self.verifier_cks.len() < n
     }
+}
+
+/// `FLASHTEX_INTRINSICS_DEBUG`: say on stderr why calls are not replayed
+/// and recordings are abandoned.
+fn debug() -> bool {
+    static D: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *D.get_or_init(|| std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some())
 }
 
 fn bump<K: Ord>(m: &mut BTreeMap<K, u64>, k: K) {
@@ -464,6 +488,15 @@ impl Globals {
             return false;
         }
         self.host.intrinsics.stats.offers += 1;
+        if debug() {
+            eprintln!(
+                "intrinsics: offer {} at line {} mode {} level {}",
+                self.host.intrinsics.stats.offers,
+                self.line,
+                self.cur_list.mode_field,
+                self.cur_level
+            );
+        }
         let mut p = self.mem[self.cur_chr as usize].hh().rh();
         if self.mem[p as usize].hh().lh() == protected_token {
             p = self.mem[p as usize].hh().rh();
@@ -476,7 +509,9 @@ impl Globals {
             Some("GlobalDefs")
         } else if self.after_token != 0 {
             Some("AfterAssignment")
-        } else if TRACING_GUARD.iter().any(|&c| self.intr_int(c) > 0) {
+        } else if TRACING_GUARD.iter().any(|&c| self.intr_int(c) > 0)
+            || self.intr_int(tracing_stats_code) > 1
+        {
             Some("Tracing")
         } else {
             None
@@ -523,7 +558,7 @@ impl Globals {
     fn intr_ctx(&self) -> Ctx {
         Ctx {
             mode: self.cur_list.mode_field.abs(),
-            align: self.align_state,
+            align: Some(self.align_state),
             par_token: self.par_token,
             scanner: self.scanner_status,
         }
@@ -541,11 +576,17 @@ impl Globals {
         let mut why = "NotRecorded";
         for i in order {
             let e = &entries[i];
-            if e.ctx != ctx {
+            if !e.ctx.holds(&ctx) {
+                if debug() {
+                    eprintln!("intrinsics: variant {} context {:?}, now {ctx:?}", e.id, e.ctx);
+                }
                 why = "Context";
                 continue;
             }
-            if let Err(w) = self.intr_reads_hold(&e.reads) {
+            if let Err((w, p)) = self.intr_reads_hold(&e.reads) {
+                if debug() {
+                    eprintln!("intrinsics: variant {} {w} of \\{} ({p})", e.id, self.intr_cs_name(p));
+                }
                 why = w;
                 continue;
             }
@@ -566,7 +607,7 @@ impl Globals {
         Err(why)
     }
 
-    fn intr_reads_hold(&self, reads: &[Read]) -> Result<(), &'static str> {
+    fn intr_reads_hold(&self, reads: &[Read]) -> Result<(), (&'static str, i32)> {
         for r in reads {
             match r {
                 Read::Meaning(p, t, v) => {
@@ -577,18 +618,18 @@ impl Globals {
                             Equiv::Tokens(ts) => self.intr_list_is(w.hh_rh(), ts),
                         };
                     if !same {
-                        return Err("Meaning");
+                        return Err(("Meaning", *p));
                     }
                 }
                 Read::Plain(p) => {
                     let t = self.eqtb[(p - 1) as usize].hh_b0();
                     if t == mac_param || t == outer_call || t == long_outer_call {
-                        return Err("Meaning");
+                        return Err(("Meaning", *p));
                     }
                 }
                 Read::Word(p, w) => {
                     if self.eqtb[(p - 1) as usize].int() != *w {
-                        return Err("Word");
+                        return Err(("Word", *p));
                     }
                 }
                 Read::Name(p, n) => {
@@ -600,7 +641,7 @@ impl Globals {
                         _ => false,
                     };
                     if !same {
-                        return Err("Name");
+                        return Err(("Name", *p));
                     }
                 }
             }
@@ -718,6 +759,7 @@ impl Globals {
             names: HashSet::new(),
             ops: vec![],
             tokens: 0,
+            align_seen: false,
             verify,
         });
         self.intr_rec_on = true;
@@ -734,7 +776,7 @@ impl Globals {
             return;
         };
         self.intr_rec_on = false;
-        if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
+        if debug() {
             eprintln!(
                 "intrinsics: recording of \\{} abandoned: {why} (cmd {} chr {} cs {})",
                 self.intr_cs_name(rec.cs),
@@ -769,7 +811,7 @@ impl Globals {
         let r = &mut self.host.intrinsics;
         r.stats.checked += 1;
         r.stats.differing += 1;
-        if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
+        if debug() {
             eprintln!("intrinsics: check differs: {classes:?} {details:?}");
         }
         for d in details.into_iter().take(3) {
@@ -957,6 +999,9 @@ impl Globals {
         };
         if self.input_ptr < base {
             return self.intr_rec_abort("Level");
+        }
+        if self.cur_cmd == tab_mark || self.cur_cmd == car_ret {
+            self.host.intrinsics.rec.as_mut().expect("checked").align_seen = true;
         }
         let cs = self.cur_cs;
         if cs == 0 {
@@ -1204,7 +1249,10 @@ impl Globals {
         store.entries.push(Entry {
             id: store.next_id,
             cs: rec.cs,
-            ctx: rec.ctx,
+            ctx: Ctx {
+                align: rec.ctx.align.filter(|_| rec.align_seen),
+                ..rec.ctx
+            },
             reads: rec.reads,
             ops: rec.ops,
             used: store.clock,
