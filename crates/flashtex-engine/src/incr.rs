@@ -6452,6 +6452,9 @@ impl Session {
         let (Some(a), Some(b)) = (pos(p0), pos(p2)) else {
             return Err("a checkpoint of the window went".into());
         };
+        if b <= a {
+            return Err("P2 is not after P0".into());
+        }
         let (n0, n2) = (g.record_of(p0)?.notes, g.record_of(p2)?.notes);
         let step = Step {
             threshold: 0,
