@@ -496,3 +496,25 @@ fn calls_in_math_groups_compare_their_save_stack() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+#[test]
+fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
+    // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
+    // assignments local (tex.web §1214), like `\globaldefs>0` makes its
+    // local ones global; and a pending `\afterassignment` fires inside the
+    // call on the normal path (here after its `\setbox`). Each offer is a
+    // miss, and the logs agree
+    let s = check(
+        "k6",
+        &[
+            PRELUDE,
+            "\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\
+             \\w=1pt \\h=1pt {\\globaldefs=-1 \\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show}\\show\
+             \\def\\after{\\message{[after]}}\\n=0 \\afterassignment\\after\\measure{5pt}\\show\
+             \\n=0 \\measure{5pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "Preconditions"), 3, "{s}");
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}

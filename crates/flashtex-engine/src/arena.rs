@@ -4737,6 +4737,30 @@ mod tests {
         assert!(arr[..] == before[..]);
     }
 
+    /// A range written through `slice_mut` (`input_ln`'s copy of a line into
+    /// `buffer`, `alloc_len`, `arr[lo..hi]`) saves every chunk it spans, the
+    /// last one too: here ranges of 1-3,000 bytes from every offset around
+    /// a chunk's end.
+    #[test]
+    fn ranges_written_through_slice_mut_are_saved_whole() {
+        let mut p = Plan::new(8);
+        let r = p.reserve::<u8>("t", 8 * CHUNK_BYTES);
+        let mut a = p.build();
+        let mut arr = a.arr(r, 8 * CHUNK_BYTES);
+        for (i, x) in arr.slice_mut(0, 8 * CHUNK_BYTES).iter_mut().enumerate() {
+            *x = i as u8;
+        }
+        for lo in (CHUNK_BYTES - 8..CHUNK_BYTES + 8).chain([3 * CHUNK_BYTES - 1]) {
+            for len in [1, 2, 9, CHUNK_BYTES, 3000] {
+                let before = arr.to_vec();
+                let id = a.checkpoint();
+                arr.slice_mut(lo, lo + len).fill(0xEE);
+                a.restore_discard(id).unwrap();
+                assert!(arr[..] == before[..], "slice_mut({lo}, {})", lo + len);
+            }
+        }
+    }
+
     #[test]
     fn scalar_spill_goes_through_the_barrier() {
         let (mut a, _arr) = space(10);

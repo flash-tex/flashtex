@@ -29,11 +29,20 @@ struct Run {
 
 /// Run `\input t` in INITEX with the intrinsics in `mode`.
 fn run(dir: &Path, mode: &str, names: &str) -> Run {
+    run_in(dir, mode, names, false)
+}
+
+/// [`run`], in e-TeX mode with `etex`.
+fn run_in(dir: &Path, mode: &str, names: &str, etex: bool) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
-        .args(["-ini", "\\input t"])
+        .args(if etex {
+            &["-ini", "-etex", "\\input t"][..]
+        } else {
+            &["-ini", "\\input t"][..]
+        })
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
         .env("FLASHTEX_RESOLVER", "cwd")
@@ -71,11 +80,16 @@ fn stat(stats: &str, key: &str) -> u64 {
 /// Run `src` off, on and verify; the logs must agree and the verifier find
 /// nothing. Returns the "on" statistics.
 fn check(tag: &str, src: &str) -> String {
+    check_in(tag, src, false)
+}
+
+/// [`check`], in e-TeX mode with `etex`.
+fn check_in(tag: &str, src: &str, etex: bool) -> String {
     let d = scratch(tag);
     std::fs::write(d.join("t.tex"), src).unwrap();
-    let off = run(&d, "off", "hook");
-    let on = run(&d, "on", "hook");
-    let verify = run(&d, "verify", "hook");
+    let off = run_in(&d, "off", "hook", etex);
+    let on = run_in(&d, "on", "hook", etex);
+    let verify = run_in(&d, "verify", "hook", etex);
     assert_eq!(off.log, on.log, "{tag}: log with intrinsics on differs");
     assert_eq!(
         off.log, verify.log,
@@ -266,4 +280,76 @@ fn memory_usage_is_pdftex_s_while_replaying() {
         want,
         "the memory lines differ from pdftex's"
     );
+}
+
+/// `\globaldefs<0` turns every global assignment local (tex.web §1214): a
+/// replay of the hook's `\global` and `\gdef` operations would be wrong, so
+/// a negative value, like a positive one, is a precondition failure. Inside
+/// the group the hook's global assignments are local, and once the group
+/// ends `\n` and `\last` are again what was set before it.
+#[test]
+fn negative_globaldefs_falls_back() {
+    let s = check(
+        "pre-neg",
+        &format!(
+            "{PRELUDE}\\hook\\hook\\show\\n=99 \\def\\last{{X}}\\show\n\
+             {{\\globaldefs=-1 \\hook\\show\\hook\\show\\hook\\show}}\\show\n\
+             \\hook\\show\\n=98 \\def\\last{{Y}}\\globaldefs=-1 \\hook\\show\\globaldefs=0 \\show\\end\n"
+        ),
+    );
+    assert_eq!(stat(&s, "GlobalDefs"), 4, "{s}");
+}
+
+/// Each tracing parameter on its own stops a replay: the normal path would
+/// print what it traces (here `\tracingifs` the hook's `\ifx`, and
+/// `\tracingassigns` its assignments) and a replay prints nothing. In
+/// e-TeX mode: four of them are e-TeX's.
+#[test]
+fn each_tracing_parameter_falls_back_alone() {
+    for p in [
+        "tracingmacros",
+        "tracingcommands",
+        "tracingassigns",
+        "tracingrestores",
+        "tracinggroups",
+        "tracingifs",
+    ] {
+        let s = check_in(
+            &format!("trace-{p}"),
+            &format!("{PRELUDE}\\hook\\hook\\{p}=1 \\hook\\show\\{p}=0 \\hook\\show\\end\n"),
+            true,
+        );
+        assert_eq!(stat(&s, "Tracing"), 1, "{p}: {s}");
+    }
+}
+
+/// A dependency redefined globally (`\gdef`, `geq_define`) fails the guard
+/// as a local redefinition does (`eq_define`).
+#[test]
+fn a_global_redefinition_of_a_dependency_falls_back() {
+    let s = check(
+        "gredef",
+        &format!(
+            "{PRELUDE}\\hook\\hook\\show\n\\gdef\\a{{AA}}\\hook\\show\\hook\\show\n\
+             {{\\global\\let\\b=\\a}}\\hook\\show\\end\n"
+        ),
+    );
+    assert!(stat(&s, "Deps") >= 2, "{s}");
+}
+
+/// `\partokenname` (pdfTeX 1.40.24) changes the token a non-`\long`
+/// macro's argument may not hold. Recorded while it is `\x`, the hook
+/// passes `\par` to such a macro; once it is `\par` again the normal path
+/// stops with "Runaway argument", which a replay would skip.
+#[test]
+fn a_changed_par_token_falls_back() {
+    let s = check(
+        "partoken",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\foo#1{\\def\\got{#1}}\\def\\hook{\\foo{\\par}}\n\
+         \\partokenname\\x \\hook\\hook\\hook\\message{[\\meaning\\got]}\n\
+         \\partokenname\\par \\hook\\message{[\\meaning\\got]}\\end\n",
+    );
+    assert!(stat(&s, "replays") >= 1, "{s}");
+    assert_eq!(stat(&s, "ParToken"), 1, "{s}");
 }
