@@ -1554,6 +1554,7 @@ impl Engine {
                 .collect(),
             earlier: self.pages.iter().map(|c| (c.id, c.pages)).collect(),
         });
+        crate::out::stage("setup_thinning");
         // the journal and the output opens up to where the run starts
         let (journal, opens) = match start {
             Start::Page(i) => (
@@ -1571,6 +1572,7 @@ impl Engine {
             }
             _ => (None, vec![]),
         };
+        crate::out::stage("setup_journal");
         let record = want_s0 || want_pages;
         let resident = Box::new(Resident {
             cancel: spec.cancel.clone(),
@@ -1589,6 +1591,7 @@ impl Engine {
             catalog_dirs: None,
             loads: Some(self.loads.clone()),
         });
+        crate::out::stage("setup_resident");
         let mut out = (!c.no_pdf).then(|| {
             let mut o = crate::out::Output::to_writer(
                 spec.dl,

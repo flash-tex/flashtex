@@ -201,9 +201,11 @@ impl Output {
                 c.0.len()
             );
         }
+        crate::out::stage("resume_parts");
         self.doc = snap.doc.clone();
         self.doc.fonts.cache = cache;
         self.pdf_name = snap.pdf_name.clone();
+        crate::out::stage("resume_docclone");
         if snap.pdf_open {
             let f = std::fs::File::create(&self.pdf_name)
                 .map_err(|e| format!("{}: {e}", self.pdf_name))?;
