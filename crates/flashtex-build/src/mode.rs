@@ -371,4 +371,79 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&d);
     }
+
+    fn scratch(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("ftx-mode-t-{name}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn magic_comment_edges() {
+        assert_eq!(
+            known("% !TEX program = latex\n"),
+            Some((Mode::Classic, "pdflatex"))
+        );
+        assert_eq!(magic_comment("% !TEX program xelatex\n"), None);
+        assert_eq!(
+            known("% !TEX program = xelatex\n% !TEX program = pdflatex\n"),
+            Some((Mode::Unicode, "xelatex"))
+        );
+        let filler = "% a comment\n".repeat(19);
+        assert!(known(&format!("{filler}% !TEX program = xelatex\n")).is_some());
+        let filler = "% a comment\n".repeat(20);
+        assert_eq!(
+            magic_comment(&format!("{filler}% !TEX program = xelatex\n")),
+            None
+        );
+    }
+
+    #[test]
+    fn bad_modes_are_errors_and_an_empty_env_is_ignored() {
+        let d = scratch("resolve-err");
+        std::fs::write(d.join(".git"), "").unwrap();
+        std::fs::write(d.join("main.tex"), "% !TEX program = xelatex\n").unwrap();
+        let r = |flag: Option<&str>, env: Option<&str>| {
+            resolve(flag, env.map(String::from), &d, "main.tex")
+        };
+        let e = r(Some("lualatex"), None).unwrap_err();
+        assert!(e.contains("unknown mode"));
+        assert!(r(None, Some("bogus")).unwrap_err().contains("unknown mode"));
+        let e = r(None, Some("flashtex")).unwrap_err();
+        assert!(e.contains("not available"));
+        assert_eq!(r(None, Some("")).unwrap().mode, Mode::Unicode);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn manifest_edges_and_the_generic_unknown_program() {
+        let d = scratch("manifest-edges");
+        std::fs::write(d.join(".git"), "").unwrap();
+        std::fs::write(d.join("main.tex"), "% !TEX program = xelatex\n").unwrap();
+        std::fs::write(d.join("flashtex.toml"), "[project\nmode = ").unwrap();
+        let e = resolve(None, None, &d, "main.tex").unwrap_err();
+        assert!(e.contains("flashtex.toml"), "{e}");
+        std::fs::write(d.join("flashtex.toml"), "[project]\n").unwrap();
+        let r = resolve(None, None, &d, "main.tex").unwrap();
+        assert_eq!((r.mode, r.source.contains("% !TEX")), (Mode::Unicode, true));
+        std::fs::write(d.join("main.tex"), "% !TEX program = pdflatex\n").unwrap();
+        std::fs::write(d.join("flashtex.toml"), "[project]\nmode = \"lualatex\"\n").unwrap();
+        let r = resolve(None, None, &d, "main.tex").unwrap();
+        assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+        std::fs::remove_file(d.join("flashtex.toml")).unwrap();
+        std::fs::write(d.join("main.tex"), "% !TEX program = context\n").unwrap();
+        let r = resolve(None, None, &d, "main.tex").unwrap();
+        assert_eq!(r.mode, Mode::Classic);
+        assert!(
+            r.warnings[0].contains("is not a program FlashTeX has"),
+            "{:?}",
+            r.warnings
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

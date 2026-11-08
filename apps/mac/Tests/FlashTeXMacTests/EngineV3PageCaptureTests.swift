@@ -74,11 +74,15 @@ final class EngineV3PageCaptureTests: XCTestCase {
     func testWindowFrameHookPlacesOnlyTheMainWindow() {
         let helper = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 500, height: 500), styleMask: [.titled])
         helper.isReleasedWhenClosed = false
-        XCTAssertNil(AppDelegate.mainWindow(in: [helper]), "no main window yet: wait, place nothing")
+        let projects = ProjectWindows()
+        let id = ProjectWindowID()
+        _ = projects.model(for: id)
+        XCTAssertNil(AppDelegate.mainWindow(in: [helper], projects: projects), "no main window yet: wait, place nothing")
         let main = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled, .resizable])
         main.isReleasedWhenClosed = false
-        main.title = "FlashTeX"
-        XCTAssertTrue(AppDelegate.mainWindow(in: [helper, main]) === main)
+        main.contentView = NSView()
+        projects.attach(main, to: id) // the first project window (ProjectWindows.swift), whatever its title
+        XCTAssertTrue(AppDelegate.mainWindow(in: [helper, main], projects: projects) === main)
     }
 
     static let document: String = {
