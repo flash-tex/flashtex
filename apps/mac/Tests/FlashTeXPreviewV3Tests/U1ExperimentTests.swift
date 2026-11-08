@@ -50,7 +50,7 @@ extension PreviewParityTests {
                                         ("preview-probes__pv-images", [4, 10, 15]),
                                         ("preview-probes__pv-fonts", [0])]
         let variants: [Set<String>] = [[], ["pdf-nolayer"], ["pdf-layer-rect"], ["png-depth-off"], ["png-alpha16-off"],
-                                       ["iq-none"], ["iq-low"], ["iq-medium"], ["iq-high"], ["png-depth-off", "iq-none"]]
+                                       ["iq-none"], ["iq-low"], ["iq-medium"], ["iq-high"], ["png-depth-off", "iq-none"], ["slant-program"]]
         for (name, pages) in cases {
             let fx = dir.appendingPathComponent(name)
             guard let bytes = try? Data(contentsOf: fx.appendingPathComponent("display.dl3")),

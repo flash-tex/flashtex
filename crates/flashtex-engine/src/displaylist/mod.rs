@@ -1909,6 +1909,7 @@ impl interp::Env for WidthEnv<'_> {
                 .get(&key)
                 .is_some_and(|i| i.str_field("type") == Some("pdf"))
         })
+        .unwrap_or(false)
     }
     fn resname_prefix(&self) -> &[u8] {
         &self.prefix

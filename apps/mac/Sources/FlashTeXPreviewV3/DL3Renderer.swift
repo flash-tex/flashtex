@@ -98,14 +98,21 @@ public final class DL3RenderFont: @unchecked Sendable {
         case "type1", "truetype", "opentype": break
         default: return .failure(DL3Error("\(label): format \(font.format ?? "?") has no program to draw"))
         }
-        guard !font.program.isEmpty, let cg = outlineFont(font.program, face: font.format == "type1" ? 0 : font.faceIndex) else {
+        var program = font.program
+        var inProgram = false // the font matrix is the program's own /FontMatrix
+        if DL3Renderer.u1Variant.contains("slant-program"), font.format == "type1", let fm = font.fontMatrix, fm.count == 6,
+           let patched = Type1Encoding.withFontMatrix(program, fm) {
+            program = patched
+            inProgram = true
+        }
+        guard !program.isEmpty, let cg = outlineFont(program, face: font.format == "type1" ? 0 : font.faceIndex) else {
             return .failure(DL3Error("\(label): the program does not load"))
         }
         if font.glyphIds {
             // Codes are glyph ids in the face (XeTeX's native fonts, Typst):
             // drawn as they are, no encoding, no cmap.
             return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: [], glyphIdCount: max(1, cg.numberOfGlyphs),
-                                          fontTransform: fontTransform(font, cg)))
+                                          fontTransform: inProgram ? .identity : fontTransform(font, cg)))
         }
         var glyphs = [CGGlyph](repeating: 0, count: 256)
         if font.format == "type1" {
@@ -160,7 +167,7 @@ public final class DL3RenderFont: @unchecked Sendable {
                 for code in 0 ..< 256 { glyphs[code] = unicodeGlyph(code) }
             }
         }
-        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: fontTransform(font, cg)))
+        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: inProgram ? .identity : fontTransform(font, cg)))
     }
 
     /// Glyph space → text space beyond the program's own 1/unitsPerEm.
@@ -211,6 +218,27 @@ public final class DL3RenderFont: @unchecked Sendable {
 /// Built-in `/Encoding` of a Type 1 program (`dup N /name put`), for a FONT
 /// that sent no `encoding` (the engine always sends one today).
 enum Type1Encoding {
+    /// TEMPORARY (U1 experiment): the program with its `/FontMatrix` array
+    /// replaced by `fm`, as writet1.c's t1_modify_fm writes SlantFont and
+    /// ExtendFont (a .pfb's first segment length follows).
+    static func withFontMatrix(_ program: [UInt8], _ fm: [Double]) -> [UInt8]? {
+        let key = Array("/FontMatrix".utf8)
+        guard program.count > key.count, let at = (0 ... program.count - key.count).first(where: { Array(program[$0 ..< $0 + key.count]) == key }),
+              let open = program[at...].firstIndex(where: { $0 == UInt8(ascii: "[") || $0 == UInt8(ascii: "{") }) else { return nil }
+        let close: UInt8 = program[open] == UInt8(ascii: "[") ? UInt8(ascii: "]") : UInt8(ascii: "}")
+        guard let end = program[open...].firstIndex(of: close) else { return nil }
+        let text = Array((fm.map { String($0) }.joined(separator: " ")).utf8)
+        var out = Array(program[..<(open + 1)]) + text + Array(program[end...])
+        let delta = out.count - program.count
+        if program.count > 6, program[0] == 0x80, program[1] == 1, at > 6 {
+            let n = Int(program[2]) | Int(program[3]) << 8 | Int(program[4]) << 16 | Int(program[5]) << 24
+            guard at < 6 + n else { return nil }
+            let m = n + delta
+            out[2] = UInt8(m & 0xFF); out[3] = UInt8(m >> 8 & 0xFF); out[4] = UInt8(m >> 16 & 0xFF); out[5] = UInt8(m >> 24 & 0xFF)
+        }
+        return out
+    }
+
     static let entry = try! NSRegularExpression(pattern: #"dup\s+(\d+)\s*/([^\s/\[\]{}()<>%]+)\s+put"#)
 
     static func builtIn(_ program: [UInt8]) -> [String?] {

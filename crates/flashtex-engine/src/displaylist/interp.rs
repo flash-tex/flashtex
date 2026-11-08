@@ -1074,7 +1074,9 @@ impl<'a, E: Env> Interp<'a, E> {
                             // As a form: the PDF draws the included page's
                             // ink in this colour, pen, text state; the
                             // client draws it from a new graphics state.
-                            self.unsupported("an included PDF page drawn in a state other than a new page's");
+                            self.unsupported(
+                                "an included PDF page drawn in a state other than a new page's",
+                            );
                         }
                         let mi = self.matrix(&m);
                         if !self.images.contains(&n) {
