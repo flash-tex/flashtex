@@ -60,6 +60,20 @@ const EXCLUDED_SCALARS: &str = "cur_cmd cur_chr cur_cs cur_tok cur_val cur_val_l
 
 const EXCLUDED_REGIONS: &str = "mem dig trick_buf pstack input_stack param_stack";
 
+/// The `not_replayable` reasons whose effect a check does not see: the
+/// input files' positions and encodings (`FileInput`), files written and
+/// `\write`s (`FileOutput`), a box's dimension and a sparse register,
+/// both in `mem` (`BoxDimen`, `SparseRegister`), and output, of which the
+/// check compares only the log's length (`Output`). A real path with one
+/// of them is a difference whatever the states (#2203).
+const HIDDEN_EFFECTS: [&str; 5] = [
+    "FileInput",
+    "FileOutput",
+    "BoxDimen",
+    "SparseRegister",
+    "Output",
+];
+
 /// A check in progress: C and the replay's state I.
 pub(crate) struct Pending {
     ck: CheckpointId,
@@ -113,20 +127,33 @@ impl Globals {
     }
 
     /// The real path is done: compare, count, drop C. `bad`: why the real
-    /// path is not replayable (`not_replayable.*`), if it is not. It then
-    /// did something a replay does not, outside the compared state (a
-    /// file written or read, output, an `\aftergroup` left behind, ...), so
-    /// equal states are no pass: the check is a difference of the class
-    /// `not_replayable` (#2203).
+    /// path is not replayable (`not_replayable.*`), if it is not.
+    ///
+    /// * A reason in [`HIDDEN_EFFECTS`]: the real path did something a
+    ///   replay does not, outside the compared state (a file read or
+    ///   written, a box's dimension or a sparse register in `mem`, output),
+    ///   so equal states are no pass: the check is a difference of the
+    ///   class `not_replayable` (#2203).
+    /// * Any other reason only means the recorder could not or would not
+    ///   keep this path (`TooManyOps`, a glue, shape or box value, a
+    ///   tracing write, a group, conditional, string or error left
+    ///   changed, ...), and whatever such a path changed is in the compared
+    ///   state: a difference found is one, and equal states are counted
+    ///   `semantic.unverified.<reason>`, neither a pass nor a difference.
     pub(crate) fn intr_verify_end(&mut self, p: Pending, bad: Option<&'static str>) {
         let mut diffs = self.intr_compare(&p);
-        if let Some(w) = bad {
-            diffs.push((
+        self.drop_checkpoint(p.ck);
+        match bad {
+            Some(w) if HIDDEN_EFFECTS.contains(&w) => diffs.push((
                 "not_replayable",
                 format!("the real path is not replayable ({w})"),
-            ));
+            )),
+            Some(w) if diffs.is_empty() => {
+                *self.host.intrinsics.unverified.entry(w).or_default() += 1;
+                return;
+            }
+            _ => {}
         }
-        self.drop_checkpoint(p.ck);
         let r = &mut self.host.intrinsics;
         r.checked += 1;
         if diffs.is_empty() {

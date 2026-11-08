@@ -435,3 +435,26 @@ fn input_encoding_changes_are_not_replayable() {
     assert_eq!(count(&s, "not_replayable.FileInput"), 3, "{s}");
     assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
 }
+
+/// A reason that only means the recorder could not keep the real path
+/// (`TooManyOps`: the loop makes 10,006 assignments) is no difference when
+/// the states agree: everything such a path changes is compared, and here
+/// it ends where the previous call's one assignment does. The check is
+/// unverified, not a difference (REVIEW-C2 on #2205); a sweep in verify
+/// mode stays green on it.
+#[test]
+fn a_check_whose_real_path_was_too_long_to_record_is_no_difference() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\countdef\\IntrC=200 \\countdef\\IntrK=201\n\
+         \\def\\IntrLoop{\\advance\\IntrK by 1 \\ifnum\\IntrK<10005 \\expandafter\\IntrLoop\\fi}\n\
+         \\def\\pdfstringdefPreHook{\\ifodd\\IntrC\\IntrLoop\\fi\\IntrK=0 \\relax}\n\
+         \\begin{document}\\relax\n\\IntrC=0 \\pdfstringdefPreHook\n\\IntrC=1 \\pdfstringdefPreHook\n\
+         x\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.TooManyOps"), 1, "{s}");
+    assert_eq!(count(&s, "semantic.unverified.TooManyOps"), 1, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
+}

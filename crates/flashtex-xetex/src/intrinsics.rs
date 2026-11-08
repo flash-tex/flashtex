@@ -124,7 +124,7 @@ pub struct Report {
     pub(crate) identical: u64,
     pub(crate) differing: u64,
     pub(crate) classes: BTreeMap<&'static str, u64>,
-    unverified: BTreeMap<&'static str, u64>,
+    pub(crate) unverified: BTreeMap<&'static str, u64>,
     not_replayable: BTreeMap<&'static str, u64>,
     pub(crate) details: Vec<String>,
 }
