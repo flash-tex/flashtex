@@ -181,31 +181,6 @@ impl Output {
         g: &crate::generated::Globals,
     ) -> Result<(), String> {
         let cache = self.doc.fonts.cache.take();
-        if std::env::var_os("FLASHTEX_UNICODE_STAGES").is_some() {
-            let t = std::time::Instant::now();
-            let a = snap.doc.fonts.clone();
-            let t1 = t.elapsed();
-            let b = snap.doc.named.clone();
-            let t2 = t.elapsed();
-            let c = (snap.doc.dests.clone(), snap.doc.outlines.clone());
-            let t3 = t.elapsed();
-            let d = snap.doc.clone();
-            let t4 = t.elapsed();
-            eprintln!(
-                "[docparts] fonts {:.3} named {:.3} dests+outlines {:.3} whole {:.3} defined {} res {} widths {} pages {} forms {} named {} dests {}",
-                t1.as_secs_f64() * 1e3,
-                (t2 - t1).as_secs_f64() * 1e3,
-                (t3 - t2).as_secs_f64() * 1e3,
-                (t4 - t3).as_secs_f64() * 1e3,
-                a.defined.len(),
-                a.res.len(),
-                a.widths.values().map(|w| w.len()).sum::<usize>(),
-                d.pages.len(),
-                d.forms.len(),
-                b.len(),
-                c.0.len()
-            );
-        }
         crate::out::stage("resume_parts");
         self.doc = snap.doc.clone();
         self.doc.fonts.cache = cache;
