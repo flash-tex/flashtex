@@ -516,8 +516,10 @@ impl Globals {
             String::new()
         };
         let named = self.host.font_mgr.is_some();
+        // (the directories the catalog was made from: a change since is a
+        // change to what its lookups found)
         let font_dirs = match (named, self.host.resident.as_mut()) {
-            (true, Some(r)) => Some(r.font_dirs()),
+            (true, Some(r)) => Some(r.catalog_dirs.unwrap_or_else(|| r.font_dirs())),
             _ => None,
         };
         let opens = self.host.resident.as_ref().map_or(0, |r| r.opens.len());

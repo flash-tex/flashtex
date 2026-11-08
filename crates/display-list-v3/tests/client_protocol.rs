@@ -179,6 +179,74 @@ fn refuses_another_major_version() {
     let _ = std::fs::remove_file(&path);
 }
 
+// The handshake over a socket pair: Unix only (Windows' AF_UNIX has no
+// socketpair). A host that answers ERROR, names another protocol, or
+// closes before HELLO is refused.
+#[cfg(unix)]
+#[test]
+fn refuses_error_reply() {
+    let (a, b) = Stream::pair().unwrap();
+    let host = std::thread::spawn(move || {
+        let mut h = a;
+        read_frame(&mut h).unwrap().unwrap();
+        write_frame(
+            &mut h,
+            kind::ERROR,
+            obj([("message", s("busy"))]).to_string().as_bytes(),
+        )
+        .unwrap();
+    });
+    let err = Client::over(b).err().expect("an ERROR reply is refused");
+    assert!(err.to_string().contains("host refused"), "{err}");
+    host.join().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_wrong_protocol() {
+    let (a, b) = Stream::pair().unwrap();
+    let host = std::thread::spawn(move || {
+        let mut h = a;
+        read_frame(&mut h).unwrap().unwrap();
+        write_frame(
+            &mut h,
+            kind::HELLO,
+            obj([
+                ("protocol", s("display-list-v2")),
+                ("version", Json::Arr(vec![Json::Int(3), Json::Int(0)])),
+            ])
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+    });
+    let err = Client::over(b).err().expect("a wrong protocol is refused");
+    assert!(
+        err.to_string().contains("not a display-list-v3 host"),
+        "{err}"
+    );
+    host.join().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_close_before_hello() {
+    let (a, b) = Stream::pair().unwrap();
+    let host = std::thread::spawn(move || {
+        let mut h = a;
+        read_frame(&mut h).unwrap().unwrap();
+        // Drop `h`: the host closes before HELLO.
+    });
+    let err = Client::over(b)
+        .err()
+        .expect("a close before HELLO is refused");
+    assert!(
+        err.to_string().contains("host closed before HELLO"),
+        "{err}"
+    );
+    host.join().unwrap();
+}
+
 // A socket pair: Unix only (Windows' AF_UNIX has no socketpair).
 #[cfg(unix)]
 #[test]

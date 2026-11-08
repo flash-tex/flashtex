@@ -1,0 +1,25 @@
+Stats {
+    calls: 226,
+    replays: 198,
+    replayed_ops: 122958,
+    replay_ns: 12448924,
+    recordings: 28,
+    committed: 27,
+    abandoned: {
+        "NewCs": 1,
+    },
+    not_replayed: {
+        "Align": 1,
+        "Deps": 25,
+        "NotRecorded": 2,
+    },
+    verified: 0,
+    verify_differences: 0,
+    verify_details: [],
+    per_cs: {
+        "pdfstringdefPreHook": (
+            198,
+            0,
+        ),
+    },
+}
