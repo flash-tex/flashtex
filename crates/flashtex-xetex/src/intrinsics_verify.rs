@@ -414,7 +414,8 @@ impl Globals {
         let mut d: Vec<(&'static str, String)> = vec![];
         let n = self.intr_capture(p.save_ptr0, false);
         let i = &p.i;
-        for sl in crate::statediff::scalar_layout(self) {
+        let layout = crate::statediff::scalar_layout(self);
+        for sl in &layout {
             if EXCLUDED_SCALARS.split_whitespace().any(|s| s == sl.name)
                 || sl.name.starts_with("intr_")
                 || sl.name.starts_with("ckpt_")
@@ -454,7 +455,6 @@ impl Globals {
         // freed, and that is free in neither state, is a node the call found
         // and changed in place (`\limits`' `subtype(tail)`): compared. The
         // rest is reached from the roots compared below by content.
-        let layout = crate::statediff::scalar_layout(self);
         let isc = |name: &str| -> i32 {
             layout
                 .iter()
