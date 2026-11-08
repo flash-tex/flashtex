@@ -113,6 +113,19 @@ struct Result {
 
 fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option<u32>) -> Result {
     let t0 = Instant::now();
+    let kw = std::env::var_os("FLASHTEX_KEYWAIT_DEBUG").is_some();
+    let us = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_micros())
+    };
+    if kw {
+        eprintln!(
+            "[kw] {} client: COMPILE {} sent (watching {target:?})",
+            us(),
+            req.id
+        );
+    }
     c.compile(req).expect("send COMPILE");
     // With the external tools on, the compile lasts until `TOOL` `settled`
     // for it; its follow-up compiles (same id) are part of it.
@@ -144,6 +157,14 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
             Event::Page(p) => {
                 first_page.get_or_insert(ms);
                 first_index.get_or_insert(p.index);
+                if kw && target_page.is_none() && (Some(p.index) == target || first_page.is_none())
+                {
+                    eprintln!(
+                        "[kw] {} client: PAGE {} read, {ms:.3} ms after COMPILE",
+                        us(),
+                        p.index
+                    );
+                }
                 if Some(p.index) == target {
                     target_page.get_or_insert(ms);
                 } else if target_page.is_some() && target.is_some_and(|t| p.index > t) {

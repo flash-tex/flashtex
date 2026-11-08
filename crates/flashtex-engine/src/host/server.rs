@@ -934,6 +934,12 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                 } else {
                     // A compile already queued or running for this
                     // connection is superseded: `queued` tells it so.
+                    if crate::incr::kw_on() {
+                        crate::incr::kw(format_args!(
+                            "conn: COMPILE {:?} read",
+                            req.int_field("id")
+                        ));
+                    }
                     conn.queued.fetch_add(1, Ordering::SeqCst);
                     // (a running compile looks at once: `checkpoint::PREEMPT_HINT`)
                     crate::checkpoint::hint_preempt();
@@ -989,6 +995,9 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                     .filter(|p| *p >= 0)
                 {
                     Some(p) => {
+                        if crate::incr::kw_on() {
+                            crate::incr::kw(format_args!("conn: VIEWPORT {p} read"));
+                        }
                         let _ = tx.send(Req::Viewport {
                             conn: conn.clone(),
                             page: p as usize,

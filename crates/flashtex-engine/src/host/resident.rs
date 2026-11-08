@@ -511,6 +511,12 @@ impl Live {
                 t.next = i as u32 + 1;
                 t.changed_sent |= changed;
             }
+            if incr::kw_on() && t.emitted <= 8 {
+                incr::kw(format_args!(
+                    "engine: page {i} shipped and sent, {:.3} ms after the read",
+                    t.t0.elapsed().as_secs_f64() * 1e3
+                ));
+            }
             if t.first_index.is_none() {
                 t.first_index = Some(i as u32);
                 t.first_page_ms = Some(t.t0.elapsed().as_secs_f64() * 1e3);
@@ -764,6 +770,13 @@ impl Engine {
                     }
                 }
                 Req::Compile { conn, req, t0 } => {
+                    if incr::kw_on() {
+                        incr::kw(format_args!(
+                            "engine: COMPILE taken, {:.3} ms after its read (VIEWPORT pending {})",
+                            t0.elapsed().as_secs_f64() * 1e3,
+                            pending_vp.is_some()
+                        ));
+                    }
                     // (newer work: a waiting VIEWPORT's re-densify is off)
                     pending_vp = None;
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
@@ -788,7 +801,12 @@ impl Engine {
                     id,
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
-                Req::Viewport { conn, page } => pending_vp = Some((conn, page, Instant::now())),
+                Req::Viewport { conn, page } => {
+                    if incr::kw_on() {
+                        incr::kw(format_args!("engine: VIEWPORT {page} taken"));
+                    }
+                    pending_vp = Some((conn, page, Instant::now()))
+                }
             }
             if compiled && self.profile.keep_warm_ms > 0 {
                 hot_until = Some(
@@ -863,16 +881,44 @@ impl Engine {
             return;
         }
         let c = conn.clone();
+        let last = std::cell::Cell::new((Instant::now(), 0u64, false));
         d.session
-            .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
-                c.queued.load(Ordering::SeqCst) > 0
+            .set_preempt(Some(std::rc::Rc::new(move |pass, pages| {
+                let q = c.queued.load(Ordering::SeqCst) > 0;
+                if incr::kw_on() {
+                    // (not every call: the comparison asks millions of times)
+                    let (at, n, was) = last.get();
+                    if q != was || at.elapsed().as_secs_f64() >= 0.5e-3 {
+                        incr::kw(format_args!(
+                            "redensify: preempt asked (pass {pass}, {pages} pages): {q}, {n} calls since the last line"
+                        ));
+                        last.set((Instant::now(), 0, q));
+                    } else {
+                        last.set((at, n + 1, was));
+                    }
+                }
+                q
             })));
+        if incr::kw_on() {
+            incr::kw(format_args!("redensify {page}: starts"));
+        }
         let t = Instant::now();
         let r = {
             let _busy = crate::busy::enter(crate::busy::Part::Prepare);
             d.session.redensify(page)
         };
         d.session.set_preempt(None);
+        if incr::kw_on() {
+            incr::kw(format_args!(
+                "redensify {page}: returns, {:.3} ms, {}",
+                t.elapsed().as_secs_f64() * 1e3,
+                match &r {
+                    Ok(Some(r)) => r.json(),
+                    Ok(None) => "nothing to do".to_string(),
+                    Err(e) => format!("error {e}"),
+                }
+            ));
+        }
         if debug {
             eprintln!(
                 "[host] VIEWPORT {page}: {:?}, {:.1} ms",

@@ -3546,6 +3546,22 @@ impl Obs {
     }
 }
 
+/// `FLASHTEX_KEYWAIT_DEBUG` (lane MEMORY, measurement only): where a key
+/// that comes during an idle run waits, as `[kw] <unix us> <what>` lines on
+/// stderr (the client's `dl3-keys` writes its own on the same clock).
+pub fn kw_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_KEYWAIT_DEBUG").is_some())
+}
+
+/// One `[kw]` line (`kw_on`).
+pub fn kw(what: std::fmt::Arguments) {
+    let us = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_micros());
+    eprintln!("[kw] {us} {what}");
+}
+
 /// CPU time of this thread, in seconds (the machine is shared: wall time
 /// includes other processes' load, this does not).
 pub fn thread_cpu_s() -> f64 {
@@ -4863,6 +4879,9 @@ impl Session {
         let i0 = crate::os::thread_counts();
         let f0 = crate::os::events();
         let mut paused_how = "";
+        if kw_on() && self.paused.is_some() {
+            kw(format_args!("compile: a paused run, handling"));
+        }
         // A run stopped for this compile (preempted, or at a viewport).
         let ahead = self.paused.as_ref().and_then(|_| system::take_ahead_read());
         if let Some(p) = ahead {
@@ -4920,6 +4939,12 @@ impl Session {
             }
         }
         let paused_s = t0.elapsed().as_secs_f64();
+        if kw_on() && !paused_how.is_empty() {
+            kw(format_args!(
+                "compile: paused run {paused_how}, {:.3} ms",
+                paused_s * 1e3
+            ));
+        }
         let paused_instr = i0.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         let paused_flt = f0
             .zip(crate::os::events())
@@ -7669,7 +7694,17 @@ impl Session {
             let (pass, pages) = (obs.pass, obs.new_pages.len());
             let mut stop = move || pp.as_ref().is_some_and(|p| p(pass, pages));
             let _busy = crate::busy::enter(crate::busy::Part::Jump);
-            match g.jump_adopt(old, &mut stop)? {
+            if kw_on() {
+                kw(format_args!("run: convergence jump starts"));
+            }
+            let ja = g.jump_adopt(old, &mut stop)?;
+            if kw_on() {
+                kw(format_args!(
+                    "run: convergence jump ends (adopted {})",
+                    ja.is_some()
+                ));
+            }
+            match ja {
                 // (and newer work that came while it compared stops the run
                 // there too: the jump itself cannot be stopped, and takes
                 // milliseconds on a long document, which the next keystroke

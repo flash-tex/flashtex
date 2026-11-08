@@ -2446,6 +2446,9 @@ impl Globals {
                 }
             }
             REQ_PREEMPT => {
+                if crate::incr::kw_on() {
+                    crate::incr::kw(format_args!("run: REQ_PREEMPT at big_switch"));
+                }
                 let stop = match self.layer().observer.take() {
                     Some(mut obs) => {
                         let s = obs.stops_now(self);
