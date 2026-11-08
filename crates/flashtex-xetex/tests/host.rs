@@ -1465,6 +1465,121 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// dvipdfmx's destination renaming across a page checkpoint (out::doc::Goto):
+/// a document without hyperref (no `dvipdfmx:config C 0x0010`) whose links
+/// and outline entries name destinations on many pages, some through named
+/// objects (`/Dest @n`, `/A @n`, also from the last page), renamed `(0)`,
+/// `(1)`, … in the order met. An edit on the last page restarts at a page
+/// checkpoint, and the counter, the table of new names and the named
+/// actions renamed in place come back with it: every PDF is byte for byte a
+/// run of its own's.
+#[test]
+fn destination_renaming_survives_a_page_checkpoint() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-gotos-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let link = |d: &str, text: &str| {
+        format!("\\special{{pdf:bann <</Subtype/Link/A<</S/GoTo/D({d})>>>>}}{text}\\special{{pdf:eann}}")
+    };
+    let mut body = String::from("\\special{pdf:obj @act <</S/GoTo/D(sec.1)>>}%\n");
+    for i in 1..=6 {
+        body.push_str(&format!(
+            "\\section{{Part {i}}}\\special{{pdf:dest (sec.{i}) [@thispage /XYZ @xpos @ypos null]}}%\n\
+             \\special{{pdf:outline 1 <</Title (Part {i}) /A <</S/GoTo/D (sec.{i})>>>>}}%\n\
+             \\special{{pdf:obj @d{i} (sec.{i})}}%\n"
+        ));
+        for k in 0..8 {
+            body.push_str(&para.repeat(3));
+            if k == 3 {
+                // links back, forward, by named objects
+                body.push_str(&link(&format!("sec.{}", (i % 6) + 1), "forward"));
+                body.push_str(&format!(
+                    " \\special{{pdf:ann width 20pt height 8pt <</Subtype/Link/Dest @d{}>>}}",
+                    (i + 4) % 6 + 1
+                ));
+                body.push_str(" \\special{pdf:ann width 20pt height 8pt <</Subtype/Link/A @act>>}");
+            }
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}See~{}.\n\\end{{document}}\n",
+        link("sec.3", "three")
+    );
+    let texts = [
+        doc.clone(),
+        doc.replace("See~", "Look at~"),
+        doc.replace(
+            "See~",
+            &format!("Look at~{}, ", link("new.dest", "nowhere")),
+        ),
+        doc.clone(),
+    ];
+    let run = |envs: &[(&str, &str)]| -> Vec<(String, Vec<u8>)> {
+        let sub = dir.join("run");
+        let _ = std::fs::remove_dir_all(&sub);
+        let (proj, out) = project(&sub, &doc);
+        let mut e = vec![("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, text) in texts.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.clone())];
+            c.compile(&r).unwrap();
+            let (_ev, done) = events(&mut c, id);
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            outs.push((
+                starts,
+                std::fs::read(Path::new(&out).join("main.pdf")).unwrap_or_default(),
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run(&[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    let got = run(&[]);
+    let starts: Vec<&str> = got.iter().map(|o| o.0.as_str()).collect();
+    assert!(starts[1].starts_with("page"), "{starts:?}");
+    assert!(starts[2].starts_with("page"), "{starts:?}");
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        // the destinations are renamed: 0 to 5, none under its old name
+        use flashtex_pdf::reader::{Obj, PdfFile};
+        let pdf = PdfFile::parse(&b.1).unwrap();
+        let cat = pdf.catalog().unwrap();
+        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
+        let dests = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
+        let list = dests.get("Names").and_then(Obj::as_array).unwrap();
+        let keys: Vec<&Obj> = list.iter().step_by(2).collect();
+        assert_eq!(keys.len(), 6, "compile {}: {keys:?}", i + 1);
+        assert!(
+            keys.iter()
+                .all(|k| matches!(k, Obj::String(s) if s.len() == 1)),
+            "compile {}: {keys:?}",
+            i + 1
+        );
+        assert!(a.1 == b.1, "compile {}: the PDFs differ", i + 1);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An export (Export PDF…, Print…) between two keystrokes is a run of its
 /// own, in a process of its own (spec §6.3): it leaves the resident engine's
 /// S₀, so the keystroke after it goes on from S₀ or a page, not from the

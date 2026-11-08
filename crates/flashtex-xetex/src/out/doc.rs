@@ -286,7 +286,13 @@ impl Doc {
     /// pdfdoc.c's `pdf_doc_add_goto` for a link annotation's or an outline
     /// entry's dictionary `d`: its named destination's new name, or none
     /// (the optimisation off, not a link, a destination array, or another
-    /// action).
+    /// action). `@name` references are followed as `pdf_deref_obj` follows
+    /// them: a `/Dest @n` or `/D @n` naming a string is replaced in `d` (the
+    /// returned [`Goto`]); an `/A @n` is the named action itself, renamed in
+    /// place in [`Doc::named`] (so a second link to it finds the new name,
+    /// which no destination has, and takes another: measured, xdvipdfmx
+    /// does the same); a reference to an object not yet made is left (the
+    /// "Cannot optimize" case).
     pub fn add_goto(&mut self, d: &Dict) -> Option<Goto> {
         if !self.check_gotos {
             return None;
@@ -295,24 +301,59 @@ impl Doc {
             doc.diag("Unknown PDF annotation format. Output file may be broken.".into());
             None
         };
-        match d.get(b"Subtype") {
-            None => {}
-            Some(Obj::Name(n)) if n == b"Link" => {}
-            Some(Obj::Name(_)) => return None,
-            Some(_) => return unknown(self),
+        let undefined = |doc: &mut Doc| {
+            doc.diag(
+                "Cannot optimize PDF annotations. Output file may be broken. \
+                 Please restart with option \"-C 0x10\""
+                    .into(),
+            );
+            None
+        };
+        // `pdf_deref_obj`: Err for a reference to an object not made yet
+        let deref = |doc: &Doc, o: Option<&Obj>| -> Result<Option<Obj>, ()> {
+            match o {
+                Some(Obj::Named(n)) => match doc.named.get(n) {
+                    Some(Named::Obj(o)) => Ok(Some(o.clone())),
+                    Some(Named::Stream(..)) | Some(Named::Form(_)) | Some(Named::Image(_)) => {
+                        Ok(Some(Obj::Null))
+                    }
+                    None => Err(()),
+                },
+                o => Ok(o.cloned()),
+            }
+        };
+        match deref(self, d.get(b"Subtype")) {
+            Err(()) => return undefined(self),
+            Ok(None) => {}
+            Ok(Some(Obj::Name(n))) if n == b"Link" => {}
+            Ok(Some(Obj::Name(_))) => return None,
+            Ok(Some(_)) => return unknown(self),
         }
-        let dest = d.get(b"Dest");
-        let (in_action, dv) = match d.get(b"A") {
-            None => (false, dest),
-            Some(Obj::Dict(a)) if dest.is_none() => match a.get(b"S") {
-                Some(Obj::Name(s)) if s == b"GoTo" => (true, a.get(b"D")),
-                Some(Obj::Name(_)) => return None,
-                _ => return unknown(self),
+        let Ok(dest) = deref(self, d.get(b"Dest")) else {
+            return undefined(self);
+        };
+        // where the new name goes: `d` itself, its direct `/A`, or the
+        // named action `/A @n`
+        let named_action = match d.get(b"A") {
+            Some(Obj::Named(n)) => Some(n.clone()),
+            _ => None,
+        };
+        let (in_action, dv) = match deref(self, d.get(b"A")) {
+            Err(()) => return undefined(self),
+            Ok(None) => (false, dest),
+            Ok(Some(Obj::Dict(a))) if dest.is_none() => match deref(self, a.get(b"S")) {
+                Err(()) => return undefined(self),
+                Ok(Some(Obj::Name(s))) if s == b"GoTo" => match deref(self, a.get(b"D")) {
+                    Err(()) => return undefined(self),
+                    Ok(dv) => (true, dv),
+                },
+                Ok(Some(Obj::Name(_))) => return None,
+                Ok(_) => return unknown(self),
             },
-            Some(_) => return unknown(self),
+            Ok(Some(_)) => return unknown(self),
         };
         let old = match dv {
-            Some(Obj::Str(s)) => s.clone(),
+            Some(Obj::Str(s)) => s,
             Some(Obj::Array(_)) => return None,
             _ => return unknown(self),
         };
@@ -322,6 +363,12 @@ impl Doc {
             .entry(old)
             .or_insert_with(|| format!("{n:x}").into_bytes())
             .clone();
+        if let (true, Some(an)) = (in_action, &named_action) {
+            if let Some(Named::Obj(Obj::Dict(a))) = self.named.get_mut(an) {
+                a.set(b"D", Obj::Str(name));
+            }
+            return None;
+        }
         Some(Goto { in_action, name })
     }
 

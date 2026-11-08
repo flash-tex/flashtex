@@ -2823,4 +2823,72 @@ mod tests {
             assert!(!text.contains("(beta)") && !text.contains("(missing)"));
         }
     }
+
+    /// Destinations named through `@name` objects, as `pdf_deref_obj`
+    /// follows them (measured with TeX Live 2026's xetex and xdvipdfmx, a
+    /// plain XeTeX file with these specials): `/Dest @dn` and `/D @dd`
+    /// become the new name in the link (`(0)`, `(2)`); `/A @act` is renamed
+    /// in the named action itself, so a second link to it finds `(1)`, which
+    /// no destination has, and makes it `(3)`; `/Dest @later`, made after
+    /// the link, stays a reference to `(delta)`, which is then not written
+    /// as a destination; the outline's `/Dest @dd` is `(2)`.
+    #[test]
+    fn destinations_through_named_objects_are_renamed_as_dvipdfmx_does() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        use super::super::pdfobj::Obj as P;
+        let mut body = Vec::new();
+        for s in [
+            "pdf:dest (alpha) [@thispage /Fit]",
+            "pdf:dest (beta) [@thispage /Fit]",
+            "pdf:dest (gamma) [@thispage /Fit]",
+            "pdf:dest (delta) [@thispage /Fit]",
+            "pdf:obj @dn (alpha)",
+            "pdf:obj @act <</S/GoTo/D(beta)>>",
+            "pdf:obj @dd (gamma)",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest @dn>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A @act>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A <</S/GoTo/D @dd>>>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest @later>>",
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A @act>>",
+            "pdf:obj @later (delta)",
+            "pdf:outline 1 <</Title (O) /Dest @dd>>",
+        ] {
+            body.extend(special(s));
+        }
+        let mut doc = Doc::new();
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let s = |v: &str| Some(v.as_bytes().to_vec());
+        let gotos: Vec<_> = built
+            .sup
+            .annots
+            .iter()
+            .map(|a| a.goto.as_ref().map(|g| g.name.clone()))
+            .collect();
+        assert_eq!(gotos, [s("0"), None, s("2"), None, None]);
+        assert_eq!(
+            doc.outlines[0].goto.as_ref().map(|g| g.name.clone()),
+            s("2")
+        );
+        let Some(Named::Obj(P::Dict(act))) = doc.named.get(&b"act"[..]) else {
+            panic!("@act");
+        };
+        assert_eq!(act.get(b"D"), Some(&P::Str(b"3".to_vec())));
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let at = text.find("/Names [").expect("the Dests tree");
+        let dests = &text[at..at + text[at..].find("endobj").unwrap()];
+        for n in ["(0)", "(1)", "(2)"] {
+            assert!(dests.contains(n), "{n}: {dests}");
+        }
+        for n in ["(3)", "(alpha)", "(beta)", "(gamma)", "(delta)"] {
+            assert!(!dests.contains(n), "{n}: {dests}");
+        }
+    }
 }
