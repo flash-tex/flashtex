@@ -147,3 +147,11 @@ bash $S/asmcalls.sh ~/flashtex-wt/d2/eng/new/flashtex-initex get_next get_next_f
 python3 $S/identity.py base new -j 2                 # outputs vs origin/main's
 bash $S/gates.sh new                                 # parity, lockstep, trip, etrip, drift, tests
 ```
+
+## Later: push_input is not worth another attempt (2026-11-01)
+
+- On #1952's branch the cold compiles of the 13 arXiv papers and 3 beamer fixtures run at 0.936x pdfTeX in cycles and 1.073x in instructions (PC, Zen 4; throughput-ab runs 41347619666 and 41351908783, lane BEAMER-FRAME).
+- Samples by function: `macro_call` about 25 %, `get_next_slow` 17 %, `expand` 7 %, `scan_toks` 4 %. In a `cycles:u` annotate, `push_input`'s 28-byte copy of `cur_input` takes about 15 % of `macro_call` and 30 % of `get_next_slow`.
+- That copy has been tried already: lane THROUGHPUT's field-at-a-time copy (0ce0d2885, run 41340061783) cut store-to-load interference by 7 % and cycles went up 0.45 %. The hot instructions are the stall made visible, not a cost you can remove.
+- What remains is inherent pointer chasing (`get_avail`'s free list, `mem[loc]` in `macro_call`) that pdfTeX pays too, plus bounds checks, which DESIGN keeps.
+- The Commander ruled 2026-11-01 that scratch expansion throughput is no longer a lane target; per-frame host cost (BOX-MEMO coverage) is.
