@@ -217,6 +217,45 @@ fn verify_all_on_the_test_file() {
     assert!(stat(&all.stats, "verified") >= 2, "{}", all.stats);
 }
 
+/// Both paths make a `\def`'s list from the same free node, so the `eqtb`
+/// entry they leave is the same word and only the tokens at that node can
+/// tell them apart. A replay that ends each list it makes with another
+/// token (`FLASHTEX_INTRINSICS_FAULT=token`) must be a difference in every
+/// verified call; before, the verifier compared such a list only by its
+/// reference count and passed both calls.
+#[test]
+fn verify_compares_a_list_at_the_same_node_by_its_tokens() {
+    let d = scratch("samenode");
+    std::fs::write(
+        d.join("t.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\scrollmode\\def\\a{A}\\def\\b{B}\
+         \\def\\hook{\\def\\y{\\a\\b}}\n\
+         \\hook\\hook\\message{[\\meaning\\y]}\\hook\\message{[\\meaning\\y]}\\end\n",
+    )
+    .unwrap();
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
+    let stats = d.join("stats-fault.txt");
+    let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args(["-ini", "\\input t"])
+        .current_dir(&d)
+        .env("FLASHTEX_POOL", pool)
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .env("FLASHTEX_INTRINSICS", "verify")
+        .env("FLASHTEX_INTRINSIC_NAMES", "hook")
+        .env("FLASHTEX_INTRINSICS_FAULT", "token")
+        .env("FLASHTEX_INTRINSICS_STATS", &stats)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run flashtex-initex");
+    assert!(out.status.code().is_some(), "{out:?}");
+    let s = std::fs::read_to_string(&stats).unwrap();
+    assert_eq!(stat(&s, "verified"), 2, "{s}");
+    assert_eq!(stat(&s, "verify_differences"), 2, "{s}");
+    assert!(s.contains("same node, tokens"), "{s}");
+}
+
 /// The `\tracingstats` memory lines of a log (`Memory usage before: ...`).
 fn memory_lines(log: &str) -> Vec<&str> {
     log.lines()
