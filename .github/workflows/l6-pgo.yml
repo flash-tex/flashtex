@@ -1,0 +1,80 @@
+# L6's E1 ablation (docs/design/engine-v2/L6.md §6): one ref built with and without PGO
+# (scripts/build-engine-dist.sh), then interleaved cold compiles of documents the training does not
+# compile, on GitHub's M1 VMs (§1.2's slowest supported Mac class). The VMs have no PMU, so the
+# measure is each compile's user CPU time; the run fails if the two builds' PDFs differ.
+# Measurement only: workflow_dispatch, or a push to an `l6-pgo/**` branch. What it runs:
+# tools/incr-bench/l6pgo.sh.
+name: l6-pgo
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "branch, tag or SHA to build both ways"
+        default: main
+      docs:
+        description: "l6ab.py --docs (empty: plain-300, full-300, beamer-30, infdesc)"
+        default: ""
+      reps:
+        description: "measured compiles per cell"
+        default: "5"
+  push:
+    branches: ["l6-pgo/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: l6-pgo-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+jobs:
+  pgo:
+    name: "PGO against the default build (hosted M1)"
+    runs-on: macos-15
+    timeout-minutes: 240
+    env:
+      L6PGO_DOCS: ${{ github.event.inputs.docs }}
+      L6PGO_REPS: ${{ github.event.inputs.reps || '5' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools
+      - name: TeX Live 2026 (MacTeX 2026, mactex-no-gui)
+        run: |
+          set -euo pipefail
+          brew install --cask mactex-no-gui >/dev/null
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH=/Library/TeX/texbin:$PATH
+          pdftex --version | head -1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: both builds, then the compiles
+        run: |
+          set -o pipefail
+          tools/incr-bench/l6pgo.sh "$RUNNER_TEMP/l6pgo" 2>&1 | tee "$RUNNER_TEMP/l6pgo.log"
+      - name: summary
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/l6pgo/r/summary.md" ] || exit 0
+          { echo "### L6 E1: PGO against the default build ($(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs)"
+            echo; cat "$RUNNER_TEMP/l6pgo/r/summary.md"; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: l6-pgo
+          path: |
+            ${{ runner.temp }}/l6pgo/r/
+            ${{ runner.temp }}/l6pgo.log
+          if-no-files-found: ignore
+          retention-days: 30

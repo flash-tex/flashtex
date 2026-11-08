@@ -8,6 +8,35 @@
 
 use super::consts::*;
 
+/// `--total-division`: integer `div` and `mod` (web2c's C `/` and `%`) by a
+/// divisor that is not a constant, as TeX Live's C build computes them on
+/// AArch64, the platform of its macOS binaries, where `sdiv` and `msub`
+/// never trap: `x div 0` is 0, `x mod 0` is `x`, and the most negative value
+/// divided by -1 is itself, remainder 0. C leaves these undefined (on x86-64
+/// TeX Live's program dies of SIGFPE); Rust's `/` and `%` would panic.
+pub trait TotalDivision: Copy {
+    fn total_div(self, y: Self) -> Self;
+    fn total_mod(self, y: Self) -> Self;
+}
+impl TotalDivision for i32 {
+    #[inline(always)]
+    fn total_div(self, y: i32) -> i32 { if y == 0 { 0 } else { self.wrapping_div(y) } }
+    #[inline(always)]
+    fn total_mod(self, y: i32) -> i32 { if y == 0 { self } else { self.wrapping_rem(y) } }
+}
+impl TotalDivision for i64 {
+    #[inline(always)]
+    fn total_div(self, y: i64) -> i64 { if y == 0 { 0 } else { self.wrapping_div(y) } }
+    #[inline(always)]
+    fn total_mod(self, y: i64) -> i64 { if y == 0 { self } else { self.wrapping_rem(y) } }
+}
+impl TotalDivision for u8 {
+    #[inline(always)]
+    fn total_div(self, y: u8) -> u8 { if y == 0 { 0 } else { self / y } }
+    #[inline(always)]
+    fn total_mod(self, y: u8) -> u8 { if y == 0 { self } else { self % y } }
+}
+
 // §18
 pub type ASCII_code = i32;
 // §25
