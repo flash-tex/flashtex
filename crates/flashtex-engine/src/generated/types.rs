@@ -240,13 +240,13 @@ pub struct in_state_record {
     pub name_field: halfword,
     pub synctex_tag_field: i32,
 }
-// §574
+// §575
 pub type internal_font_number = i32;
-// §574
+// §575
 pub type font_index = i32;
-// §621
+// §622
 pub type dvi_index = i32;
-// §694
+// §695
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct obj_entry {
     pub int0: i32,
@@ -255,15 +255,15 @@ pub struct obj_entry {
     pub int3: i32,
     pub int4: i32,
 }
-// §707
+// §708
 pub type char_used_array = [eight_bits; 32];
-// §707
+// §708
 pub type char_map_array = [eight_bits; 33];
-// §707
+// §708
 pub type fm_entry_ptr = i32;
-// §722
+// §723
 pub type vf_stack_index = i32;
-// §722
+// §723
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct vf_stack_record {
     pub stack_h: scaled,
@@ -273,24 +273,24 @@ pub struct vf_stack_record {
     pub stack_y: scaled,
     pub stack_z: scaled,
 }
-// §1097
+// §1098
 pub type trie_pointer = i32;
-// §1102
+// §1103
 pub type hyph_pointer = i32;
-// §1627
+// §1628
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct dest_name_entry {
     pub objname: str_number,
     pub objnum: i32,
 }
-// §1632
+// §1633
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct pdf_link_stack_record {
     pub nesting_level: i32,
     pub link_node: halfword,
     pub ref_link_node: halfword,
 }
-// §1678
+// §1679
 pub type save_pointer = i32;
-// §1877
+// §1887
 pub type longinteger = i64;

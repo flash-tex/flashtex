@@ -203,13 +203,14 @@ begin restart: m:=cur_chr;
 if intr_rec_on then flashtex_intr_internal;
 @z
 
-@x pdftex.web l.9769 - ... or a character code
+@x pdftex.web l.9769, enctex2.ch [26.414] - ... or a character code
 begin scan_char_num;
-if m=math_code_base then scanned_result(ho(math_code(cur_val)))(int_val)
+if m=xord_code_base then scanned_result(xord[cur_val])(int_val)
 @y
 begin scan_char_num;
 if intr_rec_on then flashtex_intr_read(m+cur_val);
-if m=math_code_base then scanned_result(ho(math_code(cur_val)))(int_val)
+  {never for \.{\\xordcode} and its kin: nothing is recorded with enc\TeX}
+if m=xord_code_base then scanned_result(xord[cur_val])(int_val)
 @z
 
 @x pdftex.web l.10446 - a recorded run never scans a dimension

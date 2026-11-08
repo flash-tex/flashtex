@@ -1538,7 +1538,11 @@ impl Globals {
     pub fn flashtex_intr_call(&mut self) -> bool {
         // (inside a BOX-MEMO recording neither replay nor record: its
         // recorder must see every read, docs/design/engine-v2/BOX-MEMO.md §1)
-        if self.intr_rec_on || self.bm_rec_on {
+        // Nor with ML\TeX or encTeX on (a format made with `-mltex` or
+        // `-enc`): their state (\charsubdef's table read by every
+        // `char_info`, the \mubyte tables, `xord`/`xchr`/`xprn`) is read
+        // and written outside what the recorder observes.
+        if self.intr_rec_on || self.bm_rec_on || self.mltex_enabled_p || self.enctex_enabled_p {
             return false;
         }
         let cs = self.cur_cs;

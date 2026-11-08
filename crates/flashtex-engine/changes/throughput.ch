@@ -52,6 +52,22 @@
 % get_next_slow on the unchanged state, which then does exactly what the
 % routine did. So the two compute the same in every case.
 %
+% encTeX (enctex2.ch [24.357]): while |write_noexpanding| is true (a \write
+% expanded with \mubyteout above 2, only with `-enc'), a control sequence
+% of a token list that \mubyte marked becomes \relax with chr 256 in
+% get_next's token-list part. Then no token is taken by [3]'s fast path or
+% read in place by [4]-[7]: every token goes to get_next_slow (or get_next,
+% get_token), as before these changes. [4] and [6] read |write_noexpanding|
+% once, into a local, before their loops: only write_out assigns it
+% (enctex2.ch [53.1370]), and nothing pass_text or a group's get_token runs
+% ships a page or writes (get_next expands nothing; its errors and the
+% terminal only print). Measured on the PC (perf, instructions:u, the cold
+% open of Infinite Descent x2): with the test in the loops pass_text was
+% 10.2 G and macro_call 7.7 G above the engine without encTeX. The local |p| of that test is
+% get_next_slow's; enctex2.ch's other new locals (|i|, |j|, |mubyte_incs|,
+% |p|, [24.341]) are get_next_file's, where enctex2.ch's file part uses
+% them.
+%
 % [4] pass_text (section 494): skipped tokens of a token list, read in place.
 %
 % pass_text skips the text of a false conditional: for each token it calls
@@ -177,6 +193,22 @@
 % in both: the original's loop has no effect before it gets there. The
 % errors (m = 0, m too big) are tested first in both.
 %
+% [9] read_buffer (enctex2.ch, part 54/encTeX): what it does without
+% \mubytein, inlined (web2rust-*.args: --inline read_buffer=always,
+% --inline read_buffer_slow=never).
+%
+% get_next reads every character of a file through read_buffer (enctex2.ch
+% [24.343], [24.354], [24.356]), and without \mubytein (mubyte_in=0, every
+% run without `-enc') read_buffer sets mubyte_skip and mubyte_token to 0,
+% mubyte_keep to 0 if it was positive, and returns buffer[i], i unchanged:
+% its first statements, then the `return' of `if mubyte_in = 0'. Here
+% read_buffer does just that, and otherwise calls read_buffer_slow, which
+% is enctex2.ch's routine (its result a local named as enctex2.ch names
+% the function's, returned at exit), whose first statements then store
+% the same values again and whose test of mubyte_in fails as before. Both
+% read the same variables and store the same values in the same order
+% where they differ only by stores that repeat a store.
+%
 % [8] search_string (tex.ch's string recycling, changes/filenames.ch): the
 % scan of the pool by a routine written by hand, src/strsearch.rs.
 %
@@ -193,7 +225,7 @@
 % with str_eq_str are the loop's, in its order. Neither writes anything.
 % len=0 is still answered here (""); s, the loop's variable, goes.
 
-@x [24] m.363 l.8501 - get_next: the external-file part out of line.
+@x [24] m.363 l.8501, enctex2.ch [24.341] - get_next: the external-file part out of line.
 @p procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
 label restart, {go here to get the next input token}
   switch, {go here to eat the next character from a file}
@@ -203,6 +235,9 @@ label restart, {go here to get the next input token}
   exit; {go here when the next input token has been got}
 var k:0..buf_size; {an index into |buffer|}
 @!t:halfword; {a token}
+@!i,@!j: 0..buf_size; {more indexes for encTeX}
+@!mubyte_incs: boolean; {control sequence is converted by mubyte}
+@!p:pointer;  {for encTeX test if noexpanding}
 @!cat:0..max_char_code; {|cat_code(cur_chr)|, usually}
 @!c,@!cc:ASCII_code; {constituents of a possible expanded code}
 @!d:2..3; {number of excess characters in an expanded code}
@@ -221,6 +256,9 @@ label restart, {go here to get the next input token}
   found, {go here when a control sequence has been found}
   exit; {go here when the next input token has been got}
 var k:0..buf_size; {an index into |buffer|}
+@!i,@!j: 0..buf_size; {more indexes for encTeX}
+@!mubyte_incs: boolean; {control sequence is converted by mubyte}
+@!p:pointer;  {for encTeX test if noexpanding}
 @!cat:0..max_char_code; {|cat_code(cur_chr)|, usually}
 @!c,@!cc:ASCII_code; {constituents of a possible expanded code}
 @!d:2..3; {number of excess characters in an expanded code}
@@ -234,6 +272,7 @@ procedure get_next_slow; {|get_next| where its fast path [3] does not apply}
 label restart, {go here to get the next input token}
   exit; {go here when the next input token has been got}
 var @!t:halfword; {a token}
+@!p:pointer;  {for encTeX test if noexpanding}
 begin restart: cur_cs:=0;
 if state<>token_list then
   case get_next_file of
@@ -263,7 +302,8 @@ if state=token_list then if loc<>null then
   begin t:=info(loc); n:=link(loc);
   if t>=cs_token_flag then
     begin q:=t-cs_token_flag; c:=eq_type(q); e:=equiv(q);
-    if (c>=outer_call)or((c<=car_ret)and(c>=tab_mark)and(align_state=0)) then
+    if (c>=outer_call)or((c<=car_ret)and(c>=tab_mark)and(align_state=0))
+      or write_noexpanding then
       c:=-1
     else  begin cur_cs:=q; loc:=n; cur_cmd:=c; cur_chr:=e;
       if rs_on then if not rs_seen[q] then flashtex_cs_read(q);
@@ -301,6 +341,7 @@ label exit, continue, done, done1, found, found1;
 @!fq:pointer; {the control sequence of |ft|}
 @!fc:integer; {its command code}
 @!in_place:boolean; {the last token was read in place}
+@!wn:boolean; {|write_noexpanding|, which a group's tokens cannot change}
 @z
 
 @x [25] m.392 l.9402 - macro_call: a delimited argument's tokens, read in place [5]
@@ -318,7 +359,7 @@ if info(r)<match_token then goto continue;
 @y
 incr(m);
 if (info(r)>end_match_token)or(info(r)<match_token) then
-  begin if not intr_rec_on then
+  begin if not intr_rec_on then if not write_noexpanding then
     begin d:=info(r);
     loop@+  begin if state<>token_list then goto continue;
       if loc=null then goto continue;
@@ -370,11 +411,12 @@ loop@+  begin fast_store_new_token(cur_tok); get_token;
 done1: rbrace_ptr:=p; store_new_token(cur_tok);
 end
 @y
-begin unbalance:=1;
+begin unbalance:=1; wn:=write_noexpanding;
 @^inner loop@>
 loop@+  begin fast_store_new_token(cur_tok);
   in_place:=false;
   if state=token_list then if loc<>null then if not intr_rec_on then
+    if not wn then
     begin ft:=info(loc);
     if ft>=cs_token_flag then
       begin if ft<>par_token then
@@ -431,7 +473,7 @@ label found,continue,done,done1,done2,done3,found1;
   else begin intr_weak:=true; get_token; intr_weak:=false;
     end;
 @y
-  else begin if not intr_rec_on then
+  else begin if not intr_rec_on then if not write_noexpanding then
       loop@+  begin if state<>token_list then goto done3;
         if loc=null then goto done3;
         tt:=info(loc);
@@ -482,10 +524,12 @@ var l:integer; {level of $\.{\\if}\ldots\.{\\fi}$ nesting}
 @!t:halfword; {a token}
 @!q:pointer; {the control sequence of |t|}
 @!c:integer; {its command code}
+@!wn:boolean; {|write_noexpanding|, which skipping cannot change}
 begin save_scanner_status:=scanner_status; scanner_status:=skipping; l:=0;
-skip_line:=line;
+skip_line:=line; wn:=write_noexpanding;
 loop@+  begin continue:
   if state=token_list then if loc<>null then if not intr_rec_on then
+    if not wn then
     begin t:=info(loc);
     if t>=cs_token_flag then
       begin q:=t-cs_token_flag; c:=eq_type(q);
@@ -529,6 +573,51 @@ var q, r, t: longinteger;
     t := t * ten_pow[dd];
     q := t div m;
     r := t mod m;
+@z
+
+@x enctex2.ch [54/enc\TeX] - read_buffer: what it does without \mubytein, inlined [9]
+function read_buffer(var i:integer):ASCII_code;
+var p: pointer;
+    last_found: integer;
+    last_type: integer;
+begin
+  mubyte_skip := 0; mubyte_token := 0;
+  read_buffer := buffer[i];
+@y
+function read_buffer_slow(var i:integer):ASCII_code;
+var p: pointer;
+    last_found: integer;
+    last_type: integer;
+    read_buffer: ASCII_code; {the result, as enctex2.ch names it}
+begin
+  mubyte_skip := 0; mubyte_token := 0;
+  read_buffer := buffer[i];
+@z
+
+@x enctex2.ch [54/enc\TeX] - read_buffer: what it does without \mubytein, inlined [9]
+      mubyte_skip := -1;
+    end;
+    if mubyte_start and (i >= start) then mubyte_start := false;
+    return;
+  end;
+exit: end;
+@y
+      mubyte_skip := -1;
+    end;
+    if mubyte_start and (i >= start) then mubyte_start := false;
+    return;
+  end;
+exit: read_buffer_slow := read_buffer;
+end;
+@#
+function read_buffer(var i:integer):ASCII_code;
+begin if mubyte_in = 0 then
+  begin mubyte_skip := 0; mubyte_token := 0;
+  if mubyte_keep > 0 then mubyte_keep := 0;
+  read_buffer := buffer[i];
+  end
+else read_buffer := read_buffer_slow(i);
+end;
 @z
 
 @x [54] tex.ch's search_string: the scan by flashtex_search_pool [8]

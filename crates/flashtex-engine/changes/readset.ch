@@ -45,10 +45,10 @@ cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs); state:=mid_line;
 if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
 @z
 
-@x pdftex.web l.8696 - a control sequence scanned from a file is a read
-found: cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
+@x pdftex.web l.8696, changes/enctex-goto.ch - a control sequence scanned from a file is a read
+begin cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 @y
-found: cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
+begin cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs);
 if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
 @z
 

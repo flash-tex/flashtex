@@ -16,16 +16,25 @@
 --change crates/flashtex-engine/changes/filenames.ch
 --change crates/flashtex-engine/changes/virtex.ch
 --change crates/flashtex-engine/changes/web2c-hooks.ch
-# TeX Live's own feature change files, public domain, unmodified, in the
-# order of pdftexdir/am/pdftex.am (third_party/pdftex/web2c/README.md).
+# tex.ch's ML\TeX (its terms forbid a changed copy named mltex.ch).
+--change crates/flashtex-engine/changes/tex-mltex.ch
+# TeX Live's own feature change files, public domain, unmodified, and the
+# files that stand for others, in the order of pdftexdir/am/pdftex.am
+# (third_party/pdftex/web2c/README.md).
 --change third_party/pdftex/web2c/tracingstacklevels.ch
 --change third_party/pdftex/web2c/partoken-102.ch
 --change third_party/pdftex/web2c/partoken.ch
 --change third_party/pdftex/web2c/locnull-optimize.ch
 --change third_party/pdftex/web2c/showstream.ch
---change crates/flashtex-engine/changes/enctex.ch
+# TeX Live's encTeX (GPL), in pdftex.am's order; its goto as goto.ch does.
+--change crates/flashtex-engine/changes/enctex1.ch
+--change crates/flashtex-engine/changes/enctex-pdftex.ch
+--change crates/flashtex-engine/changes/enctex2.ch
+--change crates/flashtex-engine/changes/enctex-goto.ch
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
+# pdftex.ch's ML\TeX, where pdftex.ch is.
+--change crates/flashtex-engine/changes/pdftex-mltex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
 --change crates/flashtex-engine/changes/web2c-run.ch
 --change crates/flashtex-engine/changes/checkpoint.ch
@@ -63,6 +72,15 @@
 --inline flush_list=always
 --inline begin_token_list=always
 --inline end_token_list=always
+# changes/throughput.ch [9]: read_buffer's case without \mubytein inlined.
+--inline read_buffer=always
+--inline read_buffer_slow=never
+# ML\TeX's effective_char, which every char_info calls, and
+# effective_char_info (changes/tex-mltex.ch), inlined. Measured
+# (instructions, against the engine without ML\TeX and encTeX): an arXiv
+# paper +2.3% before, +1.6% after; 40,000 lines of text +2.4%, +1.4%.
+--inline effective_char=always
+--inline effective_char_info=always
 # Each routine indexes mem and eqtb through a local copy of the array header
 # (crate::arena::ArrView): an element write through a raw pointer otherwise
 # makes LLVM reload the address, length and flag pointer from Globals before

@@ -14,7 +14,32 @@ impl Globals {
     /// The help messages here contain a little white lie, since \.{\\noalign}
     /// and \.{\\omit} are allowed also after `\.{\\noalign\{...\}}'.
     /// @<Declare act...
-    // §1307
+    // §1308
+    pub fn no_align_error(&mut self) {
+        {
+            self.dg_mark();
+            if (self.interaction == error_stop_mode) {
+            }
+            if self.file_line_error_style_p {
+                self.print_file_line();
+            } else {
+                self.print_nl(264i32);
+            }
+            self.print(1542i32);
+        }
+        self.print_esc(615i32);
+        {
+            self.help_ptr = 2i32;
+            self.help_line[crate::ix::U((1i32) as usize)] = 1550i32;
+            self.help_line[crate::ix::U((0i32) as usize)] = 1551i32;
+        }
+        self.error();
+    }
+
+    /// The help messages here contain a little white lie, since \.{\\noalign}
+    /// and \.{\\omit} are allowed also after `\.{\\noalign\{...\}}'.
+    /// @<Declare act...
+    // §1308
     pub fn omit_error(&mut self) {
         {
             self.dg_mark();
@@ -25,13 +50,13 @@ impl Globals {
             } else {
                 self.print_nl(264i32);
             }
-            self.print(1541i32);
+            self.print(1542i32);
         }
-        self.print_esc(617i32);
+        self.print_esc(618i32);
         {
             self.help_ptr = 2i32;
-            self.help_line[crate::ix::U((1i32) as usize)] = 1551i32;
-            self.help_line[crate::ix::U((0i32) as usize)] = 1550i32;
+            self.help_line[crate::ix::U((1i32) as usize)] = 1552i32;
+            self.help_line[crate::ix::U((0i32) as usize)] = 1551i32;
         }
         self.error();
     }
@@ -41,15 +66,15 @@ impl Globals {
     /// A devious user might force an `endv` command to occur just about anywhere;
     /// we must defeat such hacks.
     /// @<Declare act...
-    // §1309
+    // §1310
     pub fn do_endv(&mut self) {
         self.base_ptr = self.input_ptr;
-        { let __ix1627 = self.base_ptr; let __v1628 = self.cur_input; self.input_stack[crate::ix::U((__ix1627) as usize)] = __v1628; }
+        { let __ix1737 = self.base_ptr; let __v1738 = self.cur_input; self.input_stack[crate::ix::U((__ix1737) as usize)] = __v1738; }
         while (((self.input_stack[crate::ix::U((self.base_ptr) as usize)].index_field != v_template) && (self.input_stack[crate::ix::U((self.base_ptr) as usize)].loc_field == null)) && (self.input_stack[crate::ix::U((self.base_ptr) as usize)].state_field == token_list)) {
             self.base_ptr = (self.base_ptr).wrapping_sub(1i32);
         }
         if (((self.input_stack[crate::ix::U((self.base_ptr) as usize)].index_field != v_template) || (self.input_stack[crate::ix::U((self.base_ptr) as usize)].loc_field != null)) || (self.input_stack[crate::ix::U((self.base_ptr) as usize)].state_field != token_list)) {
-            self.fatal_error(688i32);
+            self.fatal_error(689i32);
         }
         if (self.cur_group == align_group) {
             {
@@ -64,23 +89,46 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1313
+    // §1314
     pub fn cs_error(&mut self) {
-        {
-            self.dg_mark();
-            if (self.interaction == error_stop_mode) {
+        if (self.cur_chr == 10i32) {
+            {
+                {
+                    self.dg_mark();
+                    if (self.interaction == error_stop_mode) {
+                    }
+                    if self.file_line_error_style_p {
+                        self.print_file_line();
+                    } else {
+                        self.print_nl(264i32);
+                    }
+                    self.print(944i32);
+                }
+                self.print_esc(601i32);
+                {
+                    self.help_ptr = 1i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1554i32;
+                }
             }
-            if self.file_line_error_style_p {
-                self.print_file_line();
-            } else {
-                self.print_nl(264i32);
+        } else {
+            {
+                {
+                    self.dg_mark();
+                    if (self.interaction == error_stop_mode) {
+                    }
+                    if self.file_line_error_style_p {
+                        self.print_file_line();
+                    } else {
+                        self.print_nl(264i32);
+                    }
+                    self.print(944i32);
+                }
+                self.print_esc(590i32);
+                {
+                    self.help_ptr = 1i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1555i32;
+                }
             }
-            self.print(943i32);
-        }
-        self.print_esc(590i32);
-        {
-            self.help_ptr = 1i32;
-            self.help_line[crate::ix::U((0i32) as usize)] = 1553i32;
         }
         self.error();
     }
@@ -94,7 +142,7 @@ impl Globals {
     /// Here is a little routine that needs to be done whenever a subformula
     /// is about to be processed. The parameter is a code like `math_group`.
     /// @<Declare act...
-    // §1314
+    // §1315
     pub fn push_math(&mut self, mut c: group_code) {
         self.push_nest();
         self.cur_list.mode_field = (209i32).wrapping_neg();
@@ -107,10 +155,10 @@ impl Globals {
     /// however, only those parts of the original list that are relevant for the
     /// computation of `pre_display_size`.
     /// @<Declare subprocedures for `init_math`
-    // §1733
+    // §1734
     pub fn just_copy(&mut self, mut p: halfword, mut h: halfword, mut t: halfword) {
-        let mut r: halfword = 0; // §1733
-        let mut words: i32 = 0; // §1733
+        let mut r: halfword = 0; // §1734
+        let mut words: i32 = 0; // §1734
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         while (p != null) {
@@ -125,12 +173,12 @@ impl Globals {
                                 hlist_node | vlist_node => {
                                     {
                                         r = self.get_node(box_node_size);
-                                        // §1897
-                                        { let __v1629 = __av_mem[crate::ix::U(((p).wrapping_add(7i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(7i32)) as usize)].set_int(__v1629); }
-                                        { let __v1630 = __av_mem[crate::ix::U(((p).wrapping_add(8i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(8i32)) as usize)].set_int(__v1630); }
-                                        // §1733
-                                        { let __v1631 = __av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)]; __av_mem[crate::ix::U(((r).wrapping_add(6i32)) as usize)] = __v1631; }
-                                        { let __v1632 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)]; __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)] = __v1632; }
+                                        // §1919
+                                        { let __v1739 = __av_mem[crate::ix::U(((p).wrapping_add(7i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(7i32)) as usize)].set_int(__v1739); }
+                                        { let __v1740 = __av_mem[crate::ix::U(((p).wrapping_add(8i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(8i32)) as usize)].set_int(__v1740); }
+                                        // §1734
+                                        { let __v1741 = __av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)]; __av_mem[crate::ix::U(((r).wrapping_add(6i32)) as usize)] = __v1741; }
+                                        { let __v1742 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)]; __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)] = __v1742; }
                                         words = 5i32;
                                         __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].set_hh_rh(null);
                                     }
@@ -144,7 +192,7 @@ impl Globals {
                                 ligature_node => {
                                     {
                                         r = self.get_avail();
-                                        { let __v1633 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((r) as usize)] = __v1633; }
+                                        { let __v1743 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((r) as usize)] = __v1743; }
                                         break 'l_found_f;
                                     }
                                 }
@@ -157,17 +205,17 @@ impl Globals {
                                 glue_node => {
                                     {
                                         r = self.get_node(medium_node_size);
-                                        { let __ix1634 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh(); let __v1635 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1634) as usize)].set_hh_rh(__v1635); }
-                                        // §1899
-                                        { let __v1636 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1636); }
-                                        { let __v1637 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1637); }
-                                        // §1733
-                                        { let __v1638 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh(); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_lh(__v1638); }
+                                        { let __ix1744 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh(); let __v1745 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1744) as usize)].set_hh_rh(__v1745); }
+                                        // §1921
+                                        { let __v1746 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1746); }
+                                        { let __v1747 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1747); }
+                                        // §1734
+                                        { let __v1748 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh(); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_lh(__v1748); }
                                         __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_rh(null);
                                     }
                                 }
                                 whatsit_node => {
-                                    // §1604
+                                    // §1605
                                     match __av_mem[crate::ix::U((p) as usize)].hh().b1() {
                                         open_node => {
                                             {
@@ -178,7 +226,7 @@ impl Globals {
                                         write_node | special_node | latespecial_node => {
                                             {
                                                 r = self.get_node(write_node_size);
-                                                { let __ix1639 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh(); let __v1640 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1639) as usize)].set_hh_lh(__v1640); }
+                                                { let __ix1749 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh(); let __v1750 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1749) as usize)].set_hh_lh(__v1750); }
                                                 words = write_node_size;
                                             }
                                         }
@@ -191,7 +239,7 @@ impl Globals {
                                         pdf_literal_node | pdf_lateliteral_node => {
                                             {
                                                 r = self.get_node(write_node_size);
-                                                { let __ix1641 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh(); let __v1642 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1641) as usize)].set_hh_lh(__v1642); }
+                                                { let __ix1751 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh(); let __v1752 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1751) as usize)].set_hh_lh(__v1752); }
                                                 words = write_node_size;
                                             }
                                         }
@@ -200,7 +248,7 @@ impl Globals {
                                                 if (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh() <= colorstack_data) {
                                                     {
                                                         r = self.get_node(pdf_colorstack_setter_node_size);
-                                                        { let __ix1643 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh(); let __v1644 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1643) as usize)].set_hh_lh(__v1644); }
+                                                        { let __ix1753 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh(); let __v1754 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1753) as usize)].set_hh_lh(__v1754); }
                                                         words = pdf_colorstack_setter_node_size;
                                                     }
                                                 } else {
@@ -214,7 +262,7 @@ impl Globals {
                                         pdf_setmatrix_node => {
                                             {
                                                 r = self.get_node(pdf_setmatrix_node_size);
-                                                { let __ix1645 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh(); let __v1646 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1645) as usize)].set_hh_lh(__v1646); }
+                                                { let __ix1755 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh(); let __v1756 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1755) as usize)].set_hh_lh(__v1756); }
                                                 words = pdf_setmatrix_node_size;
                                             }
                                         }
@@ -251,23 +299,23 @@ impl Globals {
                                         pdf_annot_node => {
                                             {
                                                 r = self.get_node(pdf_annot_node_size);
-                                                { let __ix1647 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().lh(); let __v1648 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().lh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1647) as usize)].set_hh_lh(__v1648); }
+                                                { let __ix1757 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().lh(); let __v1758 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().lh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1757) as usize)].set_hh_lh(__v1758); }
                                                 words = pdf_annot_node_size;
                                             }
                                         }
                                         pdf_start_link_node => {
                                             {
                                                 r = self.get_node(pdf_annot_node_size);
-                                                { let __v1649 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1649); }
-                                                { let __v1650 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1650); }
-                                                { let __v1651 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_int(__v1651); }
-                                                { let __v1652 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().lh(); __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].set_hh_lh(__v1652); }
+                                                { let __v1759 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1759); }
+                                                { let __v1760 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1760); }
+                                                { let __v1761 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_int(__v1761); }
+                                                { let __v1762 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().lh(); __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].set_hh_lh(__v1762); }
                                                 if (__av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().lh() != null) {
-                                                    { let __ix1653 = __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().lh(); let __v1654 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().lh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1653) as usize)].set_hh_lh(__v1654); }
+                                                    { let __ix1763 = __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().lh(); let __v1764 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().lh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1763) as usize)].set_hh_lh(__v1764); }
                                                 }
-                                                { let __v1655 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].set_hh_rh(__v1655); }
-                                                { let __ix1656 = (__av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().rh()).wrapping_add(2i32); let __v1657 = (__av_mem[crate::ix::U(((__av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().rh()).wrapping_add(2i32)) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1656) as usize)].set_hh_rh(__v1657); }
-                                                { let __v1658 = __av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(6i32)) as usize)].set_int(__v1658); }
+                                                { let __v1765 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); __av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].set_hh_rh(__v1765); }
+                                                { let __ix1766 = (__av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().rh()).wrapping_add(2i32); let __v1767 = (__av_mem[crate::ix::U(((__av_mem[crate::ix::U(((r).wrapping_add(5i32)) as usize)].hh().rh()).wrapping_add(2i32)) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1766) as usize)].set_hh_rh(__v1767); }
+                                                { let __v1768 = __av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)].int(); __av_mem[crate::ix::U(((r).wrapping_add(6i32)) as usize)].set_int(__v1768); }
                                             }
                                         }
                                         pdf_end_link_node => {
@@ -277,7 +325,7 @@ impl Globals {
                                             {
                                                 r = self.get_node(pdf_dest_node_size);
                                                 if (__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().b1() > 0i32) {
-                                                    { let __ix1659 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); let __v1660 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1659) as usize)].set_hh_lh(__v1660); }
+                                                    { let __ix1769 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); let __v1770 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1769) as usize)].set_hh_lh(__v1770); }
                                                 }
                                                 words = pdf_dest_node_size;
                                             }
@@ -286,10 +334,10 @@ impl Globals {
                                             {
                                                 r = self.get_node(pdf_thread_node_size);
                                                 if (__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().b1() > 0i32) {
-                                                    { let __ix1661 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); let __v1662 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1661) as usize)].set_hh_lh(__v1662); }
+                                                    { let __ix1771 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); let __v1772 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1771) as usize)].set_hh_lh(__v1772); }
                                                 }
                                                 if (__av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)].hh().lh() != null) {
-                                                    { let __ix1663 = __av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)].hh().lh(); let __v1664 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)].hh().lh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1663) as usize)].set_hh_lh(__v1664); }
+                                                    { let __ix1773 = __av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)].hh().lh(); let __v1774 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(6i32)) as usize)].hh().lh()) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1773) as usize)].set_hh_lh(__v1774); }
                                                 }
                                                 words = pdf_thread_node_size;
                                             }
@@ -305,7 +353,7 @@ impl Globals {
                                         }
                                         pdf_snapy_node => {
                                             {
-                                                { let __ix1665 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh(); let __v1666 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1665) as usize)].set_hh_rh(__v1666); }
+                                                { let __ix1775 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh(); let __v1776 = (__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1775) as usize)].set_hh_rh(__v1776); }
                                                 r = self.get_node(snap_node_size);
                                                 words = snap_node_size;
                                             }
@@ -329,12 +377,12 @@ impl Globals {
                                             r = self.get_node(small_node_size);
                                         }
                                         _ => {
-                                            self.confusion(1916i32);
+                                            self.confusion(1931i32);
                                         }
                                     }
                                 }
                                 _ => {
-                                    // §1733
+                                    // §1734
                                     break 'l_not_found_f;
                                 }
                             }
@@ -342,7 +390,7 @@ impl Globals {
                         while (words > 0i32) {
                             {
                                 words = (words).wrapping_sub(1i32);
-                                { let __v1667 = __av_mem[crate::ix::U(((p).wrapping_add(words)) as usize)]; __av_mem[crate::ix::U(((r).wrapping_add(words)) as usize)] = __v1667; }
+                                { let __v1777 = __av_mem[crate::ix::U(((p).wrapping_add(words)) as usize)]; __av_mem[crate::ix::U(((r).wrapping_add(words)) as usize)] = __v1777; }
                             }
                         }
                     }
@@ -356,13 +404,13 @@ impl Globals {
     }
 
     /// @<Declare subprocedures for `init_math`
-    // §1738
+    // §1739
     pub fn just_reverse(&mut self, mut p: halfword) {
-        let mut l: halfword = 0; // §1738
-        let mut t: halfword = 0; // §1738
-        let mut q: halfword = 0; // §1738
-        let mut m: halfword = 0; // §1738
-        let mut n: halfword = 0; // §1738
+        let mut l: halfword = 0; // §1739
+        let mut t: halfword = 0; // §1739
+        let mut q: halfword = 0; // §1739
+        let mut m: halfword = 0; // §1739
+        let mut n: halfword = 0; // §1739
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         'l_done_f: {
@@ -397,7 +445,7 @@ impl Globals {
                         p = q;
                         q = __av_mem[crate::ix::U((p) as usize)].hh().rh();
                         if (__av_mem[crate::ix::U((p) as usize)].hh().b0() == math_node) {
-                            // §1739
+                            // §1740
                             if (((__av_mem[crate::ix::U((p) as usize)].hh().b1()) % 2) != 0) {
                                 if (__av_mem[crate::ix::U((self.LR_ptr) as usize)].hh().lh() != ((L_code).wrapping_mul((__av_mem[crate::ix::U((p) as usize)].hh().b1() / L_code))).wrapping_add(3i32)) {
                                     {
@@ -410,7 +458,7 @@ impl Globals {
                                             self.temp_ptr = self.LR_ptr;
                                             self.LR_ptr = __av_mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                             {
-                                                { let __ix1668 = self.temp_ptr; let __v1669 = self.avail; __av_mem[crate::ix::U((__ix1668) as usize)].set_hh_rh(__v1669); }
+                                                { let __ix1778 = self.temp_ptr; let __v1779 = self.avail; __av_mem[crate::ix::U((__ix1778) as usize)].set_hh_rh(__v1779); }
                                                 self.avail = self.temp_ptr;
                                                 self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                             }
@@ -418,7 +466,7 @@ impl Globals {
                                         if (n > min_halfword) {
                                             {
                                                 n = (n).wrapping_sub(1i32);
-                                                { let __v1670 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_sub(1i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v1670); }
+                                                { let __v1780 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_sub(1i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v1780); }
                                             }
                                         } else {
                                             {
@@ -426,7 +474,7 @@ impl Globals {
                                                     m = (m).wrapping_sub(1i32);
                                                 } else {
                                                     {
-                                                        { let __v1671 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((t).wrapping_add(1i32)) as usize)].set_int(__v1671); }
+                                                        { let __v1781 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((t).wrapping_add(1i32)) as usize)].set_int(__v1781); }
                                                         __av_mem[crate::ix::U((t) as usize)].set_hh_rh(q);
                                                         self.free_node(p, medium_node_size);
                                                         break 'l_done_f;
@@ -441,14 +489,14 @@ impl Globals {
                                 {
                                     {
                                         self.temp_ptr = self.get_avail();
-                                        { let __ix1672 = self.temp_ptr; let __v1673 = ((L_code).wrapping_mul((__av_mem[crate::ix::U((p) as usize)].hh().b1() / L_code))).wrapping_add(3i32); __av_mem[crate::ix::U((__ix1672) as usize)].set_hh_lh(__v1673); }
-                                        { let __ix1674 = self.temp_ptr; let __v1675 = self.LR_ptr; __av_mem[crate::ix::U((__ix1674) as usize)].set_hh_rh(__v1675); }
+                                        { let __ix1782 = self.temp_ptr; let __v1783 = ((L_code).wrapping_mul((__av_mem[crate::ix::U((p) as usize)].hh().b1() / L_code))).wrapping_add(3i32); __av_mem[crate::ix::U((__ix1782) as usize)].set_hh_lh(__v1783); }
+                                        { let __ix1784 = self.temp_ptr; let __v1785 = self.LR_ptr; __av_mem[crate::ix::U((__ix1784) as usize)].set_hh_rh(__v1785); }
                                         self.LR_ptr = self.temp_ptr;
                                     }
                                     if ((n > min_halfword) || ((__av_mem[crate::ix::U((p) as usize)].hh().b1() / R_code) != self.cur_dir)) {
                                         {
                                             n = (n).wrapping_add(1i32);
-                                            { let __v1676 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v1676); }
+                                            { let __v1786 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v1786); }
                                         }
                                     } else {
                                         {
@@ -459,14 +507,14 @@ impl Globals {
                                 }
                             }
                         }
-                        // §1738
+                        // §1739
                         __av_mem[crate::ix::U((p) as usize)].set_hh_rh(l);
                         l = p;
                     }
                 }
             }
             break 'l_done_f;
-            { let __v1677 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((t).wrapping_add(1i32)) as usize)].set_int(__v1677); }
+            { let __v1787 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((t).wrapping_add(1i32)) as usize)].set_int(__v1787); }
             __av_mem[crate::ix::U((t) as usize)].set_hh_rh(q);
             self.free_node(p, small_node_size);
         }
@@ -474,34 +522,34 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1316
+    // §1317
     pub fn init_math(&mut self) {
-        let mut w: scaled = 0; // §1316
-        let mut j: halfword = 0; // §1316
-        let mut x: i32 = 0; // §1316
-        let mut l: scaled = 0; // §1316
-        let mut s: scaled = 0; // §1316
-        let mut p: halfword = 0; // §1316
-        let mut q: halfword = 0; // §1316
-        let mut f: internal_font_number = 0; // §1316
-        let mut n: i32 = 0; // §1316
-        let mut v: scaled = 0; // §1316
-        let mut d: scaled = 0; // §1316
+        let mut w: scaled = 0; // §1317
+        let mut j: halfword = 0; // §1317
+        let mut x: i32 = 0; // §1317
+        let mut l: scaled = 0; // §1317
+        let mut s: scaled = 0; // §1317
+        let mut p: halfword = 0; // §1317
+        let mut q: halfword = 0; // §1317
+        let mut f: internal_font_number = 0; // §1317
+        let mut n: i32 = 0; // §1317
+        let mut v: scaled = 0; // §1317
+        let mut d: scaled = 0; // §1317
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         self.get_token();
         if ((self.cur_cmd == math_shift) && (self.cur_list.mode_field > 0i32)) {
-            // §1323
+            // §1324
             {
                 j = null;
                 w = (1073741823i32).wrapping_neg();
                 if (self.cur_list.head_field == self.cur_list.tail_field) {
-                    // §1732
+                    // §1733
                     {
                         self.pop_nest();
-                        // §1731
+                        // §1732
                         if (self.cur_list.eTeX_aux_field == null) {
                             x = 0i32;
                         } else {
@@ -513,13 +561,13 @@ impl Globals {
                         }
                     }
                 } else {
-                    // §1323
+                    // §1324
                     {
                         'l_done_f: {
                             self.line_break(true);
-                            // §1734
+                            // §1735
                             if (self.eTeX_mode == 1i32) {
-                                // §1740
+                                // §1741
                                 {
                                     if (__av_eqtb[crate::ix::U(((26636i32) - 1) as usize)].hh().rh() == zero_glue) {
                                         j = self.new_kern(0i32);
@@ -533,17 +581,17 @@ impl Globals {
                                     }
                                     __av_mem[crate::ix::U((p) as usize)].set_hh_rh(j);
                                     j = self.new_null_box();
-                                    { let __v1678 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((j).wrapping_add(1i32)) as usize)].set_int(__v1678); }
-                                    { let __v1679 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(4i32)) as usize)].int(); __av_mem[crate::ix::U(((j).wrapping_add(4i32)) as usize)].set_int(__v1679); }
+                                    { let __v1788 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U(((j).wrapping_add(1i32)) as usize)].set_int(__v1788); }
+                                    { let __v1789 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(4i32)) as usize)].int(); __av_mem[crate::ix::U(((j).wrapping_add(4i32)) as usize)].set_int(__v1789); }
                                     __av_mem[crate::ix::U(((j).wrapping_add(5i32)) as usize)].set_hh_rh(p);
-                                    { let __v1680 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(5i32)) as usize)].hh().b1(); __av_mem[crate::ix::U(((j).wrapping_add(5i32)) as usize)].set_hh_b1(__v1680); }
-                                    { let __v1681 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(5i32)) as usize)].hh().b0(); __av_mem[crate::ix::U(((j).wrapping_add(5i32)) as usize)].set_hh_b0(__v1681); }
-                                    { let __v1682 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(6i32)) as usize)].gr(); __av_mem[crate::ix::U(((j).wrapping_add(6i32)) as usize)].set_gr(__v1682); }
+                                    { let __v1790 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(5i32)) as usize)].hh().b1(); __av_mem[crate::ix::U(((j).wrapping_add(5i32)) as usize)].set_hh_b1(__v1790); }
+                                    { let __v1791 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(5i32)) as usize)].hh().b0(); __av_mem[crate::ix::U(((j).wrapping_add(5i32)) as usize)].set_hh_b0(__v1791); }
+                                    { let __v1792 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(6i32)) as usize)].gr(); __av_mem[crate::ix::U(((j).wrapping_add(6i32)) as usize)].set_gr(__v1792); }
                                 }
                             }
-                            // §1734
+                            // §1735
                             v = __av_mem[crate::ix::U(((self.just_box).wrapping_add(4i32)) as usize)].int();
-                            // §1731
+                            // §1732
                             if (self.cur_list.eTeX_aux_field == null) {
                                 x = 0i32;
                             } else {
@@ -553,7 +601,7 @@ impl Globals {
                                     x = 1i32;
                                 }
                             }
-                            // §1734
+                            // §1735
                             if (x >= 0i32) {
                                 {
                                     p = __av_mem[crate::ix::U(((self.just_box).wrapping_add(5i32)) as usize)].hh().rh();
@@ -564,32 +612,32 @@ impl Globals {
                                     v = ((v).wrapping_neg()).wrapping_sub(__av_mem[crate::ix::U(((self.just_box).wrapping_add(1i32)) as usize)].int());
                                     p = self.new_math(0i32, begin_L_code);
                                     __av_mem[crate::ix::U((temp_head) as usize)].set_hh_rh(p);
-                                    { let __a1683_0 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(5i32)) as usize)].hh().rh(); let __a1683_1 = p; let __a1683_2 = self.new_math(0i32, end_L_code); self.just_copy(__a1683_0, __a1683_1, __a1683_2) };
+                                    { let __a1793_0 = __av_mem[crate::ix::U(((self.just_box).wrapping_add(5i32)) as usize)].hh().rh(); let __a1793_1 = p; let __a1793_2 = self.new_math(0i32, end_L_code); self.just_copy(__a1793_0, __a1793_1, __a1793_2) };
                                     self.cur_dir = right_to_left;
                                 }
                             }
                             v = (v).wrapping_add((2i32).wrapping_mul(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((__av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].hh().rh()) as usize)])) as usize)].int()));
                             if (__av_eqtb[crate::ix::U(((29389i32) - 1) as usize)].int() > 0i32) {
-                                // §1710
+                                // §1711
                                 {
                                     self.temp_ptr = self.get_avail();
-                                    { let __ix1684 = self.temp_ptr; __av_mem[crate::ix::U((__ix1684) as usize)].set_hh_lh(before); }
-                                    { let __ix1685 = self.temp_ptr; let __v1686 = self.LR_ptr; __av_mem[crate::ix::U((__ix1685) as usize)].set_hh_rh(__v1686); }
+                                    { let __ix1794 = self.temp_ptr; __av_mem[crate::ix::U((__ix1794) as usize)].set_hh_lh(before); }
+                                    { let __ix1795 = self.temp_ptr; let __v1796 = self.LR_ptr; __av_mem[crate::ix::U((__ix1795) as usize)].set_hh_rh(__v1796); }
                                     self.LR_ptr = self.temp_ptr;
                                 }
                             }
-                            // §1324
+                            // §1325
                             while (p != null) {
                                 {
                                     // goto labels: reswitch, found, not_found
                                     let mut __goto_1: i32 = 0;
                                     'l_dispatch_1: loop {
                                         if __goto_1 <= 0 {
-                                            // §1325
+                                            // §1326
                                             if (p >= self.hi_mem_min) {
                                                 {
                                                     f = __av_mem[crate::ix::U((p) as usize)].hh().b0();
-                                                    d = self.font_info[crate::ix::U(((self.width_base[crate::ix::U((f) as usize)]).wrapping_add(self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(__av_mem[crate::ix::U((p) as usize)].hh().b1())) as usize)].qqqq().b0())) as usize)].int();
+                                                    d = { let __s1798 = ((self.width_base[crate::ix::U((f) as usize)]).wrapping_add({ let __s1797 = ((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(self.effective_char(true, f, __av_mem[crate::ix::U((p) as usize)].hh().b1()))) as usize; self.font_info[crate::ix::U(__s1797)] }.qqqq().b0())) as usize; self.font_info[crate::ix::U(__s1798)] }.int();
                                                     { __goto_1 = 1; continue 'l_dispatch_1; }
                                                 }
                                             }
@@ -601,27 +649,27 @@ impl Globals {
                                                     }
                                                 }
                                                 ligature_node => {
-                                                    // §826
+                                                    // §827
                                                     {
-                                                        { let __v1687 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((lig_trick) as usize)] = __v1687; }
-                                                        { let __v1688 = __av_mem[crate::ix::U((p) as usize)].hh().rh(); __av_mem[crate::ix::U((lig_trick) as usize)].set_hh_rh(__v1688); }
+                                                        { let __v1799 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((lig_trick) as usize)] = __v1799; }
+                                                        { let __v1800 = __av_mem[crate::ix::U((p) as usize)].hh().rh(); __av_mem[crate::ix::U((lig_trick) as usize)].set_hh_rh(__v1800); }
                                                         p = lig_trick;
                                                         { __goto_1 = 0; continue 'l_dispatch_1; }
                                                     }
                                                 }
                                                 margin_kern_node => {
-                                                    // §1325
+                                                    // §1326
                                                     d = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int();
                                                 }
                                                 kern_node => {
                                                     d = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int();
                                                 }
                                                 math_node => {
-                                                    // §1736
+                                                    // §1737
                                                     {
                                                         d = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int();
                                                         if (__av_eqtb[crate::ix::U(((29389i32) - 1) as usize)].int() > 0i32) {
-                                                            // §1737
+                                                            // §1738
                                                             if (((__av_mem[crate::ix::U((p) as usize)].hh().b1()) % 2) != 0) {
                                                                 {
                                                                     if (__av_mem[crate::ix::U((self.LR_ptr) as usize)].hh().lh() == ((L_code).wrapping_mul((__av_mem[crate::ix::U((p) as usize)].hh().b1() / L_code))).wrapping_add(3i32)) {
@@ -629,7 +677,7 @@ impl Globals {
                                                                             self.temp_ptr = self.LR_ptr;
                                                                             self.LR_ptr = __av_mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                                                             {
-                                                                                { let __ix1689 = self.temp_ptr; let __v1690 = self.avail; __av_mem[crate::ix::U((__ix1689) as usize)].set_hh_rh(__v1690); }
+                                                                                { let __ix1801 = self.temp_ptr; let __v1802 = self.avail; __av_mem[crate::ix::U((__ix1801) as usize)].set_hh_rh(__v1802); }
                                                                                 self.avail = self.temp_ptr;
                                                                                 self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                                                             }
@@ -647,8 +695,8 @@ impl Globals {
                                                                 {
                                                                     {
                                                                         self.temp_ptr = self.get_avail();
-                                                                        { let __ix1691 = self.temp_ptr; let __v1692 = ((L_code).wrapping_mul((__av_mem[crate::ix::U((p) as usize)].hh().b1() / L_code))).wrapping_add(3i32); __av_mem[crate::ix::U((__ix1691) as usize)].set_hh_lh(__v1692); }
-                                                                        { let __ix1693 = self.temp_ptr; let __v1694 = self.LR_ptr; __av_mem[crate::ix::U((__ix1693) as usize)].set_hh_rh(__v1694); }
+                                                                        { let __ix1803 = self.temp_ptr; let __v1804 = ((L_code).wrapping_mul((__av_mem[crate::ix::U((p) as usize)].hh().b1() / L_code))).wrapping_add(3i32); __av_mem[crate::ix::U((__ix1803) as usize)].set_hh_lh(__v1804); }
+                                                                        { let __ix1805 = self.temp_ptr; let __v1806 = self.LR_ptr; __av_mem[crate::ix::U((__ix1805) as usize)].set_hh_rh(__v1806); }
                                                                         self.LR_ptr = self.temp_ptr;
                                                                     }
                                                                     if ((__av_mem[crate::ix::U((p) as usize)].hh().b1() / R_code) != self.cur_dir) {
@@ -660,7 +708,7 @@ impl Globals {
                                                                 }
                                                             }
                                                         } else {
-                                                            // §1736
+                                                            // §1737
                                                             if (__av_mem[crate::ix::U((p) as usize)].hh().b1() >= L_code) {
                                                                 {
                                                                     w = max_dimen;
@@ -677,7 +725,7 @@ impl Globals {
                                                     }
                                                 }
                                                 glue_node => {
-                                                    // §1326
+                                                    // §1327
                                                     {
                                                         q = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh();
                                                         d = __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].int();
@@ -702,7 +750,7 @@ impl Globals {
                                                     }
                                                 }
                                                 whatsit_node => {
-                                                    // §1608
+                                                    // §1609
                                                     if ((__av_mem[crate::ix::U((p) as usize)].hh().b1() == pdf_refxform_node) || (__av_mem[crate::ix::U((p) as usize)].hh().b1() == pdf_refximage_node)) {
                                                         d = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int();
                                                     } else {
@@ -710,11 +758,11 @@ impl Globals {
                                                     }
                                                 }
                                                 _ => {
-                                                    // §1325
+                                                    // §1326
                                                     d = 0i32;
                                                 }
                                             }
-                                            // §1324
+                                            // §1325
                                             if (v < max_dimen) {
                                                 v = (v).wrapping_add(d);
                                             }
@@ -742,14 +790,14 @@ impl Globals {
                             }
                         }
                         if (__av_eqtb[crate::ix::U(((29389i32) - 1) as usize)].int() > 0i32) {
-                            // §1735
+                            // §1736
                             {
                                 while (self.LR_ptr != null) {
                                     {
                                         self.temp_ptr = self.LR_ptr;
                                         self.LR_ptr = __av_mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                                         {
-                                            { let __ix1695 = self.temp_ptr; let __v1696 = self.avail; __av_mem[crate::ix::U((__ix1695) as usize)].set_hh_rh(__v1696); }
+                                            { let __ix1807 = self.temp_ptr; let __v1808 = self.avail; __av_mem[crate::ix::U((__ix1807) as usize)].set_hh_rh(__v1808); }
                                             self.avail = self.temp_ptr;
                                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                         }
@@ -767,7 +815,7 @@ impl Globals {
                         self.flush_node_list(__av_mem[crate::ix::U((temp_head) as usize)].hh().rh());
                     }
                 }
-                // §1327
+                // §1328
                 if (__av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)].hh().rh() == null) {
                     if ((__av_eqtb[crate::ix::U(((29920i32) - 1) as usize)].int() != 0i32) && (((__av_eqtb[crate::ix::U(((29318i32) - 1) as usize)].int() >= 0i32) && ((self.cur_list.pg_field).wrapping_add(2i32) > __av_eqtb[crate::ix::U(((29318i32) - 1) as usize)].int())) || ((self.cur_list.pg_field).wrapping_add(1i32) < (__av_eqtb[crate::ix::U(((29318i32) - 1) as usize)].int()).wrapping_neg()))) {
                         {
@@ -796,7 +844,7 @@ impl Globals {
                         l = __av_mem[crate::ix::U((p) as usize)].int();
                     }
                 }
-                // §1323
+                // §1324
                 self.push_math(math_shift_group);
                 self.cur_list.mode_field = mmode;
                 self.eq_word_define(29321i32, (1i32).wrapping_neg());
@@ -815,10 +863,10 @@ impl Globals {
                 }
             }
         } else {
-            // §1316
+            // §1317
             {
                 self.back_input();
-                // §1317
+                // §1318
                 {
                     self.push_math(math_shift_group);
                     self.eq_word_define(29321i32, (1i32).wrapping_neg());
@@ -834,13 +882,13 @@ impl Globals {
     /// so it is not necessary for the `start_eq_no` procedure to test for
     /// this condition.
     /// @<Declare act...
-    // §1320
+    // §1321
     pub fn start_eq_no(&mut self) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
-        { let __ix1697 = (self.save_ptr).wrapping_add(0i32); let __v1698 = self.cur_chr; self.save_stack[crate::ix::U((__ix1697) as usize)].set_int(__v1698); }
+        { let __ix1809 = (self.save_ptr).wrapping_add(0i32); let __v1810 = self.cur_chr; self.save_stack[crate::ix::U((__ix1809) as usize)].set_int(__v1810); }
         self.save_ptr = (self.save_ptr).wrapping_add(1i32);
-        // §1317
+        // §1318
         {
             self.push_math(math_shift_group);
             self.eq_word_define(29321i32, (1i32).wrapping_neg());
@@ -856,9 +904,9 @@ impl Globals {
     /// in one of these principal fields; it looks at the subformula that
     /// comes next in the input, and places an encoding of that subformula
     /// into a given word of `mem`.
-    // §1329
+    // §1330
     pub fn scan_math(&mut self, mut p: halfword) {
-        let mut c: i32 = 0; // §1329
+        let mut c: i32 = 0; // §1330
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -868,20 +916,20 @@ impl Globals {
         'l_dispatch_1: loop {
             if __goto_1 <= 0 {
                 loop {
-                    // §430
+                    // §431
                     self.get_x_token();
                     if ((self.cur_cmd != spacer) && (self.cur_cmd != relax)) { break; }
                 }
             }
             if __goto_1 <= 1 { // reswitch
-                // §1329
+                // §1330
                 match self.cur_cmd {
                     letter | other_char | char_given => {
                         {
-                            c = (__av_eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh()).wrapping_sub(0i32);
+                            c = __av_eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh();
                             if (c == 32768i32) {
                                 {
-                                    // §1330
+                                    // §1331
                                     {
                                         self.cur_cs = (self.cur_chr).wrapping_add(1i32);
                                         self.cur_cmd = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
@@ -889,7 +937,7 @@ impl Globals {
                                         self.x_token();
                                         self.back_input();
                                     }
-                                    // §1329
+                                    // §1330
                                     { __goto_1 = 0; continue 'l_dispatch_1; }
                                 }
                             }
@@ -919,22 +967,22 @@ impl Globals {
                         }
                     }
                     _ => {
-                        // §1331
+                        // §1332
                         {
                             self.back_input();
                             self.scan_left_brace();
-                            { let __ix1699 = (self.save_ptr).wrapping_add(0i32); self.save_stack[crate::ix::U((__ix1699) as usize)].set_int(p); }
+                            { let __ix1811 = (self.save_ptr).wrapping_add(0i32); self.save_stack[crate::ix::U((__ix1811) as usize)].set_int(p); }
                             self.save_ptr = (self.save_ptr).wrapping_add(1i32);
                             self.push_math(math_group);
                             { __goto_1 = 2; continue 'l_dispatch_1; }
                         }
                     }
                 }
-                // §1329
+                // §1330
                 __av_mem[crate::ix::U((p) as usize)].set_hh_rh(math_char);
-                __av_mem[crate::ix::U((p) as usize)].set_hh_b1(((c % 256i32)).wrapping_add(0i32));
+                __av_mem[crate::ix::U((p) as usize)].set_hh_b1((c % 256i32));
                 if ((c >= var_code) && ((__av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int() < 16i32))) {
-                    { let __v1700 = __av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int(); __av_mem[crate::ix::U((p) as usize)].set_hh_b0(__v1700); }
+                    { let __v1812 = __av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int(); __av_mem[crate::ix::U((p) as usize)].set_hh_b0(__v1812); }
                 } else {
                     __av_mem[crate::ix::U((p) as usize)].set_hh_b0(((c / 256i32) % 16i32));
                 }
@@ -950,15 +998,15 @@ impl Globals {
     /// is sufficiently large, the `cur_chr` is treated as an active character and
     /// nothing is appended.
     /// @<Declare act...
-    // §1333
+    // §1334
     pub fn set_math_char(&mut self, mut c: i32) {
-        let mut p: halfword = 0; // §1333
+        let mut p: halfword = 0; // §1334
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if (c >= 32768i32) {
-            // §1330
+            // §1331
             {
                 self.cur_cs = (self.cur_chr).wrapping_add(1i32);
                 self.cur_cmd = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
@@ -967,30 +1015,30 @@ impl Globals {
                 self.back_input();
             }
         } else {
-            // §1333
+            // §1334
             {
                 p = self.new_noad();
                 __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(math_char);
-                __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b1(((c % 256i32)).wrapping_add(0i32));
+                __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b1((c % 256i32));
                 __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b0(((c / 256i32) % 16i32));
                 if (c >= var_code) {
                     {
                         if ((__av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int() < 16i32)) {
-                            { let __v1701 = __av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int(); __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b0(__v1701); }
+                            { let __v1813 = __av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int(); __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b0(__v1813); }
                         }
                         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(ord_noad);
                     }
                 } else {
                     __av_mem[crate::ix::U((p) as usize)].set_hh_b0((ord_noad).wrapping_add((c / 4096i32)));
                 }
-                { let __ix1702 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1702) as usize)].set_hh_rh(p); }
+                { let __ix1814 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1814) as usize)].set_hh_rh(p); }
                 self.cur_list.tail_field = p;
             }
         }
     }
 
     /// @<Declare act...
-    // §1337
+    // §1338
     pub fn math_limit_switch(&mut self) {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
@@ -998,7 +1046,7 @@ impl Globals {
             if (self.cur_list.head_field != self.cur_list.tail_field) {
                 if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b0() == op_noad) {
                     {
-                        { let __ix1703 = self.cur_list.tail_field; let __v1704 = self.cur_chr; __av_mem[crate::ix::U((__ix1703) as usize)].set_hh_b1(__v1704); }
+                        { let __ix1815 = self.cur_list.tail_field; let __v1816 = self.cur_chr; __av_mem[crate::ix::U((__ix1815) as usize)].set_hh_b1(__v1816); }
                         break 'l_exit_f;
                     }
                 }
@@ -1012,11 +1060,11 @@ impl Globals {
                 } else {
                     self.print_nl(264i32);
                 }
-                self.print(1557i32);
+                self.print(1559i32);
             }
             {
                 self.help_ptr = 1i32;
-                self.help_line[crate::ix::U((0i32) as usize)] = 1558i32;
+                self.help_line[crate::ix::U((0i32) as usize)] = 1560i32;
             }
             self.error();
         }
@@ -1027,7 +1075,7 @@ impl Globals {
     /// delimiter is to be placed; the second tells if this delimiter follows
     /// \.{\\radical} or not.
     /// @<Declare act...
-    // §1338
+    // §1339
     pub fn scan_delimiter(&mut self, mut p: halfword, mut r: bool) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
@@ -1037,12 +1085,12 @@ impl Globals {
             self.scan_twenty_seven_bit_int();
         } else {
             {
-                // §430
+                // §431
                 loop {
                     self.get_x_token();
                     if ((self.cur_cmd != spacer) && (self.cur_cmd != relax)) { break; }
                 }
-                // §1338
+                // §1339
                 match self.cur_cmd {
                     letter | other_char => {
                         self.cur_val = __av_eqtb[crate::ix::U((((del_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].int();
@@ -1057,7 +1105,7 @@ impl Globals {
             }
         }
         if (self.cur_val < 0i32) {
-            // §1339
+            // §1340
             {
                 {
                     self.dg_mark();
@@ -1068,56 +1116,56 @@ impl Globals {
                     } else {
                         self.print_nl(264i32);
                     }
-                    self.print(1559i32);
+                    self.print(1561i32);
                 }
                 {
                     self.help_ptr = 6i32;
-                    self.help_line[crate::ix::U((5i32) as usize)] = 1560i32;
-                    self.help_line[crate::ix::U((4i32) as usize)] = 1561i32;
-                    self.help_line[crate::ix::U((3i32) as usize)] = 1562i32;
-                    self.help_line[crate::ix::U((2i32) as usize)] = 1563i32;
-                    self.help_line[crate::ix::U((1i32) as usize)] = 1564i32;
-                    self.help_line[crate::ix::U((0i32) as usize)] = 1565i32;
+                    self.help_line[crate::ix::U((5i32) as usize)] = 1562i32;
+                    self.help_line[crate::ix::U((4i32) as usize)] = 1563i32;
+                    self.help_line[crate::ix::U((3i32) as usize)] = 1564i32;
+                    self.help_line[crate::ix::U((2i32) as usize)] = 1565i32;
+                    self.help_line[crate::ix::U((1i32) as usize)] = 1566i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1567i32;
                 }
                 self.back_error();
                 self.cur_val = 0i32;
             }
         }
-        // §1338
-        { let __v1705 = ((self.cur_val / 1048576i32) % 16i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b0(__v1705); }
-        { let __v1706 = (((self.cur_val / 4096i32) % 256i32)).wrapping_add(0i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b1(__v1706); }
-        { let __v1707 = ((self.cur_val / 256i32) % 16i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b2(__v1707); }
-        { let __v1708 = ((self.cur_val % 256i32)).wrapping_add(0i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b3(__v1708); }
+        // §1339
+        { let __v1817 = ((self.cur_val / 1048576i32) % 16i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b0(__v1817); }
+        { let __v1818 = ((self.cur_val / 4096i32) % 256i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b1(__v1818); }
+        { let __v1819 = ((self.cur_val / 256i32) % 16i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b2(__v1819); }
+        { let __v1820 = (self.cur_val % 256i32); __av_mem[crate::ix::U((p) as usize)].set_qqqq_b3(__v1820); }
     }
 
     /// @<Declare act...
-    // §1341
+    // §1342
     pub fn math_radical(&mut self) {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         {
             self.prev_tail = self.cur_list.tail_field;
-            { let __ix1709 = self.cur_list.tail_field; let __v1710 = self.get_node(radical_noad_size); __av_mem[crate::ix::U((__ix1709) as usize)].set_hh_rh(__v1710); }
+            { let __ix1821 = self.cur_list.tail_field; let __v1822 = self.get_node(radical_noad_size); __av_mem[crate::ix::U((__ix1821) as usize)].set_hh_rh(__v1822); }
             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
         }
-        { let __ix1711 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1711) as usize)].set_hh_b0(radical_noad); }
-        { let __ix1712 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1712) as usize)].set_hh_b1(normal); }
-        { let __ix1713 = (self.cur_list.tail_field).wrapping_add(1i32); let __v1714 = self.empty_field; __av_mem[crate::ix::U((__ix1713) as usize)].set_hh(__v1714); }
-        { let __ix1715 = (self.cur_list.tail_field).wrapping_add(3i32); let __v1716 = self.empty_field; __av_mem[crate::ix::U((__ix1715) as usize)].set_hh(__v1716); }
-        { let __ix1717 = (self.cur_list.tail_field).wrapping_add(2i32); let __v1718 = self.empty_field; __av_mem[crate::ix::U((__ix1717) as usize)].set_hh(__v1718); }
+        { let __ix1823 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1823) as usize)].set_hh_b0(radical_noad); }
+        { let __ix1824 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1824) as usize)].set_hh_b1(normal); }
+        { let __ix1825 = (self.cur_list.tail_field).wrapping_add(1i32); let __v1826 = self.empty_field; __av_mem[crate::ix::U((__ix1825) as usize)].set_hh(__v1826); }
+        { let __ix1827 = (self.cur_list.tail_field).wrapping_add(3i32); let __v1828 = self.empty_field; __av_mem[crate::ix::U((__ix1827) as usize)].set_hh(__v1828); }
+        { let __ix1829 = (self.cur_list.tail_field).wrapping_add(2i32); let __v1830 = self.empty_field; __av_mem[crate::ix::U((__ix1829) as usize)].set_hh(__v1830); }
         self.scan_delimiter((self.cur_list.tail_field).wrapping_add(4i32), true);
         self.scan_math((self.cur_list.tail_field).wrapping_add(1i32));
     }
 
     /// @<Declare act...
-    // §1343
+    // §1344
     pub fn math_ac(&mut self) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if (self.cur_cmd == accent) {
-            // §1344
+            // §1345
             {
                 {
                     self.dg_mark();
@@ -1128,36 +1176,36 @@ impl Globals {
                     } else {
                         self.print_nl(264i32);
                     }
-                    self.print(1566i32);
+                    self.print(1568i32);
                 }
-                self.print_esc(610i32);
-                self.print(1567i32);
+                self.print_esc(611i32);
+                self.print(1569i32);
                 {
                     self.help_ptr = 2i32;
-                    self.help_line[crate::ix::U((1i32) as usize)] = 1568i32;
-                    self.help_line[crate::ix::U((0i32) as usize)] = 1569i32;
+                    self.help_line[crate::ix::U((1i32) as usize)] = 1570i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1571i32;
                 }
                 self.error();
             }
         }
-        // §1343
+        // §1344
         {
             self.prev_tail = self.cur_list.tail_field;
-            { let __ix1719 = self.cur_list.tail_field; let __v1720 = self.get_node(accent_noad_size); __av_mem[crate::ix::U((__ix1719) as usize)].set_hh_rh(__v1720); }
+            { let __ix1831 = self.cur_list.tail_field; let __v1832 = self.get_node(accent_noad_size); __av_mem[crate::ix::U((__ix1831) as usize)].set_hh_rh(__v1832); }
             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
         }
-        { let __ix1721 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1721) as usize)].set_hh_b0(accent_noad); }
-        { let __ix1722 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1722) as usize)].set_hh_b1(normal); }
-        { let __ix1723 = (self.cur_list.tail_field).wrapping_add(1i32); let __v1724 = self.empty_field; __av_mem[crate::ix::U((__ix1723) as usize)].set_hh(__v1724); }
-        { let __ix1725 = (self.cur_list.tail_field).wrapping_add(3i32); let __v1726 = self.empty_field; __av_mem[crate::ix::U((__ix1725) as usize)].set_hh(__v1726); }
-        { let __ix1727 = (self.cur_list.tail_field).wrapping_add(2i32); let __v1728 = self.empty_field; __av_mem[crate::ix::U((__ix1727) as usize)].set_hh(__v1728); }
-        { let __ix1729 = (self.cur_list.tail_field).wrapping_add(4i32); __av_mem[crate::ix::U((__ix1729) as usize)].set_hh_rh(math_char); }
+        { let __ix1833 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1833) as usize)].set_hh_b0(accent_noad); }
+        { let __ix1834 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1834) as usize)].set_hh_b1(normal); }
+        { let __ix1835 = (self.cur_list.tail_field).wrapping_add(1i32); let __v1836 = self.empty_field; __av_mem[crate::ix::U((__ix1835) as usize)].set_hh(__v1836); }
+        { let __ix1837 = (self.cur_list.tail_field).wrapping_add(3i32); let __v1838 = self.empty_field; __av_mem[crate::ix::U((__ix1837) as usize)].set_hh(__v1838); }
+        { let __ix1839 = (self.cur_list.tail_field).wrapping_add(2i32); let __v1840 = self.empty_field; __av_mem[crate::ix::U((__ix1839) as usize)].set_hh(__v1840); }
+        { let __ix1841 = (self.cur_list.tail_field).wrapping_add(4i32); __av_mem[crate::ix::U((__ix1841) as usize)].set_hh_rh(math_char); }
         self.scan_fifteen_bit_int();
-        { let __ix1730 = (self.cur_list.tail_field).wrapping_add(4i32); let __v1731 = ((self.cur_val % 256i32)).wrapping_add(0i32); __av_mem[crate::ix::U((__ix1730) as usize)].set_hh_b1(__v1731); }
+        { let __ix1842 = (self.cur_list.tail_field).wrapping_add(4i32); let __v1843 = (self.cur_val % 256i32); __av_mem[crate::ix::U((__ix1842) as usize)].set_hh_b1(__v1843); }
         if ((self.cur_val >= var_code) && ((__av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int() < 16i32))) {
-            { let __ix1732 = (self.cur_list.tail_field).wrapping_add(4i32); let __v1733 = __av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int(); __av_mem[crate::ix::U((__ix1732) as usize)].set_hh_b0(__v1733); }
+            { let __ix1844 = (self.cur_list.tail_field).wrapping_add(4i32); let __v1845 = __av_eqtb[crate::ix::U(((29321i32) - 1) as usize)].int(); __av_mem[crate::ix::U((__ix1844) as usize)].set_hh_b0(__v1845); }
         } else {
-            { let __ix1734 = (self.cur_list.tail_field).wrapping_add(4i32); let __v1735 = ((self.cur_val / 256i32) % 16i32); __av_mem[crate::ix::U((__ix1734) as usize)].set_hh_b0(__v1735); }
+            { let __ix1846 = (self.cur_list.tail_field).wrapping_add(4i32); let __v1847 = ((self.cur_val / 256i32) % 16i32); __av_mem[crate::ix::U((__ix1846) as usize)].set_hh_b0(__v1847); }
         }
         self.scan_math((self.cur_list.tail_field).wrapping_add(1i32));
     }
@@ -1165,17 +1213,17 @@ impl Globals {
     /// The routine that scans the four mlists of a \.{\\mathchoice} is very
     /// much like the routine that builds discretionary nodes.
     /// @<Declare act...
-    // §1350
+    // §1351
     pub fn append_choices(&mut self) {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         {
             self.prev_tail = self.cur_list.tail_field;
-            { let __ix1736 = self.cur_list.tail_field; let __v1737 = self.new_choice(); __av_mem[crate::ix::U((__ix1736) as usize)].set_hh_rh(__v1737); }
+            { let __ix1848 = self.cur_list.tail_field; let __v1849 = self.new_choice(); __av_mem[crate::ix::U((__ix1848) as usize)].set_hh_rh(__v1849); }
             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
         }
         self.save_ptr = (self.save_ptr).wrapping_add(1i32);
-        { let __ix1738 = (self.save_ptr).wrapping_sub(1i32); self.save_stack[crate::ix::U((__ix1738) as usize)].set_int(0i32); }
+        { let __ix1850 = (self.save_ptr).wrapping_sub(1i32); self.save_stack[crate::ix::U((__ix1850) as usize)].set_int(0i32); }
         self.push_math(math_choice_group);
         self.scan_left_brace();
     }
@@ -1186,35 +1234,35 @@ impl Globals {
     /// `fin_mlist`, if not null, points to a `right_noad` that ends the
     /// current mlist; this `right_noad` has not yet been appended.
     /// @<Declare the function called `fin_mlist`
-    // §1362
+    // §1363
     pub fn fin_mlist(&mut self, mut p: halfword) -> halfword {
         let mut fin_mlist: halfword = 0;
-        let mut q: halfword = 0; // §1362
+        let mut q: halfword = 0; // §1363
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if (self.cur_list.aux_field.int() != null) {
-            // §1363
+            // §1364
             {
-                { let __ix1739 = (self.cur_list.aux_field.int()).wrapping_add(3i32); __av_mem[crate::ix::U((__ix1739) as usize)].set_hh_rh(sub_mlist); }
-                { let __ix1740 = (self.cur_list.aux_field.int()).wrapping_add(3i32); let __v1741 = __av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1740) as usize)].set_hh_lh(__v1741); }
+                { let __ix1851 = (self.cur_list.aux_field.int()).wrapping_add(3i32); __av_mem[crate::ix::U((__ix1851) as usize)].set_hh_rh(sub_mlist); }
+                { let __ix1852 = (self.cur_list.aux_field.int()).wrapping_add(3i32); let __v1853 = __av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1852) as usize)].set_hh_lh(__v1853); }
                 if (p == null) {
                     q = self.cur_list.aux_field.int();
                 } else {
                     {
                         q = __av_mem[crate::ix::U(((self.cur_list.aux_field.int()).wrapping_add(2i32)) as usize)].hh().lh();
                         if ((__av_mem[crate::ix::U((q) as usize)].hh().b0() != left_noad) || (self.cur_list.eTeX_aux_field == null)) {
-                            self.confusion(1298i32);
+                            self.confusion(1299i32);
                         }
-                        { let __ix1742 = (self.cur_list.aux_field.int()).wrapping_add(2i32); let __v1743 = __av_mem[crate::ix::U((self.cur_list.eTeX_aux_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1742) as usize)].set_hh_lh(__v1743); }
-                        { let __ix1744 = self.cur_list.eTeX_aux_field; let __v1745 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1744) as usize)].set_hh_rh(__v1745); }
-                        { let __ix1746 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1746) as usize)].set_hh_rh(p); }
+                        { let __ix1854 = (self.cur_list.aux_field.int()).wrapping_add(2i32); let __v1855 = __av_mem[crate::ix::U((self.cur_list.eTeX_aux_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1854) as usize)].set_hh_lh(__v1855); }
+                        { let __ix1856 = self.cur_list.eTeX_aux_field; let __v1857 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1856) as usize)].set_hh_rh(__v1857); }
+                        { let __ix1858 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1858) as usize)].set_hh_rh(p); }
                     }
                 }
             }
         } else {
-            // §1362
+            // §1363
             {
-                { let __ix1747 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1747) as usize)].set_hh_rh(p); }
+                { let __ix1859 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1859) as usize)].set_hh_rh(p); }
                 q = __av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh();
             }
         }
@@ -1224,9 +1272,9 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1352
+    // §1353
     pub fn build_choices(&mut self) {
-        let mut p: halfword = 0; // §1352
+        let mut p: halfword = 0; // §1353
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         'l_exit_f: {
@@ -1234,34 +1282,34 @@ impl Globals {
             p = self.fin_mlist(null);
             match self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int() {
                 0 => {
-                    { let __ix1748 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1748) as usize)].set_hh_lh(p); }
+                    { let __ix1860 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1860) as usize)].set_hh_lh(p); }
                 }
                 1 => {
-                    { let __ix1749 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1749) as usize)].set_hh_rh(p); }
+                    { let __ix1861 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1861) as usize)].set_hh_rh(p); }
                 }
                 2 => {
-                    { let __ix1750 = (self.cur_list.tail_field).wrapping_add(2i32); __av_mem[crate::ix::U((__ix1750) as usize)].set_hh_lh(p); }
+                    { let __ix1862 = (self.cur_list.tail_field).wrapping_add(2i32); __av_mem[crate::ix::U((__ix1862) as usize)].set_hh_lh(p); }
                 }
                 3 => {
                     {
-                        { let __ix1751 = (self.cur_list.tail_field).wrapping_add(2i32); __av_mem[crate::ix::U((__ix1751) as usize)].set_hh_rh(p); }
+                        { let __ix1863 = (self.cur_list.tail_field).wrapping_add(2i32); __av_mem[crate::ix::U((__ix1863) as usize)].set_hh_rh(p); }
                         self.save_ptr = (self.save_ptr).wrapping_sub(1i32);
                         break 'l_exit_f;
                     }
                 }
                 _ => {}
             }
-            { let __ix1752 = (self.save_ptr).wrapping_sub(1i32); let __v1753 = (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int()).wrapping_add(1i32); self.save_stack[crate::ix::U((__ix1752) as usize)].set_int(__v1753); }
+            { let __ix1864 = (self.save_ptr).wrapping_sub(1i32); let __v1865 = (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_sub(1i32)) as usize)].int()).wrapping_add(1i32); self.save_stack[crate::ix::U((__ix1864) as usize)].set_int(__v1865); }
             self.push_math(math_choice_group);
             self.scan_left_brace();
         }
     }
 
     /// @<Declare act...
-    // §1354
+    // §1355
     pub fn sub_sup(&mut self) {
-        let mut t: small_number = 0; // §1354
-        let mut p: halfword = 0; // §1354
+        let mut t: small_number = 0; // §1355
+        let mut p: halfword = 0; // §1355
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         t = empty;
@@ -1275,35 +1323,17 @@ impl Globals {
             }
         }
         if ((p == null) || (t != empty)) {
-            // §1355
+            // §1356
             {
                 {
                     self.prev_tail = self.cur_list.tail_field;
-                    { let __ix1754 = self.cur_list.tail_field; let __v1755 = self.new_noad(); __av_mem[crate::ix::U((__ix1754) as usize)].set_hh_rh(__v1755); }
+                    { let __ix1866 = self.cur_list.tail_field; let __v1867 = self.new_noad(); __av_mem[crate::ix::U((__ix1866) as usize)].set_hh_rh(__v1867); }
                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                 }
                 p = (((self.cur_list.tail_field).wrapping_add(2i32)).wrapping_add(self.cur_cmd)).wrapping_sub(7i32);
                 if (t != empty) {
                     {
                         if (self.cur_cmd == sup_mark) {
-                            {
-                                {
-                                    self.dg_mark();
-                                    if (self.interaction == error_stop_mode) {
-                                    }
-                                    if self.file_line_error_style_p {
-                                        self.print_file_line();
-                                    } else {
-                                        self.print_nl(264i32);
-                                    }
-                                    self.print(1570i32);
-                                }
-                                {
-                                    self.help_ptr = 1i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1571i32;
-                                }
-                            }
-                        } else {
                             {
                                 {
                                     self.dg_mark();
@@ -1321,25 +1351,43 @@ impl Globals {
                                     self.help_line[crate::ix::U((0i32) as usize)] = 1573i32;
                                 }
                             }
+                        } else {
+                            {
+                                {
+                                    self.dg_mark();
+                                    if (self.interaction == error_stop_mode) {
+                                    }
+                                    if self.file_line_error_style_p {
+                                        self.print_file_line();
+                                    } else {
+                                        self.print_nl(264i32);
+                                    }
+                                    self.print(1574i32);
+                                }
+                                {
+                                    self.help_ptr = 1i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1575i32;
+                                }
+                            }
                         }
                         self.error();
                     }
                 }
             }
         }
-        // §1354
+        // §1355
         self.scan_math(p);
     }
 
     /// @<Declare act...
-    // §1359
+    // §1360
     pub fn math_fraction(&mut self) {
-        let mut c: small_number = 0; // §1359
+        let mut c: small_number = 0; // §1360
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         c = self.cur_chr;
         if (self.cur_list.aux_field.int() != null) {
-            // §1361
+            // §1362
             {
                 if (c >= delimited_code) {
                     {
@@ -1359,30 +1407,30 @@ impl Globals {
                     } else {
                         self.print_nl(264i32);
                     }
-                    self.print(1580i32);
+                    self.print(1582i32);
                 }
                 {
                     self.help_ptr = 3i32;
-                    self.help_line[crate::ix::U((2i32) as usize)] = 1581i32;
-                    self.help_line[crate::ix::U((1i32) as usize)] = 1582i32;
-                    self.help_line[crate::ix::U((0i32) as usize)] = 1583i32;
+                    self.help_line[crate::ix::U((2i32) as usize)] = 1583i32;
+                    self.help_line[crate::ix::U((1i32) as usize)] = 1584i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1585i32;
                 }
                 self.error();
             }
         } else {
-            // §1359
+            // §1360
             {
-                { let __v1756 = self.get_node(fraction_noad_size); self.cur_list.aux_field.set_int(__v1756); }
-                { let __ix1757 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1757) as usize)].set_hh_b0(fraction_noad); }
-                { let __ix1758 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1758) as usize)].set_hh_b1(normal); }
-                { let __ix1759 = (self.cur_list.aux_field.int()).wrapping_add(2i32); __av_mem[crate::ix::U((__ix1759) as usize)].set_hh_rh(sub_mlist); }
-                { let __ix1760 = (self.cur_list.aux_field.int()).wrapping_add(2i32); let __v1761 = __av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1760) as usize)].set_hh_lh(__v1761); }
-                { let __ix1762 = (self.cur_list.aux_field.int()).wrapping_add(3i32); let __v1763 = self.empty_field; __av_mem[crate::ix::U((__ix1762) as usize)].set_hh(__v1763); }
-                { let __ix1764 = (self.cur_list.aux_field.int()).wrapping_add(4i32); let __v1765 = self.null_delimiter; __av_mem[crate::ix::U((__ix1764) as usize)].set_qqqq(__v1765); }
-                { let __ix1766 = (self.cur_list.aux_field.int()).wrapping_add(5i32); let __v1767 = self.null_delimiter; __av_mem[crate::ix::U((__ix1766) as usize)].set_qqqq(__v1767); }
-                { let __ix1768 = self.cur_list.head_field; __av_mem[crate::ix::U((__ix1768) as usize)].set_hh_rh(null); }
+                { let __v1868 = self.get_node(fraction_noad_size); self.cur_list.aux_field.set_int(__v1868); }
+                { let __ix1869 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1869) as usize)].set_hh_b0(fraction_noad); }
+                { let __ix1870 = self.cur_list.aux_field.int(); __av_mem[crate::ix::U((__ix1870) as usize)].set_hh_b1(normal); }
+                { let __ix1871 = (self.cur_list.aux_field.int()).wrapping_add(2i32); __av_mem[crate::ix::U((__ix1871) as usize)].set_hh_rh(sub_mlist); }
+                { let __ix1872 = (self.cur_list.aux_field.int()).wrapping_add(2i32); let __v1873 = __av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1872) as usize)].set_hh_lh(__v1873); }
+                { let __ix1874 = (self.cur_list.aux_field.int()).wrapping_add(3i32); let __v1875 = self.empty_field; __av_mem[crate::ix::U((__ix1874) as usize)].set_hh(__v1875); }
+                { let __ix1876 = (self.cur_list.aux_field.int()).wrapping_add(4i32); let __v1877 = self.null_delimiter; __av_mem[crate::ix::U((__ix1876) as usize)].set_qqqq(__v1877); }
+                { let __ix1878 = (self.cur_list.aux_field.int()).wrapping_add(5i32); let __v1879 = self.null_delimiter; __av_mem[crate::ix::U((__ix1878) as usize)].set_qqqq(__v1879); }
+                { let __ix1880 = self.cur_list.head_field; __av_mem[crate::ix::U((__ix1880) as usize)].set_hh_rh(null); }
                 self.cur_list.tail_field = self.cur_list.head_field;
-                // §1360
+                // §1361
                 if (c >= delimited_code) {
                     {
                         self.scan_delimiter((self.cur_list.aux_field.int()).wrapping_add(4i32), false);
@@ -1393,14 +1441,14 @@ impl Globals {
                     above_code => {
                         {
                             self.scan_dimen(false, false, false);
-                            { let __ix1769 = (self.cur_list.aux_field.int()).wrapping_add(1i32); let __v1770 = self.cur_val; __av_mem[crate::ix::U((__ix1769) as usize)].set_int(__v1770); }
+                            { let __ix1881 = (self.cur_list.aux_field.int()).wrapping_add(1i32); let __v1882 = self.cur_val; __av_mem[crate::ix::U((__ix1881) as usize)].set_int(__v1882); }
                         }
                     }
                     over_code => {
-                        { let __ix1771 = (self.cur_list.aux_field.int()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1771) as usize)].set_int(default_code); }
+                        { let __ix1883 = (self.cur_list.aux_field.int()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1883) as usize)].set_int(default_code); }
                     }
                     atop_code => {
-                        { let __ix1772 = (self.cur_list.aux_field.int()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1772) as usize)].set_int(0i32); }
+                        { let __ix1884 = (self.cur_list.aux_field.int()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1884) as usize)].set_int(0i32); }
                     }
                     _ => {}
                 }
@@ -1409,16 +1457,16 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1369
+    // §1370
     pub fn math_left_right(&mut self) {
-        let mut t: small_number = 0; // §1369
-        let mut p: halfword = 0; // §1369
-        let mut q: halfword = 0; // §1369
+        let mut t: small_number = 0; // §1370
+        let mut p: halfword = 0; // §1370
+        let mut q: halfword = 0; // §1370
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         t = self.cur_chr;
         if ((t != left_noad) && (self.cur_group != math_left_group)) {
-            // §1370
+            // §1371
             {
                 if (self.cur_group == math_shift_group) {
                     {
@@ -1432,22 +1480,22 @@ impl Globals {
                             } else {
                                 self.print_nl(264i32);
                             }
-                            self.print(943i32);
+                            self.print(944i32);
                         }
                         if (t == middle_noad) {
                             {
-                                self.print_esc(1299i32);
+                                self.print_esc(1300i32);
                                 {
                                     self.help_ptr = 1i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1584i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1586i32;
                                 }
                             }
                         } else {
                             {
-                                self.print_esc(1298i32);
+                                self.print_esc(1299i32);
                                 {
                                     self.help_ptr = 1i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1585i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1587i32;
                                 }
                             }
                         }
@@ -1458,7 +1506,7 @@ impl Globals {
                 }
             }
         } else {
-            // §1369
+            // §1370
             {
                 p = self.new_noad();
                 __av_mem[crate::ix::U((p) as usize)].set_hh_b0(t);
@@ -1480,7 +1528,7 @@ impl Globals {
                 if (t != right_noad) {
                     {
                         self.push_math(math_left_group);
-                        { let __ix1773 = self.cur_list.head_field; __av_mem[crate::ix::U((__ix1773) as usize)].set_hh_rh(q); }
+                        { let __ix1885 = self.cur_list.head_field; __av_mem[crate::ix::U((__ix1885) as usize)].set_hh_rh(q); }
                         self.cur_list.tail_field = p;
                         self.cur_list.eTeX_aux_field = p;
                     }
@@ -1488,12 +1536,12 @@ impl Globals {
                     {
                         {
                             self.prev_tail = self.cur_list.tail_field;
-                            { let __ix1774 = self.cur_list.tail_field; let __v1775 = self.new_noad(); __av_mem[crate::ix::U((__ix1774) as usize)].set_hh_rh(__v1775); }
+                            { let __ix1886 = self.cur_list.tail_field; let __v1887 = self.new_noad(); __av_mem[crate::ix::U((__ix1886) as usize)].set_hh_rh(__v1887); }
                             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                         }
-                        { let __ix1776 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1776) as usize)].set_hh_b0(inner_noad); }
-                        { let __ix1777 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1777) as usize)].set_hh_rh(sub_mlist); }
-                        { let __ix1778 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1778) as usize)].set_hh_lh(q); }
+                        { let __ix1888 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1888) as usize)].set_hh_b0(inner_noad); }
+                        { let __ix1889 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1889) as usize)].set_hh_rh(sub_mlist); }
+                        { let __ix1890 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1890) as usize)].set_hh_lh(q); }
                     }
                 }
             }
@@ -1505,17 +1553,17 @@ impl Globals {
     /// parameters:  the prototype box, the hbox to be appended, and the
     /// displacement of the hbox in the display line.
     /// @<Declare subprocedures for `after_math`
-    // §1744
+    // §1745
     pub fn app_display(&mut self, mut j: halfword, mut b: halfword, mut d: scaled) {
-        let mut z: scaled = 0; // §1744
-        let mut s: scaled = 0; // §1744
-        let mut e: scaled = 0; // §1744
-        let mut x: i32 = 0; // §1744
-        let mut p: halfword = 0; // §1744
-        let mut q: halfword = 0; // §1744
-        let mut r: halfword = 0; // §1744
-        let mut t: halfword = 0; // §1744
-        let mut u: halfword = 0; // §1744
+        let mut z: scaled = 0; // §1745
+        let mut s: scaled = 0; // §1745
+        let mut e: scaled = 0; // §1745
+        let mut x: i32 = 0; // §1745
+        let mut p: halfword = 0; // §1745
+        let mut q: halfword = 0; // §1745
+        let mut r: halfword = 0; // §1745
+        let mut t: halfword = 0; // §1745
+        let mut u: halfword = 0; // §1745
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -1528,7 +1576,7 @@ impl Globals {
             {
                 z = __av_eqtb[crate::ix::U(((29917i32) - 1) as usize)].int();
                 p = b;
-                // §1745
+                // §1746
                 if (x > 0i32) {
                     e = ((z).wrapping_sub(d)).wrapping_sub(__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int());
                 } else {
@@ -1540,21 +1588,21 @@ impl Globals {
                 if (j != null) {
                     {
                         b = self.copy_node_list(j);
-                        { let __v1779 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((b).wrapping_add(3i32)) as usize)].set_int(__v1779); }
-                        { let __v1780 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((b).wrapping_add(2i32)) as usize)].set_int(__v1780); }
+                        { let __v1891 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((b).wrapping_add(3i32)) as usize)].set_int(__v1891); }
+                        { let __v1892 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((b).wrapping_add(2i32)) as usize)].set_int(__v1892); }
                         s = (s).wrapping_sub(__av_mem[crate::ix::U(((b).wrapping_add(4i32)) as usize)].int());
                         d = (d).wrapping_add(s);
                         e = (((e).wrapping_add(__av_mem[crate::ix::U(((b).wrapping_add(1i32)) as usize)].int())).wrapping_sub(z)).wrapping_sub(s);
                     }
                 }
-                if ((__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_sub(0i32) == dlist) {
+                if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == dlist) {
                     q = p;
                 } else {
                     {
                         r = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh();
                         self.free_node(p, box_node_size);
                         if (r == null) {
-                            self.confusion(2043i32);
+                            self.confusion(2058i32);
                         }
                         if (x > 0i32) {
                             {
@@ -1580,7 +1628,7 @@ impl Globals {
                         }
                     }
                 }
-                // §1746
+                // §1747
                 if (j == null) {
                     {
                         r = self.new_kern(0i32);
@@ -1599,11 +1647,11 @@ impl Globals {
                         __av_mem[crate::ix::U((q) as usize)].set_hh_rh(j);
                         __av_mem[crate::ix::U((j) as usize)].set_hh_rh(u);
                         j = __av_mem[crate::ix::U(((t).wrapping_add(1i32)) as usize)].hh().lh();
-                        { let __ix1781 = self.temp_ptr; let __v1782 = __av_mem[crate::ix::U((j) as usize)].hh().b0(); __av_mem[crate::ix::U((__ix1781) as usize)].set_hh_b0(__v1782); }
-                        { let __ix1783 = self.temp_ptr; let __v1784 = __av_mem[crate::ix::U((j) as usize)].hh().b1(); __av_mem[crate::ix::U((__ix1783) as usize)].set_hh_b1(__v1784); }
-                        { let __ix1785 = (self.temp_ptr).wrapping_add(1i32); let __v1786 = (e).wrapping_sub(__av_mem[crate::ix::U(((j).wrapping_add(1i32)) as usize)].int()); __av_mem[crate::ix::U((__ix1785) as usize)].set_int(__v1786); }
-                        { let __ix1787 = (self.temp_ptr).wrapping_add(2i32); let __v1788 = (__av_mem[crate::ix::U(((j).wrapping_add(2i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1787) as usize)].set_int(__v1788); }
-                        { let __ix1789 = (self.temp_ptr).wrapping_add(3i32); let __v1790 = (__av_mem[crate::ix::U(((j).wrapping_add(3i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1789) as usize)].set_int(__v1790); }
+                        { let __ix1893 = self.temp_ptr; let __v1894 = __av_mem[crate::ix::U((j) as usize)].hh().b0(); __av_mem[crate::ix::U((__ix1893) as usize)].set_hh_b0(__v1894); }
+                        { let __ix1895 = self.temp_ptr; let __v1896 = __av_mem[crate::ix::U((j) as usize)].hh().b1(); __av_mem[crate::ix::U((__ix1895) as usize)].set_hh_b1(__v1896); }
+                        { let __ix1897 = (self.temp_ptr).wrapping_add(1i32); let __v1898 = (e).wrapping_sub(__av_mem[crate::ix::U(((j).wrapping_add(1i32)) as usize)].int()); __av_mem[crate::ix::U((__ix1897) as usize)].set_int(__v1898); }
+                        { let __ix1899 = (self.temp_ptr).wrapping_add(2i32); let __v1900 = (__av_mem[crate::ix::U(((j).wrapping_add(2i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1899) as usize)].set_int(__v1900); }
+                        { let __ix1901 = (self.temp_ptr).wrapping_add(3i32); let __v1902 = (__av_mem[crate::ix::U(((j).wrapping_add(3i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1901) as usize)].set_int(__v1902); }
                         __av_mem[crate::ix::U((u) as usize)].set_hh_rh(t);
                     }
                 } else {
@@ -1620,11 +1668,11 @@ impl Globals {
                         __av_mem[crate::ix::U((u) as usize)].set_hh_rh(j);
                         __av_mem[crate::ix::U((j) as usize)].set_hh_rh(p);
                         j = __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].hh().lh();
-                        { let __ix1791 = self.temp_ptr; let __v1792 = __av_mem[crate::ix::U((j) as usize)].hh().b0(); __av_mem[crate::ix::U((__ix1791) as usize)].set_hh_b0(__v1792); }
-                        { let __ix1793 = self.temp_ptr; let __v1794 = __av_mem[crate::ix::U((j) as usize)].hh().b1(); __av_mem[crate::ix::U((__ix1793) as usize)].set_hh_b1(__v1794); }
-                        { let __ix1795 = (self.temp_ptr).wrapping_add(1i32); let __v1796 = (d).wrapping_sub(__av_mem[crate::ix::U(((j).wrapping_add(1i32)) as usize)].int()); __av_mem[crate::ix::U((__ix1795) as usize)].set_int(__v1796); }
-                        { let __ix1797 = (self.temp_ptr).wrapping_add(2i32); let __v1798 = (__av_mem[crate::ix::U(((j).wrapping_add(2i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1797) as usize)].set_int(__v1798); }
-                        { let __ix1799 = (self.temp_ptr).wrapping_add(3i32); let __v1800 = (__av_mem[crate::ix::U(((j).wrapping_add(3i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1799) as usize)].set_int(__v1800); }
+                        { let __ix1903 = self.temp_ptr; let __v1904 = __av_mem[crate::ix::U((j) as usize)].hh().b0(); __av_mem[crate::ix::U((__ix1903) as usize)].set_hh_b0(__v1904); }
+                        { let __ix1905 = self.temp_ptr; let __v1906 = __av_mem[crate::ix::U((j) as usize)].hh().b1(); __av_mem[crate::ix::U((__ix1905) as usize)].set_hh_b1(__v1906); }
+                        { let __ix1907 = (self.temp_ptr).wrapping_add(1i32); let __v1908 = (d).wrapping_sub(__av_mem[crate::ix::U(((j).wrapping_add(1i32)) as usize)].int()); __av_mem[crate::ix::U((__ix1907) as usize)].set_int(__v1908); }
+                        { let __ix1909 = (self.temp_ptr).wrapping_add(2i32); let __v1910 = (__av_mem[crate::ix::U(((j).wrapping_add(2i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1909) as usize)].set_int(__v1910); }
+                        { let __ix1911 = (self.temp_ptr).wrapping_add(3i32); let __v1912 = (__av_mem[crate::ix::U(((j).wrapping_add(3i32)) as usize)].int()).wrapping_neg(); __av_mem[crate::ix::U((__ix1911) as usize)].set_int(__v1912); }
                         __av_mem[crate::ix::U((r) as usize)].set_hh_rh(u);
                     }
                 } else {
@@ -1644,41 +1692,41 @@ impl Globals {
                 }
             }
         }
-        // §1744
+        // §1745
         self.append_to_vlist(b);
     }
 
     /// @<Declare act...
-    // §1372
+    // §1373
     pub fn after_math(&mut self) {
-        let mut l: bool = false; // §1372
-        let mut danger: bool = false; // §1372
-        let mut m: i32 = 0; // §1372
-        let mut p: halfword = 0; // §1372
-        let mut a: halfword = 0; // §1372
-        let mut b: halfword = 0; // §1376
-        let mut w: scaled = 0; // §1376
-        let mut z: scaled = 0; // §1376
-        let mut e: scaled = 0; // §1376
-        let mut q: scaled = 0; // §1376
-        let mut d: scaled = 0; // §1376
-        let mut s: scaled = 0; // §1376
-        let mut g1: small_number = 0; // §1376
-        let mut g2: small_number = 0; // §1376
-        let mut r: halfword = 0; // §1376
-        let mut t: halfword = 0; // §1376
-        let mut pre_t: halfword = 0; // §1376
-        let mut j: halfword = 0; // §1741
+        let mut l: bool = false; // §1373
+        let mut danger: bool = false; // §1373
+        let mut m: i32 = 0; // §1373
+        let mut p: halfword = 0; // §1373
+        let mut a: halfword = 0; // §1373
+        let mut b: halfword = 0; // §1377
+        let mut w: scaled = 0; // §1377
+        let mut z: scaled = 0; // §1377
+        let mut e: scaled = 0; // §1377
+        let mut q: scaled = 0; // §1377
+        let mut d: scaled = 0; // §1377
+        let mut s: scaled = 0; // §1377
+        let mut g1: small_number = 0; // §1377
+        let mut g2: small_number = 0; // §1377
+        let mut r: halfword = 0; // §1377
+        let mut t: halfword = 0; // §1377
+        let mut pre_t: halfword = 0; // §1377
+        let mut j: halfword = 0; // §1742
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         danger = false;
-        // §1742
+        // §1743
         if (self.cur_list.mode_field == mmode) {
             j = self.cur_list.eTeX_aux_field;
         }
-        // §1373
+        // §1374
         if (((self.font_params[crate::ix::U((__av_eqtb[crate::ix::U(((27695i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) || (self.font_params[crate::ix::U((__av_eqtb[crate::ix::U(((27711i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params)) || (self.font_params[crate::ix::U((__av_eqtb[crate::ix::U(((27727i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params)) {
             {
                 {
@@ -1690,13 +1738,13 @@ impl Globals {
                     } else {
                         self.print_nl(264i32);
                     }
-                    self.print(1586i32);
+                    self.print(1588i32);
                 }
                 {
                     self.help_ptr = 3i32;
-                    self.help_line[crate::ix::U((2i32) as usize)] = 1587i32;
-                    self.help_line[crate::ix::U((1i32) as usize)] = 1588i32;
-                    self.help_line[crate::ix::U((0i32) as usize)] = 1589i32;
+                    self.help_line[crate::ix::U((2i32) as usize)] = 1589i32;
+                    self.help_line[crate::ix::U((1i32) as usize)] = 1590i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1591i32;
                 }
                 self.error();
                 self.flush_math();
@@ -1714,13 +1762,13 @@ impl Globals {
                         } else {
                             self.print_nl(264i32);
                         }
-                        self.print(1590i32);
+                        self.print(1592i32);
                     }
                     {
                         self.help_ptr = 3i32;
-                        self.help_line[crate::ix::U((2i32) as usize)] = 1591i32;
-                        self.help_line[crate::ix::U((1i32) as usize)] = 1592i32;
-                        self.help_line[crate::ix::U((0i32) as usize)] = 1593i32;
+                        self.help_line[crate::ix::U((2i32) as usize)] = 1593i32;
+                        self.help_line[crate::ix::U((1i32) as usize)] = 1594i32;
+                        self.help_line[crate::ix::U((0i32) as usize)] = 1595i32;
                     }
                     self.error();
                     self.flush_math();
@@ -1728,13 +1776,13 @@ impl Globals {
                 }
             }
         }
-        // §1372
+        // §1373
         m = self.cur_list.mode_field;
         l = false;
         p = self.fin_mlist(null);
         if (self.cur_list.mode_field == (m).wrapping_neg()) {
             {
-                // §1375
+                // §1376
                 {
                     self.get_x_token();
                     if (self.cur_cmd != math_shift) {
@@ -1748,35 +1796,35 @@ impl Globals {
                                 } else {
                                     self.print_nl(264i32);
                                 }
-                                self.print(1594i32);
+                                self.print(1596i32);
                             }
                             {
                                 self.help_ptr = 2i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1595i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1596i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1597i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1598i32;
                             }
                             self.back_error();
                         }
                     }
                 }
-                // §1372
+                // §1373
                 self.cur_mlist = p;
                 self.cur_style = text_style;
                 self.mlist_penalties = false;
                 self.mlist_to_hlist();
                 a = self.hpack(__av_mem[crate::ix::U((temp_head) as usize)].hh().rh(), 0i32, additional);
-                __av_mem[crate::ix::U((a) as usize)].set_hh_b1(2i32);
+                __av_mem[crate::ix::U((a) as usize)].set_hh_b1(dlist);
                 self.unsave();
                 self.save_ptr = (self.save_ptr).wrapping_sub(1i32);
                 if (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int() == 1i32) {
                     l = true;
                 }
                 danger = false;
-                // §1742
+                // §1743
                 if (self.cur_list.mode_field == mmode) {
                     j = self.cur_list.eTeX_aux_field;
                 }
-                // §1373
+                // §1374
                 if (((self.font_params[crate::ix::U((__av_eqtb[crate::ix::U(((27695i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params) || (self.font_params[crate::ix::U((__av_eqtb[crate::ix::U(((27711i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params)) || (self.font_params[crate::ix::U((__av_eqtb[crate::ix::U(((27727i32) - 1) as usize)].hh().rh()) as usize)] < total_mathsy_params)) {
                     {
                         {
@@ -1788,13 +1836,13 @@ impl Globals {
                             } else {
                                 self.print_nl(264i32);
                             }
-                            self.print(1586i32);
+                            self.print(1588i32);
                         }
                         {
                             self.help_ptr = 3i32;
-                            self.help_line[crate::ix::U((2i32) as usize)] = 1587i32;
-                            self.help_line[crate::ix::U((1i32) as usize)] = 1588i32;
-                            self.help_line[crate::ix::U((0i32) as usize)] = 1589i32;
+                            self.help_line[crate::ix::U((2i32) as usize)] = 1589i32;
+                            self.help_line[crate::ix::U((1i32) as usize)] = 1590i32;
+                            self.help_line[crate::ix::U((0i32) as usize)] = 1591i32;
                         }
                         self.error();
                         self.flush_math();
@@ -1812,13 +1860,13 @@ impl Globals {
                                 } else {
                                     self.print_nl(264i32);
                                 }
-                                self.print(1590i32);
+                                self.print(1592i32);
                             }
                             {
                                 self.help_ptr = 3i32;
-                                self.help_line[crate::ix::U((2i32) as usize)] = 1591i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1592i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1593i32;
+                                self.help_line[crate::ix::U((2i32) as usize)] = 1593i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1594i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1595i32;
                             }
                             self.error();
                             self.flush_math();
@@ -1826,7 +1874,7 @@ impl Globals {
                         }
                     }
                 }
-                // §1372
+                // §1373
                 m = self.cur_list.mode_field;
                 p = self.fin_mlist(null);
             }
@@ -1834,34 +1882,34 @@ impl Globals {
             a = null;
         }
         if (m < 0i32) {
-            // §1374
+            // §1375
             {
                 {
                     self.prev_tail = self.cur_list.tail_field;
-                    { let __ix1801 = self.cur_list.tail_field; let __v1802 = self.new_math(__av_eqtb[crate::ix::U(((29904i32) - 1) as usize)].int(), before); __av_mem[crate::ix::U((__ix1801) as usize)].set_hh_rh(__v1802); }
+                    { let __ix1913 = self.cur_list.tail_field; let __v1914 = self.new_math(__av_eqtb[crate::ix::U(((29904i32) - 1) as usize)].int(), before); __av_mem[crate::ix::U((__ix1913) as usize)].set_hh_rh(__v1914); }
                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                 }
                 self.cur_mlist = p;
                 self.cur_style = text_style;
                 self.mlist_penalties = (self.cur_list.mode_field > 0i32);
                 self.mlist_to_hlist();
-                { let __ix1803 = self.cur_list.tail_field; let __v1804 = __av_mem[crate::ix::U((temp_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1803) as usize)].set_hh_rh(__v1804); }
+                { let __ix1915 = self.cur_list.tail_field; let __v1916 = __av_mem[crate::ix::U((temp_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1915) as usize)].set_hh_rh(__v1916); }
                 while (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh() != null) {
                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                 }
                 {
                     self.prev_tail = self.cur_list.tail_field;
-                    { let __ix1805 = self.cur_list.tail_field; let __v1806 = self.new_math(__av_eqtb[crate::ix::U(((29904i32) - 1) as usize)].int(), after); __av_mem[crate::ix::U((__ix1805) as usize)].set_hh_rh(__v1806); }
+                    { let __ix1917 = self.cur_list.tail_field; let __v1918 = self.new_math(__av_eqtb[crate::ix::U(((29904i32) - 1) as usize)].int(), after); __av_mem[crate::ix::U((__ix1917) as usize)].set_hh_rh(__v1918); }
                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                 }
                 self.cur_list.aux_field.set_hh_lh(1000i32);
                 self.unsave();
             }
         } else {
-            // §1372
+            // §1373
             {
                 if (a == null) {
-                    // §1375
+                    // §1376
                     {
                         self.get_x_token();
                         if (self.cur_cmd != math_shift) {
@@ -1875,19 +1923,19 @@ impl Globals {
                                     } else {
                                         self.print_nl(264i32);
                                     }
-                                    self.print(1594i32);
+                                    self.print(1596i32);
                                 }
                                 {
                                     self.help_ptr = 2i32;
-                                    self.help_line[crate::ix::U((1i32) as usize)] = 1595i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1596i32;
+                                    self.help_line[crate::ix::U((1i32) as usize)] = 1597i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1598i32;
                                 }
                                 self.back_error();
                             }
                         }
                     }
                 }
-                // §1377
+                // §1378
                 self.cur_mlist = p;
                 self.cur_style = display_style;
                 self.mlist_penalties = false;
@@ -1919,7 +1967,7 @@ impl Globals {
                     }
                 }
                 if ((w).wrapping_add(q) > z) {
-                    // §1379
+                    // §1380
                     {
                         if ((e != 0i32) && ((((((w).wrapping_sub(self.total_shrink[crate::ix::U((normal) as usize)])).wrapping_add(q) <= z) || (self.total_shrink[crate::ix::U((fil) as usize)] != 0i32)) || (self.total_shrink[crate::ix::U((fill) as usize)] != 0i32)) || (self.total_shrink[crate::ix::U((filll) as usize)] != 0i32))) {
                             {
@@ -1940,8 +1988,8 @@ impl Globals {
                         w = __av_mem[crate::ix::U(((b).wrapping_add(1i32)) as usize)].int();
                     }
                 }
-                // §1380
-                __av_mem[crate::ix::U((b) as usize)].set_hh_b1(2i32);
+                // §1381
+                __av_mem[crate::ix::U((b) as usize)].set_hh_b1(dlist);
                 d = self.half((z).wrapping_sub(w));
                 if ((e > 0i32) && (d < (2i32).wrapping_mul(e))) {
                     {
@@ -1955,10 +2003,10 @@ impl Globals {
                         }
                     }
                 }
-                // §1381
+                // §1382
                 {
                     self.prev_tail = self.cur_list.tail_field;
-                    { let __ix1807 = self.cur_list.tail_field; let __v1808 = self.new_penalty(__av_eqtb[crate::ix::U(((29288i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix1807) as usize)].set_hh_rh(__v1808); }
+                    { let __ix1919 = self.cur_list.tail_field; let __v1920 = self.new_penalty(__av_eqtb[crate::ix::U(((29288i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix1919) as usize)].set_hh_rh(__v1920); }
                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                 }
                 if (((d).wrapping_add(s) <= __av_eqtb[crate::ix::U(((29916i32) - 1) as usize)].int()) || l) {
@@ -1977,18 +2025,18 @@ impl Globals {
                         self.app_display(j, a, 0i32);
                         {
                             self.prev_tail = self.cur_list.tail_field;
-                            { let __ix1809 = self.cur_list.tail_field; let __v1810 = self.new_penalty(inf_penalty); __av_mem[crate::ix::U((__ix1809) as usize)].set_hh_rh(__v1810); }
+                            { let __ix1921 = self.cur_list.tail_field; let __v1922 = self.new_penalty(inf_penalty); __av_mem[crate::ix::U((__ix1921) as usize)].set_hh_rh(__v1922); }
                             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                         }
                     }
                 } else {
                     {
                         self.prev_tail = self.cur_list.tail_field;
-                        { let __ix1811 = self.cur_list.tail_field; let __v1812 = self.new_param_glue(g1); __av_mem[crate::ix::U((__ix1811) as usize)].set_hh_rh(__v1812); }
+                        { let __ix1923 = self.cur_list.tail_field; let __v1924 = self.new_param_glue(g1); __av_mem[crate::ix::U((__ix1923) as usize)].set_hh_rh(__v1924); }
                         self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                     }
                 }
-                // §1382
+                // §1383
                 if (e != 0i32) {
                     {
                         r = self.new_kern((((z).wrapping_sub(w)).wrapping_sub(e)).wrapping_sub(d));
@@ -2009,12 +2057,12 @@ impl Globals {
                     }
                 }
                 self.app_display(j, b, d);
-                // §1383
+                // §1384
                 if (((a != null) && (e == 0i32)) && (!l)) {
                     {
                         {
                             self.prev_tail = self.cur_list.tail_field;
-                            { let __ix1813 = self.cur_list.tail_field; let __v1814 = self.new_penalty(inf_penalty); __av_mem[crate::ix::U((__ix1813) as usize)].set_hh_rh(__v1814); }
+                            { let __ix1925 = self.cur_list.tail_field; let __v1926 = self.new_penalty(inf_penalty); __av_mem[crate::ix::U((__ix1925) as usize)].set_hh_rh(__v1926); }
                             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                         }
                         self.app_display(j, a, (z).wrapping_sub(__av_mem[crate::ix::U(((a).wrapping_add(1i32)) as usize)].int()));
@@ -2023,43 +2071,43 @@ impl Globals {
                 }
                 if (t != adjust_head) {
                     {
-                        { let __ix1815 = self.cur_list.tail_field; let __v1816 = __av_mem[crate::ix::U((adjust_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1815) as usize)].set_hh_rh(__v1816); }
+                        { let __ix1927 = self.cur_list.tail_field; let __v1928 = __av_mem[crate::ix::U((adjust_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1927) as usize)].set_hh_rh(__v1928); }
                         self.cur_list.tail_field = t;
                     }
                 }
                 if (pre_t != pre_adjust_head) {
                     {
-                        { let __ix1817 = self.cur_list.tail_field; let __v1818 = __av_mem[crate::ix::U((pre_adjust_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1817) as usize)].set_hh_rh(__v1818); }
+                        { let __ix1929 = self.cur_list.tail_field; let __v1930 = __av_mem[crate::ix::U((pre_adjust_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix1929) as usize)].set_hh_rh(__v1930); }
                         self.cur_list.tail_field = pre_t;
                     }
                 }
                 {
                     self.prev_tail = self.cur_list.tail_field;
-                    { let __ix1819 = self.cur_list.tail_field; let __v1820 = self.new_penalty(__av_eqtb[crate::ix::U(((29289i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix1819) as usize)].set_hh_rh(__v1820); }
+                    { let __ix1931 = self.cur_list.tail_field; let __v1932 = self.new_penalty(__av_eqtb[crate::ix::U(((29289i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix1931) as usize)].set_hh_rh(__v1932); }
                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                 }
                 if (g2 > 0i32) {
                     {
                         self.prev_tail = self.cur_list.tail_field;
-                        { let __ix1821 = self.cur_list.tail_field; let __v1822 = self.new_param_glue(g2); __av_mem[crate::ix::U((__ix1821) as usize)].set_hh_rh(__v1822); }
+                        { let __ix1933 = self.cur_list.tail_field; let __v1934 = self.new_param_glue(g2); __av_mem[crate::ix::U((__ix1933) as usize)].set_hh_rh(__v1934); }
                         self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                     }
                 }
-                // §1743
+                // §1744
                 self.flush_node_list(j);
-                // §1377
+                // §1378
                 self.resume_after_display();
             }
         }
     }
 
     /// @<Declare act...
-    // §1378
+    // §1379
     pub fn resume_after_display(&mut self) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         if (self.cur_group != math_shift_group) {
-            self.confusion(1597i32);
+            self.confusion(1599i32);
         }
         self.unsave();
         self.cur_list.pg_field = (self.cur_list.pg_field).wrapping_add(3i32);
@@ -2075,16 +2123,16 @@ impl Globals {
                 self.cur_lang = __av_eqtb[crate::ix::U(((29327i32) - 1) as usize)].int();
             }
         }
-        { let __v1823 = self.cur_lang; self.cur_list.aux_field.set_hh_rh(__v1823); }
+        { let __v1935 = self.cur_lang; self.cur_list.aux_field.set_hh_rh(__v1935); }
         self.cur_list.pg_field = ((((self.norm_min(__av_eqtb[crate::ix::U(((29328i32) - 1) as usize)].int())).wrapping_mul(64i32)).wrapping_add(self.norm_min(__av_eqtb[crate::ix::U(((29329i32) - 1) as usize)].int()))).wrapping_mul(65536i32)).wrapping_add(self.cur_lang);
-        // §469
+        // §470
         {
             self.get_x_token();
             if (self.cur_cmd != spacer) {
                 self.back_input();
             }
         }
-        // §1378
+        // §1379
         if (self.nest_ptr == 1i32) {
             self.build_page();
         }
@@ -2094,7 +2142,7 @@ impl Globals {
     /// something similar, the `get_r_token` routine will substitute a special
     /// control sequence for a token that is not redefinable.
     /// @<Declare subprocedures for `prefixed_command`
-    // §1393
+    // §1394
     pub fn get_r_token(&mut self) {
         'l_restart_b: loop {
             loop {
@@ -2114,15 +2162,15 @@ impl Globals {
                         } else {
                             self.print_nl(264i32);
                         }
-                        self.print(1615i32);
+                        self.print(1617i32);
                     }
                     {
                         self.help_ptr = 5i32;
-                        self.help_line[crate::ix::U((4i32) as usize)] = 1616i32;
-                        self.help_line[crate::ix::U((3i32) as usize)] = 1617i32;
-                        self.help_line[crate::ix::U((2i32) as usize)] = 1618i32;
-                        self.help_line[crate::ix::U((1i32) as usize)] = 1619i32;
-                        self.help_line[crate::ix::U((0i32) as usize)] = 1620i32;
+                        self.help_line[crate::ix::U((4i32) as usize)] = 1618i32;
+                        self.help_line[crate::ix::U((3i32) as usize)] = 1619i32;
+                        self.help_line[crate::ix::U((2i32) as usize)] = 1620i32;
+                        self.help_line[crate::ix::U((1i32) as usize)] = 1621i32;
+                        self.help_line[crate::ix::U((0i32) as usize)] = 1622i32;
                     }
                     if (self.cur_cs == 0i32) {
                         self.back_input();
@@ -2140,13 +2188,13 @@ impl Globals {
     /// `zero_glue` because of the following procedure. (Exception: The tabskip
     /// glue isn't trapped while preambles are being scanned.)
     /// @<Declare subprocedures for `prefixed_command`
-    // §1407
+    // §1408
     pub fn trap_zero_glue(&mut self) {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if (((__av_mem[crate::ix::U(((self.cur_val).wrapping_add(1i32)) as usize)].int() == 0i32) && (__av_mem[crate::ix::U(((self.cur_val).wrapping_add(2i32)) as usize)].int() == 0i32)) && (__av_mem[crate::ix::U(((self.cur_val).wrapping_add(3i32)) as usize)].int() == 0i32)) {
             {
-                { let __v1824 = (__av_mem[crate::ix::U((zero_glue) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((zero_glue) as usize)].set_hh_rh(__v1824); }
+                { let __v1936 = (__av_mem[crate::ix::U((zero_glue) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((zero_glue) as usize)].set_hh_rh(__v1936); }
                 self.delete_glue_ref(self.cur_val);
                 self.cur_val = zero_glue;
             }
@@ -2155,15 +2203,15 @@ impl Globals {
 
     /// We use the fact that `register<advance<multiply<divide`.
     /// @<Declare subprocedures for `prefixed_command`
-    // §1414
+    // §1415
     pub fn do_register_command(&mut self, mut a: small_number) {
-        let mut l: halfword = 0; // §1414
-        let mut q: halfword = 0; // §1414
-        let mut r: halfword = 0; // §1414
-        let mut s: halfword = 0; // §1414
-        let mut p: i32 = 0; // §1414
-        let mut e: bool = false; // §1414
-        let mut w: i32 = 0; // §1414
+        let mut l: halfword = 0; // §1415
+        let mut q: halfword = 0; // §1415
+        let mut r: halfword = 0; // §1415
+        let mut s: halfword = 0; // §1415
+        let mut p: i32 = 0; // §1415
+        let mut e: bool = false; // §1415
+        let mut w: i32 = 0; // §1415
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -2172,7 +2220,7 @@ impl Globals {
             'l_found_f: {
                 q = self.cur_cmd;
                 e = false;
-                // §1415
+                // §1416
                 {
                     if (q != register) {
                         {
@@ -2195,14 +2243,14 @@ impl Globals {
                                         } else {
                                             self.print_nl(264i32);
                                         }
-                                        self.print(796i32);
+                                        self.print(797i32);
                                     }
                                     self.print_cmd_chr(self.cur_cmd, self.cur_chr);
-                                    self.print(797i32);
+                                    self.print(798i32);
                                     self.print_cmd_chr(q, 0i32);
                                     {
                                         self.help_ptr = 1i32;
-                                        self.help_line[crate::ix::U((0i32) as usize)] = 1641i32;
+                                        self.help_line[crate::ix::U((0i32) as usize)] = 1656i32;
                                     }
                                     self.error();
                                     break 'l_exit_f;
@@ -2260,7 +2308,7 @@ impl Globals {
                     s = __av_eqtb[crate::ix::U(((l) - 1) as usize)].hh().rh();
                 }
             }
-            // §1414
+            // §1415
             if self.intr_rec_on {
                 if (!e) {
                     if (q != register) {
@@ -2276,12 +2324,12 @@ impl Globals {
             if (q == register) {
                 self.scan_optional_equals();
             } else {
-                if self.scan_keyword(1637i32) {
+                if self.scan_keyword(1652i32) {
                 }
             }
             self.arith_error = false;
             if (q < multiply) {
-                // §1416
+                // §1417
                 if (p < glue_val) {
                     {
                         if (p == int_val) {
@@ -2297,22 +2345,22 @@ impl Globals {
                     {
                         self.scan_glue(p);
                         if (q == advance) {
-                            // §1417
+                            // §1418
                             {
                                 q = self.new_spec(self.cur_val);
                                 r = s;
                                 self.delete_glue_ref(self.cur_val);
-                                { let __v1825 = (__av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].int()); __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_int(__v1825); }
+                                { let __v1937 = (__av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].int()); __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_int(__v1937); }
                                 if (__av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].int() == 0i32) {
                                     __av_mem[crate::ix::U((q) as usize)].set_hh_b0(normal);
                                 }
                                 if (__av_mem[crate::ix::U((q) as usize)].hh().b0() == __av_mem[crate::ix::U((r) as usize)].hh().b0()) {
-                                    { let __v1826 = (__av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].int()); __av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].set_int(__v1826); }
+                                    { let __v1938 = (__av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].int()); __av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].set_int(__v1938); }
                                 } else {
                                     if ((__av_mem[crate::ix::U((q) as usize)].hh().b0() < __av_mem[crate::ix::U((r) as usize)].hh().b0()) && (__av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].int() != 0i32)) {
                                         {
-                                            { let __v1827 = __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].set_int(__v1827); }
-                                            { let __v1828 = __av_mem[crate::ix::U((r) as usize)].hh().b0(); __av_mem[crate::ix::U((q) as usize)].set_hh_b0(__v1828); }
+                                            { let __v1939 = __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].set_int(__v1939); }
+                                            { let __v1940 = __av_mem[crate::ix::U((r) as usize)].hh().b0(); __av_mem[crate::ix::U((q) as usize)].set_hh_b0(__v1940); }
                                         }
                                     }
                                 }
@@ -2320,12 +2368,12 @@ impl Globals {
                                     __av_mem[crate::ix::U((q) as usize)].set_hh_b1(normal);
                                 }
                                 if (__av_mem[crate::ix::U((q) as usize)].hh().b1() == __av_mem[crate::ix::U((r) as usize)].hh().b1()) {
-                                    { let __v1829 = (__av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].int()); __av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].set_int(__v1829); }
+                                    { let __v1941 = (__av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].int()); __av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].set_int(__v1941); }
                                 } else {
                                     if ((__av_mem[crate::ix::U((q) as usize)].hh().b1() < __av_mem[crate::ix::U((r) as usize)].hh().b1()) && (__av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].int() != 0i32)) {
                                         {
-                                            { let __v1830 = __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].set_int(__v1830); }
-                                            { let __v1831 = __av_mem[crate::ix::U((r) as usize)].hh().b1(); __av_mem[crate::ix::U((q) as usize)].set_hh_b1(__v1831); }
+                                            { let __v1942 = __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].set_int(__v1942); }
+                                            { let __v1943 = __av_mem[crate::ix::U((r) as usize)].hh().b1(); __av_mem[crate::ix::U((q) as usize)].set_hh_b1(__v1943); }
                                         }
                                     }
                                 }
@@ -2335,7 +2383,7 @@ impl Globals {
                     }
                 }
             } else {
-                // §1418
+                // §1419
                 {
                     self.scan_int();
                     if (p < glue_val) {
@@ -2353,15 +2401,15 @@ impl Globals {
                             r = self.new_spec(s);
                             if (q == multiply) {
                                 {
-                                    { let __v1832 = self.mult_and_add(__av_mem[crate::ix::U(((s).wrapping_add(1i32)) as usize)].int(), self.cur_val, 0i32, 1073741823i32); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_int(__v1832); }
-                                    { let __v1833 = self.mult_and_add(__av_mem[crate::ix::U(((s).wrapping_add(2i32)) as usize)].int(), self.cur_val, 0i32, 1073741823i32); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1833); }
-                                    { let __v1834 = self.mult_and_add(__av_mem[crate::ix::U(((s).wrapping_add(3i32)) as usize)].int(), self.cur_val, 0i32, 1073741823i32); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1834); }
+                                    { let __v1944 = self.mult_and_add(__av_mem[crate::ix::U(((s).wrapping_add(1i32)) as usize)].int(), self.cur_val, 0i32, 1073741823i32); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_int(__v1944); }
+                                    { let __v1945 = self.mult_and_add(__av_mem[crate::ix::U(((s).wrapping_add(2i32)) as usize)].int(), self.cur_val, 0i32, 1073741823i32); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1945); }
+                                    { let __v1946 = self.mult_and_add(__av_mem[crate::ix::U(((s).wrapping_add(3i32)) as usize)].int(), self.cur_val, 0i32, 1073741823i32); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1946); }
                                 }
                             } else {
                                 {
-                                    { let __v1835 = self.x_over_n(__av_mem[crate::ix::U(((s).wrapping_add(1i32)) as usize)].int(), self.cur_val); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_int(__v1835); }
-                                    { let __v1836 = self.x_over_n(__av_mem[crate::ix::U(((s).wrapping_add(2i32)) as usize)].int(), self.cur_val); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1836); }
-                                    { let __v1837 = self.x_over_n(__av_mem[crate::ix::U(((s).wrapping_add(3i32)) as usize)].int(), self.cur_val); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1837); }
+                                    { let __v1947 = self.x_over_n(__av_mem[crate::ix::U(((s).wrapping_add(1i32)) as usize)].int(), self.cur_val); __av_mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_int(__v1947); }
+                                    { let __v1948 = self.x_over_n(__av_mem[crate::ix::U(((s).wrapping_add(2i32)) as usize)].int(), self.cur_val); __av_mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v1948); }
+                                    { let __v1949 = self.x_over_n(__av_mem[crate::ix::U(((s).wrapping_add(3i32)) as usize)].int(), self.cur_val); __av_mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v1949); }
                                 }
                             }
                             self.cur_val = r;
@@ -2369,7 +2417,7 @@ impl Globals {
                     }
                 }
             }
-            // §1414
+            // §1415
             if self.arith_error {
                 {
                     {
@@ -2381,12 +2429,12 @@ impl Globals {
                         } else {
                             self.print_nl(264i32);
                         }
-                        self.print(1638i32);
+                        self.print(1653i32);
                     }
                     {
                         self.help_ptr = 2i32;
-                        self.help_line[crate::ix::U((1i32) as usize)] = 1639i32;
-                        self.help_line[crate::ix::U((0i32) as usize)] = 1640i32;
+                        self.help_line[crate::ix::U((1i32) as usize)] = 1654i32;
+                        self.help_line[crate::ix::U((0i32) as usize)] = 1655i32;
                     }
                     if (p >= glue_val) {
                         self.delete_glue_ref(self.cur_val);
@@ -2431,9 +2479,9 @@ impl Globals {
     }
 
     /// @<Declare subprocedures for `prefixed_command`
-    // §1421
+    // §1422
     pub fn alter_aux(&mut self) {
-        let mut c: halfword = 0; // §1421
+        let mut c: halfword = 0; // §1422
         if (self.cur_chr != (self.cur_list.mode_field).wrapping_abs()) {
             self.report_illegal_case();
         } else {
@@ -2443,7 +2491,7 @@ impl Globals {
                 if (c == vmode) {
                     {
                         self.scan_dimen(false, false, false);
-                        { let __v1838 = self.cur_val; self.cur_list.aux_field.set_int(__v1838); }
+                        { let __v1950 = self.cur_val; self.cur_list.aux_field.set_int(__v1950); }
                     }
                 } else {
                     {
@@ -2459,16 +2507,16 @@ impl Globals {
                                     } else {
                                         self.print_nl(264i32);
                                     }
-                                    self.print(1644i32);
+                                    self.print(1659i32);
                                 }
                                 {
                                     self.help_ptr = 1i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1645i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1660i32;
                                 }
                                 self.int_error(self.cur_val);
                             }
                         } else {
-                            { let __v1839 = self.cur_val; self.cur_list.aux_field.set_hh_lh(__v1839); }
+                            { let __v1951 = self.cur_val; self.cur_list.aux_field.set_hh_lh(__v1951); }
                         }
                     }
                 }
@@ -2477,10 +2525,10 @@ impl Globals {
     }
 
     /// @<Declare subprocedures for `prefixed_command`
-    // §1422
+    // §1423
     pub fn alter_prev_graf(&mut self) {
-        let mut p: i32 = 0; // §1422
-        { let __ix1840 = self.nest_ptr; let __v1841 = self.cur_list; self.nest[crate::ix::U((__ix1840) as usize)] = __v1841; }
+        let mut p: i32 = 0; // §1423
+        { let __ix1952 = self.nest_ptr; let __v1953 = self.cur_list; self.nest[crate::ix::U((__ix1952) as usize)] = __v1953; }
         p = self.nest_ptr;
         while ((self.nest[crate::ix::U((p) as usize)].mode_field).wrapping_abs() != vmode) {
             p = (p).wrapping_sub(1i32);
@@ -2498,12 +2546,12 @@ impl Globals {
                     } else {
                         self.print_nl(264i32);
                     }
-                    self.print(1381i32);
+                    self.print(1382i32);
                 }
-                self.print_esc(620i32);
+                self.print_esc(621i32);
                 {
                     self.help_ptr = 1i32;
-                    self.help_line[crate::ix::U((0i32) as usize)] = 1646i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1661i32;
                 }
                 self.int_error(self.cur_val);
             }
@@ -2516,26 +2564,26 @@ impl Globals {
     }
 
     /// @<Declare subprocedures for `prefixed_command`
-    // §1423
+    // §1424
     pub fn alter_page_so_far(&mut self) {
-        let mut c: i32 = 0; // §1423
+        let mut c: i32 = 0; // §1424
         c = self.cur_chr;
         self.scan_optional_equals();
         self.scan_dimen(false, false, false);
-        { let __v1842 = self.cur_val; self.page_so_far[crate::ix::U((c) as usize)] = __v1842; }
+        { let __v1954 = self.cur_val; self.page_so_far[crate::ix::U((c) as usize)] = __v1954; }
     }
 
     /// @<Declare subprocedures for `prefixed_command`
-    // §1424
+    // §1425
     pub fn alter_integer(&mut self) {
-        let mut c: small_number = 0; // §1424
+        let mut c: small_number = 0; // §1425
         c = self.cur_chr;
         self.scan_optional_equals();
         self.scan_int();
         if (c == 0i32) {
             self.dead_cycles = self.cur_val;
         } else {
-            // §1696
+            // §1697
             if (c == 2i32) {
                 {
                     if ((self.cur_val < batch_mode) || (self.cur_val > error_stop_mode)) {
@@ -2549,12 +2597,12 @@ impl Globals {
                                 } else {
                                     self.print_nl(264i32);
                                 }
-                                self.print(2028i32);
+                                self.print(2043i32);
                             }
                             {
                                 self.help_ptr = 2i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 2029i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 2030i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 2044i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 2045i32;
                             }
                             self.int_error(self.cur_val);
                         }
@@ -2566,17 +2614,17 @@ impl Globals {
                     }
                 }
             } else {
-                // §1424
+                // §1425
                 self.insert_penalties = self.cur_val;
             }
         }
     }
 
     /// @<Declare subprocedures for `prefixed_command`
-    // §1425
+    // §1426
     pub fn alter_box_dimen(&mut self) {
-        let mut c: small_number = 0; // §1425
-        let mut b: halfword = 0; // §1425
+        let mut c: small_number = 0; // §1426
+        let mut b: halfword = 0; // §1426
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -2603,18 +2651,18 @@ impl Globals {
         self.scan_optional_equals();
         self.scan_dimen(false, false, false);
         if (b != null) {
-            { let __v1843 = self.cur_val; __av_mem[crate::ix::U(((b).wrapping_add(c)) as usize)].set_int(__v1843); }
+            { let __v1955 = self.cur_val; __av_mem[crate::ix::U(((b).wrapping_add(c)) as usize)].set_int(__v1955); }
         }
     }
 
     /// @<Declare subprocedures for `prefixed_command`
-    // §1435
+    // §1436
     pub fn new_font(&mut self, mut a: small_number) {
-        let mut u: halfword = 0; // §1435
-        let mut s: scaled = 0; // §1435
-        let mut f: internal_font_number = 0; // §1435
-        let mut t: str_number = 0; // §1435
-        let mut old_setting: i32 = 0; // §1435
+        let mut u: halfword = 0; // §1436
+        let mut s: scaled = 0; // §1436
+        let mut f: internal_font_number = 0; // §1436
+        let mut t: str_number = 0; // §1436
+        let mut old_setting: i32 = 0; // §1436
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         'l_common_ending_f: {
@@ -2628,7 +2676,7 @@ impl Globals {
             } else {
                 if (u >= single_base) {
                     if (u == null_cs) {
-                        t = 1108i32;
+                        t = 1109i32;
                     } else {
                         t = (u).wrapping_sub(257i32);
                     }
@@ -2636,7 +2684,7 @@ impl Globals {
                     {
                         old_setting = self.selector;
                         self.selector = new_string;
-                        self.print(1108i32);
+                        self.print(1109i32);
                         self.print((u).wrapping_sub(1i32));
                         self.selector = old_setting;
                         {
@@ -2655,10 +2703,10 @@ impl Globals {
             }
             self.scan_optional_equals();
             self.scan_file_name();
-            // §1436
+            // §1437
             self.name_in_progress = true;
-            if self.scan_keyword(1660i32) {
-                // §1437
+            if self.scan_keyword(1675i32) {
+                // §1438
                 {
                     self.scan_dimen(false, false, false);
                     s = self.cur_val;
@@ -2673,14 +2721,14 @@ impl Globals {
                                 } else {
                                     self.print_nl(264i32);
                                 }
-                                self.print(1662i32);
+                                self.print(1677i32);
                             }
                             self.print_scaled(s);
-                            self.print(1663i32);
+                            self.print(1678i32);
                             {
                                 self.help_ptr = 2i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1664i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1665i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1679i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1680i32;
                             }
                             self.error();
                             s = (10i32).wrapping_mul(unity);
@@ -2688,8 +2736,8 @@ impl Globals {
                     }
                 }
             } else {
-                // §1436
-                if self.scan_keyword(1661i32) {
+                // §1437
+                if self.scan_keyword(1676i32) {
                     {
                         self.scan_int();
                         s = (self.cur_val).wrapping_neg();
@@ -2704,11 +2752,11 @@ impl Globals {
                                     } else {
                                         self.print_nl(264i32);
                                     }
-                                    self.print(644i32);
+                                    self.print(645i32);
                                 }
                                 {
                                     self.help_ptr = 1i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 645i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 646i32;
                                 }
                                 self.int_error(self.cur_val);
                                 s = (1000i32).wrapping_neg();
@@ -2720,7 +2768,7 @@ impl Globals {
                 }
             }
             self.name_in_progress = false;
-            // §1438
+            // §1439
             {
                 let __for_end_3 = self.font_ptr;
                 f = 1i32;
@@ -2752,7 +2800,7 @@ impl Globals {
                     f = f.wrapping_add(1);
                 }
             }
-            // §1435
+            // §1436
             f = self.read_font_info(u, self.cur_name, self.cur_area, s);
         }
         if (a >= 4i32) {
@@ -2760,12 +2808,12 @@ impl Globals {
         } else {
             self.eq_define(u, set_font, f);
         }
-        { let __v1844 = __av_eqtb[crate::ix::U(((u) - 1) as usize)]; __av_eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v1844; }
+        { let __v1956 = __av_eqtb[crate::ix::U(((u) - 1) as usize)]; __av_eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v1956; }
         self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].set_rh(t);
     }
 
     /// @<Declare subprocedures for `prefixed_command`
-    // §1443
+    // §1444
     pub fn new_interaction(&mut self) {
         self.print_ln();
         self.interaction = self.cur_chr;
@@ -2781,7 +2829,7 @@ impl Globals {
         } else {
             self.selector = term_only;
         }
-        // §1443
+        // §1444
         if self.log_opened {
             self.selector = (self.selector).wrapping_add(2i32);
         }
@@ -2790,16 +2838,17 @@ impl Globals {
     /// If the user says, e.g., `\.{\\global\\global}', the redundancy is
     /// silently accepted.
     /// @<Declare act...
-    // §1389
+    // §1390
     pub fn prefixed_command(&mut self) {
-        let mut a: small_number = 0; // §1389
-        let mut f: internal_font_number = 0; // §1389
-        let mut j: halfword = 0; // §1389
-        let mut k: font_index = 0; // §1389
-        let mut p: halfword = 0; // §1389
-        let mut q: halfword = 0; // §1389
-        let mut n: i32 = 0; // §1389
-        let mut e: bool = false; // §1389
+        let mut a: small_number = 0; // §1390
+        let mut f: internal_font_number = 0; // §1390
+        let mut j: halfword = 0; // §1390
+        let mut k: font_index = 0; // §1390
+        let mut p: halfword = 0; // §1390
+        let mut q: halfword = 0; // §1390
+        let mut r: halfword = 0; // §1390
+        let mut n: i32 = 0; // §1390
+        let mut e: bool = false; // §1390
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -2812,14 +2861,14 @@ impl Globals {
                         if (!((((a).total_div(self.cur_chr)) % 2) != 0)) {
                             a = (a).wrapping_add(self.cur_chr);
                         }
-                        // §430
+                        // §431
                         loop {
                             self.get_x_token();
                             if ((self.cur_cmd != spacer) && (self.cur_cmd != relax)) { break; }
                         }
-                        // §1389
+                        // §1390
                         if (self.cur_cmd <= max_non_prefixed_command) {
-                            // §1390
+                            // §1391
                             {
                                 {
                                     self.dg_mark();
@@ -2830,22 +2879,22 @@ impl Globals {
                                     } else {
                                         self.print_nl(264i32);
                                     }
-                                    self.print(1607i32);
+                                    self.print(1609i32);
                                 }
                                 self.print_cmd_chr(self.cur_cmd, self.cur_chr);
                                 self.print_char(39i32);
                                 {
                                     self.help_ptr = 1i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1608i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1610i32;
                                 }
                                 if (self.eTeX_mode == 1i32) {
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1609i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1611i32;
                                 }
                                 self.back_error();
                                 break 'l_exit_f;
                             }
                         }
-                        // §1389
+                        // §1390
                         if (__av_eqtb[crate::ix::U(((29313i32) - 1) as usize)].int() > 2i32) {
                             if (self.eTeX_mode == 1i32) {
                                 self.show_cur_cmd_chr();
@@ -2853,7 +2902,7 @@ impl Globals {
                         }
                     }
                 }
-                // §1391
+                // §1392
                 if (a >= 8i32) {
                     {
                         j = protected_token;
@@ -2873,29 +2922,29 @@ impl Globals {
                             } else {
                                 self.print_nl(264i32);
                             }
-                            self.print(796i32);
+                            self.print(797i32);
                         }
-                        self.print_esc(1599i32);
-                        self.print(1610i32);
-                        self.print_esc(1600i32);
+                        self.print_esc(1601i32);
+                        self.print(1612i32);
+                        self.print_esc(1602i32);
                         {
                             self.help_ptr = 1i32;
-                            self.help_line[crate::ix::U((0i32) as usize)] = 1611i32;
+                            self.help_line[crate::ix::U((0i32) as usize)] = 1613i32;
                         }
                         if (self.eTeX_mode == 1i32) {
                             {
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1612i32;
-                                self.print(1610i32);
-                                self.print_esc(1613i32);
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1614i32;
+                                self.print(1612i32);
+                                self.print_esc(1615i32);
                             }
                         }
-                        self.print(1614i32);
+                        self.print(1616i32);
                         self.print_cmd_chr(self.cur_cmd, self.cur_chr);
                         self.print_char(39i32);
                         self.error();
                     }
                 }
-                // §1392
+                // §1393
                 if (__av_eqtb[crate::ix::U(((29320i32) - 1) as usize)].int() != 0i32) {
                     if (__av_eqtb[crate::ix::U(((29320i32) - 1) as usize)].int() < 0i32) {
                         {
@@ -2911,7 +2960,7 @@ impl Globals {
                         }
                     }
                 }
-                // §1389
+                // §1390
                 if self.intr_rec_on {
                     self.flashtex_intr_command();
                 }
@@ -2920,7 +2969,7 @@ impl Globals {
                 }
                 match self.cur_cmd {
                     set_font => {
-                        // §1395
+                        // §1396
                         if (a >= 4i32) {
                             self.geq_define(cur_font_loc, data, self.cur_chr);
                         } else {
@@ -2928,7 +2977,7 @@ impl Globals {
                         }
                     }
                     def => {
-                        // §1396
+                        // §1397
                         {
                             if (((((self.cur_chr) % 2) != 0) && (!(a >= 4i32))) && (__av_eqtb[crate::ix::U(((29320i32) - 1) as usize)].int() >= 0i32)) {
                                 a = (a).wrapping_add(4i32);
@@ -2942,8 +2991,8 @@ impl Globals {
                                 {
                                     q = self.get_avail();
                                     __av_mem[crate::ix::U((q) as usize)].set_hh_lh(j);
-                                    { let __v1845 = __av_mem[crate::ix::U((self.def_ref) as usize)].hh().rh(); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v1845); }
-                                    { let __ix1846 = self.def_ref; __av_mem[crate::ix::U((__ix1846) as usize)].set_hh_rh(q); }
+                                    { let __v1957 = __av_mem[crate::ix::U((self.def_ref) as usize)].hh().rh(); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v1957); }
+                                    { let __ix1958 = self.def_ref; __av_mem[crate::ix::U((__ix1958) as usize)].set_hh_rh(q); }
                                 }
                             }
                             if (a >= 4i32) {
@@ -2955,145 +3004,380 @@ impl Globals {
                         }
                     }
                     let_ => {
-                        // §1399
-                        {
-                            n = self.cur_chr;
-                            self.get_r_token();
-                            p = self.cur_cs;
-                            if (n == normal) {
+                        // §1400
+                        if (self.cur_chr == 11i32) {
+                        } else {
+                            if (self.cur_chr == 10i32) {
                                 {
-                                    loop {
-                                        self.get_token();
-                                        if (self.cur_cmd != spacer) { break; }
+                                    self.selector = term_and_log;
+                                    self.get_token();
+                                    self.mubyte_stoken = self.cur_tok;
+                                    if (self.cur_tok <= cs_token_flag) {
+                                        self.mubyte_stoken = (self.cur_tok % 256i32);
                                     }
-                                    if (self.cur_tok == 3133i32) {
+                                    self.mubyte_prefix = 60i32;
+                                    self.mubyte_relax = false;
+                                    self.mubyte_tablein = true;
+                                    self.mubyte_tableout = true;
+                                    self.get_x_token();
+                                    if (self.cur_cmd == spacer) {
+                                        self.get_x_token();
+                                    }
+                                    if (self.cur_cmd == sub_mark) {
                                         {
-                                            self.get_token();
-                                            if (self.cur_cmd == spacer) {
-                                                self.get_token();
+                                            self.mubyte_tableout = false;
+                                            self.get_x_token();
+                                            if (self.cur_cmd == sub_mark) {
+                                                {
+                                                    self.mubyte_tableout = true;
+                                                    self.mubyte_tablein = false;
+                                                    self.get_x_token();
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        if ((self.mubyte_stoken > cs_token_flag) && (self.cur_cmd == mac_param)) {
+                                            {
+                                                self.mubyte_tableout = false;
+                                                self.scan_int();
+                                                self.mubyte_prefix = self.cur_val;
+                                                self.get_x_token();
+                                                if (self.mubyte_prefix > 50i32) {
+                                                    self.mubyte_prefix = 52i32;
+                                                }
+                                                if (self.mubyte_prefix <= 0i32) {
+                                                    self.mubyte_prefix = 51i32;
+                                                }
+                                            }
+                                        } else {
+                                            if ((self.mubyte_stoken > cs_token_flag) && (self.cur_cmd == relax)) {
+                                                {
+                                                    self.mubyte_tableout = true;
+                                                    self.mubyte_tablein = false;
+                                                    self.mubyte_relax = true;
+                                                    self.get_x_token();
+                                                }
+                                            }
+                                        }
+                                    }
+                                    r = self.get_avail();
+                                    p = r;
+                                    while (self.cur_cs == 0i32) {
+                                        {
+                                            {
+                                                self.dl_list_token_begin();
+                                                q = self.get_avail();
+                                                self.dl_token_end();
+                                                __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                                                { let __v1959 = self.cur_tok; __av_mem[crate::ix::U((q) as usize)].set_hh_lh(__v1959); }
+                                                p = q;
+                                            }
+                                            self.get_x_token();
+                                        }
+                                    }
+                                    if ((self.cur_cmd != end_cs_name) || (self.cur_chr != 10i32)) {
+                                        {
+                                            {
+                                                self.dg_mark();
+                                                if (self.interaction == error_stop_mode) {
+                                                }
+                                                if self.file_line_error_style_p {
+                                                    self.print_file_line();
+                                                } else {
+                                                    self.print_nl(264i32);
+                                                }
+                                                self.print(723i32);
+                                            }
+                                            self.print_esc(601i32);
+                                            self.print(724i32);
+                                            {
+                                                self.help_ptr = 2i32;
+                                                self.help_line[crate::ix::U((1i32) as usize)] = 725i32;
+                                                self.help_line[crate::ix::U((0i32) as usize)] = 1628i32;
+                                            }
+                                            self.back_error();
+                                        }
+                                    }
+                                    p = __av_mem[crate::ix::U((r) as usize)].hh().rh();
+                                    if ((p == null) && self.mubyte_tablein) {
+                                        {
+                                            {
+                                                self.dg_mark();
+                                                if (self.interaction == error_stop_mode) {
+                                                }
+                                                if self.file_line_error_style_p {
+                                                    self.print_file_line();
+                                                } else {
+                                                    self.print_nl(264i32);
+                                                }
+                                                self.print(1629i32);
+                                            }
+                                            self.print_esc(1626i32);
+                                            self.print(1630i32);
+                                            {
+                                                self.help_ptr = 2i32;
+                                                self.help_line[crate::ix::U((1i32) as usize)] = 1631i32;
+                                                self.help_line[crate::ix::U((0i32) as usize)] = 1632i32;
+                                            }
+                                            self.error();
+                                        }
+                                    } else {
+                                        {
+                                            while (p != null) {
+                                                {
+                                                    {
+                                                        { let __ix1960 = self.pool_ptr; let __v1961 = (__av_mem[crate::ix::U((p) as usize)].hh().lh() % 256i32); self.str_pool[crate::ix::U((__ix1960) as usize)] = __v1961; }
+                                                        self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
+                                                    }
+                                                    p = __av_mem[crate::ix::U((p) as usize)].hh().rh();
+                                                }
+                                            }
+                                            self.flush_list(r);
+                                            if (((self.str_start[crate::ix::U((self.str_ptr) as usize)]).wrapping_add(1i32) == self.pool_ptr) && (self.str_pool[crate::ix::U(((self.pool_ptr).wrapping_sub(1i32)) as usize)] == self.mubyte_stoken)) {
+                                                {
+                                                    if ((self.mubyte_read[crate::ix::U((self.mubyte_stoken) as usize)] != null) && self.mubyte_tablein) {
+                                                        self.dispose_munode(self.mubyte_read[crate::ix::U((self.mubyte_stoken) as usize)]);
+                                                    }
+                                                    if self.mubyte_tablein {
+                                                        self.mubyte_read[crate::ix::U((self.mubyte_stoken) as usize)] = null;
+                                                    }
+                                                    if self.mubyte_tableout {
+                                                        self.mubyte_write[crate::ix::U((self.mubyte_stoken) as usize)] = 0i32;
+                                                    }
+                                                    self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
+                                                }
+                                            } else {
+                                                {
+                                                    if self.mubyte_tablein {
+                                                        self.mubyte_update();
+                                                    }
+                                                    if self.mubyte_tableout {
+                                                        {
+                                                            if (self.mubyte_stoken > cs_token_flag) {
+                                                                {
+                                                                    self.dispose_mutableout((self.mubyte_stoken).wrapping_sub(4095i32));
+                                                                    if ((self.str_start[crate::ix::U((self.str_ptr) as usize)] < self.pool_ptr) || self.mubyte_relax) {
+                                                                        {
+                                                                            r = self.mubyte_cswrite[crate::ix::U((((self.mubyte_stoken).wrapping_sub(4095i32) % 128i32)) as usize)];
+                                                                            p = self.get_avail();
+                                                                            self.mubyte_cswrite[crate::ix::U((((self.mubyte_stoken).wrapping_sub(4095i32) % 128i32)) as usize)] = p;
+                                                                            { let __v1962 = (self.mubyte_stoken).wrapping_sub(4095i32); __av_mem[crate::ix::U((p) as usize)].set_hh_lh(__v1962); }
+                                                                            { let __v1963 = self.get_avail(); __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v1963); }
+                                                                            p = __av_mem[crate::ix::U((p) as usize)].hh().rh();
+                                                                            if self.mubyte_relax {
+                                                                                {
+                                                                                    __av_mem[crate::ix::U((p) as usize)].set_hh_lh(0i32);
+                                                                                    self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
+                                                                                }
+                                                                            } else {
+                                                                                { let __v1964 = self.slow_make_string(); __av_mem[crate::ix::U((p) as usize)].set_hh_lh(__v1964); }
+                                                                            }
+                                                                            __av_mem[crate::ix::U((p) as usize)].set_hh_rh(r);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                {
+                                                                    if (self.str_start[crate::ix::U((self.str_ptr) as usize)] == self.pool_ptr) {
+                                                                        self.mubyte_write[crate::ix::U((self.mubyte_stoken) as usize)] = 0i32;
+                                                                    } else {
+                                                                        { let __ix1965 = self.mubyte_stoken; let __v1966 = self.slow_make_string(); self.mubyte_write[crate::ix::U((__ix1965) as usize)] = __v1966; }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    } else {
+                                                        self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             } else {
                                 {
-                                    self.get_token();
-                                    q = self.cur_tok;
-                                    self.get_token();
-                                    self.back_input();
-                                    self.cur_tok = q;
-                                    self.back_input();
-                                }
-                            }
-                            if (self.cur_cmd >= call) {
-                                { let __ix1847 = self.cur_chr; let __v1848 = (__av_mem[crate::ix::U((self.cur_chr) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1847) as usize)].set_hh_lh(__v1848); }
-                            } else {
-                                if ((self.cur_cmd == register) || (self.cur_cmd == toks_register)) {
-                                    if ((self.cur_chr < mem_bot) || (self.cur_chr > lo_mem_stat_max)) {
-                                        { let __ix1849 = (self.cur_chr).wrapping_add(1i32); let __v1850 = (__av_mem[crate::ix::U(((self.cur_chr).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1849) as usize)].set_hh_lh(__v1850); }
+                                    n = self.cur_chr;
+                                    self.get_r_token();
+                                    p = self.cur_cs;
+                                    if (n == normal) {
+                                        {
+                                            loop {
+                                                self.get_token();
+                                                if (self.cur_cmd != spacer) { break; }
+                                            }
+                                            if (self.cur_tok == 3133i32) {
+                                                {
+                                                    self.get_token();
+                                                    if (self.cur_cmd == spacer) {
+                                                        self.get_token();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        {
+                                            self.get_token();
+                                            q = self.cur_tok;
+                                            self.get_token();
+                                            self.back_input();
+                                            self.cur_tok = q;
+                                            self.back_input();
+                                        }
+                                    }
+                                    if (self.cur_cmd >= call) {
+                                        { let __ix1967 = self.cur_chr; let __v1968 = (__av_mem[crate::ix::U((self.cur_chr) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1967) as usize)].set_hh_lh(__v1968); }
+                                    } else {
+                                        if ((self.cur_cmd == register) || (self.cur_cmd == toks_register)) {
+                                            if ((self.cur_chr < mem_bot) || (self.cur_chr > lo_mem_stat_max)) {
+                                                { let __ix1969 = (self.cur_chr).wrapping_add(1i32); let __v1970 = (__av_mem[crate::ix::U(((self.cur_chr).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1969) as usize)].set_hh_lh(__v1970); }
+                                            }
+                                        }
+                                    }
+                                    if (a >= 4i32) {
+                                        self.geq_define(p, self.cur_cmd, self.cur_chr);
+                                    } else {
+                                        self.eq_define(p, self.cur_cmd, self.cur_chr);
                                     }
                                 }
-                            }
-                            if (a >= 4i32) {
-                                self.geq_define(p, self.cur_cmd, self.cur_chr);
-                            } else {
-                                self.eq_define(p, self.cur_cmd, self.cur_chr);
                             }
                         }
                     }
                     shorthand_def => {
-                        // §1402
-                        {
-                            n = self.cur_chr;
-                            self.get_r_token();
-                            p = self.cur_cs;
-                            if (a >= 4i32) {
-                                self.geq_define(p, relax, 256i32);
-                            } else {
-                                self.eq_define(p, relax, 256i32);
+                        // §1403
+                        if (self.cur_chr == char_sub_def_code) {
+                            {
+                                self.scan_char_num();
+                                p = (char_sub_code_base).wrapping_add(self.cur_val);
+                                self.scan_optional_equals();
+                                self.scan_char_num();
+                                n = self.cur_val;
+                                self.scan_char_num();
+                                if (__av_eqtb[crate::ix::U(((29334i32) - 1) as usize)].int() > 0i32) {
+                                    {
+                                        self.begin_diagnostic();
+                                        self.print_nl(1641i32);
+                                        self.print((p).wrapping_sub(29021i32));
+                                        self.print(1642i32);
+                                        self.print(n);
+                                        self.print_char(32i32);
+                                        self.print(self.cur_val);
+                                        self.end_diagnostic(false);
+                                    }
+                                }
+                                n = ((n).wrapping_mul(256i32)).wrapping_add(self.cur_val);
+                                if (a >= 4i32) {
+                                    self.geq_define(p, data, n);
+                                } else {
+                                    self.eq_define(p, data, n);
+                                }
+                                if ((p).wrapping_sub(29021i32) < __av_eqtb[crate::ix::U(((29332i32) - 1) as usize)].int()) {
+                                    if (a >= 4i32) {
+                                        self.geq_word_define(29332i32, (p).wrapping_sub(29021i32));
+                                    } else {
+                                        self.eq_word_define(29332i32, (p).wrapping_sub(29021i32));
+                                    }
+                                }
+                                if ((p).wrapping_sub(29021i32) > __av_eqtb[crate::ix::U(((29333i32) - 1) as usize)].int()) {
+                                    if (a >= 4i32) {
+                                        self.geq_word_define(29333i32, (p).wrapping_sub(29021i32));
+                                    } else {
+                                        self.eq_word_define(29333i32, (p).wrapping_sub(29021i32));
+                                    }
+                                }
                             }
-                            self.scan_optional_equals();
-                            match n {
-                                char_def_code => {
-                                    {
-                                        self.scan_char_num();
-                                        if (a >= 4i32) {
-                                            self.geq_define(p, char_given, self.cur_val);
-                                        } else {
-                                            self.eq_define(p, char_given, self.cur_val);
-                                        }
-                                    }
+                        } else {
+                            {
+                                n = self.cur_chr;
+                                self.get_r_token();
+                                p = self.cur_cs;
+                                if (a >= 4i32) {
+                                    self.geq_define(p, relax, 256i32);
+                                } else {
+                                    self.eq_define(p, relax, 256i32);
                                 }
-                                math_char_def_code => {
-                                    {
-                                        self.scan_fifteen_bit_int();
-                                        if (a >= 4i32) {
-                                            self.geq_define(p, math_given, self.cur_val);
-                                        } else {
-                                            self.eq_define(p, math_given, self.cur_val);
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    {
-                                        self.scan_register_num();
-                                        if (self.cur_val > 255i32) {
-                                            {
-                                                j = (n).wrapping_sub(2i32);
-                                                if (j > mu_val) {
-                                                    j = tok_val;
-                                                }
-                                                self.find_sa_element(j, self.cur_val, true);
-                                                { let __ix1851 = (self.cur_ptr).wrapping_add(1i32); let __v1852 = (__av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1851) as usize)].set_hh_lh(__v1852); }
-                                                if (j == tok_val) {
-                                                    j = toks_register;
-                                                } else {
-                                                    j = register;
-                                                }
-                                                if (a >= 4i32) {
-                                                    self.geq_define(p, j, self.cur_ptr);
-                                                } else {
-                                                    self.eq_define(p, j, self.cur_ptr);
-                                                }
+                                self.scan_optional_equals();
+                                match n {
+                                    char_def_code => {
+                                        {
+                                            self.scan_char_num();
+                                            if (a >= 4i32) {
+                                                self.geq_define(p, char_given, self.cur_val);
+                                            } else {
+                                                self.eq_define(p, char_given, self.cur_val);
                                             }
-                                        } else {
-                                            match n {
-                                                count_def_code => {
-                                                    if (a >= 4i32) {
-                                                        self.geq_define(p, assign_int, (count_base).wrapping_add(self.cur_val));
+                                        }
+                                    }
+                                    math_char_def_code => {
+                                        {
+                                            self.scan_fifteen_bit_int();
+                                            if (a >= 4i32) {
+                                                self.geq_define(p, math_given, self.cur_val);
+                                            } else {
+                                                self.eq_define(p, math_given, self.cur_val);
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        {
+                                            self.scan_register_num();
+                                            if (self.cur_val > 255i32) {
+                                                {
+                                                    j = (n).wrapping_sub(2i32);
+                                                    if (j > mu_val) {
+                                                        j = tok_val;
+                                                    }
+                                                    self.find_sa_element(j, self.cur_val, true);
+                                                    { let __ix1971 = (self.cur_ptr).wrapping_add(1i32); let __v1972 = (__av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1971) as usize)].set_hh_lh(__v1972); }
+                                                    if (j == tok_val) {
+                                                        j = toks_register;
                                                     } else {
-                                                        self.eq_define(p, assign_int, (count_base).wrapping_add(self.cur_val));
+                                                        j = register;
+                                                    }
+                                                    if (a >= 4i32) {
+                                                        self.geq_define(p, j, self.cur_ptr);
+                                                    } else {
+                                                        self.eq_define(p, j, self.cur_ptr);
                                                     }
                                                 }
-                                                dimen_def_code => {
-                                                    if (a >= 4i32) {
-                                                        self.geq_define(p, assign_dimen, (scaled_base).wrapping_add(self.cur_val));
-                                                    } else {
-                                                        self.eq_define(p, assign_dimen, (scaled_base).wrapping_add(self.cur_val));
+                                            } else {
+                                                match n {
+                                                    count_def_code => {
+                                                        if (a >= 4i32) {
+                                                            self.geq_define(p, assign_int, (count_base).wrapping_add(self.cur_val));
+                                                        } else {
+                                                            self.eq_define(p, assign_int, (count_base).wrapping_add(self.cur_val));
+                                                        }
                                                     }
-                                                }
-                                                skip_def_code => {
-                                                    if (a >= 4i32) {
-                                                        self.geq_define(p, assign_glue, (skip_base).wrapping_add(self.cur_val));
-                                                    } else {
-                                                        self.eq_define(p, assign_glue, (skip_base).wrapping_add(self.cur_val));
+                                                    dimen_def_code => {
+                                                        if (a >= 4i32) {
+                                                            self.geq_define(p, assign_dimen, (scaled_base).wrapping_add(self.cur_val));
+                                                        } else {
+                                                            self.eq_define(p, assign_dimen, (scaled_base).wrapping_add(self.cur_val));
+                                                        }
                                                     }
-                                                }
-                                                mu_skip_def_code => {
-                                                    if (a >= 4i32) {
-                                                        self.geq_define(p, assign_mu_glue, (mu_skip_base).wrapping_add(self.cur_val));
-                                                    } else {
-                                                        self.eq_define(p, assign_mu_glue, (mu_skip_base).wrapping_add(self.cur_val));
+                                                    skip_def_code => {
+                                                        if (a >= 4i32) {
+                                                            self.geq_define(p, assign_glue, (skip_base).wrapping_add(self.cur_val));
+                                                        } else {
+                                                            self.eq_define(p, assign_glue, (skip_base).wrapping_add(self.cur_val));
+                                                        }
                                                     }
-                                                }
-                                                toks_def_code => {
-                                                    if (a >= 4i32) {
-                                                        self.geq_define(p, assign_toks, (toks_base).wrapping_add(self.cur_val));
-                                                    } else {
-                                                        self.eq_define(p, assign_toks, (toks_base).wrapping_add(self.cur_val));
+                                                    mu_skip_def_code => {
+                                                        if (a >= 4i32) {
+                                                            self.geq_define(p, assign_mu_glue, (mu_skip_base).wrapping_add(self.cur_val));
+                                                        } else {
+                                                            self.eq_define(p, assign_mu_glue, (mu_skip_base).wrapping_add(self.cur_val));
+                                                        }
                                                     }
+                                                    toks_def_code => {
+                                                        if (a >= 4i32) {
+                                                            self.geq_define(p, assign_toks, (toks_base).wrapping_add(self.cur_val));
+                                                        } else {
+                                                            self.eq_define(p, assign_toks, (toks_base).wrapping_add(self.cur_val));
+                                                        }
+                                                    }
+                                                    _ => {}
                                                 }
-                                                _ => {}
                                             }
                                         }
                                     }
@@ -3102,12 +3386,12 @@ impl Globals {
                         }
                     }
                     read_to_cs => {
-                        // §1403
+                        // §1404
                         {
                             j = self.cur_chr;
                             self.scan_int();
                             n = self.cur_val;
-                            if (!self.scan_keyword(1257i32)) {
+                            if (!self.scan_keyword(1258i32)) {
                                 {
                                     {
                                         self.dg_mark();
@@ -3118,12 +3402,12 @@ impl Globals {
                                         } else {
                                             self.print_nl(264i32);
                                         }
-                                        self.print(1498i32);
+                                        self.print(1499i32);
                                     }
                                     {
                                         self.help_ptr = 2i32;
-                                        self.help_line[crate::ix::U((1i32) as usize)] = 1631i32;
-                                        self.help_line[crate::ix::U((0i32) as usize)] = 1632i32;
+                                        self.help_line[crate::ix::U((1i32) as usize)] = 1643i32;
+                                        self.help_line[crate::ix::U((0i32) as usize)] = 1644i32;
                                     }
                                     self.error();
                                 }
@@ -3139,7 +3423,7 @@ impl Globals {
                         }
                     }
                     toks_register | assign_toks => {
-                        // §1404
+                        // §1405
                         {
                             q = self.cur_cs;
                             e = false;
@@ -3163,14 +3447,14 @@ impl Globals {
                             }
                             p = self.cur_chr;
                             self.scan_optional_equals();
-                            // §430
+                            // §431
                             loop {
                                 self.get_x_token();
                                 if ((self.cur_cmd != spacer) && (self.cur_cmd != relax)) { break; }
                             }
-                            // §1404
+                            // §1405
                             if (self.cur_cmd != left_brace) {
-                                // §1405
+                                // §1406
                                 if ((self.cur_cmd == toks_register) || (self.cur_cmd == assign_toks)) {
                                     {
                                         if (self.cur_cmd == toks_register) {
@@ -3215,7 +3499,7 @@ impl Globals {
                                             }
                                         } else {
                                             {
-                                                { let __v1853 = (__av_mem[crate::ix::U((q) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((q) as usize)].set_hh_lh(__v1853); }
+                                                { let __v1973 = (__av_mem[crate::ix::U((q) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((q) as usize)].set_hh_lh(__v1973); }
                                                 if e {
                                                     if (a >= 4i32) {
                                                         self.gsa_def(p, q);
@@ -3235,7 +3519,7 @@ impl Globals {
                                     }
                                 }
                             }
-                            // §1404
+                            // §1405
                             self.back_input();
                             self.cur_cs = q;
                             q = self.scan_toks(false, false);
@@ -3255,7 +3539,7 @@ impl Globals {
                                         }
                                     }
                                     {
-                                        { let __ix1854 = self.def_ref; let __v1855 = self.avail; __av_mem[crate::ix::U((__ix1854) as usize)].set_hh_rh(__v1855); }
+                                        { let __ix1974 = self.def_ref; let __v1975 = self.avail; __av_mem[crate::ix::U((__ix1974) as usize)].set_hh_rh(__v1975); }
                                         self.avail = self.def_ref;
                                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                     }
@@ -3264,13 +3548,13 @@ impl Globals {
                                 {
                                     if ((p == output_routine_loc) && (!e)) {
                                         {
-                                            { let __v1856 = self.get_avail(); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v1856); }
+                                            { let __v1976 = self.get_avail(); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v1976); }
                                             q = __av_mem[crate::ix::U((q) as usize)].hh().rh();
                                             __av_mem[crate::ix::U((q) as usize)].set_hh_lh(637i32);
                                             q = self.get_avail();
                                             __av_mem[crate::ix::U((q) as usize)].set_hh_lh(379i32);
-                                            { let __v1857 = __av_mem[crate::ix::U((self.def_ref) as usize)].hh().rh(); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v1857); }
-                                            { let __ix1858 = self.def_ref; __av_mem[crate::ix::U((__ix1858) as usize)].set_hh_rh(q); }
+                                            { let __v1977 = __av_mem[crate::ix::U((self.def_ref) as usize)].hh().rh(); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v1977); }
+                                            { let __ix1978 = self.def_ref; __av_mem[crate::ix::U((__ix1978) as usize)].set_hh_rh(q); }
                                         }
                                     }
                                     if e {
@@ -3291,7 +3575,7 @@ impl Globals {
                         }
                     }
                     assign_int => {
-                        // §1406
+                        // §1407
                         {
                             p = self.cur_chr;
                             self.scan_optional_equals();
@@ -3334,9 +3618,9 @@ impl Globals {
                         }
                     }
                     def_code => {
-                        // §1410
+                        // §1411
                         {
-                            // §1411
+                            // §1412
                             if (self.cur_chr == cat_code_base) {
                                 n = max_char_code;
                             } else {
@@ -3354,10 +3638,22 @@ impl Globals {
                                     }
                                 }
                             }
-                            // §1410
+                            // §1411
                             p = self.cur_chr;
                             self.scan_char_num();
-                            p = (p).wrapping_add(self.cur_val);
+                            if (p == xord_code_base) {
+                                p = self.cur_val;
+                            } else {
+                                if (p == xchr_code_base) {
+                                    p = (self.cur_val).wrapping_add(256i32);
+                                } else {
+                                    if (p == xprn_code_base) {
+                                        p = (self.cur_val).wrapping_add(512i32);
+                                    } else {
+                                        p = (p).wrapping_add(self.cur_val);
+                                    }
+                                }
+                            }
                             self.scan_optional_equals();
                             self.scan_int();
                             if (((self.cur_val < 0i32) && (p < del_code_base)) || (self.cur_val > n)) {
@@ -3371,48 +3667,60 @@ impl Globals {
                                         } else {
                                             self.print_nl(264i32);
                                         }
-                                        self.print(1633i32);
+                                        self.print(1648i32);
                                     }
                                     self.print_int(((self.cur_val) as i64));
                                     if (p < del_code_base) {
-                                        self.print(1634i32);
+                                        self.print(1649i32);
                                     } else {
-                                        self.print(1635i32);
+                                        self.print(1650i32);
                                     }
                                     self.print_int(((n) as i64));
                                     {
                                         self.help_ptr = 1i32;
-                                        self.help_line[crate::ix::U((0i32) as usize)] = 1636i32;
+                                        self.help_line[crate::ix::U((0i32) as usize)] = 1651i32;
                                     }
                                     self.error();
                                     self.cur_val = 0i32;
                                 }
                             }
-                            if (p < math_code_base) {
-                                if (a >= 4i32) {
-                                    self.geq_define(p, data, self.cur_val);
-                                } else {
-                                    self.eq_define(p, data, self.cur_val);
-                                }
+                            if (p < 256i32) {
+                                { let __v1979 = self.cur_val; self.xord[crate::ix::U((p) as usize)] = __v1979; }
                             } else {
-                                if (p < del_code_base) {
-                                    if (a >= 4i32) {
-                                        self.geq_define(p, data, (self.cur_val).wrapping_add(0i32));
-                                    } else {
-                                        self.eq_define(p, data, (self.cur_val).wrapping_add(0i32));
-                                    }
+                                if (p < 512i32) {
+                                    { let __v1980 = ((self.cur_val) as u8); self.xchr[crate::ix::U(((p).wrapping_sub(256i32)) as usize)] = __v1980; }
                                 } else {
-                                    if (a >= 4i32) {
-                                        self.geq_word_define(p, self.cur_val);
+                                    if (p < 768i32) {
+                                        { let __v1981 = self.cur_val; self.xprn[crate::ix::U(((p).wrapping_sub(512i32)) as usize)] = __v1981; }
                                     } else {
-                                        self.eq_word_define(p, self.cur_val);
+                                        if (p < math_code_base) {
+                                            if (a >= 4i32) {
+                                                self.geq_define(p, data, self.cur_val);
+                                            } else {
+                                                self.eq_define(p, data, self.cur_val);
+                                            }
+                                        } else {
+                                            if (p < del_code_base) {
+                                                if (a >= 4i32) {
+                                                    self.geq_define(p, data, self.cur_val);
+                                                } else {
+                                                    self.eq_define(p, data, self.cur_val);
+                                                }
+                                            } else {
+                                                if (a >= 4i32) {
+                                                    self.geq_word_define(p, self.cur_val);
+                                                } else {
+                                                    self.eq_word_define(p, self.cur_val);
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                     def_family => {
-                        // §1412
+                        // §1413
                         {
                             p = self.cur_chr;
                             self.scan_four_bit_int();
@@ -3427,11 +3735,11 @@ impl Globals {
                         }
                     }
                     register | advance | multiply | divide => {
-                        // §1413
+                        // §1414
                         self.do_register_command(a);
                     }
                     set_box => {
-                        // §1419
+                        // §1420
                         {
                             self.scan_register_num();
                             if (a >= 4i32) {
@@ -3453,13 +3761,13 @@ impl Globals {
                                         } else {
                                             self.print_nl(264i32);
                                         }
-                                        self.print(791i32);
+                                        self.print(792i32);
                                     }
-                                    self.print_esc(624i32);
+                                    self.print_esc(625i32);
                                     {
                                         self.help_ptr = 2i32;
-                                        self.help_line[crate::ix::U((1i32) as usize)] = 1642i32;
-                                        self.help_line[crate::ix::U((0i32) as usize)] = 1643i32;
+                                        self.help_line[crate::ix::U((1i32) as usize)] = 1657i32;
+                                        self.help_line[crate::ix::U((0i32) as usize)] = 1658i32;
                                     }
                                     self.error();
                                 }
@@ -3467,7 +3775,7 @@ impl Globals {
                         }
                     }
                     set_aux => {
-                        // §1420
+                        // §1421
                         self.alter_aux();
                     }
                     set_prev_graf => {
@@ -3483,7 +3791,7 @@ impl Globals {
                         self.alter_box_dimen();
                     }
                     set_shape => {
-                        // §1426
+                        // §1427
                         {
                             q = self.cur_chr;
                             self.scan_optional_equals();
@@ -3505,7 +3813,7 @@ impl Globals {
                                             while j <= __for_end_10 {
                                                 {
                                                     self.scan_int();
-                                                    { let __v1859 = self.cur_val; __av_mem[crate::ix::U((j) as usize)].set_int(__v1859); }
+                                                    { let __v1982 = self.cur_val; __av_mem[crate::ix::U((j) as usize)].set_int(__v1982); }
                                                 }
                                                 j = j.wrapping_add(1);
                                             }
@@ -3524,9 +3832,9 @@ impl Globals {
                                             while j <= __for_end_10 {
                                                 {
                                                     self.scan_dimen(false, false, false);
-                                                    { let __v1860 = self.cur_val; __av_mem[crate::ix::U((((p).wrapping_add((2i32).wrapping_mul(j))).wrapping_sub(1i32)) as usize)].set_int(__v1860); }
+                                                    { let __v1983 = self.cur_val; __av_mem[crate::ix::U((((p).wrapping_add((2i32).wrapping_mul(j))).wrapping_sub(1i32)) as usize)].set_int(__v1983); }
                                                     self.scan_dimen(false, false, false);
-                                                    { let __v1861 = self.cur_val; __av_mem[crate::ix::U(((p).wrapping_add((2i32).wrapping_mul(j))) as usize)].set_int(__v1861); }
+                                                    { let __v1984 = self.cur_val; __av_mem[crate::ix::U(((p).wrapping_add((2i32).wrapping_mul(j))) as usize)].set_int(__v1984); }
                                                 }
                                                 j = j.wrapping_add(1);
                                             }
@@ -3542,7 +3850,7 @@ impl Globals {
                         }
                     }
                     hyph_data => {
-                        // §1430
+                        // §1431
                         if (self.cur_chr == 1i32) {
                             {
                                 self.new_patterns();
@@ -3556,7 +3864,7 @@ impl Globals {
                                     } else {
                                         self.print_nl(264i32);
                                     }
-                                    self.print(1647i32);
+                                    self.print(1662i32);
                                 }
                                 self.help_ptr = 0i32;
                                 self.error();
@@ -3577,13 +3885,13 @@ impl Globals {
                         }
                     }
                     assign_font_dimen => {
-                        // §1431
+                        // §1432
                         {
                             self.find_font_dimen(true);
                             k = self.cur_val;
                             self.scan_optional_equals();
                             self.scan_dimen(false, false, false);
-                            { let __v1862 = self.cur_val; self.font_info[crate::ix::U((k) as usize)].set_int(__v1862); }
+                            { let __v1985 = self.cur_val; self.font_info[crate::ix::U((k) as usize)].set_int(__v1985); }
                             if self.bm_on {
                                 self.flashtex_bm_font_set((1i32).wrapping_neg(), k, 0i32, self.cur_val);
                             }
@@ -3607,9 +3915,9 @@ impl Globals {
                                         self.scan_optional_equals();
                                         self.scan_int();
                                         if (n == 0i32) {
-                                            { let __v1863 = self.cur_val; self.hyphen_char[crate::ix::U((f) as usize)] = __v1863; }
+                                            { let __v1986 = self.cur_val; self.hyphen_char[crate::ix::U((f) as usize)] = __v1986; }
                                         } else {
-                                            { let __v1864 = self.cur_val; self.skew_char[crate::ix::U((f) as usize)] = __v1864; }
+                                            { let __v1987 = self.cur_val; self.skew_char[crate::ix::U((f) as usize)] = __v1987; }
                                         }
                                         if self.bm_on {
                                             self.flashtex_bm_font_set(n, f, 0i32, self.cur_val);
@@ -3660,7 +3968,7 @@ impl Globals {
                         }
                     }
                     def_font => {
-                        // §1434
+                        // §1435
                         self.new_font(a);
                     }
                     letterspace_font => {
@@ -3670,17 +3978,17 @@ impl Globals {
                         self.make_font_copy(a);
                     }
                     set_interaction => {
-                        // §1442
+                        // §1443
                         self.new_interaction();
                     }
                     _ => {
-                        // §1389
-                        self.confusion(1606i32);
+                        // §1390
+                        self.confusion(1608i32);
                     }
                 }
             }
             if (self.after_token != 0i32) {
-                // §1447
+                // §1448
                 {
                     self.cur_tok = self.after_token;
                     self.back_input();
@@ -3688,23 +3996,23 @@ impl Globals {
                 }
             }
         }
-        // §1389
+        // §1390
     }
 
     /// Here is a procedure that might be called `Get the next non-blank non-relax
     /// non-call non-assignment token'.
     /// @<Declare act...
-    // §1448
+    // §1449
     pub fn do_assignments(&mut self) {
         'l_exit_f: {
             while true {
                 {
-                    // §430
+                    // §431
                     loop {
                         self.get_x_token();
                         if ((self.cur_cmd != spacer) && (self.cur_cmd != relax)) { break; }
                     }
-                    // §1448
+                    // §1449
                     if (self.cur_cmd <= max_non_prefixed_command) {
                         break 'l_exit_f;
                     }
@@ -3717,10 +4025,10 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1453
+    // §1454
     pub fn open_or_close_in(&mut self) {
-        let mut c: i32 = 0; // §1453
-        let mut n: i32 = 0; // §1453
+        let mut c: i32 = 0; // §1454
+        let mut n: i32 = 0; // §1454
         c = self.cur_chr;
         self.scan_four_bit_int();
         n = self.cur_val;
@@ -3744,17 +4052,17 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1457
+    // §1458
     pub fn issue_message(&mut self) {
-        let mut old_setting: i32 = 0; // §1457
-        let mut c: i32 = 0; // §1457
-        let mut s: str_number = 0; // §1457
+        let mut old_setting: i32 = 0; // §1458
+        let mut c: i32 = 0; // §1458
+        let mut s: str_number = 0; // §1458
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         c = self.cur_chr;
-        { let __v1865 = self.scan_toks(false, true); __av_mem[crate::ix::U((garbage) as usize)].set_hh_rh(__v1865); }
+        { let __v1988 = self.scan_toks(false, true); __av_mem[crate::ix::U((garbage) as usize)].set_hh_rh(__v1988); }
         old_setting = self.selector;
         self.selector = new_string;
         self.message_printing = true;
@@ -3771,7 +4079,7 @@ impl Globals {
         }
         s = self.make_string();
         if (c == 0i32) {
-            // §1458
+            // §1459
             {
                 if ((self.term_offset).wrapping_add((self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((s) as usize)])) > (self.max_print_line).wrapping_sub(2i32)) {
                     self.print_ln();
@@ -3784,7 +4092,7 @@ impl Globals {
                 crate::system::break_out(&mut self.term_out);
             }
         } else {
-            // §1461
+            // §1462
             {
                 {
                     self.dg_mark();
@@ -3804,7 +4112,7 @@ impl Globals {
                     if self.long_help_seen {
                         {
                             self.help_ptr = 1i32;
-                            self.help_line[crate::ix::U((0i32) as usize)] = 1672i32;
+                            self.help_line[crate::ix::U((0i32) as usize)] = 1687i32;
                         }
                     } else {
                         {
@@ -3813,10 +4121,10 @@ impl Globals {
                             }
                             {
                                 self.help_ptr = 4i32;
-                                self.help_line[crate::ix::U((3i32) as usize)] = 1673i32;
-                                self.help_line[crate::ix::U((2i32) as usize)] = 1674i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1675i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1676i32;
+                                self.help_line[crate::ix::U((3i32) as usize)] = 1688i32;
+                                self.help_line[crate::ix::U((2i32) as usize)] = 1689i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1690i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1691i32;
                             }
                         }
                     }
@@ -3825,7 +4133,7 @@ impl Globals {
                 self.use_err_help = false;
             }
         }
-        // §1457
+        // §1458
         {
             self.str_ptr = (self.str_ptr).wrapping_sub(1i32);
             self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
@@ -3833,12 +4141,12 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1466
+    // §1467
     pub fn shift_case(&mut self) {
-        let mut b: halfword = 0; // §1466
-        let mut p: halfword = 0; // §1466
-        let mut t: halfword = 0; // §1466
-        let mut c: eight_bits = 0; // §1466
+        let mut b: halfword = 0; // §1467
+        let mut p: halfword = 0; // §1467
+        let mut t: halfword = 0; // §1467
+        let mut c: eight_bits = 0; // §1467
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -3848,36 +4156,36 @@ impl Globals {
         p = __av_mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
         while (p != null) {
             {
-                // §1467
+                // §1468
                 t = __av_mem[crate::ix::U((p) as usize)].hh().lh();
                 if (t < 4352i32) {
                     {
                         c = (t % 256i32);
                         if (__av_eqtb[crate::ix::U((((b).wrapping_add(c)) - 1) as usize)].hh().rh() != 0i32) {
-                            { let __v1866 = ((t).wrapping_sub(c)).wrapping_add(__av_eqtb[crate::ix::U((((b).wrapping_add(c)) - 1) as usize)].hh().rh()); __av_mem[crate::ix::U((p) as usize)].set_hh_lh(__v1866); }
+                            { let __v1989 = ((t).wrapping_sub(c)).wrapping_add(__av_eqtb[crate::ix::U((((b).wrapping_add(c)) - 1) as usize)].hh().rh()); __av_mem[crate::ix::U((p) as usize)].set_hh_lh(__v1989); }
                         }
                     }
                 }
-                // §1466
+                // §1467
                 p = __av_mem[crate::ix::U((p) as usize)].hh().rh();
             }
         }
         self.begin_token_list(__av_mem[crate::ix::U((self.def_ref) as usize)].hh().rh(), backed_up);
         {
-            { let __ix1867 = self.def_ref; let __v1868 = self.avail; __av_mem[crate::ix::U((__ix1867) as usize)].set_hh_rh(__v1868); }
+            { let __ix1990 = self.def_ref; let __v1991 = self.avail; __av_mem[crate::ix::U((__ix1990) as usize)].set_hh_rh(__v1991); }
             self.avail = self.def_ref;
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
     }
 
     /// @<Declare act...
-    // §1471
+    // §1472
     pub fn show_whatever(&mut self) {
-        let mut p: halfword = 0; // §1471
-        let mut t: small_number = 0; // §1471
-        let mut m: i32 = 0; // §1471
-        let mut l: i32 = 0; // §1471
-        let mut n: i32 = 0; // §1471
+        let mut p: halfword = 0; // §1472
+        let mut t: small_number = 0; // §1472
+        let mut m: i32 = 0; // §1472
+        let mut l: i32 = 0; // §1472
+        let mut n: i32 = 0; // §1472
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -3886,17 +4194,17 @@ impl Globals {
             match self.cur_chr {
                 show_lists_code => {
                     {
-                        // §1888
+                        // §1910
                         if (((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() < no_print)) && self.write_open[crate::ix::U((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int()) as usize)]) {
                             self.selector = __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int();
                         }
-                        // §1471
+                        // §1472
                         self.begin_diagnostic();
                         self.show_activities();
                     }
                 }
                 show_box_code => {
-                    // §1474
+                    // §1475
                     {
                         self.scan_register_num();
                         {
@@ -3916,13 +4224,13 @@ impl Globals {
                                 }
                             }
                         }
-                        // §1888
+                        // §1910
                         if (((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() < no_print)) && self.write_open[crate::ix::U((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int()) as usize)]) {
                             self.selector = __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int();
                         }
-                        // §1474
+                        // §1475
                         self.begin_diagnostic();
-                        self.print_nl(1692i32);
+                        self.print_nl(1707i32);
                         self.print_int(((self.cur_val) as i64));
                         self.print_char(61i32);
                         if (p == null) {
@@ -3933,17 +4241,17 @@ impl Globals {
                     }
                 }
                 show_code => {
-                    // §1472
+                    // §1473
                     {
                         self.get_token();
-                        // §1888
+                        // §1910
                         if (((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() < no_print)) && self.write_open[crate::ix::U((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int()) as usize)]) {
                             self.selector = __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int();
                         }
-                        // §1472
+                        // §1473
                         if (self.interaction == error_stop_mode) {
                         }
-                        self.print_nl(1688i32);
+                        self.print_nl(1703i32);
                         if (self.cur_cs != 0i32) {
                             {
                                 self.sprint_cs(self.cur_cs);
@@ -3955,32 +4263,32 @@ impl Globals {
                     }
                 }
                 show_groups => {
-                    // §1677
+                    // §1678
                     {
-                        // §1888
+                        // §1910
                         if (((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() < no_print)) && self.write_open[crate::ix::U((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int()) as usize)]) {
                             self.selector = __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int();
                         }
-                        // §1677
+                        // §1678
                         self.begin_diagnostic();
                         self.show_save_groups();
                     }
                 }
                 show_ifs => {
-                    // §1691
+                    // §1692
                     {
-                        // §1888
+                        // §1910
                         if (((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() < no_print)) && self.write_open[crate::ix::U((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int()) as usize)]) {
                             self.selector = __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int();
                         }
-                        // §1691
+                        // §1692
                         self.begin_diagnostic();
                         self.print_nl(345i32);
                         self.print_ln();
                         if (self.cond_ptr == null) {
                             {
                                 self.print_nl(380i32);
-                                self.print(2025i32);
+                                self.print(2040i32);
                             }
                         } else {
                             {
@@ -3996,17 +4304,17 @@ impl Globals {
                                 l = self.if_line;
                                 m = self.if_limit;
                                 loop {
-                                    self.print_nl(2026i32);
+                                    self.print_nl(2041i32);
                                     self.print_int(((n) as i64));
-                                    self.print(659i32);
+                                    self.print(660i32);
                                     self.print_cmd_chr(if_test, t);
                                     if (m == fi_code) {
-                                        self.print_esc(942i32);
+                                        self.print_esc(943i32);
                                     }
                                     if (l != 0i32) {
                                         {
                                             self.ls_print_unknown(l);
-                                            self.print(2024i32);
+                                            self.print(2039i32);
                                             self.print_int(((l) as i64));
                                         }
                                     }
@@ -4022,24 +4330,24 @@ impl Globals {
                     }
                 }
                 _ => {
-                    // §1475
+                    // §1476
                     {
                         p = self.the_toks();
-                        // §1888
+                        // §1910
                         if (((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() >= 0i32) && (__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int() < no_print)) && self.write_open[crate::ix::U((__av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int()) as usize)]) {
                             self.selector = __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].int();
                         }
-                        // §1475
+                        // §1476
                         if (self.interaction == error_stop_mode) {
                         }
-                        self.print_nl(1688i32);
+                        self.print_nl(1703i32);
                         self.token_show(temp_head);
                         self.flush_list(__av_mem[crate::ix::U((temp_head) as usize)].hh().rh());
                         break 'l_common_ending_f;
                     }
                 }
             }
-            // §1476
+            // §1477
             self.end_diagnostic(true);
             {
                 self.dg_mark();
@@ -4050,19 +4358,19 @@ impl Globals {
                 } else {
                     self.print_nl(264i32);
                 }
-                self.print(1693i32);
+                self.print(1708i32);
             }
             if (self.selector == term_and_log) {
                 if (__av_eqtb[crate::ix::U(((29306i32) - 1) as usize)].int() <= 0i32) {
                     {
                         self.selector = term_only;
-                        self.print(1694i32);
+                        self.print(1709i32);
                         self.selector = term_and_log;
                     }
                 }
             }
         }
-        // §1471
+        // §1472
         if (self.selector < no_print) {
             {
                 self.print_ln();
@@ -4072,7 +4380,7 @@ impl Globals {
                 } else {
                     self.selector = term_only;
                 }
-                // §1471
+                // §1472
                 if self.log_opened {
                     self.selector = (self.selector).wrapping_add(2i32);
                 }
@@ -4089,20 +4397,20 @@ impl Globals {
                         {
                             {
                                 self.help_ptr = 3i32;
-                                self.help_line[crate::ix::U((2i32) as usize)] = 1683i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1684i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1685i32;
+                                self.help_line[crate::ix::U((2i32) as usize)] = 1698i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1699i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1700i32;
                             }
                         }
                     } else {
                         {
                             {
                                 self.help_ptr = 5i32;
-                                self.help_line[crate::ix::U((4i32) as usize)] = 1683i32;
-                                self.help_line[crate::ix::U((3i32) as usize)] = 1684i32;
-                                self.help_line[crate::ix::U((2i32) as usize)] = 1685i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1686i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1687i32;
+                                self.help_line[crate::ix::U((4i32) as usize)] = 1698i32;
+                                self.help_line[crate::ix::U((3i32) as usize)] = 1699i32;
+                                self.help_line[crate::ix::U((2i32) as usize)] = 1700i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1701i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1702i32;
                             }
                         }
                     }
@@ -4113,20 +4421,20 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1480
+    // §1481
     pub fn store_fmt_file(&mut self) {
-        let mut j: i32 = 0; // §1480
-        let mut k: i32 = 0; // §1480
-        let mut l: i32 = 0; // §1480
-        let mut p: halfword = 0; // §1480
-        let mut q: halfword = 0; // §1480
-        let mut x: i32 = 0; // §1480
-        let mut w: four_quarters = four_quarters::default(); // §1480
+        let mut j: i32 = 0; // §1481
+        let mut k: i32 = 0; // §1481
+        let mut l: i32 = 0; // §1481
+        let mut p: halfword = 0; // §1481
+        let mut q: halfword = 0; // §1481
+        let mut x: i32 = 0; // §1481
+        let mut w: four_quarters = four_quarters::default(); // §1481
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
-        // §1482
+        // §1483
         if (self.save_ptr != 0i32) {
             {
                 {
@@ -4138,11 +4446,11 @@ impl Globals {
                     } else {
                         self.print_nl(264i32);
                     }
-                    self.print(1696i32);
+                    self.print(1711i32);
                 }
                 {
                     self.help_ptr = 1i32;
-                    self.help_line[crate::ix::U((0i32) as usize)] = 1697i32;
+                    self.help_line[crate::ix::U((0i32) as usize)] = 1712i32;
                 }
                 {
                     if (self.interaction == error_stop_mode) {
@@ -4156,9 +4464,9 @@ impl Globals {
                 }
             }
         }
-        // §1508
+        // §1509
         self.selector = new_string;
-        self.print(1715i32);
+        self.print(1730i32);
         self.print(self.job_name);
         self.print_char(32i32);
         self.print_int(((__av_eqtb[crate::ix::U(((29300i32) - 1) as usize)].int()) as i64));
@@ -4180,28 +4488,28 @@ impl Globals {
         self.format_ident = self.make_string();
         self.pack_job_name(format_extension);
         while (!{ let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_open_out(&mut __f0); self.fmt_file = __f0; __r }) {
-            self.prompt_file_name(1716i32, format_extension);
+            self.prompt_file_name(1731i32, format_extension);
         }
-        self.print_nl(1717i32);
-        { let __a1869_0 = { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_make_name_string(&mut __f0); self.fmt_file = __f0; __r }; self.slow_print(__a1869_0) };
+        self.print_nl(1732i32);
+        { let __a1992_0 = { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_make_name_string(&mut __f0); self.fmt_file = __f0; __r }; self.slow_print(__a1992_0) };
         {
             self.str_ptr = (self.str_ptr).wrapping_sub(1i32);
             self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
         }
         self.print_nl(345i32);
         self.slow_print(self.format_ident);
-        // §1485
+        // §1486
         {
-            self.fmt_file.buf.set_int(327502766i32);
+            self.fmt_file.buf.set_int(312141437i32);
             crate::system::put_word(&mut self.fmt_file);
         }
-        // §1906
+        // §1928
         {
             let __for_end_2 = 255i32;
             k = 0i32;
             while k <= __for_end_2 {
                 {
-                    { let __v1870 = self.xord[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1870); }
+                    { let __v1993 = self.xord[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1993); }
                     crate::system::put_word(&mut self.fmt_file);
                 }
                 k = k.wrapping_add(1);
@@ -4212,7 +4520,7 @@ impl Globals {
             k = 0i32;
             while k <= __for_end_2 {
                 {
-                    { let __v1871 = ((self.xchr[crate::ix::U((k) as usize)]) as i32); self.fmt_file.buf.set_int(__v1871); }
+                    { let __v1994 = ((self.xchr[crate::ix::U((k) as usize)]) as i32); self.fmt_file.buf.set_int(__v1994); }
                     crate::system::put_word(&mut self.fmt_file);
                 }
                 k = k.wrapping_add(1);
@@ -4222,23 +4530,16 @@ impl Globals {
             let __for_end_2 = 255i32;
             k = 0i32;
             while k <= __for_end_2 {
-                if self.xprn[crate::ix::U((k) as usize)] {
-                    {
-                        self.fmt_file.buf.set_int(1i32);
-                        crate::system::put_word(&mut self.fmt_file);
-                    }
-                } else {
-                    {
-                        self.fmt_file.buf.set_int(0i32);
-                        crate::system::put_word(&mut self.fmt_file);
-                    }
+                {
+                    { let __v1995 = self.xprn[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1995); }
+                    crate::system::put_word(&mut self.fmt_file);
                 }
                 k = k.wrapping_add(1);
             }
         }
-        // §1654
+        // §1655
         {
-            { let __v1872 = self.eTeX_mode; self.fmt_file.buf.set_int(__v1872); }
+            { let __v1996 = self.eTeX_mode; self.fmt_file.buf.set_int(__v1996); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4249,11 +4550,11 @@ impl Globals {
                 j = j.wrapping_add(1);
             }
         }
-        // §1758
+        // §1759
         while (self.pseudo_files != null) {
             self.pseudo_close();
         }
-        // §1485
+        // §1486
         {
             self.fmt_file.buf.set_int(mem_bot);
             crate::system::put_word(&mut self.fmt_file);
@@ -4267,7 +4568,7 @@ impl Globals {
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1873 = self.hash_high; self.fmt_file.buf.set_int(__v1873); }
+            { let __v1997 = self.hash_high; self.fmt_file.buf.set_int(__v1997); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4278,13 +4579,80 @@ impl Globals {
             self.fmt_file.buf.set_int(hyph_size);
             crate::system::put_word(&mut self.fmt_file);
         }
-        // §1487
+        // §1908
         {
-            { let __v1874 = self.pool_ptr; self.fmt_file.buf.set_int(__v1874); }
+            self.fmt_file.buf.set_int(1296847960i32);
+            crate::system::put_word(&mut self.fmt_file);
+        }
+        if self.mltex_p {
+            {
+                self.fmt_file.buf.set_int(1i32);
+                crate::system::put_word(&mut self.fmt_file);
+            }
+        } else {
+            {
+                self.fmt_file.buf.set_int(0i32);
+                crate::system::put_word(&mut self.fmt_file);
+            }
+        }
+        // §1875
+        {
+            self.fmt_file.buf.set_int(1162040408i32);
+            crate::system::put_word(&mut self.fmt_file);
+        }
+        if (!self.enctex_p) {
+            {
+                self.fmt_file.buf.set_int(0i32);
+                crate::system::put_word(&mut self.fmt_file);
+            }
+        } else {
+            {
+                {
+                    self.fmt_file.buf.set_int(1i32);
+                    crate::system::put_word(&mut self.fmt_file);
+                }
+                {
+                    let __for_end_4 = 255i32;
+                    k = 0i32;
+                    while k <= __for_end_4 {
+                        {
+                            { let __v1998 = self.mubyte_read[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1998); }
+                            crate::system::put_word(&mut self.fmt_file);
+                        }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                {
+                    let __for_end_4 = 255i32;
+                    k = 0i32;
+                    while k <= __for_end_4 {
+                        {
+                            { let __v1999 = self.mubyte_write[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1999); }
+                            crate::system::put_word(&mut self.fmt_file);
+                        }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                {
+                    let __for_end_4 = 127i32;
+                    k = 0i32;
+                    while k <= __for_end_4 {
+                        {
+                            { let __v2000 = self.mubyte_cswrite[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2000); }
+                            crate::system::put_word(&mut self.fmt_file);
+                        }
+                        k = k.wrapping_add(1);
+                    }
+                }
+            }
+        }
+        // §1488
+        {
+            { let __v2001 = self.pool_ptr; self.fmt_file.buf.set_int(__v2001); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1875 = self.str_ptr; self.fmt_file.buf.set_int(__v1875); }
+            { let __v2002 = self.str_ptr; self.fmt_file.buf.set_int(__v2002); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4292,7 +4660,7 @@ impl Globals {
             k = 0i32;
             while k <= __for_end_2 {
                 {
-                    { let __v1876 = self.str_start[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1876); }
+                    { let __v2003 = self.str_start[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2003); }
                     crate::system::put_word(&mut self.fmt_file);
                 }
                 k = k.wrapping_add(1);
@@ -4301,10 +4669,10 @@ impl Globals {
         k = 0i32;
         while ((k).wrapping_add(4i32) < self.pool_ptr) {
             {
-                { let __v1877 = (self.str_pool[crate::ix::U((k) as usize)]).wrapping_add(0i32); w.set_b0(__v1877); }
-                { let __v1878 = (self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)]).wrapping_add(0i32); w.set_b1(__v1878); }
-                { let __v1879 = (self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)]).wrapping_add(0i32); w.set_b2(__v1879); }
-                { let __v1880 = (self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)]).wrapping_add(0i32); w.set_b3(__v1880); }
+                { let __v2004 = self.str_pool[crate::ix::U((k) as usize)]; w.set_b0(__v2004); }
+                { let __v2005 = self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)]; w.set_b1(__v2005); }
+                { let __v2006 = self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)]; w.set_b2(__v2006); }
+                { let __v2007 = self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)]; w.set_b3(__v2007); }
                 {
                     self.fmt_file.buf.set_qqqq(w);
                     crate::system::put_word(&mut self.fmt_file);
@@ -4313,27 +4681,27 @@ impl Globals {
             }
         }
         k = (self.pool_ptr).wrapping_sub(4i32);
-        { let __v1881 = (self.str_pool[crate::ix::U((k) as usize)]).wrapping_add(0i32); w.set_b0(__v1881); }
-        { let __v1882 = (self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)]).wrapping_add(0i32); w.set_b1(__v1882); }
-        { let __v1883 = (self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)]).wrapping_add(0i32); w.set_b2(__v1883); }
-        { let __v1884 = (self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)]).wrapping_add(0i32); w.set_b3(__v1884); }
+        { let __v2008 = self.str_pool[crate::ix::U((k) as usize)]; w.set_b0(__v2008); }
+        { let __v2009 = self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)]; w.set_b1(__v2009); }
+        { let __v2010 = self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)]; w.set_b2(__v2010); }
+        { let __v2011 = self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)]; w.set_b3(__v2011); }
         {
             self.fmt_file.buf.set_qqqq(w);
             crate::system::put_word(&mut self.fmt_file);
         }
         self.print_ln();
         self.print_int(((self.str_ptr) as i64));
-        self.print(1698i32);
+        self.print(1713i32);
         self.print_int(((self.pool_ptr) as i64));
-        // §1489
+        // §1490
         self.sort_avail();
         self.var_used = 0i32;
         {
-            { let __v1885 = self.lo_mem_max; self.fmt_file.buf.set_int(__v1885); }
+            { let __v2012 = self.lo_mem_max; self.fmt_file.buf.set_int(__v2012); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1886 = self.rover; self.fmt_file.buf.set_int(__v1886); }
+            { let __v2013 = self.rover; self.fmt_file.buf.set_int(__v2013); }
             crate::system::put_word(&mut self.fmt_file);
         }
         if (self.eTeX_mode == 1i32) {
@@ -4342,7 +4710,7 @@ impl Globals {
                 k = int_val;
                 while k <= __for_end_3 {
                     {
-                        { let __v1887 = self.sa_root[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1887); }
+                        { let __v2014 = self.sa_root[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2014); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     k = k.wrapping_add(1);
@@ -4385,11 +4753,11 @@ impl Globals {
         }
         x = (((x).wrapping_add(self.lo_mem_max)).wrapping_add(1i32)).wrapping_sub(p);
         {
-            { let __v1888 = self.hi_mem_min; self.fmt_file.buf.set_int(__v1888); }
+            { let __v2015 = self.hi_mem_min; self.fmt_file.buf.set_int(__v2015); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1889 = self.avail; self.fmt_file.buf.set_int(__v1889); }
+            { let __v2016 = self.avail; self.fmt_file.buf.set_int(__v2016); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4412,20 +4780,20 @@ impl Globals {
             }
         }
         {
-            { let __v1890 = self.var_used; self.fmt_file.buf.set_int(__v1890); }
+            { let __v2017 = self.var_used; self.fmt_file.buf.set_int(__v2017); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1891 = self.dyn_used; self.fmt_file.buf.set_int(__v1891); }
+            { let __v2018 = self.dyn_used; self.fmt_file.buf.set_int(__v2018); }
             crate::system::put_word(&mut self.fmt_file);
         }
         self.print_ln();
         self.print_int(((x) as i64));
-        self.print(1699i32);
+        self.print(1714i32);
         self.print_int(((self.var_used) as i64));
         self.print_char(38i32);
         self.print_int(((self.dyn_used) as i64));
-        // §1493
+        // §1494
         k = active_base;
         loop {
             'l_done1_f: {
@@ -4473,7 +4841,7 @@ impl Globals {
             }
             if (k == int_base) { break; }
         }
-        // §1494
+        // §1495
         loop {
             'l_done2_f: {
                 'l_found2_f: {
@@ -4533,29 +4901,29 @@ impl Globals {
                 }
             }
         }
-        // §1491
+        // §1492
         {
-            { let __v1892 = self.par_loc; self.fmt_file.buf.set_int(__v1892); }
+            { let __v2019 = self.par_loc; self.fmt_file.buf.set_int(__v2019); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1893 = self.write_loc; self.fmt_file.buf.set_int(__v1893); }
+            { let __v2020 = self.write_loc; self.fmt_file.buf.set_int(__v2020); }
             crate::system::put_word(&mut self.fmt_file);
         }
-        // §1496
+        // §1497
         {
             let __for_end_2 = prim_size;
             p = 0i32;
             while p <= __for_end_2 {
                 {
-                    { let __v1894 = self.prim[crate::ix::U((p) as usize)]; self.fmt_file.buf.set_hh(__v1894); }
+                    { let __v2021 = self.prim[crate::ix::U((p) as usize)]; self.fmt_file.buf.set_hh(__v2021); }
                     crate::system::put_word(&mut self.fmt_file);
                 }
                 p = p.wrapping_add(1);
             }
         }
         {
-            { let __v1895 = self.hash_used; self.fmt_file.buf.set_int(__v1895); }
+            { let __v2022 = self.hash_used; self.fmt_file.buf.set_int(__v2022); }
             crate::system::put_word(&mut self.fmt_file);
         }
         self.cs_count = ((15513i32).wrapping_sub(self.hash_used)).wrapping_add(self.hash_high);
@@ -4570,7 +4938,7 @@ impl Globals {
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         {
-                            { let __v1896 = self.hash[crate::ix::U(((p) - 514) as usize)]; self.fmt_file.buf.set_hh(__v1896); }
+                            { let __v2023 = self.hash[crate::ix::U(((p) - 514) as usize)]; self.fmt_file.buf.set_hh(__v2023); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         self.cs_count = (self.cs_count).wrapping_add(1i32);
@@ -4584,7 +4952,7 @@ impl Globals {
             p = (self.hash_used).wrapping_add(1i32);
             while p <= __for_end_2 {
                 {
-                    { let __v1897 = self.hash[crate::ix::U(((p) - 514) as usize)]; self.fmt_file.buf.set_hh(__v1897); }
+                    { let __v2024 = self.hash[crate::ix::U(((p) - 514) as usize)]; self.fmt_file.buf.set_hh(__v2024); }
                     crate::system::put_word(&mut self.fmt_file);
                 }
                 p = p.wrapping_add(1);
@@ -4596,7 +4964,7 @@ impl Globals {
                 p = 30193i32;
                 while p <= __for_end_3 {
                     {
-                        { let __v1898 = self.hash[crate::ix::U(((p) - 514) as usize)]; self.fmt_file.buf.set_hh(__v1898); }
+                        { let __v2025 = self.hash[crate::ix::U(((p) - 514) as usize)]; self.fmt_file.buf.set_hh(__v2025); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     p = p.wrapping_add(1);
@@ -4604,15 +4972,15 @@ impl Globals {
             }
         }
         {
-            { let __v1899 = self.cs_count; self.fmt_file.buf.set_int(__v1899); }
+            { let __v2026 = self.cs_count; self.fmt_file.buf.set_int(__v2026); }
             crate::system::put_word(&mut self.fmt_file);
         }
         self.print_ln();
         self.print_int(((self.cs_count) as i64));
-        self.print(1700i32);
-        // §1498
+        self.print(1715i32);
+        // §1499
         {
-            { let __v1900 = self.fmem_ptr; self.fmt_file.buf.set_int(__v1900); }
+            { let __v2027 = self.fmem_ptr; self.fmt_file.buf.set_int(__v2027); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4627,114 +4995,114 @@ impl Globals {
             }
         }
         {
-            { let __v1901 = self.font_ptr; self.fmt_file.buf.set_int(__v1901); }
+            { let __v2028 = self.font_ptr; self.fmt_file.buf.set_int(__v2028); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
             let __for_end_2 = self.font_ptr;
             k = null_font;
             while k <= __for_end_2 {
-                // §1500
+                // §1501
                 {
                     {
-                        { let __v1902 = self.font_check[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_qqqq(__v1902); }
+                        { let __v2029 = self.font_check[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_qqqq(__v2029); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1903 = self.font_size[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1903); }
+                        { let __v2030 = self.font_size[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2030); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1904 = self.font_dsize[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1904); }
+                        { let __v2031 = self.font_dsize[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2031); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1905 = self.font_params[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1905); }
+                        { let __v2032 = self.font_params[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2032); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1906 = self.hyphen_char[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1906); }
+                        { let __v2033 = self.hyphen_char[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2033); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1907 = self.skew_char[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1907); }
+                        { let __v2034 = self.skew_char[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2034); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1908 = self.font_name[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1908); }
+                        { let __v2035 = self.font_name[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2035); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1909 = self.font_area[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1909); }
+                        { let __v2036 = self.font_area[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2036); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1910 = self.font_bc[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1910); }
+                        { let __v2037 = self.font_bc[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2037); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1911 = self.font_ec[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1911); }
+                        { let __v2038 = self.font_ec[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2038); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1912 = self.char_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1912); }
+                        { let __v2039 = self.char_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2039); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1913 = self.width_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1913); }
+                        { let __v2040 = self.width_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2040); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1914 = self.height_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1914); }
+                        { let __v2041 = self.height_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2041); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1915 = self.depth_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1915); }
+                        { let __v2042 = self.depth_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2042); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1916 = self.italic_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1916); }
+                        { let __v2043 = self.italic_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2043); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1917 = self.lig_kern_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1917); }
+                        { let __v2044 = self.lig_kern_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2044); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1918 = self.kern_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1918); }
+                        { let __v2045 = self.kern_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2045); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1919 = self.exten_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1919); }
+                        { let __v2046 = self.exten_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2046); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1920 = self.param_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1920); }
+                        { let __v2047 = self.param_base[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2047); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1921 = self.font_glue[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1921); }
+                        { let __v2048 = self.font_glue[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2048); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1922 = self.bchar_label[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1922); }
+                        { let __v2049 = self.bchar_label[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2049); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1923 = self.font_bchar[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1923); }
+                        { let __v2050 = self.font_bchar[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2050); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1924 = self.font_false_bchar[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1924); }
+                        { let __v2051 = self.font_false_bchar[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2051); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
-                    self.print_nl(1704i32);
+                    self.print_nl(1719i32);
                     self.print_esc(self.hash[crate::ix::U((((font_id_base).wrapping_add(k)) - 514) as usize)].rh());
                     self.print_char(61i32);
                     self.print_file_name(self.font_name[crate::ix::U((k) as usize)], self.font_area[crate::ix::U((k) as usize)], 345i32);
                     if (self.font_size[crate::ix::U((k) as usize)] != self.font_dsize[crate::ix::U((k) as usize)]) {
                         {
-                            self.print(905i32);
+                            self.print(906i32);
                             self.print_scaled(self.font_size[crate::ix::U((k) as usize)]);
                             self.print(312i32);
                         }
@@ -4743,19 +5111,19 @@ impl Globals {
                 k = k.wrapping_add(1);
             }
         }
-        // §1498
+        // §1499
         self.print_ln();
         self.print_int((((self.fmem_ptr).wrapping_sub(7i32)) as i64));
-        self.print(1701i32);
+        self.print(1716i32);
         self.print_int((((self.font_ptr).wrapping_sub(0i32)) as i64));
         if (self.font_ptr != 1i32) {
-            self.print(1702i32);
+            self.print(1717i32);
         } else {
-            self.print(1703i32);
+            self.print(1718i32);
         }
-        // §1502
+        // §1503
         {
-            { let __v1925 = self.hyph_count; self.fmt_file.buf.set_int(__v1925); }
+            { let __v2052 = self.hyph_count; self.fmt_file.buf.set_int(__v2052); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4769,11 +5137,11 @@ impl Globals {
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         {
-                            { let __v1926 = self.hyph_word[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1926); }
+                            { let __v2053 = self.hyph_word[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2053); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         {
-                            { let __v1927 = self.hyph_list[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1927); }
+                            { let __v2054 = self.hyph_list[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2054); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                     }
@@ -4784,19 +5152,19 @@ impl Globals {
         self.print_ln();
         self.print_int(((self.hyph_count) as i64));
         if (self.hyph_count != 1i32) {
-            self.print(1705i32);
+            self.print(1720i32);
         } else {
-            self.print(1706i32);
+            self.print(1721i32);
         }
         if self.trie_not_ready {
             self.init_trie();
         }
         {
-            { let __v1928 = self.trie_max; self.fmt_file.buf.set_int(__v1928); }
+            { let __v2055 = self.trie_max; self.fmt_file.buf.set_int(__v2055); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1929 = self.hyph_start; self.fmt_file.buf.set_int(__v1929); }
+            { let __v2056 = self.hyph_start; self.fmt_file.buf.set_int(__v2056); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4804,14 +5172,14 @@ impl Globals {
             k = 0i32;
             while k <= __for_end_2 {
                 {
-                    { let __v1930 = self.trie[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_hh(__v1930); }
+                    { let __v2057 = self.trie[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_hh(__v2057); }
                     crate::system::put_word(&mut self.fmt_file);
                 }
                 k = k.wrapping_add(1);
             }
         }
         {
-            { let __v1931 = self.trie_op_ptr; self.fmt_file.buf.set_int(__v1931); }
+            { let __v2058 = self.trie_op_ptr; self.fmt_file.buf.set_int(__v2058); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4820,31 +5188,31 @@ impl Globals {
             while k <= __for_end_2 {
                 {
                     {
-                        { let __v1932 = self.hyf_distance[crate::ix::U(((k) - 1) as usize)]; self.fmt_file.buf.set_int(__v1932); }
+                        { let __v2059 = self.hyf_distance[crate::ix::U(((k) - 1) as usize)]; self.fmt_file.buf.set_int(__v2059); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1933 = self.hyf_num[crate::ix::U(((k) - 1) as usize)]; self.fmt_file.buf.set_int(__v1933); }
+                        { let __v2060 = self.hyf_num[crate::ix::U(((k) - 1) as usize)]; self.fmt_file.buf.set_int(__v2060); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                     {
-                        { let __v1934 = self.hyf_next[crate::ix::U(((k) - 1) as usize)]; self.fmt_file.buf.set_int(__v1934); }
+                        { let __v2061 = self.hyf_next[crate::ix::U(((k) - 1) as usize)]; self.fmt_file.buf.set_int(__v2061); }
                         crate::system::put_word(&mut self.fmt_file);
                     }
                 }
                 k = k.wrapping_add(1);
             }
         }
-        self.print_nl(1707i32);
+        self.print_nl(1722i32);
         self.print_int(((self.trie_max) as i64));
-        self.print(1708i32);
+        self.print(1723i32);
         self.print_int(((self.trie_op_ptr) as i64));
         if (self.trie_op_ptr != 1i32) {
-            self.print(1709i32);
+            self.print(1724i32);
         } else {
-            self.print(1710i32);
+            self.print(1725i32);
         }
-        self.print(1711i32);
+        self.print(1726i32);
         self.print_int(((trie_op_size) as i64));
         {
             let __for_end_2 = 0i32;
@@ -4852,16 +5220,16 @@ impl Globals {
             while k >= __for_end_2 {
                 if (self.trie_used[crate::ix::U((k) as usize)] > min_quarterword) {
                     {
-                        self.print_nl(966i32);
-                        self.print_int((((self.trie_used[crate::ix::U((k) as usize)]).wrapping_sub(0i32)) as i64));
-                        self.print(1712i32);
+                        self.print_nl(967i32);
+                        self.print_int(((self.trie_used[crate::ix::U((k) as usize)]) as i64));
+                        self.print(1727i32);
                         self.print_int(((k) as i64));
                         {
                             self.fmt_file.buf.set_int(k);
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         {
-                            { let __v1935 = (self.trie_used[crate::ix::U((k) as usize)]).wrapping_sub(0i32); self.fmt_file.buf.set_int(__v1935); }
+                            { let __v2062 = self.trie_used[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2062); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                     }
@@ -4869,15 +5237,15 @@ impl Globals {
                 k = k.wrapping_sub(1);
             }
         }
-        // §1504
+        // §1505
         {
             self.dumpimagemeta();
             {
-                { let __v1936 = self.pdf_mem_size; self.fmt_file.buf.set_int(__v1936); }
+                { let __v2063 = self.pdf_mem_size; self.fmt_file.buf.set_int(__v2063); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1937 = self.pdf_mem_ptr; self.fmt_file.buf.set_int(__v1937); }
+                { let __v2064 = self.pdf_mem_ptr; self.fmt_file.buf.set_int(__v2064); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
@@ -4886,7 +5254,7 @@ impl Globals {
                 while k <= __for_end_3 {
                     {
                         {
-                            { let __v1938 = self.pdf_mem[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v1938); }
+                            { let __v2065 = self.pdf_mem[crate::ix::U((k) as usize)]; self.fmt_file.buf.set_int(__v2065); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                     }
@@ -4895,17 +5263,17 @@ impl Globals {
             }
             self.print_ln();
             self.print_int((((self.pdf_mem_ptr).wrapping_sub(1i32)) as i64));
-            self.print(1713i32);
+            self.print(1728i32);
             {
-                { let __v1939 = self.obj_tab_size; self.fmt_file.buf.set_int(__v1939); }
+                { let __v2066 = self.obj_tab_size; self.fmt_file.buf.set_int(__v2066); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1940 = self.obj_ptr; self.fmt_file.buf.set_int(__v1940); }
+                { let __v2067 = self.obj_ptr; self.fmt_file.buf.set_int(__v2067); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1941 = self.sys_obj_ptr; self.fmt_file.buf.set_int(__v1941); }
+                { let __v2068 = self.sys_obj_ptr; self.fmt_file.buf.set_int(__v2068); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
@@ -4914,19 +5282,19 @@ impl Globals {
                 while k <= __for_end_3 {
                     {
                         {
-                            { let __v1942 = self.obj_tab[crate::ix::U((k) as usize)].int0; self.fmt_file.buf.set_int(__v1942); }
+                            { let __v2069 = self.obj_tab[crate::ix::U((k) as usize)].int0; self.fmt_file.buf.set_int(__v2069); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         {
-                            { let __v1943 = self.obj_tab[crate::ix::U((k) as usize)].int1; self.fmt_file.buf.set_int(__v1943); }
+                            { let __v2070 = self.obj_tab[crate::ix::U((k) as usize)].int1; self.fmt_file.buf.set_int(__v2070); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         {
-                            { let __v1944 = self.obj_tab[crate::ix::U((k) as usize)].int3; self.fmt_file.buf.set_int(__v1944); }
+                            { let __v2071 = self.obj_tab[crate::ix::U((k) as usize)].int3; self.fmt_file.buf.set_int(__v2071); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                         {
-                            { let __v1945 = self.obj_tab[crate::ix::U((k) as usize)].int4; self.fmt_file.buf.set_int(__v1945); }
+                            { let __v2072 = self.obj_tab[crate::ix::U((k) as usize)].int4; self.fmt_file.buf.set_int(__v2072); }
                             crate::system::put_word(&mut self.fmt_file);
                         }
                     }
@@ -4935,52 +5303,52 @@ impl Globals {
             }
             self.print_ln();
             self.print_int(((self.sys_obj_ptr) as i64));
-            self.print(1714i32);
+            self.print(1729i32);
             {
-                { let __v1946 = self.pdf_obj_count; self.fmt_file.buf.set_int(__v1946); }
+                { let __v2073 = self.pdf_obj_count; self.fmt_file.buf.set_int(__v2073); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1947 = self.pdf_xform_count; self.fmt_file.buf.set_int(__v1947); }
+                { let __v2074 = self.pdf_xform_count; self.fmt_file.buf.set_int(__v2074); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1948 = self.pdf_ximage_count; self.fmt_file.buf.set_int(__v1948); }
+                { let __v2075 = self.pdf_ximage_count; self.fmt_file.buf.set_int(__v2075); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1949 = self.head_tab[crate::ix::U(((obj_type_obj) - 1) as usize)]; self.fmt_file.buf.set_int(__v1949); }
+                { let __v2076 = self.head_tab[crate::ix::U(((obj_type_obj) - 1) as usize)]; self.fmt_file.buf.set_int(__v2076); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1950 = self.head_tab[crate::ix::U(((obj_type_xform) - 1) as usize)]; self.fmt_file.buf.set_int(__v1950); }
+                { let __v2077 = self.head_tab[crate::ix::U(((obj_type_xform) - 1) as usize)]; self.fmt_file.buf.set_int(__v2077); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1951 = self.head_tab[crate::ix::U(((obj_type_ximage) - 1) as usize)]; self.fmt_file.buf.set_int(__v1951); }
+                { let __v2078 = self.head_tab[crate::ix::U(((obj_type_ximage) - 1) as usize)]; self.fmt_file.buf.set_int(__v2078); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1952 = self.pdf_last_obj; self.fmt_file.buf.set_int(__v1952); }
+                { let __v2079 = self.pdf_last_obj; self.fmt_file.buf.set_int(__v2079); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1953 = self.pdf_last_xform; self.fmt_file.buf.set_int(__v1953); }
+                { let __v2080 = self.pdf_last_xform; self.fmt_file.buf.set_int(__v2080); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             {
-                { let __v1954 = self.pdf_last_ximage; self.fmt_file.buf.set_int(__v1954); }
+                { let __v2081 = self.pdf_last_ximage; self.fmt_file.buf.set_int(__v2081); }
                 crate::system::put_word(&mut self.fmt_file);
             }
             self.dumptounicode();
         }
-        // §1506
+        // §1507
         {
-            { let __v1955 = self.interaction; self.fmt_file.buf.set_int(__v1955); }
+            { let __v2082 = self.interaction; self.fmt_file.buf.set_int(__v2082); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
-            { let __v1956 = self.format_ident; self.fmt_file.buf.set_int(__v1956); }
+            { let __v2083 = self.format_ident; self.fmt_file.buf.set_int(__v2083); }
             crate::system::put_word(&mut self.fmt_file);
         }
         {
@@ -4988,7 +5356,7 @@ impl Globals {
             crate::system::put_word(&mut self.fmt_file);
         }
         __av_eqtb[crate::ix::U(((29308i32) - 1) as usize)].set_int(0i32);
-        // §1509
+        // §1510
         { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
     }
 
@@ -4996,23 +5364,25 @@ impl Globals {
     /// and a given number of words. It initializes only the first word of the whatsit,
     /// and appends it to the current list.
     /// @<Declare procedures needed in `do_extension`
-    // §1529
+    // §1530
     pub fn new_whatsit(&mut self, mut s: small_number, mut w: small_number) {
-        let mut p: halfword = 0; // §1529
+        let mut p: halfword = 0; // §1530
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         p = self.get_node(w);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(whatsit_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(s);
-        { let __ix1957 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix1957) as usize)].set_hh_rh(p); }
+        { let __ix2084 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2084) as usize)].set_hh_rh(p); }
         self.cur_list.tail_field = p;
     }
 
     /// The next subroutine uses `cur_chr` to decide what sort of whatsit is
     /// involved, and also inserts a `write_stream` number.
     /// @<Declare procedures needed in `do_ext...
-    // §1530
+    // §1531
     pub fn new_write_whatsit(&mut self, mut w: small_number) {
+        #[allow(unused_mut)]
+        let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         self.new_whatsit(self.cur_chr, w);
@@ -5030,22 +5400,31 @@ impl Globals {
                 }
             }
         }
-        { let __ix1958 = (self.cur_list.tail_field).wrapping_add(1i32); let __v1959 = self.cur_val; __av_mem[crate::ix::U((__ix1958) as usize)].set_hh_lh(__v1959); }
+        { let __ix2085 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2086 = self.cur_val; __av_mem[crate::ix::U((__ix2085) as usize)].set_hh_b0(__v2086); }
+        if ((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32) < 0i32) {
+            { let __ix2087 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2087) as usize)].set_hh_b1(0i32); }
+        } else {
+            if ((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32) >= (2i32).wrapping_mul(mubyte_zero)) {
+                { let __ix2088 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2088) as usize)].set_hh_b1(((2i32).wrapping_mul(mubyte_zero)).wrapping_sub(1i32)); }
+            } else {
+                { let __ix2089 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2090 = (__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32); __av_mem[crate::ix::U((__ix2089) as usize)].set_hh_b1(__v2090); }
+            }
+        }
     }
 
     /// We have to check whether \.{\\pdfoutput} is set for using \pdfTeX{}
     /// extensions.
     /// @<Declare procedures needed in `do_ext...
-    // §1537
+    // §1538
     pub fn check_pdfoutput(&mut self, mut s: str_number, mut is_error: bool) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         if (__av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int() <= 0i32) {
             {
                 if is_error {
-                    self.pdf_error(s, 1778i32);
+                    self.pdf_error(s, 1793i32);
                 } else {
-                    self.pdf_warning(s, 1779i32, true, true);
+                    self.pdf_warning(s, 1794i32, true, true);
                 }
             }
         }
@@ -5054,7 +5433,7 @@ impl Globals {
     /// We have to check whether \.{\\pdfoutput} is set for using \pdfTeX{}
     /// extensions.
     /// @<Declare procedures needed in `do_ext...
-    // §1537
+    // §1538
     pub fn scan_pdf_ext_toks(&mut self) {
         {
             if (self.scan_toks(false, true) != 0i32) {
@@ -5065,7 +5444,7 @@ impl Globals {
     /// We have to check whether \.{\\pdfoutput} is set for using \pdfTeX{}
     /// extensions.
     /// @<Declare procedures needed in `do_ext...
-    // §1537
+    // §1538
     pub fn scan_pdf_ext_late_toks(&mut self) {
         {
             if (self.scan_toks(false, false) != 0i32) {
@@ -5076,15 +5455,15 @@ impl Globals {
     /// We have to check whether \.{\\pdfoutput} is set for using \pdfTeX{}
     /// extensions.
     /// @<Declare procedures needed in `do_ext...
-    // §1537
+    // §1538
     pub fn compare_strings(&mut self) {
-        let mut s1: str_number = 0; // §1537
-        let mut s2: str_number = 0; // §1537
-        let mut i1: pool_pointer = 0; // §1537
-        let mut i2: pool_pointer = 0; // §1537
-        let mut j1: pool_pointer = 0; // §1537
-        let mut j2: pool_pointer = 0; // §1537
-        let mut save_cur_cs: halfword = 0; // §1537
+        let mut s1: str_number = 0; // §1538
+        let mut s2: str_number = 0; // §1538
+        let mut i1: pool_pointer = 0; // §1538
+        let mut i2: pool_pointer = 0; // §1538
+        let mut j1: pool_pointer = 0; // §1538
+        let mut j2: pool_pointer = 0; // §1538
+        let mut save_cur_cs: halfword = 0; // §1538
         'l_done_f: {
             save_cur_cs = self.cur_cs;
             {
@@ -5138,16 +5517,16 @@ impl Globals {
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1552
+    // §1553
     pub fn scale_image(&mut self, mut n: i32) {
-        let mut x: i32 = 0; // §1552
-        let mut y: i32 = 0; // §1552
-        let mut xr: i32 = 0; // §1552
-        let mut yr: i32 = 0; // §1552
-        let mut w: scaled = 0; // §1552
-        let mut h: scaled = 0; // §1552
-        let mut default_res: i32 = 0; // §1552
-        let mut image: i32 = 0; // §1552
+        let mut x: i32 = 0; // §1553
+        let mut y: i32 = 0; // §1553
+        let mut xr: i32 = 0; // §1553
+        let mut yr: i32 = 0; // §1553
+        let mut w: scaled = 0; // §1553
+        let mut h: scaled = 0; // §1553
+        let mut default_res: i32 = 0; // §1553
+        let mut image: i32 = 0; // §1553
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         image = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(4i32)) as usize)];
@@ -5170,11 +5549,11 @@ impl Globals {
             {
                 xr = 0i32;
                 yr = 0i32;
-                self.pdf_warning(1777i32, 1808i32, true, true);
+                self.pdf_warning(1792i32, 1823i32, true, true);
             }
         }
         if ((((x <= 0i32) || (y <= 0i32)) || (xr < 0i32)) || (yr < 0i32)) {
-            self.pdf_error(1777i32, 1809i32);
+            self.pdf_error(1792i32, 1824i32);
         }
         if ((xr == 0i32) && (yr == 0i32)) {
             {
@@ -5184,7 +5563,7 @@ impl Globals {
                 {
                     xr = 0i32;
                     yr = 0i32;
-                    self.pdf_warning(1777i32, 1810i32, true, true);
+                    self.pdf_warning(1792i32, 1825i32, true, true);
                 }
             }
         }
@@ -5230,18 +5609,18 @@ impl Globals {
                 {
                     if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] == (1073741824i32).wrapping_neg()) {
                         {
-                            { let __ix1960 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32); let __v1961 = self.ext_xn_over_d(h, x, y); self.pdf_mem[crate::ix::U((__ix1960) as usize)] = __v1961; }
-                            { let __ix1962 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32); let __v1963 = (h).wrapping_sub(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]); self.pdf_mem[crate::ix::U((__ix1962) as usize)] = __v1963; }
+                            { let __ix2091 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32); let __v2092 = self.ext_xn_over_d(h, x, y); self.pdf_mem[crate::ix::U((__ix2091) as usize)] = __v2092; }
+                            { let __ix2093 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32); let __v2094 = (h).wrapping_sub(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]); self.pdf_mem[crate::ix::U((__ix2093) as usize)] = __v2094; }
                         }
                     } else {
                         if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] == (1073741824i32).wrapping_neg()) {
                             {
-                                { let __ix1964 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32); let __v1965 = self.ext_xn_over_d(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)], x, y); self.pdf_mem[crate::ix::U((__ix1964) as usize)] = __v1965; }
+                                { let __ix2095 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32); let __v2096 = self.ext_xn_over_d(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)], x, y); self.pdf_mem[crate::ix::U((__ix2095) as usize)] = __v2096; }
                                 self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] = 0i32;
                             }
                         } else {
                             {
-                                { let __ix1966 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32); let __v1967 = self.ext_xn_over_d((self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)]).wrapping_add(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]), x, y); self.pdf_mem[crate::ix::U((__ix1966) as usize)] = __v1967; }
+                                { let __ix2097 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32); let __v2098 = self.ext_xn_over_d((self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)]).wrapping_add(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]), x, y); self.pdf_mem[crate::ix::U((__ix2097) as usize)] = __v2098; }
                             }
                         }
                     }
@@ -5250,13 +5629,13 @@ impl Globals {
                 {
                     if ((self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] == (1073741824i32).wrapping_neg()) && (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] == (1073741824i32).wrapping_neg())) {
                         {
-                            { let __ix1968 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32); let __v1969 = self.ext_xn_over_d(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)], y, x); self.pdf_mem[crate::ix::U((__ix1968) as usize)] = __v1969; }
+                            { let __ix2099 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32); let __v2100 = self.ext_xn_over_d(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)], y, x); self.pdf_mem[crate::ix::U((__ix2099) as usize)] = __v2100; }
                             self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] = 0i32;
                         }
                     } else {
                         if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] == (1073741824i32).wrapping_neg()) {
                             {
-                                { let __ix1970 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32); let __v1971 = (self.ext_xn_over_d(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)], y, x)).wrapping_sub(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]); self.pdf_mem[crate::ix::U((__ix1970) as usize)] = __v1971; }
+                                { let __ix2101 = (self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32); let __v2102 = (self.ext_xn_over_d(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)], y, x)).wrapping_sub(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]); self.pdf_mem[crate::ix::U((__ix2101) as usize)] = __v2102; }
                             }
                         } else {
                             if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] == (1073741824i32).wrapping_neg()) {
@@ -5273,23 +5652,23 @@ impl Globals {
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1552
+    // §1553
     pub fn scan_pdf_box_spec(&mut self) -> i32 {
         let mut scan_pdf_box_spec: i32 = 0;
         scan_pdf_box_spec = 0i32;
-        if self.scan_keyword(1811i32) {
+        if self.scan_keyword(1826i32) {
             scan_pdf_box_spec = self.pdf_box_spec_media;
         } else {
-            if self.scan_keyword(1812i32) {
+            if self.scan_keyword(1827i32) {
                 scan_pdf_box_spec = self.pdf_box_spec_crop;
             } else {
-                if self.scan_keyword(1813i32) {
+                if self.scan_keyword(1828i32) {
                     scan_pdf_box_spec = self.pdf_box_spec_bleed;
                 } else {
-                    if self.scan_keyword(1814i32) {
+                    if self.scan_keyword(1829i32) {
                         scan_pdf_box_spec = self.pdf_box_spec_trim;
                     } else {
-                        if self.scan_keyword(1815i32) {
+                        if self.scan_keyword(1830i32) {
                             scan_pdf_box_spec = self.pdf_box_spec_art;
                         }
                     }
@@ -5300,35 +5679,35 @@ impl Globals {
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1552
+    // §1553
     pub fn scan_alt_rule(&mut self) {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if (self.alt_rule == null) {
             self.alt_rule = self.new_rule();
         }
-        { let __ix1972 = (self.alt_rule).wrapping_add(1i32); __av_mem[crate::ix::U((__ix1972) as usize)].set_int((1073741824i32).wrapping_neg()); }
-        { let __ix1973 = (self.alt_rule).wrapping_add(3i32); __av_mem[crate::ix::U((__ix1973) as usize)].set_int((1073741824i32).wrapping_neg()); }
-        { let __ix1974 = (self.alt_rule).wrapping_add(2i32); __av_mem[crate::ix::U((__ix1974) as usize)].set_int((1073741824i32).wrapping_neg()); }
+        { let __ix2103 = (self.alt_rule).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2103) as usize)].set_int((1073741824i32).wrapping_neg()); }
+        { let __ix2104 = (self.alt_rule).wrapping_add(3i32); __av_mem[crate::ix::U((__ix2104) as usize)].set_int((1073741824i32).wrapping_neg()); }
+        { let __ix2105 = (self.alt_rule).wrapping_add(2i32); __av_mem[crate::ix::U((__ix2105) as usize)].set_int((1073741824i32).wrapping_neg()); }
         'l_reswitch_b: loop {
-            if self.scan_keyword(846i32) {
-                {
-                    self.scan_dimen(false, false, false);
-                    { let __ix1975 = (self.alt_rule).wrapping_add(1i32); let __v1976 = self.cur_val; __av_mem[crate::ix::U((__ix1975) as usize)].set_int(__v1976); }
-                    continue 'l_reswitch_b;
-                }
-            }
             if self.scan_keyword(847i32) {
                 {
                     self.scan_dimen(false, false, false);
-                    { let __ix1977 = (self.alt_rule).wrapping_add(3i32); let __v1978 = self.cur_val; __av_mem[crate::ix::U((__ix1977) as usize)].set_int(__v1978); }
+                    { let __ix2106 = (self.alt_rule).wrapping_add(1i32); let __v2107 = self.cur_val; __av_mem[crate::ix::U((__ix2106) as usize)].set_int(__v2107); }
                     continue 'l_reswitch_b;
                 }
             }
             if self.scan_keyword(848i32) {
                 {
                     self.scan_dimen(false, false, false);
-                    { let __ix1979 = (self.alt_rule).wrapping_add(2i32); let __v1980 = self.cur_val; __av_mem[crate::ix::U((__ix1979) as usize)].set_int(__v1980); }
+                    { let __ix2108 = (self.alt_rule).wrapping_add(3i32); let __v2109 = self.cur_val; __av_mem[crate::ix::U((__ix2108) as usize)].set_int(__v2109); }
+                    continue 'l_reswitch_b;
+                }
+            }
+            if self.scan_keyword(849i32) {
+                {
+                    self.scan_dimen(false, false, false);
+                    { let __ix2110 = (self.alt_rule).wrapping_add(2i32); let __v2111 = self.cur_val; __av_mem[crate::ix::U((__ix2110) as usize)].set_int(__v2111); }
                     continue 'l_reswitch_b;
                 }
             }
@@ -5337,14 +5716,14 @@ impl Globals {
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1552
+    // §1553
     pub fn scan_image(&mut self) {
-        let mut k: i32 = 0; // §1552
-        let mut named: str_number = 0; // §1552
-        let mut s: str_number = 0; // §1552
-        let mut page: i32 = 0; // §1552
-        let mut pagebox: i32 = 0; // §1552
-        let mut colorspace: i32 = 0; // §1552
+        let mut k: i32 = 0; // §1553
+        let mut named: str_number = 0; // §1553
+        let mut s: str_number = 0; // §1553
+        let mut page: i32 = 0; // §1553
+        let mut pagebox: i32 = 0; // §1553
+        let mut colorspace: i32 = 0; // §1553
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -5354,26 +5733,26 @@ impl Globals {
         k = self.obj_ptr;
         self.obj_tab[crate::ix::U((k) as usize)].int4 = self.pdf_get_mem(pdfmem_ximage_size);
         self.scan_alt_rule();
-        { let __ix1981 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(0i32); let __v1982 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(1i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix1981) as usize)] = __v1982; }
-        { let __ix1983 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32); let __v1984 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(3i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix1983) as usize)] = __v1984; }
-        { let __ix1985 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v1986 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(2i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix1985) as usize)] = __v1986; }
-        if self.scan_keyword(1801i32) {
+        { let __ix2112 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(0i32); let __v2113 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(1i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2112) as usize)] = __v2113; }
+        { let __ix2114 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32); let __v2115 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(3i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2114) as usize)] = __v2115; }
+        { let __ix2116 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v2117 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(2i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2116) as usize)] = __v2117; }
+        if self.scan_keyword(1816i32) {
             {
                 self.scan_pdf_ext_toks();
-                { let __ix1987 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32); let __v1988 = self.def_ref; self.pdf_mem[crate::ix::U((__ix1987) as usize)] = __v1988; }
+                { let __ix2118 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32); let __v2119 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2118) as usize)] = __v2119; }
             }
         } else {
             self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)] = null;
         }
         named = 0i32;
-        if self.scan_keyword(1816i32) {
+        if self.scan_keyword(1831i32) {
             {
                 self.scan_pdf_ext_toks();
                 named = self.tokens_to_string(self.def_ref);
                 self.delete_token_ref(self.def_ref);
             }
         } else {
-            if self.scan_keyword(899i32) {
+            if self.scan_keyword(900i32) {
                 {
                     self.scan_int();
                     page = self.cur_val;
@@ -5382,7 +5761,7 @@ impl Globals {
                 page = 1i32;
             }
         }
-        if self.scan_keyword(1817i32) {
+        if self.scan_keyword(1832i32) {
             {
                 self.scan_int();
                 colorspace = self.cur_val;
@@ -5399,16 +5778,16 @@ impl Globals {
         self.delete_token_ref(self.def_ref);
         if (__av_eqtb[crate::ix::U(((29349i32) - 1) as usize)].int() != 0i32) {
             {
-                self.pdf_warning(1818i32, 1819i32, true, true);
-                { let __v1989 = __av_eqtb[crate::ix::U(((29349i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29353i32) - 1) as usize)].set_int(__v1989); }
+                self.pdf_warning(1833i32, 1834i32, true, true);
+                { let __v2120 = __av_eqtb[crate::ix::U(((29349i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29353i32) - 1) as usize)].set_int(__v2120); }
                 __av_eqtb[crate::ix::U(((29349i32) - 1) as usize)].set_int(0i32);
                 self.warn_pdfpagebox = false;
             }
         }
         if (__av_eqtb[crate::ix::U(((29350i32) - 1) as usize)].int() != 0i32) {
             {
-                self.pdf_warning(1818i32, 1820i32, true, true);
-                { let __v1990 = __av_eqtb[crate::ix::U(((29350i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29355i32) - 1) as usize)].set_int(__v1990); }
+                self.pdf_warning(1833i32, 1835i32, true, true);
+                { let __v2121 = __av_eqtb[crate::ix::U(((29350i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29355i32) - 1) as usize)].set_int(__v2121); }
                 __av_eqtb[crate::ix::U(((29350i32) - 1) as usize)].set_int(0i32);
             }
         }
@@ -5416,7 +5795,7 @@ impl Globals {
             {
                 if self.warn_pdfpagebox {
                     {
-                        self.pdf_warning(1818i32, 1821i32, true, true);
+                        self.pdf_warning(1833i32, 1836i32, true, true);
                         self.warn_pdfpagebox = false;
                     }
                 }
@@ -5426,7 +5805,7 @@ impl Globals {
         if (pagebox == 0i32) {
             pagebox = self.pdf_box_spec_crop;
         }
-        { let __ix1991 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32); let __v1992 = self.read_image(s, page, named, colorspace, pagebox, __av_eqtb[crate::ix::U(((29351i32) - 1) as usize)].int(), __av_eqtb[crate::ix::U(((29352i32) - 1) as usize)].int(), __av_eqtb[crate::ix::U(((29355i32) - 1) as usize)].int()); self.pdf_mem[crate::ix::U((__ix1991) as usize)] = __v1992; }
+        { let __ix2122 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32); let __v2123 = self.read_image(s, page, named, colorspace, pagebox, __av_eqtb[crate::ix::U(((29351i32) - 1) as usize)].int(), __av_eqtb[crate::ix::U(((29352i32) - 1) as usize)].int(), __av_eqtb[crate::ix::U(((29355i32) - 1) as usize)].int()); self.pdf_mem[crate::ix::U((__ix2122) as usize)] = __v2123; }
         if (named != 0i32) {
             self.flush_str(named);
         }
@@ -5438,72 +5817,72 @@ impl Globals {
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1556
+    // §1557
     pub fn scan_action(&mut self) -> halfword {
         let mut scan_action: halfword = 0;
-        let mut p: i32 = 0; // §1556
+        let mut p: i32 = 0; // §1557
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         p = self.get_node(pdf_action_size);
         scan_action = p;
         __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(null);
         __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_rh(null);
-        if self.scan_keyword(1824i32) {
+        if self.scan_keyword(1839i32) {
             __av_mem[crate::ix::U((p) as usize)].set_hh_b0(pdf_action_user);
         } else {
-            if self.scan_keyword(1825i32) {
+            if self.scan_keyword(1840i32) {
                 __av_mem[crate::ix::U((p) as usize)].set_hh_b0(pdf_action_goto);
             } else {
-                if self.scan_keyword(1826i32) {
+                if self.scan_keyword(1841i32) {
                     __av_mem[crate::ix::U((p) as usize)].set_hh_b0(pdf_action_thread);
                 } else {
-                    self.pdf_error(1777i32, 1827i32);
+                    self.pdf_error(1792i32, 1842i32);
                 }
             }
         }
         if (__av_mem[crate::ix::U((p) as usize)].hh().b0() == pdf_action_user) {
             {
                 self.scan_pdf_ext_toks();
-                { let __v1993 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_lh(__v1993); }
+                { let __v2124 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_lh(__v2124); }
                 return scan_action;
             }
         }
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(0i32);
-        if self.scan_keyword(888i32) {
+        if self.scan_keyword(889i32) {
             {
                 self.scan_pdf_ext_toks();
-                { let __v1994 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v1994); }
+                { let __v2125 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v2125); }
             }
         }
-        if self.scan_keyword(1828i32) {
+        if self.scan_keyword(1843i32) {
             {
                 if (__av_mem[crate::ix::U((p) as usize)].hh().b0() != pdf_action_goto) {
-                    self.pdf_error(1777i32, 1829i32);
+                    self.pdf_error(1792i32, 1844i32);
                 }
                 if (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh() != null) {
                     {
                         self.scan_pdf_ext_toks();
-                        { let __v1995 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(2i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v1995); }
-                        { let __v1996 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_hh_rh(__v1996); }
+                        { let __v2126 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(2i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v2126); }
+                        { let __v2127 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_hh_rh(__v2127); }
                     }
                 } else {
-                    if self.scan_keyword(1830i32) {
+                    if self.scan_keyword(1845i32) {
                         {
                             self.scan_pdf_ext_toks();
-                            { let __v1997 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(2i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v1997); }
-                            { let __v1998 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_hh_rh(__v1998); }
+                            { let __v2128 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(2i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v2128); }
+                            { let __v2129 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_hh_rh(__v2129); }
                         }
                     } else {
-                        if self.scan_keyword(1207i32) {
+                        if self.scan_keyword(1208i32) {
                             {
                                 self.scan_int();
                                 if (self.cur_val <= 0i32) {
-                                    self.pdf_error(1777i32, 1831i32);
+                                    self.pdf_error(1792i32, 1846i32);
                                 }
-                                { let __v1999 = self.cur_val; __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_hh_rh(__v1999); }
+                                { let __v2130 = self.cur_val; __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_hh_rh(__v2130); }
                             }
                         } else {
-                            self.pdf_error(1777i32, 1832i32);
+                            self.pdf_error(1792i32, 1847i32);
                         }
                     }
                 }
@@ -5511,48 +5890,48 @@ impl Globals {
         } else {
             __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].set_hh_rh(null);
         }
-        if self.scan_keyword(899i32) {
+        if self.scan_keyword(900i32) {
             {
                 if (__av_mem[crate::ix::U((p) as usize)].hh().b0() != pdf_action_goto) {
-                    self.pdf_error(1777i32, 1833i32);
+                    self.pdf_error(1792i32, 1848i32);
                 }
                 __av_mem[crate::ix::U((p) as usize)].set_hh_b0(pdf_action_page);
                 self.scan_int();
                 if (self.cur_val <= 0i32) {
-                    self.pdf_error(1777i32, 1834i32);
+                    self.pdf_error(1792i32, 1849i32);
                 }
-                { let __v2000 = self.cur_val; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2000); }
+                { let __v2131 = self.cur_val; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2131); }
                 self.scan_pdf_ext_toks();
-                { let __v2001 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_lh(__v2001); }
+                { let __v2132 = self.def_ref; __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_lh(__v2132); }
             }
         } else {
-            if self.scan_keyword(1830i32) {
+            if self.scan_keyword(1845i32) {
                 {
                     self.scan_pdf_ext_toks();
-                    { let __v2002 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v2002); }
-                    { let __v2003 = self.def_ref; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2003); }
+                    { let __v2133 = (__av_mem[crate::ix::U((p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((p) as usize)].set_hh_b1(__v2133); }
+                    { let __v2134 = self.def_ref; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2134); }
                 }
             } else {
-                if self.scan_keyword(1207i32) {
+                if self.scan_keyword(1208i32) {
                     {
                         if ((__av_mem[crate::ix::U((p) as usize)].hh().b0() == pdf_action_goto) && (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh() != null)) {
-                            self.pdf_error(1777i32, 1835i32);
+                            self.pdf_error(1792i32, 1850i32);
                         }
                         self.scan_int();
                         if (self.cur_val <= 0i32) {
-                            self.pdf_error(1777i32, 1831i32);
+                            self.pdf_error(1792i32, 1846i32);
                         }
-                        { let __v2004 = self.cur_val; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2004); }
+                        { let __v2135 = self.cur_val; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2135); }
                     }
                 } else {
-                    self.pdf_error(1777i32, 1832i32);
+                    self.pdf_error(1792i32, 1847i32);
                 }
             }
         }
-        if self.scan_keyword(1836i32) {
+        if self.scan_keyword(1851i32) {
             {
                 __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(1i32);
-                // §469
+                // §470
                 {
                     self.get_x_token();
                     if (self.cur_cmd != spacer) {
@@ -5561,11 +5940,11 @@ impl Globals {
                 }
             }
         } else {
-            // §1556
-            if self.scan_keyword(1837i32) {
+            // §1557
+            if self.scan_keyword(1852i32) {
                 {
                     __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(2i32);
-                    // §469
+                    // §470
                     {
                         self.get_x_token();
                         if (self.cur_cmd != spacer) {
@@ -5574,57 +5953,57 @@ impl Globals {
                     }
                 }
             } else {
-                // §1556
+                // §1557
                 __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(0i32);
             }
         }
         if ((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh() > 0i32) && (((__av_mem[crate::ix::U((p) as usize)].hh().b0() != pdf_action_goto) && (__av_mem[crate::ix::U((p) as usize)].hh().b0() != pdf_action_page)) || (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh() == null))) {
-            self.pdf_error(1777i32, 1838i32);
+            self.pdf_error(1792i32, 1853i32);
         }
         scan_action
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1556
+    // §1557
     pub fn new_annot_whatsit(&mut self, mut w: small_number, mut s: small_number) {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         self.new_whatsit(w, s);
         self.scan_alt_rule();
-        { let __ix2005 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2006 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2005) as usize)].set_int(__v2006); }
-        { let __ix2007 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2008 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2007) as usize)].set_int(__v2008); }
-        { let __ix2009 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2010 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2009) as usize)].set_int(__v2010); }
+        { let __ix2136 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2137 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2136) as usize)].set_int(__v2137); }
+        { let __ix2138 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2139 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2138) as usize)].set_int(__v2139); }
+        { let __ix2140 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2141 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2140) as usize)].set_int(__v2141); }
         if (w == pdf_start_link_node) {
             {
-                if self.scan_keyword(1801i32) {
+                if self.scan_keyword(1816i32) {
                     {
                         self.scan_pdf_ext_toks();
-                        { let __ix2011 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2012 = self.def_ref; __av_mem[crate::ix::U((__ix2011) as usize)].set_hh_lh(__v2012); }
+                        { let __ix2142 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2143 = self.def_ref; __av_mem[crate::ix::U((__ix2142) as usize)].set_hh_lh(__v2143); }
                     }
                 } else {
-                    { let __ix2013 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2013) as usize)].set_hh_lh(null); }
+                    { let __ix2144 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2144) as usize)].set_hh_lh(null); }
                 }
             }
         }
         if ((w == pdf_thread_node) || (w == pdf_start_thread_node)) {
             {
-                if self.scan_keyword(1801i32) {
+                if self.scan_keyword(1816i32) {
                     {
                         self.scan_pdf_ext_toks();
-                        { let __ix2014 = (self.cur_list.tail_field).wrapping_add(6i32); let __v2015 = self.def_ref; __av_mem[crate::ix::U((__ix2014) as usize)].set_hh_lh(__v2015); }
+                        { let __ix2145 = (self.cur_list.tail_field).wrapping_add(6i32); let __v2146 = self.def_ref; __av_mem[crate::ix::U((__ix2145) as usize)].set_hh_lh(__v2146); }
                     }
                 } else {
-                    { let __ix2016 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2016) as usize)].set_hh_lh(null); }
+                    { let __ix2147 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2147) as usize)].set_hh_lh(null); }
                 }
             }
         }
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1562
+    // §1563
     pub fn outline_list_count(&mut self, mut p: halfword) -> i32 {
         let mut outline_list_count: i32 = 0;
-        let mut k: i32 = 0; // §1562
+        let mut k: i32 = 0; // §1563
         k = 1i32;
         while (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((p) as usize)].int4).wrapping_add(2i32)) as usize)] != 0i32) {
             {
@@ -5637,51 +6016,51 @@ impl Globals {
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1566
+    // §1567
     pub fn scan_thread_id(&mut self) {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
-        if self.scan_keyword(1207i32) {
+        if self.scan_keyword(1208i32) {
             {
                 self.scan_int();
                 if (self.cur_val <= 0i32) {
-                    self.pdf_error(1777i32, 1831i32);
+                    self.pdf_error(1792i32, 1846i32);
                 }
                 if (self.cur_val > max_halfword) {
-                    self.pdf_error(1777i32, 1044i32);
+                    self.pdf_error(1792i32, 1045i32);
                 }
-                { let __ix2017 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2018 = self.cur_val; __av_mem[crate::ix::U((__ix2017) as usize)].set_hh_rh(__v2018); }
-                { let __ix2019 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2019) as usize)].set_hh_b1(0i32); }
+                { let __ix2148 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2149 = self.cur_val; __av_mem[crate::ix::U((__ix2148) as usize)].set_hh_rh(__v2149); }
+                { let __ix2150 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2150) as usize)].set_hh_b1(0i32); }
             }
         } else {
-            if self.scan_keyword(1830i32) {
+            if self.scan_keyword(1845i32) {
                 {
                     self.scan_pdf_ext_toks();
-                    { let __ix2020 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2021 = self.def_ref; __av_mem[crate::ix::U((__ix2020) as usize)].set_hh_rh(__v2021); }
-                    { let __ix2022 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2022) as usize)].set_hh_b1(1i32); }
+                    { let __ix2151 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2152 = self.def_ref; __av_mem[crate::ix::U((__ix2151) as usize)].set_hh_rh(__v2152); }
+                    { let __ix2153 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2153) as usize)].set_hh_b1(1i32); }
                 }
             } else {
-                self.pdf_error(1777i32, 1832i32);
+                self.pdf_error(1792i32, 1847i32);
             }
         }
     }
 
     /// @<Declare procedures needed in `do_ext...
-    // §1573
+    // §1574
     pub fn new_snap_node(&mut self, mut s: small_number) -> halfword {
         let mut new_snap_node: halfword = 0;
-        let mut p: halfword = 0; // §1573
+        let mut p: halfword = 0; // §1574
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         self.scan_glue(glue_val);
         if (__av_mem[crate::ix::U(((self.cur_val).wrapping_add(1i32)) as usize)].int() < 0i32) {
-            self.pdf_error(1777i32, 1866i32);
+            self.pdf_error(1792i32, 1881i32);
         }
         p = self.get_node(snap_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(whatsit_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(s);
         __av_mem[crate::ix::U((p) as usize)].set_hh_rh(null);
-        { let __v2023 = self.cur_val; __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v2023); }
+        { let __v2154 = self.cur_val; __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v2154); }
         __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_int(0i32);
         new_snap_node = p;
         new_snap_node
@@ -5690,10 +6069,10 @@ impl Globals {
     /// To implement primitives as \.{\\pdfinfo}, \.{\\pdfcatalog} or
     /// \.{\\pdfnames} we need to concatenate tokens lists.
     /// @<Declare procedures needed in `do_ext...
-    // §1577
+    // §1578
     pub fn concat_tokens(&mut self, mut q: halfword, mut r: halfword) -> halfword {
         let mut concat_tokens: halfword = 0;
-        let mut p: halfword = 0; // §1577
+        let mut p: halfword = 0; // §1578
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if (q == null) {
@@ -5706,9 +6085,9 @@ impl Globals {
         while (__av_mem[crate::ix::U((p) as usize)].hh().rh() != null) {
             p = __av_mem[crate::ix::U((p) as usize)].hh().rh();
         }
-        { let __v2024 = __av_mem[crate::ix::U((r) as usize)].hh().rh(); __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2024); }
+        { let __v2155 = __av_mem[crate::ix::U((r) as usize)].hh().rh(); __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v2155); }
         {
-            { let __v2025 = self.avail; __av_mem[crate::ix::U((r) as usize)].set_hh_rh(__v2025); }
+            { let __v2156 = self.avail; __av_mem[crate::ix::U((r) as usize)].set_hh_rh(__v2156); }
             self.avail = r;
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
@@ -5718,15 +6097,15 @@ impl Globals {
 
     /// The following subroutines are about PDF-specific font issues.
     /// @<Declare procedures needed in `do_ext...
-    // §1587
+    // §1588
     pub fn pdf_include_chars(&mut self) {
-        let mut s: str_number = 0; // §1587
-        let mut k: pool_pointer = 0; // §1587
-        let mut f: internal_font_number = 0; // §1587
+        let mut s: str_number = 0; // §1588
+        let mut k: pool_pointer = 0; // §1588
+        let mut f: internal_font_number = 0; // §1588
         self.scan_font_ident();
         f = self.cur_val;
         if (f == null_font) {
-            self.pdf_error(603i32, 883i32);
+            self.pdf_error(604i32, 884i32);
         }
         self.pdf_check_vf_cur_val();
         if (!self.font_used[crate::ix::U((f) as usize)]) {
@@ -5747,10 +6126,10 @@ impl Globals {
 
     /// The following subroutines are about PDF-specific font issues.
     /// @<Declare procedures needed in `do_ext...
-    // §1587
+    // §1588
     pub fn glyph_to_unicode(&mut self) {
-        let mut s1: str_number = 0; // §1587
-        let mut s2: str_number = 0; // §1587
+        let mut s1: str_number = 0; // §1588
+        let mut s2: str_number = 0; // §1588
         self.scan_pdf_ext_toks();
         s1 = self.tokens_to_string(self.def_ref);
         self.delete_token_ref(self.def_ref);
@@ -5764,9 +6143,9 @@ impl Globals {
 
     /// The following function are needed for outputting article thread.
     /// @<Declare procedures needed in `do_ext...
-    // §1600
+    // §1601
     pub fn thread_title(&mut self, mut thread: i32) {
-        self.pdf_print(1886i32);
+        self.pdf_print(1901i32);
         if (self.obj_tab[crate::ix::U((thread) as usize)].int0 < 0i32) {
             self.pdf_print((self.obj_tab[crate::ix::U((thread) as usize)].int0).wrapping_neg());
         } else {
@@ -5780,7 +6159,7 @@ impl Globals {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(1017i32, pdf_op_buf_size);
+                            self.overflow(1018i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -5798,25 +6177,25 @@ impl Globals {
 
     /// The following function are needed for outputting article thread.
     /// @<Declare procedures needed in `do_ext...
-    // §1600
+    // §1601
     pub fn pdf_fix_thread(&mut self, mut thread: i32) {
-        let mut a: halfword = 0; // §1600
+        let mut a: halfword = 0; // §1601
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
-        self.pdf_warning(1826i32, 1887i32, true, false);
+        self.pdf_warning(1841i32, 1902i32, true, false);
         if (self.obj_tab[crate::ix::U((thread) as usize)].int0 < 0i32) {
             {
-                self.print(1206i32);
+                self.print(1207i32);
                 self.print((self.obj_tab[crate::ix::U((thread) as usize)].int0).wrapping_neg());
                 self.print(125i32);
             }
         } else {
             {
-                self.print(1207i32);
+                self.print(1208i32);
                 self.print_int(((self.obj_tab[crate::ix::U((thread) as usize)].int0) as i64));
             }
         }
-        self.print(1208i32);
+        self.print(1209i32);
         self.print_ln();
         self.print_ln();
         self.pdf_new_dict(obj_type_others, 0i32, 0i32);
@@ -5825,7 +6204,7 @@ impl Globals {
         self.pdf_indirect_ln(86i32, a);
         self.pdf_indirect_ln(78i32, a);
         self.pdf_indirect_ln(80i32, self.head_tab[crate::ix::U(((obj_type_page) - 1) as usize)]);
-        self.pdf_print(1888i32);
+        self.pdf_print(1903i32);
         self.pdf_print_bp(__av_eqtb[crate::ix::U(((29926i32) - 1) as usize)].int());
         {
             {
@@ -5833,7 +6212,7 @@ impl Globals {
                     self.pdf_os_get_os_buf(1i32);
                 } else {
                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                        self.overflow(1017i32, pdf_op_buf_size);
+                        self.overflow(1018i32, pdf_op_buf_size);
                     } else {
                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                             self.pdf_flush();
@@ -5855,7 +6234,7 @@ impl Globals {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(1017i32, pdf_op_buf_size);
+                            self.overflow(1018i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -5872,14 +6251,14 @@ impl Globals {
         self.pdf_end_dict();
         self.pdf_begin_dict(thread, 1i32);
         {
-            self.pdf_print(1889i32);
+            self.pdf_print(1904i32);
             {
                 {
                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(1017i32, pdf_op_buf_size);
+                            self.overflow(1018i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -5895,14 +6274,14 @@ impl Globals {
         }
         self.thread_title(thread);
         {
-            self.pdf_print(1034i32);
+            self.pdf_print(1035i32);
             {
                 {
                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                         self.pdf_os_get_os_buf(1i32);
                     } else {
                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                            self.overflow(1017i32, pdf_op_buf_size);
+                            self.overflow(1018i32, pdf_op_buf_size);
                         } else {
                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_flush();
@@ -5922,11 +6301,11 @@ impl Globals {
 
     /// The following function are needed for outputting article thread.
     /// @<Declare procedures needed in `do_ext...
-    // §1600
+    // §1601
     pub fn out_thread(&mut self, mut thread: i32) {
-        let mut a: halfword = 0; // §1600
-        let mut b: halfword = 0; // §1600
-        let mut last_attr: i32 = 0; // §1600
+        let mut a: halfword = 0; // §1601
+        let mut b: halfword = 0; // §1601
+        let mut last_attr: i32 = 0; // §1601
         if (self.obj_tab[crate::ix::U((thread) as usize)].int4 == 0i32) {
             {
                 self.pdf_fix_thread(thread);
@@ -5953,7 +6332,7 @@ impl Globals {
                             self.pdf_os_get_os_buf(1i32);
                         } else {
                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(1017i32, pdf_op_buf_size);
+                                self.overflow(1018i32, pdf_op_buf_size);
                             } else {
                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                     self.pdf_flush();
@@ -5970,14 +6349,14 @@ impl Globals {
         } else {
             {
                 {
-                    self.pdf_print(1889i32);
+                    self.pdf_print(1904i32);
                     {
                         {
                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_os_get_os_buf(1i32);
                             } else {
                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(1017i32, pdf_op_buf_size);
+                                    self.overflow(1018i32, pdf_op_buf_size);
                                 } else {
                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                         self.pdf_flush();
@@ -5993,14 +6372,14 @@ impl Globals {
                 }
                 self.thread_title(thread);
                 {
-                    self.pdf_print(1034i32);
+                    self.pdf_print(1035i32);
                     {
                         {
                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                 self.pdf_os_get_os_buf(1i32);
                             } else {
                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(1017i32, pdf_op_buf_size);
+                                    self.overflow(1018i32, pdf_op_buf_size);
                                 } else {
                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                         self.pdf_flush();
@@ -6034,69 +6413,115 @@ impl Globals {
     }
 
     /// @<Declare act...
-    // §1528
+    // §1529
     pub fn do_extension(&mut self) {
-        let mut i: i32 = 0; // §1528
-        let mut j: i32 = 0; // §1528
-        let mut k: i32 = 0; // §1528
-        let mut p: halfword = 0; // §1528
-        let mut q: halfword = 0; // §1528
-        let mut r: halfword = 0; // §1528
+        let mut i: i32 = 0; // §1529
+        let mut j: i32 = 0; // §1529
+        let mut k: i32 = 0; // §1529
+        let mut p: halfword = 0; // §1529
+        let mut q: halfword = 0; // §1529
+        let mut r: halfword = 0; // §1529
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         match self.cur_chr {
             open_node => {
-                // §1531
+                // §1532
                 {
                     self.new_write_whatsit(open_node_size);
                     self.scan_optional_equals();
                     self.scan_file_name();
-                    { let __ix2026 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2027 = self.cur_name; __av_mem[crate::ix::U((__ix2026) as usize)].set_hh_rh(__v2027); }
-                    { let __ix2028 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2029 = self.cur_area; __av_mem[crate::ix::U((__ix2028) as usize)].set_hh_lh(__v2029); }
-                    { let __ix2030 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2031 = self.cur_ext; __av_mem[crate::ix::U((__ix2030) as usize)].set_hh_rh(__v2031); }
+                    { let __ix2157 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2158 = self.cur_name; __av_mem[crate::ix::U((__ix2157) as usize)].set_hh_rh(__v2158); }
+                    { let __ix2159 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2160 = self.cur_area; __av_mem[crate::ix::U((__ix2159) as usize)].set_hh_lh(__v2160); }
+                    { let __ix2161 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2162 = self.cur_ext; __av_mem[crate::ix::U((__ix2161) as usize)].set_hh_rh(__v2162); }
                 }
             }
             write_node => {
-                // §1532
+                // §1533
                 {
                     k = self.cur_cs;
                     self.new_write_whatsit(write_node_size);
                     self.cur_cs = k;
                     p = self.scan_toks(false, false);
-                    { let __ix2032 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2033 = self.def_ref; __av_mem[crate::ix::U((__ix2032) as usize)].set_hh_rh(__v2033); }
+                    { let __ix2163 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2164 = self.def_ref; __av_mem[crate::ix::U((__ix2163) as usize)].set_hh_rh(__v2164); }
                 }
             }
             close_node => {
-                // §1533
+                // §1534
                 {
                     self.new_write_whatsit(write_node_size);
-                    { let __ix2034 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2034) as usize)].set_hh_rh(null); }
+                    { let __ix2165 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2165) as usize)].set_hh_rh(null); }
                 }
             }
             special_node => {
-                // §1534
+                // §1535
                 {
-                    if self.scan_keyword(1486i32) {
+                    if self.scan_keyword(1487i32) {
                         {
                             self.new_whatsit(latespecial_node, write_node_size);
-                            { let __ix2035 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2035) as usize)].set_hh_lh(null); }
+                            if ((__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int()).wrapping_add(64i32) < 0i32) {
+                                { let __ix2166 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2166) as usize)].set_hh_b0(0i32); }
+                            } else {
+                                if ((__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int()).wrapping_add(64i32) >= (2i32).wrapping_mul(mubyte_zero)) {
+                                    { let __ix2167 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2167) as usize)].set_hh_b0(((2i32).wrapping_mul(mubyte_zero)).wrapping_sub(1i32)); }
+                                } else {
+                                    { let __ix2168 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2169 = (__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int()).wrapping_add(64i32); __av_mem[crate::ix::U((__ix2168) as usize)].set_hh_b0(__v2169); }
+                                }
+                            }
+                            if ((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32) < 0i32) {
+                                { let __ix2170 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2170) as usize)].set_hh_b1(0i32); }
+                            } else {
+                                if ((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32) >= (2i32).wrapping_mul(mubyte_zero)) {
+                                    { let __ix2171 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2171) as usize)].set_hh_b1(((2i32).wrapping_mul(mubyte_zero)).wrapping_sub(1i32)); }
+                                } else {
+                                    { let __ix2172 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2173 = (__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32); __av_mem[crate::ix::U((__ix2172) as usize)].set_hh_b1(__v2173); }
+                                }
+                            }
+                            if ((__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int() == 2i32) || (__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int() == 3i32)) {
+                                if (((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int() > 2i32) || (__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int() == (1i32).wrapping_neg())) || (__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int() == (2i32).wrapping_neg())) {
+                                    self.write_noexpanding = true;
+                                }
+                            }
                             p = self.scan_toks(false, false);
-                            { let __ix2036 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2037 = self.def_ref; __av_mem[crate::ix::U((__ix2036) as usize)].set_hh_rh(__v2037); }
+                            { let __ix2174 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2175 = self.def_ref; __av_mem[crate::ix::U((__ix2174) as usize)].set_hh_rh(__v2175); }
+                            self.write_noexpanding = false;
                         }
                     } else {
                         {
                             self.new_whatsit(special_node, write_node_size);
-                            { let __ix2038 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2038) as usize)].set_hh_lh(null); }
+                            if ((__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int()).wrapping_add(64i32) < 0i32) {
+                                { let __ix2176 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2176) as usize)].set_hh_b0(0i32); }
+                            } else {
+                                if ((__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int()).wrapping_add(64i32) >= (2i32).wrapping_mul(mubyte_zero)) {
+                                    { let __ix2177 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2177) as usize)].set_hh_b0(((2i32).wrapping_mul(mubyte_zero)).wrapping_sub(1i32)); }
+                                } else {
+                                    { let __ix2178 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2179 = (__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int()).wrapping_add(64i32); __av_mem[crate::ix::U((__ix2178) as usize)].set_hh_b0(__v2179); }
+                                }
+                            }
+                            if ((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32) < 0i32) {
+                                { let __ix2180 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2180) as usize)].set_hh_b1(0i32); }
+                            } else {
+                                if ((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32) >= (2i32).wrapping_mul(mubyte_zero)) {
+                                    { let __ix2181 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2181) as usize)].set_hh_b1(((2i32).wrapping_mul(mubyte_zero)).wrapping_sub(1i32)); }
+                                } else {
+                                    { let __ix2182 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2183 = (__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int()).wrapping_add(64i32); __av_mem[crate::ix::U((__ix2182) as usize)].set_hh_b1(__v2183); }
+                                }
+                            }
+                            if ((__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int() == 2i32) || (__av_eqtb[crate::ix::U(((29341i32) - 1) as usize)].int() == 3i32)) {
+                                if (((__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int() > 2i32) || (__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int() == (1i32).wrapping_neg())) || (__av_eqtb[crate::ix::U(((29339i32) - 1) as usize)].int() == (2i32).wrapping_neg())) {
+                                    self.write_noexpanding = true;
+                                }
+                            }
                             p = self.scan_toks(false, true);
-                            { let __ix2039 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2040 = self.def_ref; __av_mem[crate::ix::U((__ix2039) as usize)].set_hh_rh(__v2040); }
+                            { let __ix2184 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2185 = self.def_ref; __av_mem[crate::ix::U((__ix2184) as usize)].set_hh_rh(__v2185); }
+                            self.write_noexpanding = false;
                         }
                     }
                 }
             }
             immediate_code => {
-                // §1623
+                // §1624
                 {
                     self.get_x_token();
                     if (self.cur_cmd == extension) {
@@ -6116,7 +6541,7 @@ impl Globals {
                                         {
                                             self.do_extension();
                                             if (self.obj_tab[crate::ix::U((self.pdf_last_obj) as usize)].int4 == 0i32) {
-                                                self.pdf_error(1777i32, 1932i32);
+                                                self.pdf_error(1792i32, 1947i32);
                                             }
                                             self.pdf_write_obj(self.pdf_last_obj);
                                         }
@@ -6146,7 +6571,7 @@ impl Globals {
                 }
             }
             set_language_code => {
-                // §1625
+                // §1626
                 if ((self.cur_list.mode_field).wrapping_abs() != hmode) {
                     self.report_illegal_case();
                 } else {
@@ -6159,23 +6584,23 @@ impl Globals {
                             if (self.cur_val > 255i32) {
                                 self.cur_list.aux_field.set_hh_rh(0i32);
                             } else {
-                                { let __v2041 = self.cur_val; self.cur_list.aux_field.set_hh_rh(__v2041); }
+                                { let __v2186 = self.cur_val; self.cur_list.aux_field.set_hh_rh(__v2186); }
                             }
                         }
-                        { let __ix2042 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2043 = self.cur_list.aux_field.hh().rh(); __av_mem[crate::ix::U((__ix2042) as usize)].set_hh_rh(__v2043); }
-                        { let __ix2044 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2045 = self.norm_min(__av_eqtb[crate::ix::U(((29328i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2044) as usize)].set_hh_b0(__v2045); }
-                        { let __ix2046 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2047 = self.norm_min(__av_eqtb[crate::ix::U(((29329i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2046) as usize)].set_hh_b1(__v2047); }
+                        { let __ix2187 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2188 = self.cur_list.aux_field.hh().rh(); __av_mem[crate::ix::U((__ix2187) as usize)].set_hh_rh(__v2188); }
+                        { let __ix2189 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2190 = self.norm_min(__av_eqtb[crate::ix::U(((29328i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2189) as usize)].set_hh_b0(__v2190); }
+                        { let __ix2191 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2192 = self.norm_min(__av_eqtb[crate::ix::U(((29329i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2191) as usize)].set_hh_b1(__v2192); }
                     }
                 }
             }
             pdf_annot_node => {
-                // §1558
+                // §1559
                 {
-                    self.check_pdfoutput(1839i32, true);
-                    if self.scan_keyword(1798i32) {
+                    self.check_pdfoutput(1854i32, true);
+                    if self.scan_keyword(1813i32) {
                         {
                             self.pdf_last_annot = self.pdf_new_objnum();
-                            // §469
+                            // §470
                             {
                                 self.get_x_token();
                                 if (self.cur_cmd != spacer) {
@@ -6184,40 +6609,40 @@ impl Globals {
                             }
                         }
                     } else {
-                        // §1558
+                        // §1559
                         {
-                            if self.scan_keyword(1799i32) {
+                            if self.scan_keyword(1814i32) {
                                 {
                                     self.scan_int();
                                     k = self.cur_val;
                                     if (((k <= 0i32) || (k > self.obj_ptr)) || (self.obj_tab[crate::ix::U((k) as usize)].int4 != 0i32)) {
-                                        self.pdf_error(1777i32, 1840i32);
+                                        self.pdf_error(1792i32, 1855i32);
                                     }
                                 }
                             } else {
                                 k = self.pdf_new_objnum();
                             }
                             self.new_annot_whatsit(pdf_annot_node, pdf_annot_node_size);
-                            { let __ix2048 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2048) as usize)].set_int(k); }
+                            { let __ix2193 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2193) as usize)].set_int(k); }
                             self.scan_pdf_ext_toks();
-                            { let __ix2049 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2050 = self.def_ref; __av_mem[crate::ix::U((__ix2049) as usize)].set_hh_lh(__v2050); }
+                            { let __ix2194 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2195 = self.def_ref; __av_mem[crate::ix::U((__ix2194) as usize)].set_hh_lh(__v2195); }
                             self.pdf_last_annot = k;
                         }
                     }
                 }
             }
             pdf_catalog_code => {
-                // §1579
+                // §1580
                 {
-                    self.check_pdfoutput(1870i32, false);
+                    self.check_pdfoutput(1885i32, false);
                     self.scan_pdf_ext_toks();
                     if (__av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int() > 0i32) {
                         self.pdf_catalog_toks = self.concat_tokens(self.pdf_catalog_toks, self.def_ref);
                     }
-                    if self.scan_keyword(1871i32) {
+                    if self.scan_keyword(1886i32) {
                         {
                             if (self.pdf_catalog_openaction != 0i32) {
-                                self.pdf_error(1777i32, 1872i32);
+                                self.pdf_error(1792i32, 1887i32);
                             } else {
                                 {
                                     p = self.scan_action();
@@ -6252,7 +6677,7 @@ impl Globals {
                                                 self.free_node(p, pdf_action_size);
                                             }
                                         } else {
-                                            { let __v2051 = (__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh()).wrapping_sub(1i32); __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_rh(__v2051); }
+                                            { let __v2196 = (__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh()).wrapping_sub(1i32); __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_rh(__v2196); }
                                         }
                                     }
                                 }
@@ -6262,87 +6687,87 @@ impl Globals {
                 }
             }
             pdf_dest_node => {
-                // §1565
+                // §1566
                 {
-                    self.check_pdfoutput(1848i32, true);
+                    self.check_pdfoutput(1863i32, true);
                     q = self.cur_list.tail_field;
                     self.new_whatsit(pdf_dest_node, pdf_dest_node_size);
-                    if self.scan_keyword(1828i32) {
+                    if self.scan_keyword(1843i32) {
                         {
                             self.scan_int();
                             if (self.cur_val <= 0i32) {
-                                self.pdf_error(1777i32, 1849i32);
+                                self.pdf_error(1792i32, 1864i32);
                             }
-                            { let __ix2052 = (self.cur_list.tail_field).wrapping_add(6i32); let __v2053 = self.cur_val; __av_mem[crate::ix::U((__ix2052) as usize)].set_hh_rh(__v2053); }
+                            { let __ix2197 = (self.cur_list.tail_field).wrapping_add(6i32); let __v2198 = self.cur_val; __av_mem[crate::ix::U((__ix2197) as usize)].set_hh_rh(__v2198); }
                             j = obj_type_struct_dest;
                         }
                     } else {
                         {
-                            { let __ix2054 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2054) as usize)].set_hh_rh(null); }
+                            { let __ix2199 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2199) as usize)].set_hh_rh(null); }
                             j = obj_type_dest;
                         }
                     }
-                    if self.scan_keyword(1207i32) {
+                    if self.scan_keyword(1208i32) {
                         {
                             self.scan_int();
                             if (self.cur_val <= 0i32) {
-                                self.pdf_error(1777i32, 1831i32);
+                                self.pdf_error(1792i32, 1846i32);
                             }
                             if (self.cur_val > max_halfword) {
-                                self.pdf_error(1777i32, 1044i32);
+                                self.pdf_error(1792i32, 1045i32);
                             }
-                            { let __ix2055 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2056 = self.cur_val; __av_mem[crate::ix::U((__ix2055) as usize)].set_hh_rh(__v2056); }
-                            { let __ix2057 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2057) as usize)].set_hh_b1(0i32); }
+                            { let __ix2200 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2201 = self.cur_val; __av_mem[crate::ix::U((__ix2200) as usize)].set_hh_rh(__v2201); }
+                            { let __ix2202 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2202) as usize)].set_hh_b1(0i32); }
                         }
                     } else {
-                        if self.scan_keyword(1830i32) {
+                        if self.scan_keyword(1845i32) {
                             {
                                 self.scan_pdf_ext_toks();
-                                { let __ix2058 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2059 = self.def_ref; __av_mem[crate::ix::U((__ix2058) as usize)].set_hh_rh(__v2059); }
-                                { let __ix2060 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2060) as usize)].set_hh_b1(1i32); }
+                                { let __ix2203 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2204 = self.def_ref; __av_mem[crate::ix::U((__ix2203) as usize)].set_hh_rh(__v2204); }
+                                { let __ix2205 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2205) as usize)].set_hh_b1(1i32); }
                             }
                         } else {
-                            self.pdf_error(1777i32, 1832i32);
+                            self.pdf_error(1792i32, 1847i32);
                         }
                     }
-                    if self.scan_keyword(1850i32) {
+                    if self.scan_keyword(1865i32) {
                         {
-                            { let __ix2061 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2061) as usize)].set_hh_b0(pdf_dest_xyz); }
-                            if self.scan_keyword(1851i32) {
+                            { let __ix2206 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2206) as usize)].set_hh_b0(pdf_dest_xyz); }
+                            if self.scan_keyword(1866i32) {
                                 {
                                     self.scan_int();
                                     if (self.cur_val > max_halfword) {
-                                        self.pdf_error(1777i32, 1044i32);
+                                        self.pdf_error(1792i32, 1045i32);
                                     }
-                                    { let __ix2062 = (self.cur_list.tail_field).wrapping_add(6i32); let __v2063 = self.cur_val; __av_mem[crate::ix::U((__ix2062) as usize)].set_hh_lh(__v2063); }
+                                    { let __ix2207 = (self.cur_list.tail_field).wrapping_add(6i32); let __v2208 = self.cur_val; __av_mem[crate::ix::U((__ix2207) as usize)].set_hh_lh(__v2208); }
                                 }
                             } else {
-                                { let __ix2064 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2064) as usize)].set_hh_lh(null); }
+                                { let __ix2209 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2209) as usize)].set_hh_lh(null); }
                             }
                         }
                     } else {
-                        if self.scan_keyword(1852i32) {
-                            { let __ix2065 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2065) as usize)].set_hh_b0(pdf_dest_fitbh); }
+                        if self.scan_keyword(1867i32) {
+                            { let __ix2210 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2210) as usize)].set_hh_b0(pdf_dest_fitbh); }
                         } else {
-                            if self.scan_keyword(1853i32) {
-                                { let __ix2066 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2066) as usize)].set_hh_b0(pdf_dest_fitbv); }
+                            if self.scan_keyword(1868i32) {
+                                { let __ix2211 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2211) as usize)].set_hh_b0(pdf_dest_fitbv); }
                             } else {
-                                if self.scan_keyword(1854i32) {
-                                    { let __ix2067 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2067) as usize)].set_hh_b0(pdf_dest_fitb); }
+                                if self.scan_keyword(1869i32) {
+                                    { let __ix2212 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2212) as usize)].set_hh_b0(pdf_dest_fitb); }
                                 } else {
-                                    if self.scan_keyword(1855i32) {
-                                        { let __ix2068 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2068) as usize)].set_hh_b0(pdf_dest_fith); }
+                                    if self.scan_keyword(1870i32) {
+                                        { let __ix2213 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2213) as usize)].set_hh_b0(pdf_dest_fith); }
                                     } else {
-                                        if self.scan_keyword(1856i32) {
-                                            { let __ix2069 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2069) as usize)].set_hh_b0(pdf_dest_fitv); }
+                                        if self.scan_keyword(1871i32) {
+                                            { let __ix2214 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2214) as usize)].set_hh_b0(pdf_dest_fitv); }
                                         } else {
-                                            if self.scan_keyword(1857i32) {
-                                                { let __ix2070 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2070) as usize)].set_hh_b0(pdf_dest_fitr); }
+                                            if self.scan_keyword(1872i32) {
+                                                { let __ix2215 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2215) as usize)].set_hh_b0(pdf_dest_fitr); }
                                             } else {
-                                                if self.scan_keyword(1858i32) {
-                                                    { let __ix2071 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2071) as usize)].set_hh_b0(pdf_dest_fit); }
+                                                if self.scan_keyword(1873i32) {
+                                                    { let __ix2216 = (self.cur_list.tail_field).wrapping_add(5i32); __av_mem[crate::ix::U((__ix2216) as usize)].set_hh_b0(pdf_dest_fit); }
                                                 } else {
-                                                    self.pdf_error(1777i32, 1859i32);
+                                                    self.pdf_error(1792i32, 1874i32);
                                                 }
                                             }
                                         }
@@ -6351,20 +6776,20 @@ impl Globals {
                             }
                         }
                     }
-                    // §469
+                    // §470
                     {
                         self.get_x_token();
                         if (self.cur_cmd != spacer) {
                             self.back_input();
                         }
                     }
-                    // §1565
+                    // §1566
                     if (__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(5i32)) as usize)].hh().b0() == pdf_dest_fitr) {
                         {
                             self.scan_alt_rule();
-                            { let __ix2072 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2073 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2072) as usize)].set_int(__v2073); }
-                            { let __ix2074 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2075 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2074) as usize)].set_int(__v2075); }
-                            { let __ix2076 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2077 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2076) as usize)].set_int(__v2077); }
+                            { let __ix2217 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2218 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2217) as usize)].set_int(__v2218); }
+                            { let __ix2219 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2220 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(3i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2219) as usize)].set_int(__v2220); }
+                            { let __ix2221 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2222 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2221) as usize)].set_int(__v2222); }
                         }
                     }
                     if (__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(5i32)) as usize)].hh().b1() != 0i32) {
@@ -6378,7 +6803,7 @@ impl Globals {
                     }
                     if ((k != 0i32) && (self.obj_tab[crate::ix::U((k) as usize)].int4 != null)) {
                         {
-                            self.warn_dest_dup(__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(5i32)) as usize)].hh().rh(), __av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(5i32)) as usize)].hh().b1(), 1860i32, 1861i32);
+                            self.warn_dest_dup(__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(5i32)) as usize)].hh().rh(), __av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(5i32)) as usize)].hh().b1(), 1875i32, 1876i32);
                             self.flush_node_list(self.cur_list.tail_field);
                             self.cur_list.tail_field = q;
                             __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
@@ -6387,56 +6812,56 @@ impl Globals {
                 }
             }
             pdf_end_link_node => {
-                // §1561
+                // §1562
                 {
-                    self.check_pdfoutput(1843i32, true);
+                    self.check_pdfoutput(1858i32, true);
                     if ((self.cur_list.mode_field).wrapping_abs() == vmode) {
-                        self.pdf_error(1777i32, 1844i32);
+                        self.pdf_error(1792i32, 1859i32);
                     }
                     self.new_whatsit(pdf_end_link_node, small_node_size);
                 }
             }
             pdf_end_thread_node => {
-                // §1569
+                // §1570
                 {
-                    self.check_pdfoutput(1864i32, true);
+                    self.check_pdfoutput(1879i32, true);
                     self.new_whatsit(pdf_end_thread_node, small_node_size);
                 }
             }
             pdf_font_attr_code => {
-                // §1589
+                // §1590
                 {
-                    self.check_pdfoutput(1214i32, true);
+                    self.check_pdfoutput(1215i32, true);
                     self.scan_font_ident();
                     k = self.cur_val;
                     if (k == null_font) {
-                        self.pdf_error(603i32, 883i32);
+                        self.pdf_error(604i32, 884i32);
                     }
                     self.scan_pdf_ext_toks();
-                    { let __v2078 = self.tokens_to_string(self.def_ref); self.pdf_font_attr[crate::ix::U((k) as usize)] = __v2078; }
+                    { let __v2223 = self.tokens_to_string(self.def_ref); self.pdf_font_attr[crate::ix::U((k) as usize)] = __v2223; }
                 }
             }
             pdf_font_expand_code => {
-                // §1528
+                // §1529
                 {
                     if self.bm_on {
                         self.flashtex_bm_font_changed();
                     }
-                    // §1535
+                    // §1536
                     self.read_expand_font();
                 }
             }
             pdf_include_chars_code => {
-                // §1588
+                // §1589
                 {
-                    self.check_pdfoutput(1876i32, true);
+                    self.check_pdfoutput(1891i32, true);
                     self.pdf_include_chars();
                 }
             }
             pdf_info_code => {
-                // §1578
+                // §1579
                 {
-                    self.check_pdfoutput(1869i32, false);
+                    self.check_pdfoutput(1884i32, false);
                     self.scan_pdf_ext_toks();
                     if (__av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int() > 0i32) {
                         self.pdf_info_toks = self.concat_tokens(self.pdf_info_toks, self.def_ref);
@@ -6444,22 +6869,22 @@ impl Globals {
                 }
             }
             pdf_literal_node => {
-                // §1538
+                // §1539
                 {
-                    self.check_pdfoutput(1780i32, true);
-                    if self.scan_keyword(1486i32) {
+                    self.check_pdfoutput(1795i32, true);
+                    if self.scan_keyword(1487i32) {
                         k = pdf_lateliteral_node;
                     } else {
                         k = pdf_literal_node;
                     }
                     self.new_whatsit(k, write_node_size);
-                    if self.scan_keyword(900i32) {
-                        { let __ix2079 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2079) as usize)].set_hh_lh(direct_always); }
+                    if self.scan_keyword(901i32) {
+                        { let __ix2224 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2224) as usize)].set_hh_lh(direct_always); }
                     } else {
-                        if self.scan_keyword(899i32) {
-                            { let __ix2080 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2080) as usize)].set_hh_lh(direct_page); }
+                        if self.scan_keyword(900i32) {
+                            { let __ix2225 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2225) as usize)].set_hh_lh(direct_page); }
                         } else {
-                            { let __ix2081 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2081) as usize)].set_hh_lh(set_origin); }
+                            { let __ix2226 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2226) as usize)].set_hh_lh(set_origin); }
                         }
                     }
                     if (k == pdf_literal_node) {
@@ -6467,13 +6892,13 @@ impl Globals {
                     } else {
                         self.scan_pdf_ext_late_toks();
                     }
-                    { let __ix2082 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2083 = self.def_ref; __av_mem[crate::ix::U((__ix2082) as usize)].set_hh_rh(__v2083); }
+                    { let __ix2227 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2228 = self.def_ref; __av_mem[crate::ix::U((__ix2227) as usize)].set_hh_rh(__v2228); }
                 }
             }
             pdf_colorstack_node => {
-                // §1539
+                // §1540
                 {
-                    self.check_pdfoutput(1781i32, true);
+                    self.check_pdfoutput(1796i32, true);
                     self.scan_int();
                     if (self.cur_val >= self.colorstackused()) {
                         {
@@ -6486,14 +6911,14 @@ impl Globals {
                                 } else {
                                     self.print_nl(264i32);
                                 }
-                                self.print(1782i32);
+                                self.print(1797i32);
                             }
                             self.print_int(((self.cur_val) as i64));
                             {
                                 self.help_ptr = 3i32;
-                                self.help_line[crate::ix::U((2i32) as usize)] = 1783i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1784i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1785i32;
+                                self.help_line[crate::ix::U((2i32) as usize)] = 1798i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1799i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1800i32;
                             }
                             self.error();
                             self.cur_val = 0i32;
@@ -6510,36 +6935,36 @@ impl Globals {
                                 } else {
                                     self.print_nl(264i32);
                                 }
-                                self.print(1786i32);
+                                self.print(1801i32);
                             }
                             {
                                 self.help_ptr = 2i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1784i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1785i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1799i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1800i32;
                             }
                             self.error();
                             self.cur_val = 0i32;
                         }
                     }
-                    if self.scan_keyword(1787i32) {
+                    if self.scan_keyword(1802i32) {
                         {
                             i = colorstack_set;
                             j = pdf_colorstack_setter_node_size;
                         }
                     } else {
-                        if self.scan_keyword(1788i32) {
+                        if self.scan_keyword(1803i32) {
                             {
                                 i = colorstack_push;
                                 j = pdf_colorstack_setter_node_size;
                             }
                         } else {
-                            if self.scan_keyword(1789i32) {
+                            if self.scan_keyword(1804i32) {
                                 {
                                     i = colorstack_pop;
                                     j = pdf_colorstack_getter_node_size;
                                 }
                             } else {
-                                if self.scan_keyword(1790i32) {
+                                if self.scan_keyword(1805i32) {
                                     {
                                         i = colorstack_current;
                                         j = pdf_colorstack_getter_node_size;
@@ -6555,12 +6980,12 @@ impl Globals {
                     if (i >= 0i32) {
                         {
                             self.new_whatsit(pdf_colorstack_node, j);
-                            { let __ix2084 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2085 = self.cur_val; __av_mem[crate::ix::U((__ix2084) as usize)].set_hh_rh(__v2085); }
-                            { let __ix2086 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2086) as usize)].set_hh_lh(i); }
+                            { let __ix2229 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2230 = self.cur_val; __av_mem[crate::ix::U((__ix2229) as usize)].set_hh_rh(__v2230); }
+                            { let __ix2231 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2231) as usize)].set_hh_lh(i); }
                             if (i <= colorstack_data) {
                                 {
                                     self.scan_pdf_ext_toks();
-                                    { let __ix2087 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2088 = self.def_ref; __av_mem[crate::ix::U((__ix2087) as usize)].set_hh_rh(__v2088); }
+                                    { let __ix2232 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2233 = self.def_ref; __av_mem[crate::ix::U((__ix2232) as usize)].set_hh_rh(__v2233); }
                                 }
                             }
                         }
@@ -6575,13 +7000,13 @@ impl Globals {
                                 } else {
                                     self.print_nl(264i32);
                                 }
-                                self.print(1791i32);
+                                self.print(1806i32);
                             }
                             {
                                 self.help_ptr = 3i32;
-                                self.help_line[crate::ix::U((2i32) as usize)] = 1792i32;
-                                self.help_line[crate::ix::U((1i32) as usize)] = 1793i32;
-                                self.help_line[crate::ix::U((0i32) as usize)] = 1794i32;
+                                self.help_line[crate::ix::U((2i32) as usize)] = 1807i32;
+                                self.help_line[crate::ix::U((1i32) as usize)] = 1808i32;
+                                self.help_line[crate::ix::U((0i32) as usize)] = 1809i32;
                             }
                             self.error();
                         }
@@ -6589,68 +7014,68 @@ impl Globals {
                 }
             }
             pdf_setmatrix_node => {
-                // §1540
+                // §1541
                 {
-                    self.check_pdfoutput(1145i32, true);
+                    self.check_pdfoutput(1146i32, true);
                     self.new_whatsit(pdf_setmatrix_node, pdf_setmatrix_node_size);
                     self.scan_pdf_ext_toks();
-                    { let __ix2089 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2090 = self.def_ref; __av_mem[crate::ix::U((__ix2089) as usize)].set_hh_rh(__v2090); }
+                    { let __ix2234 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2235 = self.def_ref; __av_mem[crate::ix::U((__ix2234) as usize)].set_hh_rh(__v2235); }
                 }
             }
             pdf_save_node => {
-                // §1541
+                // §1542
                 {
-                    self.check_pdfoutput(1795i32, true);
+                    self.check_pdfoutput(1810i32, true);
                     self.new_whatsit(pdf_save_node, pdf_save_node_size);
                 }
             }
             pdf_restore_node => {
-                // §1542
+                // §1543
                 {
-                    self.check_pdfoutput(1796i32, true);
+                    self.check_pdfoutput(1811i32, true);
                     self.new_whatsit(pdf_restore_node, pdf_restore_node_size);
                 }
             }
             pdf_map_file_code => {
-                // §1590
+                // §1591
                 {
-                    self.check_pdfoutput(1877i32, true);
+                    self.check_pdfoutput(1892i32, true);
                     self.scan_pdf_ext_toks();
                     self.pdfmapfile(self.def_ref);
                     self.delete_token_ref(self.def_ref);
                 }
             }
             pdf_map_line_code => {
-                // §1591
+                // §1592
                 {
-                    self.check_pdfoutput(1878i32, true);
+                    self.check_pdfoutput(1893i32, true);
                     self.scan_pdf_ext_toks();
                     self.pdfmapline(self.def_ref);
                     self.delete_token_ref(self.def_ref);
                 }
             }
             pdf_names_code => {
-                // §1580
+                // §1581
                 {
-                    self.check_pdfoutput(1873i32, true);
+                    self.check_pdfoutput(1888i32, true);
                     self.scan_pdf_ext_toks();
                     self.pdf_names_toks = self.concat_tokens(self.pdf_names_toks, self.def_ref);
                 }
             }
             pdf_obj_code => {
-                // §1544
+                // §1545
                 {
-                    self.check_pdfoutput(1797i32, true);
-                    if self.scan_keyword(1798i32) {
+                    self.check_pdfoutput(1812i32, true);
+                    if self.scan_keyword(1813i32) {
                         {
-                            // §469
+                            // §470
                             {
                                 self.get_x_token();
                                 if (self.cur_cmd != spacer) {
                                     self.back_input();
                                 }
                             }
-                            // §1544
+                            // §1545
                             self.pdf_obj_count = (self.pdf_obj_count).wrapping_add(1i32);
                             self.pdf_create_obj(obj_type_obj, self.pdf_obj_count);
                             self.pdf_last_obj = self.obj_ptr;
@@ -6658,13 +7083,13 @@ impl Globals {
                     } else {
                         {
                             k = (1i32).wrapping_neg();
-                            if self.scan_keyword(1799i32) {
+                            if self.scan_keyword(1814i32) {
                                 {
                                     self.scan_int();
                                     k = self.cur_val;
                                     if (((k <= 0i32) || (k > self.obj_ptr)) || (self.obj_tab[crate::ix::U((k) as usize)].int4 != 0i32)) {
                                         {
-                                            self.pdf_warning(1797i32, 1800i32, true, true);
+                                            self.pdf_warning(1812i32, 1815i32, true, true);
                                             self.pdf_retval = (1i32).wrapping_neg();
                                             k = (1i32).wrapping_neg();
                                         }
@@ -6679,13 +7104,13 @@ impl Globals {
                                 }
                             }
                             self.obj_tab[crate::ix::U((k) as usize)].int4 = self.pdf_get_mem(pdfmem_obj_size);
-                            if self.scan_keyword(1035i32) {
+                            if self.scan_keyword(1036i32) {
                                 {
                                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32)) as usize)] = 1i32;
-                                    if self.scan_keyword(1801i32) {
+                                    if self.scan_keyword(1816i32) {
                                         {
                                             self.scan_pdf_ext_toks();
-                                            { let __ix2091 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v2092 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2091) as usize)] = __v2092; }
+                                            { let __ix2236 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v2237 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2236) as usize)] = __v2237; }
                                         }
                                     } else {
                                         self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32)) as usize)] = null;
@@ -6694,23 +7119,23 @@ impl Globals {
                             } else {
                                 self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32)) as usize)] = 0i32;
                             }
-                            if self.scan_keyword(888i32) {
+                            if self.scan_keyword(889i32) {
                                 self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)] = 1i32;
                             } else {
                                 self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)] = 0i32;
                             }
                             self.scan_pdf_ext_toks();
-                            { let __ix2093 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(0i32); let __v2094 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2093) as usize)] = __v2094; }
+                            { let __ix2238 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(0i32); let __v2239 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2238) as usize)] = __v2239; }
                             self.pdf_last_obj = k;
                         }
                     }
                 }
             }
             pdf_outline_code => {
-                // §1563
+                // §1564
                 {
-                    self.check_pdfoutput(1845i32, true);
-                    if self.scan_keyword(1801i32) {
+                    self.check_pdfoutput(1860i32, true);
+                    if self.scan_keyword(1816i32) {
                         {
                             self.scan_pdf_ext_toks();
                             r = self.def_ref;
@@ -6758,7 +7183,7 @@ impl Globals {
                                 self.free_node(p, pdf_action_size);
                             }
                         } else {
-                            { let __v2095 = (__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh()).wrapping_sub(1i32); __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_rh(__v2095); }
+                            { let __v2240 = (__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh()).wrapping_sub(1i32); __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].set_hh_rh(__v2240); }
                         }
                     }
                     self.pdf_create_obj(obj_type_outline, 0i32);
@@ -6767,16 +7192,16 @@ impl Globals {
                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(6i32)) as usize)] = j;
                     self.obj_tab[crate::ix::U((k) as usize)].int0 = i;
                     self.pdf_new_obj(obj_type_others, 0i32, 1i32);
-                    { let __a2096_0 = self.tokens_to_string(q); self.pdf_print_str_ln(__a2096_0) };
+                    { let __a2241_0 = self.tokens_to_string(q); self.pdf_print_str_ln(__a2241_0) };
                     self.flush_str(self.last_tokens_string);
                     self.delete_token_ref(q);
                     self.pdf_end_obj();
-                    { let __ix2097 = self.obj_tab[crate::ix::U((k) as usize)].int4; let __v2098 = self.obj_ptr; self.pdf_mem[crate::ix::U((__ix2097) as usize)] = __v2098; }
+                    { let __ix2242 = self.obj_tab[crate::ix::U((k) as usize)].int4; let __v2243 = self.obj_ptr; self.pdf_mem[crate::ix::U((__ix2242) as usize)] = __v2243; }
                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32)) as usize)] = 0i32;
                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)] = 0i32;
                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32)) as usize)] = 0i32;
                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32)) as usize)] = 0i32;
-                    { let __ix2099 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32); let __v2100 = self.pdf_parent_outline; self.pdf_mem[crate::ix::U((__ix2099) as usize)] = __v2100; }
+                    { let __ix2244 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32); let __v2245 = self.pdf_parent_outline; self.pdf_mem[crate::ix::U((__ix2244) as usize)] = __v2245; }
                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(7i32)) as usize)] = r;
                     if (self.pdf_first_outline == 0i32) {
                         self.pdf_first_outline = k;
@@ -6790,7 +7215,7 @@ impl Globals {
                     } else {
                         {
                             self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.pdf_last_outline) as usize)].int4).wrapping_add(3i32)) as usize)] = k;
-                            { let __ix2101 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v2102 = self.pdf_last_outline; self.pdf_mem[crate::ix::U((__ix2101) as usize)] = __v2102; }
+                            { let __ix2246 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v2247 = self.pdf_last_outline; self.pdf_mem[crate::ix::U((__ix2246) as usize)] = __v2247; }
                         }
                     }
                     self.pdf_last_outline = k;
@@ -6823,91 +7248,91 @@ impl Globals {
                 }
             }
             pdf_refobj_node => {
-                // §1546
+                // §1547
                 {
-                    self.check_pdfoutput(1803i32, true);
+                    self.check_pdfoutput(1818i32, true);
                     self.scan_int();
                     self.pdf_check_obj(obj_type_obj, self.cur_val);
                     self.new_whatsit(pdf_refobj_node, pdf_refobj_node_size);
-                    { let __ix2103 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2104 = self.cur_val; __av_mem[crate::ix::U((__ix2103) as usize)].set_hh_lh(__v2104); }
+                    { let __ix2248 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2249 = self.cur_val; __av_mem[crate::ix::U((__ix2248) as usize)].set_hh_lh(__v2249); }
                 }
             }
             pdf_refxform_node => {
-                // §1549
+                // §1550
                 {
-                    self.check_pdfoutput(1807i32, true);
+                    self.check_pdfoutput(1822i32, true);
                     self.scan_int();
                     self.pdf_check_obj(obj_type_xform, self.cur_val);
                     self.new_whatsit(pdf_refxform_node, pdf_refxform_node_size);
-                    { let __ix2105 = (self.cur_list.tail_field).wrapping_add(4i32); let __v2106 = self.cur_val; __av_mem[crate::ix::U((__ix2105) as usize)].set_hh_lh(__v2106); }
-                    { let __ix2107 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2108 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(0i32)) as usize)]; __av_mem[crate::ix::U((__ix2107) as usize)].set_int(__v2108); }
-                    { let __ix2109 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2110 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((__ix2109) as usize)].set_int(__v2110); }
-                    { let __ix2111 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2112 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(2i32)) as usize)]; __av_mem[crate::ix::U((__ix2111) as usize)].set_int(__v2112); }
+                    { let __ix2250 = (self.cur_list.tail_field).wrapping_add(4i32); let __v2251 = self.cur_val; __av_mem[crate::ix::U((__ix2250) as usize)].set_hh_lh(__v2251); }
+                    { let __ix2252 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2253 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(0i32)) as usize)]; __av_mem[crate::ix::U((__ix2252) as usize)].set_int(__v2253); }
+                    { let __ix2254 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2255 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((__ix2254) as usize)].set_int(__v2255); }
+                    { let __ix2256 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2257 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(2i32)) as usize)]; __av_mem[crate::ix::U((__ix2256) as usize)].set_int(__v2257); }
                     if self.bm_rec_on {
                         self.flashtex_bm_obj_ref(obj_type_xform, self.cur_val);
                     }
                 }
             }
             pdf_refximage_node => {
-                // §1554
+                // §1555
                 {
-                    self.check_pdfoutput(1823i32, true);
+                    self.check_pdfoutput(1838i32, true);
                     self.scan_int();
                     self.pdf_check_obj(obj_type_ximage, self.cur_val);
                     self.new_whatsit(pdf_refximage_node, pdf_refximage_node_size);
-                    { let __ix2113 = (self.cur_list.tail_field).wrapping_add(4i32); let __v2114 = self.cur_val; __av_mem[crate::ix::U((__ix2113) as usize)].set_hh_lh(__v2114); }
-                    { let __ix2115 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2116 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(0i32)) as usize)]; __av_mem[crate::ix::U((__ix2115) as usize)].set_int(__v2116); }
-                    { let __ix2117 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2118 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((__ix2117) as usize)].set_int(__v2118); }
-                    { let __ix2119 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2120 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(2i32)) as usize)]; __av_mem[crate::ix::U((__ix2119) as usize)].set_int(__v2120); }
+                    { let __ix2258 = (self.cur_list.tail_field).wrapping_add(4i32); let __v2259 = self.cur_val; __av_mem[crate::ix::U((__ix2258) as usize)].set_hh_lh(__v2259); }
+                    { let __ix2260 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2261 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(0i32)) as usize)]; __av_mem[crate::ix::U((__ix2260) as usize)].set_int(__v2261); }
+                    { let __ix2262 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2263 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(1i32)) as usize)]; __av_mem[crate::ix::U((__ix2262) as usize)].set_int(__v2263); }
+                    { let __ix2264 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2265 = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((self.cur_val) as usize)].int4).wrapping_add(2i32)) as usize)]; __av_mem[crate::ix::U((__ix2264) as usize)].set_int(__v2265); }
                     if self.bm_rec_on {
                         self.flashtex_bm_obj_ref(obj_type_ximage, self.cur_val);
                     }
                 }
             }
             pdf_save_pos_node => {
-                // §1576
+                // §1577
                 {
                     self.new_whatsit(pdf_save_pos_node, small_node_size);
                 }
             }
             pdf_snap_ref_point_node => {
-                // §1572
+                // §1573
                 {
-                    self.check_pdfoutput(1865i32, true);
+                    self.check_pdfoutput(1880i32, true);
                     self.new_whatsit(pdf_snap_ref_point_node, small_node_size);
                 }
             }
             pdf_snapy_comp_node => {
-                // §1575
+                // §1576
                 {
-                    self.check_pdfoutput(1868i32, true);
+                    self.check_pdfoutput(1883i32, true);
                     self.new_whatsit(pdf_snapy_comp_node, small_node_size);
                     self.scan_int();
-                    { let __ix2121 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2122 = self.fix_int(self.cur_val, 0i32, 1000i32); __av_mem[crate::ix::U((__ix2121) as usize)].set_int(__v2122); }
+                    { let __ix2266 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2267 = self.fix_int(self.cur_val, 0i32, 1000i32); __av_mem[crate::ix::U((__ix2266) as usize)].set_int(__v2267); }
                 }
             }
             pdf_snapy_node => {
-                // §1574
+                // §1575
                 {
-                    self.check_pdfoutput(1867i32, true);
+                    self.check_pdfoutput(1882i32, true);
                     {
                         self.prev_tail = self.cur_list.tail_field;
-                        { let __ix2123 = self.cur_list.tail_field; let __v2124 = self.new_snap_node(pdf_snapy_node); __av_mem[crate::ix::U((__ix2123) as usize)].set_hh_rh(__v2124); }
+                        { let __ix2268 = self.cur_list.tail_field; let __v2269 = self.new_snap_node(pdf_snapy_node); __av_mem[crate::ix::U((__ix2268) as usize)].set_hh_rh(__v2269); }
                         self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                     }
                 }
             }
             pdf_start_link_node => {
-                // §1560
+                // §1561
                 {
-                    self.check_pdfoutput(1841i32, true);
+                    self.check_pdfoutput(1856i32, true);
                     if ((self.cur_list.mode_field).wrapping_abs() == vmode) {
-                        self.pdf_error(1777i32, 1842i32);
+                        self.pdf_error(1792i32, 1857i32);
                     }
                     k = self.pdf_new_objnum();
                     self.new_annot_whatsit(pdf_start_link_node, pdf_annot_node_size);
-                    { let __ix2125 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2126 = self.scan_action(); __av_mem[crate::ix::U((__ix2125) as usize)].set_hh_rh(__v2126); }
-                    { let __ix2127 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2127) as usize)].set_int(k); }
+                    { let __ix2270 = (self.cur_list.tail_field).wrapping_add(5i32); let __v2271 = self.scan_action(); __av_mem[crate::ix::U((__ix2270) as usize)].set_hh_rh(__v2271); }
+                    { let __ix2272 = (self.cur_list.tail_field).wrapping_add(6i32); __av_mem[crate::ix::U((__ix2272) as usize)].set_int(k); }
                     self.pdf_last_link = k;
                     if self.bm_rec_on {
                         self.flashtex_bm_new_obj(k);
@@ -6915,25 +7340,25 @@ impl Globals {
                 }
             }
             pdf_start_thread_node => {
-                // §1568
+                // §1569
                 {
-                    self.check_pdfoutput(1863i32, true);
+                    self.check_pdfoutput(1878i32, true);
                     self.new_annot_whatsit(pdf_start_thread_node, pdf_thread_node_size);
                     self.scan_thread_id();
                 }
             }
             pdf_thread_node => {
-                // §1567
+                // §1568
                 {
-                    self.check_pdfoutput(1862i32, true);
+                    self.check_pdfoutput(1877i32, true);
                     self.new_annot_whatsit(pdf_thread_node, pdf_thread_node_size);
                     self.scan_thread_id();
                 }
             }
             pdf_trailer_code => {
-                // §1581
+                // §1582
                 {
-                    self.check_pdfoutput(1874i32, false);
+                    self.check_pdfoutput(1889i32, false);
                     self.scan_pdf_ext_toks();
                     if (__av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int() > 0i32) {
                         self.pdf_trailer_toks = self.concat_tokens(self.pdf_trailer_toks, self.def_ref);
@@ -6941,9 +7366,9 @@ impl Globals {
                 }
             }
             pdf_trailer_id_code => {
-                // §1582
+                // §1583
                 {
-                    self.check_pdfoutput(1875i32, false);
+                    self.check_pdfoutput(1890i32, false);
                     self.scan_pdf_ext_toks();
                     if (__av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int() > 0i32) {
                         self.pdf_trailer_id_toks = self.concat_tokens(self.pdf_trailer_id_toks, self.def_ref);
@@ -6951,25 +7376,25 @@ impl Globals {
                 }
             }
             pdf_xform_code => {
-                // §1548
+                // §1549
                 {
-                    self.check_pdfoutput(1804i32, true);
+                    self.check_pdfoutput(1819i32, true);
                     self.pdf_xform_count = (self.pdf_xform_count).wrapping_add(1i32);
                     self.pdf_create_obj(obj_type_xform, self.pdf_xform_count);
                     k = self.obj_ptr;
                     self.obj_tab[crate::ix::U((k) as usize)].int4 = self.pdf_get_mem(pdfmem_xform_size);
-                    if self.scan_keyword(1801i32) {
+                    if self.scan_keyword(1816i32) {
                         {
                             self.scan_pdf_ext_toks();
-                            { let __ix2128 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32); let __v2129 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2128) as usize)] = __v2129; }
+                            { let __ix2273 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32); let __v2274 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2273) as usize)] = __v2274; }
                         }
                     } else {
                         self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32)) as usize)] = null;
                     }
-                    if self.scan_keyword(1805i32) {
+                    if self.scan_keyword(1820i32) {
                         {
                             self.scan_pdf_ext_toks();
-                            { let __ix2130 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32); let __v2131 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2130) as usize)] = __v2131; }
+                            { let __ix2275 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32); let __v2276 = self.def_ref; self.pdf_mem[crate::ix::U((__ix2275) as usize)] = __v2276; }
                         }
                     } else {
                         self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32)) as usize)] = null;
@@ -6993,21 +7418,21 @@ impl Globals {
                         }
                     }
                     if (p == null) {
-                        self.pdf_error(1777i32, 1806i32);
+                        self.pdf_error(1792i32, 1821i32);
                     }
-                    { let __ix2132 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(0i32); let __v2133 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2132) as usize)] = __v2133; }
-                    { let __ix2134 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32); let __v2135 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2134) as usize)] = __v2135; }
-                    { let __ix2136 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v2137 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2136) as usize)] = __v2137; }
+                    { let __ix2277 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(0i32); let __v2278 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2277) as usize)] = __v2278; }
+                    { let __ix2279 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32); let __v2280 = __av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2279) as usize)] = __v2280; }
+                    { let __ix2281 = (self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32); let __v2282 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); self.pdf_mem[crate::ix::U((__ix2281) as usize)] = __v2282; }
                     self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)] = p;
                     if (self.cur_val < 256i32) {
-                        { let __ix2138 = (box_base).wrapping_add(self.cur_val); __av_eqtb[crate::ix::U(((__ix2138) - 1) as usize)].set_hh_rh(null); }
+                        { let __ix2283 = (box_base).wrapping_add(self.cur_val); __av_eqtb[crate::ix::U(((__ix2283) - 1) as usize)].set_hh_rh(null); }
                     } else {
                         {
                             self.find_sa_element(box_val, self.cur_val, false);
                             if (self.cur_ptr != null) {
                                 {
-                                    { let __ix2139 = (self.cur_ptr).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2139) as usize)].set_hh_rh(null); }
-                                    { let __ix2140 = (self.cur_ptr).wrapping_add(1i32); let __v2141 = (__av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2140) as usize)].set_hh_lh(__v2141); }
+                                    { let __ix2284 = (self.cur_ptr).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2284) as usize)].set_hh_rh(null); }
+                                    { let __ix2285 = (self.cur_ptr).wrapping_add(1i32); let __v2286 = (__av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2285) as usize)].set_hh_lh(__v2286); }
                                     self.delete_sa_ref(self.cur_ptr);
                                 }
                             }
@@ -7017,21 +7442,21 @@ impl Globals {
                 }
             }
             pdf_ximage_code => {
-                // §1553
+                // §1554
                 {
-                    self.check_pdfoutput(1822i32, true);
+                    self.check_pdfoutput(1837i32, true);
                     self.check_pdfversion();
                     self.scan_image();
                 }
             }
             reset_timer_code => {
-                // §1586
+                // §1587
                 {
                     { let mut __f0 = ::core::mem::take(&mut self.epochseconds); let mut __f1 = ::core::mem::take(&mut self.microseconds); let __r = self.seconds_and_micros(&mut __f0, &mut __f1); self.epochseconds = __f0; self.microseconds = __f1; __r };
                 }
             }
             set_random_seed_code => {
-                // §1585
+                // §1586
                 {
                     self.scan_int();
                     if (self.cur_val < 0i32) {
@@ -7042,70 +7467,70 @@ impl Globals {
                 }
             }
             pdf_glyph_to_unicode_code => {
-                // §1592
+                // §1593
                 {
                     self.glyph_to_unicode();
                 }
             }
             pdf_nobuiltin_tounicode_code => {
-                // §1593
+                // §1594
                 {
-                    self.check_pdfoutput(1879i32, true);
+                    self.check_pdfoutput(1894i32, true);
                     self.scan_font_ident();
                     k = self.cur_val;
                     if (k == null_font) {
-                        self.pdf_error(603i32, 883i32);
+                        self.pdf_error(604i32, 884i32);
                     }
-                    { let __v2142 = true; self.pdf_font_nobuiltin_tounicode[crate::ix::U((k) as usize)] = __v2142; }
+                    { let __v2287 = true; self.pdf_font_nobuiltin_tounicode[crate::ix::U((k) as usize)] = __v2287; }
                 }
             }
             pdf_interword_space_on_node => {
-                // §1594
+                // §1595
                 {
-                    self.check_pdfoutput(1880i32, true);
+                    self.check_pdfoutput(1895i32, true);
                     self.new_whatsit(pdf_interword_space_on_node, small_node_size);
                 }
             }
             pdf_interword_space_off_node => {
-                // §1595
+                // §1596
                 {
-                    self.check_pdfoutput(1881i32, true);
+                    self.check_pdfoutput(1896i32, true);
                     self.new_whatsit(pdf_interword_space_off_node, small_node_size);
                 }
             }
             pdf_fake_space_node => {
-                // §1596
+                // §1597
                 {
-                    self.check_pdfoutput(1882i32, true);
+                    self.check_pdfoutput(1897i32, true);
                     self.new_whatsit(pdf_fake_space_node, small_node_size);
                 }
             }
             pdf_running_link_off_node => {
-                // §1597
+                // §1598
                 {
-                    self.check_pdfoutput(1883i32, true);
+                    self.check_pdfoutput(1898i32, true);
                     self.new_whatsit(pdf_running_link_off_node, small_node_size);
                 }
             }
             pdf_running_link_on_node => {
-                // §1598
+                // §1599
                 {
-                    self.check_pdfoutput(1884i32, true);
+                    self.check_pdfoutput(1899i32, true);
                     self.new_whatsit(pdf_running_link_on_node, small_node_size);
                 }
             }
             pdf_space_font_code => {
-                // §1599
+                // §1600
                 {
-                    self.check_pdfoutput(1885i32, true);
+                    self.check_pdfoutput(1900i32, true);
                     self.scan_pdf_ext_toks();
                     self.pdf_space_font_name = self.tokens_to_string(self.def_ref);
                     self.delete_token_ref(self.def_ref);
                 }
             }
             _ => {
-                // §1528
-                self.confusion(1777i32);
+                // §1529
+                self.confusion(1792i32);
             }
         }
     }
@@ -7114,9 +7539,9 @@ impl Globals {
     /// We need a subroutine that comes into play when a character of
     /// a non-`clang` language is being appended to the current paragraph.
     /// @<Declare action...
-    // §1624
+    // §1625
     pub fn fix_language(&mut self) {
-        let mut l: ASCII_code = 0; // §1624
+        let mut l: ASCII_code = 0; // §1625
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -7133,21 +7558,21 @@ impl Globals {
         if (l != self.cur_list.aux_field.hh().rh()) {
             {
                 self.new_whatsit(language_node, small_node_size);
-                { let __ix2143 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2143) as usize)].set_hh_rh(l); }
+                { let __ix2288 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2288) as usize)].set_hh_rh(l); }
                 self.cur_list.aux_field.set_hh_rh(l);
-                { let __ix2144 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2145 = self.norm_min(__av_eqtb[crate::ix::U(((29328i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2144) as usize)].set_hh_b0(__v2145); }
-                { let __ix2146 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2147 = self.norm_min(__av_eqtb[crate::ix::U(((29329i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2146) as usize)].set_hh_b1(__v2147); }
+                { let __ix2289 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2290 = self.norm_min(__av_eqtb[crate::ix::U(((29328i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2289) as usize)].set_hh_b0(__v2290); }
+                { let __ix2291 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2292 = self.norm_min(__av_eqtb[crate::ix::U(((29329i32) - 1) as usize)].int()); __av_mem[crate::ix::U((__ix2291) as usize)].set_hh_b1(__v2292); }
             }
         }
     }
 
     /// @<Declare the procedure called `handle_right_brace`
-    // §1246
+    // §1247
     pub fn handle_right_brace(&mut self) {
-        let mut p: halfword = 0; // §1246
-        let mut q: halfword = 0; // §1246
-        let mut d: scaled = 0; // §1246
-        let mut f: i32 = 0; // §1246
+        let mut p: halfword = 0; // §1247
+        let mut q: halfword = 0; // §1247
+        let mut d: scaled = 0; // §1247
+        let mut f: i32 = 0; // §1247
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -7167,12 +7592,12 @@ impl Globals {
                         } else {
                             self.print_nl(264i32);
                         }
-                        self.print(1468i32);
+                        self.print(1469i32);
                     }
                     {
                         self.help_ptr = 2i32;
-                        self.help_line[crate::ix::U((1i32) as usize)] = 1469i32;
-                        self.help_line[crate::ix::U((0i32) as usize)] = 1470i32;
+                        self.help_line[crate::ix::U((1i32) as usize)] = 1470i32;
+                        self.help_line[crate::ix::U((0i32) as usize)] = 1471i32;
                     }
                     self.error();
                 }
@@ -7181,7 +7606,7 @@ impl Globals {
                 self.extra_right_brace();
             }
             hbox_group => {
-                // §1263
+                // §1264
                 self.package(0i32);
             }
             adjusted_hbox_group => {
@@ -7222,7 +7647,7 @@ impl Globals {
                 }
             }
             insert_group => {
-                // §1278
+                // §1279
                 if ((__av_eqtb[crate::ix::U(((29336i32) - 1) as usize)].int() > 1i32) && (self.cur_list.mode_field == hmode)) {
                     {
                         self.back_input();
@@ -7234,7 +7659,7 @@ impl Globals {
                     {
                         self.end_graf();
                         q = __av_eqtb[crate::ix::U(((26638i32) - 1) as usize)].hh().rh();
-                        { let __v2148 = (__av_mem[crate::ix::U((q) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v2148); }
+                        { let __v2293 = (__av_mem[crate::ix::U((q) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v2293); }
                         d = __av_eqtb[crate::ix::U(((29909i32) - 1) as usize)].int();
                         f = __av_eqtb[crate::ix::U(((29319i32) - 1) as usize)].int();
                         self.unsave();
@@ -7245,27 +7670,27 @@ impl Globals {
                             {
                                 {
                                     self.prev_tail = self.cur_list.tail_field;
-                                    { let __ix2149 = self.cur_list.tail_field; let __v2150 = self.get_node(ins_node_size); __av_mem[crate::ix::U((__ix2149) as usize)].set_hh_rh(__v2150); }
+                                    { let __ix2294 = self.cur_list.tail_field; let __v2295 = self.get_node(ins_node_size); __av_mem[crate::ix::U((__ix2294) as usize)].set_hh_rh(__v2295); }
                                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                 }
-                                { let __ix2151 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2151) as usize)].set_hh_b0(ins_node); }
-                                { let __ix2152 = self.cur_list.tail_field; let __v2153 = (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int()).wrapping_add(0i32); __av_mem[crate::ix::U((__ix2152) as usize)].set_hh_b1(__v2153); }
-                                { let __ix2154 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2155 = (__av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int()); __av_mem[crate::ix::U((__ix2154) as usize)].set_int(__v2155); }
-                                { let __ix2156 = (self.cur_list.tail_field).wrapping_add(4i32); let __v2157 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2156) as usize)].set_hh_lh(__v2157); }
-                                { let __ix2158 = (self.cur_list.tail_field).wrapping_add(4i32); __av_mem[crate::ix::U((__ix2158) as usize)].set_hh_rh(q); }
-                                { let __ix2159 = (self.cur_list.tail_field).wrapping_add(2i32); __av_mem[crate::ix::U((__ix2159) as usize)].set_int(d); }
-                                { let __ix2160 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2160) as usize)].set_int(f); }
+                                { let __ix2296 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2296) as usize)].set_hh_b0(ins_node); }
+                                { let __ix2297 = self.cur_list.tail_field; let __v2298 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2297) as usize)].set_hh_b1(__v2298); }
+                                { let __ix2299 = (self.cur_list.tail_field).wrapping_add(3i32); let __v2300 = (__av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int()).wrapping_add(__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int()); __av_mem[crate::ix::U((__ix2299) as usize)].set_int(__v2300); }
+                                { let __ix2301 = (self.cur_list.tail_field).wrapping_add(4i32); let __v2302 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2301) as usize)].set_hh_lh(__v2302); }
+                                { let __ix2303 = (self.cur_list.tail_field).wrapping_add(4i32); __av_mem[crate::ix::U((__ix2303) as usize)].set_hh_rh(q); }
+                                { let __ix2304 = (self.cur_list.tail_field).wrapping_add(2i32); __av_mem[crate::ix::U((__ix2304) as usize)].set_int(d); }
+                                { let __ix2305 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2305) as usize)].set_int(f); }
                             }
                         } else {
                             {
                                 {
                                     self.prev_tail = self.cur_list.tail_field;
-                                    { let __ix2161 = self.cur_list.tail_field; let __v2162 = self.get_node(small_node_size); __av_mem[crate::ix::U((__ix2161) as usize)].set_hh_rh(__v2162); }
+                                    { let __ix2306 = self.cur_list.tail_field; let __v2307 = self.get_node(small_node_size); __av_mem[crate::ix::U((__ix2306) as usize)].set_hh_rh(__v2307); }
                                     self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                 }
-                                { let __ix2163 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2163) as usize)].set_hh_b0(adjust_node); }
-                                { let __ix2164 = self.cur_list.tail_field; let __v2165 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2164) as usize)].set_hh_b1(__v2165); }
-                                { let __ix2166 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2167 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2166) as usize)].set_int(__v2167); }
+                                { let __ix2308 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2308) as usize)].set_hh_b0(adjust_node); }
+                                { let __ix2309 = self.cur_list.tail_field; let __v2310 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2309) as usize)].set_hh_b1(__v2310); }
+                                { let __ix2311 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2312 = __av_mem[crate::ix::U(((p).wrapping_add(5i32)) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2311) as usize)].set_int(__v2312); }
                                 self.delete_glue_ref(q);
                             }
                         }
@@ -7285,13 +7710,13 @@ impl Globals {
                         self.cur_input.index_field = inserted;
                     }
                 } else {
-                    // §1203
+                    // §1204
                     {
                         while (((self.cur_input.state_field == token_list) && (self.cur_input.loc_field == null)) && (self.cur_input.index_field == backed_up)) {
                             self.end_token_list();
                         }
                         if (((self.cur_input.state_field != token_list) || (self.cur_input.loc_field != null)) || (self.cur_input.index_field != output_text)) {
-                            // §1204
+                            // §1205
                             {
                                 {
                                     self.dg_mark();
@@ -7302,12 +7727,12 @@ impl Globals {
                                     } else {
                                         self.print_nl(264i32);
                                     }
-                                    self.print(687i32);
+                                    self.print(688i32);
                                 }
                                 {
                                     self.help_ptr = 2i32;
-                                    self.help_line[crate::ix::U((1i32) as usize)] = 1437i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1438i32;
+                                    self.help_line[crate::ix::U((1i32) as usize)] = 1438i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1439i32;
                                 }
                                 self.error();
                                 loop {
@@ -7316,7 +7741,7 @@ impl Globals {
                                 }
                             }
                         }
-                        // §1203
+                        // §1204
                         self.output_can_end = true;
                         self.end_token_list();
                         self.output_can_end = false;
@@ -7324,7 +7749,7 @@ impl Globals {
                         self.unsave();
                         self.output_active = false;
                         self.insert_penalties = 0i32;
-                        // §1205
+                        // §1206
                         if (__av_eqtb[crate::ix::U(((27688i32) - 1) as usize)].hh().rh() != null) {
                             {
                                 {
@@ -7336,23 +7761,23 @@ impl Globals {
                                     } else {
                                         self.print_nl(264i32);
                                     }
-                                    self.print(1439i32);
+                                    self.print(1440i32);
                                 }
                                 self.print_esc(430i32);
                                 self.print_int(((255i32) as i64));
                                 {
                                     self.help_ptr = 3i32;
-                                    self.help_line[crate::ix::U((2i32) as usize)] = 1440i32;
-                                    self.help_line[crate::ix::U((1i32) as usize)] = 1441i32;
-                                    self.help_line[crate::ix::U((0i32) as usize)] = 1442i32;
+                                    self.help_line[crate::ix::U((2i32) as usize)] = 1441i32;
+                                    self.help_line[crate::ix::U((1i32) as usize)] = 1442i32;
+                                    self.help_line[crate::ix::U((0i32) as usize)] = 1443i32;
                                 }
                                 self.box_error(255i32);
                             }
                         }
-                        // §1203
+                        // §1204
                         if (self.cur_list.tail_field != self.cur_list.head_field) {
                             {
-                                { let __ix2168 = self.page_tail; let __v2169 = __av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2168) as usize)].set_hh_rh(__v2169); }
+                                { let __ix2313 = self.page_tail; let __v2314 = __av_mem[crate::ix::U((self.cur_list.head_field) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2313) as usize)].set_hh_rh(__v2314); }
                                 self.page_tail = self.cur_list.tail_field;
                             }
                         }
@@ -7361,8 +7786,8 @@ impl Globals {
                                 if (__av_mem[crate::ix::U((contrib_head) as usize)].hh().rh() == null) {
                                     self.nest[crate::ix::U((0i32) as usize)].tail_field = self.page_tail;
                                 }
-                                { let __ix2170 = self.page_tail; let __v2171 = __av_mem[crate::ix::U((contrib_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2170) as usize)].set_hh_rh(__v2171); }
-                                { let __v2172 = __av_mem[crate::ix::U((page_head) as usize)].hh().rh(); __av_mem[crate::ix::U((contrib_head) as usize)].set_hh_rh(__v2172); }
+                                { let __ix2315 = self.page_tail; let __v2316 = __av_mem[crate::ix::U((contrib_head) as usize)].hh().rh(); __av_mem[crate::ix::U((__ix2315) as usize)].set_hh_rh(__v2316); }
+                                { let __v2317 = __av_mem[crate::ix::U((page_head) as usize)].hh().rh(); __av_mem[crate::ix::U((contrib_head) as usize)].set_hh_rh(__v2317); }
                                 __av_mem[crate::ix::U((page_head) as usize)].set_hh_rh(null);
                                 self.page_tail = page_head;
                             }
@@ -7375,11 +7800,11 @@ impl Globals {
                 }
             }
             disc_group => {
-                // §1296
+                // §1297
                 self.build_discretionary();
             }
             align_group => {
-                // §1310
+                // §1311
                 {
                     self.back_input();
                     self.cur_tok = 19610i32;
@@ -7392,19 +7817,19 @@ impl Globals {
                         } else {
                             self.print_nl(264i32);
                         }
-                        self.print(722i32);
+                        self.print(723i32);
                     }
-                    self.print_esc(1321i32);
-                    self.print(723i32);
+                    self.print_esc(1322i32);
+                    self.print(724i32);
                     {
                         self.help_ptr = 1i32;
-                        self.help_line[crate::ix::U((0i32) as usize)] = 1552i32;
+                        self.help_line[crate::ix::U((0i32) as usize)] = 1553i32;
                     }
                     self.ins_error();
                 }
             }
             no_align_group => {
-                // §1311
+                // §1312
                 if ((__av_eqtb[crate::ix::U(((29336i32) - 1) as usize)].int() > 1i32) && (self.cur_list.mode_field == hmode)) {
                     {
                         self.back_input();
@@ -7421,7 +7846,7 @@ impl Globals {
                 }
             }
             vcenter_group => {
-                // §1346
+                // §1347
                 if ((__av_eqtb[crate::ix::U(((29336i32) - 1) as usize)].int() > 0i32) && (self.cur_list.mode_field == hmode)) {
                     {
                         self.back_input();
@@ -7438,27 +7863,27 @@ impl Globals {
                         self.pop_nest();
                         {
                             self.prev_tail = self.cur_list.tail_field;
-                            { let __ix2173 = self.cur_list.tail_field; let __v2174 = self.new_noad(); __av_mem[crate::ix::U((__ix2173) as usize)].set_hh_rh(__v2174); }
+                            { let __ix2318 = self.cur_list.tail_field; let __v2319 = self.new_noad(); __av_mem[crate::ix::U((__ix2318) as usize)].set_hh_rh(__v2319); }
                             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                         }
-                        { let __ix2175 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2175) as usize)].set_hh_b0(vcenter_noad); }
-                        { let __ix2176 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2176) as usize)].set_hh_rh(sub_box); }
-                        { let __ix2177 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2177) as usize)].set_hh_lh(p); }
+                        { let __ix2320 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2320) as usize)].set_hh_b0(vcenter_noad); }
+                        { let __ix2321 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2321) as usize)].set_hh_rh(sub_box); }
+                        { let __ix2322 = (self.cur_list.tail_field).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2322) as usize)].set_hh_lh(p); }
                     }
                 }
             }
             math_choice_group => {
-                // §1351
+                // §1352
                 self.build_choices();
             }
             math_group => {
-                // §1364
+                // §1365
                 {
                     self.unsave();
                     self.save_ptr = (self.save_ptr).wrapping_sub(1i32);
-                    { let __ix2178 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2178) as usize)].set_hh_rh(sub_mlist); }
+                    { let __ix2323 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2323) as usize)].set_hh_rh(sub_mlist); }
                     p = self.fin_mlist(null);
-                    { let __ix2179 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2179) as usize)].set_hh_lh(p); }
+                    { let __ix2324 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2324) as usize)].set_hh_lh(p); }
                     if (p != null) {
                         if (__av_mem[crate::ix::U((p) as usize)].hh().rh() == null) {
                             if (__av_mem[crate::ix::U((p) as usize)].hh().b0() == ord_noad) {
@@ -7466,7 +7891,7 @@ impl Globals {
                                     if (__av_mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].hh().rh() == empty) {
                                         if (__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().rh() == empty) {
                                             {
-                                                { let __ix2180 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int(); let __v2181 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh(); __av_mem[crate::ix::U((__ix2180) as usize)].set_hh(__v2181); }
+                                                { let __ix2325 = self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int(); let __v2326 = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh(); __av_mem[crate::ix::U((__ix2325) as usize)].set_hh(__v2326); }
                                                 self.free_node(p, noad_size);
                                             }
                                         }
@@ -7476,7 +7901,7 @@ impl Globals {
                                 if (__av_mem[crate::ix::U((p) as usize)].hh().b0() == accent_noad) {
                                     if (self.save_stack[crate::ix::U(((self.save_ptr).wrapping_add(0i32)) as usize)].int() == (self.cur_list.tail_field).wrapping_add(1i32)) {
                                         if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b0() == ord_noad) {
-                                            // §1365
+                                            // §1366
                                             {
                                                 q = self.cur_list.head_field;
                                                 while (__av_mem[crate::ix::U((q) as usize)].hh().rh() != self.cur_list.tail_field) {
@@ -7495,19 +7920,19 @@ impl Globals {
                 }
             }
             _ => {
-                // §1246
-                self.confusion(1471i32);
+                // §1247
+                self.confusion(1472i32);
             }
         }
     }
 
     /// We shall concentrate first on the inner loop of `main_control`, deferring
     /// consideration of the other cases until later.
-    // §1207
+    // §1208
     pub fn main_control(&mut self) {
-        let mut t: i32 = 0; // §1207
-        let mut tmp_k1: halfword = 0; // §1207
-        let mut tmp_k2: halfword = 0; // §1207
+        let mut t: i32 = 0; // §1208
+        let mut tmp_k1: halfword = 0; // §1208
+        let mut tmp_k2: halfword = 0; // §1208
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -7550,7 +7975,7 @@ impl Globals {
             }
             if __goto_1 <= 2 { // reswitch
                 if (self.interrupt != 0i32) {
-                    // §1208
+                    // §1209
                     if self.OK_to_interrupt {
                         {
                             self.back_input();
@@ -7566,7 +7991,7 @@ impl Globals {
                 if (__av_eqtb[crate::ix::U(((29313i32) - 1) as usize)].int() > 0i32) {
                     self.show_cur_cmd_chr();
                 }
-                // §1207
+                // §1208
                 if self.intr_rec_on {
                     self.flashtex_intr_command();
                 }
@@ -7604,18 +8029,18 @@ impl Globals {
                         { __goto_1 = 14; continue 'l_dispatch_1; }
                     }
                     1 | 105 | 209 | 11 | 219 | 274 => {
-                        // §1223
+                        // §1224
                     }
                     40 | 144 | 248 => {
                         {
                             if (self.cur_chr == 0i32) {
                                 {
-                                    // §432
+                                    // §433
                                     loop {
                                         self.get_x_token();
                                         if (self.cur_cmd != spacer) { break; }
                                     }
-                                    // §1223
+                                    // §1224
                                     { __goto_1 = 2; continue 'l_dispatch_1; }
                                 }
                             } else {
@@ -7653,15 +8078,15 @@ impl Globals {
                         self.insert_dollar_sign();
                     }
                     37 | 140 | 244 => {
-                        // §1234
+                        // §1235
                         {
                             {
                                 self.prev_tail = self.cur_list.tail_field;
-                                { let __ix2182 = self.cur_list.tail_field; let __v2183 = self.scan_rule_spec(); __av_mem[crate::ix::U((__ix2182) as usize)].set_hh_rh(__v2183); }
+                                { let __ix2327 = self.cur_list.tail_field; let __v2328 = self.scan_rule_spec(); __av_mem[crate::ix::U((__ix2327) as usize)].set_hh_rh(__v2328); }
                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                             }
                             if ((self.cur_list.mode_field).wrapping_abs() == vmode) {
-                                { let __v2184 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); self.cur_list.aux_field.set_int(__v2184); }
+                                { let __v2329 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); self.cur_list.aux_field.set_int(__v2329); }
                             } else {
                                 if ((self.cur_list.mode_field).wrapping_abs() == hmode) {
                                     self.cur_list.aux_field.set_hh_lh(1000i32);
@@ -7670,14 +8095,14 @@ impl Globals {
                         }
                     }
                     28 | 131 | 235 | 237 => {
-                        // §1235
+                        // §1236
                         self.append_glue();
                     }
                     30 | 134 | 238 | 239 => {
                         self.append_kern();
                     }
                     2 | 106 => {
-                        // §1241
+                        // §1242
                         self.new_save_level(simple_group);
                     }
                     62 | 166 | 270 => {
@@ -7691,11 +8116,11 @@ impl Globals {
                         }
                     }
                     3 | 107 | 211 => {
-                        // §1245
+                        // §1246
                         self.handle_right_brace();
                     }
                     22 | 127 | 231 => {
-                        // §1251
+                        // §1252
                         {
                             t = self.cur_chr;
                             self.scan_dimen(false, false, false);
@@ -7713,7 +8138,7 @@ impl Globals {
                         self.begin_box(0i32);
                     }
                     44 => {
-                        // §1268
+                        // §1269
                         self.new_graf((self.cur_chr > 0i32));
                     }
                     12 | 13 | 17 | 69 | 4 | 24 | 36 | 46 | 48 | 27 | 34 | 65 | 66 => {
@@ -7723,13 +8148,13 @@ impl Globals {
                         }
                     }
                     148 | 252 => {
-                        // §1270
+                        // §1271
                         if (self.cur_chr != 2i32) {
                             self.indent_in_hmode();
                         }
                     }
                     14 => {
-                        // §1272
+                        // §1273
                         {
                             self.normal_paragraph();
                             if (self.cur_list.mode_field > 0i32) {
@@ -7752,45 +8177,45 @@ impl Globals {
                         self.head_for_vmode();
                     }
                     38 | 142 | 246 | 143 | 247 => {
-                        // §1275
+                        // §1276
                         self.begin_insert_or_adjust();
                     }
                     19 | 123 | 227 => {
                         self.make_mark();
                     }
                     43 | 147 | 251 => {
-                        // §1280
+                        // §1281
                         self.append_penalty();
                     }
                     26 | 130 | 234 => {
-                        // §1282
+                        // §1283
                         self.delete_last();
                     }
                     25 | 128 | 232 => {
-                        // §1287
+                        // §1288
                         self.unpackage();
                     }
                     149 => {
-                        // §1290
+                        // §1291
                         self.append_italic_correction();
                     }
                     253 => {
                         {
                             self.prev_tail = self.cur_list.tail_field;
-                            { let __ix2185 = self.cur_list.tail_field; let __v2186 = self.new_kern(0i32); __av_mem[crate::ix::U((__ix2185) as usize)].set_hh_rh(__v2186); }
+                            { let __ix2330 = self.cur_list.tail_field; let __v2331 = self.new_kern(0i32); __av_mem[crate::ix::U((__ix2330) as usize)].set_hh_rh(__v2331); }
                             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                         }
                     }
                     152 | 256 => {
-                        // §1294
+                        // §1295
                         self.append_discretionary();
                     }
                     150 => {
-                        // §1300
+                        // §1301
                         self.make_accent();
                     }
                     6 | 110 | 214 | 5 | 109 | 213 => {
-                        // §1304
+                        // §1305
                         self.align_error();
                     }
                     35 | 139 | 243 => {
@@ -7800,23 +8225,23 @@ impl Globals {
                         self.omit_error();
                     }
                     33 => {
-                        // §1308
+                        // §1309
                         self.init_align();
                     }
                     138 => {
-                        // §1703
+                        // §1704
                         if (self.cur_chr > 0i32) {
                             {
                                 if self.eTeX_enabled((__av_eqtb[crate::ix::U(((29389i32) - 1) as usize)].int() > 0i32), self.cur_cmd, self.cur_chr) {
                                     {
                                         self.prev_tail = self.cur_list.tail_field;
-                                        { let __ix2187 = self.cur_list.tail_field; let __v2188 = self.new_math(0i32, self.cur_chr); __av_mem[crate::ix::U((__ix2187) as usize)].set_hh_rh(__v2188); }
+                                        { let __ix2332 = self.cur_list.tail_field; let __v2333 = self.new_math(0i32, self.cur_chr); __av_mem[crate::ix::U((__ix2332) as usize)].set_hh_rh(__v2333); }
                                         self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                     }
                                 }
                             }
                         } else {
-                            // §1308
+                            // §1309
                             self.init_align();
                         }
                     }
@@ -7842,15 +8267,15 @@ impl Globals {
                         }
                     }
                     68 | 172 | 276 => {
-                        // §1312
+                        // §1313
                         self.cs_error();
                     }
                     108 => {
-                        // §1315
+                        // §1316
                         self.init_math();
                     }
                     257 => {
-                        // §1318
+                        // §1319
                         if self.privileged() {
                             if (self.cur_group == math_shift_group) {
                                 self.start_eq_no();
@@ -7860,11 +8285,11 @@ impl Globals {
                         }
                     }
                     210 => {
-                        // §1328
+                        // §1329
                         {
                             {
                                 self.prev_tail = self.cur_list.tail_field;
-                                { let __ix2189 = self.cur_list.tail_field; let __v2190 = self.new_noad(); __av_mem[crate::ix::U((__ix2189) as usize)].set_hh_rh(__v2190); }
+                                { let __ix2334 = self.cur_list.tail_field; let __v2335 = self.new_noad(); __av_mem[crate::ix::U((__ix2334) as usize)].set_hh_rh(__v2335); }
                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                             }
                             self.back_input();
@@ -7872,14 +8297,14 @@ impl Globals {
                         }
                     }
                     220 | 221 | 277 => {
-                        // §1332
-                        self.set_math_char((__av_eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh()).wrapping_sub(0i32));
+                        // §1333
+                        self.set_math_char(__av_eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh());
                     }
                     225 => {
                         {
                             self.scan_char_num();
                             self.cur_chr = self.cur_val;
-                            self.set_math_char((__av_eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh()).wrapping_sub(0i32));
+                            self.set_math_char(__av_eqtb[crate::ix::U((((math_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh());
                         }
                     }
                     226 => {
@@ -7898,14 +8323,14 @@ impl Globals {
                         }
                     }
                     259 => {
-                        // §1336
+                        // §1337
                         {
                             {
                                 self.prev_tail = self.cur_list.tail_field;
-                                { let __ix2191 = self.cur_list.tail_field; let __v2192 = self.new_noad(); __av_mem[crate::ix::U((__ix2191) as usize)].set_hh_rh(__v2192); }
+                                { let __ix2336 = self.cur_list.tail_field; let __v2337 = self.new_noad(); __av_mem[crate::ix::U((__ix2336) as usize)].set_hh_rh(__v2337); }
                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                             }
-                            { let __ix2193 = self.cur_list.tail_field; let __v2194 = self.cur_chr; __av_mem[crate::ix::U((__ix2193) as usize)].set_hh_b0(__v2194); }
+                            { let __ix2338 = self.cur_list.tail_field; let __v2339 = self.cur_chr; __av_mem[crate::ix::U((__ix2338) as usize)].set_hh_b0(__v2339); }
                             self.scan_math((self.cur_list.tail_field).wrapping_add(1i32));
                         }
                     }
@@ -7913,31 +8338,31 @@ impl Globals {
                         self.math_limit_switch();
                     }
                     275 => {
-                        // §1340
+                        // §1341
                         self.math_radical();
                     }
                     254 | 255 => {
-                        // §1342
+                        // §1343
                         self.math_ac();
                     }
                     265 => {
-                        // §1345
+                        // §1346
                         {
                             self.scan_spec(vcenter_group, false);
                             self.normal_paragraph();
                             self.push_nest();
                             self.cur_list.mode_field = (1i32).wrapping_neg();
-                            { let __v2195 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); self.cur_list.aux_field.set_int(__v2195); }
+                            { let __v2340 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); self.cur_list.aux_field.set_int(__v2340); }
                             if (__av_eqtb[crate::ix::U(((every_vbox_loc) - 1) as usize)].hh().rh() != null) {
                                 self.begin_token_list(__av_eqtb[crate::ix::U(((every_vbox_loc) - 1) as usize)].hh().rh(), every_vbox_text);
                             }
                         }
                     }
                     262 => {
-                        // §1349
+                        // §1350
                         {
                             self.prev_tail = self.cur_list.tail_field;
-                            { let __ix2196 = self.cur_list.tail_field; let __v2197 = self.new_style(self.cur_chr); __av_mem[crate::ix::U((__ix2196) as usize)].set_hh_rh(__v2197); }
+                            { let __ix2341 = self.cur_list.tail_field; let __v2342 = self.new_style(self.cur_chr); __av_mem[crate::ix::U((__ix2341) as usize)].set_hh_rh(__v2342); }
                             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                         }
                     }
@@ -7945,29 +8370,29 @@ impl Globals {
                         {
                             {
                                 self.prev_tail = self.cur_list.tail_field;
-                                { let __ix2198 = self.cur_list.tail_field; let __v2199 = self.new_glue(zero_glue); __av_mem[crate::ix::U((__ix2198) as usize)].set_hh_rh(__v2199); }
+                                { let __ix2343 = self.cur_list.tail_field; let __v2344 = self.new_glue(zero_glue); __av_mem[crate::ix::U((__ix2343) as usize)].set_hh_rh(__v2344); }
                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                             }
-                            { let __ix2200 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2200) as usize)].set_hh_b1(cond_math_glue); }
+                            { let __ix2345 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2345) as usize)].set_hh_b1(cond_math_glue); }
                         }
                     }
                     263 => {
                         self.append_choices();
                     }
                     217 | 216 => {
-                        // §1353
+                        // §1354
                         self.sub_sup();
                     }
                     261 => {
-                        // §1358
+                        // §1359
                         self.math_fraction();
                     }
                     258 => {
-                        // §1368
+                        // §1369
                         self.math_left_right();
                     }
                     212 => {
-                        // §1371
+                        // §1372
                         if (self.cur_group == math_shift_group) {
                             self.after_math();
                         } else {
@@ -7975,18 +8400,18 @@ impl Globals {
                         }
                     }
                     72 | 176 | 280 | 73 | 177 | 281 | 74 | 178 | 282 | 75 | 179 | 283 | 76 | 180 | 284 | 77 | 181 | 285 | 78 | 182 | 286 | 79 | 183 | 287 | 80 | 184 | 288 | 81 | 185 | 289 | 82 | 186 | 290 | 83 | 187 | 291 | 84 | 188 | 292 | 85 | 189 | 293 | 86 | 190 | 294 | 87 | 191 | 295 | 88 | 192 | 296 | 89 | 193 | 297 | 102 | 206 | 310 | 103 | 207 | 311 | 90 | 194 | 298 | 91 | 195 | 299 | 92 | 196 | 300 | 93 | 197 | 301 | 94 | 198 | 302 | 95 | 199 | 303 | 96 | 200 | 304 | 97 | 201 | 305 | 98 | 202 | 306 | 99 | 203 | 307 | 100 | 204 | 308 | 101 | 205 | 309 => {
-                        // §1388
+                        // §1389
                         self.prefixed_command();
                     }
                     41 | 145 | 249 => {
-                        // §1446
+                        // §1447
                         {
                             self.get_token();
                             self.after_token = self.cur_tok;
                         }
                     }
                     42 | 146 | 250 => {
-                        // §1449
+                        // §1450
                         {
                             self.get_token();
                             self.save_for_after(self.cur_tok);
@@ -8004,47 +8429,47 @@ impl Globals {
                         }
                     }
                     61 | 165 | 269 => {
-                        // §1452
+                        // §1453
                         self.open_or_close_in();
                     }
                     59 | 163 | 267 => {
-                        // §1454
+                        // §1455
                         self.issue_message();
                     }
                     58 | 162 | 266 => {
-                        // §1463
+                        // §1464
                         self.shift_case();
                     }
                     20 | 124 | 228 => {
-                        // §1468
+                        // §1469
                         self.show_whatever();
                     }
                     60 | 164 | 268 => {
-                        // §1527
+                        // §1528
                         self.do_extension();
                     }
                     _ => {}
                 }
-                // §1207
+                // §1208
                 { __goto_1 = 1; continue 'l_dispatch_1; }
             }
             if __goto_1 <= 3 { // L70
                 self.main_s = __av_eqtb[crate::ix::U((((sf_code_base).wrapping_add(self.cur_chr)) - 1) as usize)].hh().rh();
-                // §1211
+                // §1212
                 if (self.main_s == 1000i32) {
                     self.cur_list.aux_field.set_hh_lh(1000i32);
                 } else {
                     if (self.main_s < 1000i32) {
                         {
                             if (self.main_s > 0i32) {
-                                { let __v2201 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2201); }
+                                { let __v2346 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2346); }
                             }
                         }
                     } else {
                         if (self.cur_list.aux_field.hh().lh() < 1000i32) {
                             self.cur_list.aux_field.set_hh_lh(1000i32);
                         } else {
-                            { let __v2202 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2202); }
+                            { let __v2347 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2347); }
                         }
                     }
                 }
@@ -8064,24 +8489,24 @@ impl Globals {
                     } else {
                         {
                             self.avail = __av_mem[crate::ix::U((self.lig_stack) as usize)].hh().rh();
-                            { let __ix2203 = self.lig_stack; __av_mem[crate::ix::U((__ix2203) as usize)].set_hh_rh(null); }
+                            { let __ix2348 = self.lig_stack; __av_mem[crate::ix::U((__ix2348) as usize)].set_hh_rh(null); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
                             self.dl_new_node(self.lig_stack);
                         }
                     }
                 }
-                { let __ix2204 = self.lig_stack; let __v2205 = self.main_f; __av_mem[crate::ix::U((__ix2204) as usize)].set_hh_b0(__v2205); }
-                self.cur_l = (self.cur_chr).wrapping_add(0i32);
-                { let __ix2206 = self.lig_stack; let __v2207 = self.cur_l; __av_mem[crate::ix::U((__ix2206) as usize)].set_hh_b1(__v2207); }
+                { let __ix2349 = self.lig_stack; let __v2350 = self.main_f; __av_mem[crate::ix::U((__ix2349) as usize)].set_hh_b0(__v2350); }
+                self.cur_l = self.cur_chr;
+                { let __ix2351 = self.lig_stack; let __v2352 = self.cur_l; __av_mem[crate::ix::U((__ix2351) as usize)].set_hh_b1(__v2352); }
                 self.cur_q = self.cur_list.tail_field;
                 tmp_k1 = self.get_auto_kern(self.main_f, non_char, self.cur_l);
-                // §1217
+                // §1218
                 if (tmp_k1 != null) {
                     {
                         if (self.cur_l < non_char) {
                             {
                                 if (__av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh() > null) {
-                                    if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == (self.hyphen_char[crate::ix::U((self.main_f) as usize)]).wrapping_add(0i32)) {
+                                    if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == self.hyphen_char[crate::ix::U((self.main_f) as usize)]) {
                                         self.ins_disc = true;
                                     }
                                 }
@@ -8090,14 +8515,14 @@ impl Globals {
                                         self.main_p = self.new_ligature(self.main_f, self.cur_l, __av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh());
                                         if self.lft_hit {
                                             {
-                                                { let __ix2208 = self.main_p; __av_mem[crate::ix::U((__ix2208) as usize)].set_hh_b1(2i32); }
+                                                { let __ix2353 = self.main_p; __av_mem[crate::ix::U((__ix2353) as usize)].set_hh_b1(2i32); }
                                                 self.lft_hit = false;
                                             }
                                         }
                                         if self.rt_hit {
                                             if (self.lig_stack == null) {
                                                 {
-                                                    { let __ix2209 = self.main_p; let __v2210 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2209) as usize)].set_hh_b1(__v2210); }
+                                                    { let __ix2354 = self.main_p; let __v2355 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2354) as usize)].set_hh_b1(__v2355); }
                                                     self.rt_hit = false;
                                                 }
                                             }
@@ -8109,14 +8534,14 @@ impl Globals {
                                         }
                                         if (tmp_k2 == null) {
                                             {
-                                                { let __ix2211 = self.cur_q; let __v2212 = self.main_p; __av_mem[crate::ix::U((__ix2211) as usize)].set_hh_rh(__v2212); }
+                                                { let __ix2356 = self.cur_q; let __v2357 = self.main_p; __av_mem[crate::ix::U((__ix2356) as usize)].set_hh_rh(__v2357); }
                                                 self.cur_list.tail_field = self.main_p;
                                                 self.ligature_present = false;
                                             }
                                         } else {
                                             {
-                                                { let __ix2213 = self.cur_q; __av_mem[crate::ix::U((__ix2213) as usize)].set_hh_rh(tmp_k2); }
-                                                { let __v2214 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2214); }
+                                                { let __ix2358 = self.cur_q; __av_mem[crate::ix::U((__ix2358) as usize)].set_hh_rh(tmp_k2); }
+                                                { let __v2359 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2359); }
                                                 self.cur_list.tail_field = self.main_p;
                                                 self.ligature_present = false;
                                             }
@@ -8129,7 +8554,7 @@ impl Globals {
                                         if (self.cur_list.mode_field > 0i32) {
                                             {
                                                 self.prev_tail = self.cur_list.tail_field;
-                                                { let __ix2215 = self.cur_list.tail_field; let __v2216 = self.new_disc(); __av_mem[crate::ix::U((__ix2215) as usize)].set_hh_rh(__v2216); }
+                                                { let __ix2360 = self.cur_list.tail_field; let __v2361 = self.new_disc(); __av_mem[crate::ix::U((__ix2360) as usize)].set_hh_rh(__v2361); }
                                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                             }
                                         }
@@ -8141,22 +8566,22 @@ impl Globals {
                         if ((((((!(self.cur_list.tail_field >= self.hi_mem_min)) && (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b0() == disc_node)) && (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == 0i32)) && (__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(1i32)) as usize)].hh().lh() == null)) && (__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(1i32)) as usize)].hh().rh() == null)) && (__av_mem[crate::ix::U((self.prev_tail) as usize)].hh().rh() == self.cur_list.tail_field)) {
                             {
                                 {
-                                    { let __ix2217 = self.prev_tail; __av_mem[crate::ix::U((__ix2217) as usize)].set_hh_rh(tmp_k1); }
-                                    { let __v2218 = self.cur_list.tail_field; __av_mem[crate::ix::U((tmp_k1) as usize)].set_hh_rh(__v2218); }
+                                    { let __ix2362 = self.prev_tail; __av_mem[crate::ix::U((__ix2362) as usize)].set_hh_rh(tmp_k1); }
+                                    { let __v2363 = self.cur_list.tail_field; __av_mem[crate::ix::U((tmp_k1) as usize)].set_hh_rh(__v2363); }
                                     self.prev_tail = tmp_k1;
                                 }
                             }
                         } else {
                             {
                                 self.prev_tail = self.cur_list.tail_field;
-                                { let __ix2219 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2219) as usize)].set_hh_rh(tmp_k1); }
+                                { let __ix2364 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2364) as usize)].set_hh_rh(tmp_k1); }
                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                             }
                         }
                         { __goto_1 = 5; continue 'l_dispatch_1; }
                     }
                 }
-                // §1211
+                // §1212
                 if self.cancel_boundary {
                     {
                         self.cancel_boundary = false;
@@ -8174,10 +8599,10 @@ impl Globals {
             }
             if __goto_1 <= 4 { // L80
                 if (self.cur_l < non_char) {
-                    // §1212
+                    // §1213
                     {
                         if (__av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh() > null) {
-                            if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == (self.hyphen_char[crate::ix::U((self.main_f) as usize)]).wrapping_add(0i32)) {
+                            if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == self.hyphen_char[crate::ix::U((self.main_f) as usize)]) {
                                 self.ins_disc = true;
                             }
                         }
@@ -8186,14 +8611,14 @@ impl Globals {
                                 self.main_p = self.new_ligature(self.main_f, self.cur_l, __av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh());
                                 if self.lft_hit {
                                     {
-                                        { let __ix2220 = self.main_p; __av_mem[crate::ix::U((__ix2220) as usize)].set_hh_b1(2i32); }
+                                        { let __ix2365 = self.main_p; __av_mem[crate::ix::U((__ix2365) as usize)].set_hh_b1(2i32); }
                                         self.lft_hit = false;
                                     }
                                 }
                                 if self.rt_hit {
                                     if (self.lig_stack == null) {
                                         {
-                                            { let __ix2221 = self.main_p; let __v2222 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2221) as usize)].set_hh_b1(__v2222); }
+                                            { let __ix2366 = self.main_p; let __v2367 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2366) as usize)].set_hh_b1(__v2367); }
                                             self.rt_hit = false;
                                         }
                                     }
@@ -8205,14 +8630,14 @@ impl Globals {
                                 }
                                 if (tmp_k2 == null) {
                                     {
-                                        { let __ix2223 = self.cur_q; let __v2224 = self.main_p; __av_mem[crate::ix::U((__ix2223) as usize)].set_hh_rh(__v2224); }
+                                        { let __ix2368 = self.cur_q; let __v2369 = self.main_p; __av_mem[crate::ix::U((__ix2368) as usize)].set_hh_rh(__v2369); }
                                         self.cur_list.tail_field = self.main_p;
                                         self.ligature_present = false;
                                     }
                                 } else {
                                     {
-                                        { let __ix2225 = self.cur_q; __av_mem[crate::ix::U((__ix2225) as usize)].set_hh_rh(tmp_k2); }
-                                        { let __v2226 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2226); }
+                                        { let __ix2370 = self.cur_q; __av_mem[crate::ix::U((__ix2370) as usize)].set_hh_rh(tmp_k2); }
+                                        { let __v2371 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2371); }
                                         self.cur_list.tail_field = self.main_p;
                                         self.ligature_present = false;
                                     }
@@ -8225,7 +8650,7 @@ impl Globals {
                                 if (self.cur_list.mode_field > 0i32) {
                                     {
                                         self.prev_tail = self.cur_list.tail_field;
-                                        { let __ix2227 = self.cur_list.tail_field; let __v2228 = self.new_disc(); __av_mem[crate::ix::U((__ix2227) as usize)].set_hh_rh(__v2228); }
+                                        { let __ix2372 = self.cur_list.tail_field; let __v2373 = self.new_disc(); __av_mem[crate::ix::U((__ix2372) as usize)].set_hh_rh(__v2373); }
                                         self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                     }
                                 }
@@ -8235,9 +8660,9 @@ impl Globals {
                 }
             }
             if __goto_1 <= 5 { // L90
-                // §1211
+                // §1212
                 if (self.lig_stack == null) {
-                    // §1213
+                    // §1214
                     { __goto_1 = 2; continue 'l_dispatch_1; }
                 }
                 self.cur_q = self.cur_list.tail_field;
@@ -8249,36 +8674,36 @@ impl Globals {
                 }
             }
             if __goto_1 <= 7 { // L92
-                if ((self.cur_chr < self.font_bc[crate::ix::U((self.main_f) as usize)]) || (self.cur_chr > self.font_ec[crate::ix::U((self.main_f) as usize)])) {
+                if ((self.effective_char(false, self.main_f, self.cur_chr) > self.font_ec[crate::ix::U((self.main_f) as usize)]) || (self.effective_char(false, self.main_f, self.cur_chr) < self.font_bc[crate::ix::U((self.main_f) as usize)])) {
                     {
                         self.char_warning(self.main_f, self.cur_chr);
                         {
-                            { let __ix2229 = self.lig_stack; let __v2230 = self.avail; __av_mem[crate::ix::U((__ix2229) as usize)].set_hh_rh(__v2230); }
+                            { let __ix2374 = self.lig_stack; let __v2375 = self.avail; __av_mem[crate::ix::U((__ix2374) as usize)].set_hh_rh(__v2375); }
                             self.avail = self.lig_stack;
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                         }
                         { __goto_1 = 1; continue 'l_dispatch_1; }
                     }
                 }
-                self.main_i = self.font_info[crate::ix::U(((self.char_base[crate::ix::U((self.main_f) as usize)]).wrapping_add(self.cur_l)) as usize)].qqqq();
+                self.main_i = self.effective_char_info(self.main_f, self.cur_l);
                 if (!(self.main_i.b0() > min_quarterword)) {
                     {
                         self.char_warning(self.main_f, self.cur_chr);
                         {
-                            { let __ix2231 = self.lig_stack; let __v2232 = self.avail; __av_mem[crate::ix::U((__ix2231) as usize)].set_hh_rh(__v2232); }
+                            { let __ix2376 = self.lig_stack; let __v2377 = self.avail; __av_mem[crate::ix::U((__ix2376) as usize)].set_hh_rh(__v2377); }
                             self.avail = self.lig_stack;
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                         }
                         { __goto_1 = 1; continue 'l_dispatch_1; }
                     }
                 }
-                { let __ix2233 = self.cur_list.tail_field; let __v2234 = self.lig_stack; __av_mem[crate::ix::U((__ix2233) as usize)].set_hh_rh(__v2234); }
+                { let __ix2378 = self.cur_list.tail_field; let __v2379 = self.lig_stack; __av_mem[crate::ix::U((__ix2378) as usize)].set_hh_rh(__v2379); }
                 self.cur_list.tail_field = self.lig_stack;
             }
             if __goto_1 <= 8 { // L100
-                // §1211
+                // §1212
                 self.get_next();
-                // §1215
+                // §1216
                 if (self.cur_cmd == letter) {
                     { __goto_1 = 9; continue 'l_dispatch_1; }
                 }
@@ -8320,14 +8745,14 @@ impl Globals {
                     if (self.main_s < 1000i32) {
                         {
                             if (self.main_s > 0i32) {
-                                { let __v2235 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2235); }
+                                { let __v2380 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2380); }
                             }
                         }
                     } else {
                         if (self.cur_list.aux_field.hh().lh() < 1000i32) {
                             self.cur_list.aux_field.set_hh_lh(1000i32);
                         } else {
-                            { let __v2236 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2236); }
+                            { let __v2381 = self.main_s; self.cur_list.aux_field.set_hh_lh(__v2381); }
                         }
                     }
                 }
@@ -8338,29 +8763,29 @@ impl Globals {
                     } else {
                         {
                             self.avail = __av_mem[crate::ix::U((self.lig_stack) as usize)].hh().rh();
-                            { let __ix2237 = self.lig_stack; __av_mem[crate::ix::U((__ix2237) as usize)].set_hh_rh(null); }
+                            { let __ix2382 = self.lig_stack; __av_mem[crate::ix::U((__ix2382) as usize)].set_hh_rh(null); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
                             self.dl_new_node(self.lig_stack);
                         }
                     }
                 }
-                { let __ix2238 = self.lig_stack; let __v2239 = self.main_f; __av_mem[crate::ix::U((__ix2238) as usize)].set_hh_b0(__v2239); }
-                self.cur_r = (self.cur_chr).wrapping_add(0i32);
-                { let __ix2240 = self.lig_stack; let __v2241 = self.cur_r; __av_mem[crate::ix::U((__ix2240) as usize)].set_hh_b1(__v2241); }
+                { let __ix2383 = self.lig_stack; let __v2384 = self.main_f; __av_mem[crate::ix::U((__ix2383) as usize)].set_hh_b0(__v2384); }
+                self.cur_r = self.cur_chr;
+                { let __ix2385 = self.lig_stack; let __v2386 = self.cur_r; __av_mem[crate::ix::U((__ix2385) as usize)].set_hh_b1(__v2386); }
                 if (self.cur_r == self.false_bchar) {
                     self.cur_r = non_char;
                 }
             }
             if __goto_1 <= 10 { // L110
-                // §1211
+                // §1212
                 tmp_k1 = self.get_auto_kern(self.main_f, self.cur_l, self.cur_r);
-                // §1217
+                // §1218
                 if (tmp_k1 != null) {
                     {
                         if (self.cur_l < non_char) {
                             {
                                 if (__av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh() > null) {
-                                    if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == (self.hyphen_char[crate::ix::U((self.main_f) as usize)]).wrapping_add(0i32)) {
+                                    if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == self.hyphen_char[crate::ix::U((self.main_f) as usize)]) {
                                         self.ins_disc = true;
                                     }
                                 }
@@ -8369,14 +8794,14 @@ impl Globals {
                                         self.main_p = self.new_ligature(self.main_f, self.cur_l, __av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh());
                                         if self.lft_hit {
                                             {
-                                                { let __ix2242 = self.main_p; __av_mem[crate::ix::U((__ix2242) as usize)].set_hh_b1(2i32); }
+                                                { let __ix2387 = self.main_p; __av_mem[crate::ix::U((__ix2387) as usize)].set_hh_b1(2i32); }
                                                 self.lft_hit = false;
                                             }
                                         }
                                         if self.rt_hit {
                                             if (self.lig_stack == null) {
                                                 {
-                                                    { let __ix2243 = self.main_p; let __v2244 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2243) as usize)].set_hh_b1(__v2244); }
+                                                    { let __ix2388 = self.main_p; let __v2389 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2388) as usize)].set_hh_b1(__v2389); }
                                                     self.rt_hit = false;
                                                 }
                                             }
@@ -8388,14 +8813,14 @@ impl Globals {
                                         }
                                         if (tmp_k2 == null) {
                                             {
-                                                { let __ix2245 = self.cur_q; let __v2246 = self.main_p; __av_mem[crate::ix::U((__ix2245) as usize)].set_hh_rh(__v2246); }
+                                                { let __ix2390 = self.cur_q; let __v2391 = self.main_p; __av_mem[crate::ix::U((__ix2390) as usize)].set_hh_rh(__v2391); }
                                                 self.cur_list.tail_field = self.main_p;
                                                 self.ligature_present = false;
                                             }
                                         } else {
                                             {
-                                                { let __ix2247 = self.cur_q; __av_mem[crate::ix::U((__ix2247) as usize)].set_hh_rh(tmp_k2); }
-                                                { let __v2248 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2248); }
+                                                { let __ix2392 = self.cur_q; __av_mem[crate::ix::U((__ix2392) as usize)].set_hh_rh(tmp_k2); }
+                                                { let __v2393 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2393); }
                                                 self.cur_list.tail_field = self.main_p;
                                                 self.ligature_present = false;
                                             }
@@ -8408,7 +8833,7 @@ impl Globals {
                                         if (self.cur_list.mode_field > 0i32) {
                                             {
                                                 self.prev_tail = self.cur_list.tail_field;
-                                                { let __ix2249 = self.cur_list.tail_field; let __v2250 = self.new_disc(); __av_mem[crate::ix::U((__ix2249) as usize)].set_hh_rh(__v2250); }
+                                                { let __ix2394 = self.cur_list.tail_field; let __v2395 = self.new_disc(); __av_mem[crate::ix::U((__ix2394) as usize)].set_hh_rh(__v2395); }
                                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                             }
                                         }
@@ -8420,23 +8845,23 @@ impl Globals {
                         if ((((((!(self.cur_list.tail_field >= self.hi_mem_min)) && (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b0() == disc_node)) && (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == 0i32)) && (__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(1i32)) as usize)].hh().lh() == null)) && (__av_mem[crate::ix::U(((self.cur_list.tail_field).wrapping_add(1i32)) as usize)].hh().rh() == null)) && (__av_mem[crate::ix::U((self.prev_tail) as usize)].hh().rh() == self.cur_list.tail_field)) {
                             {
                                 {
-                                    { let __ix2251 = self.prev_tail; __av_mem[crate::ix::U((__ix2251) as usize)].set_hh_rh(tmp_k1); }
-                                    { let __v2252 = self.cur_list.tail_field; __av_mem[crate::ix::U((tmp_k1) as usize)].set_hh_rh(__v2252); }
+                                    { let __ix2396 = self.prev_tail; __av_mem[crate::ix::U((__ix2396) as usize)].set_hh_rh(tmp_k1); }
+                                    { let __v2397 = self.cur_list.tail_field; __av_mem[crate::ix::U((tmp_k1) as usize)].set_hh_rh(__v2397); }
                                     self.prev_tail = tmp_k1;
                                 }
                             }
                         } else {
                             {
                                 self.prev_tail = self.cur_list.tail_field;
-                                { let __ix2253 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2253) as usize)].set_hh_rh(tmp_k1); }
+                                { let __ix2398 = self.cur_list.tail_field; __av_mem[crate::ix::U((__ix2398) as usize)].set_hh_rh(tmp_k1); }
                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                             }
                         }
                         { __goto_1 = 5; continue 'l_dispatch_1; }
                     }
                 }
-                // §1216
-                if (((self.main_i.b2()).wrapping_sub(0i32) % 4i32) != lig_tag) {
+                // §1217
+                if ((self.main_i.b2() % 4i32) != lig_tag) {
                     { __goto_1 = 4; continue 'l_dispatch_1; }
                 }
                 if (self.cur_r == non_char) {
@@ -8455,14 +8880,14 @@ impl Globals {
             if __goto_1 <= 12 { // L112
                 if (self.main_j.b1() == self.cur_r) {
                     if (self.main_j.b0() <= stop_flag) {
-                        // §1218
+                        // §1219
                         {
                             if (self.main_j.b2() >= kern_flag) {
                                 {
                                     if (self.cur_l < non_char) {
                                         {
                                             if (__av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh() > null) {
-                                                if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == (self.hyphen_char[crate::ix::U((self.main_f) as usize)]).wrapping_add(0i32)) {
+                                                if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == self.hyphen_char[crate::ix::U((self.main_f) as usize)]) {
                                                     self.ins_disc = true;
                                                 }
                                             }
@@ -8471,14 +8896,14 @@ impl Globals {
                                                     self.main_p = self.new_ligature(self.main_f, self.cur_l, __av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh());
                                                     if self.lft_hit {
                                                         {
-                                                            { let __ix2254 = self.main_p; __av_mem[crate::ix::U((__ix2254) as usize)].set_hh_b1(2i32); }
+                                                            { let __ix2399 = self.main_p; __av_mem[crate::ix::U((__ix2399) as usize)].set_hh_b1(2i32); }
                                                             self.lft_hit = false;
                                                         }
                                                     }
                                                     if self.rt_hit {
                                                         if (self.lig_stack == null) {
                                                             {
-                                                                { let __ix2255 = self.main_p; let __v2256 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2255) as usize)].set_hh_b1(__v2256); }
+                                                                { let __ix2400 = self.main_p; let __v2401 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2400) as usize)].set_hh_b1(__v2401); }
                                                                 self.rt_hit = false;
                                                             }
                                                         }
@@ -8490,14 +8915,14 @@ impl Globals {
                                                     }
                                                     if (tmp_k2 == null) {
                                                         {
-                                                            { let __ix2257 = self.cur_q; let __v2258 = self.main_p; __av_mem[crate::ix::U((__ix2257) as usize)].set_hh_rh(__v2258); }
+                                                            { let __ix2402 = self.cur_q; let __v2403 = self.main_p; __av_mem[crate::ix::U((__ix2402) as usize)].set_hh_rh(__v2403); }
                                                             self.cur_list.tail_field = self.main_p;
                                                             self.ligature_present = false;
                                                         }
                                                     } else {
                                                         {
-                                                            { let __ix2259 = self.cur_q; __av_mem[crate::ix::U((__ix2259) as usize)].set_hh_rh(tmp_k2); }
-                                                            { let __v2260 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2260); }
+                                                            { let __ix2404 = self.cur_q; __av_mem[crate::ix::U((__ix2404) as usize)].set_hh_rh(tmp_k2); }
+                                                            { let __v2405 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2405); }
                                                             self.cur_list.tail_field = self.main_p;
                                                             self.ligature_present = false;
                                                         }
@@ -8510,7 +8935,7 @@ impl Globals {
                                                     if (self.cur_list.mode_field > 0i32) {
                                                         {
                                                             self.prev_tail = self.cur_list.tail_field;
-                                                            { let __ix2261 = self.cur_list.tail_field; let __v2262 = self.new_disc(); __av_mem[crate::ix::U((__ix2261) as usize)].set_hh_rh(__v2262); }
+                                                            { let __ix2406 = self.cur_list.tail_field; let __v2407 = self.new_disc(); __av_mem[crate::ix::U((__ix2406) as usize)].set_hh_rh(__v2407); }
                                                             self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                                         }
                                                     }
@@ -8520,7 +8945,7 @@ impl Globals {
                                     }
                                     {
                                         self.prev_tail = self.cur_list.tail_field;
-                                        { let __ix2263 = self.cur_list.tail_field; let __v2264 = self.new_kern(self.font_info[crate::ix::U((((self.kern_base[crate::ix::U((self.main_f) as usize)]).wrapping_add((256i32).wrapping_mul(self.main_j.b2()))).wrapping_add(self.main_j.b3())) as usize)].int()); __av_mem[crate::ix::U((__ix2263) as usize)].set_hh_rh(__v2264); }
+                                        { let __ix2408 = self.cur_list.tail_field; let __v2409 = self.new_kern(self.font_info[crate::ix::U((((self.kern_base[crate::ix::U((self.main_f) as usize)]).wrapping_add((256i32).wrapping_mul(self.main_j.b2()))).wrapping_add(self.main_j.b3())) as usize)].int()); __av_mem[crate::ix::U((__ix2408) as usize)].set_hh_rh(__v2409); }
                                         self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                     }
                                     { __goto_1 = 5; continue 'l_dispatch_1; }
@@ -8542,7 +8967,7 @@ impl Globals {
                                 1 | 5 => {
                                     {
                                         self.cur_l = self.main_j.b3();
-                                        self.main_i = self.font_info[crate::ix::U(((self.char_base[crate::ix::U((self.main_f) as usize)]).wrapping_add(self.cur_l)) as usize)].qqqq();
+                                        self.main_i = { let __s2410 = ((self.char_base[crate::ix::U((self.main_f) as usize)]).wrapping_add(self.effective_char(true, self.main_f, self.cur_l))) as usize; self.font_info[crate::ix::U(__s2410)] }.qqqq();
                                         self.ligature_present = true;
                                     }
                                 }
@@ -8559,10 +8984,10 @@ impl Globals {
                                                 {
                                                     self.main_p = self.lig_stack;
                                                     self.lig_stack = self.new_lig_item(self.cur_r);
-                                                    { let __ix2265 = (self.lig_stack).wrapping_add(1i32); let __v2266 = self.main_p; __av_mem[crate::ix::U((__ix2265) as usize)].set_hh_rh(__v2266); }
+                                                    { let __ix2411 = (self.lig_stack).wrapping_add(1i32); let __v2412 = self.main_p; __av_mem[crate::ix::U((__ix2411) as usize)].set_hh_rh(__v2412); }
                                                 }
                                             } else {
-                                                { let __ix2267 = self.lig_stack; let __v2268 = self.cur_r; __av_mem[crate::ix::U((__ix2267) as usize)].set_hh_b1(__v2268); }
+                                                { let __ix2413 = self.lig_stack; let __v2414 = self.cur_r; __av_mem[crate::ix::U((__ix2413) as usize)].set_hh_b1(__v2414); }
                                             }
                                         }
                                     }
@@ -8572,7 +8997,7 @@ impl Globals {
                                         self.cur_r = self.main_j.b3();
                                         self.main_p = self.lig_stack;
                                         self.lig_stack = self.new_lig_item(self.cur_r);
-                                        { let __ix2269 = self.lig_stack; let __v2270 = self.main_p; __av_mem[crate::ix::U((__ix2269) as usize)].set_hh_rh(__v2270); }
+                                        { let __ix2415 = self.lig_stack; let __v2416 = self.main_p; __av_mem[crate::ix::U((__ix2415) as usize)].set_hh_rh(__v2416); }
                                     }
                                 }
                                 7 | 11 => {
@@ -8580,7 +9005,7 @@ impl Globals {
                                         if (self.cur_l < non_char) {
                                             {
                                                 if (__av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh() > null) {
-                                                    if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == (self.hyphen_char[crate::ix::U((self.main_f) as usize)]).wrapping_add(0i32)) {
+                                                    if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b1() == self.hyphen_char[crate::ix::U((self.main_f) as usize)]) {
                                                         self.ins_disc = true;
                                                     }
                                                 }
@@ -8589,14 +9014,14 @@ impl Globals {
                                                         self.main_p = self.new_ligature(self.main_f, self.cur_l, __av_mem[crate::ix::U((self.cur_q) as usize)].hh().rh());
                                                         if self.lft_hit {
                                                             {
-                                                                { let __ix2271 = self.main_p; __av_mem[crate::ix::U((__ix2271) as usize)].set_hh_b1(2i32); }
+                                                                { let __ix2417 = self.main_p; __av_mem[crate::ix::U((__ix2417) as usize)].set_hh_b1(2i32); }
                                                                 self.lft_hit = false;
                                                             }
                                                         }
                                                         if false {
                                                             if (self.lig_stack == null) {
                                                                 {
-                                                                    { let __ix2272 = self.main_p; let __v2273 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2272) as usize)].set_hh_b1(__v2273); }
+                                                                    { let __ix2418 = self.main_p; let __v2419 = (__av_mem[crate::ix::U((self.main_p) as usize)].hh().b1()).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2418) as usize)].set_hh_b1(__v2419); }
                                                                     self.rt_hit = false;
                                                                 }
                                                             }
@@ -8608,14 +9033,14 @@ impl Globals {
                                                         }
                                                         if (tmp_k2 == null) {
                                                             {
-                                                                { let __ix2274 = self.cur_q; let __v2275 = self.main_p; __av_mem[crate::ix::U((__ix2274) as usize)].set_hh_rh(__v2275); }
+                                                                { let __ix2420 = self.cur_q; let __v2421 = self.main_p; __av_mem[crate::ix::U((__ix2420) as usize)].set_hh_rh(__v2421); }
                                                                 self.cur_list.tail_field = self.main_p;
                                                                 self.ligature_present = false;
                                                             }
                                                         } else {
                                                             {
-                                                                { let __ix2276 = self.cur_q; __av_mem[crate::ix::U((__ix2276) as usize)].set_hh_rh(tmp_k2); }
-                                                                { let __v2277 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2277); }
+                                                                { let __ix2422 = self.cur_q; __av_mem[crate::ix::U((__ix2422) as usize)].set_hh_rh(tmp_k2); }
+                                                                { let __v2423 = self.main_p; __av_mem[crate::ix::U((tmp_k2) as usize)].set_hh_rh(__v2423); }
                                                                 self.cur_list.tail_field = self.main_p;
                                                                 self.ligature_present = false;
                                                             }
@@ -8628,7 +9053,7 @@ impl Globals {
                                                         if (self.cur_list.mode_field > 0i32) {
                                                             {
                                                                 self.prev_tail = self.cur_list.tail_field;
-                                                                { let __ix2278 = self.cur_list.tail_field; let __v2279 = self.new_disc(); __av_mem[crate::ix::U((__ix2278) as usize)].set_hh_rh(__v2279); }
+                                                                { let __ix2424 = self.cur_list.tail_field; let __v2425 = self.new_disc(); __av_mem[crate::ix::U((__ix2424) as usize)].set_hh_rh(__v2425); }
                                                                 self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                                                             }
                                                         }
@@ -8638,7 +9063,7 @@ impl Globals {
                                         }
                                         self.cur_q = self.cur_list.tail_field;
                                         self.cur_l = self.main_j.b3();
-                                        self.main_i = self.font_info[crate::ix::U(((self.char_base[crate::ix::U((self.main_f) as usize)]).wrapping_add(self.cur_l)) as usize)].qqqq();
+                                        self.main_i = { let __s2426 = ((self.char_base[crate::ix::U((self.main_f) as usize)]).wrapping_add(self.effective_char(true, self.main_f, self.cur_l))) as usize; self.font_info[crate::ix::U(__s2426)] }.qqqq();
                                         self.ligature_present = true;
                                     }
                                 }
@@ -8667,7 +9092,7 @@ impl Globals {
                         }
                     }
                 }
-                // §1216
+                // §1217
                 if (self.main_j.b0() == 0i32) {
                     self.main_k = (self.main_k).wrapping_add(1i32);
                 } else {
@@ -8681,20 +9106,20 @@ impl Globals {
                 { __goto_1 = 11; continue 'l_dispatch_1; }
             }
             if __goto_1 <= 13 { // L95
-                // §1211
+                // §1212
                 self.main_p = __av_mem[crate::ix::U(((self.lig_stack).wrapping_add(1i32)) as usize)].hh().rh();
-                // §1214
+                // §1215
                 if (self.main_p > null) {
                     {
                         self.prev_tail = self.cur_list.tail_field;
-                        { let __ix2280 = self.cur_list.tail_field; let __v2281 = self.main_p; __av_mem[crate::ix::U((__ix2280) as usize)].set_hh_rh(__v2281); }
+                        { let __ix2427 = self.cur_list.tail_field; let __v2428 = self.main_p; __av_mem[crate::ix::U((__ix2427) as usize)].set_hh_rh(__v2428); }
                         self.cur_list.tail_field = __av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().rh();
                     }
                 }
                 self.temp_ptr = self.lig_stack;
                 self.lig_stack = __av_mem[crate::ix::U((self.temp_ptr) as usize)].hh().rh();
                 self.free_node(self.temp_ptr, small_node_size);
-                self.main_i = self.font_info[crate::ix::U(((self.char_base[crate::ix::U((self.main_f) as usize)]).wrapping_add(self.cur_l)) as usize)].qqqq();
+                self.main_i = { let __s2429 = ((self.char_base[crate::ix::U((self.main_f) as usize)]).wrapping_add(self.effective_char(true, self.main_f, self.cur_l))) as usize; self.font_info[crate::ix::U(__s2429)] }.qqqq();
                 self.ligature_present = true;
                 if (self.lig_stack == null) {
                     if (self.main_p > null) {
@@ -8708,25 +9133,25 @@ impl Globals {
                 { __goto_1 = 10; continue 'l_dispatch_1; }
             }
             if __goto_1 <= 14 { // L120
-                // §1207
+                // §1208
                 if (__av_eqtb[crate::ix::U(((26640i32) - 1) as usize)].hh().rh() == zero_glue) {
-                    // §1219
+                    // §1220
                     {
-                        // §1220
+                        // §1221
                         {
                             self.main_p = self.font_glue[crate::ix::U((__av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].hh().rh()) as usize)];
                             if (self.main_p == null) {
                                 {
                                     self.main_p = self.new_spec(zero_glue);
                                     self.main_k = (self.param_base[crate::ix::U((__av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].hh().rh()) as usize)]).wrapping_add(2i32);
-                                    { let __ix2282 = (self.main_p).wrapping_add(1i32); let __v2283 = self.font_info[crate::ix::U((self.main_k) as usize)].int(); __av_mem[crate::ix::U((__ix2282) as usize)].set_int(__v2283); }
-                                    { let __ix2284 = (self.main_p).wrapping_add(2i32); let __v2285 = self.font_info[crate::ix::U(((self.main_k).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2284) as usize)].set_int(__v2285); }
-                                    { let __ix2286 = (self.main_p).wrapping_add(3i32); let __v2287 = self.font_info[crate::ix::U(((self.main_k).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2286) as usize)].set_int(__v2287); }
-                                    { let __ix2288 = __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].hh().rh(); let __v2289 = self.main_p; self.font_glue[crate::ix::U((__ix2288) as usize)] = __v2289; }
+                                    { let __ix2430 = (self.main_p).wrapping_add(1i32); let __v2431 = self.font_info[crate::ix::U((self.main_k) as usize)].int(); __av_mem[crate::ix::U((__ix2430) as usize)].set_int(__v2431); }
+                                    { let __ix2432 = (self.main_p).wrapping_add(2i32); let __v2433 = self.font_info[crate::ix::U(((self.main_k).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2432) as usize)].set_int(__v2433); }
+                                    { let __ix2434 = (self.main_p).wrapping_add(3i32); let __v2435 = self.font_info[crate::ix::U(((self.main_k).wrapping_add(2i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2434) as usize)].set_int(__v2435); }
+                                    { let __ix2436 = __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].hh().rh(); let __v2437 = self.main_p; self.font_glue[crate::ix::U((__ix2436) as usize)] = __v2437; }
                                 }
                             }
                         }
-                        // §1219
+                        // §1220
                         self.temp_ptr = self.new_glue(self.main_p);
                     }
                 } else {
@@ -8735,12 +9160,12 @@ impl Globals {
                 if (__av_eqtb[crate::ix::U(((29364i32) - 1) as usize)].int() > 0i32) {
                     self.adjust_interword_glue(self.cur_list.tail_field, self.temp_ptr);
                 }
-                { let __ix2290 = self.cur_list.tail_field; let __v2291 = self.temp_ptr; __av_mem[crate::ix::U((__ix2290) as usize)].set_hh_rh(__v2291); }
+                { let __ix2438 = self.cur_list.tail_field; let __v2439 = self.temp_ptr; __av_mem[crate::ix::U((__ix2438) as usize)].set_hh_rh(__v2439); }
                 self.cur_list.tail_field = self.temp_ptr;
                 { __goto_1 = 1; continue 'l_dispatch_1; }
             }
             if __goto_1 <= 15 { // exit
-                // §1207
+                // §1208
             }
             break 'l_dispatch_1;
         }
@@ -8748,7 +9173,7 @@ impl Globals {
 
     /// The `error` routine calls on `give_err_help` if help is requested from
     /// the `err_help` parameter.
-    // §1462
+    // §1463
     pub fn give_err_help(&mut self) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
@@ -8762,10 +9187,10 @@ impl Globals {
     /// contains the first line of input in `buffer[loc..(last-1)]`, where
     /// `loc<last` and `buffer[loc]<>" "`.
     /// @<Declare the function called `open_fmt_file`
-    // §550
+    // §551
     pub fn open_fmt_file(&mut self) -> bool {
         let mut open_fmt_file: bool = false;
-        let mut j: i32 = 0; // §550
+        let mut j: i32 = 0; // §551
         'l_exit_f: {
             'l_found_f: {
                 j = self.cur_input.loc_field;
@@ -8821,27 +9246,27 @@ impl Globals {
     /// Corresponding to the procedure that dumps a format file, we have a function
     /// that reads one in. The function returns `false` if the dumped format is
     /// incompatible with the present \TeX\ table sizes, etc.
-    // §1481
+    // §1482
     pub fn load_fmt_file(&mut self) -> bool {
         let mut load_fmt_file: bool = false;
-        let mut j: i32 = 0; // §1481
-        let mut k: i32 = 0; // §1481
-        let mut p: halfword = 0; // §1481
-        let mut q: halfword = 0; // §1481
-        let mut x: i32 = 0; // §1481
-        let mut w: four_quarters = four_quarters::default(); // §1481
+        let mut j: i32 = 0; // §1482
+        let mut k: i32 = 0; // §1482
+        let mut p: halfword = 0; // §1482
+        let mut q: halfword = 0; // §1482
+        let mut x: i32 = 0; // §1482
+        let mut w: four_quarters = four_quarters::default(); // §1482
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         'l_exit_f: {
             'l_L6666_f: {
-                // §1486
+                // §1487
                 x = self.fmt_file.buf.int();
-                if (x != 327502766i32) {
+                if (x != 312141437i32) {
                     break 'l_L6666_f;
                 }
-                // §1907
+                // §1929
                 if self.translate_filename_p {
                     {
                         {
@@ -8895,7 +9320,7 @@ impl Globals {
                                         crate::system::get_word(&mut self.fmt_file);
                                         x = self.fmt_file.buf.int();
                                     }
-                                    self.xprn[crate::ix::U((k) as usize)] = (x != 0i32);
+                                    self.xprn[crate::ix::U((k) as usize)] = x;
                                 }
                                 k = k.wrapping_add(1);
                             }
@@ -8905,14 +9330,14 @@ impl Globals {
                                 let __for_end_7 = 255i32;
                                 k = 0i32;
                                 while k <= __for_end_7 {
-                                    { let __v2292 = true; self.xprn[crate::ix::U((k) as usize)] = __v2292; }
+                                    self.xprn[crate::ix::U((k) as usize)] = 1i32;
                                     k = k.wrapping_add(1);
                                 }
                             }
                         }
                     }
                 }
-                // §1655
+                // §1656
                 {
                     {
                         crate::system::get_word(&mut self.fmt_file);
@@ -8926,19 +9351,19 @@ impl Globals {
                 }
                 if (self.eTeX_mode == 1i32) {
                     {
-                        // §1813
+                        // §1814
                         self.max_reg_num = 32767i32;
-                        self.max_reg_help_line = 2077i32;
+                        self.max_reg_help_line = 2092i32;
                     }
                 } else {
-                    // §1655
+                    // §1656
                     {
-                        // §1812
+                        // §1813
                         self.max_reg_num = 255i32;
-                        self.max_reg_help_line = 799i32;
+                        self.max_reg_help_line = 800i32;
                     }
                 }
-                // §1486
+                // §1487
                 {
                     crate::system::get_word(&mut self.fmt_file);
                     x = self.fmt_file.buf.int();
@@ -8985,7 +9410,91 @@ impl Globals {
                 if (x != hyph_size) {
                     break 'l_L6666_f;
                 }
-                // §1488
+                // §1909
+                {
+                    crate::system::get_word(&mut self.fmt_file);
+                    x = self.fmt_file.buf.int();
+                }
+                if (x != 1296847960i32) {
+                    break 'l_L6666_f;
+                }
+                {
+                    crate::system::get_word(&mut self.fmt_file);
+                    x = self.fmt_file.buf.int();
+                }
+                if (x == 1i32) {
+                    self.mltex_enabled_p = true;
+                } else {
+                    if (x != 0i32) {
+                        break 'l_L6666_f;
+                    }
+                }
+                // §1876
+                {
+                    crate::system::get_word(&mut self.fmt_file);
+                    x = self.fmt_file.buf.int();
+                }
+                if (x != 1162040408i32) {
+                    break 'l_L6666_f;
+                }
+                {
+                    crate::system::get_word(&mut self.fmt_file);
+                    x = self.fmt_file.buf.int();
+                }
+                if (x == 0i32) {
+                    self.enctex_enabled_p = false;
+                } else {
+                    if (x != 1i32) {
+                        break 'l_L6666_f;
+                    } else {
+                        {
+                            self.enctex_enabled_p = true;
+                            {
+                                let __for_end_7 = 255i32;
+                                k = 0i32;
+                                while k <= __for_end_7 {
+                                    {
+                                        {
+                                            crate::system::get_word(&mut self.fmt_file);
+                                            x = self.fmt_file.buf.int();
+                                        }
+                                        self.mubyte_read[crate::ix::U((k) as usize)] = x;
+                                    }
+                                    k = k.wrapping_add(1);
+                                }
+                            }
+                            {
+                                let __for_end_7 = 255i32;
+                                k = 0i32;
+                                while k <= __for_end_7 {
+                                    {
+                                        {
+                                            crate::system::get_word(&mut self.fmt_file);
+                                            x = self.fmt_file.buf.int();
+                                        }
+                                        self.mubyte_write[crate::ix::U((k) as usize)] = x;
+                                    }
+                                    k = k.wrapping_add(1);
+                                }
+                            }
+                            {
+                                let __for_end_7 = 127i32;
+                                k = 0i32;
+                                while k <= __for_end_7 {
+                                    {
+                                        {
+                                            crate::system::get_word(&mut self.fmt_file);
+                                            x = self.fmt_file.buf.int();
+                                        }
+                                        self.mubyte_cswrite[crate::ix::U((k) as usize)] = x;
+                                    }
+                                    k = k.wrapping_add(1);
+                                }
+                            }
+                        }
+                    }
+                }
+                // §1489
                 {
                     {
                         crate::system::get_word(&mut self.fmt_file);
@@ -9053,10 +9562,10 @@ impl Globals {
                             crate::system::get_word(&mut self.fmt_file);
                             w = self.fmt_file.buf.qqqq();
                         }
-                        self.str_pool[crate::ix::U((k) as usize)] = (w.b0()).wrapping_sub(0i32);
-                        self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)] = (w.b1()).wrapping_sub(0i32);
-                        self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)] = (w.b2()).wrapping_sub(0i32);
-                        self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)] = (w.b3()).wrapping_sub(0i32);
+                        self.str_pool[crate::ix::U((k) as usize)] = w.b0();
+                        self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)] = w.b1();
+                        self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)] = w.b2();
+                        self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)] = w.b3();
                         k = (k).wrapping_add(4i32);
                     }
                 }
@@ -9065,13 +9574,13 @@ impl Globals {
                     crate::system::get_word(&mut self.fmt_file);
                     w = self.fmt_file.buf.qqqq();
                 }
-                self.str_pool[crate::ix::U((k) as usize)] = (w.b0()).wrapping_sub(0i32);
-                self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)] = (w.b1()).wrapping_sub(0i32);
-                self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)] = (w.b2()).wrapping_sub(0i32);
-                self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)] = (w.b3()).wrapping_sub(0i32);
+                self.str_pool[crate::ix::U((k) as usize)] = w.b0();
+                self.str_pool[crate::ix::U(((k).wrapping_add(1i32)) as usize)] = w.b1();
+                self.str_pool[crate::ix::U(((k).wrapping_add(2i32)) as usize)] = w.b2();
+                self.str_pool[crate::ix::U(((k).wrapping_add(3i32)) as usize)] = w.b3();
                 self.init_str_ptr = self.str_ptr;
                 self.init_pool_ptr = self.pool_ptr;
-                // §1490
+                // §1491
                 {
                     {
                         crate::system::get_word(&mut self.fmt_file);
@@ -9123,7 +9632,7 @@ impl Globals {
                         while k <= __for_end_5 {
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2293 = self.fmt_file.buf; __av_mem[crate::ix::U((k) as usize)] = __v2293; }
+                                { let __v2440 = self.fmt_file.buf; __av_mem[crate::ix::U((k) as usize)] = __v2440; }
                             }
                             k = k.wrapping_add(1);
                         }
@@ -9141,7 +9650,7 @@ impl Globals {
                     while k <= __for_end_4 {
                         {
                             crate::system::get_word(&mut self.fmt_file);
-                            { let __v2294 = self.fmt_file.buf; __av_mem[crate::ix::U((k) as usize)] = __v2294; }
+                            { let __v2441 = self.fmt_file.buf; __av_mem[crate::ix::U((k) as usize)] = __v2441; }
                         }
                         k = k.wrapping_add(1);
                     }
@@ -9150,11 +9659,11 @@ impl Globals {
                     {
                         p = __av_mem[crate::ix::U(((self.rover).wrapping_add(1i32)) as usize)].hh().lh();
                         q = (mem_min).wrapping_add(1i32);
-                        { let __ix2295 = mem_min; __av_mem[crate::ix::U((__ix2295) as usize)].set_hh_rh(null); }
-                        { let __ix2296 = mem_min; __av_mem[crate::ix::U((__ix2296) as usize)].set_hh_lh(null); }
+                        { let __ix2442 = mem_min; __av_mem[crate::ix::U((__ix2442) as usize)].set_hh_rh(null); }
+                        { let __ix2443 = mem_min; __av_mem[crate::ix::U((__ix2443) as usize)].set_hh_lh(null); }
                         __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(q);
-                        { let __ix2297 = (self.rover).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2297) as usize)].set_hh_lh(q); }
-                        { let __v2298 = self.rover; __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_rh(__v2298); }
+                        { let __ix2444 = (self.rover).wrapping_add(1i32); __av_mem[crate::ix::U((__ix2444) as usize)].set_hh_lh(q); }
+                        { let __v2445 = self.rover; __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_rh(__v2445); }
                         __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_lh(p);
                         __av_mem[crate::ix::U((q) as usize)].set_hh_rh(empty_flag);
                         __av_mem[crate::ix::U((q) as usize)].set_hh_lh(((0i32).wrapping_neg()).wrapping_sub(q));
@@ -9189,7 +9698,7 @@ impl Globals {
                     while k <= __for_end_4 {
                         {
                             crate::system::get_word(&mut self.fmt_file);
-                            { let __v2299 = self.fmt_file.buf; __av_mem[crate::ix::U((k) as usize)] = __v2299; }
+                            { let __v2446 = self.fmt_file.buf; __av_mem[crate::ix::U((k) as usize)] = __v2446; }
                         }
                         k = k.wrapping_add(1);
                     }
@@ -9202,7 +9711,7 @@ impl Globals {
                     crate::system::get_word(&mut self.fmt_file);
                     self.dyn_used = self.fmt_file.buf.int();
                 }
-                // §1495
+                // §1496
                 k = active_base;
                 loop {
                     {
@@ -9218,7 +9727,7 @@ impl Globals {
                         while j <= __for_end_5 {
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2300 = self.fmt_file.buf; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2300; }
+                                { let __v2447 = self.fmt_file.buf; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2447; }
                             }
                             j = j.wrapping_add(1);
                         }
@@ -9235,7 +9744,7 @@ impl Globals {
                         let __for_end_5 = ((k).wrapping_add(x)).wrapping_sub(1i32);
                         j = k;
                         while j <= __for_end_5 {
-                            { let __v2301 = __av_eqtb[crate::ix::U((((k).wrapping_sub(1i32)) - 1) as usize)]; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2301; }
+                            { let __v2448 = __av_eqtb[crate::ix::U((((k).wrapping_sub(1i32)) - 1) as usize)]; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2448; }
                             j = j.wrapping_add(1);
                         }
                     }
@@ -9246,7 +9755,7 @@ impl Globals {
                     let __for_end_4 = eqtb_top;
                     j = 30193i32;
                     while j <= __for_end_4 {
-                        { let __v2302 = __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)]; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2302; }
+                        { let __v2449 = __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)]; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2449; }
                         j = j.wrapping_add(1);
                     }
                 }
@@ -9257,13 +9766,13 @@ impl Globals {
                         while j <= __for_end_5 {
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2303 = self.fmt_file.buf; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2303; }
+                                { let __v2450 = self.fmt_file.buf; __av_eqtb[crate::ix::U(((j) - 1) as usize)] = __v2450; }
                             }
                             j = j.wrapping_add(1);
                         }
                     }
                 }
-                // §1492
+                // §1493
                 {
                     crate::system::get_word(&mut self.fmt_file);
                     self.par_loc = self.fmt_file.buf.int();
@@ -9280,14 +9789,14 @@ impl Globals {
                         self.write_loc = x;
                     }
                 }
-                // §1497
+                // §1498
                 {
                     let __for_end_4 = prim_size;
                     p = 0i32;
                     while p <= __for_end_4 {
                         {
                             crate::system::get_word(&mut self.fmt_file);
-                            { let __v2304 = self.fmt_file.buf.hh(); self.prim[crate::ix::U((p) as usize)] = __v2304; }
+                            { let __v2451 = self.fmt_file.buf.hh(); self.prim[crate::ix::U((p) as usize)] = __v2451; }
                         }
                         p = p.wrapping_add(1);
                     }
@@ -9318,7 +9827,7 @@ impl Globals {
                     }
                     {
                         crate::system::get_word(&mut self.fmt_file);
-                        { let __v2305 = self.fmt_file.buf.hh(); self.hash[crate::ix::U(((p) - 514) as usize)] = __v2305; }
+                        { let __v2452 = self.fmt_file.buf.hh(); self.hash[crate::ix::U(((p) - 514) as usize)] = __v2452; }
                     }
                     if (p == self.hash_used) { break; }
                 }
@@ -9328,7 +9837,7 @@ impl Globals {
                     while p <= __for_end_4 {
                         {
                             crate::system::get_word(&mut self.fmt_file);
-                            { let __v2306 = self.fmt_file.buf.hh(); self.hash[crate::ix::U(((p) - 514) as usize)] = __v2306; }
+                            { let __v2453 = self.fmt_file.buf.hh(); self.hash[crate::ix::U(((p) - 514) as usize)] = __v2453; }
                         }
                         p = p.wrapping_add(1);
                     }
@@ -9340,7 +9849,7 @@ impl Globals {
                         while p <= __for_end_5 {
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2307 = self.fmt_file.buf.hh(); self.hash[crate::ix::U(((p) - 514) as usize)] = __v2307; }
+                                { let __v2454 = self.fmt_file.buf.hh(); self.hash[crate::ix::U(((p) - 514) as usize)] = __v2454; }
                             }
                             p = p.wrapping_add(1);
                         }
@@ -9350,7 +9859,7 @@ impl Globals {
                     crate::system::get_word(&mut self.fmt_file);
                     self.cs_count = self.fmt_file.buf.int();
                 }
-                // §1499
+                // §1500
                 {
                     {
                         crate::system::get_word(&mut self.fmt_file);
@@ -9378,7 +9887,7 @@ impl Globals {
                     while k <= __for_end_4 {
                         {
                             crate::system::get_word(&mut self.fmt_file);
-                            { let __v2308 = self.fmt_file.buf; self.font_info[crate::ix::U((k) as usize)] = __v2308; }
+                            { let __v2455 = self.fmt_file.buf; self.font_info[crate::ix::U((k) as usize)] = __v2455; }
                         }
                         k = k.wrapping_add(1);
                     }
@@ -9409,19 +9918,19 @@ impl Globals {
                     let __for_end_4 = self.font_ptr;
                     k = null_font;
                     while k <= __for_end_4 {
-                        // §1501
+                        // §1502
                         {
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2309 = self.fmt_file.buf.qqqq(); self.font_check[crate::ix::U((k) as usize)] = __v2309; }
+                                { let __v2456 = self.fmt_file.buf.qqqq(); self.font_check[crate::ix::U((k) as usize)] = __v2456; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2310 = self.fmt_file.buf.int(); self.font_size[crate::ix::U((k) as usize)] = __v2310; }
+                                { let __v2457 = self.fmt_file.buf.int(); self.font_size[crate::ix::U((k) as usize)] = __v2457; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2311 = self.fmt_file.buf.int(); self.font_dsize[crate::ix::U((k) as usize)] = __v2311; }
+                                { let __v2458 = self.fmt_file.buf.int(); self.font_dsize[crate::ix::U((k) as usize)] = __v2458; }
                             }
                             {
                                 {
@@ -9436,11 +9945,11 @@ impl Globals {
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2312 = self.fmt_file.buf.int(); self.hyphen_char[crate::ix::U((k) as usize)] = __v2312; }
+                                { let __v2459 = self.fmt_file.buf.int(); self.hyphen_char[crate::ix::U((k) as usize)] = __v2459; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2313 = self.fmt_file.buf.int(); self.skew_char[crate::ix::U((k) as usize)] = __v2313; }
+                                { let __v2460 = self.fmt_file.buf.int(); self.skew_char[crate::ix::U((k) as usize)] = __v2460; }
                             }
                             {
                                 {
@@ -9488,39 +9997,39 @@ impl Globals {
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2314 = self.fmt_file.buf.int(); self.char_base[crate::ix::U((k) as usize)] = __v2314; }
+                                { let __v2461 = self.fmt_file.buf.int(); self.char_base[crate::ix::U((k) as usize)] = __v2461; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2315 = self.fmt_file.buf.int(); self.width_base[crate::ix::U((k) as usize)] = __v2315; }
+                                { let __v2462 = self.fmt_file.buf.int(); self.width_base[crate::ix::U((k) as usize)] = __v2462; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2316 = self.fmt_file.buf.int(); self.height_base[crate::ix::U((k) as usize)] = __v2316; }
+                                { let __v2463 = self.fmt_file.buf.int(); self.height_base[crate::ix::U((k) as usize)] = __v2463; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2317 = self.fmt_file.buf.int(); self.depth_base[crate::ix::U((k) as usize)] = __v2317; }
+                                { let __v2464 = self.fmt_file.buf.int(); self.depth_base[crate::ix::U((k) as usize)] = __v2464; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2318 = self.fmt_file.buf.int(); self.italic_base[crate::ix::U((k) as usize)] = __v2318; }
+                                { let __v2465 = self.fmt_file.buf.int(); self.italic_base[crate::ix::U((k) as usize)] = __v2465; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2319 = self.fmt_file.buf.int(); self.lig_kern_base[crate::ix::U((k) as usize)] = __v2319; }
+                                { let __v2466 = self.fmt_file.buf.int(); self.lig_kern_base[crate::ix::U((k) as usize)] = __v2466; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2320 = self.fmt_file.buf.int(); self.kern_base[crate::ix::U((k) as usize)] = __v2320; }
+                                { let __v2467 = self.fmt_file.buf.int(); self.kern_base[crate::ix::U((k) as usize)] = __v2467; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2321 = self.fmt_file.buf.int(); self.exten_base[crate::ix::U((k) as usize)] = __v2321; }
+                                { let __v2468 = self.fmt_file.buf.int(); self.exten_base[crate::ix::U((k) as usize)] = __v2468; }
                             }
                             {
                                 crate::system::get_word(&mut self.fmt_file);
-                                { let __v2322 = self.fmt_file.buf.int(); self.param_base[crate::ix::U((k) as usize)] = __v2322; }
+                                { let __v2469 = self.fmt_file.buf.int(); self.param_base[crate::ix::U((k) as usize)] = __v2469; }
                             }
                             {
                                 {
@@ -9570,7 +10079,7 @@ impl Globals {
                         k = k.wrapping_add(1);
                     }
                 }
-                // §1503
+                // §1504
                 {
                     {
                         crate::system::get_word(&mut self.fmt_file);
@@ -9663,7 +10172,7 @@ impl Globals {
                     while k <= __for_end_4 {
                         {
                             crate::system::get_word(&mut self.fmt_file);
-                            { let __v2323 = self.fmt_file.buf.hh(); self.trie[crate::ix::U((k) as usize)] = __v2323; }
+                            { let __v2470 = self.fmt_file.buf.hh(); self.trie[crate::ix::U((k) as usize)] = __v2470; }
                         }
                         k = k.wrapping_add(1);
                     }
@@ -9765,13 +10274,13 @@ impl Globals {
                                 x = x;
                             }
                         }
-                        self.trie_used[crate::ix::U((k) as usize)] = (x).wrapping_add(0i32);
+                        self.trie_used[crate::ix::U((k) as usize)] = x;
                         j = (j).wrapping_sub(x);
-                        self.op_start[crate::ix::U((k) as usize)] = (j).wrapping_sub(0i32);
+                        self.op_start[crate::ix::U((k) as usize)] = j;
                     }
                 }
                 self.trie_not_ready = false;
-                // §1505
+                // §1506
                 {
                     self.undumpimagemeta(__av_eqtb[crate::ix::U(((29351i32) - 1) as usize)].int(), __av_eqtb[crate::ix::U(((29352i32) - 1) as usize)].int(), __av_eqtb[crate::ix::U(((29355i32) - 1) as usize)].int());
                     {
@@ -9790,7 +10299,7 @@ impl Globals {
                             {
                                 {
                                     crate::system::get_word(&mut self.fmt_file);
-                                    { let __v2324 = self.fmt_file.buf.int(); self.pdf_mem[crate::ix::U((k) as usize)] = __v2324; }
+                                    { let __v2471 = self.fmt_file.buf.int(); self.pdf_mem[crate::ix::U((k) as usize)] = __v2471; }
                                 }
                             }
                             k = k.wrapping_add(1);
@@ -9848,15 +10357,15 @@ impl Globals {
                     }
                     {
                         crate::system::get_word(&mut self.fmt_file);
-                        { let __v2325 = self.fmt_file.buf.int(); self.head_tab[crate::ix::U(((obj_type_obj) - 1) as usize)] = __v2325; }
+                        { let __v2472 = self.fmt_file.buf.int(); self.head_tab[crate::ix::U(((obj_type_obj) - 1) as usize)] = __v2472; }
                     }
                     {
                         crate::system::get_word(&mut self.fmt_file);
-                        { let __v2326 = self.fmt_file.buf.int(); self.head_tab[crate::ix::U(((obj_type_xform) - 1) as usize)] = __v2326; }
+                        { let __v2473 = self.fmt_file.buf.int(); self.head_tab[crate::ix::U(((obj_type_xform) - 1) as usize)] = __v2473; }
                     }
                     {
                         crate::system::get_word(&mut self.fmt_file);
-                        { let __v2327 = self.fmt_file.buf.int(); self.head_tab[crate::ix::U(((obj_type_ximage) - 1) as usize)] = __v2327; }
+                        { let __v2474 = self.fmt_file.buf.int(); self.head_tab[crate::ix::U(((obj_type_ximage) - 1) as usize)] = __v2474; }
                     }
                     {
                         crate::system::get_word(&mut self.fmt_file);
@@ -9872,7 +10381,7 @@ impl Globals {
                     }
                     self.undumptounicode();
                 }
-                // §1507
+                // §1508
                 {
                     {
                         crate::system::get_word(&mut self.fmt_file);
@@ -9905,8 +10414,8 @@ impl Globals {
                 if ((x != 69069i32) || crate::system::eof(&self.fmt_file)) {
                     break 'l_L6666_f;
                 }
-                // §1481
-                { let __v2328 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); self.cur_list.aux_field.set_int(__v2328); }
+                // §1482
+                { let __v2475 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); self.cur_list.aux_field.set_int(__v2475); }
                 load_fmt_file = true;
                 break 'l_exit_f;
             }
@@ -9930,28 +10439,28 @@ impl Globals {
     /// If `final_cleanup` is bypassed, this program doesn't bother to close
     /// the input files that may still be open.
     /// @<Last-minute...
-    // §1513
+    // §1514
     pub fn close_files_and_terminate(&mut self) {
-        let mut a: i32 = 0; // §1513
-        let mut b: i32 = 0; // §1513
-        let mut c: i32 = 0; // §1513
-        let mut i: i32 = 0; // §1513
-        let mut j: i32 = 0; // §1513
-        let mut k: i32 = 0; // §1513
-        let mut l: i32 = 0; // §1513
-        let mut is_root: bool = false; // §1513
-        let mut is_names: bool = false; // §1513
-        let mut root: i32 = 0; // §1513
-        let mut outlines: i32 = 0; // §1513
-        let mut threads: i32 = 0; // §1513
-        let mut names_tree: i32 = 0; // §1513
-        let mut dests: i32 = 0; // §1513
-        let mut xref_offset_width: i32 = 0; // §1513
-        let mut names_head: i32 = 0; // §1513
-        let mut names_tail: i32 = 0; // §1513
+        let mut a: i32 = 0; // §1514
+        let mut b: i32 = 0; // §1514
+        let mut c: i32 = 0; // §1514
+        let mut i: i32 = 0; // §1514
+        let mut j: i32 = 0; // §1514
+        let mut k: i32 = 0; // §1514
+        let mut l: i32 = 0; // §1514
+        let mut is_root: bool = false; // §1514
+        let mut is_names: bool = false; // §1514
+        let mut root: i32 = 0; // §1514
+        let mut outlines: i32 = 0; // §1514
+        let mut threads: i32 = 0; // §1514
+        let mut names_tree: i32 = 0; // §1514
+        let mut dests: i32 = 0; // §1514
+        let mut xref_offset_width: i32 = 0; // §1514
+        let mut names_head: i32 = 0; // §1514
+        let mut names_tail: i32 = 0; // §1514
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
-        // §1626
+        // §1627
         {
             let __for_end_2 = 15i32;
             k = 0i32;
@@ -9962,10 +10471,10 @@ impl Globals {
                 k = k.wrapping_add(1);
             }
         }
-        // §1513
+        // §1514
         __av_eqtb[crate::ix::U(((29326i32) - 1) as usize)].set_int((1i32).wrapping_neg());
         if (__av_eqtb[crate::ix::U(((29308i32) - 1) as usize)].int() > 0i32) {
-            // §1514
+            // §1515
             if self.log_opened {
                 {
                     {
@@ -10114,7 +10623,7 @@ impl Globals {
                 }
             }
         }
-        // §1513
+        // §1514
         if (!self.fixed_pdfoutput_set) {
             self.fix_pdfoutput();
         }
@@ -10132,15 +10641,15 @@ impl Globals {
                             } else {
                                 self.print_nl(264i32);
                             }
-                            self.print(1718i32);
+                            self.print(1733i32);
                         }
                     }
                 } else {
                     {
-                        // §794
+                        // §795
                         if (self.total_pages == 0i32) {
                             {
-                                self.print_nl(1010i32);
+                                self.print_nl(1011i32);
                                 if (self.pdf_gone > ((0i32) as i64)) {
                                     self.garbage_warning();
                                 }
@@ -10156,20 +10665,20 @@ impl Globals {
                                                     self.obj_tab[crate::ix::U((self.pdf_last_pages) as usize)].int0 = (self.total_pages % pages_tree_kids_max);
                                                 }
                                                 self.flush_jbig2_page0_objects();
-                                                // §799
+                                                // §800
                                                 k = self.head_tab[crate::ix::U(((obj_type_page) - 1) as usize)];
                                                 while (self.obj_tab[crate::ix::U((k) as usize)].int4 == 0i32) {
                                                     {
-                                                        self.pdf_warning(1205i32, 1212i32, true, false);
+                                                        self.pdf_warning(1206i32, 1213i32, true, false);
                                                         self.print_int(((self.obj_tab[crate::ix::U((k) as usize)].int0) as i64));
-                                                        self.print(1213i32);
+                                                        self.print(1214i32);
                                                         self.print_ln();
                                                         self.print_ln();
                                                         k = self.obj_tab[crate::ix::U((k) as usize)].int1;
                                                     }
                                                 }
                                                 self.head_tab[crate::ix::U(((obj_type_page) - 1) as usize)] = k;
-                                                // §800
+                                                // §801
                                                 k = self.head_tab[crate::ix::U(((obj_type_page) - 1) as usize)];
                                                 l = 0i32;
                                                 loop {
@@ -10191,7 +10700,7 @@ impl Globals {
                                                     if (k == 0i32) { break; }
                                                 }
                                                 self.head_tab[crate::ix::U(((obj_type_pages) - 1) as usize)] = l;
-                                                // §796
+                                                // §797
                                                 k = self.head_tab[crate::ix::U(((obj_type_dest) - 1) as usize)];
                                                 while (k != 0i32) {
                                                     {
@@ -10199,7 +10708,7 @@ impl Globals {
                                                         k = self.obj_tab[crate::ix::U((k) as usize)].int1;
                                                     }
                                                 }
-                                                // §798
+                                                // §799
                                                 k = self.head_tab[crate::ix::U(((obj_type_struct_dest) - 1) as usize)];
                                                 while (k != 0i32) {
                                                     {
@@ -10207,7 +10716,7 @@ impl Globals {
                                                         k = self.obj_tab[crate::ix::U((k) as usize)].int1;
                                                     }
                                                 }
-                                                // §801
+                                                // §802
                                                 {
                                                     let __for_end_12 = self.font_ptr;
                                                     k = 1i32;
@@ -10227,18 +10736,18 @@ impl Globals {
                                                                     }
                                                                 }
                                                                 if (((self.str_start[crate::ix::U(((self.pdf_font_attr[crate::ix::U((i) as usize)]).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.pdf_font_attr[crate::ix::U((i) as usize)]) as usize)]) == 0i32) && ((self.str_start[crate::ix::U(((self.pdf_font_attr[crate::ix::U((k) as usize)]).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.pdf_font_attr[crate::ix::U((k) as usize)]) as usize)]) != 0i32)) {
-                                                                    { let __v2329 = self.pdf_font_attr[crate::ix::U((k) as usize)]; self.pdf_font_attr[crate::ix::U((i) as usize)] = __v2329; }
+                                                                    { let __v2476 = self.pdf_font_attr[crate::ix::U((k) as usize)]; self.pdf_font_attr[crate::ix::U((i) as usize)] = __v2476; }
                                                                 } else {
                                                                     if (((self.str_start[crate::ix::U(((self.pdf_font_attr[crate::ix::U((k) as usize)]).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.pdf_font_attr[crate::ix::U((k) as usize)]) as usize)]) == 0i32) && ((self.str_start[crate::ix::U(((self.pdf_font_attr[crate::ix::U((i) as usize)]).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.pdf_font_attr[crate::ix::U((i) as usize)]) as usize)]) != 0i32)) {
-                                                                        { let __v2330 = self.pdf_font_attr[crate::ix::U((i) as usize)]; self.pdf_font_attr[crate::ix::U((k) as usize)] = __v2330; }
+                                                                        { let __v2477 = self.pdf_font_attr[crate::ix::U((i) as usize)]; self.pdf_font_attr[crate::ix::U((k) as usize)] = __v2477; }
                                                                     } else {
                                                                         if ((((self.str_start[crate::ix::U(((self.pdf_font_attr[crate::ix::U((i) as usize)]).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.pdf_font_attr[crate::ix::U((i) as usize)]) as usize)]) != 0i32) && ((self.str_start[crate::ix::U(((self.pdf_font_attr[crate::ix::U((k) as usize)]).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.pdf_font_attr[crate::ix::U((k) as usize)]) as usize)]) != 0i32)) && (!self.str_eq_str(self.pdf_font_attr[crate::ix::U((i) as usize)], self.pdf_font_attr[crate::ix::U((k) as usize)]))) {
                                                                             {
-                                                                                self.pdf_warning(1214i32, 1215i32, true, false);
+                                                                                self.pdf_warning(1215i32, 1216i32, true, false);
                                                                                 self.print_font_identifier(i);
-                                                                                self.print(1216i32);
-                                                                                self.print_font_identifier(k);
                                                                                 self.print(1217i32);
+                                                                                self.print_font_identifier(k);
+                                                                                self.print(1218i32);
                                                                                 self.print_font_identifier(i);
                                                                                 self.print_ln();
                                                                                 self.print_ln();
@@ -10262,7 +10771,7 @@ impl Globals {
                                                     }
                                                 }
                                                 self.write_fontstuff();
-                                                // §802
+                                                // §803
                                                 a = (self.sys_obj_ptr).wrapping_add(1i32);
                                                 l = self.head_tab[crate::ix::U(((obj_type_pages) - 1) as usize)];
                                                 k = self.head_tab[crate::ix::U(((obj_type_page) - 1) as usize)];
@@ -10294,17 +10803,17 @@ impl Globals {
                                                                 }
                                                             }
                                                         }
-                                                        // §803
+                                                        // §804
                                                         self.pdf_begin_dict(l, 1i32);
                                                         {
-                                                            self.pdf_print(1218i32);
+                                                            self.pdf_print(1219i32);
                                                             {
                                                                 {
                                                                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_os_get_os_buf(1i32);
                                                                     } else {
                                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                                         } else {
                                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                 self.pdf_flush();
@@ -10318,15 +10827,15 @@ impl Globals {
                                                                 }
                                                             }
                                                         }
-                                                        self.pdf_int_entry_ln(1200i32, self.obj_tab[crate::ix::U((l) as usize)].int0);
+                                                        self.pdf_int_entry_ln(1201i32, self.obj_tab[crate::ix::U((l) as usize)].int0);
                                                         if (!is_root) {
-                                                            self.pdf_indirect_ln(1174i32, self.pdf_last_pages);
+                                                            self.pdf_indirect_ln(1175i32, self.pdf_last_pages);
                                                         }
-                                                        self.pdf_print(1219i32);
+                                                        self.pdf_print(1220i32);
                                                         j = 0i32;
                                                         loop {
                                                             self.pdf_print_int(((k) as i64));
-                                                            self.pdf_print(1159i32);
+                                                            self.pdf_print(1160i32);
                                                             k = self.obj_tab[crate::ix::U((k) as usize)].int1;
                                                             j = (j).wrapping_add(1i32);
                                                             if (((((l < a) && (j == self.obj_tab[crate::ix::U((l) as usize)].int0)) || (k == 0i32)) || ((k == b) && (b != 0i32))) || (j == pages_tree_kids_max)) { break; }
@@ -10340,7 +10849,7 @@ impl Globals {
                                                                         self.pdf_os_get_os_buf(1i32);
                                                                     } else {
                                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                                         } else {
                                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                 self.pdf_flush();
@@ -10364,7 +10873,7 @@ impl Globals {
                                                             self.pdf_print_toks_ln(__av_eqtb[crate::ix::U(((pdf_pages_attr_loc) - 1) as usize)].hh().rh());
                                                         }
                                                         self.pdf_end_dict();
-                                                        // §802
+                                                        // §803
                                                         i = (i).wrapping_add(1i32);
                                                         l = self.obj_tab[crate::ix::U((l) as usize)].int1;
                                                         if (l == c) { break; }
@@ -10376,7 +10885,7 @@ impl Globals {
                                                     if false { break; }
                                                 }
                                             }
-                                            // §788
+                                            // §789
                                             if (self.pdf_first_outline != 0i32) {
                                                 {
                                                     self.pdf_new_dict(obj_type_others, 0i32, 1i32);
@@ -10389,19 +10898,19 @@ impl Globals {
                                                         if (self.obj_tab[crate::ix::U((l) as usize)].int0 > 0i32) {
                                                             k = (k).wrapping_add(a);
                                                         }
-                                                        { let __ix2331 = (self.obj_tab[crate::ix::U((l) as usize)].int4).wrapping_add(1i32); let __v2332 = self.obj_ptr; self.pdf_mem[crate::ix::U((__ix2331) as usize)] = __v2332; }
+                                                        { let __ix2478 = (self.obj_tab[crate::ix::U((l) as usize)].int4).wrapping_add(1i32); let __v2479 = self.obj_ptr; self.pdf_mem[crate::ix::U((__ix2478) as usize)] = __v2479; }
                                                         l = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((l) as usize)].int4).wrapping_add(3i32)) as usize)];
                                                         if (l == 0i32) { break; }
                                                     }
                                                     {
-                                                        self.pdf_print(1197i32);
+                                                        self.pdf_print(1198i32);
                                                         {
                                                             {
                                                                 if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                     self.pdf_os_get_os_buf(1i32);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                        self.overflow(1017i32, pdf_op_buf_size);
+                                                                        self.overflow(1018i32, pdf_op_buf_size);
                                                                     } else {
                                                                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                             self.pdf_flush();
@@ -10415,11 +10924,11 @@ impl Globals {
                                                             }
                                                         }
                                                     }
-                                                    self.pdf_indirect_ln(1198i32, self.pdf_first_outline);
-                                                    self.pdf_indirect_ln(1199i32, self.pdf_last_outline);
-                                                    self.pdf_int_entry_ln(1200i32, k);
+                                                    self.pdf_indirect_ln(1199i32, self.pdf_first_outline);
+                                                    self.pdf_indirect_ln(1200i32, self.pdf_last_outline);
+                                                    self.pdf_int_entry_ln(1201i32, k);
                                                     self.pdf_end_dict();
-                                                    // §789
+                                                    // §790
                                                     k = self.head_tab[crate::ix::U(((obj_type_outline) - 1) as usize)];
                                                     while (k != 0i32) {
                                                         {
@@ -10434,25 +10943,25 @@ impl Globals {
                                                                 }
                                                             }
                                                             self.pdf_begin_dict(k, 1i32);
-                                                            self.pdf_indirect_ln(1201i32, self.pdf_mem[crate::ix::U((self.obj_tab[crate::ix::U((k) as usize)].int4) as usize)]);
+                                                            self.pdf_indirect_ln(1202i32, self.pdf_mem[crate::ix::U((self.obj_tab[crate::ix::U((k) as usize)].int4) as usize)]);
                                                             self.pdf_indirect_ln(65i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(6i32)) as usize)]);
                                                             if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32)) as usize)] != 0i32) {
-                                                                self.pdf_indirect_ln(1174i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32)) as usize)]);
+                                                                self.pdf_indirect_ln(1175i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(1i32)) as usize)]);
                                                             }
                                                             if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32)) as usize)] != 0i32) {
-                                                                self.pdf_indirect_ln(1202i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32)) as usize)]);
+                                                                self.pdf_indirect_ln(1203i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(2i32)) as usize)]);
                                                             }
                                                             if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)] != 0i32) {
-                                                                self.pdf_indirect_ln(1203i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)]);
+                                                                self.pdf_indirect_ln(1204i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(3i32)) as usize)]);
                                                             }
                                                             if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32)) as usize)] != 0i32) {
-                                                                self.pdf_indirect_ln(1198i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32)) as usize)]);
+                                                                self.pdf_indirect_ln(1199i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(4i32)) as usize)]);
                                                             }
                                                             if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32)) as usize)] != 0i32) {
-                                                                self.pdf_indirect_ln(1199i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32)) as usize)]);
+                                                                self.pdf_indirect_ln(1200i32, self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32)) as usize)]);
                                                             }
                                                             if (self.obj_tab[crate::ix::U((k) as usize)].int0 != 0i32) {
-                                                                self.pdf_int_entry_ln(1200i32, self.obj_tab[crate::ix::U((k) as usize)].int0);
+                                                                self.pdf_int_entry_ln(1201i32, self.obj_tab[crate::ix::U((k) as usize)].int0);
                                                             }
                                                             if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(7i32)) as usize)] != 0i32) {
                                                                 {
@@ -10469,10 +10978,10 @@ impl Globals {
                                                     }
                                                 }
                                             } else {
-                                                // §788
+                                                // §789
                                                 outlines = 0i32;
                                             }
-                                            // §804
+                                            // §805
                                             if (self.pdf_dest_names_ptr == 0i32) {
                                                 {
                                                     dests = 0i32;
@@ -10504,13 +11013,13 @@ impl Globals {
                                                         }
                                                     }
                                                     self.obj_tab[crate::ix::U((names_tail) as usize)].int1 = 0i32;
-                                                    // §805
+                                                    // §806
                                                     self.pdf_begin_dict(l, 1i32);
                                                     j = 0i32;
                                                     if is_names {
                                                         {
                                                             self.obj_tab[crate::ix::U((l) as usize)].int0 = self.dest_names[crate::ix::U((k) as usize)].objname;
-                                                            self.pdf_print(1221i32);
+                                                            self.pdf_print(1222i32);
                                                             loop {
                                                                 self.pdf_print_str(self.dest_names[crate::ix::U((k) as usize)].objname);
                                                                 {
@@ -10519,7 +11028,7 @@ impl Globals {
                                                                             self.pdf_os_get_os_buf(1i32);
                                                                         } else {
                                                                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                self.overflow(1017i32, pdf_op_buf_size);
+                                                                                self.overflow(1018i32, pdf_op_buf_size);
                                                                             } else {
                                                                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                     self.pdf_flush();
@@ -10533,7 +11042,7 @@ impl Globals {
                                                                     }
                                                                 }
                                                                 self.pdf_print_int(((self.dest_names[crate::ix::U((k) as usize)].objnum) as i64));
-                                                                self.pdf_print(1159i32);
+                                                                self.pdf_print(1160i32);
                                                                 j = (j).wrapping_add(1i32);
                                                                 k = (k).wrapping_add(1i32);
                                                                 if ((j == name_tree_kids_max) || (k == self.pdf_dest_names_ptr)) { break; }
@@ -10547,7 +11056,7 @@ impl Globals {
                                                                             self.pdf_os_get_os_buf(1i32);
                                                                         } else {
                                                                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                self.overflow(1017i32, pdf_op_buf_size);
+                                                                                self.overflow(1018i32, pdf_op_buf_size);
                                                                             } else {
                                                                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                     self.pdf_flush();
@@ -10573,10 +11082,10 @@ impl Globals {
                                                     } else {
                                                         {
                                                             self.obj_tab[crate::ix::U((l) as usize)].int0 = self.obj_tab[crate::ix::U((k) as usize)].int0;
-                                                            self.pdf_print(1219i32);
+                                                            self.pdf_print(1220i32);
                                                             loop {
                                                                 self.pdf_print_int(((k) as i64));
-                                                                self.pdf_print(1159i32);
+                                                                self.pdf_print(1160i32);
                                                                 j = (j).wrapping_add(1i32);
                                                                 self.obj_tab[crate::ix::U((l) as usize)].int4 = self.obj_tab[crate::ix::U((k) as usize)].int4;
                                                                 k = self.obj_tab[crate::ix::U((k) as usize)].int1;
@@ -10591,7 +11100,7 @@ impl Globals {
                                                                             self.pdf_os_get_os_buf(1i32);
                                                                         } else {
                                                                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                self.overflow(1017i32, pdf_op_buf_size);
+                                                                                self.overflow(1018i32, pdf_op_buf_size);
                                                                             } else {
                                                                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                     self.pdf_flush();
@@ -10610,7 +11119,7 @@ impl Globals {
                                                             }
                                                         }
                                                     }
-                                                    self.pdf_print(1222i32);
+                                                    self.pdf_print(1223i32);
                                                     self.pdf_print_str(self.obj_tab[crate::ix::U((l) as usize)].int0);
                                                     {
                                                         {
@@ -10618,7 +11127,7 @@ impl Globals {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -10640,7 +11149,7 @@ impl Globals {
                                                                     self.pdf_os_get_os_buf(1i32);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                        self.overflow(1017i32, pdf_op_buf_size);
+                                                                        self.overflow(1018i32, pdf_op_buf_size);
                                                                     } else {
                                                                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                             self.pdf_flush();
@@ -10657,7 +11166,7 @@ impl Globals {
                                                     self.pdf_end_dict();
                                                     if (b == 0i32) { break; }
                                                 }
-                                                // §804
+                                                // §805
                                                 if (k == l) {
                                                     {
                                                         dests = l;
@@ -10671,7 +11180,7 @@ impl Globals {
                                             {
                                                 self.pdf_new_dict(obj_type_others, 0i32, 1i32);
                                                 if (dests != 0i32) {
-                                                    self.pdf_indirect_ln(1220i32, dests);
+                                                    self.pdf_indirect_ln(1221i32, dests);
                                                 }
                                                 if (self.pdf_names_toks != null) {
                                                     {
@@ -10688,7 +11197,7 @@ impl Globals {
                                         } else {
                                             names_tree = 0i32;
                                         }
-                                        // §790
+                                        // §791
                                         if (self.head_tab[crate::ix::U(((obj_type_thread) - 1) as usize)] != 0i32) {
                                             {
                                                 self.pdf_new_obj(obj_type_others, 0i32, 1i32);
@@ -10699,7 +11208,7 @@ impl Globals {
                                                             self.pdf_os_get_os_buf(1i32);
                                                         } else {
                                                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                self.overflow(1017i32, pdf_op_buf_size);
+                                                                self.overflow(1018i32, pdf_op_buf_size);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                     self.pdf_flush();
@@ -10716,7 +11225,7 @@ impl Globals {
                                                 while (k != 0i32) {
                                                     {
                                                         self.pdf_print_int(((k) as i64));
-                                                        self.pdf_print(1159i32);
+                                                        self.pdf_print(1160i32);
                                                         k = self.obj_tab[crate::ix::U((k) as usize)].int1;
                                                     }
                                                 }
@@ -10729,7 +11238,7 @@ impl Globals {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -10755,18 +11264,18 @@ impl Globals {
                                         } else {
                                             threads = 0i32;
                                         }
-                                        // §806
+                                        // §807
                                         self.pdf_new_dict(obj_type_others, 0i32, 1i32);
                                         root = self.obj_ptr;
                                         {
-                                            self.pdf_print(1223i32);
+                                            self.pdf_print(1224i32);
                                             {
                                                 {
                                                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                         self.pdf_os_get_os_buf(1i32);
                                                     } else {
                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                         } else {
                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_flush();
@@ -10780,15 +11289,15 @@ impl Globals {
                                                 }
                                             }
                                         }
-                                        self.pdf_indirect_ln(1224i32, self.pdf_last_pages);
+                                        self.pdf_indirect_ln(1225i32, self.pdf_last_pages);
                                         if (threads != 0i32) {
-                                            self.pdf_indirect_ln(1225i32, threads);
+                                            self.pdf_indirect_ln(1226i32, threads);
                                         }
                                         if (outlines != 0i32) {
-                                            self.pdf_indirect_ln(1226i32, outlines);
+                                            self.pdf_indirect_ln(1227i32, outlines);
                                         }
                                         if (names_tree != 0i32) {
-                                            self.pdf_indirect_ln(1227i32, names_tree);
+                                            self.pdf_indirect_ln(1228i32, names_tree);
                                         }
                                         if (self.pdf_catalog_toks != null) {
                                             {
@@ -10800,10 +11309,10 @@ impl Globals {
                                             }
                                         }
                                         if (self.pdf_catalog_openaction != 0i32) {
-                                            self.pdf_indirect_ln(1228i32, self.pdf_catalog_openaction);
+                                            self.pdf_indirect_ln(1229i32, self.pdf_catalog_openaction);
                                         }
                                         self.pdf_end_dict();
-                                        // §794
+                                        // §795
                                         if (__av_eqtb[crate::ix::U(((29376i32) - 1) as usize)].int() == 0i32) {
                                             self.pdf_print_info();
                                         }
@@ -10813,7 +11322,7 @@ impl Globals {
                                                 self.pdf_os_write_objstream();
                                                 self.pdf_flush();
                                                 self.pdf_os_switch(false);
-                                                // §814
+                                                // §815
                                                 self.pdf_new_dict(obj_type_others, 0i32, 0i32);
                                                 if (((self.obj_tab[crate::ix::U((self.sys_obj_ptr) as usize)].int2) as f64 / (((256i32) as i64)) as f64) > ((16777215i32) as f64)) {
                                                     xref_offset_width = 5i32;
@@ -10828,7 +11337,7 @@ impl Globals {
                                                         }
                                                     }
                                                 }
-                                                // §812
+                                                // §813
                                                 l = 0i32;
                                                 self.obj_tab[crate::ix::U((l) as usize)].int2 = (((2i32).wrapping_neg()) as i64);
                                                 {
@@ -10845,16 +11354,16 @@ impl Globals {
                                                     }
                                                 }
                                                 self.obj_tab[crate::ix::U((l) as usize)].int1 = 0i32;
-                                                // §814
+                                                // §815
                                                 {
-                                                    self.pdf_print(1245i32);
+                                                    self.pdf_print(1246i32);
                                                     {
                                                         {
                                                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -10868,7 +11377,7 @@ impl Globals {
                                                         }
                                                     }
                                                 }
-                                                self.pdf_print(1246i32);
+                                                self.pdf_print(1247i32);
                                                 self.pdf_print_int((((self.obj_ptr).wrapping_add(1i32)) as i64));
                                                 {
                                                     self.pdf_print(93i32);
@@ -10878,7 +11387,7 @@ impl Globals {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -10892,18 +11401,18 @@ impl Globals {
                                                         }
                                                     }
                                                 }
-                                                self.pdf_int_entry_ln(1247i32, (self.obj_ptr).wrapping_add(1i32));
-                                                self.pdf_print(1248i32);
+                                                self.pdf_int_entry_ln(1248i32, (self.obj_ptr).wrapping_add(1i32));
+                                                self.pdf_print(1249i32);
                                                 self.pdf_print_int(((xref_offset_width) as i64));
                                                 {
-                                                    self.pdf_print(1249i32);
+                                                    self.pdf_print(1250i32);
                                                     {
                                                         {
                                                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -10917,9 +11426,9 @@ impl Globals {
                                                         }
                                                     }
                                                 }
-                                                self.pdf_indirect_ln(1250i32, root);
+                                                self.pdf_indirect_ln(1251i32, root);
                                                 if (__av_eqtb[crate::ix::U(((29376i32) - 1) as usize)].int() == 0i32) {
-                                                    self.pdf_indirect_ln(1251i32, (self.obj_ptr).wrapping_sub(1i32));
+                                                    self.pdf_indirect_ln(1252i32, (self.obj_ptr).wrapping_sub(1i32));
                                                 }
                                                 if (self.pdf_trailer_toks != null) {
                                                     {
@@ -10941,7 +11450,7 @@ impl Globals {
                                                             self.pdf_os_get_os_buf(1i32);
                                                         } else {
                                                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                self.overflow(1017i32, pdf_op_buf_size);
+                                                                self.overflow(1018i32, pdf_op_buf_size);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                     self.pdf_flush();
@@ -10968,7 +11477,7 @@ impl Globals {
                                                                                 self.pdf_os_get_os_buf(1i32);
                                                                             } else {
                                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                                 } else {
                                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                         self.pdf_flush();
@@ -10988,7 +11497,7 @@ impl Globals {
                                                                                 self.pdf_os_get_os_buf(1i32);
                                                                             } else {
                                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                                 } else {
                                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                         self.pdf_flush();
@@ -11012,7 +11521,7 @@ impl Globals {
                                                                                         self.pdf_os_get_os_buf(1i32);
                                                                                     } else {
                                                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                                                         } else {
                                                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                                 self.pdf_flush();
@@ -11032,7 +11541,7 @@ impl Globals {
                                                                                         self.pdf_os_get_os_buf(1i32);
                                                                                     } else {
                                                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                                                         } else {
                                                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                                 self.pdf_flush();
@@ -11054,7 +11563,7 @@ impl Globals {
                                                                                         self.pdf_os_get_os_buf(1i32);
                                                                                     } else {
                                                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                                                         } else {
                                                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                                 self.pdf_flush();
@@ -11074,7 +11583,7 @@ impl Globals {
                                                                                         self.pdf_os_get_os_buf(1i32);
                                                                                     } else {
                                                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                                                         } else {
                                                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                                 self.pdf_flush();
@@ -11096,12 +11605,12 @@ impl Globals {
                                                     }
                                                 }
                                                 self.pdf_end_stream();
-                                                // §794
+                                                // §795
                                                 self.pdf_flush();
                                             }
                                         } else {
                                             {
-                                                // §812
+                                                // §813
                                                 l = 0i32;
                                                 self.obj_tab[crate::ix::U((l) as usize)].int2 = (((2i32).wrapping_neg()) as i64);
                                                 {
@@ -11118,17 +11627,17 @@ impl Globals {
                                                     }
                                                 }
                                                 self.obj_tab[crate::ix::U((l) as usize)].int1 = 0i32;
-                                                // §813
+                                                // §814
                                                 self.pdf_save_offset = (self.pdf_gone).wrapping_add(((self.pdf_ptr) as i64));
                                                 {
-                                                    self.pdf_print(1240i32);
+                                                    self.pdf_print(1241i32);
                                                     {
                                                         {
                                                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -11142,7 +11651,7 @@ impl Globals {
                                                         }
                                                     }
                                                 }
-                                                self.pdf_print(1241i32);
+                                                self.pdf_print(1242i32);
                                                 {
                                                     self.pdf_print_int((((self.obj_ptr).wrapping_add(1i32)) as i64));
                                                     {
@@ -11151,7 +11660,7 @@ impl Globals {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -11167,14 +11676,14 @@ impl Globals {
                                                 }
                                                 self.pdf_print_fw_int(((self.obj_tab[crate::ix::U((0i32) as usize)].int1) as i64), 10i32);
                                                 {
-                                                    self.pdf_print(1242i32);
+                                                    self.pdf_print(1243i32);
                                                     {
                                                         {
                                                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -11197,14 +11706,14 @@ impl Globals {
                                                                 {
                                                                     self.pdf_print_fw_int(((self.obj_tab[crate::ix::U((k) as usize)].int1) as i64), 10i32);
                                                                     {
-                                                                        self.pdf_print(1243i32);
+                                                                        self.pdf_print(1244i32);
                                                                         {
                                                                             {
                                                                                 if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                     self.pdf_os_get_os_buf(1i32);
                                                                                 } else {
                                                                                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                        self.overflow(1017i32, pdf_op_buf_size);
+                                                                                        self.overflow(1018i32, pdf_op_buf_size);
                                                                                     } else {
                                                                                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                             self.pdf_flush();
@@ -11223,14 +11732,14 @@ impl Globals {
                                                                 {
                                                                     self.pdf_print_fw_int(self.obj_tab[crate::ix::U((k) as usize)].int2, 10i32);
                                                                     {
-                                                                        self.pdf_print(1244i32);
+                                                                        self.pdf_print(1245i32);
                                                                         {
                                                                             {
                                                                                 if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                     self.pdf_os_get_os_buf(1i32);
                                                                                 } else {
                                                                                     if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                                        self.overflow(1017i32, pdf_op_buf_size);
+                                                                                        self.overflow(1018i32, pdf_op_buf_size);
                                                                                     } else {
                                                                                         if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                                             self.pdf_flush();
@@ -11252,18 +11761,18 @@ impl Globals {
                                                 }
                                             }
                                         }
-                                        // §815
+                                        // §816
                                         if (!self.pdf_os_enable) {
                                             {
                                                 {
-                                                    self.pdf_print(1252i32);
+                                                    self.pdf_print(1253i32);
                                                     {
                                                         {
                                                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -11277,11 +11786,11 @@ impl Globals {
                                                         }
                                                     }
                                                 }
-                                                self.pdf_print(1253i32);
-                                                self.pdf_int_entry_ln(1247i32, (self.sys_obj_ptr).wrapping_add(1i32));
-                                                self.pdf_indirect_ln(1250i32, root);
+                                                self.pdf_print(1254i32);
+                                                self.pdf_int_entry_ln(1248i32, (self.sys_obj_ptr).wrapping_add(1i32));
+                                                self.pdf_indirect_ln(1251i32, root);
                                                 if (__av_eqtb[crate::ix::U(((29376i32) - 1) as usize)].int() == 0i32) {
-                                                    self.pdf_indirect_ln(1251i32, self.sys_obj_ptr);
+                                                    self.pdf_indirect_ln(1252i32, self.sys_obj_ptr);
                                                 }
                                                 if (self.pdf_trailer_toks != null) {
                                                     {
@@ -11298,14 +11807,14 @@ impl Globals {
                                                     self.print_ID(self.output_file_name);
                                                 }
                                                 {
-                                                    self.pdf_print(1254i32);
+                                                    self.pdf_print(1255i32);
                                                     {
                                                         {
                                                             if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_os_get_os_buf(1i32);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                    self.overflow(1017i32, pdf_op_buf_size);
+                                                                    self.overflow(1018i32, pdf_op_buf_size);
                                                                 } else {
                                                                     if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                         self.pdf_flush();
@@ -11322,14 +11831,14 @@ impl Globals {
                                             }
                                         }
                                         {
-                                            self.pdf_print(1255i32);
+                                            self.pdf_print(1256i32);
                                             {
                                                 {
                                                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                         self.pdf_os_get_os_buf(1i32);
                                                     } else {
                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                         } else {
                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_flush();
@@ -11352,7 +11861,7 @@ impl Globals {
                                                             self.pdf_os_get_os_buf(1i32);
                                                         } else {
                                                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                self.overflow(1017i32, pdf_op_buf_size);
+                                                                self.overflow(1018i32, pdf_op_buf_size);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                     self.pdf_flush();
@@ -11375,7 +11884,7 @@ impl Globals {
                                                             self.pdf_os_get_os_buf(1i32);
                                                         } else {
                                                             if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                                self.overflow(1017i32, pdf_op_buf_size);
+                                                                self.overflow(1018i32, pdf_op_buf_size);
                                                             } else {
                                                                 if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                     self.pdf_flush();
@@ -11391,14 +11900,14 @@ impl Globals {
                                             }
                                         }
                                         {
-                                            self.pdf_print(1256i32);
+                                            self.pdf_print(1257i32);
                                             {
                                                 {
                                                     if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                         self.pdf_os_get_os_buf(1i32);
                                                     } else {
                                                         if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                                            self.overflow(1017i32, pdf_op_buf_size);
+                                                            self.overflow(1018i32, pdf_op_buf_size);
                                                         } else {
                                                             if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
                                                                 self.pdf_flush();
@@ -11412,30 +11921,30 @@ impl Globals {
                                                 }
                                             }
                                         }
-                                        // §794
+                                        // §795
                                         self.pdf_flush();
-                                        self.print_nl(1011i32);
+                                        self.print_nl(1012i32);
                                         self.print_file_name(0i32, self.output_file_name, 0i32);
                                         self.print(286i32);
                                         self.print_int(((self.total_pages) as i64));
-                                        self.print(1013i32);
+                                        self.print(1014i32);
                                         if (self.total_pages != 1i32) {
                                             self.print_char(115i32);
                                         }
-                                        self.print(1014i32);
-                                        self.print_int((self.pdf_gone).wrapping_add(((self.pdf_ptr) as i64)));
                                         self.print(1015i32);
+                                        self.print_int((self.pdf_gone).wrapping_add(((self.pdf_ptr) as i64)));
+                                        self.print(1016i32);
                                     }
                                 }
                                 self.libpdffinish();
                                 if (self.fixed_pdf_draftmode == 0i32) {
                                     { let mut __f0 = ::core::mem::take(&mut self.pdf_file); let __r = self.b_close(&mut __f0); self.pdf_file = __f0; __r };
                                 } else {
-                                    self.pdf_warning(0i32, 1204i32, true, true);
+                                    self.pdf_warning(0i32, 1205i32, true, true);
                                 }
                             }
                         }
-                        // §1513
+                        // §1514
                         if self.log_opened {
                             {
                                 {
@@ -11520,7 +12029,7 @@ impl Globals {
             }
         } else {
             {
-                // §670
+                // §671
                 while (self.cur_s > (1i32).wrapping_neg()) {
                     {
                         if (self.cur_s > 0i32) {
@@ -11547,7 +12056,7 @@ impl Globals {
                     }
                 }
                 if (self.total_pages == 0i32) {
-                    self.print_nl(1010i32);
+                    self.print_nl(1011i32);
                 } else {
                     if (self.cur_s != (2i32).wrapping_neg()) {
                         {
@@ -11567,34 +12076,34 @@ impl Globals {
                             self.dvi_four(self.max_v);
                             self.dvi_four(self.max_h);
                             {
-                                { let __ix2333 = self.dvi_ptr; let __v2334 = (self.max_push / 256i32); self.dvi_buf[crate::ix::U((__ix2333) as usize)] = __v2334; }
+                                { let __ix2480 = self.dvi_ptr; let __v2481 = (self.max_push / 256i32); self.dvi_buf[crate::ix::U((__ix2480) as usize)] = __v2481; }
                                 self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
                                 if (self.dvi_ptr == self.dvi_limit) {
                                     self.dvi_swap();
                                 }
                             }
                             {
-                                { let __ix2335 = self.dvi_ptr; let __v2336 = (self.max_push % 256i32); self.dvi_buf[crate::ix::U((__ix2335) as usize)] = __v2336; }
+                                { let __ix2482 = self.dvi_ptr; let __v2483 = (self.max_push % 256i32); self.dvi_buf[crate::ix::U((__ix2482) as usize)] = __v2483; }
                                 self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
                                 if (self.dvi_ptr == self.dvi_limit) {
                                     self.dvi_swap();
                                 }
                             }
                             {
-                                { let __ix2337 = self.dvi_ptr; let __v2338 = ((self.total_pages / 256i32) % 256i32); self.dvi_buf[crate::ix::U((__ix2337) as usize)] = __v2338; }
+                                { let __ix2484 = self.dvi_ptr; let __v2485 = ((self.total_pages / 256i32) % 256i32); self.dvi_buf[crate::ix::U((__ix2484) as usize)] = __v2485; }
                                 self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
                                 if (self.dvi_ptr == self.dvi_limit) {
                                     self.dvi_swap();
                                 }
                             }
                             {
-                                { let __ix2339 = self.dvi_ptr; let __v2340 = (self.total_pages % 256i32); self.dvi_buf[crate::ix::U((__ix2339) as usize)] = __v2340; }
+                                { let __ix2486 = self.dvi_ptr; let __v2487 = (self.total_pages % 256i32); self.dvi_buf[crate::ix::U((__ix2486) as usize)] = __v2487; }
                                 self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
                                 if (self.dvi_ptr == self.dvi_limit) {
                                     self.dvi_swap();
                                 }
                             }
-                            // §671
+                            // §672
                             while (self.font_ptr > font_base) {
                                 {
                                     if self.font_used[crate::ix::U((self.font_ptr) as usize)] {
@@ -11603,7 +12112,7 @@ impl Globals {
                                     self.font_ptr = (self.font_ptr).wrapping_sub(1i32);
                                 }
                             }
-                            // §670
+                            // §671
                             {
                                 self.dvi_buf[crate::ix::U((self.dvi_ptr) as usize)] = post_post;
                                 self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
@@ -11632,39 +12141,39 @@ impl Globals {
                                     k = (k).wrapping_sub(1i32);
                                 }
                             }
-                            // §626
+                            // §627
                             if (self.dvi_limit == self.half_buf) {
                                 self.write_dvi(self.half_buf, (dvi_buf_size).wrapping_sub(1i32));
                             }
                             if (self.dvi_ptr > (2147483647i32).wrapping_sub(self.dvi_offset)) {
                                 {
                                     self.cur_s = (2i32).wrapping_neg();
-                                    self.fatal_error(999i32);
+                                    self.fatal_error(1000i32);
                                 }
                             }
                             if (self.dvi_ptr > 0i32) {
                                 self.write_dvi(0i32, (self.dvi_ptr).wrapping_sub(1i32));
                             }
-                            // §670
-                            self.print_nl(1011i32);
+                            // §671
+                            self.print_nl(1012i32);
                             self.print_file_name(0i32, self.output_file_name, 0i32);
                             self.print(286i32);
                             self.print_int(((self.total_pages) as i64));
                             if (self.total_pages != 1i32) {
-                                self.print(1012i32);
-                            } else {
                                 self.print(1013i32);
+                            } else {
+                                self.print(1014i32);
                             }
-                            self.print(1014i32);
-                            self.print_int((((self.dvi_offset).wrapping_add(self.dvi_ptr)) as i64));
                             self.print(1015i32);
+                            self.print_int((((self.dvi_offset).wrapping_add(self.dvi_ptr)) as i64));
+                            self.print(1016i32);
                             { let mut __f0 = ::core::mem::take(&mut self.dvi_file); let __r = self.b_close(&mut __f0); self.dvi_file = __f0; __r };
                         }
                     }
                 }
             }
         }
-        // §1513
+        // §1514
         if self.log_opened {
             {
                 {
@@ -11674,7 +12183,7 @@ impl Globals {
                 self.selector = (self.selector).wrapping_sub(2i32);
                 if (self.selector == term_only) {
                     {
-                        self.print_nl(1719i32);
+                        self.print_nl(1734i32);
                         self.print_file_name(0i32, self.log_name, 0i32);
                         self.print_char(46i32);
                     }
@@ -11690,9 +12199,9 @@ impl Globals {
     /// We get to the `final_cleanup` routine when \.{\\end} or \.{\\dump} has
     /// been scanned and `its_all_over`\kern-2pt.
     /// @<Last-minute...
-    // §1515
+    // §1516
     pub fn final_cleanup(&mut self) {
-        let mut c: small_number = 0; // §1515
+        let mut c: small_number = 0; // §1516
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
@@ -11714,15 +12223,15 @@ impl Globals {
             }
             while (self.open_parens > 0i32) {
                 {
-                    self.print(1720i32);
+                    self.print(1735i32);
                     self.open_parens = (self.open_parens).wrapping_sub(1i32);
                 }
             }
             if (self.cur_level > level_one) {
                 {
                     self.print_nl(40i32);
-                    self.print_esc(1721i32);
-                    self.print(1722i32);
+                    self.print_esc(1736i32);
+                    self.print(1737i32);
                     self.print_int((((self.cur_level).wrapping_sub(1i32)) as i64));
                     self.print_char(41i32);
                     if (self.eTeX_mode == 1i32) {
@@ -11733,17 +12242,17 @@ impl Globals {
             while (self.cond_ptr != null) {
                 {
                     self.print_nl(40i32);
-                    self.print_esc(1721i32);
-                    self.print(1723i32);
+                    self.print_esc(1736i32);
+                    self.print(1738i32);
                     self.print_cmd_chr(if_test, self.cur_if);
                     if (self.if_line != 0i32) {
                         {
                             self.ls_print_unknown(self.if_line);
-                            self.print(1724i32);
+                            self.print(1739i32);
                             self.print_int(((self.if_line) as i64));
                         }
                     }
-                    self.print(1725i32);
+                    self.print(1740i32);
                     self.if_line = __av_mem[crate::ix::U(((self.cond_ptr).wrapping_add(1i32)) as usize)].int();
                     self.cur_if = __av_mem[crate::ix::U((self.cond_ptr) as usize)].hh().b1();
                     self.temp_ptr = self.cond_ptr;
@@ -11757,7 +12266,7 @@ impl Globals {
                     if (self.selector == term_and_log) {
                         {
                             self.selector = term_only;
-                            self.print_nl(1726i32);
+                            self.print_nl(1741i32);
                             self.selector = term_and_log;
                         }
                     }
@@ -11793,7 +12302,7 @@ impl Globals {
                     }
                     self.store_fmt_file();
                     break 'l_exit_f;
-                    self.print_nl(1727i32);
+                    self.print_nl(1742i32);
                     break 'l_exit_f;
                 }
             }
@@ -11801,7 +12310,7 @@ impl Globals {
     }
 
     /// @<Last-minute...
-    // §1516
+    // §1517
     pub fn init_prim(&mut self) {
         #[allow(unused_mut)]
         let mut __av_eqtb = self.eqtb.view();
@@ -11906,6 +12415,15 @@ impl Globals {
                 self.primitive(498i32, assign_int, 29334i32);
             }
         }
+        if self.enctex_p {
+            {
+                self.enctex_enabled_p = true;
+                self.primitive(499i32, assign_int, 29338i32);
+                self.primitive(500i32, assign_int, 29339i32);
+                self.primitive(501i32, assign_int, 29340i32);
+                self.primitive(502i32, assign_int, 29341i32);
+            }
+        }
         self.primitive(503i32, assign_int, 29335i32);
         self.primitive(544i32, partoken_name, 0i32);
         self.primitive(504i32, assign_int, 29336i32);
@@ -11996,277 +12514,300 @@ impl Globals {
         self.primitive(599i32, delim_num, 0i32);
         self.primitive(600i32, divide, 0i32);
         self.primitive(590i32, end_cs_name, 0i32);
-        self.primitive(601i32, end_group, 0i32);
-        self.hash[crate::ix::U(((frozen_end_group) - 514) as usize)].set_rh(601i32);
-        { let __v2341 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_end_group) - 1) as usize)] = __v2341; }
-        self.primitive(602i32, expand_after, 0i32);
-        self.primitive(603i32, def_font, 0i32);
-        self.primitive(604i32, letterspace_font, 0i32);
-        self.primitive(605i32, pdf_copy_font, 0i32);
-        self.primitive(606i32, assign_font_dimen, 0i32);
-        self.primitive(607i32, halign, 0i32);
-        self.primitive(608i32, hrule, 0i32);
-        self.primitive(609i32, ignore_spaces, 0i32);
+        if self.enctex_p {
+            {
+                self.primitive(601i32, end_cs_name, 10i32);
+            }
+        }
+        self.primitive(602i32, end_group, 0i32);
+        self.hash[crate::ix::U(((frozen_end_group) - 514) as usize)].set_rh(602i32);
+        { let __v2488 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_end_group) - 1) as usize)] = __v2488; }
+        self.primitive(603i32, expand_after, 0i32);
+        self.primitive(604i32, def_font, 0i32);
+        self.primitive(605i32, letterspace_font, 0i32);
+        self.primitive(606i32, pdf_copy_font, 0i32);
+        self.primitive(607i32, assign_font_dimen, 0i32);
+        self.primitive(608i32, halign, 0i32);
+        self.primitive(609i32, hrule, 0i32);
+        self.primitive(610i32, ignore_spaces, 0i32);
         self.primitive(337i32, insert, 0i32);
         self.primitive(360i32, mark, 0i32);
-        self.primitive(610i32, math_accent, 0i32);
-        self.primitive(611i32, math_char_num, 0i32);
-        self.primitive(612i32, math_choice, 0i32);
-        self.primitive(613i32, multiply, 0i32);
-        self.primitive(614i32, no_align, 0i32);
-        self.primitive(615i32, no_boundary, 0i32);
-        self.primitive(616i32, no_expand, 0i32);
+        self.primitive(611i32, math_accent, 0i32);
+        self.primitive(612i32, math_char_num, 0i32);
+        self.primitive(613i32, math_choice, 0i32);
+        self.primitive(614i32, multiply, 0i32);
+        self.primitive(615i32, no_align, 0i32);
+        self.primitive(616i32, no_boundary, 0i32);
+        self.primitive(617i32, no_expand, 0i32);
         self.primitive(586i32, no_expand, 1i32);
         self.primitive(342i32, non_script, 0i32);
-        self.primitive(617i32, omit, 0i32);
-        self.primitive(618i32, set_shape, par_shape_loc);
-        self.primitive(619i32, break_penalty, 0i32);
-        self.primitive(620i32, set_prev_graf, 0i32);
-        self.primitive(621i32, radical, 0i32);
-        self.primitive(622i32, read_to_cs, 0i32);
-        self.primitive(623i32, relax, 256i32);
-        self.hash[crate::ix::U(((frozen_relax) - 514) as usize)].set_rh(623i32);
-        { let __v2342 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_relax) - 1) as usize)] = __v2342; }
-        self.primitive(624i32, set_box, 0i32);
-        self.primitive(625i32, the, 0i32);
+        self.primitive(618i32, omit, 0i32);
+        self.primitive(619i32, set_shape, par_shape_loc);
+        self.primitive(620i32, break_penalty, 0i32);
+        self.primitive(621i32, set_prev_graf, 0i32);
+        self.primitive(622i32, radical, 0i32);
+        self.primitive(623i32, read_to_cs, 0i32);
+        self.primitive(624i32, relax, 256i32);
+        self.hash[crate::ix::U(((frozen_relax) - 514) as usize)].set_rh(624i32);
+        { let __v2489 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_relax) - 1) as usize)] = __v2489; }
+        self.primitive(625i32, set_box, 0i32);
+        self.primitive(626i32, the, 0i32);
         self.primitive(428i32, toks_register, mem_bot);
         self.primitive(361i32, vadjust, 0i32);
-        self.primitive(626i32, valign, 0i32);
-        self.primitive(627i32, vcenter, 0i32);
-        self.primitive(628i32, vrule, 0i32);
+        self.primitive(627i32, valign, 0i32);
+        self.primitive(628i32, vcenter, 0i32);
+        self.primitive(629i32, vrule, 0i32);
         // §356
-        self.primitive(690i32, par_end, 256i32);
+        self.primitive(691i32, par_end, 256i32);
         self.par_loc = self.cur_val;
         self.par_token = (cs_token_flag).wrapping_add(self.par_loc);
-        // §402
-        self.primitive(726i32, input, 0i32);
-        self.primitive(727i32, input, 1i32);
-        // §410
-        self.primitive(728i32, top_bot_mark, top_mark_code);
-        self.primitive(729i32, top_bot_mark, first_mark_code);
-        self.primitive(730i32, top_bot_mark, bot_mark_code);
-        self.primitive(731i32, top_bot_mark, split_first_mark_code);
-        self.primitive(732i32, top_bot_mark, split_bot_mark_code);
-        // §437
+        // §403
+        self.primitive(727i32, input, 0i32);
+        self.primitive(728i32, input, 1i32);
+        // §411
+        self.primitive(729i32, top_bot_mark, top_mark_code);
+        self.primitive(730i32, top_bot_mark, first_mark_code);
+        self.primitive(731i32, top_bot_mark, bot_mark_code);
+        self.primitive(732i32, top_bot_mark, split_first_mark_code);
+        self.primitive(733i32, top_bot_mark, split_bot_mark_code);
+        // §438
         self.primitive(546i32, register, 0i32);
         self.primitive(583i32, register, 1i32);
         self.primitive(413i32, register, 2i32);
         self.primitive(414i32, register, 3i32);
-        // §442
-        self.primitive(765i32, set_aux, hmode);
-        self.primitive(766i32, set_aux, vmode);
-        self.primitive(767i32, set_page_int, 0i32);
-        self.primitive(768i32, set_page_int, 1i32);
-        self.primitive(769i32, set_box_dimen, width_offset);
-        self.primitive(770i32, set_box_dimen, height_offset);
-        self.primitive(771i32, set_box_dimen, depth_offset);
-        self.primitive(772i32, last_item, int_val);
-        self.primitive(773i32, last_item, dimen_val);
-        self.primitive(774i32, last_item, glue_val);
-        self.primitive(775i32, last_item, input_line_no_code);
-        self.primitive(776i32, last_item, badness_code);
-        self.primitive(777i32, last_item, pdftex_version_code);
-        self.primitive(778i32, last_item, pdf_last_obj_code);
-        self.primitive(779i32, last_item, pdf_last_xform_code);
-        self.primitive(780i32, last_item, pdf_last_ximage_code);
-        self.primitive(781i32, last_item, pdf_last_ximage_pages_code);
-        self.primitive(782i32, last_item, pdf_last_annot_code);
-        self.primitive(783i32, last_item, pdf_last_x_pos_code);
-        self.primitive(784i32, last_item, pdf_last_y_pos_code);
-        self.primitive(785i32, last_item, pdf_retval_code);
-        self.primitive(786i32, last_item, pdf_last_ximage_colordepth_code);
-        self.primitive(787i32, last_item, elapsed_time_code);
-        self.primitive(788i32, last_item, pdf_shell_escape_code);
-        self.primitive(789i32, last_item, random_seed_code);
-        self.primitive(790i32, last_item, pdf_last_link_code);
-        // §494
-        self.primitive(849i32, convert, number_code);
-        self.primitive(850i32, convert, roman_numeral_code);
-        self.primitive(851i32, convert, string_code);
-        self.primitive(852i32, convert, meaning_code);
-        self.primitive(853i32, convert, font_name_code);
-        self.primitive(854i32, convert, expanded_code);
-        self.primitive(855i32, convert, pdftex_revision_code);
-        self.primitive(856i32, convert, pdftex_banner_code);
-        self.primitive(857i32, convert, pdf_font_name_code);
-        self.primitive(858i32, convert, pdf_font_objnum_code);
-        self.primitive(859i32, convert, pdf_font_size_code);
-        self.primitive(860i32, convert, pdf_page_ref_code);
-        self.primitive(861i32, convert, left_margin_kern_code);
-        self.primitive(862i32, convert, right_margin_kern_code);
-        self.primitive(863i32, convert, pdf_xform_name_code);
-        self.primitive(864i32, convert, pdf_escape_string_code);
-        self.primitive(865i32, convert, pdf_escape_name_code);
-        self.primitive(866i32, convert, pdf_escape_hex_code);
-        self.primitive(867i32, convert, pdf_unescape_hex_code);
-        self.primitive(868i32, convert, pdf_creation_date_code);
-        self.primitive(869i32, convert, pdf_file_mod_date_code);
-        self.primitive(870i32, convert, pdf_file_size_code);
-        self.primitive(871i32, convert, pdf_mdfive_sum_code);
-        self.primitive(872i32, convert, pdf_file_dump_code);
-        self.primitive(873i32, convert, pdf_match_code);
-        self.primitive(874i32, convert, pdf_last_match_code);
-        self.primitive(875i32, convert, pdf_strcmp_code);
-        self.primitive(876i32, convert, pdf_colorstack_init_code);
-        self.primitive(877i32, convert, uniform_deviate_code);
-        self.primitive(878i32, convert, normal_deviate_code);
-        self.primitive(879i32, convert, job_name_code);
-        self.primitive(880i32, convert, pdf_insert_ht_code);
-        self.primitive(881i32, convert, pdf_ximage_bbox_code);
-        // §513
-        self.primitive(921i32, if_test, if_char_code);
-        self.primitive(922i32, if_test, if_cat_code);
-        self.primitive(923i32, if_test, if_int_code);
-        self.primitive(924i32, if_test, if_dim_code);
-        self.primitive(925i32, if_test, if_odd_code);
-        self.primitive(926i32, if_test, if_vmode_code);
-        self.primitive(927i32, if_test, if_hmode_code);
-        self.primitive(928i32, if_test, if_mmode_code);
-        self.primitive(929i32, if_test, if_inner_code);
-        self.primitive(930i32, if_test, if_void_code);
-        self.primitive(931i32, if_test, if_hbox_code);
-        self.primitive(932i32, if_test, if_vbox_code);
-        self.primitive(933i32, if_test, ifx_code);
-        self.primitive(934i32, if_test, if_eof_code);
-        self.primitive(935i32, if_test, if_true_code);
-        self.primitive(936i32, if_test, if_false_code);
-        self.primitive(937i32, if_test, if_case_code);
-        self.primitive(938i32, if_test, if_pdfprimitive_code);
-        // §517
-        self.primitive(940i32, fi_or_else, fi_code);
-        self.hash[crate::ix::U(((frozen_fi) - 514) as usize)].set_rh(940i32);
-        { let __v2343 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_fi) - 1) as usize)] = __v2343; }
-        self.primitive(941i32, fi_or_else, or_code);
-        self.primitive(942i32, fi_or_else, else_code);
-        // §579
-        self.primitive(968i32, set_font, null_font);
-        self.hash[crate::ix::U(((frozen_null_font) - 514) as usize)].set_rh(968i32);
-        { let __v2344 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_null_font) - 1) as usize)] = __v2344; }
-        // §956
-        self.primitive(1320i32, tab_mark, span_code);
-        self.primitive(1321i32, car_ret, cr_code);
-        self.hash[crate::ix::U(((frozen_cr) - 514) as usize)].set_rh(1321i32);
-        { let __v2345 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_cr) - 1) as usize)] = __v2345; }
-        self.primitive(1322i32, car_ret, cr_cr_code);
-        self.hash[crate::ix::U(((frozen_end_template) - 514) as usize)].set_rh(1323i32);
-        self.hash[crate::ix::U(((frozen_endv) - 514) as usize)].set_rh(1323i32);
+        // §443
+        self.primitive(766i32, set_aux, hmode);
+        self.primitive(767i32, set_aux, vmode);
+        self.primitive(768i32, set_page_int, 0i32);
+        self.primitive(769i32, set_page_int, 1i32);
+        self.primitive(770i32, set_box_dimen, width_offset);
+        self.primitive(771i32, set_box_dimen, height_offset);
+        self.primitive(772i32, set_box_dimen, depth_offset);
+        self.primitive(773i32, last_item, int_val);
+        self.primitive(774i32, last_item, dimen_val);
+        self.primitive(775i32, last_item, glue_val);
+        self.primitive(776i32, last_item, input_line_no_code);
+        self.primitive(777i32, last_item, badness_code);
+        self.primitive(778i32, last_item, pdftex_version_code);
+        self.primitive(779i32, last_item, pdf_last_obj_code);
+        self.primitive(780i32, last_item, pdf_last_xform_code);
+        self.primitive(781i32, last_item, pdf_last_ximage_code);
+        self.primitive(782i32, last_item, pdf_last_ximage_pages_code);
+        self.primitive(783i32, last_item, pdf_last_annot_code);
+        self.primitive(784i32, last_item, pdf_last_x_pos_code);
+        self.primitive(785i32, last_item, pdf_last_y_pos_code);
+        self.primitive(786i32, last_item, pdf_retval_code);
+        self.primitive(787i32, last_item, pdf_last_ximage_colordepth_code);
+        self.primitive(788i32, last_item, elapsed_time_code);
+        self.primitive(789i32, last_item, pdf_shell_escape_code);
+        self.primitive(790i32, last_item, random_seed_code);
+        self.primitive(791i32, last_item, pdf_last_link_code);
+        // §495
+        self.primitive(850i32, convert, number_code);
+        self.primitive(851i32, convert, roman_numeral_code);
+        self.primitive(852i32, convert, string_code);
+        self.primitive(853i32, convert, meaning_code);
+        self.primitive(854i32, convert, font_name_code);
+        self.primitive(855i32, convert, expanded_code);
+        self.primitive(856i32, convert, pdftex_revision_code);
+        self.primitive(857i32, convert, pdftex_banner_code);
+        self.primitive(858i32, convert, pdf_font_name_code);
+        self.primitive(859i32, convert, pdf_font_objnum_code);
+        self.primitive(860i32, convert, pdf_font_size_code);
+        self.primitive(861i32, convert, pdf_page_ref_code);
+        self.primitive(862i32, convert, left_margin_kern_code);
+        self.primitive(863i32, convert, right_margin_kern_code);
+        self.primitive(864i32, convert, pdf_xform_name_code);
+        self.primitive(865i32, convert, pdf_escape_string_code);
+        self.primitive(866i32, convert, pdf_escape_name_code);
+        self.primitive(867i32, convert, pdf_escape_hex_code);
+        self.primitive(868i32, convert, pdf_unescape_hex_code);
+        self.primitive(869i32, convert, pdf_creation_date_code);
+        self.primitive(870i32, convert, pdf_file_mod_date_code);
+        self.primitive(871i32, convert, pdf_file_size_code);
+        self.primitive(872i32, convert, pdf_mdfive_sum_code);
+        self.primitive(873i32, convert, pdf_file_dump_code);
+        self.primitive(874i32, convert, pdf_match_code);
+        self.primitive(875i32, convert, pdf_last_match_code);
+        self.primitive(876i32, convert, pdf_strcmp_code);
+        self.primitive(877i32, convert, pdf_colorstack_init_code);
+        self.primitive(878i32, convert, uniform_deviate_code);
+        self.primitive(879i32, convert, normal_deviate_code);
+        self.primitive(880i32, convert, job_name_code);
+        self.primitive(881i32, convert, pdf_insert_ht_code);
+        self.primitive(882i32, convert, pdf_ximage_bbox_code);
+        // §514
+        self.primitive(922i32, if_test, if_char_code);
+        self.primitive(923i32, if_test, if_cat_code);
+        self.primitive(924i32, if_test, if_int_code);
+        self.primitive(925i32, if_test, if_dim_code);
+        self.primitive(926i32, if_test, if_odd_code);
+        self.primitive(927i32, if_test, if_vmode_code);
+        self.primitive(928i32, if_test, if_hmode_code);
+        self.primitive(929i32, if_test, if_mmode_code);
+        self.primitive(930i32, if_test, if_inner_code);
+        self.primitive(931i32, if_test, if_void_code);
+        self.primitive(932i32, if_test, if_hbox_code);
+        self.primitive(933i32, if_test, if_vbox_code);
+        self.primitive(934i32, if_test, ifx_code);
+        self.primitive(935i32, if_test, if_eof_code);
+        self.primitive(936i32, if_test, if_true_code);
+        self.primitive(937i32, if_test, if_false_code);
+        self.primitive(938i32, if_test, if_case_code);
+        self.primitive(939i32, if_test, if_pdfprimitive_code);
+        // §518
+        self.primitive(941i32, fi_or_else, fi_code);
+        self.hash[crate::ix::U(((frozen_fi) - 514) as usize)].set_rh(941i32);
+        { let __v2490 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_fi) - 1) as usize)] = __v2490; }
+        self.primitive(942i32, fi_or_else, or_code);
+        self.primitive(943i32, fi_or_else, else_code);
+        // §580
+        self.primitive(969i32, set_font, null_font);
+        self.hash[crate::ix::U(((frozen_null_font) - 514) as usize)].set_rh(969i32);
+        { let __v2491 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_null_font) - 1) as usize)] = __v2491; }
+        // §957
+        self.primitive(1321i32, tab_mark, span_code);
+        self.primitive(1322i32, car_ret, cr_code);
+        self.hash[crate::ix::U(((frozen_cr) - 514) as usize)].set_rh(1322i32);
+        { let __v2492 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_cr) - 1) as usize)] = __v2492; }
+        self.primitive(1323i32, car_ret, cr_cr_code);
+        self.hash[crate::ix::U(((frozen_end_template) - 514) as usize)].set_rh(1324i32);
+        self.hash[crate::ix::U(((frozen_endv) - 514) as usize)].set_rh(1324i32);
         __av_eqtb[crate::ix::U(((frozen_endv) - 1) as usize)].set_hh_b0(endv);
         __av_eqtb[crate::ix::U(((frozen_endv) - 1) as usize)].set_hh_rh(null_list);
         __av_eqtb[crate::ix::U(((frozen_endv) - 1) as usize)].set_hh_b1(level_one);
-        { let __v2346 = __av_eqtb[crate::ix::U(((frozen_endv) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_end_template) - 1) as usize)] = __v2346; }
+        { let __v2493 = __av_eqtb[crate::ix::U(((frozen_endv) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_end_template) - 1) as usize)] = __v2493; }
         __av_eqtb[crate::ix::U(((frozen_end_template) - 1) as usize)].set_hh_b0(end_template);
-        // §1160
-        self.primitive(1398i32, set_page_dimen, 0i32);
-        self.primitive(1399i32, set_page_dimen, 1i32);
-        self.primitive(1400i32, set_page_dimen, 2i32);
-        self.primitive(1401i32, set_page_dimen, 3i32);
-        self.primitive(1402i32, set_page_dimen, 4i32);
-        self.primitive(1403i32, set_page_dimen, 5i32);
-        self.primitive(1404i32, set_page_dimen, 6i32);
-        self.primitive(1405i32, set_page_dimen, 7i32);
-        // §1230
+        // §1161
+        self.primitive(1399i32, set_page_dimen, 0i32);
+        self.primitive(1400i32, set_page_dimen, 1i32);
+        self.primitive(1401i32, set_page_dimen, 2i32);
+        self.primitive(1402i32, set_page_dimen, 3i32);
+        self.primitive(1403i32, set_page_dimen, 4i32);
+        self.primitive(1404i32, set_page_dimen, 5i32);
+        self.primitive(1405i32, set_page_dimen, 6i32);
+        self.primitive(1406i32, set_page_dimen, 7i32);
+        // §1231
         self.primitive(350i32, stop, 0i32);
-        self.primitive(1450i32, stop, 1i32);
-        // §1236
-        self.primitive(1451i32, hskip, skip_code);
-        self.primitive(1452i32, hskip, fil_code);
-        self.primitive(1453i32, hskip, fill_code);
-        self.primitive(1454i32, hskip, ss_code);
-        self.primitive(1455i32, hskip, fil_neg_code);
-        self.primitive(1456i32, vskip, skip_code);
-        self.primitive(1457i32, vskip, fil_code);
-        self.primitive(1458i32, vskip, fill_code);
-        self.primitive(1459i32, vskip, ss_code);
-        self.primitive(1460i32, vskip, fil_neg_code);
+        self.primitive(1451i32, stop, 1i32);
+        // §1237
+        self.primitive(1452i32, hskip, skip_code);
+        self.primitive(1453i32, hskip, fil_code);
+        self.primitive(1454i32, hskip, fill_code);
+        self.primitive(1455i32, hskip, ss_code);
+        self.primitive(1456i32, hskip, fil_neg_code);
+        self.primitive(1457i32, vskip, skip_code);
+        self.primitive(1458i32, vskip, fil_code);
+        self.primitive(1459i32, vskip, fill_code);
+        self.primitive(1460i32, vskip, ss_code);
+        self.primitive(1461i32, vskip, fil_neg_code);
         self.primitive(343i32, mskip, mskip_code);
         self.primitive(322i32, kern, explicit);
         self.primitive(349i32, mkern, mu_glue);
-        // §1249
-        self.primitive(1478i32, hmove, 1i32);
-        self.primitive(1479i32, hmove, 0i32);
-        self.primitive(1480i32, vmove, 1i32);
-        self.primitive(1481i32, vmove, 0i32);
+        // §1250
+        self.primitive(1479i32, hmove, 1i32);
+        self.primitive(1480i32, hmove, 0i32);
+        self.primitive(1481i32, vmove, 1i32);
+        self.primitive(1482i32, vmove, 0i32);
         self.primitive(430i32, make_box, box_code);
-        self.primitive(1482i32, make_box, copy_code);
-        self.primitive(1483i32, make_box, last_box_code);
-        self.primitive(1393i32, make_box, vsplit_code);
-        self.primitive(1484i32, make_box, vtop_code);
-        self.primitive(1395i32, make_box, 5i32);
-        self.primitive(1485i32, make_box, 109i32);
-        self.primitive(1486i32, leader_ship, 99i32);
-        self.primitive(1487i32, leader_ship, a_leaders);
-        self.primitive(1488i32, leader_ship, c_leaders);
-        self.primitive(1489i32, leader_ship, x_leaders);
-        // §1266
-        self.primitive(1505i32, start_par, 1i32);
-        self.primitive(1506i32, start_par, 0i32);
-        self.primitive(1507i32, start_par, 2i32);
-        // §1285
-        self.primitive(1517i32, remove_item, penalty_node);
-        self.primitive(1518i32, remove_item, kern_node);
-        self.primitive(1519i32, remove_item, glue_node);
-        self.primitive(1520i32, un_hbox, box_code);
-        self.primitive(1521i32, un_hbox, copy_code);
-        self.primitive(1522i32, un_vbox, box_code);
-        self.primitive(1523i32, un_vbox, copy_code);
-        // §1292
+        self.primitive(1483i32, make_box, copy_code);
+        self.primitive(1484i32, make_box, last_box_code);
+        self.primitive(1394i32, make_box, vsplit_code);
+        self.primitive(1485i32, make_box, vtop_code);
+        self.primitive(1396i32, make_box, 5i32);
+        self.primitive(1486i32, make_box, 109i32);
+        self.primitive(1487i32, leader_ship, 99i32);
+        self.primitive(1488i32, leader_ship, a_leaders);
+        self.primitive(1489i32, leader_ship, c_leaders);
+        self.primitive(1490i32, leader_ship, x_leaders);
+        // §1267
+        self.primitive(1506i32, start_par, 1i32);
+        self.primitive(1507i32, start_par, 0i32);
+        self.primitive(1508i32, start_par, 2i32);
+        // §1286
+        self.primitive(1518i32, remove_item, penalty_node);
+        self.primitive(1519i32, remove_item, kern_node);
+        self.primitive(1520i32, remove_item, glue_node);
+        self.primitive(1521i32, un_hbox, box_code);
+        self.primitive(1522i32, un_hbox, copy_code);
+        self.primitive(1523i32, un_vbox, box_code);
+        self.primitive(1524i32, un_vbox, copy_code);
+        // §1293
         self.primitive(45i32, discretionary, 1i32);
         self.primitive(358i32, discretionary, 0i32);
-        // §1319
-        self.primitive(1554i32, eq_no, 0i32);
-        self.primitive(1555i32, eq_no, 1i32);
-        // §1334
-        self.primitive(1287i32, math_comp, ord_noad);
-        self.primitive(1288i32, math_comp, op_noad);
-        self.primitive(1289i32, math_comp, bin_noad);
-        self.primitive(1290i32, math_comp, rel_noad);
-        self.primitive(1291i32, math_comp, open_noad);
-        self.primitive(1292i32, math_comp, close_noad);
-        self.primitive(1293i32, math_comp, punct_noad);
-        self.primitive(1294i32, math_comp, inner_noad);
-        self.primitive(1296i32, math_comp, under_noad);
-        self.primitive(1295i32, math_comp, over_noad);
-        self.primitive(1556i32, limit_switch, normal);
-        self.primitive(1300i32, limit_switch, limits);
-        self.primitive(1301i32, limit_switch, no_limits);
-        // §1347
-        self.primitive(1282i32, math_style, display_style);
-        self.primitive(1283i32, math_style, text_style);
-        self.primitive(1284i32, math_style, script_style);
-        self.primitive(1285i32, math_style, script_script_style);
-        // §1356
-        self.primitive(1574i32, above, above_code);
-        self.primitive(1575i32, above, over_code);
-        self.primitive(1576i32, above, atop_code);
-        self.primitive(1577i32, above, 3i32);
-        self.primitive(1578i32, above, 4i32);
-        self.primitive(1579i32, above, 5i32);
-        // §1366
-        self.primitive(1297i32, left_right, left_noad);
-        self.primitive(1298i32, left_right, right_noad);
-        self.hash[crate::ix::U(((frozen_right) - 514) as usize)].set_rh(1298i32);
-        { let __v2347 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_right) - 1) as usize)] = __v2347; }
-        // §1386
-        self.primitive(1599i32, prefix, 1i32);
-        self.primitive(1600i32, prefix, 2i32);
-        self.primitive(1601i32, prefix, 4i32);
-        self.primitive(1602i32, def, 0i32);
-        self.primitive(1603i32, def, 1i32);
-        self.primitive(1604i32, def, 2i32);
-        self.primitive(1605i32, def, 3i32);
-        // §1397
-        self.primitive(1622i32, let_, normal);
-        self.primitive(1623i32, let_, 1i32);
-        // §1400
-        self.primitive(1624i32, shorthand_def, char_def_code);
-        self.primitive(1625i32, shorthand_def, math_char_def_code);
-        self.primitive(1626i32, shorthand_def, count_def_code);
-        self.primitive(1627i32, shorthand_def, dimen_def_code);
-        self.primitive(1628i32, shorthand_def, skip_def_code);
-        self.primitive(1629i32, shorthand_def, mu_skip_def_code);
-        self.primitive(1630i32, shorthand_def, toks_def_code);
-        // §1408
+        // §1320
+        self.primitive(1556i32, eq_no, 0i32);
+        self.primitive(1557i32, eq_no, 1i32);
+        // §1335
+        self.primitive(1288i32, math_comp, ord_noad);
+        self.primitive(1289i32, math_comp, op_noad);
+        self.primitive(1290i32, math_comp, bin_noad);
+        self.primitive(1291i32, math_comp, rel_noad);
+        self.primitive(1292i32, math_comp, open_noad);
+        self.primitive(1293i32, math_comp, close_noad);
+        self.primitive(1294i32, math_comp, punct_noad);
+        self.primitive(1295i32, math_comp, inner_noad);
+        self.primitive(1297i32, math_comp, under_noad);
+        self.primitive(1296i32, math_comp, over_noad);
+        self.primitive(1558i32, limit_switch, normal);
+        self.primitive(1301i32, limit_switch, limits);
+        self.primitive(1302i32, limit_switch, no_limits);
+        // §1348
+        self.primitive(1283i32, math_style, display_style);
+        self.primitive(1284i32, math_style, text_style);
+        self.primitive(1285i32, math_style, script_style);
+        self.primitive(1286i32, math_style, script_script_style);
+        // §1357
+        self.primitive(1576i32, above, above_code);
+        self.primitive(1577i32, above, over_code);
+        self.primitive(1578i32, above, atop_code);
+        self.primitive(1579i32, above, 3i32);
+        self.primitive(1580i32, above, 4i32);
+        self.primitive(1581i32, above, 5i32);
+        // §1367
+        self.primitive(1298i32, left_right, left_noad);
+        self.primitive(1299i32, left_right, right_noad);
+        self.hash[crate::ix::U(((frozen_right) - 514) as usize)].set_rh(1299i32);
+        { let __v2494 = __av_eqtb[crate::ix::U(((self.cur_val) - 1) as usize)]; __av_eqtb[crate::ix::U(((frozen_right) - 1) as usize)] = __v2494; }
+        // §1387
+        self.primitive(1601i32, prefix, 1i32);
+        self.primitive(1602i32, prefix, 2i32);
+        self.primitive(1603i32, prefix, 4i32);
+        self.primitive(1604i32, def, 0i32);
+        self.primitive(1605i32, def, 1i32);
+        self.primitive(1606i32, def, 2i32);
+        self.primitive(1607i32, def, 3i32);
+        // §1398
+        self.primitive(1624i32, let_, normal);
+        self.primitive(1625i32, let_, 1i32);
+        if self.enctex_p {
+            {
+                self.primitive(1626i32, let_, 10i32);
+                self.primitive(1627i32, let_, 11i32);
+            }
+        }
+        // §1401
+        self.primitive(1633i32, shorthand_def, char_def_code);
+        self.primitive(1634i32, shorthand_def, math_char_def_code);
+        self.primitive(1635i32, shorthand_def, count_def_code);
+        self.primitive(1636i32, shorthand_def, dimen_def_code);
+        self.primitive(1637i32, shorthand_def, skip_def_code);
+        self.primitive(1638i32, shorthand_def, mu_skip_def_code);
+        self.primitive(1639i32, shorthand_def, toks_def_code);
+        if self.mltex_p {
+            {
+                self.primitive(1640i32, shorthand_def, char_sub_def_code);
+            }
+        }
+        // §1409
         self.primitive(436i32, def_code, cat_code_base);
+        if self.enctex_p {
+            {
+                self.primitive(1645i32, def_code, xord_code_base);
+                self.primitive(1646i32, def_code, xchr_code_base);
+                self.primitive(1647i32, def_code, xprn_code_base);
+            }
+        }
         self.primitive(440i32, def_code, math_code_base);
         self.primitive(437i32, def_code, lc_code_base);
         self.primitive(438i32, def_code, uc_code_base);
@@ -12275,95 +12816,95 @@ impl Globals {
         self.primitive(433i32, def_family, math_font_base);
         self.primitive(434i32, def_family, 27709i32);
         self.primitive(435i32, def_family, 27725i32);
-        // §1428
-        self.primitive(1367i32, hyph_data, 0i32);
-        self.primitive(1379i32, hyph_data, 1i32);
-        // §1432
-        self.primitive(1648i32, assign_font_int, 0i32);
-        self.primitive(1649i32, assign_font_int, 1i32);
-        self.primitive(1650i32, assign_font_int, lp_code_base);
-        self.primitive(1651i32, assign_font_int, rp_code_base);
-        self.primitive(1652i32, assign_font_int, ef_code_base);
-        self.primitive(1653i32, assign_font_int, tag_code);
-        self.primitive(1654i32, assign_font_int, kn_bs_code_base);
-        self.primitive(1655i32, assign_font_int, st_bs_code_base);
-        self.primitive(1656i32, assign_font_int, sh_bs_code_base);
-        self.primitive(1657i32, assign_font_int, kn_bc_code_base);
-        self.primitive(1658i32, assign_font_int, kn_ac_code_base);
-        self.primitive(1659i32, assign_font_int, no_lig_code);
-        // §1440
+        // §1429
+        self.primitive(1368i32, hyph_data, 0i32);
+        self.primitive(1380i32, hyph_data, 1i32);
+        // §1433
+        self.primitive(1663i32, assign_font_int, 0i32);
+        self.primitive(1664i32, assign_font_int, 1i32);
+        self.primitive(1665i32, assign_font_int, lp_code_base);
+        self.primitive(1666i32, assign_font_int, rp_code_base);
+        self.primitive(1667i32, assign_font_int, ef_code_base);
+        self.primitive(1668i32, assign_font_int, tag_code);
+        self.primitive(1669i32, assign_font_int, kn_bs_code_base);
+        self.primitive(1670i32, assign_font_int, st_bs_code_base);
+        self.primitive(1671i32, assign_font_int, sh_bs_code_base);
+        self.primitive(1672i32, assign_font_int, kn_bc_code_base);
+        self.primitive(1673i32, assign_font_int, kn_ac_code_base);
+        self.primitive(1674i32, assign_font_int, no_lig_code);
+        // §1441
         self.primitive(274i32, set_interaction, batch_mode);
         self.primitive(275i32, set_interaction, nonstop_mode);
         self.primitive(276i32, set_interaction, scroll_mode);
-        self.primitive(1667i32, set_interaction, error_stop_mode);
-        // §1450
-        self.primitive(1668i32, in_stream, 1i32);
-        self.primitive(1669i32, in_stream, 0i32);
-        // §1455
-        self.primitive(1670i32, message, 0i32);
-        self.primitive(1671i32, message, 1i32);
-        // §1464
-        self.primitive(1677i32, case_shift, lc_code_base);
-        self.primitive(1678i32, case_shift, uc_code_base);
-        // §1469
-        self.primitive(1679i32, xray, show_code);
-        self.primitive(1680i32, xray, show_box_code);
-        self.primitive(1681i32, xray, show_the_code);
-        self.primitive(1682i32, xray, show_lists_code);
-        // §1524
-        self.primitive(1729i32, extension, open_node);
-        self.primitive(686i32, extension, write_node);
+        self.primitive(1682i32, set_interaction, error_stop_mode);
+        // §1451
+        self.primitive(1683i32, in_stream, 1i32);
+        self.primitive(1684i32, in_stream, 0i32);
+        // §1456
+        self.primitive(1685i32, message, 0i32);
+        self.primitive(1686i32, message, 1i32);
+        // §1465
+        self.primitive(1692i32, case_shift, lc_code_base);
+        self.primitive(1693i32, case_shift, uc_code_base);
+        // §1470
+        self.primitive(1694i32, xray, show_code);
+        self.primitive(1695i32, xray, show_box_code);
+        self.primitive(1696i32, xray, show_the_code);
+        self.primitive(1697i32, xray, show_lists_code);
+        // §1525
+        self.primitive(1744i32, extension, open_node);
+        self.primitive(687i32, extension, write_node);
         self.write_loc = self.cur_val;
-        self.primitive(1730i32, extension, close_node);
-        self.primitive(1731i32, extension, special_node);
-        self.primitive(1732i32, extension, immediate_code);
-        self.primitive(1733i32, extension, set_language_code);
-        self.primitive(1734i32, extension, pdf_literal_node);
-        self.primitive(1144i32, extension, pdf_colorstack_node);
-        self.primitive(1735i32, extension, pdf_setmatrix_node);
-        self.primitive(1736i32, extension, pdf_save_node);
-        self.primitive(1737i32, extension, pdf_restore_node);
-        self.primitive(1738i32, extension, pdf_obj_code);
-        self.primitive(1739i32, extension, pdf_refobj_node);
-        self.primitive(1740i32, extension, pdf_xform_code);
-        self.primitive(1741i32, extension, pdf_refxform_node);
-        self.primitive(1742i32, extension, pdf_ximage_code);
-        self.primitive(1743i32, extension, pdf_refximage_node);
-        self.primitive(1744i32, extension, pdf_annot_node);
-        self.primitive(1745i32, extension, pdf_start_link_node);
-        self.primitive(1746i32, extension, pdf_end_link_node);
-        self.primitive(1747i32, extension, pdf_outline_code);
-        self.primitive(1748i32, extension, pdf_dest_node);
-        self.primitive(1749i32, extension, pdf_thread_node);
-        self.primitive(1750i32, extension, pdf_start_thread_node);
-        self.primitive(1751i32, extension, pdf_end_thread_node);
-        self.primitive(1752i32, extension, pdf_save_pos_node);
-        self.primitive(1753i32, extension, pdf_snap_ref_point_node);
-        self.primitive(1754i32, extension, pdf_snapy_node);
-        self.primitive(1755i32, extension, pdf_snapy_comp_node);
-        self.primitive(1756i32, extension, pdf_info_code);
-        self.primitive(1757i32, extension, pdf_catalog_code);
-        self.primitive(1758i32, extension, pdf_names_code);
-        self.primitive(1759i32, extension, pdf_include_chars_code);
-        self.primitive(1760i32, extension, pdf_font_attr_code);
-        self.primitive(1761i32, extension, pdf_map_file_code);
-        self.primitive(1762i32, extension, pdf_map_line_code);
-        self.primitive(1763i32, extension, pdf_trailer_code);
-        self.primitive(1764i32, extension, pdf_trailer_id_code);
-        self.primitive(1765i32, extension, reset_timer_code);
-        self.primitive(1766i32, extension, set_random_seed_code);
-        self.primitive(1767i32, extension, pdf_font_expand_code);
-        self.primitive(1768i32, extension, pdf_glyph_to_unicode_code);
-        self.primitive(1769i32, extension, pdf_nobuiltin_tounicode_code);
-        self.primitive(1770i32, extension, pdf_interword_space_on_node);
-        self.primitive(1771i32, extension, pdf_interword_space_off_node);
-        self.primitive(1772i32, extension, pdf_fake_space_node);
-        self.primitive(1773i32, extension, pdf_running_link_off_node);
-        self.primitive(1774i32, extension, pdf_running_link_on_node);
-        self.primitive(1775i32, extension, pdf_space_font_code);
-        // §1889
-        self.primitive(2086i32, assign_int, 29390i32);
-        // §1516
+        self.primitive(1745i32, extension, close_node);
+        self.primitive(1746i32, extension, special_node);
+        self.primitive(1747i32, extension, immediate_code);
+        self.primitive(1748i32, extension, set_language_code);
+        self.primitive(1749i32, extension, pdf_literal_node);
+        self.primitive(1145i32, extension, pdf_colorstack_node);
+        self.primitive(1750i32, extension, pdf_setmatrix_node);
+        self.primitive(1751i32, extension, pdf_save_node);
+        self.primitive(1752i32, extension, pdf_restore_node);
+        self.primitive(1753i32, extension, pdf_obj_code);
+        self.primitive(1754i32, extension, pdf_refobj_node);
+        self.primitive(1755i32, extension, pdf_xform_code);
+        self.primitive(1756i32, extension, pdf_refxform_node);
+        self.primitive(1757i32, extension, pdf_ximage_code);
+        self.primitive(1758i32, extension, pdf_refximage_node);
+        self.primitive(1759i32, extension, pdf_annot_node);
+        self.primitive(1760i32, extension, pdf_start_link_node);
+        self.primitive(1761i32, extension, pdf_end_link_node);
+        self.primitive(1762i32, extension, pdf_outline_code);
+        self.primitive(1763i32, extension, pdf_dest_node);
+        self.primitive(1764i32, extension, pdf_thread_node);
+        self.primitive(1765i32, extension, pdf_start_thread_node);
+        self.primitive(1766i32, extension, pdf_end_thread_node);
+        self.primitive(1767i32, extension, pdf_save_pos_node);
+        self.primitive(1768i32, extension, pdf_snap_ref_point_node);
+        self.primitive(1769i32, extension, pdf_snapy_node);
+        self.primitive(1770i32, extension, pdf_snapy_comp_node);
+        self.primitive(1771i32, extension, pdf_info_code);
+        self.primitive(1772i32, extension, pdf_catalog_code);
+        self.primitive(1773i32, extension, pdf_names_code);
+        self.primitive(1774i32, extension, pdf_include_chars_code);
+        self.primitive(1775i32, extension, pdf_font_attr_code);
+        self.primitive(1776i32, extension, pdf_map_file_code);
+        self.primitive(1777i32, extension, pdf_map_line_code);
+        self.primitive(1778i32, extension, pdf_trailer_code);
+        self.primitive(1779i32, extension, pdf_trailer_id_code);
+        self.primitive(1780i32, extension, reset_timer_code);
+        self.primitive(1781i32, extension, set_random_seed_code);
+        self.primitive(1782i32, extension, pdf_font_expand_code);
+        self.primitive(1783i32, extension, pdf_glyph_to_unicode_code);
+        self.primitive(1784i32, extension, pdf_nobuiltin_tounicode_code);
+        self.primitive(1785i32, extension, pdf_interword_space_on_node);
+        self.primitive(1786i32, extension, pdf_interword_space_off_node);
+        self.primitive(1787i32, extension, pdf_fake_space_node);
+        self.primitive(1788i32, extension, pdf_running_link_off_node);
+        self.primitive(1789i32, extension, pdf_running_link_on_node);
+        self.primitive(1790i32, extension, pdf_space_font_code);
+        // §1911
+        self.primitive(2104i32, assign_int, 29390i32);
+        // §1517
         self.no_new_control_sequence = true;
     }
 
