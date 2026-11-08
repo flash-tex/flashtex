@@ -758,11 +758,16 @@ fn fuzz_step(
             .filter(|&i| i < body - 16)
             .collect();
         Some(match rng.below(3) {
-            0 => step(
-                at,
-                0,
-                format!("\\newcommand\\fuzz{}{{x}}\n", roman_fuzz(*labels)),
-            ),
+            // (a new name each time: `\newcommand` of a defined one is an
+            // error that would stay)
+            0 => {
+                *labels += 1;
+                step(
+                    at,
+                    0,
+                    format!("\\newcommand\\fuzz{}{{x}}\n", roman_fuzz(*labels)),
+                )
+            }
             1 => step(at, 0, "% a preamble comment\n".into()),
             _ => match near(rng, &pre) {
                 Some(p) => step(p, 0, "q".into()),
