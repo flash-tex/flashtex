@@ -787,6 +787,14 @@ fn run_job(
             host.engine.as_ref(),
         );
         done(out, job, &o, t0, cause);
+        if o.fatal {
+            // The engine thread died (`inproc::FATAL_EXIT`): its engine is
+            // in no known state, and no later compile could run. The DONE
+            // is out (each frame is flushed); the host ends, its children
+            // with it (`proc.rs`), and the app starts a new one.
+            eprintln!("flashtex-host-unicode: the engine thread died; exiting");
+            std::process::exit(inproc::FATAL_EXIT);
+        }
         if job.export || o.status == "cancelled" || o.status == "failed" {
             break;
         }

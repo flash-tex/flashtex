@@ -145,6 +145,28 @@ public enum LocalCompletion {
         return []
     }
 
+    /// `s` (from a pass over an earlier snapshot) applied to `text` with the
+    /// caret at `caretByte`: the word under the caret must still start at
+    /// `s.replaceStart` — the same prefix rule as `suggestions` — and `s.text`
+    /// must still extend it; the replaced range then ends at the caret. Nil
+    /// when the list no longer applies (the word ended, the caret moved off
+    /// it, text before it changed length). The editor shows a pass's list
+    /// until the next pass lands, so Tab can arrive one keystroke ahead of it.
+    /// O(prefix) after the caret's byte offset is known.
+    public static func reanchored(_ s: Suggestion, in text: String, caretByte: Int) -> Suggestion? {
+        let u = text.utf8
+        guard s.replaceStart >= 0, caretByte >= s.replaceStart, caretByte <= u.count,
+              let caret = u.index(u.startIndex, offsetBy: caretByte, limitedBy: u.endIndex) else { return nil }
+        var start = caret
+        while start > u.startIndex, isWordByte(u[u.index(before: start)]) { start = u.index(before: start) }
+        if start > u.startIndex, u[u.index(before: start)] == 0x5C /* \ */ { start = u.index(before: start) }
+        guard u.distance(from: u.startIndex, to: start) == s.replaceStart else { return nil }
+        guard s.text.utf8.starts(with: u[start..<caret]) else { return nil }
+        var out = s
+        out.replaceEnd = caretByte
+        return out
+    }
+
     /// The Mac's argument skeleton for a vocabulary entry (`\frac{}{}` with
     /// the caret in the first group and a Tab stop in the second).
     static func snippet(for entry: LaTeXVocabulary.Command) -> LaTeXSnippet? {
