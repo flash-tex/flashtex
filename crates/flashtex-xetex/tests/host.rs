@@ -2163,6 +2163,8 @@ fn a_unicode_math_document_converges_past_its_dead_script_glyphs() {
     assert!(got.0 == want.0, "the PDFs differ ({done:?})");
     assert_eq!(got.1, want.1);
     assert_eq!(got.2, want.2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
 /// READ-TRACK (`crate::dormant`, docs/design/engine-v2/READ-TRACK.md): a
 /// command with an optional argument, alone on its line, peeks at the next
