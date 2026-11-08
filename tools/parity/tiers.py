@@ -38,7 +38,7 @@ PINNED_PDFTEX = "1.40.29"
 DEFAULT_ORACLE = "/Library/TeX/texbin/pdftex"
 FMT = "pdflatex"
 PASSES = 6
-PASS_TIMEOUT = 300  # CPU seconds (capture.cpu_limited)
+PASS_TIMEOUT = 300  # CPU seconds (harness.cpu_preexec)
 # --compress-streams=y: qpdf still decodes every stream it can (Flate, LZW, predictors) and
 # normalises the content streams, then writes them compressed again with its own Flate, so
 # the qdf copy stays about the size of the PDF; Graph decodes one stream at a time, and an
@@ -292,8 +292,8 @@ def embeds_type3(pdf):
     if not q or not os.path.isfile(pdf):
         return True
     try:
-        p = subprocess.run([q, "--object-streams=disable", "--stream-data=preserve", pdf, "-"],
-                           capture_output=True, timeout=300)
+        p = subprocess.run([q, "--object-streams=disable", "--stream-data=preserve", pdf, "-"], capture_output=True,
+                           timeout=pcapture.WALL_FACTOR * 300, preexec_fn=pcapture.cpu_preexec(300))
     except (OSError, subprocess.SubprocessError):
         return True
     return p.returncode not in (0, 3) or re.search(rb"/Subtype\s*/Type3\b", p.stdout) is not None
@@ -793,8 +793,9 @@ def normalise_pdf(pdf, out):
         import resource
         resource.setrlimit(resource.RLIMIT_FSIZE, (cap + 1, cap + 1))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=300,
-                       preexec_fn=limit if cap > 0 else None)
+    # 300 CPU seconds (harness.cpu_preexec), with the wall-clock backstop
+    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=pcapture.WALL_FACTOR * 300,
+                       preexec_fn=pcapture.cpu_preexec(300, limit if cap > 0 else None))
     size = os.path.getsize(out) if os.path.isfile(out) else 0
     if cap > 0 and (p.returncode == -25 or size > cap):  # -25: SIGXFSZ
         try:

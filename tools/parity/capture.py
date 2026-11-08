@@ -72,12 +72,12 @@ import functools
 import hashlib
 import os
 import re
-import resource
 import shutil
-import signal
 import subprocess
 import tempfile
 import threading
+
+import harness  # tools/parity, on sys.path wherever this module is imported
 
 # The one \write18 setting, for BOTH engines. Owner decision #1209 (DESIGN
 # §4.5): restricted by default, as in TeX Live's pdflatex. So the default is
@@ -139,42 +139,14 @@ TRACE_ENV = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1",
 # The traced pass's time limit in seconds (parity.py --pt1-timeout). A pass it
 # stops is a harness error (tiers.TRACE_TIMEOUT), never a pass.
 TIMEOUT = 1800
-# Every TeX run's time limit is CPU seconds of the process (RLIMIT_CPU, set by
-# `cpu_limited`), not wall-clock seconds, so a loaded host cannot turn a slow
-# pass into a timeout: on the NixOS PC a pass of arXiv 2211.03354v2 used 25 s
-# of CPU in 250 s (lane PARITY-HUNT, 2026-11-08). The same rule holds for the
-# engine and the oracles. WALL_FACTOR times the limit, in wall-clock seconds,
-# is only a backstop for a run that stops using the CPU (blocked on I/O, say a
-# full pt1stream pipe): at most 6 h for the oracle's traced pass (7200 s).
-WALL_FACTOR = 3
+# Every TeX run's time limit is CPU seconds of the process, with WALL_FACTOR
+# times as many wall-clock seconds as a backstop (harness.cpu_preexec): at most
+# 6 h for the oracle's traced pass (7200 s). On Windows the backstop alone.
+WALL_FACTOR = harness.CPU_WALL_FACTOR
+CpuLimitError, cpu_preexec, cpu_stopped = harness.CpuLimitError, harness.cpu_preexec, harness.cpu_stopped
 # The limits' kind, recorded with a cached oracle entry: an entry stopped by a
 # limit of another kind (wall-clock, before 2026-11-08) is made again.
 LIMIT_KIND = "cpu"
-
-
-def cpu_limited(argv, seconds):
-    """`argv` run through /bin/sh with a soft RLIMIT_CPU of `seconds` (at
-    least 1): the kernel sends SIGXCPU when the process has used that much
-    CPU, and its default action ends it (`cpu_stopped`). The shell sets the
-    limit and `exec`s argv, so argv[0] is the program's name as given and a
-    bare name is looked up on the run's PATH. A shell, not preexec_fn,
-    because the caller may have threads (pt1stream's pipe reader) when it
-    forks. A hard RLIMIT_CPU below `seconds` cannot be raised: that is a
-    harness error (CpuLimitError), raised here, never a TeX exit status."""
-    s = max(1, int(seconds))
-    hard = resource.getrlimit(resource.RLIMIT_CPU)[1]
-    if hard != resource.RLIM_INFINITY and hard < s:
-        raise CpuLimitError(f"the hard CPU-time limit ({hard} s) is below a run's limit ({s} s)")
-    return ["/bin/sh", "-c", 'ulimit -S -t "$1" || exit 125; shift; exec "$@"', "sh", str(s)] + list(argv)
-
-
-class CpuLimitError(RuntimeError):
-    """A run's CPU-time limit cannot be set (`cpu_limited`)."""
-
-
-def cpu_stopped(code):
-    """Whether a run's exit status says its CPU limit stopped it."""
-    return code == -signal.SIGXCPU
 
 # The traced-log budget in bytes (parity.py --pt1-max-log-mb; 0: none). A log
 # over it is never read whole: a \tracingall log runs to 25 GB (arXiv
@@ -738,16 +710,15 @@ def run_engine(engine_bin, fmt, args, workdir, extra_env=None, timeout=TIMEOUT):
     """One run: argv[0] is exactly `pdftex` (pdfTeX prints argv[0] as given,
     e.g. `pdfTeX warning: ./x (file ...)`, so a path would differ per engine),
     executed through the engine's link, with the one shell-escape setting and
-    the format. `timeout` is CPU seconds (`cpu_limited`), with WALL_FACTOR
-    times as many wall-clock seconds as a backstop; the shell finds `pdftex`
-    in the link's directory, which `engine_env` puts first on PATH. Returns
-    (exit code or None, timed out)."""
+    the format. `timeout` is CPU seconds (`cpu_preexec`), with WALL_FACTOR
+    times as many wall-clock seconds as a backstop. Returns (exit code or
+    None, timed out)."""
     link = engine_link(engine_bin)
     argv = [PROGRAM] + ([SHELL_ESCAPE] if SHELL_ESCAPE else []) + ([f"-fmt={fmt}"] if fmt else []) + list(args)
     try:
-        p = subprocess.run(cpu_limited(argv, timeout), cwd=workdir, env=engine_env(link, extra_env),
+        p = subprocess.run(argv, executable=link, cwd=workdir, env=engine_env(link, extra_env),
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=WALL_FACTOR * timeout, check=False)
+                           timeout=WALL_FACTOR * timeout, check=False, preexec_fn=cpu_preexec(timeout))
         if cpu_stopped(p.returncode):
             return None, True
         return p.returncode, False

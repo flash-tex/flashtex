@@ -3068,10 +3068,11 @@ class RowPadding(unittest.TestCase):
         self.assertEqual(tiers.clear_row_padding(doc, mask, b"\xff\xff"), b"\xff\x80")
 
 
+@unittest.skipUnless(os.name == "posix", "RLIMIT_CPU is POSIX: on Windows the wall-clock backstop alone")
 class CpuLimits(unittest.TestCase):
-    """Time limits are CPU seconds (capture.cpu_limited), so a slow, loaded
-    host cannot make a timeout: a run that waits past its limit without using
-    the CPU finishes, and one that spins past it is stopped."""
+    """Time limits are CPU seconds (harness.cpu_preexec), so throttling that
+    leaves a run waiting does not stop it: a run that waits past its limit
+    without using the CPU finishes, and one that spins past it is stopped."""
 
     def fake_engine(self, d, body):
         exe = os.path.join(d, "engine.sh")
@@ -3104,6 +3105,15 @@ class CpuLimits(unittest.TestCase):
             self.assertEqual(os.path.basename(words[0]), capture.PROGRAM)
             self.assertEqual(words[-2:], ["-fmt=pdflatex", "x.tex"])
 
+    def test_harness_run_with_cpu_limits_the_rasteriser_and_others(self):
+        import harness
+        code, _, _, _, timed_out = harness.run(["sleep", "2"], timeout=1, cpu=True)
+        self.assertEqual((code, timed_out), (0, False))
+        code, _, _, secs, timed_out = harness.run(["python3", "-c", "while True: pass"], timeout=1, cpu=True)
+        self.assertEqual((code, timed_out), (None, True))
+        self.assertLess(secs, harness.CPU_WALL_FACTOR)
+        self.assertEqual(harness.run(["sleep", "2"], timeout=1)[4], True)  # without cpu: wall-clock, as before
+
     def test_a_limit_the_host_cannot_give_is_a_harness_error(self):
         import capture
         import resource
@@ -3111,10 +3121,23 @@ class CpuLimits(unittest.TestCase):
         try:
             resource.getrlimit = lambda _r: (10, 10)
             with self.assertRaises(capture.CpuLimitError):
-                capture.cpu_limited(["pdftex"], 300)
-            self.assertEqual(capture.cpu_limited(["pdftex"], 5)[-2:], ["5", "pdftex"])
+                capture.cpu_preexec(300)
+            self.assertTrue(callable(capture.cpu_preexec(5)))
         finally:
             resource.getrlimit = real
+
+    def test_windows_has_the_wall_clock_backstop_alone(self):
+        import harness
+        real = harness.resource
+        try:
+            harness.resource = None  # as on Windows: no `resource` module
+            self.assertIsNone(harness.cpu_preexec(5))
+            then = object()
+            self.assertIs(harness.cpu_preexec(5, then), then)
+            code, _, _, _, timed_out = harness.run(["sleep", "2"], timeout=1, cpu=True)  # 3 s backstop
+            self.assertEqual((code, timed_out), (0, False))
+        finally:
+            harness.resource = real
 
     def test_a_wall_clock_timeout_in_the_cache_is_made_again(self):
         import tiers
