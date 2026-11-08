@@ -1099,10 +1099,6 @@ jobs:
       - name: swift build
         working-directory: apps/mac
         run: swift build
-      - name: "DIAG #2151: the multi-window typing test alone"
-        working-directory: apps/mac
-        run: |
-          swift test --filter 'ProjectWindowsHostedTests/testTypingInOneWindowCostsTheOtherWindowsNothing' 2>&1 | tee isolated.log | grep -E 'MultiWindow|error:|Test Case' || true
       - name: swift test
         working-directory: apps/mac
         # Serial, as rehearsed locally (877 tests in ~5 min on an M1 Max):
