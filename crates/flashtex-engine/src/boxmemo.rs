@@ -3721,7 +3721,8 @@ impl Globals {
             return self.bm_abort("Expandable");
         }
         if c == k::convert && chr == k::job_name_code {
-            self.bm_with_rec(|r| r.job_read = true);
+            // MUTANT: the job name never keyed
+            self.bm_with_rec(|r| r.job_read = false);
         }
     }
 
