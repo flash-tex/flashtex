@@ -2584,3 +2584,134 @@ fn diags_come_from_the_engine_and_hold_across_edits() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// P-T1 with the diagnostics side channel recording (`changes/diagnostics.ch`,
+/// `crate::diag`): its hooks run only in a resident engine's run (the
+/// terminal is captured), which the lockstep gate against TeX Live's xetex
+/// never makes. So compiles in the host's process, for a client that
+/// accepts `diag-v1`, of a document that reaches every hook (errors with
+/// help and `\errhelp`, `\show`, overfull and underfull `\hbox`es and an
+/// overfull `\vbox`, `\def`s, LaTeX's and a package's warnings written to
+/// the terminal, `\write`s to the log and the terminal, undefined references), over a body
+/// edit (from S₀) and a late edit (from a page), write the log and the PDF
+/// byte for byte as the same compiles in processes of their own (the
+/// `flashtex-xetex` program run as xelatex, `FLASHTEX_UNICODE_INPROCESS=0`,
+/// whose terminal is not captured: no hook records there).
+#[test]
+fn the_diagnostics_hooks_change_neither_the_log_nor_the_pdf() {
+    use flashtex_display_list::diag::CAPABILITY;
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-dgpt1-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=5 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for k in 0..6 {
+            body.push_str(&para.repeat(3));
+            match (i, k) {
+                (1, 1) => body.push_str("\n\\wrap{café}\n"),
+                (2, 2) => body.push_str("\n\\hbox to 1em{overfull naïve box}\n"),
+                (2, 3) => body.push_str("\n\\hbox to 30em{under}\n"),
+                (3, 1) => body.push_str("\n\\setbox0\\vbox to 1pt{\\hrule height 5pt}\n"),
+                (3, 4) => body.push_str("\n\\show\\wrap\n"),
+                (4, 0) => body.push_str("\n\\PackageWarning{mine}{Something odd}\n"),
+                (4, 2) => body.push_str("\n\\errhelp{Help of my own.}\\errmessage{My own error}\n"),
+                (4, 5) => body.push_str(
+                    "\n\\immediate\\write-1{to the log only}\\typeout{to the terminal}\n",
+                ),
+                (5, 3) => body.push_str("\n\\textbf{bold} \\ref{nowhere}\n"),
+                _ => {}
+            }
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\
+         \\newcommand{{\\inner}}[1]{{\\undefinedmacro #1}}\n\
+         \\newcommand{{\\wrap}}[1]{{\\inner{{#1}}.}}\n\
+         \\def\\other#1{{(#1)}}\n\
+         \\begin{{document}}\n{body}See~\\ref{{p2}}.\n\\end{{document}}\n"
+    );
+    let texts = [
+        doc.clone(),
+        doc.replacen("Words and more", "Wards and more", 1),
+        doc.replace("See~", "Look at~"),
+    ];
+    type Outs = Vec<(String, Vec<u8>, String, usize, String)>;
+    let run = |inproc: &str| -> Outs {
+        // the same paths every time: the log names them
+        let sub = dir.join("run");
+        let _ = std::fs::remove_dir_all(&sub);
+        let (proj, out) = project(&sub, &doc);
+        let envs = [
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_INPROCESS", inproc),
+        ];
+        let h = start_with(&sub, &envs, &sub.join("host.err"));
+        let mut c = Client::connect_accepting(&h.sock, &[CAPABILITY]).unwrap();
+        let mut outs = vec![];
+        for (i, text) in texts.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.clone())];
+            c.compile(&r).unwrap();
+            let (ev, done) = events(&mut c, id);
+            let exact = ev
+                .iter()
+                .filter(|e| matches!(e, Event::Diag(d) if d.exact))
+                .count();
+            let o = Path::new(&out);
+            outs.push((
+                done.str_field("status").unwrap_or("").to_string(),
+                std::fs::read(o.join("main.pdf")).unwrap_or_default(),
+                std::fs::read_to_string(o.join("main.log")).unwrap(),
+                exact,
+                done.get("starts")
+                    .and_then(Json::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default(),
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run("0");
+    let got = run("1");
+    let starts: Vec<&str> = got.iter().map(|o| o.4.as_str()).collect();
+    assert!(starts[1].starts_with("s0"), "{starts:?}");
+    assert!(starts[2].starts_with("page"), "{starts:?}");
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        // the hooks recorded (exact DIAGs) in the host's process only
+        assert!(a.3 >= 6, "compile {}: {} exact DIAGs", i + 1, a.3);
+        assert_eq!(b.3, 0, "compile {}: a process of its own records", i + 1);
+        assert_eq!(a.0, b.0, "compile {}: the status", i + 1);
+        assert!(!a.1.is_empty(), "compile {}: no PDF", i + 1);
+        assert!(a.1 == b.1, "compile {}: the PDFs differ", i + 1);
+        assert_eq!(a.2, b.2, "compile {}: the logs differ", i + 1);
+    }
+    // every hook's report is in the log
+    for want in [
+        "Undefined control sequence",
+        "Overfull \\hbox",
+        "Underfull \\hbox",
+        "Overfull \\vbox",
+        "> \\wrap=",
+        "Package mine Warning: Something odd",
+        "My own error",
+        "Reference `nowhere' on page",
+    ] {
+        assert!(got[0].2.contains(want), "the log has no {want:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
