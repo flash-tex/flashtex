@@ -101,8 +101,10 @@ impl Globals {
     /// run if it cannot be read.
     pub fn load_enc_file(&mut self, enc_name: &[u8]) -> GlyphNames {
         self.set_cur_file_name_str(Some(enc_name));
-        let name = String::from_utf8_lossy(enc_name).into_owned();
-        let Some((path, data)) = crate::system::find_file(&name, Format::Enc)
+        // enc_open: openclose.c's open_input, so `-output-directory` first
+        // and `nameoffile` without kpathsea's `./` (the log's `{x.enc}`)
+        let Some((path, data)) = self
+            .open_input_named(enc_name, Format::Enc)
             .and_then(|p| std::fs::read(&p).ok().map(|d| (p, d)))
         else {
             self.pdftex_fail("cannot open encoding file for reading");
