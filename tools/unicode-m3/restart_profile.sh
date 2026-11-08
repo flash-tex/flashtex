@@ -63,7 +63,7 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
     --keys "$KEYS" --gap-ms 20 --at "$at" > "$out" 2> "$d/keys.err" &
   local kp=$!
   for _ in $(seq 1 3000); do [ "$(grep -c '"key"' "$out" 2>/dev/null)" -ge 2 ] && break; sleep 0.05; done
-  "${PERF_CMD[@]}" record --clockid monotonic -e cycles:u -F 9999 -p "$hp" -o "$d/perf.data" > "$d/perf.log" 2>&1 &
+  "${PERF_CMD[@]}" record --clockid monotonic -e ${PERF_EVENT:-cycles:u} -F ${PERF_HZ:-9999} ${PERF_G:-} -p "$hp" -o "$d/perf.data" > "$d/perf.log" 2>&1 &
   local pp=$!
   wait "$kp" || true
   kill -INT "$pp" 2>/dev/null || true
@@ -84,11 +84,11 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
     echo "most stat'ed:"; grep '^\[fswatch\] stat ' "$d/host.err" | sed -E 's/: [a-z ]+$//' | sort | uniq -c | sort -rn | head -25; } \
     > "$WORK/r/fswatch-$variant-$at.txt" 2>/dev/null || true
   cat "$WORK/r/perf-$variant-$at.txt" | head -45
-  rm -rf "$d"
+  [ -n "${KEEP:-}" ] || rm -rf "$d"
 }
 
-for at in 0.5 0.98; do
-  for v in classic unicode-fontspec; do
+for at in ${ATS:-0.5 0.98}; do
+  for v in ${VARIANTS:-classic unicode-fontspec}; do
     prof "$v" "$at"
   done
 done
