@@ -253,11 +253,31 @@ final class CaretFollowController {
     /// what following is for. A move that stays on the same line (arrow
     /// keys, clicking another word on it) does not re-arm, so reading in
     /// place never yanks the preview back out from under you.
+    ///
+    /// Disarmed, the line and page are compared once the caret settles (the
+    /// same debounce), not at every move: each is a walk of the buffer up to
+    /// the caret, several per arrow key on main in a long book.
     func noteCaretMove() {
-        if !isArmed, currentLine?() != disarmedAtLine || target?()?.page != disarmedAtPage {
+        guard !isArmed else { note(.caretMove); return }
+        cancel()
+        let item = DispatchWorkItem { [weak self] in self?.settleDisarmedMove() }
+        pending = item
+        let delay = CaretFollow.debounceInterval
+        if delay <= 0 { item.perform(); return }
+        schedule(delay, item)
+    }
+
+    /// The caret settled while disarmed: re-arm and follow if it landed on
+    /// another line or page than the manual scroll's (`noteCaretMove`).
+    private func settleDisarmedMove() {
+        pending = nil
+        guard !isArmed else { return }
+        if currentLine?() != disarmedAtLine || target?()?.page != disarmedAtPage {
             isArmed = true
+            fire(.caretMove)
+        } else {
+            skippedDisarmed += 1
         }
-        note(.caretMove)
     }
 
     /// The reader scrolled the preview themselves: stop following until they

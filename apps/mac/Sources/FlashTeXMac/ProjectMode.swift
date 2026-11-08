@@ -49,6 +49,38 @@ extension ShellModel {
         return engineHostNeedsUnicode.flatMap { $0.document == documentURL ? $0.need : nil }
     }
 
+    /// Why the helper must not rewrite flashtex.toml now: it is open in the
+    /// editor with edits not saved. Those are the user's; every manifest
+    /// writer (mode, fonts, packages policy) refuses rather than write over
+    /// or beside them. Nil when it may.
+    func manifestEditRefusal(root: URL) -> String? {
+        let manifestPaths = [manifest.snapshot?.path].compactMap { $0 } + [root.appendingPathComponent(ProjectManifest.fileName).path]
+        for open in documents.map(\.path) where ProjectManifest.isManifestPath(open) && open.hasSuffix(ProjectManifest.fileName) {
+            let abs = root.appendingPathComponent(open).standardizedFileURL.path
+            if manifestPaths.contains(where: { URL(fileURLWithPath: $0).standardizedFileURL.path == abs }), project.isDirty(open) {
+                return "\(ProjectManifest.fileName) has unsaved edits in the editor; save or revert them first"
+            }
+        }
+        return nil
+    }
+
+    /// The manifest as it is before a helper rewrite: the save of the
+    /// rewritten text checks it is still that (a write in between is a
+    /// conflict, not lost under `.any`).
+    struct ManifestBefore {
+        var url: URL
+        var sha256: String?
+        func expectation(saving target: URL, exists: Bool) -> ProjectFilesV1.Expected {
+            guard exists else { return .newFile }
+            return (target.standardizedFileURL == url.standardizedFileURL ? sha256.map { .hash($0) } : nil) ?? .any
+        }
+    }
+
+    func manifestBeforeRewrite(root: URL) -> ManifestBefore {
+        let url = URL(fileURLWithPath: manifest.snapshot?.path ?? root.appendingPathComponent(ProjectManifest.fileName).path)
+        return ManifestBefore(url: url, sha256: (try? Data(contentsOf: url)).map { SourceDigest.sha256Hex($0) })
+    }
+
     /// Switches the project to `mode` by writing `[project] mode` (creating
     /// flashtex.toml next to the entry when there is none); the manifest is
     /// read again (ShellModel.manifestDidRefresh)
@@ -60,19 +92,8 @@ extension ShellModel {
         if mode == .unicode, !unicodeModeAvailable {
             return refuseMode("Unicode mode's engine (flashtex-host-unicode) is not installed with this build")
         }
-        // flashtex.toml open in the editor with edits not saved: those are
-        // the user's; refuse rather than write over or beside them.
-        let manifestPaths = [manifest.snapshot?.path].compactMap { $0 } + [root.appendingPathComponent(ProjectManifest.fileName).path]
-        for open in documents.map(\.path) where ProjectManifest.isManifestPath(open) && open.hasSuffix(ProjectManifest.fileName) {
-            let abs = root.appendingPathComponent(open).standardizedFileURL.path
-            if manifestPaths.contains(where: { URL(fileURLWithPath: $0).standardizedFileURL.path == abs }), project.isDirty(open) {
-                return refuseMode("\(ProjectManifest.fileName) has unsaved edits in the editor; save or revert them first")
-            }
-        }
-        // What the helper rewrites is the file as it is now: the save checks
-        // it is still that (a write in between is a conflict, not lost).
-        let manifestURL = URL(fileURLWithPath: manifest.snapshot?.path ?? root.appendingPathComponent(ProjectManifest.fileName).path)
-        let before = (try? Data(contentsOf: manifestURL)).map { SourceDigest.sha256Hex($0) }
+        if let why = manifestEditRefusal(root: root) { return refuseMode(why) }
+        let before = manifestBeforeRewrite(root: root)
         let reply: ProjectFilesV1.SetFonts
         switch files.setMode(for: root, entry: project.entryPath, mode: mode.rawValue) {
         case .success(let r): reply = r
@@ -80,8 +101,7 @@ extension ShellModel {
         }
         if reply.changed, let text = reply.text {
             let url = URL(fileURLWithPath: reply.path)
-            let expected: ProjectFilesV1.Expected = !reply.exists ? .newFile
-                : (url.standardizedFileURL == manifestURL.standardizedFileURL ? before.map { ProjectFilesV1.Expected.hash($0) } : nil) ?? .any
+            let expected = before.expectation(saving: url, exists: reply.exists)
             switch files.save(url, text: text, expected: expected, force: false, recordsState: false) {
             case .saved: break
             case .conflict(let c): return refuseMode("cannot write \(ProjectManifest.fileName): \(c.summary)")

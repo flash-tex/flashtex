@@ -134,6 +134,9 @@ pub struct Resident {
     /// checkpoints.
     pub(crate) thinning: Option<crate::ckpt::Thinning>,
     fonts: Box<dyn Fonts>,
+    /// The state of the font directories ([`Fonts::dirs`]) the catalog this
+    /// run made for a lookup by name was made from, if it made one.
+    pub(crate) catalog_dirs: Option<[u64; 2]>,
     /// The native fonts' faces and mappings the engine's runs share
     /// (`crate::native::cache`); none for a run that is not the engine's.
     pub(crate) loads: Option<Arc<std::sync::Mutex<crate::native::cache::LoadCache>>>,
@@ -158,9 +161,15 @@ impl Resident {
         self.point.as_ref().map(|p| p.0)
     }
 
-    /// The fonts' catalog for a lookup by name.
+    /// The fonts' catalog for a lookup by name, and the state of the font
+    /// directories it is made from kept ([`Resident::catalog_dirs`]).
     pub(crate) fn font_catalog(&mut self) -> Arc<FontCatalog> {
-        self.fonts.catalog()
+        // (the directories first: one that changes in between leaves the
+        // older state recorded, which the next run finds changed)
+        let dirs = self.fonts.dirs();
+        let c = self.fonts.catalog();
+        self.catalog_dirs = Some(dirs);
+        c
     }
 
     /// The font directories' state now (`Fonts::dirs`).
@@ -402,6 +411,9 @@ pub struct Report {
     /// The run broke off (an engine panic or the host's failure to set it
     /// up): its message.
     pub failure: Option<String>,
+    /// The engine thread itself died (a panic outside the engine's run,
+    /// `host::inproc`): the host is to exit after the compile's `DONE`.
+    pub fatal: bool,
     /// What the run wrote to its terminal.
     pub terminal: Vec<u8>,
     /// The output's reports (`FlashTeX output: ...`).
@@ -475,6 +487,13 @@ pub struct Engine {
     /// A save of S₀ asked for and not made yet ([`Engine::save_s0`],
     /// [`Engine::save_pending`]).
     pending_save: Option<PendingSave>,
+    /// The state of the font directories ([`Fonts::dirs`]) that the
+    /// catalog of the page checkpoints' lookups by name was made from,
+    /// when a lookup was made after S₀ (S₀'s key watches the directories
+    /// only for one made before it, [`S0::font_dirs`]): a font installed
+    /// or removed since changes what those lookups find, so no page
+    /// checkpoint is restored then, and a run from S₀ looks them up again.
+    named_dirs: Option<[u64; 2]>,
 }
 
 /// A save of S₀ asked for after a compile's DONE: what it writes, taken
@@ -595,6 +614,7 @@ impl Engine {
             writers: vec![],
             lean_save: false,
             pending_save: None,
+            named_dirs: None,
         }
     }
 
@@ -617,6 +637,7 @@ impl Engine {
         self.journal = None;
         self.opens.clear();
         self.g = None;
+        self.named_dirs = None;
     }
 
     /// Open the document's persisted S₀ at `path` (`crate::s0file`) for a
@@ -994,6 +1015,15 @@ impl Engine {
             self.pages.clear();
             return (no_s0, Some(w));
         }
+        // the page checkpoints' lookups by name, made after S₀, were made
+        // from the font directories as they were: changed, every page is
+        // typeset again from S₀
+        if let Some(d) = self.named_dirs {
+            if self.fonts.as_mut().map(|f| f.dirs()) != Some(d) {
+                self.pages.clear();
+                self.named_dirs = None;
+            }
+        }
         match now.and_then(|now| self.restart_page(now)) {
             Some(i) => (Start::Page(i), None),
             None => (Start::S0, None),
@@ -1236,6 +1266,7 @@ impl Engine {
             conv: None,
             thinning: None,
             fonts: Box::new(Unkept),
+            catalog_dirs: None,
             loads: None,
         };
         if start.in_body() {
@@ -1488,6 +1519,7 @@ impl Engine {
             conv,
             thinning,
             fonts: self.fonts.take().unwrap_or_else(|| Box::new(Unkept)),
+            catalog_dirs: None,
             loads: Some(self.loads.clone()),
         });
         let mut out = (!c.no_pdf).then(|| {
@@ -1611,8 +1643,10 @@ impl Engine {
         let mut new_pages = vec![];
         let mut opens = vec![];
         let mut restored_files = vec![];
+        let mut catalog_dirs = None;
         if let Some(r) = g.host.resident.take() {
             self.fonts = Some(r.fonts);
+            catalog_dirs = r.catalog_dirs;
             self.loads
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1654,6 +1688,16 @@ impl Engine {
             if let Some(t) = texts_before {
                 self.texts = t;
             }
+        } else {
+            // the font directories the page checkpoints' lookups by name
+            // were made from: this run's catalog's, else (a run that went
+            // on from a checkpoint holding a catalog) those checked at its
+            // start
+            self.named_dirs = match catalog_dirs {
+                Some(d) => Some(d),
+                None if g.host.font_mgr.is_some() => self.named_dirs,
+                None => None,
+            };
         }
         if crate::conv::on() && !rep.cancelled && rep.failure.is_none() {
             self.last_pages = final_pages.unwrap_or_default();

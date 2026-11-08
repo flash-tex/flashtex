@@ -382,6 +382,9 @@ pub struct RunResult {
     pub stderr: String,
     /// An in-process run that broke off (`inproc`): why.
     pub failure: Option<String>,
+    /// The engine thread died (`inproc::FATAL_EXIT`): the host exits after
+    /// the compile's `DONE`.
+    pub fatal: bool,
     /// An in-process run: where it started.
     pub start: Option<crate::resident::Start>,
 }
@@ -561,7 +564,12 @@ pub fn run_once(
 ) -> Result<RunResult, String> {
     std::fs::create_dir_all(&job.output_dir)
         .map_err(|e| format!("{}: {e}", job.output_dir.display()))?;
-    if let Some(sh) = inproc {
+    // An export is a run of its own, in a process of its own (spec §6.3),
+    // as the pdfTeX host's: run by the resident engine, it replaced the
+    // engine's S₀ and page checkpoints with its own (made without the
+    // display list's source map, so the next keystroke's run could not go
+    // on from them either, and ran from the format).
+    if let Some(sh) = inproc.filter(|_| !job.export) {
         return run_in_process(
             sh,
             format_dir,
@@ -757,7 +765,18 @@ fn run_in_process(
         r.stop = None;
         res.cancelled = r.cancelled;
     }
-    let (rep, ()) = ran?;
+    // (an engine thread that has ended -- it died at an earlier run or a
+    // save -- is as fatal as one that dies now)
+    let (rep, ()) = ran.unwrap_or_else(|e| {
+        (
+            crate::resident::Report {
+                failure: Some(e),
+                fatal: true,
+                ..Default::default()
+            },
+            (),
+        )
+    });
     if held.tracking() && !job.export {
         // (the pages it held were not sent: the run's count is the engine's)
         res.pages = held.frames.lock().unwrap().seen;
@@ -766,6 +785,11 @@ fn run_in_process(
     res.exit_code = rep.exit_code;
     res.stderr = rep.reports.join("\n");
     res.failure = rep.failure;
+    res.fatal = rep.fatal;
+    if res.fatal {
+        // (not a cancel: the run is lost, whatever stopped it)
+        res.cancelled = false;
+    }
     res.start = Some(rep.start);
     if std::env::var_os("FLASHTEX_UNICODE_DEBUG").is_some() {
         eprintln!(
@@ -800,10 +824,24 @@ fn forward(
     // (a run in this process compared its frames with the client's itself)
     let compare = tracking && !in_process;
     while let Ok(Some((k, body))) = frame::read_frame(&mut r) {
-        // (the frame as the engine made it: a run in this process compares
-        // that)
-        let raw_digest =
-            (compare && matches!(k, kind::PAGE | kind::FORM)).then(|| crate::out::digest(&body));
+        // (whether the client holds the frame as the engine made it, which
+        // is what a run in this process compares: its digest, then its
+        // bytes)
+        let mut held_already = false;
+        if compare && matches!(k, kind::PAGE | kind::FORM) {
+            if let Some(i) = body
+                .get(..4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+            {
+                let d = crate::out::digest(&body);
+                let mut f = held.frames.lock().unwrap();
+                held_already = if k == kind::PAGE {
+                    f.page(i, d, &body)
+                } else {
+                    f.form(i as u32, d, &body)
+                };
+            }
+        }
         let body = match k {
             kind::FONT => match Font::decode(&body) {
                 Ok(mut f) => {
@@ -843,17 +881,6 @@ fn forward(
         let index = body
             .get(..4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
-        let mut held_already = false;
-        if let (Some(d), Some(i)) = (raw_digest, index) {
-            {
-                let mut f = held.frames.lock().unwrap();
-                held_already = if k == kind::PAGE {
-                    f.page(i, d)
-                } else {
-                    f.form(i as u32, d)
-                };
-            }
-        }
         if k == kind::PAGE {
             res.pages += 1;
         }
@@ -1049,6 +1076,9 @@ pub struct Outcome {
     /// Where each pass's run started (`crate::resident::Start`; a run in a
     /// process of its own: none).
     pub starts: Vec<&'static str>,
+    /// The engine thread died (`RunResult::fatal`): the host exits after
+    /// this compile's `DONE`.
+    pub fatal: bool,
 }
 
 impl Outcome {
@@ -1062,6 +1092,7 @@ impl Outcome {
             first_page_ms: None,
             diagnostics: 0,
             starts: vec![],
+            fatal: false,
         }
     }
 }
@@ -1126,6 +1157,28 @@ pub fn compile(
                     ("message", js(format!("the engine stopped: {f}"))),
                 ]),
             );
+        }
+        if last.fatal {
+            send_json(
+                out,
+                kind::DIAGNOSTIC,
+                &obj([
+                    ("id", Json::Int(job.id)),
+                    ("severity", js("error")),
+                    (
+                        "message",
+                        js("the Unicode engine's host stops; a new one starts"),
+                    ),
+                ]),
+            );
+            return Outcome {
+                passes,
+                first_page_ms,
+                diagnostics: 2,
+                starts,
+                fatal: true,
+                ..Outcome::none("failed")
+            };
         }
         for l in last.stderr.lines() {
             let (sev, m) = match l.strip_prefix("! FlashTeX output: ") {
@@ -1206,6 +1259,7 @@ pub fn compile(
         first_page_ms,
         diagnostics: count,
         starts,
+        fatal: false,
     }
 }
 
@@ -1337,9 +1391,13 @@ Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4
         assert_eq!(inc.viewport, Some(4));
         let mut h = Held::default();
         assert!(!h.begin(&inc), "nothing is held before the first compile");
-        h.frames.lock().unwrap().pages = vec![7, 8];
+        {
+            let mut f = h.frames.lock().unwrap();
+            f.page(0, 7, b"seven");
+            f.page(1, 8, b"eight");
+        }
         assert!(h.begin(&inc), "the same document keeps");
-        assert_eq!(h.frames.lock().unwrap().pages, [7, 8]);
+        assert!(h.frames.lock().unwrap().page(1, 8, b"eight"), "kept");
         let other = job(r#"{"id": 2, "root": "/p", "main": "other.tex", "incremental": true}"#);
         assert!(!h.keeps(&other));
         assert!(!h.begin(&other), "another document drops the pages");
@@ -1358,5 +1416,45 @@ Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4
         let digest = crate::out::digest;
         assert_ne!(digest(b"abcdefgh1"), digest(b"abcdefgh2"));
         assert_ne!(digest(b""), 0);
+    }
+
+    /// Two different frames with the same 64-bit digest (REVIEW-B on
+    /// #2109): the digest's step `h = rotl29((h ^ w) * K)` is a bijection of
+    /// the word `w`, so after a first word that differs, a second word can
+    /// bring both states together, and every later word keeps them so. A
+    /// client that holds one is still sent the other: the held frame is
+    /// compared byte for byte after the digest.
+    #[test]
+    fn frames_with_the_same_digest_are_not_taken_for_each_other() {
+        use crate::out::{digest, FrameDigests};
+        const K: u64 = 0x9E37_79B9_7F4A_7C15;
+        let len = 64usize;
+        let h0 = (len as u64).wrapping_mul(K) ^ 0x5851_F42D_4C95_7F2D;
+        let step = |h: u64, w: u64| (h ^ w).wrapping_mul(K).rotate_left(29);
+        // a page-like frame: index 7, then words; its twin differs in words
+        // 1 and 2 only
+        let mut a = vec![0u8; len];
+        a[..4].copy_from_slice(&7u32.to_le_bytes());
+        for (i, b) in a.iter_mut().enumerate().skip(8) {
+            *b = (i * 37) as u8;
+        }
+        let w = |f: &[u8], k: usize| u64::from_le_bytes(f[8 * k..8 * k + 8].try_into().unwrap());
+        let mut b = a.clone();
+        let w1 = w(&a, 1) ^ 0xFF;
+        b[8..16].copy_from_slice(&w1.to_le_bytes());
+        // the states after word 1, and the word 2 that makes them equal
+        let s0 = step(h0, w(&a, 0));
+        let (sa, sb) = (step(s0, w(&a, 1)), step(s0, w1));
+        let w2 = w(&a, 2) ^ sa ^ sb;
+        b[16..24].copy_from_slice(&w2.to_le_bytes());
+        assert_ne!(a, b);
+        assert_eq!(digest(&a), digest(&b), "the frames collide on the digest");
+        let mut f = FrameDigests::default();
+        assert!(!f.page(7, digest(&a), &a), "first sent");
+        assert!(f.page(7, digest(&a), &a), "then held");
+        assert!(!f.page(7, digest(&b), &b), "its twin is sent");
+        assert!(f.page(7, digest(&b), &b), "and then held");
+        assert!(!f.form(3, digest(&a), &a));
+        assert!(!f.form(3, digest(&b), &b), "a form's twin is sent");
     }
 }

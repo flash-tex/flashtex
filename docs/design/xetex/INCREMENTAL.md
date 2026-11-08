@@ -225,6 +225,17 @@ pdfTeX's own, each needing a XeTeX counterpart written against `xetex.web`:
 5. **L3 restart and converge**: `iso.rs` for XeTeX's nodes, the dead-word
    rules from `xetex.web`, line shifting; a soundness case for every rule and
    the soundness sweep (incremental equal to cold, frame by frame).
+   *Dead native characters (lane UNICODE):* `compute_ot_math_accent_pos`
+   and `make_scripts`'s OpenType math kerning make a native character
+   only to ask for its glyph and never free it (xetex.web leaks one node
+   per accent or script in an OpenType math font). The nodes lie wherever
+   the allocator put them, so after an edit every test failed on
+   `mem[..] differs outside what the walk compared`, and a unicode-math
+   document typeset all its later pages again (T7's `full-120` with
+   fontspec and unicode-math: DONE 1.4 s after a keystroke in the middle).
+   `changes/checkpoint.ch` fills such a node with `iso::DEAD_NODE_WORD`
+   after its last use, and the test reads that word as garbage; the node
+   stays allocated, so xetex's allocation and memory statistics are kept.
 6. **L4 viewport first and L5 passes**, as Classic has them.
    *Kept pages (lane UNICODE; protocol 3.1 `incremental`):* the host
    (`host::compile::Held`, per connection) remembers a digest of every page
