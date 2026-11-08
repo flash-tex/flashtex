@@ -101,7 +101,19 @@ public final class FileMap {
     var ops: [CollabID: FileOp] = [:]
     var log: [FileOp] = []
 
-    public init(replica: UInt64) { self.replica = replica }
+    /// Most entries; a create past it is `projectFull`.
+    public let maxFiles: Int
+    /// This replica's own creates stop this far below `maxFiles` (§2.4a).
+    public let localHeadroom: Int
+
+    public init(replica: UInt64, maxFiles: Int = CollabLimits.maxFiles, localHeadroom: Int = 0) {
+        self.replica = replica
+        self.maxFiles = maxFiles
+        self.localHeadroom = localHeadroom
+    }
+
+    /// Number of entries, deleted ones included.
+    public var count: Int { entries.count }
 
     /// Contract §2.6, over UTF-8 bytes. Never over Characters: a combining
     /// mark after `/` or `\` makes one grapheme of the pair, which would
@@ -134,6 +146,11 @@ public final class FileMap {
     public func isDeleted(_ file: FileID) -> Bool? { entries[file]?.deleted.1 }
 
     func local(_ file: FileID, _ kind: FileOpKind) throws -> FileOp {
+        // A local create stops `localHeadroom` below the cap (§2.4a); a
+        // remote one may take the cap itself.
+        if case .create = kind, entries[file] == nil, entries.count >= maxFiles - min(localHeadroom, maxFiles) {
+            throw CollabError.projectFull
+        }
         let op = FileOp(id: CollabID(replica: replica, counter: stateVector[replica]), lamport: lamport + 1,
                         file: file, kind: kind)
         try apply(op)
@@ -163,6 +180,7 @@ public final class FileMap {
         case let .create(kind, path):
             guard Self.isValidPath(path) else { throw CollabError.malformed("invalid path") }
             guard entries[op.file] == nil else { throw CollabError.idConflict(op.id) }
+            guard entries.count < maxFiles else { throw CollabError.projectFull }
             entries[op.file] = Entry(kind: kind, path: (stamp, path), blob: nil, deleted: (stamp, false))
         case let .setPath(path):
             guard var e = entries[op.file] else { throw CollabError.unknownFile(op.file) }
