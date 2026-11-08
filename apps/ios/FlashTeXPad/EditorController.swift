@@ -139,6 +139,8 @@ final class EditorController: NSObject, UITextViewDelegate {
     /// The document revision the text view currently shows (set by the
     /// SwiftUI layer; a different model revision reloads the text).
     var loadedRevision = 0
+    /// The model's `documentGeneration` of the buffer shown (set with it).
+    var loadedGeneration = -1
 
     /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
     /// captured before the edit (`LinkedEnvironmentEditing`); kept across an

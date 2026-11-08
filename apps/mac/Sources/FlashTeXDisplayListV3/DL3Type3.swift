@@ -14,7 +14,7 @@ public struct DL3Type3Glyph: Equatable, Sendable {
     public var llx: Int32, lly: Int32
     public var width: UInt32, height: UInt32
     public var rows: [UInt8]
-    public var bytesPerRow: Int { Int((width + 7) / 8) }
+    public var bytesPerRow: Int { (Int(width) + 7) / 8 } // in Int: `width + 7` overflows UInt32
 }
 
 public enum DL3Type3 {
@@ -28,7 +28,7 @@ public enum DL3Type3 {
             let code = try r.u8()
             let llx = try r.i32(), lly = try r.i32()
             let w = try r.u32(), h = try r.u32()
-            let (size, overflow) = Int((w + 7) / 8).multipliedReportingOverflow(by: Int(h))
+            let (size, overflow) = ((Int(w) + 7) / 8).multipliedReportingOverflow(by: Int(h))
             guard !overflow, size <= r.left else { throw DL3Error("type3 glyph \(code): \(w)×\(h) exceeds the program") }
             out.append(DL3Type3Glyph(code: code, llx: llx, lly: lly, width: w, height: h, rows: Array(try r.take(size))))
         }

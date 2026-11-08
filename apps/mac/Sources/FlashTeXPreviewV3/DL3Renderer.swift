@@ -379,14 +379,29 @@ func pdfColored(_ img: CGImage, _ cs: DL3JSON) -> CGImage? {
 
 /// The decoded samples in the PDF's device colour space, as pdfTeX embeds
 /// PNG/JPEG data (`/DeviceGray`, `/DeviceRGB`, `/DeviceCMYK`; no gamma, no
-/// profile), not interpolated (no `/Interpolate`).
+/// profile), not interpolated (no `/Interpolate`). A palette image keeps
+/// its palette over the device space: pdfTeX writes `/Indexed /DeviceRGB`
+/// with the PLTE bytes, while ImageIO bases the palette on sRGB, or on
+/// linear sRGB for a PNG with gAMA 1.0, which pdfTeX ignores.
 func deviceSamples(_ img: CGImage) -> CGImage {
+    func device(_ model: CGColorSpaceModel?) -> CGColorSpace? {
+        switch model {
+        case .monochrome?: CGColorSpaceCreateDeviceGray()
+        case .rgb?: CGColorSpaceCreateDeviceRGB()
+        case .cmyk?: CGColorSpaceCreateDeviceCMYK()
+        default: nil
+        }
+    }
     let space: CGColorSpace
-    switch img.colorSpace?.model {
-    case .monochrome?: space = CGColorSpaceCreateDeviceGray()
-    case .rgb?: space = CGColorSpaceCreateDeviceRGB()
-    case .cmyk?: space = CGColorSpaceCreateDeviceCMYK()
-    default: return img
+    if img.colorSpace?.model == .indexed {
+        guard let src = img.colorSpace, let base = device(src.baseColorSpace?.model), let table = src.colorTable,
+              table.count >= base.numberOfComponents, table.count % base.numberOfComponents == 0,
+              let ix = CGColorSpace(indexedBaseSpace: base, last: table.count / base.numberOfComponents - 1, colorTable: table)
+        else { return img }
+        space = ix
+    } else {
+        guard let d = device(img.colorSpace?.model) else { return img }
+        space = d
     }
     guard let provider = img.dataProvider,
           let out = CGImage(width: img.width, height: img.height, bitsPerComponent: img.bitsPerComponent, bitsPerPixel: img.bitsPerPixel,
@@ -786,7 +801,8 @@ public enum DL3Renderer {
                     continue
                 }
                 let left = snap(Double(x) / K), top = snap(H - Double(y) / K)
-                let right = snap(Double(x + w) / K), bottom = snap(H - Double(y + h) / K)
+                // In Double: `x + w` overflows Int32 for a rule at the edge of the range.
+                let right = snap((Double(x) + Double(w)) / K), bottom = snap(H - (Double(y) + Double(h)) / K)
                 if let tile, kind == .fill { // (a tile by translation has only filled rules)
                     tileRule(left: left, right: right, top: top, bottom: bottom, tile: tile, in: ctx)
                     continue
@@ -1060,8 +1076,9 @@ public enum DL3Renderer {
     /// column and row included), as `rasterizeToSurface` lays it.
     public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba,
                                      smoothFonts: Bool = false, background: CGColor = CGColor(gray: 1, alpha: 1)) -> CGContext? {
-        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
-        guard w > 0, h > 0,
+        // Checked in Double first: a non-finite or absurd box (a corrupt
+        // page) sizes nothing instead of trapping in `Int(_:)`.
+        guard let (w, h, _) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale),
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: layout.bitmapInfo) else { return nil }
@@ -1135,8 +1152,7 @@ public enum DL3Renderer {
 
     static func surface(widthPt: Double, heightPt: Double, scale: Double, background: CGColor = CGColor(gray: 1, alpha: 1),
                         smoothFonts: Bool = false, _ body: (CGContext) -> Void) -> IOSurface? {
-        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
-        guard w > 0, h > 0,
+        guard let (w, h, _) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale), // as `bitmapContext`
               let s = IOSurface(properties: [.width: w, .height: h, .bytesPerElement: 4,
                                              .pixelFormat: 0x4247_5241 /* 'BGRA' */]) else { return nil }
         s.lock(options: [], seed: nil)
