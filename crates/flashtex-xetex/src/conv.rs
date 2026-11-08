@@ -167,6 +167,23 @@ impl Old {
     }
 }
 
+impl Globals {
+    /// `p` is a native character node that xetex.web made only to ask for
+    /// its glyph (`compute_ot_math_accent_pos`, `make_scripts`'s OpenType
+    /// math kerning) and never frees: from here on nothing reads it
+    /// (changes/checkpoint.ch). Its words become
+    /// [`crate::iso::DEAD_NODE_WORD`], which the convergence test reads as
+    /// garbage; it stays allocated, as in xetex.
+    pub fn flashtex_dead_node(&mut self, p: i32) {
+        // native_size(p) == mem[p+4].qqqq.b0: the size it was allocated with
+        let size = self.mem[crate::ix::U((p + 4) as usize)].qqqq().b0();
+        let w = crate::generated::types::memory_word::from_bits(crate::iso::DEAD_NODE_WORD);
+        for k in 0..size {
+            self.mem[crate::ix::U((p + k) as usize)] = w;
+        }
+    }
+}
+
 /// Whether the measurement's notes are printed, and its claims checked
 /// at the end of the run (`FLASHTEX_UNICODE_CONV_DEBUG=1`).
 pub fn on() -> bool {

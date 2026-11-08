@@ -33,19 +33,31 @@ struct WordCountStatusItem: View {
         // zero-size child so the revision does not re-evaluate this item.
         .background(IsolatedOnChange(of: { model.chrome.editorRevision }) { _ in model.wordCount.scheduleUpdate(documents: model.documents) })
         .onChange(of: model.documentCount) { _, _ in model.wordCount.scheduleUpdate(documents: model.documents) }
+        // A long selection is counted in the background; read in a zero-size
+        // child so a caret move without a selection costs this item nothing.
+        .background(IsolatedOnChange(of: { SelectionKey(path: model.activePath, location: model.caretUTF16,
+                                                        length: model.caretLengthUTF16, revision: model.editorRevision) }, initial: true) { key in
+            model.wordCount.scheduleSelectionCount(text: model.activeText, path: key.path,
+                                                   range: NSRange(location: key.location, length: key.length), revision: key.revision)
+        })
     }
 
+    /// The selection's count: a short selection counted here, a long one
+    /// counted off the main thread (`WordCountModel.scheduleSelectionCount`).
     private var selectionCount: Int? {
         guard model.caretLengthUTF16 > 0 else { return nil }
         let range = NSRange(location: model.caretUTF16, length: model.caretLengthUTF16)
-        return DocumentStatistics.wordCount(inSelection: model.activeText, utf16Range: range)
+        return model.wordCount.selectionWords(text: model.activeText, path: model.activePath, range: range, revision: model.editorRevision)
     }
 
     private var labelText: String {
         guard let total = model.wordCount.total?.totalWords else { return "…" }
         if let selected = selectionCount { return "\(selected) of \(total) words" }
+        if model.caretLengthUTF16 > 0 { return "… of \(total) words" } // a long selection being counted
         return "\(total) word\(total == 1 ? "" : "s")"
     }
+
+    private struct SelectionKey: Equatable { var path: String; var location: Int; var length: Int; var revision: Int }
 
     private var helpText: String {
         if model.wordCount.total?.totalWords == nil { return "Counting words…" }
