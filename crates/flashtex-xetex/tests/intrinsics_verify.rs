@@ -517,6 +517,38 @@ fn tracing_writes_are_never_replayed() {
     never_replayed("", "\\tracingnesting=0 ", "", "Tracing");
 }
 
+/// A command that edits the current list in place (`\limits` sets the
+/// tail noad's subtype, `^` and `_` its script fields) is not on the
+/// allowlist: such calls never replay, so the output cannot change, even
+/// though verify does not compare `mem` words outside the lists it walks.
+#[test]
+fn in_place_list_edits_are_never_replayed() {
+    for (body, what) in [
+        ("\\limits", "limit_switch"),
+        ("\\nolimits", "limit_switch"),
+        ("^{2}", "sup_mark"),
+        ("_{1}", "sub_mark"),
+        ("\\def\\IntrX{a}\\limits", "a def, then limit_switch"),
+    ] {
+        let doc = format!(
+            "\\documentclass{{article}}\\def\\pdfstringdefPreHook{{{body}}}\n\
+             \\begin{{document}}\\relax\n$\\sum\\pdfstringdefPreHook x$\n\
+             $\\sum\\pdfstringdefPreHook x$\n$\\sum\\pdfstringdefPreHook x$\n\
+             \\[\\sum\\pdfstringdefPreHook x\\]\\end{{document}}\n"
+        );
+        let Some((on, verify)) = modes_agree(&doc) else {
+            return;
+        };
+        for s in [&on, &verify] {
+            assert!(count(s, "offers") > 0, "{what}: {s}");
+            assert_eq!(count(s, "recordings.committed"), 0, "{what}: {s}");
+            assert_eq!(count(s, "replayed"), 0, "{what}: {s}");
+            assert_eq!(count(s, "verify.checked"), 0, "{what}: {s}");
+            assert!(count(s, "abandoned.Command") > 0, "{what}: {s}");
+        }
+    }
+}
+
 /// A recording made inside a group closes one it did not open: abandoned.
 #[test]
 fn a_group_the_call_did_not_open_is_never_closed_by_a_replay() {
