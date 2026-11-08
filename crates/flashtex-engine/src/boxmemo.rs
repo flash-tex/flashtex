@@ -100,6 +100,9 @@ struct Config {
     stats_out: Option<String>,
     debug: bool,
     verify_fail: bool,
+    /// `FLASHTEX_BOXMEMO_FULL_VERIFY_HOST`: measurement only (§17.12), the
+    /// whole-state verifier in the host too.
+    full_in_host: bool,
 }
 
 /// The macros offered by default (BOX-MEMO.md §2, §11): framed.sty's frame
@@ -901,6 +904,7 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                 stats_out: std::env::var("FLASHTEX_BOXMEMO_STATS").ok(),
                 debug: std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some(),
                 verify_fail: std::env::var_os("FLASHTEX_BOXMEMO_VERIFY_FAIL").is_some(),
+                full_in_host: std::env::var_os("FLASHTEX_BOXMEMO_FULL_VERIFY_HOST").is_some(),
             });
         }
         f(c.as_ref().unwrap())
@@ -3053,7 +3057,9 @@ impl Globals {
                 // interrupted by the next edit), and its restore replaced
                 // the edit's pending branch. The host verifies each
                 // admitted call's operation log and output (`bm_verified`).
-                if WINDOW.with(|w| w.get()).is_none() {
+                // `FLASHTEX_BOXMEMO_FULL_VERIFY_HOST` (measurement only,
+                // §17.12) runs it in the host anyway, restart points at risk.
+                if WINDOW.with(|w| w.get()).is_none() || with_config(|c| c.full_in_host) {
                     if let Ok(ck) = self.checkpoint() {
                         FULL.with(|f| *f.borrow_mut() = Some(FullVerify { ck, warn }));
                     }
