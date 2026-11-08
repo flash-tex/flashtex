@@ -190,6 +190,11 @@ final class EngineV3RealDocTypingTests: XCTestCase {
         let freezes: [(String, [Double], [Double])] = [
             ("the owner's freeze: one 1.9 s turn", [1900, 1850, 1800], [1900]),
             ("1.9 s cut into 5 turns of 380 ms", [380, 340, 300], [380, 380, 380, 380, 380]),
+            // REVIEW-C's Q1: 5 x 300 ms (1.5 s, the total's bound) plus four turns of 100 ms (not
+            // over the soft budget). The turns pass; the keys typed 50 ms apart during each 300 ms
+            // pause do not (four of them over 100 ms per pause).
+            ("1.9 s as 5 x 300 ms and 4 x 100 ms", Array(repeating: [300.0, 250, 200, 150], count: 5).flatMap { $0 },
+             [300, 300, 300, 300, 300, 100, 100, 100, 100]),
             ("every compile costs main a 150 ms turn", [], Array(repeating: 150, count: 40)),
             ("every key 120 ms late", Array(repeating: 120, count: 40), []),
         ]
