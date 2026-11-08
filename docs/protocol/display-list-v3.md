@@ -111,6 +111,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4F` | `LOCATED` | host → client | JSON (§11.6; 3.3) |
 | `0x50` | `PACKAGE` | host → client | JSON (§11.8; Typst host, `accept` `packages-v1`) |
 | `0x51` | `PROFILE` | host → client | JSON (§6.9; the reply to a client's `PROFILE`) |
+| `0x52` | `SPAN_SHIFT` | host → client | JSON (§5.3.1; `accept` `span-shift-v1`) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 | `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
@@ -604,6 +605,49 @@ engine run of a compile starts its span ids afresh and declares them again.
 Spans are ids, not byte offsets: an edit shifts lines, and the next
 compile's `SOURCES` say where every span now is.
 
+#### 5.3.1 `SPAN_SHIFT`: moved lines in one message (`span-shift-v1`)
+
+Kind `0x52`, host to client, accept-gated: the host sends it only to a
+client whose `HELLO.accept` lists `span-shift-v1` (the LaTeX host lists it
+in `capabilities`); any other client gets the `SOURCES` re-declarations of
+§5.3, unchanged. An edit that turns a file's old lines `from..old_end` into
+`from..new_end` moves every span on a later line by `new_end - old_end`
+lines; a line inserted near the top of a long source moves every later
+span, and re-declaring them all was one `SOURCES` entry per span (60,000
+for a long book), applied span by span on the client's main thread. The
+shift says it once:
+
+```json
+{"shifts": [[1, 13, 1], [1, 40, -2]]}
+```
+
+Each entry is `[file, from, delta]`. Applied in order, it moves every span
+the client holds in `file` whose line is `>= from` to line `+ delta`; the
+host sends only entries with `from + delta >= 1`, so no line goes below 1
+(a client refuses one that does not). Spans on other lines and files stay.
+
+It comes where the re-declaring `SOURCES` came: after an incremental
+compile's `STARTED`, before its first page, and it says where the spans
+went since the client's last compile (all its edits, in order, across
+files). A `SOURCES` may follow it, re-declaring the spans the shifts do not
+place (one that moved some other way, or that was sent where it already
+was); a client applies the `SPAN_SHIFT` first, then the `SOURCES`. The two
+together leave the client exactly the spans the `SOURCES` of every moved
+span would: the host checks each span the client holds against where the
+shifts put it, and re-declares any that differ. Spans of the edited lines
+themselves (retired, §5.3: they keep their line) are not moved: their lines
+are below `from` (the `from` of a shift is the edit's `old_end`).
+
+Lines only: spans carry no byte offsets (a GLYPH's `col` is a column within
+its line, which a shift of whole lines leaves alone), so there is no byte
+delta. A host that keeps too few shifts to describe a client's (it keeps
+the last few thousand) re-declares the moved spans in `SOURCES` instead.
+
+The macOS app applies a shift lazily (`DL3SourceMap`): it records it, and a
+lookup carries a span's line forward through the shifts since the span was
+declared, or a line backward through them to find its spans; the shifts are
+folded into the table off the main thread.
+
 ## 6. The engine host and its socket
 
 ### 6.1 Transport
@@ -674,7 +718,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
 
 A client may add `"accept": [...]` to its `HELLO`: the optional message
 families it wants, of those the host lists in `capabilities` (`diag-v1`,
-§6.7; `progress-v1`, §6.8; 3.3's features, §11.7). The host ignores names
+§6.7; `progress-v1`, §6.8; `span-shift-v1`, §5.3.1; 3.3's features, §11.7). The host ignores names
 it does not know.
 
 `texmf.texlive` is null when no TeX Live was found (the resolver is then
@@ -1424,6 +1468,15 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
   INCOMPLETE, not expressed (2 of the 82 parity fixtures use `gs`).
+- The LaTeX host also flags INCOMPLETE (lane RENDER-AUDIT,
+  `fixtures/preview-probes`): a form drawn in a graphics state other than
+  a new page's (a PDF form inherits the colour, text render mode and pen it
+  is drawn in, a `FORM` starts from §4.3's state; pdfTeX writes no colour
+  at a form's start); stroked text (modes 1, 2) whose pen is not a new
+  graphics state's or whose CTM scales or turns it, for a client without
+  `line-state` (§11.4); and a glyph a `\pdfliteral` shows in a code TeX has
+  not typeset in that font (it is not in the PDF's font subset, and past
+  `/LastChar` its width is 0).
 - TrueType, OpenType and Type 3 (PK) fonts reach a display list (§5.1,
   §5.1.1) for a client that asks for them; a Type 3 font from a `.pgc`
   file, and a PK font on the compile that first makes its PK file, are

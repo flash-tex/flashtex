@@ -1,0 +1,97 @@
+# Font-file fuzzing (lane TRANSFER-AUDIT, sandbox finding 5): a project can
+# carry its own .tfm, .vf, .map, .enc, Type 1 and TrueType files, and the
+# engine reads them from the project folder before the TeX tree. This runs
+# tools/fuzz/parsers/{tfm,fontfiles,type1,ttf}.py against this tree's engine
+# and fails on any crash or hang (the inputs are in the artifact).
+#
+# WHEN. By hand (workflow_dispatch, with the iteration count) and on pull
+# requests that touch the font fuzzers. Every night the same fuzzers run in
+# T6 (tools/fuzz/nightly.py lists them; #1385 runs it). Not part of
+# `CI required`.
+#
+# WHERE. GitHub-hosted Ubuntu with TeX Live 2026 pinned by digest, as
+# writet1-sweep.yml, so nothing runs on the owner's Macs.
+name: font fuzz
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: iterations per fuzzer
+        default: '2000'
+  pull_request:
+    paths:
+      - 'tools/fuzz/parsers/fontfiles.py'
+      - 'tools/fuzz/parsers/tfm.py'
+      - '.github/workflows/font-fuzz.yml'
+
+concurrency:
+  group: font-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: "font fuzz: tfm, vf, map, enc, type1, ttf"
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+      N: ${{ github.event_name == 'pull_request' && '200' || inputs.iterations }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: font-fuzz
+      - name: this tree's engine and pdftex.fmt
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+          eng="$RUNNER_TEMP/eng"; fmt="$RUNNER_TEMP/fmt"; mkdir -p "$eng" "$fmt"
+          cp target/release/flashtex-initex crates/flashtex-engine/pdftex.pool "$eng/"
+          ln -sf "$eng/flashtex-initex" "$eng/pdftex"
+          (cd "$fmt" && FLASHTEX_POOL="$eng/pdftex.pool" "$eng/pdftex" -ini -jobname=pdftex -progname=pdftex \
+             -etex -translate-file=cp227.tcx pdfetex.ini </dev/null >pdftex.out 2>&1)
+          test -s "$fmt/pdftex.fmt"
+      - name: fuzz
+        run: |
+          set -uo pipefail
+          export FLASHTEX_POOL="$RUNNER_TEMP/eng/pdftex.pool" FLASHTEX_FORMATS="$RUNNER_TEMP/fmt"
+          out="$RUNNER_TEMP/fuzz"; mkdir -p "$out"
+          c="$RUNNER_TEMP/eng/pdftex"; seed="${GITHUB_RUN_ID}"
+          run() { local name="$1"; shift; python3 "$@" --candidate "$c" --iterations "$N" --seed "$seed" \
+                    --out "$out/$name" --timeout 10 | tee "$out/$name.txt"; }
+          run tfm tools/fuzz/parsers/tfm.py &
+          run vf tools/fuzz/parsers/fontfiles.py --kind vf &
+          run map tools/fuzz/parsers/fontfiles.py --kind map &
+          run enc tools/fuzz/parsers/fontfiles.py --kind enc &
+          wait
+          run type1 tools/fuzz/parsers/type1.py &
+          run ttf tools/fuzz/parsers/ttf.py &
+          wait
+          found=$(find "$out" \( -path '*/crash/*' -o -path '*/hang/*' -o -path '*/output-flood/*' \) -name '*.json' | wc -l)
+          {
+            echo "## Font fuzz ($N iterations each, seed $seed)"
+            for f in "$out"/*.txt; do echo "- $(basename "$f" .txt): $(tail -1 "$f")"; done
+            echo; echo "Stored findings: $found"
+            python3 - "$out" <<'PY'
+          import glob, json, os, sys
+          for p in sorted(glob.glob(os.path.join(sys.argv[1], "*", "*", "*.json"))):
+              d = json.load(open(p))
+              print("- %s: %s (%s)" % (os.path.relpath(p, sys.argv[1]), d.get("signature"), d.get("mutation")))
+          PY
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$found" -eq 0 ]] || { echo "::error::$found font-fuzz finding(s); see the artifact"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: font-fuzz
+          path: ${{ runner.temp }}/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14
