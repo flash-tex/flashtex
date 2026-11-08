@@ -6866,11 +6866,12 @@ fn spans_hold_timed_checkpoints_back() {
 /// fonts by number (`cur_font` in K2, a `\font` identifier's meaning in K3)
 /// and their arrays by the font version, which named only the changes made
 /// to loaded fonts (`\hyphenchar` & co.), not which font was loaded: NFSS's
-/// `\hyphenchar\font=45` on cmti10 and on cmbx10 at the same number reached
-/// the same version. Here a picture in `\itshape` (cmti10, first used
-/// there) is recorded and replayed in edits' windows; the shape then becomes
-/// `\bfseries` (cmbx10, loaded at cmti10's number), every other key equal,
-/// and the bold picture must not be the italic one replayed.
+/// `\hyphenchar\font=45` on cmsl10 and on cmss10 at the same number reached
+/// the same version, and the two have the same interword glue (the fonts of
+/// a replay's nodes key theirs). Here a picture in `\slshape` (cmsl10, first
+/// used there) is recorded and replayed in edits' windows; the family then
+/// becomes `\sffamily` (cmss10, loaded at cmsl10's number), every other key
+/// equal, and the sans picture must not be the slanted one replayed.
 #[test]
 fn a_font_loaded_at_another_fonts_number_is_another_font() {
     let Some(e) = env() else {
@@ -6882,13 +6883,18 @@ fn a_font_loaded_at_another_fonts_number_is_another_font() {
     std::fs::create_dir_all(&dir).unwrap();
     let before: String = (0..12).map(|i| para(i, "alpha")).collect();
     let after: String = (12..30).map(|i| para(i, "beta")).collect();
-    // (no space inside the picture: an interword glue keys its font's glue)
+    // (no space inside the picture: an interword glue keys its font's glue;
+    // a picture before, so that LaTeX's hooks for `pic` exist before the
+    // edits' restore points: a control sequence a call makes keys the hash;
+    // an environment after the font switch, which leaves `\reserved@a` the
+    // same: NFSS leaves the font's identifier there, which K3 would see)
     let doc = |shape: &str, word: &str| {
         format!(
             "\\documentclass{{article}}\n\
              \\newenvironment{{pic}}{{\\setbox0\\hbox\\bgroup}}{{\\egroup\\box0 }}\n\
-             \\begin{{document}}\n{before}Some {word} text.\n\n\
-             {{{shape} A\n\\begin{{pic}}Hello\\end{{pic}} end.}}\n\n{after}\\end{{document}}\n"
+             \\newenvironment{{nil}}{{}}{{}}\n\
+             \\begin{{document}}\n\\begin{{pic}}x\\end{{pic}}\n{before}Some {word} text.\n\n\
+             {{{shape} A\\begin{{nil}}\\end{{nil}}\n\\begin{{pic}}Hello\\end{{pic}} end.}}\n\n{after}\\end{{document}}\n"
         )
     };
     let stats = dir.with_extension("stats");
@@ -6904,16 +6910,16 @@ fn a_font_loaded_at_another_fonts_number_is_another_font() {
             ("FLASHTEX_BOXMEMO_STATS", &stats_s),
         ],
     );
-    let italic = doc("\\itshape", "plain");
+    let slanted = doc("\\slshape", "plain");
     for _ in 0..3 {
-        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &italic)], "settle");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &slanted)], "settle");
         if r.contains("\"mode\":\"unchanged\"") {
             break;
         }
     }
     // edits before the picture: their windows record it, then replay it
     for word in ["plainx", "plain", "plainx", "plain"] {
-        let text = doc("\\itshape", word);
+        let text = doc("\\slshape", word);
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], word);
     }
     let s = std::fs::read_to_string(&stats).unwrap_or_default();
@@ -6924,8 +6930,8 @@ fn a_font_loaded_at_another_fonts_number_is_another_font() {
             (k.trim().trim_matches('"') == "hits").then(|| v.trim().parse::<u64>().ok())?
         })
         .unwrap_or(0);
-    assert!(hits >= 1, "the italic picture never replayed:\n{s}");
-    // the shape changed: cmbx10 at cmti10's number
-    let bold = doc("\\bfseries", "plain");
-    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &bold)], "bold");
+    assert!(hits >= 1, "the slanted picture never replayed:\n{s}");
+    // the family changed: cmss10 at cmsl10's number
+    let sans = doc("\\sffamily", "plain");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &sans)], "sans");
 }
