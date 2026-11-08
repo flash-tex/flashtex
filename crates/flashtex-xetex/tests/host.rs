@@ -2689,8 +2689,15 @@ fn the_diagnostics_hooks_change_neither_the_log_nor_the_pdf() {
     let own = run("0");
     let got = run("1");
     let starts: Vec<&str> = got.iter().map(|o| o.4.as_str()).collect();
-    assert!(starts[1].starts_with("s0"), "{starts:?}");
-    assert!(starts[2].starts_with("page"), "{starts:?}");
+    // (both edits go on from kept state: S₀, or a page checkpoint where
+    // one is taken; `diags_come_from_the_engine_and_hold_across_edits`
+    // has both)
+    assert!(
+        starts[1..]
+            .iter()
+            .all(|s| s.starts_with("s0") || s.starts_with("page")),
+        "{starts:?}"
+    );
     for (i, (a, b)) in got.iter().zip(&own).enumerate() {
         // the hooks recorded (exact DIAGs) in the host's process only
         assert!(a.3 >= 6, "compile {}: {} exact DIAGs", i + 1, a.3);
