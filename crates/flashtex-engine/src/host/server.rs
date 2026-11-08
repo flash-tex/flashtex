@@ -1215,7 +1215,7 @@ pub(crate) mod rooted {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
 
-    pub(crate) use libc::{O_CREAT, O_RDONLY, O_RDWR};
+    pub(crate) use libc::{O_CREAT, O_RDONLY, O_RDWR, O_WRONLY};
 
     /// The project root, pinned: its directory, and the names it was opened
     /// by (as given, and with its links resolved), against which a link
@@ -1352,6 +1352,11 @@ pub(crate) const MAX_LINKS: usize = 8;
 /// many links, or anything the walk cannot read is an error, and nothing
 /// is opened outside the root, a link swapped in during the walk included.
 /// (A `..` steps back along the directories walked, never `openat("..")`.)
+///
+/// Known limit: a directory the walk holds that another process renames
+/// out of the root before the last `openat` still takes the open (the walk
+/// is from its descriptor, wherever it now is). That needs write access to
+/// the root and to the place outside; no link is involved.
 #[cfg(unix)]
 pub(crate) fn open_confined(
     root: &rooted::Root,

@@ -2216,8 +2216,10 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     // The file `rel`, opened once for its read and its write (one
     // descriptor: the bytes an edit is made from are the file's it is
     // written to, whatever is renamed over the name meanwhile); `create`,
-    // for a buffer. Read-only where the file may not be written (`EACCES`):
-    // a buffer that changes nothing is still taken, a write fails.
+    // for a buffer. Where it may not be read and written (`EACCES`):
+    // write-only if it may be written (`0o222`: its bytes then unknown, a
+    // buffer writes the whole file, as on main), else read-only (a buffer
+    // that changes nothing is still taken, a write fails).
     let open = |rel: &Path, create: bool| -> std::io::Result<std::fs::File> {
         #[cfg(test)]
         BEFORE_WRITE_OPEN.with(|hook| {
@@ -2226,10 +2228,12 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 call();
             }
         });
-        let flags = sys::O_RDWR | if create { sys::O_CREAT } else { 0 };
-        let f = match server::open_confined(&root_fd, rel, flags) {
+        let creat = if create { sys::O_CREAT } else { 0 };
+        let f = match server::open_confined(&root_fd, rel, sys::O_RDWR | creat) {
             Err(e) if e.raw_os_error() == Some(libc::EACCES) => {
-                server::open_confined(&root_fd, rel, sys::O_RDONLY)?
+                server::open_confined(&root_fd, rel, sys::O_WRONLY | creat)
+                    .or_else(|_| server::open_confined(&root_fd, rel, sys::O_RDONLY))
+                    .map_err(|_| e)?
             }
             r => r?,
         };
@@ -3165,6 +3169,41 @@ mod tests {
         }
         assert_eq!(std::fs::read(&ro).unwrap(), b"fixed\n");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file the user may write but not read (`0o222`) still takes a
+    /// buffer (#2104 review): opened write-only, its bytes unknown, the
+    /// whole file written, as main did. (As root the read-write open
+    /// succeeds and this is not exercised: skipped.)
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_write_only_file_takes_a_buffer() {
+        use flashtex_display_list::json::{obj, s as js, Json};
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("ftx-wronly-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let wo = root.join("wo.tex");
+        std::fs::write(&wo, "old text, longer than the new\n").unwrap();
+        std::fs::set_permissions(&wo, std::fs::Permissions::from_mode(0o222)).unwrap();
+        let req = obj([(
+            "buffers",
+            Json::Arr(vec![obj([("path", js("wo.tex")), ("text", js("new\n"))])]),
+        )]);
+        let mut written = super::Written::new();
+        let r = super::apply_changes(&root, &req, &mut written);
+        // (and again: the host's copy, or the whole file written once more)
+        let r2 = super::apply_changes(&root, &req, &mut written);
+        std::fs::set_permissions(&wo, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let got = std::fs::read(&wo).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        r.unwrap();
+        r2.unwrap();
+        assert_eq!(got, b"new\n");
     }
 
     /// Hosts without a rooted walk must refuse edits instead of relying on
