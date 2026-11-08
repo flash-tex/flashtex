@@ -3077,11 +3077,15 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         // lists first (`roots`), the outcome does not depend on the order:
         // the pairs are those both states reach from the same places, and a
         // token list's walk reads and pairs only its own tokens.
+        let pt = crate::boxmemo::prof::now();
         w.toks_later = Some(Vec::new());
         w.roots();
+        let pt = crate::boxmemo::prof::add("i1 roots", pt);
         if w.err.is_none() {
             w.run();
         }
+        let pt = crate::boxmemo::prof::add("i2 run", pt);
+        crate::boxmemo::prof::count("i2 nodes before toks", w.nodes as u64);
         if let Some(e) = w.err {
             return Err(e);
         }
@@ -3112,8 +3116,11 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             }
         }
         let toks = w.toks_later.take().unwrap_or_default();
+        crate::boxmemo::prof::count("i3 token lists", toks.len() as u64);
         w.todo.extend(toks);
         w.finish();
+        let pt = crate::boxmemo::prof::add("i3 toks+finish", pt);
+        crate::boxmemo::prof::count("i3 nodes after", w.nodes as u64);
         if let Some(e) = w.err {
             return Err(e);
         }
@@ -3168,6 +3175,11 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             }
         }
         DEAD_CELLS.with(|c| c.set(n_dead));
+        crate::boxmemo::prof::add("i4 bad_mem cover", pt);
+        crate::boxmemo::prof::count(
+            "i4 dead computed",
+            dead_o.is_some() as u64 + dead_n.is_some() as u64,
+        );
         Ok(w.nodes)
     }
 
