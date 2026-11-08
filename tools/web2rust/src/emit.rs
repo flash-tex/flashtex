@@ -140,6 +140,9 @@ struct E<'a> {
     view_on: bool,
     /// The views the routine being emitted uses.
     used_views: std::cell::RefCell<std::collections::BTreeSet<String>>,
+    /// `--total-division` (main.rs): `div` and `mod` by a divisor that may
+    /// be 0 or -1 never panic (`int_div`).
+    total_division: bool,
 }
 
 /// How a global is stored.
@@ -748,8 +751,7 @@ impl<'a> E<'a> {
                 "=" => format!("({x} == {y})"),
                 "<>" => format!("({x} != {y})"),
                 "<" | ">" | "<=" | ">=" => format!("({x} {o} {y})"),
-                "div" => format!("({x} / {y})"),
-                "mod" => format!("({x} % {y})"),
+                "div" | "mod" => self.int_div(o, x, b, y),
                 "+" => format!("({x}).wrapping_add({y})"),
                 "-" => format!("({x}).wrapping_sub({y})"),
                 "*" => format!("({x}).wrapping_mul({y})"),
@@ -774,8 +776,7 @@ impl<'a> E<'a> {
             "<" | ">" | "<=" | ">=" => format!("({} {o} {})", ca(a), ca(b)),
             "and" => format!("({} && {})", self.cond(a), self.cond(b)),
             "or" => format!("({} || {})", self.cond(a), self.cond(b)),
-            "div" => format!("({} / {})", self.ex(a), self.ex(b)),
-            "mod" => format!("({} % {})", self.ex(a), self.ex(b)),
+            "div" | "mod" => self.int_div(o, self.ex(a), b, self.ex(b)),
             // Pascal's `/` is real division whatever the operands are.
             "/" => {
                 let f = |x: &Expr| {
@@ -1900,6 +1901,7 @@ pub fn emit(
     inline: &[(String, String)],
     array_views: &[String],
     translate: &[String],
+    total_division: bool,
 ) -> Result<(), String> {
     for (n, _) in inline {
         if !p.routines.iter().any(|r| r.name == *n) {
@@ -1976,6 +1978,7 @@ pub fn emit(
         views: HashSet::new(),
         view_on: false,
         used_views: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+        total_division,
     };
 
     // Array type aliases become `[T; N]`, so that an array of them can live
@@ -2040,6 +2043,9 @@ pub fn emit(
     // ---- types.rs --------------------------------------------------------
     let mut s = header("Types from WEB's `@<Types in the outer block@>`.");
     let _ = writeln!(s, "use super::consts::*;\n");
+    if total_division {
+        s.push_str(TOTAL_DIVISION);
+    }
     for (n, ty, sec) in &p.types {
         let _ = writeln!(s, "// §{sec}");
         match ty {
@@ -2358,6 +2364,50 @@ impl<'a> E<'a> {
         })
     }
 
+    /// The value of an integer expression made of literals, macro constants
+    /// and outer-block constants, if it is one.
+    fn const_val(&self, e: &Expr) -> Option<i64> {
+        match e {
+            Expr::Int(v) | Expr::Named(_, v) => Some(*v),
+            Expr::Var(n) if !self.globals.contains_key(n) && !self.is_local(n) => {
+                match self.p.consts.iter().find(|(c, _, _)| c == n) {
+                    Some((_, v, _)) => self.const_val(v),
+                    None => None,
+                }
+            }
+            Expr::Un("-", a) => self.const_val(a).map(|v| -v),
+            Expr::Un("+", a) => self.const_val(a),
+            Expr::Bin(o, a, b) => {
+                let (x, y) = (self.const_val(a)?, self.const_val(b)?);
+                match *o {
+                    "+" => x.checked_add(y),
+                    "-" => x.checked_sub(y),
+                    "*" => x.checked_mul(y),
+                    "div" if y != 0 => Some(x / y),
+                    "mod" if y != 0 => Some(x % y),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// `x div y` or `x mod y` (`o`), from the emitted operands. Rust's `/`
+    /// and `%` panic when `y` is 0, or when `x` is the most negative value
+    /// and `y` is -1; C leaves both undefined. With `--total-division`, a
+    /// divisor that is not a constant other than 0 and -1 goes through the
+    /// generated `TotalDivision` methods instead, which compute what TeX
+    /// Live's C build computes on AArch64 (types.rs).
+    fn int_div(&self, o: &str, x: String, b: &Expr, y: String) -> String {
+        let op = if o == "div" { "/" } else { "%" };
+        let safe = matches!(self.const_val(b), Some(v) if v != 0 && v != -1);
+        if !self.total_division || safe {
+            return format!("({x} {op} {y})");
+        }
+        let m = if o == "div" { "total_div" } else { "total_mod" };
+        format!("({x}).{m}({y})")
+    }
+
     /// Whether `e` is made of literals and outer-block constants only.
     fn is_const(&self, e: &Expr) -> bool {
         match e {
@@ -2657,6 +2707,39 @@ fn narrow_store(bits: u32, off: u32, width: u32) -> Option<String> {
         n = bits / 8
     ))
 }
+
+/// What `--total-division` adds to types.rs (see `E::int_div`).
+const TOTAL_DIVISION: &str = "\
+/// `--total-division`: integer `div` and `mod` (web2c's C `/` and `%`) by a
+/// divisor that is not a constant, as TeX Live's C build computes them on
+/// AArch64, the platform of its macOS binaries, where `sdiv` and `msub`
+/// never trap: `x div 0` is 0, `x mod 0` is `x`, and the most negative value
+/// divided by -1 is itself, remainder 0. C leaves these undefined (on x86-64
+/// TeX Live's program dies of SIGFPE); Rust's `/` and `%` would panic.
+pub trait TotalDivision: Copy {
+    fn total_div(self, y: Self) -> Self;
+    fn total_mod(self, y: Self) -> Self;
+}
+impl TotalDivision for i32 {
+    #[inline(always)]
+    fn total_div(self, y: i32) -> i32 { if y == 0 { 0 } else { self.wrapping_div(y) } }
+    #[inline(always)]
+    fn total_mod(self, y: i32) -> i32 { if y == 0 { self } else { self.wrapping_rem(y) } }
+}
+impl TotalDivision for i64 {
+    #[inline(always)]
+    fn total_div(self, y: i64) -> i64 { if y == 0 { 0 } else { self.wrapping_div(y) } }
+    #[inline(always)]
+    fn total_mod(self, y: i64) -> i64 { if y == 0 { self } else { self.wrapping_rem(y) } }
+}
+impl TotalDivision for u8 {
+    #[inline(always)]
+    fn total_div(self, y: u8) -> u8 { if y == 0 { 0 } else { self / y } }
+    #[inline(always)]
+    fn total_mod(self, y: u8) -> u8 { if y == 0 { self } else { self % y } }
+}
+
+";
 
 fn header(what: &str) -> String {
     format!(
