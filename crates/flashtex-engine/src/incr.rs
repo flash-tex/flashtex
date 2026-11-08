@@ -2016,6 +2016,9 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         "ls_cond_tag" => g.ls_cond_depth.min(g.ls_cond_tag.len() as i32 - 1) + 1,
         // ... and the file of every SyncTeX tag given so far
         "ls_tag_file" => g.synctex_tag_counter.min(g.ls_tag_file.len() as i32 - 1) + 1,
+        // changes/lazyflush.ch: the free list's pending segments (none in
+        // a state read through `spill_scalars`, which merges them first)
+        "seg_stack" => g.seg_ptr,
         // pdftex.web: the PDF output buffer up to `pdf_ptr` (in object
         // stream mode it is saved in `pdf_op_ptr`), the object stream
         // buffer likewise
@@ -2958,7 +2961,7 @@ fn check_mem(g: &mut Globals, page: usize) {
                         g.hi_mem_min,
                         g.mem_end,
                         cnt(g.hi_mem_min, g.mem_end),
-                        g.dyn_used,
+                        g.lf_dyn_used(),
                         miss_lo
                     );
                     // the variable-size free ring

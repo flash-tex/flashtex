@@ -935,8 +935,12 @@ impl Globals {
     }
 
     /// Copy the scalar globals into the word space's scalar region, through
-    /// the barrier.
+    /// the barrier. Every reading of the word space starts here, so the free
+    /// list of one-word nodes is first made one chain again
+    /// (`changes/lazyflush.ch` (3)): from here on every word is the one
+    /// pdftex.web's walking `flush_list` would have left.
     pub fn spill_scalars(&mut self) {
+        self.flashtex_merge_free();
         let mut sp = Spill {
             buf: Vec::with_capacity(SCALAR_BYTES),
         };
