@@ -24,6 +24,9 @@
 --change third_party/pdftex/web2c/locnull-optimize.ch
 --change third_party/pdftex/web2c/showstream.ch
 --change crates/flashtex-engine/changes/enctex.ch
+# The strings of encTeX's and MLTeX's own code, which TeX Live's pool holds
+# (changes/pool.ch, #2208).
+--change crates/flashtex-engine/changes/pool.ch
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch

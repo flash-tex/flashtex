@@ -343,6 +343,7 @@
 04char
 09delimiter
 06divide
+09endmubyte
 08endgroup
 11expandafter
 04font
@@ -1295,6 +1296,7 @@
 49an alignment. Proceed, and I'll ignore this case.
 56I expect to see \omit only after tab marks or the \cr of
 53I'm guessing that you meant to end an alignment here.
+50I'm ignoring this, since I wasn't doing a \mubyte.
 50I'm ignoring this, since I wasn't doing a \csname.
 04eqno
 05leqno
@@ -1366,6 +1368,13 @@
 12inaccessible
 03let
 09futurelet
+06mubyte
+09noconvert
+61not appear in <byte sequence> between \mubyte and \endmubyte.
+27The empty <byte sequence>, 
+08 ignored
+22The <byte sequence> in
+62\mubyte <token> <byte sequence>\endmubyte should not be empty.
 07chardef
 11mathchardef
 08countdef
@@ -1373,8 +1382,14 @@
 07skipdef
 09muskipdef
 07toksdef
+10charsubdef
+28New character substitution: 
+03 = 
 44You should have said `\read<number> to \cs'.
 34I'm going to look for the \cs now.
+08xordcode
+08xchrcode
+08xprncode
 14Invalid code (
 29), should be in the range 0..
 21), should be at most 
@@ -1828,5 +1843,8 @@
 13clubpenalties
 14widowpenalties
 21displaywidowpenalties
+17substitution for 
+43Missing character: Incomplete substitution 
+30Using character substitution: 
 07synctex
-*327502766
+*312141437

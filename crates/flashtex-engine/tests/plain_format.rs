@@ -6,8 +6,8 @@
 //!
 //! * the banner (web2c adds "(TeX Live 2026)"; the date is the clock's) and the
 //!   format's date stamp;
-//! * the pool-string count, which web2c's tex.ch raises with strings of its
-//!   own, and the memory words dumped, which SyncTeX's node fields raise in
+//! * the pool-string count (compared on its own in `tests/pool_strings.rs`),
+//!   and the memory words dumped, which SyncTeX's node fields raise in
 //!   TeX Live (DESIGN.md section 1.1 normalises memory accounting);
 //! * the count of multiletter control sequences: TeX Live's pdfTeX has five
 //!   primitives from web2c change files (`\tracingstacklevels`,

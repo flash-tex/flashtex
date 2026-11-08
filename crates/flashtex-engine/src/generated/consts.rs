@@ -1436,7 +1436,7 @@ pub const or_code: i32 = 4i32;
 // §546
 pub const format_default_length: i32 = 20i32;
 // §546
-pub const format_extension: i32 = 950i32;
+pub const format_extension: i32 = 951i32;
 // §570
 pub const ext_tag: i32 = 3i32;
 // §570
@@ -1670,7 +1670,7 @@ pub const real_font_type: i32 = 2i32;
 // §703
 pub const virtual_font_type: i32 = 1i32;
 // §705
-pub const non_existent_path: i32 = 1088i32;
+pub const non_existent_path: i32 = 1089i32;
 // §710
 pub const long_char: i32 = 242i32;
 // §710
@@ -1768,7 +1768,7 @@ pub const total_mathsy_params: i32 = 22i32;
 // §877
 pub const total_mathex_params: i32 = 13i32;
 // §940
-pub const math_spacing: i32 = 1314i32;
+pub const math_spacing: i32 = 1315i32;
 // §946
 pub const align_stack_node_size: i32 = 6i32;
 // §956
@@ -2105,9 +2105,9 @@ pub const hash_extra: i32 = 600000i32;
 pub const hash_top: i32 = 630192i32;
 // §1870
 pub const max_trie_op: i32 = 65535i32;
-// §1900
+// §1901
 pub const ssup_error_line: i32 = 255i32;
-// §1920
+// §1921
 pub const ls_cond_size: i32 = 1000i32;
-// §1920
+// §1921
 pub const ls_tag_size: i32 = 65535i32;
