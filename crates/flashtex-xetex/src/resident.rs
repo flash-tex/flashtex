@@ -958,13 +958,17 @@ impl Engine {
     }
 
     /// Where this run can start, and why not from S₀ when one is kept.
+    /// Where this run starts (and why not from the kept state, if not),
+    /// with what changed since the last run when it starts in the body
+    /// (`changes`: worked out once, for the restart point and the
+    /// convergence test alike).
     fn start_for(
         &mut self,
         key: &PointKey,
         first_line: &[u8],
         dl_on: bool,
         now: Option<&HashMap<String, Arc<Vec<u8>>>>,
-    ) -> (Start, Option<String>) {
+    ) -> (Start, Option<String>, Option<Changes>) {
         let point_ok = self.keep_point
             && self.g.is_some()
             && self
@@ -982,7 +986,7 @@ impl Engine {
         if !point_ok && !opened_ok {
             self.s0 = None;
             self.pages.clear();
-            return (Start::Fresh, None);
+            return (Start::Fresh, None, None);
         }
         let no_s0 = if point_ok {
             Start::Format
@@ -991,8 +995,15 @@ impl Engine {
         };
         let Some(s0) = self.s0.as_mut() else {
             self.pages.clear();
-            return (no_s0, None);
+            return (no_s0, None, None);
         };
+        // The font directories' state, asked for once: S₀'s check and the
+        // page checkpoints' lookups by name below compare with the same
+        // (each `dirs()` checks every directory again: about 0.45 ms on T7's
+        // `full-120` with fontspec, lane BEAMER).
+        let fonts = &mut self.fonts;
+        let mut dirs_now: Option<Option<[u64; 2]>> = None;
+        let mut dirs = || *dirs_now.get_or_insert_with(|| fonts.as_mut().map(|f| f.dirs()));
         let why = match s0.key.check_refresh(self.clock, first_line) {
             Err(why) => Some(why),
             Ok(()) if s0.dl_on != dl_on => {
@@ -1000,7 +1011,7 @@ impl Engine {
             }
             Ok(()) => match s0.font_dirs {
                 None => None,
-                Some(d) => match self.fonts.as_mut().map(|f| f.dirs()) {
+                Some(d) => match dirs() {
                     Some(now) if now == d => None,
                     Some(_) => Some("the font directories changed".to_string()),
                     None => Some("the font directories are not watched".to_string()),
@@ -1010,20 +1021,21 @@ impl Engine {
         if let Some(w) = why {
             self.s0 = None;
             self.pages.clear();
-            return (no_s0, Some(w));
+            return (no_s0, Some(w), None);
         }
         // the page checkpoints' lookups by name, made after S₀, were made
         // from the font directories as they were: changed, every page is
         // typeset again from S₀
         if let Some(d) = self.named_dirs {
-            if self.fonts.as_mut().map(|f| f.dirs()) != Some(d) {
+            if dirs() != Some(d) {
                 self.pages.clear();
                 self.named_dirs = None;
             }
         }
-        match now.and_then(|now| self.restart_page(now)) {
-            Some(i) => (Start::Page(i), None),
-            None => (Start::S0, None),
+        let ch = now.and_then(|now| self.changes(now));
+        match ch.as_ref().and_then(|ch| self.restart_page(ch)) {
+            Some(i) => (Start::Page(i), None, ch),
+            None => (Start::S0, None, ch),
         }
     }
 
@@ -1111,11 +1123,10 @@ impl Engine {
     /// to before its first changed byte), no lookup it made finds another
     /// file, and its output files are as the runs left them and not opened
     /// again later.
-    fn restart_page(&self, now: &HashMap<String, Arc<Vec<u8>>>) -> Option<usize> {
+    fn restart_page(&self, ch: &Changes) -> Option<usize> {
         if self.pages.is_empty() {
             return None;
         }
-        let ch = self.changes(now)?;
         let j = self.journal.as_ref()?;
         'pages: for (i, ck) in self.pages.iter().enumerate().rev() {
             if ch.lookup.is_some_and(|l| l < ck.reads.1) {
@@ -1216,7 +1227,8 @@ impl Engine {
             }
         }
         let texts_then = self.keep_pages.then(|| self.texts_now());
-        let (mut start, mut s0_note) = self.start_for(&key, &line, dl_on, texts_then.as_ref());
+        let (mut start, mut s0_note, changes) =
+            self.start_for(&key, &line, dl_on, texts_then.as_ref());
         if s0_note.is_none() {
             s0_note = opened_note;
         }
@@ -1230,10 +1242,15 @@ impl Engine {
         }
         let check_ms = t_check.elapsed().as_secs_f64() * 1e3;
         let mut rewrite_failed = None;
+        // (`start_for`'s changes hold for the convergence test below unless
+        // a file is written back here: then they are worked out again)
+        let mut changes = changes;
         if start.in_body() {
             // the files the run wrote and closed before S₀, as it left them
-            if let Err(e) = self.s0.as_ref().expect("checked").key.rewrite_outputs() {
-                rewrite_failed = Some(e);
+            match self.s0.as_ref().expect("checked").key.rewrite_outputs_any() {
+                Ok(false) => {}
+                Ok(true) => changes = None,
+                Err(e) => rewrite_failed = Some(e),
             }
         }
         if let Some(e) = rewrite_failed {
@@ -1271,7 +1288,7 @@ impl Engine {
                 .s0
                 .iter()
                 .map(|s| &s.rec)
-                .chain(self.pages.iter().map(|c| &c.rec));
+                .chain(self.pages.iter().map(|c| &*c.rec));
             for rec in recs {
                 for f in &rec.files {
                     if let crate::system::Stream::Out { path, .. } = &f.stream {
@@ -1296,7 +1313,10 @@ impl Engine {
         let mut conv_changes = None;
         if measure {
             if let Some(now) = texts_then.as_ref() {
-                let ch = self.changes(now);
+                let ch = match changes.take() {
+                    Some(ch) => Some(ch),
+                    None => self.changes(now),
+                };
                 let edits: Vec<crate::conv::Edit> = now
                     .iter()
                     .filter_map(|(p, new)| {
@@ -1338,7 +1358,7 @@ impl Engine {
                     let (id, rec, base, later) = match start {
                         Start::Page(i) => (
                             self.pages[i].id,
-                            &self.pages[i].rec,
+                            &*self.pages[i].rec,
                             Some(&self.terminal[..]),
                             &self.pages[i + 1..],
                         ),

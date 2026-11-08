@@ -59,7 +59,9 @@ pub struct PageCk {
     pub id: CheckpointId,
     /// The pages shipped by then.
     pub pages: usize,
-    pub rec: Record,
+    /// (shared: a restart's convergence test takes the later checkpoints'
+    /// records, `crate::conv::OldPage`, at every keystroke)
+    pub rec: std::sync::Arc<Record>,
     /// (shared: a later run that converges with this one takes the
     /// document over, `crate::conv`)
     pub out: Option<std::sync::Arc<OutSnap>>,
@@ -406,7 +408,7 @@ impl Globals {
             r.pages.push(PageCk {
                 id,
                 pages,
-                rec,
+                rec: std::sync::Arc::new(rec),
                 out,
                 reads,
                 opens,
