@@ -332,6 +332,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      # "true" when the ref predates unicode_reopen.py: the job then passes
+      # without running, and the summary says "not run" (a base ref older
+      # than the script reads as absent, not as a failure; REVIEW-B on #2133)
+      absent: ${{ steps.reopen.outputs.absent }}
     steps:
       - name: free disk (the TeX Live image and its copy take ~12 GB)
         run: |
@@ -351,6 +356,7 @@ jobs:
           name: sweeps-unicode-bin
           path: ${{ runner.temp }}/bin
       - name: reopen scenarios
+        id: reopen
         run: |
           set -euo pipefail
           chmod +x "$RUNNER_TEMP"/bin/*
@@ -359,7 +365,11 @@ jobs:
           export FLASHTEX_CACHE_DIR="$RUNNER_TEMP/flashtex-cache"
           mkdir -p "$RUNNER_TEMP/reopen"
           if [[ ! -f tools/incr-bench/unicode_reopen.py ]]; then
-            echo "tools/incr-bench/unicode_reopen.py is missing at this ref" | tee -a "$GITHUB_STEP_SUMMARY"; exit 1
+            # not a failure: this ref predates the reopen scenarios (#1805)
+            echo "::warning::tools/incr-bench/unicode_reopen.py is absent at this ref: the reopen scenarios are not run"
+            echo "reopen scenarios: not run (no tools/incr-bench/unicode_reopen.py at this ref)" >> "$GITHUB_STEP_SUMMARY"
+            echo "absent=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           python3 tools/incr-bench/unicode_reopen.py "$RUNNER_TEMP/bin/flashtex-host-unicode" \
             tools/incr-bench/unicode-corpus/*.tex tools/xetex-pdfparity/cases/*.tex \
@@ -386,7 +396,7 @@ jobs:
         env:
           SHA: ${{ needs.build.outputs.sha }}
           SHARDS: ${{ needs.build.outputs.shards }}
-          REOPEN: ${{ needs.reopen.result }}
+          REOPEN: ${{ needs.reopen.outputs.absent == 'true' && 'not run (no unicode_reopen.py at this ref)' || needs.reopen.result }}
         run: |
           set -euo pipefail
           n=$(python3 -c 'import json,os; print(len(json.loads(os.environ["SHARDS"])))')
@@ -406,4 +416,4 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
           echo "- reopen scenarios: ${REOPEN}" | tee -a "$GITHUB_STEP_SUMMARY"
-          [[ "$totals" == "$n" && "$bad" == 0 && ( "$REOPEN" == success || "$REOPEN" == skipped ) ]]
+          [[ "$totals" == "$n" && "$bad" == 0 && ( "$REOPEN" == success || "$REOPEN" == skipped || "$REOPEN" == "not run"* ) ]]
