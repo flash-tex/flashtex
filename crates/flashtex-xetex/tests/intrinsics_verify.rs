@@ -293,3 +293,85 @@ fn immediate_writes_are_not_replayable() {
     assert_eq!(count(&s, "not_replayable.FileOutput"), 3, "{s}");
     assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
 }
+
+/// `\read` moves an input file's position, which is not compared: with a
+/// file of equal lines, a replay would define the same macro and its check
+/// pass, while the real path read a line further (#2141). Not replayable.
+#[test]
+fn file_reads_are_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\newwrite\\IntrW\\immediate\\openout\\IntrW=\\jobname.dat\n\
+         \\immediate\\write\\IntrW{x}\\immediate\\write\\IntrW{x}\\immediate\\write\\IntrW{x}\n\
+         \\immediate\\write\\IntrW{x}\\immediate\\closeout\\IntrW\n\
+         \\newread\\IntrR\\openin\\IntrR=\\jobname.dat\n\
+         \\def\\pdfstringdefPreHook{\\read\\IntrR to\\IntrL}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\n\\IntrL\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.FileInput"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+}
+
+/// `\openin` and `\closein` open and close an input file, whose position
+/// is not compared: not replayable (#2141).
+#[test]
+fn opening_and_closing_input_files_is_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\newread\\IntrR\n\
+         \\def\\pdfstringdefPreHook{\\closein\\IntrR\\openin\\IntrR=\\jobname.tex\\relax}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\nx\\closein\\IntrR\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.FileInput"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+}
+
+/// An `\aftergroup` token at the call's own level stays on the save stack
+/// after the call, which a replay would not push (its check found a
+/// difference, #2141): not replayable. One inside a group the call opens
+/// comes back at that group's end, within the call: replayable, and its
+/// checks find nothing.
+#[test]
+fn aftergroup_at_the_calls_level_is_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\aftergroup\\relax}\n\
+         \\begin{document}x\\begingroup\\pdfstringdefPreHook\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\\endgroup\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.AfterGroup"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\IntrX{\\gdef\\IntrY{y}}\n\
+         \\def\\pdfstringdefPreHook{\\begingroup\\aftergroup\\IntrX\\endgroup}\n\
+         \\begin{document}x\\begingroup\\pdfstringdefPreHook\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\\endgroup\\IntrY\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.AfterGroup"), 0, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+}
+
+/// A recorded write to a `\tracing...` parameter is not replayable: a
+/// replay's group ends trace (or not) as the parameters are then, and the
+/// recording would print where the real path did not (#2141).
+#[test]
+fn tracing_writes_are_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\def\\pdfstringdefPreHook{\\tracingnesting=0 }\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\pdfstringdefPreHook\n\
+         \\pdfstringdefPreHook\nx\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "not_replayable.Tracing"), 3, "{s}");
+    assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
+}
