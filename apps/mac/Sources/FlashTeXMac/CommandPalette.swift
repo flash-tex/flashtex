@@ -88,6 +88,7 @@ enum CommandPaletteModel {
         case .checkForUpdates: UpdatePresenter.shared.checkForUpdatesInteractive() // UpdateChecker.swift
         case .openLaTeXFile: model.openTexPanel()
         case .newProject: model.scaffold.presentNewProject() // ProjectScaffoldViews.swift
+        case .newWindow: openWindow(value: (model.windows ?? .shared).newWindow()) // ProjectWindows.swift
         case .newFile: model.scaffold.presentNewFile()
         case .moveFile: model.scaffold.presentMove(model.activePath) // ProjectMove.swift
         case .projectFonts: model.projectFonts.present() // ProjectFonts.swift

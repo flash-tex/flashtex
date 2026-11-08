@@ -48,9 +48,20 @@ FUZZERS = (
      "seeds": False, "timeout": 10.0, "base": 300, "offset": 600000},
     {"name": "ttf", "script": "parsers/ttf.py", "oracle": False,
      "seeds": False, "timeout": 10.0, "base": 300, "offset": 700000},
+    # A project's own virtual fonts, font maps and encodings
+    # (parsers/fontfiles.py; lane TRANSFER-AUDIT). "args" go to the script.
+    {"name": "vf", "script": "parsers/fontfiles.py", "args": ("--kind", "vf"),
+     "oracle": False, "seeds": False, "timeout": 10.0, "base": 300,
+     "offset": 800000},
+    {"name": "map", "script": "parsers/fontfiles.py", "args": ("--kind", "map"),
+     "oracle": False, "seeds": False, "timeout": 10.0, "base": 300,
+     "offset": 900000},
+    {"name": "enc", "script": "parsers/fontfiles.py", "args": ("--kind", "enc"),
+     "oracle": False, "seeds": False, "timeout": 10.0, "base": 300,
+     "offset": 1000000},
     # differential: --oracle makes it compare exit status, PDF and log
     {"name": "jbig2", "script": "parsers/jbig2.py", "oracle": True,
-     "seeds": False, "timeout": 10.0, "base": 300, "offset": 800000},
+     "seeds": False, "timeout": 10.0, "base": 300, "offset": 1100000},
 )
 
 DONE_RE = re.compile(r"^done: (\d+) iterations:(.*)$")
@@ -266,7 +277,8 @@ def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
     cmd = [sys.executable, os.path.join(HERE, spec["script"]),
            "--candidate", candidate, "--out", out_dir,
            "--iterations", str(iterations), "--seed", str(seed),
-           "--timeout", str(spec["timeout"])] + list(extra_args)
+           "--timeout", str(spec["timeout"])] + list(spec.get("args", ())) \
+        + list(extra_args)
     if spec["oracle"]:
         cmd += ["--oracle", oracle]
     if spec["seeds"]:
