@@ -750,7 +750,12 @@ pub fn make_key(t: &Taken, clock: (i64, i32), first_line: &[u8]) -> Result<Key, 
         .filter(|k| seen.insert(k.clone()))
         .collect();
     let fx = flashtex_engine::system::external_effects();
+    // (the configuration besides the first line: the environment kpathsea
+    // and the engine read, kpathsea's configuration files, #2058)
+    let (config, config_files) = flashtex_engine::host::config_now();
     Ok(Key {
+        config,
+        config_files,
         build: flashtex_engine::host::engine_build(),
         clock,
         source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),

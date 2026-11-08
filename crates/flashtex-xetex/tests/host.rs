@@ -1221,6 +1221,92 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #2058: a persisted S₀ is not opened under another configuration than
+/// its run's, with the same command line: an environment variable kpathsea
+/// reads for a setting (`max_print_line`, which a run takes at its start
+/// and S₀ holds). A host opened with it set runs from the start and writes
+/// what a from-scratch compile with it writes; without `Key::check_config`
+/// it went on from S₀ (the log wrapped at the old width). A control with
+/// nothing changed goes on from S₀.
+#[test]
+fn a_persisted_s0_is_not_opened_under_another_environment() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-s0env-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let doc = "\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\n\\section{One}\\label{one}\nSome words, ffi. See section~\\ref{one}.\n\\typeout{A line longer than seventy-nine characters, so that the log wraps it where max_print_line says.}\n\\end{document}\n";
+    let (proj, out) = project(&dir, doc);
+    let cache = dir.join("cache");
+    let cache_s = cache.to_string_lossy().into_owned();
+    // one compile by a new host with `envs`; the host ends (and its S₀ is
+    // written); its start and outputs
+    let compile = |envs: &[(&str, &str)], tag: &str| -> (String, String, Vec<Vec<u8>>) {
+        let h = start_with(&dir, envs, &dir.join(format!("{tag}.err")));
+        let mut c = Client::connect(&h.sock).unwrap();
+        c.compile(&request(1, &proj, &out)).unwrap();
+        let (_, done) = events(&mut c, 1);
+        c.bye().unwrap();
+        let mut h = h;
+        let t = Instant::now();
+        while h.child.try_wait().unwrap().is_none() {
+            assert!(
+                t.elapsed() < Duration::from_secs(120),
+                "the host did not end"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let start = done
+            .get("starts")
+            .and_then(Json::as_array)
+            .and_then(|a| a.first())
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        let got = ["main.pdf", "main.log", "main.aux"]
+            .iter()
+            .map(|n| std::fs::read(Path::new(&out).join(n)).unwrap_or_default())
+            .collect();
+        (
+            done.str_field("status").unwrap_or("").to_string(),
+            start,
+            got,
+        )
+    };
+    let base = [
+        ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+        ("FLASHTEX_S0_CACHE", cache_s.as_str()),
+    ];
+    let (status, _, _) = compile(&base, "first");
+    assert_eq!(status, "ok");
+    let (_, start, _) = compile(&base, "control");
+    assert_eq!(start, "s0", "the control goes on from S0");
+    let wide: Vec<(&str, &str)> = base
+        .iter()
+        .copied()
+        .chain([("max_print_line", "200")])
+        .collect();
+    let (status, start, got) = compile(&wide, "wide");
+    assert_eq!(status, "ok");
+    assert_eq!(
+        start, "fresh",
+        "another max_print_line refuses the stored S0"
+    );
+    let (_, _, want) = compile(
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_INPROCESS", "0"),
+            ("max_print_line", "200"),
+        ],
+        "wide-ref",
+    );
+    for (n, (a, b)) in ["PDF", "log", ".aux"].iter().zip(got.iter().zip(&want)) {
+        assert!(a == b, "the {n} differs from a from-scratch compile's");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A persisted S₀ is saved when the engine is idle (`host::inproc`,
 /// `Engine::save_pending`): a keystroke right after a cold compile runs
 /// first. The file then written is the one a save made at once writes,

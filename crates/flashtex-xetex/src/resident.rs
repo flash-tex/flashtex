@@ -674,6 +674,9 @@ impl Engine {
                         "the display list's source map is made in one run, not the other".into(),
                     );
                 }
+                // (the environment and kpathsea's configuration files: the
+                // point key holds the switches, not those; #2058)
+                m.key.check_config()?;
                 m.key.check(m.key.clock, line)?;
                 m.key.check_arm()?;
                 if let Some(d) = m.font_dirs {
