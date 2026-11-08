@@ -185,9 +185,58 @@ inlined copies and `get_avail`'s 93.
      `sound-a`, `sound-timed`, `sound-d`, `sound-budget-d` with BOX-MEMO on, verify and off (runs
      41420459736, 41420480889, 41420501650 on `49a5c303b`; again on its final head after main was
      merged in).
-   - Not done from the review's list: a forced "main memory size" overflow compared with pdfTeX's
-     `runaway` text (by (1) of the change file the overflow comes at the same allocation, but no
-     test shows it), a test with the segment stack full, and a verify-mode assertion on reads of a
-     pending segment's last link.
+   - Forced "main memory size" overflow (2026-11-08, the PC, raw/ovf-1/; #2016's merged head
+     `e0d4f2485` against main `6e66beddf` and TeX Live 2026's pdfTeX): `ovf1.tex` doubles a macro
+     with `\edef` until memory runs out, so every earlier body is freed as a segment; `ovf2.tex`
+     first frees 30,000 short argument and `\toks` lists, then overflows in an `\edef` of a
+     macro argument (the `<argument>` context).
+     Both stop at the same token with the same `Runaway definition?` text and context as pdfTeX,
+     and #2016's logs equal main's byte for byte; pdfTeX's logs differ from both only in the two
+     string-pool capacity lines ("out of 467050" against 467068), which P-T1 normalises.
+   - The pdflatex format #2016 builds is byte-identical to main's (SHA-256 `47b8b5dc…`, both).
+   - Not done from the review's list: a test with the segment stack full (16,384 segments
+     pending; `seg_limit` is a constant), a verify-mode assertion on reads of a pending segment's
+     last link, a restore after a caught panic in the middle of a segment, and any measurement on
+     an M-series Mac.
 3. **Contiguity by placement (Rule 1)** only if a read-side measurement shows token reads missing the
    cache (§3); its parity risk is nil, but it competes with LIFO reuse, which keeps hot cells hot.
+
+## 6. Follow-up measurement: A/A control, random order, the host (2026-11-08)
+
+Run on the NixOS PC (AMD 7800X3D) inside the agents' CPU-capped slice, on #2016's head after main
+was merged in (`e0d4f2485`, `lazy`) against main `6e66beddf` built twice from the same tree
+(`main` and `mainB`: the same binary, the A/A control). Scripts and raw records:
+`docs/evidence/contig-tokens-2026-11-01/raw/ab-1/` and `scripts/{bench2.py,hostab.sh,absum.py}`.
+The PC was shared with about 30 other lanes for the whole run (load 0.2 to 28, the slice's CPU
+quota split between them), so wall-clock times are not comparable at all and cycles are noisy;
+instructions do not move with load. Every row says which it is.
+
+**Host (review of #2008, item 3).** The socket host as the app starts it (checkpoints and
+BOX-MEMO on), *Infinite Descent ×2*, 20 letters typed 300 ms apart into a prose line on page 842
+(the book's second copy, `x2/book/number-theory/modular-arithmetic.tex`), each waiting for
+`DONE`; the whole host process under `perf stat`, so a session is the cold open (with its
+`makeindex` passes) plus the 20 keystrokes. Engines in a seeded random order per round. Three
+sessions hit the time limit on the starved PC and are left out (main r2 twice, lazy r2 once
+before its rerun); what is left is main 1, mainB 2 and lazy 2 sessions.
+
+| engine | sessions | session instructions | Δ vs main | session cycles | Δ vs main | request CPU ms, p50 / p95 | edited page CPU ms, p50 / p95 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| main | 1 | 1,634.18 G | | 929.8 G | | 313 / 357 | 25.8 / 28.0 |
+| mainB (A/A) | 2 | 1,632.65 G | −0.09 % | 971.8 G | +4.5 % | 358 / 395 | 27.7 / 34.8 |
+| lazy | 2 | 1,626.56 G | **−0.47 %** | 1,012.7 G | +8.9 % | 361 / 459 | 31.6 / 41.2 |
+
+- VERIFIED: in the host, LAZY-FLUSH retires fewer instructions than main (−0.47 %, against an
+  A/A spread of 0.09 %), so batching the walks at `spill_scalars` does not cost more instructions
+  than the walks it replaces.
+- NOT SHOWN either way: cycles and the per-keystroke CPU times. The A/A pair, one binary, already
+  differs by +4.5 % in cycles and +14 % in request CPU time, and lazy's second session ran at load
+  22; in the first round, at load 0.2 to 17, lazy's session took 944.6 G cycles against main's
+  929.8 G and mainB's 947.4 G. A host cycle cost below about 5 % on the edit path can be neither
+  shown nor excluded on this PC, and §1.2's 20 ms key-to-commit target is about an M1-class Mac,
+  where nothing was measured.
+
+**Cold compiles (items 2 and 4).** `bench2.py`: `bench.py` with a seeded random order per rep
+(each run records its predecessor), each compile's own peak RSS (`wait4`), the document settled
+once and the settled tree copied to every engine (each engine's own pass must leave it settled).
+
+COLD-RESULTS

@@ -1,0 +1,19 @@
+dl3-keys: 1140 pages; letter on line 845 (page 842), byte 49233
+infdesc-x2-p900-lazy-r1 load=0.23 1626991319710 944577298338 client_edited_page 181.27/186.15 restore 4.47/17.76 test 289.75/366.77 edited_cpu 25.15/28.13 cpu 326.07/361.37
+dl3-keys: 1140 pages; letter on line 845 (page 842), byte 49233
+infdesc-x2-p900-main-r1 load=17.55 1634182002616 929789331675 client_edited_page 95.94/162.27 restore 3.69/11.02 test 202.21/265.95 edited_cpu 25.80/28.00 cpu 313.12/357.18
+dl3-keys: 1140 pages; letter on line 845 (page 842), byte 49233
+infdesc-x2-p900-mainB-r1 load=1.49 1632553141430 947444530708 client_edited_page 182.98/489.34 restore 6.06/95.43 test 301.63/394.20 edited_cpu 26.25/30.62 cpu 354.59/394.61
+dl3-keys: 1140 pages; letter on line 845 (page 842), byte 49233
+infdesc-x2-p900-mainB-r2 load=23.92 1632752943552 996117077547 client_edited_page 217.98/1013.24 restore 80.65/492.81 test 321.40/419.46 edited_cpu 28.48/34.77 cpu 365.73/394.46
+/home/kubar/.cache/flashtex-agents/contig/hostab.sh: line 16: 120003 Alarm clock                $S/to.sh 900 $IB/$E/dl3-keys --socket $OUT/h.sock --root $W --main main.tex --output-dir $W/out --keys $KEYS --at 0 --no-viewport --gap-ms $G --page $PAGE ${EDIT:+--edit $EDIT} > $OUT/$tag.jsonl
+dl3-keys failed: infdesc-x2-p900-lazy-r2
+infdesc-x2-p900-lazy-r2 load=22.16 957596087249 654449576032 
+/home/kubar/.cache/flashtex-agents/contig/hostab.sh: line 16: 264741 Alarm clock                $S/to.sh 900 $IB/$E/dl3-keys --socket $OUT/h.sock --root $W --main main.tex --output-dir $W/out --keys $KEYS --at 0 --no-viewport --gap-ms $G --page $PAGE ${EDIT:+--edit $EDIT} > $OUT/$tag.jsonl
+dl3-keys failed: infdesc-x2-p900-main-r2
+infdesc-x2-p900-main-r2 load=2.60 927012928907 648947337074 
+dl3-keys: 1140 pages; letter on line 845 (page 842), byte 49233
+infdesc-x2-p900-lazy-r2 load=0.51 1626124813936 1080753838823 client_edited_page 1110.52/3207.92 restore 201.91/893.06 test 955.75/4005.80 edited_cpu 35.93/41.18 cpu 398.51/458.83
+/home/kubar/.cache/flashtex-agents/contig/hostab2.sh: line 16: 528329 Alarm clock                $S/to.sh ${TO:-900} $IB/$E/dl3-keys --socket $OUT/h.sock --root $W --main main.tex --output-dir $W/out --keys $KEYS --at 0 --no-viewport --gap-ms $G --page $PAGE ${EDIT:+--edit $EDIT} > $OUT/$tag.jsonl
+dl3-keys failed: infdesc-x2-p900-main-r2
+infdesc-x2-p900-main-r2 load=3.09 1013283564153 714957682258 
