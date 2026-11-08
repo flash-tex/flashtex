@@ -1,0 +1,67 @@
+# Lane MEMORY's VIEWPORT gate in milliseconds on a GitHub-hosted M1 (macos-15), one VM, the
+# configurations interleaved (docs/evidence/mem-lane-2026-11-01/scripts/mac.sh). Measurement only:
+# this file lives on the lane's measure branches and is never merged.
+name: mem-lane-mac
+
+on:
+  push:
+    branches: ["agent/kabir-claude-memory/measure-kw*"]
+
+permissions:
+  contents: read
+
+env:
+  BASE_REF: 6e66beddf054228104a21dcab4a329ae8aecec0d
+  ROUNDS: "3"
+  DOCS: full-1000
+  CFGS: main vp300 vp0 vp65 vp80 vp100
+  VP_FAR: "1"
+  KEYS: "6"
+  INCR_BENCH_DIR: /tmp/ib
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  jumps:
+    name: VIEWPORT jumps (hosted M1)
+    runs-on: macos-15
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: TeX Live 2026 (MacTeX 2026, mactex-no-gui)
+        run: |
+          set -euo pipefail
+          brew install --cask mactex-no-gui >/dev/null
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH=/Library/TeX/texbin:$PATH
+          pdftex --version | head -1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/ib/cache
+          key: t7-hosted-books-${{ hashFiles('tools/parity/corpus/books.json') }}
+      - name: measure
+        run: |
+          set -o pipefail
+          echo "runner $RUNNER_NAME ($(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) CPUs)"
+          caffeinate -i bash docs/evidence/mem-lane-2026-11-01/scripts/mac.sh "$RUNNER_TEMP/mm" 2>&1 | tee "$RUNNER_TEMP/mm.log"
+      - name: summary
+        if: always()
+        run: |
+          { echo '```'; cat "$RUNNER_TEMP/mm/summary.txt" 2>/dev/null || tail -40 "$RUNNER_TEMP/mm.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mem-lane-mac
+          path: |
+            ${{ runner.temp }}/mm/*.jsonl
+            ${{ runner.temp }}/mm/*.txt
+            ${{ runner.temp }}/mm/kw.log
+            ${{ runner.temp }}/mm/HEAD
+
+            ${{ runner.temp }}/mm.log
+          if-no-files-found: ignore

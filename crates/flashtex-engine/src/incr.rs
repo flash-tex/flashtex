@@ -3551,7 +3551,7 @@ impl Obs {
 /// stderr (the client's `dl3-keys` writes its own on the same clock).
 pub fn kw_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("FLASHTEX_KEYWAIT_DEBUG").is_some())
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_KEYWAIT_DEBUG").is_some_and(|v| !v.is_empty()))
 }
 
 /// One `[kw]` line (`kw_on`).

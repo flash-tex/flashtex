@@ -113,7 +113,7 @@ struct Result {
 
 fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option<u32>) -> Result {
     let t0 = Instant::now();
-    let kw = std::env::var_os("FLASHTEX_KEYWAIT_DEBUG").is_some();
+    let kw = std::env::var_os("FLASHTEX_KEYWAIT_DEBUG").is_some_and(|v| !v.is_empty());
     let us = || {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -384,12 +384,16 @@ fn main() {
     // A preamble edit types after `\documentclass` and watches page 0: it
     // needs no prose line, and a book's main file (only `\include`s) has none.
     let preamble = arg("--kind").as_deref() == Some("preamble");
+    // `--min-words N` (measurement only): a prose line has more than N words
+    let min_words: usize = arg("--min-words")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
     let (line, page) = given.unwrap_or_else(|| {
         if preamble {
             return (1, 0);
         }
         (1..=lines.len() as u32)
-            .filter(|&l| lines[l as usize - 1].split(' ').count() > 40)
+            .filter(|&l| lines[l as usize - 1].split(' ').count() > min_words)
             .filter_map(|l| {
                 let p = on_pages(l);
                 (p.len() == 1).then(|| (l, p[0]))
