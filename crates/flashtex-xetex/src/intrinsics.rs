@@ -1247,6 +1247,37 @@ impl Globals {
     }
 
     fn intr_commit(&mut self, mut rec: Rec) {
+        if debug() {
+            let mut big: Vec<(usize, i32)> = rec
+                .reads
+                .iter()
+                .filter_map(|r| match r {
+                    Read::Meaning(p, _, Equiv::Tokens(ts)) => Some((ts.len(), *p)),
+                    _ => None,
+                })
+                .collect();
+            let total: usize = big.iter().map(|b| b.0).sum();
+            big.sort_unstable_by(|a, b| b.cmp(a));
+            let kinds = rec.reads.iter().fold([0usize; 4], |mut k, r| {
+                k[match r {
+                    Read::Meaning(..) => 0,
+                    Read::Plain(_) => 1,
+                    Read::Word(..) => 2,
+                    Read::Name(..) => 3,
+                }] += 1;
+                k
+            });
+            let top: Vec<String> = big
+                .iter()
+                .take(12)
+                .map(|&(n, p)| format!("\\{} {n}", self.intr_cs_name(p)))
+                .collect();
+            eprintln!(
+                "intrinsics: kept \\{}: {} ops, reads meaning/plain/word/name {kinds:?}, {total} tokens; largest {top:?}",
+                self.intr_cs_name(rec.cs),
+                rec.ops.len()
+            );
+        }
         let r = &mut self.host.intrinsics;
         if r.fault == Fault::SkipRead {
             let cs = rec.cs;
