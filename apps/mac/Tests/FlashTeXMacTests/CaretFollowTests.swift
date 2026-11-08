@@ -395,6 +395,8 @@ final class CaretFollowControllerTests: XCTestCase {
             line = c.toLine; page = c.toPage
             let skippedBefore = controller.skippedDisarmed
             controller.noteCaretMove()
+            XCTAssertFalse(controller.isArmed, "decided once the caret settles: \(c.why)")
+            clock.advance(1)
             XCTAssertEqual(controller.isArmed, c.reArms, c.why)
             XCTAssertEqual(controller.skippedDisarmed, skippedBefore + (c.reArms ? 0 : 1), c.why)
         }
