@@ -2560,7 +2560,10 @@ impl Globals {
                 // the edit's pending branch. The host verifies each
                 // admitted call's operation log and output (`bm_verified`).
                 if WINDOW.with(|w| w.get()).is_none() {
-                    if let Ok(ck) = self.checkpoint() {
+                    let t = prof::now();
+                    let c = self.checkpoint();
+                    prof::add("0 checkpoint C", t);
+                    if let Ok(ck) = c {
                         FULL.with(|f| *f.borrow_mut() = Some(FullVerify { ck, warn }));
                     }
                 }
@@ -4097,8 +4100,11 @@ impl Globals {
         let bpb = self.best_page_break;
         self.best_page_break = 0;
         let result = (|| -> Result<usize, String> {
+            let t = prof::now();
             let n = self.checkpoint()?;
+            let t = prof::add("1 checkpoint N", t);
             self.restore(fv.ck)?;
+            let t = prof::add("2 restore C", t);
             // `macro_call`'s exit, which the normal path ran
             self.bm_replay(cs, i);
             self.scanner_status = scanner;
@@ -4107,16 +4113,21 @@ impl Globals {
             scratch.put(self);
             self.bm_null_hold_head();
             self.best_page_break = 0;
+            let t = prof::add("3 replay", t);
             let r = crate::incr::same_state(self, n);
+            let t = prof::add("4 same_state", t);
             if r.is_err() && debug() {
                 self.bm_locate_debug(r.as_ref().err().unwrap());
             }
             self.abandon_pending();
+            prof::add("5 abandon_pending", t);
             r
         })();
         self.best_page_break = bpb;
         let ck = fv.ck;
+        let t = prof::now();
         self.retain_checkpoints(&|id| id != ck);
+        prof::add("6 drop C", t);
         let fail = with_config(|c| c.verify_fail);
         ST.with(|s| {
             let mut s = s.borrow_mut();
@@ -4358,7 +4369,61 @@ impl Globals {
 
     /// The end of the run: the statistics.
     pub fn flashtex_bm_finish(&mut self) {
+        prof::report();
         write_stats(true);
+    }
+}
+
+/// Measurement only (FLASHTEX_BOXMEMO_PROF=1): thread CPU seconds and
+/// counts by phase of the full verifier.
+pub(crate) mod prof {
+    use std::cell::RefCell;
+    thread_local! {
+        static P: RefCell<std::collections::BTreeMap<&'static str, (f64, u64)>> = RefCell::new(Default::default());
+    }
+    pub(crate) fn on() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("FLASHTEX_BOXMEMO_PROF").is_some())
+    }
+    pub(crate) fn now() -> f64 {
+        if on() {
+            crate::incr::thread_cpu_s()
+        } else {
+            0.0
+        }
+    }
+    pub(crate) fn add(k: &'static str, t0: f64) -> f64 {
+        if !on() {
+            return 0.0;
+        }
+        let t = crate::incr::thread_cpu_s();
+        P.with(|p| {
+            let mut p = p.borrow_mut();
+            let e = p.entry(k).or_default();
+            e.0 += t - t0;
+            e.1 += 1;
+        });
+        t
+    }
+    pub(crate) fn count(k: &'static str, n: u64) {
+        if !on() {
+            return;
+        }
+        P.with(|p| p.borrow_mut().entry(k).or_default().1 += n);
+    }
+    pub(crate) fn report() {
+        if !on() {
+            return;
+        }
+        P.with(|p| {
+            for (k, (s, n)) in p.borrow().iter() {
+                eprintln!("bmprof {k}: {s:.3} s, {n}");
+            }
+        });
+        eprintln!(
+            "bmprof total thread cpu {:.3} s",
+            crate::incr::thread_cpu_s()
+        );
     }
 }
 
