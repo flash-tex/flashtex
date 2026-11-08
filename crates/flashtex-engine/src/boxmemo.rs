@@ -862,6 +862,12 @@ fn next_version(parent: i32, change: [i32; 4]) -> i32 {
 }
 
 thread_local! {
+    /// The font first made at each font number on this thread, by what it is
+    /// (`Globals::flashtex_bm_font_new`).
+    static FONT_IDS: RefCell<HashMap<i32, u64>> = RefCell::new(HashMap::new());
+}
+
+thread_local! {
     /// Where BOX-MEMO may record (replays are allowed everywhere): `None`
     /// (the command line) anywhere; in the host, only in an edit's window,
     /// from the engine's resumption to the edited page's shipout -- the
@@ -2478,6 +2484,84 @@ impl Globals {
     #[inline(never)]
     pub fn flashtex_bm_font_set(&mut self, n: i32, a: i32, b: i32, v: i32) {
         self.bm_font_version = next_version(self.bm_font_version, [n, a, b, v]);
+    }
+
+    /// Font `f` was made (`read_font_info`, pdfTeX's `auto_expand_font`,
+    /// `letter_space_font`, `copy_font_info`; lane AUDIT-SPANS). A font
+    /// number names a font only in its timeline: an edit's restore takes the
+    /// fonts made after its checkpoint away, and the run after it may make
+    /// another font at the same number, while the version, which names only
+    /// the changes made to fonts (`\hyphenchar` on each, as NFSS sets it),
+    /// stays what it was. So a font is named by what it is (`bm_font_id`),
+    /// and the first font made at each number on this thread leaves the
+    /// version alone (a cold run's calls keep their hits across its font
+    /// loads), while another one at that number is a change: two states with
+    /// one version made the same fonts at the same numbers.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_font_new(&mut self, f: i32) {
+        let id = self.bm_font_id(f);
+        let other = FONT_IDS.with(|t| {
+            let mut t = t.borrow_mut();
+            *t.entry(f).or_insert(id) != id
+        });
+        if other {
+            self.bm_font_version = next_version(
+                self.bm_font_version,
+                [-3, f, id as i32, (id >> 32) as i32],
+            );
+        }
+    }
+
+    /// What font `f` is: its name, area, sizes and check sum, and its
+    /// characters' metrics and its parameters as `font_info` holds them.
+    fn bm_font_id(&self, f: i32) -> u64 {
+        use std::hash::Hasher;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let fu = f as usize;
+        for s in [self.font_name[fu], self.font_area[fu]] {
+            if s >= 0 && s < self.str_ptr {
+                let (a, b) = (self.str_start[s as usize], self.str_start[s as usize + 1]);
+                h.write_u32((b - a) as u32);
+                for i in a..b {
+                    h.write_u8(self.str_pool[i as usize] as u8);
+                }
+            } else {
+                h.write_i32(s);
+            }
+        }
+        h.write_i32(self.font_size[fu]);
+        h.write_i32(self.font_dsize[fu]);
+        h.write_u32(self.font_check[fu].0);
+        let (bc, ec, np) = (
+            self.font_bc[fu] as i32,
+            self.font_ec[fu] as i32,
+            self.font_params[fu],
+        );
+        h.write_i32(bc);
+        h.write_i32(ec);
+        h.write_i32(np);
+        let word = |i: i32| -> u64 {
+            if i >= 0 && (i as usize) < self.font_info.len() {
+                self.font_info[i as usize].0
+            } else {
+                u64::MAX
+            }
+        };
+        for c in bc..=ec {
+            let ci = self.font_info[(self.char_base[fu] + c) as usize];
+            h.write_u64(ci.0);
+            if ci.qqqq_b0() > 0 {
+                h.write_u64(word(self.width_base[fu] + ci.qqqq_b0()));
+                h.write_u64(word(self.height_base[fu] + ci.qqqq_b1() / 16));
+                h.write_u64(word(self.depth_base[fu] + ci.qqqq_b1() % 16));
+                h.write_u64(word(self.italic_base[fu] + ci.qqqq_b2() / 4));
+            }
+        }
+        for i in 1..=np {
+            h.write_u64(word(self.param_base[fu] + i));
+        }
+        h.finish()
     }
 
     #[cold]

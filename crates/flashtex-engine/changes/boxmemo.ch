@@ -37,7 +37,10 @@
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
-%   naming a version names one state of those arrays.
+%   naming a version names one state of those arrays. A font made
+%   (|read_font_info|, pdfTeX's expanded, letter-spaced and copied fonts)
+%   at a number where another font was made before, in another timeline of
+%   the incremental engine, is a change too (|flashtex_bm_font_new|).
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
@@ -308,6 +311,15 @@ if bm_rec_on then flashtex_bm_box_use(cur_val,2);
 if this_if=if_void_code then b:=(p=null)
 @z
 
+@x pdftex.web l.13113 - a font made is named in the fonts' version when its number named another font before
+done: if file_opened then b_close(tfm_file);
+read_font_info:=g;
+@y
+done: if file_opened then b_close(tfm_file);
+if bm_on then if g<>null_font then flashtex_bm_font_new(g);
+read_font_info:=g;
+@z
+
 @x pdftex.web l.13529 - a parameter read that adds parameters to the last font makes the fonts' next version
 font_info[fmem_ptr].sc:=0; incr(fmem_ptr); incr(font_params[f]);
 until n=font_params[f];
@@ -315,6 +327,27 @@ until n=font_params[f];
 font_info[fmem_ptr].sc:=0; incr(fmem_ptr); incr(font_params[f]);
 until n=font_params[f];
 if bm_on then flashtex_bm_font_set(-2, f, n, 0);
+@z
+
+@x pdftex.web l.17462 - ... and so is an expanded font made from another
+    auto_expand_font := k;
+@y
+    if bm_on then flashtex_bm_font_new(k);
+    auto_expand_font := k;
+@z
+
+@x pdftex.web l.17816 - ... a letter-spaced one
+    letter_space_font := k;
+@y
+    if bm_on then flashtex_bm_font_new(k);
+    letter_space_font := k;
+@z
+
+@x pdftex.web l.17917 - ... and a copy
+    copy_font_info := k;
+@y
+    if bm_on then flashtex_bm_font_new(k);
+    copy_font_info := k;
 @z
 
 @x pdftex.web l.20923 - a recording notes that it packed a box (it then set |last_badness|)
@@ -574,6 +607,7 @@ procedure flashtex_bm_reg_loc(@!l:pointer;@!e:boolean); external;
 procedure flashtex_bm_abort(@!r:integer); external;
 procedure flashtex_bm_font_changed; external;
 procedure flashtex_bm_font_set(@!n:integer;@!a:integer;@!b:integer;@!v:integer); external;
+procedure flashtex_bm_font_new(@!f:integer); external;
 procedure flashtex_bm_hyph_changed; external;
 procedure flashtex_bm_packed; external;
 procedure flashtex_bm_obj_ref(@!t:integer;@!n:integer); external;
