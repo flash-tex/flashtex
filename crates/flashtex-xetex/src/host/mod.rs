@@ -625,8 +625,8 @@ fn compile_thread(
     mut spares: spare::Spares,
 ) {
     let mut memory = tools::Memory::default();
-    // the pages the client was last told the document has (`done`)
-    let mut shown = 0u32;
+    // the pages the client was last told each document has (`done`)
+    let mut shown = Shown::new();
     loop {
         let (job, t0, seq) = match rx.recv_timeout(spares.ttl()) {
             Ok(Msg::Compile(job, t0, seq)) => (*job, t0, seq),
@@ -693,7 +693,7 @@ fn run_job(
     t0: Instant,
     memory: &mut tools::Memory,
     spares: &mut spare::Spares,
-    shown: &mut u32,
+    shown: &mut Shown,
 ) {
     if let Err(e) = job.apply_files() {
         send_json(
@@ -864,23 +864,30 @@ fn started(out: &Out, job: &Job, exe: &Path) {
 /// compile that ended (`ok`, `error`) sets it; one that `failed` (no run,
 /// or the engine thread died, #2130) keeps the pages last reported, or
 /// more if it sent more, so the preview keeps the last good pages instead
-/// of none. `typeset_pages` is what this compile typeset. `shown` is the
-/// connection's last reported count.
+/// of none. `typeset_pages` is what this compile typeset. `shown` holds
+/// the last reported count of each document of the connection (its root
+/// and PDF: a client that compiles two documents on one connection keeps
+/// each one's pages, never the other's).
+/// The pages last reported for each document (root, PDF path) of a
+/// connection (`done`).
+type Shown = HashMap<(PathBuf, PathBuf), u32>;
+
 fn done(
     out: &Out,
     job: &Job,
     o: &compile::Outcome,
     t0: Instant,
     cause: Option<&str>,
-    shown: &mut u32,
+    shown: &mut Shown,
 ) {
+    let key = || (job.root.clone(), job.output_dir.join(&job.jobname));
     let pages = match o.status {
         _ if job.export => o.pages,
         "ok" | "error" => {
-            *shown = o.pages;
+            shown.insert(key(), o.pages);
             o.pages
         }
-        "failed" => o.pages.max(*shown),
+        "failed" => o.pages.max(shown.get(&key()).copied().unwrap_or(0)),
         _ => o.pages,
     };
     let (status, exit_code, diagnostics, passes, first_page_ms) = (

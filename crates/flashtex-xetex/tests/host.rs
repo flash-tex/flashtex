@@ -463,16 +463,18 @@ fn a_failed_compile_keeps_the_pages_shown() {
     let (_, done) = events(&mut c, 1);
     assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
     assert_eq!(pages(&done), (Some(3), Some(3)), "{done:?}");
-    let failing = |id: i64| {
-        let mut r = request(id, &proj, &out);
+    let failing_in = |id: i64, main: &str| {
+        let mut r = CompileRequest::new(id, proj.to_str().unwrap(), main);
+        r.output_dir = Some(out.clone());
         r.edits = vec![flashtex_display_list::client::Edit {
-            path: "main.tex".into(),
+            path: main.into(),
             offset: 1 << 20,
             delete: 0,
             insert: "x".into(),
         }];
         r
     };
+    let failing = |id: i64| failing_in(id, "main.tex");
     c.compile(&failing(2)).unwrap();
     let (_, done) = events(&mut c, 2);
     assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
@@ -493,6 +495,16 @@ fn a_failed_compile_keeps_the_pages_shown() {
     c.compile(&failing(4)).unwrap();
     let (_, done) = events(&mut c, 4);
     assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
+    assert_eq!(pages(&done), (Some(1), Some(0)), "{done:?}");
+    // another document on the same connection: its own count, never
+    // main.tex's (none yet), and main.tex's is still its own
+    std::fs::write(proj.join("other.tex"), three).unwrap();
+    c.compile(&failing_in(5, "other.tex")).unwrap();
+    let (_, done) = events(&mut c, 5);
+    assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
+    assert_eq!(pages(&done), (Some(0), Some(0)), "{done:?}");
+    c.compile(&failing(6)).unwrap();
+    let (_, done) = events(&mut c, 6);
     assert_eq!(pages(&done), (Some(1), Some(0)), "{done:?}");
     drop(alarm);
     c.bye().unwrap();
