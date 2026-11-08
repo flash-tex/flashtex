@@ -22,6 +22,10 @@ public enum DL3 {
     public static let spPerBp = 65781.76
     public static let maxFrame = 1 << 28
 
+    /// The `HELLO` `accept` entry for `SPAN_SHIFT` (§5.3.1): a file's later
+    /// lines moved by one amount arrive as one shift, not as every later
+    /// span re-declared in `SOURCES`.
+    public static let spanShiftCapability = "span-shift-v1"
     /// The `HELLO` `accept` entry for `PROGRESS` (§6.8).
     public static let progressCapability = "progress-v1"
     /// The host capability (`HELLO.capabilities`) for `TRIM`: the client
@@ -37,6 +41,8 @@ public enum DL3 {
         public static let hello: UInt8 = 0x41, started: UInt8 = 0x42, font: UInt8 = 0x43, image: UInt8 = 0x44
         public static let page: UInt8 = 0x45, form: UInt8 = 0x46, sources: UInt8 = 0x47, diagnostic: UInt8 = 0x48
         public static let done: UInt8 = 0x49, error: UInt8 = 0x4A, pages: UInt8 = 0x4B
+        /// `span-shift-v1` (accept-gated, §5.3.1): spans of a file's later lines moved.
+        public static let spanShift: UInt8 = 0x52
         /// 3.2: bibtex/biber/makeindex runs of a compile (spec §6.4).
         public static let tool: UInt8 = 0x4C
         /// `progress-v1` (capability-gated, §6.8): a heartbeat while a compile typesets.
@@ -60,6 +66,7 @@ public enum DL3 {
             case page: "page"
             case form: "form"
             case sources: "sources"
+            case spanShift: "span-shift"
             case diagnostic: "diagnostic"
             case done: "done"
             case error: "error"
@@ -531,6 +538,37 @@ public struct DL3Font: Sendable {
     }
 }
 
+/// `SPAN_SHIFT` (§5.3.1): `{"shifts": [[file, from, delta], ...]}`. In
+/// order, each moves every span the client holds in `file` on a line
+/// `>= from` by `delta` lines; `from + delta >= 1` (no line goes below 1).
+public struct DL3SpanShifts: Equatable, Sendable {
+    public struct Shift: Equatable, Sendable {
+        public var file: UInt32, from: UInt32, delta: Int
+        public init(file: UInt32, from: UInt32, delta: Int) { self.file = file; self.from = from; self.delta = delta }
+
+        /// Where a span at `line` of `file` is after this shift.
+        public func apply(file f: UInt32, line: UInt32) -> UInt32 {
+            guard f == file, line >= from else { return line }
+            return UInt32(max(1, Int(line) + delta))
+        }
+    }
+    public var shifts: [Shift] = []
+    public init(_ shifts: [Shift] = []) { self.shifts = shifts }
+
+    public static func from(_ j: DL3JSON) throws -> DL3SpanShifts {
+        var s = DL3SpanShifts()
+        for e in j["shifts"]?.array ?? [] {
+            guard let a = e.array, a.count == 3 else { throw DL3Error("shifts entry is not [file, from, delta]") }
+            guard case .int(let f) = a[0], f >= 0, f <= Int64(UInt32.max),
+                  case .int(let from) = a[1], from >= 0, from <= Int64(UInt32.max),
+                  case .int(let d) = a[2] else { throw DL3Error("bad shift") }
+            guard from + d >= 1 else { throw DL3Error("a shift moves a line below 1") }
+            s.shifts.append(.init(file: UInt32(f), from: UInt32(from), delta: Int(d)))
+        }
+        return s
+    }
+}
+
 public struct DL3Sources: Equatable, Sendable {
     public var files: [(UInt32, String)] = []
     public var spans: [(UInt32, UInt32, UInt32)] = []
@@ -575,6 +613,8 @@ public enum DL3Event: Sendable {
     case page(DL3Page)
     case form(DL3Page)
     case sources(DL3Sources)
+    /// `span-shift-v1` (§5.3.1), for a client that accepted it.
+    case spanShift(DL3SpanShifts)
     case diagnostic(DL3JSON)
     case done(DL3JSON)
     case error(DL3JSON)
@@ -597,6 +637,7 @@ public enum DL3Event: Sendable {
         case DL3.Kind.page: .page(try DL3Page.decode(kind: .page, body: body))
         case DL3.Kind.form: .form(try DL3Page.decode(kind: .form, body: body))
         case DL3.Kind.sources: .sources(try DL3Sources.from(try DL3JSON.parse(body)))
+        case DL3.Kind.spanShift: .spanShift(try DL3SpanShifts.from(try DL3JSON.parse(body)))
         case DL3.Kind.diagnostic: .diagnostic(try DL3JSON.parse(body))
         case DL3.Kind.done: .done(try DL3JSON.parse(body))
         case DL3.Kind.error: .error(try DL3JSON.parse(body))

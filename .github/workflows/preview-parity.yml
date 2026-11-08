@@ -137,7 +137,10 @@ jobs:
           E="$RUNNER_TEMP/engine-parity"
           sudo mkdir -p "$DL3" && sudo chown "$(id -u):$(id -g)" "$DL3"
           rc=0
+          # The parity fixtures and fixtures/preview-probes (constructs the
+          # parity fixtures do not draw: literals, forms, images, matrices).
           python3 tools/displaylist/check_positions.py --pt2 -j 4 \
+            --root fixtures/real-world --root fixtures/divergence-probes --root fixtures/preview-probes \
             --engine "$E/eng/flashtex-initex" --formats "$E/fmt" --pool "$E/eng/pdftex.pool" \
             --dump "${CARGO_TARGET_DIR:-target}/release/dl3-dump" \
             --oracle "$(command -v pdftex)" --cache "$RUNNER_TEMP/parity-oracle" \
