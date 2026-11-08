@@ -429,6 +429,72 @@ fn a_save_panic_still_answers_an_accepted_compile() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A PDF the disk cannot take (#1612, the Classic host's: a full disk,
+/// then the next COMPILE seemed to hang) ends that compile with a `DONE`
+/// that says so: `error`, with an error diagnostic naming the write (it
+/// was a warning, and the app showed a compile with no PDF as recovered);
+/// the host then serves the next COMPILE on the same connection. The PDF
+/// is `/dev/full` (every write fails with ENOSPC); runs in the host's
+/// process and in processes of their own.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pdf_write_failure_leaves_the_host_serving() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    for inproc in ["1", "0"] {
+        let dir = std::env::temp_dir().join(format!(
+            "flashtex-host-diskfull-{}-{inproc}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (proj, out) = project(&dir, DOC);
+        let h = start_with(
+            &dir,
+            &[("FLASHTEX_UNICODE_INPROCESS", inproc)],
+            &dir.join("host.err"),
+        );
+        let alarm = deadline(h.child.id(), 600);
+        let mut c = Client::connect(&h.sock).unwrap();
+        c.compile(&request(1, &proj, &out)).unwrap();
+        let (_, done) = events(&mut c, 1);
+        assert_eq!(done.str_field("status"), Some("ok"), "{inproc}: {done:?}");
+        let pdf = PathBuf::from(&out).join("main.pdf");
+        std::fs::remove_file(&pdf).unwrap();
+        std::os::unix::fs::symlink("/dev/full", &pdf).unwrap();
+        let mut r = request(2, &proj, &out);
+        r.buffers = vec![(
+            "main.tex".into(),
+            DOC.replace("See section", "Read section"),
+        )];
+        c.compile(&r).unwrap();
+        let (ev, done) = events(&mut c, 2);
+        assert_eq!(
+            done.str_field("status"),
+            Some("error"),
+            "{inproc}: {done:?}"
+        );
+        assert!(
+            ev.iter().any(|e| matches!(e, Event::Diagnostic(j)
+                if j.str_field("severity") == Some("error")
+                    && j.str_field("message").is_some_and(|m| m.contains("writing")))),
+            "{inproc}: the failed write, as an error: {ev:?}"
+        );
+        let _ = std::fs::remove_file(&pdf);
+        let mut r = request(3, &proj, &out);
+        r.buffers = vec![("main.tex".into(), DOC.into())];
+        c.compile(&r).unwrap();
+        let (_, done) = events(&mut c, 3);
+        assert_eq!(done.str_field("status"), Some("ok"), "{inproc}: {done:?}");
+        assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+        drop(alarm);
+        c.bye().unwrap();
+        drop(h);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// A CANCEL that names a compile already finished (or one never sent)
 /// is dropped: it does not cancel a later compile that reuses the id.
 #[test]

@@ -5388,3 +5388,66 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
     assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A PDF the disk cannot take (#1612: the disk filled, `!pdfTeX error:
+/// pdftex: fwrite() failed`, then the next COMPILE seemed to hang) ends
+/// that compile with a `DONE`, and the host serves the next COMPILE on
+/// the same connection, which compiles the document again. The PDF is
+/// `/dev/full` (every write fails with ENOSPC, as on a full disk); every
+/// wait is bounded, so a hang fails the test instead of stalling it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pdf_write_failure_leaves_the_host_serving() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-diskfull");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let text = article(4);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    let h = start_host("diskfull");
+    let mut c = Client::connect(&h.1).unwrap();
+    c.reader()
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_secs(300)))
+        .unwrap();
+    let mut view = View::default();
+    let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(
+        first.done.str_field("status"),
+        Some("ok"),
+        "{:?}",
+        first.done
+    );
+    let pages = first.done.int_field("pages");
+    assert!(pages >= Some(2), "{:?}", first.done);
+    // the disk is full: every write of the PDF fails
+    let pdf = out.join("main.pdf");
+    std::fs::remove_file(&pdf).unwrap();
+    std::os::unix::fs::symlink("/dev/full", &pdf).unwrap();
+    let mut r = req(2, &proj, &out, "main.tex");
+    r.buffers = vec![("main.tex".into(), text.replacen("Start", "Begin", 1))];
+    let full = compile(&mut c, &mut view, &r);
+    assert_ne!(full.done.str_field("status"), Some("ok"), "{:?}", full.done);
+    // the disk has room again: the next COMPILE is served
+    let _ = std::fs::remove_file(&pdf);
+    let _ = std::fs::remove_file(out.join("main.pdf.flashtex-removed"));
+    let mut r = req(3, &proj, &out, "main.tex");
+    r.buffers = vec![("main.tex".into(), text.clone())];
+    let again = compile(&mut c, &mut view, &r);
+    assert_eq!(
+        again.done.str_field("status"),
+        Some("ok"),
+        "{:?}",
+        again.done
+    );
+    assert_eq!(again.done.int_field("pages"), pages, "{:?}", again.done);
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&base);
+}
