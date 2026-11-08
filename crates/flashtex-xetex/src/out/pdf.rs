@@ -484,6 +484,9 @@ impl<'a> Writer<'a> {
                 }
             }
             let mut d = a.dict.clone();
+            if let Some(g) = &a.goto {
+                g.apply(&mut d);
+            }
             d.set(
                 b"Rect",
                 Obj::Array(a.rect.iter().map(|v| Obj::num(*v, 3)).collect()),
@@ -1351,11 +1354,23 @@ impl<'a> Writer<'a> {
         };
         // named destinations
         let mut names = doc.names.clone();
-        if !doc.dests.is_empty() {
-            let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
-            for (k, v) in &doc.dests {
-                sorted.entry(k.clone()).or_insert_with(|| v.clone());
-            }
+        // with dvipdfmx's destination optimisation (`Goto`), only the
+        // destinations a link or an outline entry names, under their new
+        // names (pdfnames.c's `flat_table` with the `gotos` filter), in
+        // the order of the new names (`cmp_key`)
+        let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
+        for (k, v) in &doc.dests {
+            let k = if doc.check_gotos {
+                match doc.gotos.get(k) {
+                    Some(n) => n.clone(),
+                    None => continue,
+                }
+            } else {
+                k.clone()
+            };
+            sorted.entry(k).or_insert_with(|| v.clone());
+        }
+        if !sorted.is_empty() {
             let mut arr = Vec::new();
             for (k, v) in sorted {
                 arr.push(Obj::Str(k));
@@ -1442,6 +1457,9 @@ impl<'a> Writer<'a> {
         for i in 0..n_items {
             let o = &doc.outlines[i];
             let mut d = o.dict.clone();
+            if let Some(g) = &o.goto {
+                g.apply(&mut d);
+            }
             for k in [
                 &b"Parent"[..],
                 b"Prev",
@@ -2702,5 +2720,107 @@ mod tests {
         assert!(!w.contains("/Annot"), "{w}");
         let pdf = PdfFile::parse(&bytes).unwrap();
         assert_eq!(pdf.pages().unwrap().len(), 1);
+    }
+
+    /// dvipdfmx's destination optimisation, measured with TeX Live 2026's
+    /// xetex and xdvipdfmx on a plain XeTeX file with these specials: the
+    /// GoTo destinations of outline entries and links become `(0)`, `(1)`,
+    /// … in the order they are met (an undefined one takes a number too);
+    /// a destination array, a URI and a GoToR keep theirs; only the
+    /// destinations so named are written, under the new names (here 0, 1,
+    /// 3 and, from page 2, 4: `unused` is dropped). A `dvipdfmx:config C
+    /// 0x0010` on page 2 changes nothing (dvipdfmx reads page 1's); on page
+    /// 1 it keeps every name (hyperref's case).
+    #[test]
+    fn destinations_are_renamed_as_dvipdfmx_does() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let page1 = |config: bool| {
+            let mut body = if config {
+                special("dvipdfmx:config C 0x0010")
+            } else {
+                Vec::new()
+            };
+            for s in [
+                "pdf:dest (alpha) [@thispage /Fit]",
+                "pdf:dest (beta) [@thispage /Fit]",
+                "pdf:dest (unused) [@thispage /FitH 500]",
+                "pdf:dest (gamma) [@thispage /Fit]",
+                "pdf:outline 1 <</Title (One) /A <</S/GoTo/D (alpha)>>>>",
+                "pdf:outline 2 <</Title (Two) /Dest (beta)>>",
+                "pdf:outline 1 <</Title (Three) /Dest [@thispage /Fit]>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoTo/D(beta)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest(alpha)>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/URI/URI(http://x)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoTo/D(missing)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoToR/F(o.pdf)/D(alpha)>>>>",
+                "pdf:ann width 20pt height 10pt <</Subtype/Link/Dest(gamma)>>",
+            ] {
+                body.extend(special(s));
+            }
+            page_bytes(&body)
+        };
+        let mut page2 = special("dvipdfmx:config C 0x0010");
+        page2.extend(special("pdf:dest (delta) [@thispage /Fit]"));
+        page2.extend(special(
+            "pdf:ann width 20pt height 10pt <</Subtype/Link/A<</S/GoTo/D(delta)>>>>",
+        ));
+        let page2 = page_bytes(&page2);
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        for config in [false, true] {
+            let mut doc = Doc::new();
+            for (n, b) in [(1, page1(config)), (2, page2.clone())] {
+                let built = Builder::page(&mut doc, &NoTfm, 1000, n, &b).unwrap();
+                doc.pages.push(std::sync::Arc::new(built));
+            }
+            let bytes = write(&doc, &opts).unwrap().0;
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            let pdf = PdfFile::parse(&bytes).unwrap();
+            assert_eq!(pdf.pages().unwrap().len(), 2);
+            let gotos: Vec<Option<Vec<u8>>> = doc.pages[0]
+                .sup
+                .annots
+                .iter()
+                .map(|a| a.goto.as_ref().map(|g| g.name.clone()))
+                .collect();
+            let outl: Vec<Option<Vec<u8>>> = doc
+                .outlines
+                .iter()
+                .map(|o| o.goto.as_ref().map(|g| g.name.clone()))
+                .collect();
+            let at = text.find("/Names [").expect("the Dests tree");
+            let dests = &text[at..at + text[at..].find("endobj").unwrap()];
+            if config {
+                assert!(!doc.check_gotos);
+                assert!(gotos.iter().chain(&outl).all(Option::is_none));
+                for n in ["(alpha)", "(beta)", "(unused)", "(gamma)", "(delta)"] {
+                    assert!(dests.contains(n), "{n}: {dests}");
+                }
+                continue;
+            }
+            let s = |v: &str| Some(v.as_bytes().to_vec());
+            assert_eq!(outl, [s("0"), s("1"), None]);
+            assert_eq!(gotos, [s("1"), s("0"), None, s("2"), None, s("3")]);
+            let p2: Vec<_> = doc.pages[1]
+                .sup
+                .annots
+                .iter()
+                .map(|a| a.goto.clone())
+                .collect();
+            assert_eq!(p2[0].as_ref().map(|g| g.name.clone()), s("4"));
+            for n in ["(0)", "(1)", "(3)", "(4)"] {
+                assert!(dests.contains(n), "{n}: {dests}");
+            }
+            for n in ["(2)", "(alpha)", "(beta)", "(unused)", "(gamma)", "(delta)"] {
+                assert!(!dests.contains(n), "{n}: {dests}");
+            }
+            // the GoToR keeps its name; no link names an old one
+            assert_eq!(text.matches("(alpha)").count(), 1, "{text}");
+            assert!(!text.contains("(beta)") && !text.contains("(missing)"));
+        }
     }
 }

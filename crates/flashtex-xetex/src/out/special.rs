@@ -449,20 +449,18 @@ impl<M: Metrics> Builder<'_, M> {
                 self.reset_color();
             }
             b"bcolor" | b"begincolor" => {
-                let Some(f) = read_color(&mut p) else {
+                let Some((f, s)) = self.read_fill_stroke(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
                 self.doc.colors.push((f.clone(), s.clone()));
                 self.set_colors(Some(f), Some(s));
             }
             b"scolor" | b"setcolor" => {
-                let Some(f) = read_color(&mut p) else {
+                let Some((f, s)) = self.read_fill_stroke(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
                 match self.doc.colors.last_mut() {
                     Some(top) => *top = (f.clone(), s.clone()),
                     None => self.doc.colors.push((f.clone(), s.clone())),
@@ -546,6 +544,8 @@ impl<M: Metrics> Builder<'_, M> {
                     depth: self.stack.len(),
                     rect: None,
                     name,
+                    broken: false,
+                    goto: None,
                 });
             }
             b"eann" | b"eannot" | b"endann" => {
@@ -588,10 +588,13 @@ impl<M: Metrics> Builder<'_, M> {
                     return;
                 };
                 let d = self.fixup_dict(d);
+                // `pdf_doc_bookmarks_add` ends with `pdf_doc_add_goto`
+                let goto = self.doc.add_goto(&d);
                 self.doc.outlines.push(Outline {
                     level,
                     open,
                     dict: d,
+                    goto,
                 });
             }
             b"docinfo" => {
@@ -615,6 +618,42 @@ impl<M: Metrics> Builder<'_, M> {
             }
             _ => self.doc.unknown_special(&format!("pdf:{}", lossy(&cmd))),
         }
+    }
+
+    /// The colours of `pdf:bcolor`/`pdf:scolor` (spc_pdfm.c): a fill colour
+    /// and an optional stroke colour (the fill's when there is none), or
+    /// `fill COLOUR` and `stroke COLOUR` in any order, each starting from
+    /// the colour in effect (the colour stack's top) and kept where a
+    /// colour does not read (`spc_util_read_pdfcolor`'s default).
+    fn read_fill_stroke(&mut self, p: &mut Parser) -> Option<(Col, Col)> {
+        if !matches!(p.peek(), Some(b'f' | b's')) {
+            let f = read_color(p)?;
+            let s = read_color(p).unwrap_or_else(|| f.clone());
+            return Some((f, s));
+        }
+        let (mut f, mut s) = self
+            .doc
+            .colors
+            .last()
+            .cloned()
+            .unwrap_or_else(|| (Col::black(), Col::black()));
+        loop {
+            let which = if p.keyword(b"fill") {
+                &mut f
+            } else if p.keyword(b"stroke") {
+                &mut s
+            } else {
+                // dvipdfmx loops here for ever on anything else
+                break;
+            };
+            if p.at_end() {
+                return None;
+            }
+            if let Some(c) = read_color(p) {
+                *which = c;
+            }
+        }
+        Some((f, s))
     }
 
     /// `@thispage`, `@prevpage`, `@nextpage` as `@page<n>`; `@xpos` and
@@ -779,7 +818,8 @@ impl<M: Metrics> Builder<'_, M> {
         };
         let d = self.fixup_dict(d);
         let r = self.annot_rect(&t);
-        self.add_annot(d, r, name);
+        let goto = self.doc.add_goto(&d);
+        self.add_annot(d, r, name, goto);
     }
 
     /// dvipdfmx's `set_rect_for_annot`: the box of `width`, `height` and
