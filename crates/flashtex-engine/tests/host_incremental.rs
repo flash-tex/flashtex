@@ -5402,6 +5402,7 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
         common::no_texlive();
         return;
     }
+    let t0 = Instant::now();
     let base = common::fresh_dir("flashtex-host-diskfull");
     let _ = std::fs::remove_dir_all(&base);
     let (proj, out) = (base.join("proj"), base.join("out"));
@@ -5416,6 +5417,7 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
         .set_read_timeout(Some(Duration::from_secs(300)))
         .unwrap();
     let mut view = View::default();
+    eprintln!("{:?}: compile 1", t0.elapsed());
     let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
     assert_eq!(
         first.done.str_field("status"),
@@ -5431,13 +5433,16 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
     std::os::unix::fs::symlink("/dev/full", &pdf).unwrap();
     let mut r = req(2, &proj, &out, "main.tex");
     r.buffers = vec![("main.tex".into(), text.replacen("Start", "Begin", 1))];
+    eprintln!("{:?}: compile 2 (PDF is /dev/full)", t0.elapsed());
     let full = compile(&mut c, &mut view, &r);
+    eprintln!("{:?}: DONE {:?}", t0.elapsed(), full.done);
     assert_ne!(full.done.str_field("status"), Some("ok"), "{:?}", full.done);
     // the disk has room again: the next COMPILE is served
     let _ = std::fs::remove_file(&pdf);
     let _ = std::fs::remove_file(out.join("main.pdf.flashtex-removed"));
     let mut r = req(3, &proj, &out, "main.tex");
     r.buffers = vec![("main.tex".into(), text.clone())];
+    eprintln!("{:?}: compile 3 (room again)", t0.elapsed());
     let again = compile(&mut c, &mut view, &r);
     assert_eq!(
         again.done.str_field("status"),
