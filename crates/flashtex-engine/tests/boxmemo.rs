@@ -748,6 +748,42 @@ fn spans_after_an_endinput_on_their_line_are_not_replayed() {
 }
 
 #[test]
+fn spans_that_reach_the_files_end_are_not_replayed() {
+    // (lane AUDIT-SPANS) e-TeX's `\everyeof`: at the end of the picture's
+    // file its tokens are read and the file stays open (`eof_seen`, a fake
+    // empty line); here they end the picture. Its recording reads no line
+    // the file ends with, so a replay neither knows the file must end there
+    // (rewritten with a third line, the normal path reads it inside the
+    // picture) nor leaves `eof_seen` set (the normal path then closes the
+    // file; a replay reads `\everyeof` a second time, an extra `\end{pic}`)
+    let pic = "\\begin{pic}\\vrule width 3pt height 2pt\\kern2pt\n\
+               \\vrule height 5pt width 1pt\\global\\advance\\n by 1 \\def\\x{y}\n";
+    let s = check_files(
+        "span-eof",
+        &[
+            ("p.tex", pic),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    "\\everyeof{\\end{pic}}\\one\\one\n\
+                     \\toks0={\\begin{pic}\\vrule width 3pt height 2pt\\kern2pt}\
+                     \\toks2={\\vrule height 5pt width 1pt\\global\\advance\\n by 1 \\def\\x{y}}\
+                     \\toks4={\\vrule height 6pt width 4pt}\n\
+                     \\immediate\\openout3=p.tex \\immediate\\write3{\\the\\toks0}\
+                     \\immediate\\write3{\\the\\toks2}\\immediate\\write3{\\the\\toks4}\\immediate\\closeout3\n\
+                     \\one\\one\\par\\showlists\\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    assert!(stat(&s, "SpanEof") >= 1, "{s}");
+}
+
+#[test]
 fn spans_with_a_savepos_are_not_replayed() {
     // (REVIEW-A on #1997) a `remember picture` picture: its `\pdfsavepos`
     // node is not one `boxfrag` keeps, so the span is never recorded
