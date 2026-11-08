@@ -595,6 +595,13 @@ jobs:
       # gate-pc.py stood-down reads this run's jobs
       actions: read
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    # Every run step in a scope of its own inside flashtex.slice (MemoryMax 10G,
+    # MemoryHigh 9G, no swap, nice 10), never in the runner's own cgroup: a
+    # reclaim stall there stalls the listener and GitHub drops the job
+    # (nightly.yml's T4, 37423737667). No systemd --user, no step (it fails).
+    defaults: &pc-scope
+      run:
+        shell: systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0 nice -n 10 bash --noprofile --norc -eo pipefail {0}
     timeout-minutes: 30
     env: *build-env
     steps: *build-steps
@@ -667,6 +674,7 @@ jobs:
       # gate-pc.py stood-down reads this run's jobs
       actions: read
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    defaults: *pc-scope
     timeout-minutes: 45
     steps: *quick-steps
 
@@ -851,6 +859,7 @@ jobs:
       # gate-pc.py stood-down reads this run's jobs
       actions: read
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    defaults: *pc-scope
     timeout-minutes: 75
     steps: *checks-steps
 
@@ -960,6 +969,7 @@ jobs:
       # gate-pc.py stood-down reads this run's jobs
       actions: read
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    defaults: *pc-scope
     timeout-minutes: 30
     strategy:
       # A red shard frees the other two runners at once for the next group.
