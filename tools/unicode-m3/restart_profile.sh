@@ -87,8 +87,8 @@ open('$d/main.tex', 'w').write(m.source('$variant', 120))"
   rm -rf "$d"
 }
 
-for at in 0.5 0.98; do
-  for v in classic unicode-fontspec; do
+for at in ${ATS:-0.5 0.98}; do
+  for v in ${VARIANTS:-classic unicode-fontspec}; do
     prof "$v" "$at"
   done
 done
