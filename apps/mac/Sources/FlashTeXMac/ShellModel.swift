@@ -432,6 +432,8 @@ final class ShellModel {
         }
     }
     @ObservationIgnored private var autosaveWork: DispatchWorkItem?
+    /// When autosave first deferred to an unanswered save (`performAutosave`).
+    @ObservationIgnored private var autosaveDeferredSince: Date?
     /// Asynchronous (helper-routed) saves per document path — autosave and
     /// Command-S alike — that have not answered yet (`enqueueSave`).
     @ObservationIgnored private var savesInFlight: [String: (id: Int, task: Task<Void, Never>)] = [:]
@@ -845,6 +847,23 @@ final class ShellModel {
     private func performAutosave() {
         autosaveWork = nil
         guard EditorPreferences.shared.autosave, documentURL != nil else { return }
+        // A save whose reply is still outstanding (it outlived its wait):
+        // the file layer rebinds a busy helper, which would drop that late
+        // receipt, and the next save would then call the user's own write an
+        // external change. Defer the whole pass; it runs again later. A
+        // helper that never answers is still restarted (its recovery), once
+        // two waits have passed.
+        if files.helperBusy {
+            let since = autosaveDeferredSince ?? Date()
+            if Date().timeIntervalSince(since) < max(2 * files.helperTimeout, 1) {
+                if autosaveDeferredSince == nil { FlashTeXLog.write("autosave: deferred, a save is still unanswered") }
+                autosaveDeferredSince = since
+                scheduleAutosave()
+                return
+            }
+            FlashTeXLog.write("autosave: the helper has not answered for \(Int(Date().timeIntervalSince(since))) s; saving (it restarts)")
+        }
+        autosaveDeferredSince = nil
         let entry = project.entryPath
         if project.isDirty(entry), files.conflict == nil, savesInFlight[entry] == nil {
             saveEntryTex()
