@@ -1612,7 +1612,7 @@ impl Globals {
                                         let __for_end_9 = (self.first_count).wrapping_sub(1i32);
                                         q = p;
                                         while q <= __for_end_9 {
-                                            self.print_char(self.trick_buf[crate::ix::U(((q % self.error_line)) as usize)]);
+                                            self.print_char(self.trick_buf[crate::ix::U(((q).total_mod(self.error_line)) as usize)]);
                                             q = q.wrapping_add(1);
                                         }
                                     }
@@ -1634,7 +1634,7 @@ impl Globals {
                                         let __for_end_9 = (p).wrapping_sub(1i32);
                                         q = self.first_count;
                                         while q <= __for_end_9 {
-                                            self.print_char(self.trick_buf[crate::ix::U(((q % self.error_line)) as usize)]);
+                                            self.print_char(self.trick_buf[crate::ix::U(((q).total_mod(self.error_line)) as usize)]);
                                             q = q.wrapping_add(1);
                                         }
                                     }
@@ -3057,6 +3057,9 @@ impl Globals {
                     } else {
                         {
                             self.end_token_list();
+                            if self.bm_rec_on {
+                                self.flashtex_bm_popped();
+                            }
                             { __goto_1 = 0; continue 'l_dispatch_1; }
                         }
                     }
@@ -3531,7 +3534,7 @@ impl Globals {
                                                         in_place = false;
                                                         if (self.cur_input.state_field == token_list) {
                                                             if (self.cur_input.loc_field != null) {
-                                                                if (!self.intr_rec_on) {
+                                                                if (!(self.intr_rec_on || self.bm_rec_on)) {
                                                                     if (!wn) {
                                                                         {
                                                                             ft = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
@@ -3721,7 +3724,7 @@ impl Globals {
                                 m = (m).wrapping_add(1i32);
                                 if ((__av_mem[crate::ix::U((r) as usize)].hh().lh() > end_match_token) || (__av_mem[crate::ix::U((r) as usize)].hh().lh() < match_token)) {
                                     {
-                                        if (!self.intr_rec_on) {
+                                        if (!(self.intr_rec_on || self.bm_rec_on)) {
                                             if (!self.write_noexpanding) {
                                                 {
                                                     d = __av_mem[crate::ix::U((r) as usize)].hh().lh();
@@ -6802,7 +6805,7 @@ impl Globals {
                                 if (__av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int() != 1000i32) {
                                     {
                                         self.cur_val = self.xn_over_d(self.cur_val, 1000i32, __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
-                                        f = (((1000i32).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder)) / __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
+                                        f = (((1000i32).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder))).total_div(__av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
                                         self.cur_val = (self.cur_val).wrapping_add((f / 65536i32));
                                         f = (f % 65536i32);
                                     }
@@ -6909,7 +6912,7 @@ impl Globals {
                         }
                         // §485
                         self.cur_val = self.xn_over_d(self.cur_val, num, denom);
-                        f = (((num).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder)) / denom);
+                        f = (((num).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder))).total_div(denom);
                         self.cur_val = (self.cur_val).wrapping_add((f / 65536i32));
                         f = (f % 65536i32);
                     }
@@ -7108,7 +7111,7 @@ impl Globals {
                         negative = (!negative);
                     }
                 }
-                a = (n / d);
+                a = (n).total_div(d);
                 n = (n).wrapping_sub((a).wrapping_mul(d));
                 d = (n).wrapping_sub(d);
                 if ((d).wrapping_add(n) >= 0i32) {

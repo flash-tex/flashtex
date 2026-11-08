@@ -90,6 +90,7 @@
 --array-view mem
 --array-view eqtb
 --stat
+--total-division              # as web2rust-default.args
 --scalar longinteger=i64
 --macro max_halfword=268435455
 --macro mem_bot=0

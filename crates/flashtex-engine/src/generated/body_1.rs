@@ -695,15 +695,15 @@ impl Globals {
         }
         t = ((s) as i64);
         t = (t).wrapping_mul(((self.ten_pow[crate::ix::U((dd) as usize)]) as i64));
-        q = (t / ((m) as i64));
-        r = (t % ((m) as i64));
+        q = (t).total_div(((m) as i64));
+        r = (t).total_mod(((m) as i64));
         if ((((2i32) as i64)).wrapping_mul(r) >= ((m) as i64)) {
             {
                 q = (q).wrapping_add(((1i32) as i64));
                 r = (r).wrapping_sub(((m) as i64));
             }
         }
-        self.scaled_out = (((((sign) as i64)).wrapping_mul((((s) as i64)).wrapping_sub((r / ((self.ten_pow[crate::ix::U((dd) as usize)]) as i64))))) as i32);
+        self.scaled_out = (((((sign) as i64)).wrapping_mul((((s) as i64)).wrapping_sub((r).total_div(((self.ten_pow[crate::ix::U((dd) as usize)]) as i64))))) as i32);
         divide_scaled = (((((sign) as i64)).wrapping_mul(q)) as i32);
         divide_scaled
     }
@@ -729,13 +729,13 @@ impl Globals {
         }
         t = ((x % 32768i32)).wrapping_mul(n);
         u = (((x / 32768i32)).wrapping_mul(n)).wrapping_add((t / 32768i32));
-        v = (((u % d)).wrapping_mul(32768i32)).wrapping_add((t % 32768i32));
-        if ((u / d) >= 32768i32) {
+        v = (((u).total_mod(d)).wrapping_mul(32768i32)).wrapping_add((t % 32768i32));
+        if ((u).total_div(d) >= 32768i32) {
             self.arith_error = true;
         } else {
-            u = ((32768i32).wrapping_mul((u / d))).wrapping_add((v / d));
+            u = ((32768i32).wrapping_mul((u).total_div(d))).wrapping_add((v).total_div(d));
         }
-        v = (v % d);
+        v = (v).total_mod(d);
         if ((2i32).wrapping_mul(v) >= d) {
             u = (u).wrapping_add(1i32);
         }
@@ -765,7 +765,7 @@ impl Globals {
                 i = i.wrapping_add(1);
             }
         }
-        is_bit_set = ((((n / m) % 2i32)) != 0);
+        is_bit_set = ((((n).total_div(m) % 2i32)) != 0);
         is_bit_set
     }
 
