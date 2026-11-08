@@ -638,14 +638,40 @@ fn calls_in_math_groups_compare_their_save_stack() {
     // `\\label` in `equation`). The full verifier walks the save stack
     // group by group as `show_save_groups` does; it took the display's
     // nest level for inline math under a math group, read the `$$` as an
-    // `\\eqno` with a saved word, and misread every entry below
+    // `\\eqno` with a saved word, and misread every entry below. (A `\\par`
+    // after each: INITEX has no math fonts, which is an error, and no call
+    // is offered until a paragraph's end sets `error_count` back to 0)
     let s = check(
         "math-group",
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
          \\hsize=100pt \\tracingonline=0\n\
          \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
          \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
-         \\one\\one\\one\\end\n",
+         \\one\\par\\one\\par\\one\\par\\end\n",
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_call_that_ends_a_paragraph_is_not_replayed_after_an_error() {
+    // (beamer-polish, sound-a in verify mode: `\@oddhead` after an edit
+    // that made errors) a call that ends a paragraph -- here in a `\vbox`,
+    // beamer's head in its `\parbox`es -- sets `error_count` to 0
+    // (`end_graf`), which a replay does not. Recorded at 0, then offered
+    // after 99 scrolled errors: replayed, the count stayed at 99 and the
+    // next error was the hundredth ("That makes 100 errors"), where the
+    // normal path counts it as the first. No call is offered while the
+    // count is not 0 (BOX-MEMO.md §17, errors)
+    let s = check(
+        "error-count",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\hsize=100pt \\parfillskip=0pt plus 1fil \\tolerance=10000 \\hbadness=10000 \\vbadness=10000\n\
+         \\hfuzz=16383pt \\vfuzz=16383pt\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\noindent\\vrule width #1 height 2pt\\par}\
+         \\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\errs{\\ifnum\\count9<99 \\advance\\count9 by 1 \\undefinedx\\expandafter\\errs\\fi}\n\
+         \\measure{1pt}\\measure{1pt}\\errs\\measure{1pt}\\undefinedx\\message{[\\the\\count9|\\the\\dimen1]}\
+         \\measure{1pt}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 1, "{s}");
 }
