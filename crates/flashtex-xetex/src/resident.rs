@@ -1068,6 +1068,7 @@ impl Engine {
                 self.named_dirs = None;
             }
         }
+        crate::out::stage("named_dirs");
         let ch = now.and_then(|now| self.changes(now));
         match ch.as_ref().and_then(|ch| self.restart_page(ch)) {
             Some(i) => (Start::Page(i), None, ch),
@@ -1140,6 +1141,17 @@ impl Engine {
                 files.insert(p.to_string(), c);
             }
         }
+        crate::out::stage("ch_files");
+        if std::env::var_os("FLASHTEX_UNICODE_STAGES").is_some() {
+            let since = j.files.len().saturating_sub(s0.reads.0);
+            let upto = self.pages.iter().map(|c| c.reads.1).max().unwrap_or(0);
+            let n = upto.min(j.lookups.len()).saturating_sub(s0.reads.1);
+            let mut d = HashSet::new();
+            for l in &j.lookups[s0.reads.1.min(j.lookups.len())..upto.min(j.lookups.len()).max(s0.reads.1.min(j.lookups.len()))] {
+                d.insert((l.name.as_str(), l.format, l.must_exist));
+            }
+            eprintln!("[chcount] files_since {since} distinct_files {} journal_files {} lookups {n} distinct {} user {}", seen.len(), j.files.len(), d.len(), files.len());
+        }
         // the first lookup since S₀ that finds something else now (of
         // those before the newest page checkpoint: the later ones are
         // made again whatever the restart). A lookup the journal lists more
@@ -1159,6 +1171,7 @@ impl Engine {
                 *now != l.found
             })
             .map(|i| s0.reads.1 + i);
+        crate::out::stage("ch_lookups");
         Some(Changes { files, lookup })
     }
 
