@@ -198,17 +198,6 @@ fn count(stats: &str, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// The sum of the counts whose key starts with `prefix`.
-#[allow(dead_code)]
-fn count_all(stats: &str, prefix: &str) -> u64 {
-    stats
-        .lines()
-        .filter_map(|l| l.split_once(": "))
-        .filter(|(k, _)| k.starts_with(prefix))
-        .filter_map(|(_, n)| n.parse::<u64>().ok())
-        .sum()
-}
-
 /// The engine, a fresh directory holding `doc` as main.tex, and the
 /// xelatex format (None: no TeX Live).
 fn setup(doc: &str) -> Option<(&'static Path, PathBuf, PathBuf)> {
@@ -290,7 +279,11 @@ fn the_packages_hook_replays_to_the_real_paths_output() {
         eprintln!("on (pdf {pdf}):\n{}\nverify:\n{}", on.stats, verify.stats);
         assert!(count(&on.stats, "replayed") > 0, "{}", on.stats);
         assert_eq!(count(&verify.stats, "replayed"), 0, "{}", verify.stats);
-        assert!(count(&verify.stats, "verify.checked") > 0, "{}", verify.stats);
+        assert!(
+            count(&verify.stats, "verify.checked") > 0,
+            "{}",
+            verify.stats
+        );
         assert_verified(&verify.stats);
         for s in [&on.stats, &verify.stats] {
             // `\def\測試`, `\def\IntrDeep`, `\DeclareSIUnit`
@@ -371,11 +364,19 @@ fn faults_in_the_replay_or_the_read_set_are_seen_by_verify() {
         };
         let v = run_with(exe, &dir, &format, o);
         assert_same_output(&off, &v);
-        assert!(count(&v.stats, "verify.differing") > 0, "{fault}: {}", v.stats);
+        assert!(
+            count(&v.stats, "verify.differing") > 0,
+            "{fault}: {}",
+            v.stats
+        );
         assert!(count(&v.stats, class) > 0, "{fault}: {}", v.stats);
         let fail = run_with(exe, &dir, &format, Opts { fail: true, ..o });
         assert_eq!(fail.status, Some(3), "{fault}: {}", fail.stderr);
-        assert!(fail.stderr.contains("checked calls differ"), "{}", fail.stderr);
+        assert!(
+            fail.stderr.contains("checked calls differ"),
+            "{}",
+            fail.stderr
+        );
     }
     // without a fault, VERIFY_FAIL leaves the status alone
     let ok = run_with(
@@ -444,7 +445,12 @@ fn file_input_is_never_replayed() {
         "",
         "Command",
     );
-    never_replayed("\\newread\\IntrR", "\\openin\\IntrR=\\jobname.tex", "", "Command");
+    never_replayed(
+        "\\newread\\IntrR",
+        "\\openin\\IntrR=\\jobname.tex",
+        "",
+        "Command",
+    );
 }
 
 /// `\aftergroup` at the call's own level (#2141 item 3) puts a token after
@@ -452,13 +458,23 @@ fn file_input_is_never_replayed() {
 #[test]
 fn aftergroup_is_never_replayed() {
     never_replayed("", "\\aftergroup\\relax", "", "Command");
-    never_replayed("", "\\begingroup\\aftergroup\\relax\\endgroup", "", "Command");
+    never_replayed(
+        "",
+        "\\begingroup\\aftergroup\\relax\\endgroup",
+        "",
+        "Command",
+    );
 }
 
 /// A write to a tracing parameter (#2141 item 4) could make a replay print.
 #[test]
 fn tracing_writes_are_never_replayed() {
-    never_replayed("", "\\tracingrestores=1 \\tracingrestores=0 ", "", "Tracing");
+    never_replayed(
+        "",
+        "\\tracingrestores=1 \\tracingrestores=0 ",
+        "",
+        "Tracing",
+    );
     never_replayed("", "\\tracingnesting=0 ", "", "Tracing");
 }
 
@@ -514,17 +530,15 @@ fn printing_reads_category_codes_and_the_escape_character() {
         return;
     };
     assert!(count(&on, "replayed") > 0, "{on}");
-    assert!(count(&on, "missed.Meaning") + count(&on, "missed.Word") > 0, "{on}");
+    assert!(
+        count(&on, "missed.Meaning") + count(&on, "missed.Word") > 0,
+        "{on}"
+    );
     assert!(count(&verify, "verify.checked") > 0, "{verify}");
 }
 
 /// An `\ifcsname` that finds nothing is not recorded (no key for absence).
 #[test]
 fn an_absent_name_is_not_recorded() {
-    never_replayed(
-        "",
-        "\\ifcsname IntrNone\\endcsname\\fi",
-        "",
-        "Absent",
-    );
+    never_replayed("", "\\ifcsname IntrNone\\endcsname\\fi", "", "Absent");
 }

@@ -121,10 +121,7 @@ impl Globals {
 
     /// The real path is done: compare, drop C. `Err`: the classes and the
     /// first details of the differences.
-    pub(crate) fn intr_verify_end(
-        &mut self,
-        p: Pending,
-    ) -> Result<(), (Vec<String>, Vec<String>)> {
+    pub(crate) fn intr_verify_end(&mut self, p: Pending) -> Result<(), (Vec<String>, Vec<String>)> {
         let diffs = self.intr_compare(&p);
         self.drop_checkpoint(p.ck);
         if diffs.is_empty() {

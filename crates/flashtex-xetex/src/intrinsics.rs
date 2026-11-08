@@ -80,23 +80,22 @@
 // (TeX's names for its codes, matched as they are spelt in xetex.web)
 #![allow(non_upper_case_globals)]
 use crate::generated::consts::{
-    advance, car_ret, tab_mark, assign_dimen, assign_int, assign_toks, begin_group, box_ref, call,
-    cat_code_base, char_def_code, char_given, convert, cs_name, def, def_code,
-    divide, eTeX_expr, eTeX_revision_code, eTeX_version_code, end_group, end_match_token,
-    end_template, eqtb_size, eqtb_top, escape_char_code, etex_pen_base, expand_after,
-    expanded_code, fi_or_else, font_id_base, frozen_control_sequence, glue_base, glue_ref,
-    global_defs_code, hash_base, if_case_code, if_cat_code, if_char_code, if_cs_code,
-    if_def_code, if_false_code, if_int_code, if_odd_code, if_test, if_true_code, ifx_code,
-    ignore_spaces, int_base, last_item, left_brace, let_, lo_mem_stat_max, local_base,
-    long_outer_call, mac_param, math_given, matching, max_non_prefixed_command, meaning_code,
-    mem_bot, mmode, multiply, no_expand, null_cs, number_code, outer_call, pdf_strcmp_code,
-    prefix, protected_token, register, relax, right_brace, roman_numeral_code,
-    semi_simple_group, set_font, shape_ref, shorthand_def, show_tokens, simple_group,
-    single_base, spacer, string_code, the, toks_def_code, toks_register, token_list,
-    top_bot_mark, tracing_assigns_code, tracing_char_sub_def_code, tracing_commands_code,
-    tracing_groups_code, tracing_ifs_code, tracing_lost_chars_code, tracing_macros_code,
-    tracing_nesting_code, tracing_online_code, tracing_output_code, tracing_pages_code,
-    tracing_paragraphs_code, tracing_restores_code, tracing_scan_tokens_code,
+    advance, assign_dimen, assign_int, assign_toks, begin_group, box_ref, call, car_ret,
+    cat_code_base, char_def_code, char_given, convert, cs_name, def, def_code, divide, eTeX_expr,
+    eTeX_revision_code, eTeX_version_code, end_group, end_match_token, end_template, eqtb_size,
+    eqtb_top, escape_char_code, etex_pen_base, expand_after, expanded_code, fi_or_else,
+    font_id_base, frozen_control_sequence, global_defs_code, glue_base, glue_ref, hash_base,
+    if_case_code, if_cat_code, if_char_code, if_cs_code, if_def_code, if_false_code, if_int_code,
+    if_odd_code, if_test, if_true_code, ifx_code, ignore_spaces, int_base, last_item, left_brace,
+    let_, lo_mem_stat_max, local_base, long_outer_call, mac_param, matching, math_given,
+    max_non_prefixed_command, meaning_code, mem_bot, mmode, multiply, no_expand, null_cs,
+    number_code, outer_call, pdf_strcmp_code, prefix, protected_token, register, relax,
+    right_brace, roman_numeral_code, semi_simple_group, set_font, shape_ref, shorthand_def,
+    show_tokens, simple_group, single_base, spacer, string_code, tab_mark, the, token_list,
+    toks_def_code, toks_register, top_bot_mark, tracing_assigns_code, tracing_char_sub_def_code,
+    tracing_commands_code, tracing_groups_code, tracing_ifs_code, tracing_lost_chars_code,
+    tracing_macros_code, tracing_nesting_code, tracing_online_code, tracing_output_code,
+    tracing_pages_code, tracing_paragraphs_code, tracing_restores_code, tracing_scan_tokens_code,
     tracing_stack_levels_code, tracing_stats_code, undefined_control_sequence, unless_code,
     v_template, vmode, XeTeX_revision_code, XeTeX_version_code,
 };
@@ -578,14 +577,21 @@ impl Globals {
             let e = &entries[i];
             if !e.ctx.holds(&ctx) {
                 if debug() {
-                    eprintln!("intrinsics: variant {} context {:?}, now {ctx:?}", e.id, e.ctx);
+                    eprintln!(
+                        "intrinsics: variant {} context {:?}, now {ctx:?}",
+                        e.id, e.ctx
+                    );
                 }
                 why = "Context";
                 continue;
             }
             if let Err((w, p)) = self.intr_reads_hold(&e.reads) {
                 if debug() {
-                    eprintln!("intrinsics: variant {} {w} of \\{} ({p})", e.id, self.intr_cs_name(p));
+                    eprintln!(
+                        "intrinsics: variant {} {w} of \\{} ({p})",
+                        e.id,
+                        self.intr_cs_name(p)
+                    );
                 }
                 why = w;
                 continue;
@@ -594,8 +600,7 @@ impl Globals {
             // (changes/checkpoint.ch), which a replay would not
             let arm = self.ckpt_arm_cs;
             if arm != 0
-                && e
-                    .reads
+                && e.reads
                     .iter()
                     .any(|r| matches!(r, Read::Meaning(p, ..) if *p == arm))
             {
@@ -744,7 +749,11 @@ impl Globals {
 
     // -- recording -------------------------------------------------------
 
-    fn intr_rec_start(&mut self, cs: i32, verify: Option<(u64, crate::intrinsics_verify::Pending)>) {
+    fn intr_rec_start(
+        &mut self,
+        cs: i32,
+        verify: Option<(u64, crate::intrinsics_verify::Pending)>,
+    ) {
         self.host.intrinsics.stats.started += 1;
         let marks = self.intr_marks();
         self.host.intrinsics.rec = Some(Rec {
@@ -807,7 +816,12 @@ impl Globals {
 
     /// A checked variant differed (or its real path was not pure): count
     /// it and drop the variant.
-    pub(crate) fn intr_check_failed(&mut self, id: u64, classes: Vec<String>, details: Vec<String>) {
+    pub(crate) fn intr_check_failed(
+        &mut self,
+        id: u64,
+        classes: Vec<String>,
+        details: Vec<String>,
+    ) {
         let r = &mut self.host.intrinsics;
         r.stats.checked += 1;
         r.stats.differing += 1;
@@ -864,7 +878,11 @@ impl Globals {
                 return self.intr_rec_abort("Sparse");
             }
             if self.intr_is_list(t, e) {
-                Read::Meaning(p, t, Equiv::Tokens(self.intr_tokens(self.mem[e as usize].hh().rh())))
+                Read::Meaning(
+                    p,
+                    t,
+                    Equiv::Tokens(self.intr_tokens(self.mem[e as usize].hh().rh())),
+                )
             } else {
                 Read::Meaning(p, t, Equiv::Value(e))
             }
@@ -939,7 +957,9 @@ impl Globals {
                 if t == glue_ref || t == shape_ref || t == box_ref {
                     return self.intr_rec_abort("PointerType");
                 }
-                if (t == register || t == toks_register) && !(mem_bot..=lo_mem_stat_max).contains(&e) {
+                if (t == register || t == toks_register)
+                    && !(mem_bot..=lo_mem_stat_max).contains(&e)
+                {
                     return self.intr_rec_abort("Sparse");
                 }
                 let v = if !self.intr_is_list(t, e) {
@@ -1001,7 +1021,12 @@ impl Globals {
             return self.intr_rec_abort("Level");
         }
         if self.cur_cmd == tab_mark || self.cur_cmd == car_ret {
-            self.host.intrinsics.rec.as_mut().expect("checked").align_seen = true;
+            self.host
+                .intrinsics
+                .rec
+                .as_mut()
+                .expect("checked")
+                .align_seen = true;
         }
         let cs = self.cur_cs;
         if cs == 0 {
@@ -1062,7 +1087,8 @@ impl Globals {
         let (c, chr) = (self.cur_cmd, self.cur_chr);
         if c == set_font
             || c == top_bot_mark
-            || ((c == register || c == toks_register) && !(mem_bot..=lo_mem_stat_max).contains(&chr))
+            || ((c == register || c == toks_register)
+                && !(mem_bot..=lo_mem_stat_max).contains(&chr))
         {
             self.intr_rec_abort("Meaning");
         }
@@ -1121,7 +1147,8 @@ impl Globals {
             def_code | char_given | math_given => {}
             assign_toks | assign_int | assign_dimen => self.intr_rec_read(chr),
             // \eTeXversion \XeTeXversion \numexpr
-            last_item if chr == eTeX_version_code || chr == XeTeX_version_code || chr == eTeX_expr => {}
+            last_item
+                if chr == eTeX_version_code || chr == XeTeX_version_code || chr == eTeX_expr => {}
             _ => self.intr_rec_abort("Internal"),
         }
     }
