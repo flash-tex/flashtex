@@ -55,6 +55,13 @@ pub trait Env {
     fn typeset(&mut self, _font: u32, _code: u8) -> bool {
         true
     }
+    /// Whether image `/Im<n>` is an included PDF page: pdfTeX writes it as
+    /// a Form XObject (pdftoepdf), whose content inherits the graphics
+    /// state it is drawn in, while the client draws the page from a new
+    /// graphics state. By default, no.
+    fn image_is_pdf_page(&mut self, _image: u32) -> bool {
+        false
+    }
     /// The resource-name prefix (`\pdfpkresolution`'s `pdf_resname_prefix`).
     fn resname_prefix(&self) -> &[u8];
 }
@@ -1063,6 +1070,12 @@ impl<'a, E: Env> Interp<'a, E> {
                     };
                     let m = self.gs.ctm;
                     if let Some(n) = num(b"Im") {
+                        if !self.initial_state() && self.env.image_is_pdf_page(n) {
+                            // As a form: the PDF draws the included page's
+                            // ink in this colour, pen, text state; the
+                            // client draws it from a new graphics state.
+                            self.unsupported("an included PDF page drawn in a state other than a new page's");
+                        }
                         let mi = self.matrix(&m);
                         if !self.images.contains(&n) {
                             self.images.push(n);
@@ -1638,6 +1651,45 @@ mod tests {
             !out.page.unsupported.is_empty()
         );
         out.page.unsupported
+    }
+
+    #[test]
+    fn an_included_pdf_page_drawn_in_another_state_is_incomplete() {
+        // \includegraphics of a PDF page is a Form XObject (/Im<n>) whose
+        // content inherits the state it is drawn in: {\color{red}...} or a
+        // \pdfliteral{4 w} pen paints a page without colour operators red,
+        // or with a 4 bp pen, while the client draws the page from a new
+        // graphics state (fixtures/preview-probes/pv-pdf-inclusion p9). A
+        // raster image does not paint with the state.
+        struct Pdf;
+        impl Env for Pdf {
+            fn width(&mut self, _font: u32, _code: u8) -> Option<i64> {
+                Some(5000)
+            }
+            fn image_is_pdf_page(&mut self, image: u32) -> bool {
+                image == 1
+            }
+            fn resname_prefix(&self) -> &[u8] {
+                b""
+            }
+        }
+        let at = |pre: &str, im: u32| {
+            incomplete(
+                format!("{pre} q 1 0 0 1 10 10 cm /Im{im} Do Q").as_bytes(),
+                &mut Pdf,
+            )
+        };
+        for pre in ["", "0 g 0 G", "q 1 0 0 rg Q", "2 0 0 2 0 0 cm"] {
+            assert!(at(pre, 1).is_empty(), "{pre}");
+        }
+        for pre in ["1 0 0 rg", "0 0 1 RG", "4 w", "1 J", "[2] 0 d", "3 Tr"] {
+            assert_eq!(
+                at(pre, 1),
+                vec!["an included PDF page drawn in a state other than a new page's".to_string()],
+                "{pre}"
+            );
+            assert!(at(pre, 2).is_empty(), "{pre}: a raster image");
+        }
     }
 
     #[test]

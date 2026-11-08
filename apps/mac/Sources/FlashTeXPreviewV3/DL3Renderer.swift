@@ -272,6 +272,7 @@ public final class DL3RenderImage: @unchecked Sendable {
                jpeg.colorSpace?.numberOfComponents == space.numberOfComponents, let recolored = jpeg.copy(colorSpace: space) {
                 samples = recolored
             }
+            if type == "png", let header = pngHeader(url) { samples = pngSamplesAsPDFTeXWrites(samples, header) }
             return .success(DL3RenderImage(key: key, payload: .raster(samples), cost: img.bytesPerRow * img.height))
         case "pdf":
             guard let doc = DL3Renderer.openPDF(url), let page = DL3Renderer.page(of: doc, at: Int(info["page"]?.int ?? 1)) else {
@@ -375,6 +376,72 @@ func pdfColored(_ img: CGImage, _ cs: DL3JSON) -> CGImage? {
     return CGImage(width: img.width, height: img.height, bitsPerComponent: img.bitsPerComponent, bitsPerPixel: img.bitsPerPixel,
                    bytesPerRow: img.bytesPerRow, space: space, bitmapInfo: img.bitmapInfo, provider: provider,
                    decode: nil, shouldInterpolate: false, intent: intent)
+}
+
+/// A PNG's IHDR bit depth and colour type (bytes 24 and 25 of the file).
+func pngHeader(_ url: URL) -> (depth: Int, colorType: Int)? {
+    guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? h.close() }
+    guard let d = try? h.read(upToCount: 26), d.count == 26,
+          Array(d.prefix(8)) == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] else { return nil }
+    return (Int(d[d.startIndex + 24]), Int(d[d.startIndex + 25]))
+}
+
+/// ImageIO's samples of a PNG at the precision pdfTeX writes them
+/// (writepng.c), where ImageIO's differ:
+/// * grey at 1, 2 or 4 bits is copied as it is (`/BitsPerComponent 1`, …),
+///   while ImageIO expands it to 8 bits; Core Graphics draws a 1-bit image
+///   magnified otherwise than its 8-bit expansion (pv-images p5, p16:
+///   up to 1,703 px apart, Δ 252);
+/// * 16-bit grey or RGB with alpha keeps its colour at 16 bits, but the
+///   SMask holds only the alpha's high byte (`/BitsPerComponent 8`), while
+///   ImageIO keeps all 16 bits of alpha (pv-images p11: Δ 2 over the image).
+/// Anything else, or a layout this does not know, is returned as it was.
+func pngSamplesAsPDFTeXWrites(_ img: CGImage, _ header: (depth: Int, colorType: Int)) -> CGImage {
+    guard !img.bitmapInfo.contains(.floatComponents), let data = img.dataProvider?.data,
+          let space = img.colorSpace, let base = CFDataGetBytePtr(data) else { return img }
+    let w = img.width, h = img.height, rowBytes = img.bytesPerRow, count = CFDataGetLength(data)
+    if header.colorType == 0, [1, 2, 4].contains(header.depth), img.bitsPerComponent == 8, img.bitsPerPixel == 8,
+       space.model == .monochrome, !DL3Renderer.u1Variant.contains("png-depth-off"), count >= rowBytes * (h - 1) + w {
+        let d = header.depth, top = (1 << d) - 1, packed = (w * d + 7) / 8
+        var out = [UInt8](repeating: 0, count: packed * h)
+        for y in 0 ..< h {
+            for x in 0 ..< w {
+                // ImageIO's expansion is v·255/top: back to v, exactly.
+                let v = (Int(base[y * rowBytes + x]) * top + 127) / 255
+                let bit = x * d
+                out[y * packed + bit / 8] |= UInt8(v << (8 - d - bit % 8))
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(out) as CFData),
+              let packedImage = CGImage(width: w, height: h, bitsPerComponent: d, bitsPerPixel: d, bytesPerRow: packed,
+                                        space: space, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue),
+                                        provider: provider, decode: nil, shouldInterpolate: false, intent: img.renderingIntent)
+        else { return img }
+        return packedImage
+    }
+    if header.depth == 16, header.colorType == 4 || header.colorType == 6, img.bitsPerComponent == 16,
+       img.alphaInfo == .last || img.alphaInfo == .first, !DL3Renderer.u1Variant.contains("png-alpha16-off") {
+        let n = img.bitsPerPixel / 16
+        guard n >= 2, count >= rowBytes * (h - 1) + w * n * 2 else { return img }
+        let little = img.bitmapInfo.intersection(.byteOrderMask) == .byteOrder16Little
+        var bytes = Array(UnsafeBufferPointer(start: base, count: count))
+        let a = img.alphaInfo == .last ? n - 1 : 0
+        for y in 0 ..< h {
+            for x in 0 ..< w {
+                let o = y * rowBytes + (x * n + a) * 2
+                // alpha := its high byte · 257 (= hi·256 + hi): the SMask's value.
+                if little { bytes[o] = bytes[o + 1] } else { bytes[o + 1] = bytes[o] }
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let out = CGImage(width: w, height: h, bitsPerComponent: 16, bitsPerPixel: img.bitsPerPixel, bytesPerRow: rowBytes,
+                                space: space, bitmapInfo: img.bitmapInfo, provider: provider, decode: nil,
+                                shouldInterpolate: false, intent: img.renderingIntent)
+        else { return img }
+        return out
+    }
+    return img
 }
 
 /// The decoded samples in the PDF's device colour space, as pdfTeX embeds
@@ -682,6 +749,10 @@ public enum DL3Renderer {
         return comps.withUnsafeBufferPointer { CGColor(colorSpace: space, components: $0.baseAddress!)! }
     }
 
+    /// TEMPORARY (lane PREVIEW-PARITY, U1): variants the CI experiment
+    /// test switches on; empty in the product. Removed before merge.
+    nonisolated(unsafe) static var u1Variant: Set<String> = []
+
     static func affine(_ m: DL3Matrix) -> CGAffineTransform { CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: m.e, ty: m.f) }
 
     struct GState {
@@ -850,6 +921,10 @@ public enum DL3Renderer {
                 switch img.payload {
                 case .raster(let cgImage):
                     ctx.interpolationQuality = .default // what Core Graphics uses for a PDF image without /Interpolate (measured: .none and .medium/.high differ)
+                    if Self.u1Variant.contains("iq-none") { ctx.interpolationQuality = .none }
+                    if Self.u1Variant.contains("iq-low") { ctx.interpolationQuality = .low }
+                    if Self.u1Variant.contains("iq-medium") { ctx.interpolationQuality = .medium }
+                    if Self.u1Variant.contains("iq-high") { ctx.interpolationQuality = .high }
                     // Core Graphics draws a PDF's image XObject whose device
                     // transform is axis-aligned (0/90/180/270°) without edge
                     // antialiasing: an edge pixel the image only partly covers
@@ -869,7 +944,19 @@ public enum DL3Renderer {
                     // (`drawPDFPage` neither rotates nor clips).
                     ctx.concatenate(matrix)
                     ctx.clip(to: box)
-                    DL3Renderer.drawPDFPage(pdfPage, in: ctx)
+                    // LaTeX's pdfTeX drivers (pdftex.def, l3backend-pdftex)
+                    // give every included page `/Group <</S/Transparency/K
+                    // false/I false>>`, which Core Graphics paints through
+                    // a transparency layer: drawn straight, its edge pixels
+                    // were 1 level off (pv-pdf-inclusion p1–p8).
+                    if Self.u1Variant.contains("pdf-nolayer") {
+                        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
+                    } else {
+                        if Self.u1Variant.contains("pdf-layer-rect") { ctx.beginTransparencyLayer(in: box, auxiliaryInfo: nil) }
+                        else { ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
+                        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
+                        ctx.endTransparencyLayer()
+                    }
                 }
                 ctx.restoreGState()
                 lastFont = nil

@@ -1725,6 +1725,7 @@ enum Query {
     Advance(u32, u8),
     FontProblem(u32),
     Typeset(u32, u8),
+    ImageIsPdfPage(u32),
 }
 
 #[derive(Clone, PartialEq)]
@@ -1733,6 +1734,7 @@ enum Answer {
     Advance(Option<(i64, i64)>),
     FontProblem(Option<String>),
     Typeset(bool),
+    ImageIsPdfPage(bool),
 }
 
 impl Query {
@@ -1743,6 +1745,7 @@ impl Query {
             Query::Advance(f, c) => Answer::Advance(env.advance(f, c)),
             Query::FontProblem(f) => Answer::FontProblem(env.font_problem(f)),
             Query::Typeset(f, c) => Answer::Typeset(env.typeset(f, c)),
+            Query::ImageIsPdfPage(n) => Answer::ImageIsPdfPage(env.image_is_pdf_page(n)),
         }
     }
 }
@@ -1788,6 +1791,15 @@ impl interp::Env for Recording<'_> {
         }
         let a = self.env.typeset(font, code);
         self.queries.insert(q, Answer::Typeset(a));
+        a
+    }
+    fn image_is_pdf_page(&mut self, image: u32) -> bool {
+        let q = Query::ImageIsPdfPage(image);
+        if let Some(Answer::ImageIsPdfPage(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.image_is_pdf_page(image);
+        self.queries.insert(q, Answer::ImageIsPdfPage(a));
         a
     }
     fn resname_prefix(&self) -> &[u8] {
@@ -1886,6 +1898,17 @@ impl interp::Env for WidthEnv<'_> {
         }
         (1..=g.font_ptr)
             .any(|k| g.pdf_font_num[k as usize] == -f && g.pdf_char_marked(k, code as i32))
+    }
+    fn image_is_pdf_page(&mut self, image: u32) -> bool {
+        // By the IMAGE the display list names it with (`dl_image_info`).
+        let Some(key) = self.g.dl_image_key(image) else {
+            return false;
+        };
+        with(|st| {
+            st.images
+                .get(&key)
+                .is_some_and(|i| i.str_field("type") == Some("pdf"))
+        })
     }
     fn resname_prefix(&self) -> &[u8] {
         &self.prefix
