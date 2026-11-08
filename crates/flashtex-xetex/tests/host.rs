@@ -341,10 +341,14 @@ fn a_host_whose_engine_thread_dies_exits() {
         c.compile(&request(1, &proj, &out)).unwrap();
         let (_, done) = events(&mut c, 1);
         assert_eq!(done.str_field("status"), Some("ok"), "{what}: {done:?}");
+        let shown = done.int_field("pages");
+        assert!(shown >= Some(1), "{done:?}");
         if what.starts_with("run") {
             c.compile(&request(2, &proj, &out)).unwrap();
             let (ev, done) = events(&mut c, 2);
             assert_eq!(done.str_field("status"), Some("failed"), "{what}: {done:?}");
+            // the preview keeps the last good pages (#2130)
+            assert_eq!(done.int_field("pages"), shown, "{what}: {done:?}");
             assert!(
                 ev.iter().any(|e| matches!(e, Event::Diagnostic(j)
                     if j.str_field("message").is_some_and(|m| m.contains("panicked")))),
@@ -395,6 +399,8 @@ fn a_save_panic_still_answers_an_accepted_compile() {
     c.compile(&request(1, &proj, &out)).unwrap();
     let (_, done) = events(&mut c, 1);
     assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    let shown = done.int_field("pages");
+    assert!(shown >= Some(1), "{done:?}");
     // the idle save panics (the engine thread ends): wait for its message,
     // not for the host's exit (after the fix it stays up for the compile)
     let t = Instant::now();
@@ -419,6 +425,8 @@ fn a_save_panic_still_answers_an_accepted_compile() {
         "the second compile was accepted: {ev:?} {done:?}"
     );
     assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
+    // the preview keeps the last good pages (#2130)
+    assert_eq!(done.int_field("pages"), shown, "{done:?}");
     let status = exit_within(&mut h.child, 120);
     let err = std::fs::read_to_string(&err_path).unwrap_or_default();
     assert_eq!(
@@ -426,6 +434,69 @@ fn a_save_panic_still_answers_an_accepted_compile() {
         Some(70),
         "the host did not exit as fatal: {err}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A compile that `failed` keeps the pages the client shows (#2130): its
+/// `DONE`'s `pages` is the last reported count, as the Classic host's
+/// (`resident.rs`), and `typeset_pages` is 0. Before, `pages: 0` made the
+/// app remove every page (`setCount(0, complete: true)`), so the preview
+/// went blank until a later compile. (A failure the release builds can
+/// make: an edit outside its file. The engine thread's death, debug
+/// builds only, is `a_host_whose_engine_thread_dies_exits`.)
+#[test]
+fn a_failed_compile_keeps_the_pages_shown() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-keep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let three =
+        "\\documentclass{article}\n\\begin{document}\na\\newpage b\\newpage c\n\\end{document}\n";
+    let (proj, out) = project(&dir, three);
+    let h = start(&dir);
+    let alarm = deadline(h.child.id(), 600);
+    let mut c = Client::connect(&h.sock).unwrap();
+    let pages = |d: &Json| (d.int_field("pages"), d.int_field("typeset_pages"));
+    c.compile(&request(1, &proj, &out)).unwrap();
+    let (_, done) = events(&mut c, 1);
+    assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    assert_eq!(pages(&done), (Some(3), Some(3)), "{done:?}");
+    let failing = |id: i64| {
+        let mut r = request(id, &proj, &out);
+        r.edits = vec![flashtex_display_list::client::Edit {
+            path: "main.tex".into(),
+            offset: 1 << 20,
+            delete: 0,
+            insert: "x".into(),
+        }];
+        r
+    };
+    c.compile(&failing(2)).unwrap();
+    let (_, done) = events(&mut c, 2);
+    assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
+    assert_eq!(
+        pages(&done),
+        (Some(3), Some(0)),
+        "the pages shown stay: {done:?}"
+    );
+    // a compile that ends sets the count; a later failure keeps that one
+    std::fs::write(
+        proj.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
+    )
+    .unwrap();
+    c.compile(&request(3, &proj, &out)).unwrap();
+    let (_, done) = events(&mut c, 3);
+    assert_eq!(pages(&done), (Some(1), Some(1)), "{done:?}");
+    c.compile(&failing(4)).unwrap();
+    let (_, done) = events(&mut c, 4);
+    assert_eq!(done.str_field("status"), Some("failed"), "{done:?}");
+    assert_eq!(pages(&done), (Some(1), Some(0)), "{done:?}");
+    drop(alarm);
+    c.bye().unwrap();
+    drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

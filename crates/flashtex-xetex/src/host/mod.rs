@@ -625,6 +625,8 @@ fn compile_thread(
     mut spares: spare::Spares,
 ) {
     let mut memory = tools::Memory::default();
+    // the pages the client was last told the document has (`done`)
+    let mut shown = 0u32;
     loop {
         let (job, t0, seq) = match rx.recv_timeout(spares.ttl()) {
             Ok(Msg::Compile(job, t0, seq)) => (*job, t0, seq),
@@ -660,7 +662,8 @@ fn compile_thread(
         };
         if superseded {
             let _ = job.apply_files();
-            done(out, &job, &compile::Outcome::none("cancelled"), t0, None);
+            let o = compile::Outcome::none("cancelled");
+            done(out, &job, &o, t0, None, &mut shown);
             continue;
         }
         run_job(
@@ -673,6 +676,7 @@ fn compile_thread(
             t0,
             &mut memory,
             &mut spares,
+            &mut shown,
         );
         running.lock().unwrap().job = None;
     }
@@ -689,6 +693,7 @@ fn run_job(
     t0: Instant,
     memory: &mut tools::Memory,
     spares: &mut spare::Spares,
+    shown: &mut u32,
 ) {
     if let Err(e) = job.apply_files() {
         send_json(
@@ -700,7 +705,7 @@ fn run_job(
                 ("message", js(e)),
             ]),
         );
-        done(out, job, &compile::Outcome::none("failed"), t0, None);
+        done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
         return;
     }
     let fmt_dir = match host.format_dir(&job.format) {
@@ -715,7 +720,7 @@ fn run_job(
                     ("message", js(e)),
                 ]),
             );
-            done(out, job, &compile::Outcome::none("failed"), t0, None);
+            done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
             return;
         }
     };
@@ -786,7 +791,7 @@ fn run_job(
             spares,
             host.engine.as_ref(),
         );
-        done(out, job, &o, t0, cause);
+        done(out, job, &o, t0, cause, shown);
         if o.fatal {
             // The engine thread died (`inproc::FATAL_EXIT`): its engine is
             // in no known state, and no later compile could run. The DONE
@@ -854,11 +859,33 @@ fn started(out: &Out, job: &Job, exe: &Path) {
     );
 }
 
-fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&str>) {
-    let (status, exit_code, pages, diagnostics, passes, first_page_ms) = (
+/// The compile's `DONE`. Its `pages` is the document's page count as the
+/// client should now show it, as the Classic host's (`resident.rs`): a
+/// compile that ended (`ok`, `error`) sets it; one that `failed` (no run,
+/// or the engine thread died, #2130) keeps the pages last reported, or
+/// more if it sent more, so the preview keeps the last good pages instead
+/// of none. `typeset_pages` is what this compile typeset. `shown` is the
+/// connection's last reported count.
+fn done(
+    out: &Out,
+    job: &Job,
+    o: &compile::Outcome,
+    t0: Instant,
+    cause: Option<&str>,
+    shown: &mut u32,
+) {
+    let pages = match o.status {
+        _ if job.export => o.pages,
+        "ok" | "error" => {
+            *shown = o.pages;
+            o.pages
+        }
+        "failed" => o.pages.max(*shown),
+        _ => o.pages,
+    };
+    let (status, exit_code, diagnostics, passes, first_page_ms) = (
         o.status,
         o.exit_code,
-        o.pages,
         o.diagnostics,
         o.passes,
         o.first_page_ms,
@@ -906,7 +933,7 @@ fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&
             Json::Arr(o.starts.iter().map(|s| js(*s)).collect()),
         ),
         ("passes".to_string(), Json::Int(passes as i64)),
-        ("typeset_pages".to_string(), Json::Int(pages as i64)),
+        ("typeset_pages".to_string(), Json::Int(o.pages as i64)),
         ("keep".to_string(), Json::Bool(false)),
     ];
     if let Some(c) = cause {
