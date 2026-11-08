@@ -2,6 +2,63 @@ import AppKit
 import XCTest
 @testable import FlashTeXMac
 
+/// The real-doc gate's limits for one phase (`EngineV3RealDocTypingTests.gate`). Without
+/// `FLASHTEX_REALDOC_STALL_MS` (the nightly, the reference Mac) one bound, the one-frame budget,
+/// and nothing may cross it. With it (the PR job on a GitHub-hosted 3-vCPU VM, #2146: 100 ms there
+/// failed 6 of 7 runs, on PRs that never touch the app, by 107-470 ms) the env value is a SOFT
+/// budget and three limits apply:
+///   - `hard`, max(5 x budget, 500 ms): no key and no turn may cross it. The owner's freeze was
+///     1.9 s on main (before #1890 and #1900), about 4 x over;
+///   - `allowed`, an eighth of the phase's keys and at least 3 (5 of the 40): at most that many
+///     keys, and at most that many turns, over the soft budget. One VM pause late-delivers every
+///     key posted during it (run 41432961769: turns of 123, 124 and 470 ms back to back made 5
+///     keys late), while a regression that costs every key or every compile a long turn shows up
+///     about 40 times;
+///   - `totalMs`, 3 x `hard`: the turns over the soft budget may add up to at most that, so a
+///     freeze cut into turns under `hard` (1.9 s as 5 x 380 ms) still fails. The worst VM noise
+///     measured adds up to 0.99 s.
+struct RealDocStallLimits {
+    var soft: Double
+    var hard: Double
+    var allowed: Int
+    var totalMs: Double
+
+    static func of(budgetMs: Double, hosted: Bool, wanted: Int) -> RealDocStallLimits {
+        guard hosted else { return RealDocStallLimits(soft: budgetMs, hard: budgetMs, allowed: 0, totalMs: .infinity) }
+        let hard = max(5 * budgetMs, 500)
+        return RealDocStallLimits(soft: budgetMs, hard: hard, allowed: max(3, wanted / 8), totalMs: 3 * hard)
+    }
+
+    var text: String {
+        allowed == 0 ? "budget \(soft) ms"
+            : "soft budget \(soft) ms, \(allowed) allowed over it, hard limit \(hard) ms, \(totalMs) ms in all"
+    }
+
+    /// The misses of one phase: each key's way into the text storage (ms, in the order typed) and
+    /// main's run-loop turns (ms, and when from the phase's start). Empty: the phase passed.
+    func misses(_ name: String, keysMs: [Double], turns: [(ms: Double, atMs: Double)]) -> [String] {
+        var out: [String] = []
+        let late = keysMs.enumerated().filter { $0.element > soft }
+        let lateText = late.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element)) ms" }.joined(separator: ", ")
+        if late.contains(where: { $0.element > hard }) {
+            out.append("\(name): a key reached the text storage after the hard limit (\(text)): " + lateText)
+        } else if late.count > allowed {
+            out.append("\(name): \(late.count) of \(keysMs.count) keys reached the text storage later than the budget (\(text)): " + lateText)
+        }
+        let stalls = turns.filter { $0.ms > soft }.sorted { $0.ms > $1.ms }
+        let stallText = stalls.prefix(8).map { String(format: "%.1f ms at +%.0f ms", $0.ms, $0.atMs) }.joined(separator: ", ")
+        let total = stalls.reduce(0.0) { $0 + $1.ms }
+        if stalls.contains(where: { $0.ms > hard }) {
+            out.append("\(name): a main run-loop turn over the hard limit (\(text)), longest " + stallText)
+        } else if stalls.count > allowed {
+            out.append("\(name): \(stalls.count) main run-loop turns over the budget (\(text)), longest " + stallText)
+        } else if total > totalMs {
+            out.append("\(name): main run-loop turns over the budget add up to \(String(format: "%.0f", total)) ms (\(text)): " + stallText)
+        }
+        return out
+    }
+}
+
 /// REAL-DOC-GATE's app-level gate (2026-10-24). The owner typed on page 883 of Infinite Descent ×2
 /// (1,152 pages, the second copy's real-numbers chapter): each key took 32 s to reach the
 /// preview, and the editor froze. T7 gated generated documents only, and EditorInstantTests'
@@ -17,7 +74,7 @@ import XCTest
 /// It fails when, in either phase, any main run-loop turn is longer than one frame
 /// (`MainThreadStall.frameMs`, 16 ms), or any key is not in the editor's text storage within that
 /// of being posted, or a key is never handled. `FLASHTEX_REALDOC_STALL_MS` (100 in the PR CI's
-/// hosted job) makes the frame a soft budget with a hard limit, a count and a total (`Limits`).
+/// hosted job) makes the frame a soft budget with a hard limit, a count and a total (`RealDocStallLimits`).
 ///
 /// The document: `FLASHTEX_REALDOC_DIR` (an unpacked infdesc-x2 tree: `tools/incr-bench/mkbook.py
 /// infdesc-x2`), entry `FLASHTEX_REALDOC_MAIN` (default `infdesc-x2.tex`), the edited chapter
@@ -84,82 +141,26 @@ final class EngineV3RealDocTypingTests: XCTestCase {
     }
 
     /// The budget: one frame (`MainThreadStall.frameMs`), or `FLASHTEX_REALDOC_STALL_MS` (the PR
-    /// CI's hosted job uses 100 ms as a soft budget, see `Limits`: a shared 3-vCPU VM has hiccups
+    /// CI's hosted job uses 100 ms as a soft budget, see `RealDocStallLimits`: a shared 3-vCPU VM has hiccups
     /// of its own; the one-frame bound stays the nightly's and the reference's).
     private var budgetMs: Double {
         ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init) ?? MainThreadStall.frameMs
     }
 
-    /// The gate's limits for one phase. Without `FLASHTEX_REALDOC_STALL_MS` (the nightly, the
-    /// reference Mac) one bound, the one-frame budget, and nothing may cross it. With it (the PR
-    /// job on a GitHub-hosted 3-vCPU VM, #2146: 100 ms there failed 6 of 7 runs, on PRs that never
-    /// touch the app, by 107-470 ms) the env value is a SOFT budget and three limits apply:
-    ///   - `hard`, max(5 x budget, 500 ms): no key and no turn may cross it. The owner's freeze was
-    ///     1.9 s on main (before #1890 and #1900), about 4 x over;
-    ///   - `allowed`, an eighth of the phase's keys and at least 3 (5 of the 40): at most that many
-    ///     keys, and at most that many turns, over the soft budget. One VM pause late-delivers every
-    ///     key posted during it (run 41432961769: turns of 123, 124 and 470 ms back to back made 5
-    ///     keys late), while a regression that costs every key or every compile a long turn shows
-    ///     up about 40 times;
-    ///   - `totalMs`, 3 x `hard`: the turns over the soft budget may add up to at most that, so a
-    ///     freeze cut into turns under `hard` (1.9 s as 5 x 380 ms) still fails. The worst VM noise
-    ///     measured adds up to 0.99 s.
-    struct Limits {
-        var soft: Double
-        var hard: Double
-        var allowed: Int
-        var totalMs: Double
-
-        static func of(budgetMs: Double, hosted: Bool, wanted: Int) -> Limits {
-            guard hosted else { return Limits(soft: budgetMs, hard: budgetMs, allowed: 0, totalMs: .infinity) }
-            let hard = max(5 * budgetMs, 500)
-            return Limits(soft: budgetMs, hard: hard, allowed: max(3, wanted / 8), totalMs: 3 * hard)
-        }
-
-        var text: String {
-            allowed == 0 ? "budget \(soft) ms"
-                : "soft budget \(soft) ms, \(allowed) allowed over it, hard limit \(hard) ms, \(totalMs) ms in all"
-        }
-    }
-
-    /// The misses of one phase: each key's way into the text storage (ms, in the order typed) and
-    /// main's run-loop turns (ms, and when from the phase's start). Empty: the phase passed.
-    nonisolated static func misses(_ name: String, keysMs: [Double], turns: [(ms: Double, atMs: Double)], _ l: Limits) -> [String] {
-        var out: [String] = []
-        let late = keysMs.enumerated().filter { $0.element > l.soft }
-        let lateText = late.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element)) ms" }.joined(separator: ", ")
-        if late.contains(where: { $0.element > l.hard }) {
-            out.append("\(name): a key reached the text storage after the hard limit (\(l.text)): " + lateText)
-        } else if late.count > l.allowed {
-            out.append("\(name): \(late.count) of \(keysMs.count) keys reached the text storage later than the budget (\(l.text)): " + lateText)
-        }
-        let stalls = turns.filter { $0.ms > l.soft }.sorted { $0.ms > $1.ms }
-        let stallText = stalls.prefix(8).map { String(format: "%.1f ms at +%.0f ms", $0.ms, $0.atMs) }.joined(separator: ", ")
-        let total = stalls.reduce(0) { $0 + $1.ms }
-        if stalls.contains(where: { $0.ms > l.hard }) {
-            out.append("\(name): a main run-loop turn over the hard limit (\(l.text)), longest " + stallText)
-        } else if stalls.count > l.allowed {
-            out.append("\(name): \(stalls.count) main run-loop turns over the budget (\(l.text)), longest " + stallText)
-        } else if total > l.totalMs {
-            out.append("\(name): main run-loop turns over the budget add up to \(String(format: "%.0f", total)) ms (\(l.text)): " + stallText)
-        }
-        return out
-    }
-
     private func gate(_ p: Phase) {
         let hosted = ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init) != nil
-        let limits = Limits.of(budgetMs: budgetMs, hosted: hosted, wanted: p.wanted)
+        let limits = RealDocStallLimits.of(budgetMs: budgetMs, hosted: hosted, wanted: p.wanted)
         XCTAssertEqual(p.keys.count, p.wanted, "\(p.name): \(p.wanted - p.keys.count) of \(p.wanted) keys never handled")
         let missing = p.keys.filter { !$0.inStorage }.count
         XCTAssertEqual(missing, 0, "\(p.name): \(missing) keys not in the editor's text storage")
         let turns = p.report.over(limits.soft).map { (ms: $0.ms, atMs: Double($0.startNs &- p.report.startNs) / 1e6) }
-        for miss in Self.misses(p.name, keysMs: p.keys.map(\.ms), turns: turns, limits) { XCTFail(miss) }
+        for miss in limits.misses(p.name, keysMs: p.keys.map(\.ms), turns: turns) { XCTFail(miss) }
     }
 
     /// The limits themselves, on the numbers #2146 measured (no TeX or book needed: this runs in
     /// the mac-app job): every hosted noise run passes, and the freeze fails however it comes.
     func testTheHostedLimitsPassTheMeasuredNoiseAndFailTheFreeze() {
-        let hosted = Limits.of(budgetMs: 100, hosted: true, wanted: 40)
+        let hosted = RealDocStallLimits.of(budgetMs: 100, hosted: true, wanted: 40)
         XCTAssertEqual([hosted.hard, Double(hosted.allowed), hosted.totalMs], [500, 5, 1500])
         func keys(_ late: [Double]) -> [Double] { late + Array(repeating: 5, count: 40 - late.count) }
         func turns(_ ms: [Double]) -> [(ms: Double, atMs: Double)] { ms.enumerated().map { (ms: $0.element, atMs: Double($0.offset) * 100) } }
@@ -184,7 +185,7 @@ final class EngineV3RealDocTypingTests: XCTestCase {
             ("41385296674/3 late", [106.7], [107.1]),
         ]
         for (name, k, t) in noise {
-            XCTAssertEqual(Self.misses(name, keysMs: keys(k), turns: turns(t), hosted), [], name)
+            XCTAssertEqual(hosted.misses(name, keysMs: keys(k), turns: turns(t)), [], name)
         }
         let freezes: [(String, [Double], [Double])] = [
             ("the owner's freeze: one 1.9 s turn", [1900, 1850, 1800], [1900]),
@@ -193,12 +194,12 @@ final class EngineV3RealDocTypingTests: XCTestCase {
             ("every key 120 ms late", Array(repeating: 120, count: 40), []),
         ]
         for (name, k, t) in freezes {
-            XCTAssertFalse(Self.misses(name, keysMs: keys(k), turns: turns(t), hosted).isEmpty, name)
+            XCTAssertFalse(hosted.misses(name, keysMs: keys(k), turns: turns(t)).isEmpty, name)
         }
         // Without the env (nightly, reference): one frame, nothing over it.
-        let frame = Limits.of(budgetMs: MainThreadStall.frameMs, hosted: false, wanted: 40)
-        XCTAssertFalse(Self.misses("one late turn", keysMs: keys([]), turns: turns([17]), frame).isEmpty)
-        XCTAssertEqual(Self.misses("all within a frame", keysMs: keys([]), turns: turns([16]), frame), [])
+        let frame = RealDocStallLimits.of(budgetMs: MainThreadStall.frameMs, hosted: false, wanted: 40)
+        XCTAssertFalse(frame.misses("one late turn", keysMs: keys([]), turns: turns([17])).isEmpty)
+        XCTAssertEqual(frame.misses("all within a frame", keysMs: keys([]), turns: turns([16])), [])
     }
 
     func testTypingOnALatePageOfARealBookNeverStallsTheEditor() async throws {
