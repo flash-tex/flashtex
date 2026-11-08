@@ -37,7 +37,6 @@
 use crate::generated::consts as web;
 use crate::generated::Globals;
 use flashtex_engine::diag::{Frame, Kind, Note, Pos, Site, FLAG_NOT_ON_TERMINAL, FLAG_OUTPUT_ACTIVE};
-use flashtex_engine::persist::Codec;
 use std::collections::HashMap;
 use std::sync::Arc;
 
