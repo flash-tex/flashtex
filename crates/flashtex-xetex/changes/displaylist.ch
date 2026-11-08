@@ -21,6 +21,9 @@
 % * |dl_token_begin| and |dl_token_end| around the allocations that never
 %   become part of a list TeX ships (|back_input|'s token, the condition
 %   stack's node).
+% * |dl_native_char| as the main loop collects a character of a native
+%   word: whether it was read from the file's line itself, and where (a
+%   native word's characters are then given their own columns).
 % * |dl_node(p)| as |hlist_out| and |vlist_out| output node |p|: the
 %   writer notes where the XDV stream is at that moment, so that what is
 %   drawn from there on is attributed to |p|.
@@ -133,6 +136,14 @@ done1: end
 done1: dl_hyph_end; end
 @z
 
+@x xetex.web l.24400 - main_control: a native word's character read
+collect_native:
+  adjust_space_factor;
+@y
+collect_native:
+  dl_native_char; adjust_space_factor;
+@z
+
 @x xetex.web l.30087 - hpack: a merged native word keeps the first fragment's place
       pp:=new_native_word_node(native_font(p), total_chars); { make new node for merged word }
 @y
@@ -154,6 +165,7 @@ procedure dl_hyph_begin(@!p:pointer); external;
 procedure dl_hyph_end; external;
 procedure dl_token_begin; external;
 procedure dl_token_end; external;
+procedure dl_native_char; external;
 
 @* \[55] Index.
 @z
