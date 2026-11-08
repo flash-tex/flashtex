@@ -5477,6 +5477,9 @@ impl Globals {
             XeTeX_input_encoding_extension_code => {
                 // §1446
                 {
+                    if self.intr_verify_on {
+                        self.flashtex_intr_op(16i32, 0i32, 0i32, 0i32);
+                    }
                     self.scan_and_pack_name();
                     i = { let mut __f0 = ::core::mem::take(&mut j); let __r = self.get_encoding_mode_and_info(&mut __f0); j = __f0; __r };
                     if (i == XeTeX_input_mode_auto) {
