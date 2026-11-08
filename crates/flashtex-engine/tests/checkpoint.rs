@@ -226,11 +226,12 @@ fn persisted_s0_reopens() {
 /// which a run takes at its start and S₀ holds) or for a search path
 /// (`TEXINPUTS`, which a lookup in the preamble depends on), and a
 /// database (`ls-R`) of a tree a lookup in the preamble found nothing in,
-/// with the file added (F4). Without `Key::check_config` the open restored
-/// S₀ for the switch, the job name and `max_print_line`, as the control
-/// with nothing changed does (VERIFIED, PC, 2026-11-08); the `TEXINPUTS`
-/// and `ls-R` cases were refused there by the lookups made again ("finds
-/// another file now"), and stay as guards of the key's own check.
+/// with the file added (F4). Without `Key::check_config` the open restores
+/// S₀ in every case, as the control with nothing changed does: the stored
+/// S₀ is kept outside the document's directory and the directories the
+/// key lists have settled (signatures taken past `FLASHTEX_RACY_MS`), so
+/// the key's lookups are not made again, and `\\IfFileExists` keeps its old
+/// answer (a run from the format finds `zzalt.sty` and `zzlocal.sty`).
 #[test]
 fn a_persisted_s0_is_not_opened_under_another_configuration() {
     let Some(e) = env() else {
@@ -261,8 +262,16 @@ fn a_persisted_s0_is_not_opened_under_another_configuration() {
     };
     std::fs::write(tree.join("ls-R"), ls_r("")).unwrap();
     let tree_s = tree.to_str().unwrap().to_string();
-    let s0 = a.join("doc.s0");
+    // (outside the document's directory: a save there would change the
+    // listing the key's lookups depend on, and they would be made again)
+    let store = e.dir.join("reopen-config-s0");
+    let _ = std::fs::remove_dir_all(&store);
+    std::fs::create_dir_all(&store).unwrap();
+    let s0 = store.join("doc.s0");
     let s0 = s0.to_str().unwrap().to_string();
+    // (a signature taken within 200 ms of its directory's change is racy,
+    // and the lookups are made again; the steps below wait that long)
+    let settle = || std::thread::sleep(std::time::Duration::from_millis(400));
     let host_with = |pdftex: &[&str], cmd: &[&str], extra: &[(&str, &str)]| {
         let mut args: Vec<&str> = cmd.to_vec();
         args.push("--");
@@ -276,6 +285,7 @@ fn a_persisted_s0_is_not_opened_under_another_configuration() {
             .env("FORCE_SOURCE_DATE", "1")
             .env("FLASHTEX_PIN_CLOCK", "1700000000.123456")
             .env("TEXMFLOCAL", &tree_s)
+            .env("FLASHTEX_RACY_MS", "200")
             .stdin(Stdio::null());
         for (k, v) in extra {
             c.env(k, v);
@@ -290,8 +300,10 @@ fn a_persisted_s0_is_not_opened_under_another_configuration() {
     // listing settles), then S0 saved
     let (ok, out) = host_with(PDFTEX_ARGS, &["bench", "--reps", "1"], &[]);
     assert!(ok, "{out}");
+    settle();
     let (ok, out) = host_with(PDFTEX_ARGS, &["bench", "--reps", "1", "--save", &s0], &[]);
     assert!(ok, "{out}");
+    settle();
     let (ok, out) = host_with(PDFTEX_ARGS, &["open", &s0], &[]);
     assert!(ok && out.contains("\"mode\":\"s0\""), "the control: {out}");
     let batch: &[&str] = &["-fmt=pdflatex", "-interaction=batchmode", "doc.tex"];
@@ -338,6 +350,7 @@ fn a_persisted_s0_is_not_opened_under_another_configuration() {
     };
     let mut bad = vec![];
     for (what, pdftex, extra, why) in cases {
+        settle();
         let (ok, out) = host_with(pdftex, &["open", &s0], &extra);
         if ok || !out.contains(why) {
             bad.push(format!("{what}: {}", said(&out)));
@@ -346,6 +359,7 @@ fn a_persisted_s0_is_not_opened_under_another_configuration() {
     // a package installed into the tree, its ls-R updated
     std::fs::write(tree.join("tex/latex/zzlocal.sty"), "\\endinput\n").unwrap();
     std::fs::write(tree.join("ls-R"), ls_r("zzlocal.sty\n")).unwrap();
+    settle();
     let (ok, out) = host_with(PDFTEX_ARGS, &["open", &s0], &[]);
     if ok || !out.contains("ls-R, of kpathsea's configuration, changed") {
         bad.push(format!("ls-R: {}", said(&out)));
