@@ -2093,18 +2093,6 @@ pub fn find_input(name: &str) -> Option<String> {
     p
 }
 
-/// The name texmfmp.c's `open_input` leaves in `nameoffile` once `asked`
-/// was found at `found`: without the `./` kpathsea puts in front of a file
-/// in the current directory, unless `asked` had it too ("it looks dumb").
-/// The C parts print and report that name (writet1.c's `load_enc_file`,
-/// mapfile.c's `fm_read_info`).
-pub fn name_after_open<'a>(asked: &str, found: &'a str) -> &'a str {
-    match found.strip_prefix("./") {
-        Some(rest) if !rest.is_empty() && !asked.starts_with("./") => rest,
-        _ => found,
-    }
-}
-
 /// `kpse_find_file(name, format)`, for the C parts (font map files, ...).
 pub fn find_file(name: &str, format: Format) -> Option<String> {
     let p = resolve(name, format);
@@ -2733,7 +2721,10 @@ impl Globals {
     pub fn open_input_path(&mut self, format: Format) -> Option<String> {
         let asked = self.raw_file_name();
         let found = self.input_path(format, true)?;
-        Some(name_after_open(&asked, &found).to_string())
+        Some(match found.strip_prefix("./") {
+            Some(rest) if !rest.is_empty() && !asked.starts_with("./") => rest.to_string(),
+            _ => found,
+        })
     }
 
     /// `open_input` of file `name` (a C string the C parts put in

@@ -110,10 +110,8 @@ impl Globals {
             self.pdftex_fail("cannot open encoding file for reading");
         };
         self.tex_printf(b"{");
-        // `cur_file_name = nameoffile + 1`: the name `open_input` left.
-        let shown = crate::system::name_after_open(&name, &path);
-        set_cur_file_name(Some(shown.as_bytes()));
-        self.tex_printf(shown.as_bytes());
+        set_cur_file_name(Some(path.as_bytes()));
+        self.tex_printf(path.as_bytes());
         let names = encoding::parse_enc_file(&data).unwrap_or_else(|e| self.pdftex_fail(&e.0));
         self.tex_printf(b"}");
         set_cur_file_name(None);

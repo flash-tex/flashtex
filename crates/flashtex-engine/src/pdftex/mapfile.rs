@@ -966,9 +966,7 @@ impl Globals {
                 })
             });
             if let Some(hit) = hit {
-                // `cur_file_name = nameoffile + 1`: the name `open_input` left.
-                let path =
-                    crate::system::name_after_open(&name, found.as_deref().unwrap_or_default());
+                let path = found.as_deref().unwrap_or_default();
                 set_cur_file_name(Some(path.as_bytes()));
                 let mut s = b"{".to_vec();
                 s.extend_from_slice(path.as_bytes());
@@ -986,10 +984,9 @@ impl Globals {
             match found.and_then(|p| std::fs::read(&p).ok().map(|d| (p, d))) {
                 None => self.pdftex_warn("cannot open font map file"),
                 Some((path, data)) => {
-                    let shown = crate::system::name_after_open(&name, &path);
-                    set_cur_file_name(Some(shown.as_bytes()));
+                    set_cur_file_name(Some(path.as_bytes()));
                     let mut s = b"{".to_vec();
-                    s.extend_from_slice(shown.as_bytes());
+                    s.extend_from_slice(path.as_bytes());
                     self.tex_printf(&s);
                     let mut pos = 0usize;
                     let mut eof = false;
