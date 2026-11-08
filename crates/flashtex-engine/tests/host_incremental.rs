@@ -1452,7 +1452,11 @@ fn an_include_in_a_subdirectory_writes_its_aux_under_the_output_directory() {
              \\include{chapters/one}\n\\include{chapters/deeper/two}\n\\end{document}\n",
         )
         .unwrap();
-        std::fs::write(d.join("chapters/one.tex"), "\\section{One}\\label{one}\nText.\n").unwrap();
+        std::fs::write(
+            d.join("chapters/one.tex"),
+            "\\section{One}\\label{one}\nText.\n",
+        )
+        .unwrap();
         std::fs::write(
             d.join("chapters/deeper/two.tex"),
             "\\section{Two}\\label{two}\nMore.\n",
@@ -1471,7 +1475,12 @@ fn an_include_in_a_subdirectory_writes_its_aux_under_the_output_directory() {
     let mut view = View::default();
     for id in 1..=4 {
         let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
-        assert_eq!(o.done.str_field("status"), Some("ok"), "compile {id}: {}", o.done);
+        assert_eq!(
+            o.done.str_field("status"),
+            Some("ok"),
+            "compile {id}: {}",
+            o.done
+        );
         if o.done.str_field("mode") == Some("unchanged") {
             break;
         }

@@ -5353,7 +5353,8 @@ pub fn make_output_subdir(dir: &str, name: &str) -> bool {
     {
         return false;
     }
-    output_subdir(dir, name).is_some_and(|sub| !sub.is_dir() && std::fs::create_dir_all(&sub).is_ok())
+    output_subdir(dir, name)
+        .is_some_and(|sub| !sub.is_dir() && std::fs::create_dir_all(&sub).is_ok())
 }
 
 /// The directory below `dir` that the relative output name `name` needs,
@@ -5364,8 +5365,11 @@ fn output_subdir(dir: &str, name: &str) -> Option<std::path::PathBuf> {
     let below = parent
         .components()
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
-    (below && parent.components().any(|c| matches!(c, Component::Normal(_))))
-        .then(|| Path::new(dir).join(parent))
+    (below
+        && parent
+            .components()
+            .any(|c| matches!(c, Component::Normal(_))))
+    .then(|| Path::new(dir).join(parent))
 }
 
 /// The run opened `path` for output (the read journal's `outputs`).
@@ -6078,7 +6082,14 @@ mod output_subdir_tests {
         assert_eq!(output_subdir("/o", "chapters/one.aux"), d("/o/chapters"));
         assert_eq!(output_subdir("/o", "a/b/c.aux"), d("/o/a/b"));
         assert_eq!(output_subdir("/o", "./a/c.aux"), d("/o/./a"));
-        for name in ["one.aux", "./one.aux", "../one.aux", "a/../../x.aux", "/abs/x.aux", ""] {
+        for name in [
+            "one.aux",
+            "./one.aux",
+            "../one.aux",
+            "a/../../x.aux",
+            "/abs/x.aux",
+            "",
+        ] {
             assert_eq!(output_subdir("/o", name), None, "{name}");
         }
     }
