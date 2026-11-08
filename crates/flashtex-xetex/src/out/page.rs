@@ -1541,4 +1541,110 @@ pub(crate) mod tests {
         assert!((r[2] - r[0] - 15.0 * bp).abs() < 2e-5, "{r:?}");
         assert!((r[3] - r[1] - 8.0 * bp).abs() < 2e-5, "{r:?}");
     }
+
+    /// Annotation rectangles go through dvipdfmx's own CTM, which follows
+    /// `x:rotate`, `pdf:btrans` and `pdf:bcontent` but not the `cm` of
+    /// literal PDF code; `pdf:ann @name` makes the annotation that named
+    /// object. Measured with TeX Live 2026's xetex and xdvipdfmx on a plain
+    /// XeTeX file with these specials at a point P (P.x = 101.888 bp):
+    /// `x:rotate 90` around `pdf:ann width 20pt height 10pt depth 2pt` is
+    /// `[91.925 710.037 103.88 729.963]` (P.x − 10 pt to P.x + 2 pt, P.y to
+    /// P.y + 20 pt); after `pdf:literal 1 0 0 1 50 0 cm` it is unmoved;
+    /// `pdf:btrans rotate 30` turns a `bbox 0 -2 20 10` (bounds 23.32 bp
+    /// wide); inside `pdf:bcontent` it is unmoved; the named one has
+    /// `pdf:put @w`'s keys and is the object `@w` names.
+    #[test]
+    fn annotation_rects_follow_dvipdfmx_ctm() {
+        let mut doc = Doc::new();
+        let pt = |x: f64| (x * 65536.0).round() as i32;
+        let ann = |name: &str| {
+            special(&format!(
+                "pdf:ann width 20pt height 10pt depth 2pt <</Subtype/Link/A<</S/URI/URI({name})>>>>"
+            ))
+        };
+        let mut body = right4(pt(30.0));
+        body.extend(special("x:gsave"));
+        body.extend(special("x:rotate 90"));
+        body.extend(ann("rot"));
+        body.extend(special("x:grestore"));
+        body.extend(special("pdf:literal 1 0 0 1 50 0 cm"));
+        body.extend(ann("lit"));
+        body.extend(special("pdf:literal -1 0 0 -1 50 0 cm"));
+        body.extend(special("pdf:btrans rotate 30"));
+        body.extend(special(
+            "pdf:ann bbox 0 -2 20 10 <</Subtype/Link/A<</S/URI/URI(bbox)>>>>",
+        ));
+        body.extend(special("pdf:etrans"));
+        body.extend(special("pdf:bcontent"));
+        body.extend(special(
+            "pdf:ann @w width 20pt height 10pt depth 2pt <</Subtype/Widget/FT/Tx/T(w)>>",
+        ));
+        body.extend(special("pdf:econtent"));
+        body.extend(special("pdf:put @w <</V(filled)>>"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let a = &built.sup.annots;
+        assert_eq!(a.len(), 4);
+        let bp = 72.0 / 72.27;
+        let (px, py) = (a[1].rect[0], a[1].rect[1] + 2.0 * bp);
+        assert!((px - (72.0 + 30.0 * bp)).abs() < 1e-9, "{:?}", a[1].rect);
+        let close =
+            |r: [f64; 4], w: [f64; 4]| r.iter().zip(w).all(|(a, b)| (a - b).abs() < 1e-9);
+        // rotated 90 degrees about P
+        let want = [px - 10.0 * bp, py, px + 2.0 * bp, py + 20.0 * bp];
+        assert!(close(a[0].rect, want), "{:?} {want:?}", a[0].rect);
+        // the literal's `cm` does not move it
+        let want = [px, py - 2.0 * bp, px + 20.0 * bp, py + 10.0 * bp];
+        assert!(close(a[1].rect, want), "{:?}", a[1].rect);
+        // a bbox (bp) turned by 30 degrees: the bounds of its corners
+        let (s, c) = 30f64.to_radians().sin_cos();
+        let pts = [(0.0, -2.0), (20.0, -2.0), (20.0, 10.0), (0.0, 10.0)]
+            .map(|(x, y): (f64, f64)| (px + c * x - s * y, py + s * x + c * y));
+        let want = [
+            pts.iter().map(|p| p.0).fold(f64::INFINITY, f64::min),
+            pts.iter().map(|p| p.1).fold(f64::INFINITY, f64::min),
+            pts.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max),
+            pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max),
+        ];
+        assert!(
+            a[2].rect.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-6),
+            "{:?} {want:?}",
+            a[2].rect
+        );
+        assert!(((want[2] - want[0]) - 23.32).abs() < 1e-3, "{want:?}");
+        // inside pdf:bcontent: unmoved, and the named object
+        assert!(close(a[3].rect, a[1].rect), "{:?}", a[3].rect);
+        assert_eq!(a[3].name.as_deref(), Some(&b"w"[..]));
+        let Some(super::super::doc::Named::Obj(Obj::Dict(d))) = doc.named.get(&b"w"[..]) else {
+            panic!("@w is not a dictionary");
+        };
+        assert!(d.get(b"Rect").is_some() && d.get(b"V").is_some(), "{d:?}");
+        assert!(a[1].dict.get(b"Type").is_none());
+    }
+
+    /// A `pdf:bann` while a link is open is ignored (spc_pdfm.c: "Can't
+    /// begin an annotation when one is pending."): the first link goes on
+    /// and the `pdf:eann` ends it (measured, the plain XeTeX file of
+    /// `annotation_rects_follow_dvipdfmx_ctm`: one GoTo link over both
+    /// letters).
+    #[test]
+    fn a_link_begun_inside_a_link_is_ignored() {
+        let mut doc = Doc::new();
+        let pt = |x: f64| (x * 65536.0).round() as i32;
+        let mut body = special("dvipdfmx:catch_phantom true height 8pt");
+        body.extend(link("first"));
+        body.extend(right4(pt(10.0)));
+        body.extend(link("second"));
+        body.extend(right4(pt(10.0)));
+        body.extend(special("pdf:eann"));
+        body.extend(right4(pt(10.0)));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let got = links(&built);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, "first");
+        let bp = 72.0 / 72.27;
+        assert!(
+            (got[0].1[2] - got[0].1[0] - 20.0 * bp).abs() < 2e-5,
+            "{got:?}"
+        );
+    }
 }

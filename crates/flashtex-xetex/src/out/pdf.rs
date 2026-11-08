@@ -2645,4 +2645,57 @@ mod tests {
         let pdf = PdfFile::parse(&bytes).unwrap();
         assert_eq!(pdf.pages().unwrap().len(), 1);
     }
+
+    /// hyperref's form fields are `pdf:ann @textN …` with the AcroForm's
+    /// `/Fields` naming them (`pdf:put @afields @textN`): the widget is one
+    /// object, in the page's `/Annots` and in `/Fields`, with what `pdf:put
+    /// @textN` added and no `/Type` (dvipdfmx's `spc_push_object` and
+    /// `pdf_doc_add_annot`; xdvipdfmx's PDF of the parity case
+    /// d10-hyperref-forms-transformed). `/Fields` held `null`s before.
+    #[test]
+    fn a_named_annotation_is_the_object_its_name_refers_to() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let mut doc = Doc::new();
+        let mut body = special("pdf:obj @afields []");
+        body.extend(special(
+            "pdf:ann @w width 20pt height 10pt depth 2pt <</Subtype/Widget/FT/Tx/T(w)>>",
+        ));
+        body.extend(special("pdf:put @w <</V(filled)>>"));
+        body.extend(special("pdf:put @afields @w"));
+        body.extend(special("pdf:put @catalog <</AcroForm<</Fields @afields>>>>"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let text = String::from_utf8_lossy(&bytes);
+        let num_after = |key: &str| -> String {
+            let at = text.find(key).unwrap_or_else(|| panic!("no {key}: {text}"));
+            text[at + key.len()..]
+                .trim_start_matches([' ', '['])
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect()
+        };
+        let annot = num_after("/Annots");
+        let fields = num_after("/Fields");
+        let obj = |n: &str| -> String {
+            let i = text
+                .find(&format!("\n{n} 0 obj\n"))
+                .unwrap_or_else(|| panic!("no object {n}: {text}"));
+            let o = &text[i..];
+            o[..o.find("endobj").unwrap()].to_string()
+        };
+        let f = obj(&fields);
+        assert!(f.contains(&format!("{annot} 0 R")), "{f}\n{text}");
+        let w = obj(&annot);
+        assert!(w.contains("/Widget") && w.contains("(filled)") && w.contains("/Rect"), "{w}");
+        assert!(!w.contains("/Annot"), "{w}");
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        assert_eq!(pdf.pages().unwrap().len(), 1);
+    }
 }
