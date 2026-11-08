@@ -867,15 +867,16 @@ fn spans_on_one_line_keep_the_text_before_them() {
     // text before it. With that text rewritten between inputs (to the same
     // length: `\relax` to `\empty`) the picture replays, and must leave the
     // buffer's line as the file has it: `\show`'s error context after it on
-    // that line prints the line ("l.1 \empty ..."), not the recorded run's
+    // that line prints the line ("l.1 \empty ...", short enough to be
+    // printed whole), not the recorded run's
     let s = check_files(
         "span-prefix",
         &[(
             "t.tex",
             &[
                 SPAN_PRELUDE,
-                "\\def\\empty{}\\def\\x{}\n\
-                 \\def\\pv#1{\\toks0={#1\\begin{pic}\\vrule width 3pt height 2pt\\kern2pt\\end{pic}\\show\\x}\
+                "\\def\\empty{}\n\
+                 \\def\\pv#1{\\toks0={#1\\begin{pic}\\end{pic}\\show a}\
                  \\immediate\\openout3=p.tex \\immediate\\write3{\\the\\toks0}\\immediate\\closeout3 }\n\
                  \\pv\\relax\\one\\one\\pv\\empty\\one\\one\\par\\showlists\\stop\n",
             ]
