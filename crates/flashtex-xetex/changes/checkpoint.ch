@@ -42,6 +42,21 @@
 % (both read |first|), and |flashtex_level_shown| every input line
 % |show_context| prints. The inline test is the same comparison as before.
 %
+% Dead native characters (the convergence test, src/conv.rs and src/iso.rs):
+% |compute_ot_math_accent_pos| and |make_scripts|'s OpenType math kerning
+% make a native character node (|new_native_character|) only to ask for its
+% glyph, in a local variable, and never free it: xetex.web leaks it, one
+% node per accent or script in an OpenType math font. Such nodes lie
+% wherever the allocator put them, so after an edit the two runs' word
+% spaces differ in cells no structure reaches, and the test refused every
+% page (unicode-math documents re-typeset all pages after an edit).
+% |flashtex_dead_node| fills the node's words with |iso::DEAD_NODE_WORD|
+% right after its last use, which the test then reads as garbage. The node
+% stays allocated, so the allocator and the memory statistics are xetex's;
+% the words are never read again (the variable is local and the node is in
+% no list), and no word the allocator tests (|is_empty|, a link equal to
+% |empty_flag|) can equal the mark.
+%
 % GPL-2.0-or-later, like the rest of crates/flashtex-xetex.
 
 @x l.1946 of the merged WEB - a line read from the terminal is counted (READ-TRACK)
@@ -108,6 +123,22 @@ if ckpt_on_shipout<>0 then ckpt_request:=ckpt_on_shipout;
 end;
 @z
 
+@x xetex.web l.17808 - the native character made only to ask its glyph is dead
+    g:=get_native_glyph(q, 0);
+    s:=get_ot_math_accent_pos(cur_f, g);
+@y
+    g:=get_native_glyph(q, 0);
+    s:=get_ot_math_accent_pos(cur_f, g);
+    flashtex_dead_node(q);
+@z
+
+@x xetex.web l.18569 - so is the one made for a script's OpenType math kerning
+    script_g:=get_native_glyph(script_c,0);
+@y
+    script_g:=get_native_glyph(script_c,0);
+    flashtex_dead_node(script_c);
+@z
+
 @x l.24680 of the merged WEB - checkpoints are taken, and resumed, at |big_switch|
 begin if every_job<>null then begin_token_list(every_job,every_job_text);
 big_switch: flashtex_poll; get_x_token;@/
@@ -156,6 +187,8 @@ procedure flashtex_level_opened; external;
   {a new input level, or a terminal line}
 procedure flashtex_level_shown; external;
   {|show_context| prints a file level's line}
+procedure flashtex_dead_node(@!p:pointer); external;
+  {|p| is a native character node nothing will read or free (src/conv.rs)}
 
 @* \[55] Index.
 @z

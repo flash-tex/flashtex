@@ -185,6 +185,9 @@ pub(crate) struct Conn {
     pub diag: bool,
     /// The client accepted `progress-v1`: it gets `PROGRESS` heartbeats (spec §6.8).
     pub progress: bool,
+    /// The client accepted `span-shift-v1`: moved lines reach it as
+    /// `SPAN_SHIFT`s, not as every moved span re-declared (spec §5.3.1).
+    pub span_shift: bool,
 }
 
 impl Conn {
@@ -789,6 +792,8 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     flashtex_display_list::PROGRESS_CAPABILITY,
     // HELLO `profile` and the PROFILE message: performance modes (spec §6.9).
     flashtex_display_list::PROFILE_CAPABILITY,
+    // SPAN_SHIFT for a client that accepts it (spec §5.3.1).
+    flashtex_display_list::SPAN_SHIFT_CAPABILITY,
 ];
 
 fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
@@ -802,6 +807,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     // HELLO
     let diag;
     let progress;
+    let span_shift;
     let profile;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
@@ -827,6 +833,10 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
             progress = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
                 a.iter()
                     .any(|x| x.as_str() == Some(flashtex_display_list::PROGRESS_CAPABILITY))
+            });
+            span_shift = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
+                a.iter()
+                    .any(|x| x.as_str() == Some(flashtex_display_list::SPAN_SHIFT_CAPABILITY))
             });
             // A mode the host does not know is ignored, as unknown names are
             // (the host's own then stays, and its HELLO says which).
@@ -876,6 +886,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
         minor,
         diag,
         progress,
+        span_shift,
     });
     if let Some(p) = profile {
         let _ = tx.send(Req::Profile {

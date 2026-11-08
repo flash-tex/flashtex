@@ -23,7 +23,8 @@ your task; do not load the entire repository history into every prompt.
 | Latest global update and recovery state | [COMMANDER.md](../coordination/COMMANDER.md) | Commander |
 | Worker identities and capabilities | [ROSTER.md](../coordination/ROSTER.md) | Commander |
 | Assignments, revisions, dependencies | [TASKS.md](../coordination/TASKS.md) | Commander |
-| Product requirements | [Master plan](../latex-master-plan.md) | Product/integration owner |
+| Product requirements | Goals and phases: [DESIGN.md](design/engine-v2/DESIGN.md) §1, §12 (governing). The founders' first [master plan](../latex-master-plan.md) is historical: its from-scratch compiler was retired at P5 (S7, 2026-11-01) | Owner; Commander |
+| Nightly design reviews (DESIGN.md §14): audit numbers, CI truth, red-team findings, decisions | [design/engine-v2/reviews/](design/engine-v2/reviews/) (latest [2026-11-01](design/engine-v2/reviews/2026-11-01.md)) | Commander |
 | Deadline and acceptance gates | [PROJECT.md](../coordination/PROJECT.md) | Designated coordinator |
 | Funding, permissions, allocations | [RESOURCES.md](../coordination/RESOURCES.md) | Designated resource owner |
 | Delegation, progress, recovery procedures | [Agent operations](agent-operations.md) | Integration owner |
@@ -78,8 +79,6 @@ latency. Every consumer must retain source/project/revision and resource identit
 
 - `crates/edit-ledger/README.md`: authoritative durable source, receipts, history,
   background service and restart handling. Do not build a second independent undo ledger.
-- `crates/document-runtime/README.md`: persistent original compiler transport, stale
-  response suppression and replay metrics; native paint is excluded from its timings.
 - `crates/project-index/README.md`: exact-revision source navigation and lexical
   bibliography/rename facilities; lexical results do not establish TeX expansion semantics.
 - `crates/pdf/README.md`: FlashTeX's own font-file readers and PDF writer; Unicode
