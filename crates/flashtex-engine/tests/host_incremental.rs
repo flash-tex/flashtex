@@ -5392,9 +5392,13 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
 /// A PDF the disk cannot take (#1612: the disk filled, `!pdfTeX error:
 /// pdftex: fwrite() failed`, then the next COMPILE seemed to hang) ends
 /// that compile with a `DONE`, and the host serves the next COMPILE on
-/// the same connection, which compiles the document again. The PDF is
-/// `/dev/full` (every write fails with ENOSPC, as on a full disk); every
-/// wait is bounded, so a hang fails the test instead of stalling it.
+/// the same connection, which compiles the document again. The full disk
+/// is the host's file-size limit (`prlimit`, RLIMIT_FSIZE) lowered after
+/// the first compile, with SIGXFSZ ignored: a write past it fails (EFBIG),
+/// as `ulimit -f` did in #1612's reproduction. (Not `/dev/full` as the
+/// PDF: a restart reads the PDF it wrote back, and `/dev/full` reads as
+/// endless zeros, so the host filled its memory instead.) Every wait is
+/// bounded, so a hang fails the test instead of stalling it.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_pdf_write_failure_leaves_the_host_serving() {
@@ -5410,7 +5414,27 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
     std::fs::create_dir_all(&out).unwrap();
     let text = article(4);
     std::fs::write(proj.join("main.tex"), &text).unwrap();
+    // the host inherits the ignored SIGXFSZ (a write past the limit then
+    // fails instead of ending the process)
+    // SAFETY: signal(2) with SIG_IGN has no memory-safety preconditions.
+    unsafe { libc::signal(libc::SIGXFSZ, libc::SIG_IGN) };
     let h = start_host("diskfull");
+    let fsize = |bytes: u64| {
+        let l = libc::rlimit64 {
+            rlim_cur: bytes,
+            rlim_max: libc::RLIM64_INFINITY,
+        };
+        // SAFETY: prlimit64(2) on the host (our child) with a valid limit.
+        let r = unsafe {
+            libc::prlimit64(
+                h.0.id() as libc::pid_t,
+                libc::RLIMIT_FSIZE,
+                &l,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(r, 0, "prlimit: {}", std::io::Error::last_os_error());
+    };
     let mut c = Client::connect(&h.1).unwrap();
     c.reader()
         .get_ref()
@@ -5427,19 +5451,17 @@ fn a_pdf_write_failure_leaves_the_host_serving() {
     );
     let pages = first.done.int_field("pages");
     assert!(pages >= Some(2), "{:?}", first.done);
-    // the disk is full: every write of the PDF fails
-    let pdf = out.join("main.pdf");
-    std::fs::remove_file(&pdf).unwrap();
-    std::os::unix::fs::symlink("/dev/full", &pdf).unwrap();
+    // the disk is full: no file grows past 4 KB (the PDF is ~20 KB)
+    fsize(4096);
     let mut r = req(2, &proj, &out, "main.tex");
     r.buffers = vec![("main.tex".into(), text.replacen("Start", "Begin", 1))];
-    eprintln!("{:?}: compile 2 (PDF is /dev/full)", t0.elapsed());
+    eprintln!("{:?}: compile 2 (the disk is full)", t0.elapsed());
     let full = compile(&mut c, &mut view, &r);
     eprintln!("{:?}: DONE {:?}", t0.elapsed(), full.done);
     assert_ne!(full.done.str_field("status"), Some("ok"), "{:?}", full.done);
     // the disk has room again: the next COMPILE is served
-    let _ = std::fs::remove_file(&pdf);
-    let _ = std::fs::remove_file(out.join("main.pdf.flashtex-removed"));
+    fsize(libc::RLIM64_INFINITY);
+    let pdf = out.join("main.pdf");
     let mut r = req(3, &proj, &out, "main.tex");
     r.buffers = vec![("main.tex".into(), text.clone())];
     eprintln!("{:?}: compile 3 (room again)", t0.elapsed());
