@@ -1,16 +1,12 @@
 # The first open of Infinite Descent x2 (1,152 pages) on the NixOS PC, against pdflatex: first
 # page, each pass, DONE, pages per second, the engine thread's instructions and cycles, and
 # optionally a `perf` profile (lane COLD-FIRST-2; DESIGN.md §1.2 "Opening"). Measurement only, by
-# hand: workflow_dispatch, or a push to an `agent/kabir-claude-coldfirst2/pc/**` branch whose
-# tools/incr-bench/coldopen-pc.request (shell assignments of REFS, REPS, PERF) says what to run
-# (DESIGN §9.3: no pull request ever runs on a self-hosted runner). The script says what it runs:
-# tools/incr-bench/coldopen-pc.sh. Its wall times are a reference only when the PC is otherwise
-# quiet: the summary has each open's load1.
+# hand: workflow_dispatch, nothing else (DESIGN §9.3: no pull request ever runs on a self-hosted
+# runner). The script says what it runs: tools/incr-bench/coldopen-pc.sh. Its wall times are a
+# reference only when the PC is otherwise quiet: the summary has each open's load1.
 name: coldopen-pc
 
 on:
-  push:
-    branches: ["agent/kabir-claude-coldfirst2/pc/**"]
   workflow_dispatch:
     inputs:
       refs:
@@ -34,26 +30,17 @@ jobs:
     timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: "4"
-      IN_REFS: ${{ github.event.inputs.refs || 'main' }}
-      IN_REPS: ${{ github.event.inputs.reps || '2' }}
-      IN_PERF: ${{ github.event.inputs.perf || '0' }}
+      REFS: ${{ github.event.inputs.refs || 'main' }}
+      REPS: ${{ github.event.inputs.reps || '2' }}
+      PERF: ${{ github.event.inputs.perf || '0' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
-      - name: this runner's build directory; a pushed request
-        run: |
-          set -euo pipefail
-          echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-coldopen" >> "$GITHUB_ENV"
-          f=tools/incr-bench/coldopen-pc.request
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ -f "$f" ]; then
-            grep -E '^(REFS|REPS|PERF)=' "$f" | sed -E "s/^([A-Z]+)='?([^']*)'?$/\1=\2/" >> "$GITHUB_ENV"
-            cat "$f"
-          else
-            { echo "REFS=$IN_REFS"; echo "REPS=$IN_REPS"; echo "PERF=$IN_PERF"; } >> "$GITHUB_ENV"
-          fi
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-coldopen" >> "$GITHUB_ENV"
       - name: build each ref, then pdflatex's passes and the cold opens
         run: |
           set -o pipefail
