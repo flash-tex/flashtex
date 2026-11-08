@@ -35,12 +35,16 @@ DESIGN.md §12 P6). Main is `3f835f488`; the prototype is `agent/kabir-claude-co
 - Headline (pc-2, switch on against main): *Infinite Descent ×2* −0.36 % instructions, −4.23 %
   cycles; 13 papers −0.40 % instructions, −2.41 % cycles, fewer cycles on 13 of 13. Switch off:
   +1.74 % and +1.15 % instructions. pc-1: −6.68 % and −3.00 % cycles with the switch on.
-- Output identity: every PDF of 420 measured compiles equals main's; logs equal but for that path;
-  the memory lines each log prints (usage at shipouts, the end-of-run "words of memory") equal in every run.
-- Not measured here: read-side cache behaviour (`workflows/contig-bench.yml`, run 41335270525,
-  queued on GitHub's runners); the formal gates with the switch on (`workflows/contig-gates.yml`,
-  run 41342741326 on branch `agent/kabir-claude-contig/pcgates-1`, and that branch's CI run
-  41342741298), queued when this was written.
+- Output identity: every PDF of 420 measured compiles (210 per build; pc-1 and pc-2 measured
+  different builds) equals main's; logs equal but for that path. No document sets
+  `\tracingstats>1`, so the only memory line compared is the end-of-run "words of memory", which
+  does not read `dyn_used`; the recomputed `dyn_used` is tested in #2016 (below). `maxrss_kb` here
+  is `RUSAGE_CHILDREN`'s running maximum, not a per-compile peak: these runs carry no memory data.
+- Never ran: read-side cache behaviour (`workflows/contig-bench.yml`, run 41335270525) and the
+  formal gates with the switch on (`workflows/contig-gates.yml`, run 41342741326 on branch
+  `agent/kabir-claude-contig/pcgates-1`, and that branch's CI run 41342741298) were all
+  **cancelled** in the queue. The gates were run instead on #2016's always-on build; see
+  CONTIG-TOKENS.md §5.
 
 ## Reproduce
 

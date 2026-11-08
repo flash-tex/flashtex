@@ -334,7 +334,9 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   - the font map parsed once per process, not per run (80–90 ms per run today);
   - an uncompressed, page-aligned, memory-mapped format (a gzipped format costs about
     27 ms to load);
-  - contiguous token-list storage, but only after P-T1 on the full suite (§12, P6).
+  - contiguous token-list storage, but only after P-T1 on the full suite (§12, P6). Studied
+    and measured in [CONTIG-TOKENS.md](CONTIG-TOKENS.md): its recommendation (keep linked
+    storage; lazy `flush_list`, #2016) awaits a §13 decision.
 - **Array reads are bounds-checked in every build that ships or is tested** (adopted
   2026-09-30, §13). Unchecked reads (`get_unchecked`, #1241's `src/ix.rs`) exist only as the
   opt-in measurement feature `unchecked-reads`, never shipped. Reason: they bought 1.3–3.2 %
@@ -659,7 +661,8 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
 ### 5.6 L6: raw-speed program (after P-T1 parity)
 
 1. Profile first; every item needs a measured win.
-2. Contiguous token lists and argument matching without allocation.
+2. Contiguous token lists and argument matching without allocation (contiguous storage:
+   [CONTIG-TOKENS.md](CONTIG-TOKENS.md), its recommendation awaiting a §13 decision).
 3. A fast `\csname` lookup.
 4. **Guarded intrinsics** (D9). Only pure, non-erroring leaf functions. The dependency
    set is computed when the format is built. An O(1) counter of redefinitions acts as

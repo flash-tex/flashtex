@@ -2,8 +2,10 @@
 
 Lane **CONTIG-TOKENS** (DESIGN.md §4.2 "contiguous token-list storage, but only after P-T1 on the
 full suite", §5.6 item 2, §12 P6). Status: design, measured on main, and one prototype measured
-against it. Evidence: [`docs/evidence/contig-tokens-2026-11-01/`](../../evidence/contig-tokens-2026-11-01/).
-DESIGN.md stays the source of truth.
+against it; the prototype's idea is landed always on by PR #2016 (LAZY-FLUSH), whose gates are
+summarised in §5. Evidence: [`docs/evidence/contig-tokens-2026-11-01/`](../../evidence/contig-tokens-2026-11-01/).
+DESIGN.md stays the source of truth: this document's recommendation (§5) is not a decision until
+§13 of DESIGN.md records one.
 
 ## 1. What is stored today
 
@@ -31,9 +33,38 @@ The generated engine calls `get_avail` from 93 places, `flush_list` from 31, `de
 
 P-T1 normalises items 1's lines and the end-of-run block (DESIGN.md §1.1) but both harnesses still
 report them as an accounting check; this design keeps them exact. Beside pdfTeX's observables the
-engine itself reads addresses: the display list's side table (`dl_new_node`, by address), the
-convergence test (`crate::iso`, free cells from the `avail` chain, the dead-cell rule),
-`readset`'s same-address patches, lineshift's taint bits and BOX-MEMO's freed-list hook (by head).
+engine itself reads addresses. Each reader, and why §4's lazy flush (as #2016 lands it) leaves it
+as it was:
+
+- the display list's side table (`dl_new_node`, keyed by the address allocated): every node gets
+  pdfTeX's address in pdfTeX's order (§4), so every key is the same;
+- the convergence test, checkpoints, restores and hashes (`crate::iso`, `incr::free_cells` walking
+  the `avail` chain, the dead-cell rule): they read the word space only after `spill_scalars`,
+  which #2016 makes link the pending segments into one chain first, so they see pdftex.web's words;
+- `readset`'s same-address patches and lineshift's taint bits: keyed by a live list's head or a
+  live node's address, which (as for the side table) do not move;
+- BOX-MEMO's freed-list hook (by head): it is told the head that `flush_list` frees, which it still
+  gets; it never follows the freed list's links;
+- pdfTeX's own readers of a freed cell's link: `check_mem` and `search_mem` (pdftex.web l.3966,
+  l.4053) are in `debug ... gubed`, which `web2rust-default.args` does not compile in; `show_token_list` of a dangling list, or a use after free
+  on an error path, would read the one word that differs (a pending segment's last link is null,
+  where pdfTeX's points at the older free list). pdftex.web has no such read (it would corrupt
+  pdfTeX's free list too), and trip and etrip, which reach the error paths, pass on #2016. A
+  verify-mode assertion on such reads (review of #2008, item 5) is not implemented.
+
+Token lists are shared, not only owned, which matters to Rule 2 below. pdftex.web calls
+`add_token_ref` at 26 places: every macro or `\toks` list put on the input stack
+(`begin_token_list`, l.8225), `\let` of a macro (l.31759) and `\toks` copied between registers
+(l.31908), marks (`\mark` nodes copied, l.4661, and the page builder's `top_mark`, `first_mark`,
+`bot_mark` and `split_bot_mark`, l.27781 and l.28424–28495), e-TeX's mark classes (l.39792–39829), and the
+pdfTeX whatsits `copy_node_list` copies (`\write`'s tokens, literals, colour stacks, `\pdfsetmatrix`,
+annotations, link attributes, destination and thread ids; l.35790–35867, l.36629, l.36651). A store
+outside `mem` would need shared, reference-counted, immutable slices that live across the page
+builder and shipout for all of them. Other routines hand a list's ownership
+to the input stack (`back_list`, `ins_list`), make one-node `backed_up` lists (`back_input`,
+`\expandafter`), or rewrite `info` in place before handing it on (`\uppercase`, `\lowercase`).
+Assignments (`\def`, `\edef`, `\toks`) replace by reference (`eq_define` and `delete_token_ref`)
+and `\afterassignment` holds one token, so those need nothing new.
 
 **Rule 1: the layout is free.** Any allocator that returns *some* free one-word cell when one exists,
 and takes `hi_mem_min-1` only when none does, leaves items 1, 2 and 4 unchanged: the number of free
@@ -50,7 +81,8 @@ as a slice of the caller's list), changes how many cells are in use. It stays ex
 phantom count Φ of the cells pdfTeX would hold: print `dyn_used+Φ`; take `hi_mem_min-1` whenever the
 free chain has at most Φ cells (pdfTeX's would be empty); and do it *per token*, not per list, so that
 the overflow and its `runaway` text come at pdfTeX's token. Then `runaway` and `show_context` must
-print slices, and every routine that splices or edits a list in place must copy instead (`\the`
+print slices, every sharer of §2's catalogue needs a reference-counted slice, and every routine
+that splices or edits a list in place must copy instead (`\the`
 inside a definition, `ins_the_toks`; `macro_call`'s brace stripping; alignment templates), and the
 convergence test must learn the new representation. That is MACRO-REPLAY-sized work (§5.6 item 2's
 "argument matching without allocation"); §3 and §4 measure part of what it could buy.
@@ -61,8 +93,8 @@ A contiguous list would buy two things: an O(1) free (its end is known) and read
 words. The free is measured, on the prototype's own binary (§4, switch on against off): the walk in
 `flush_list` is about 2 % of a cold compile's instructions and 3–6 % of its cycles. The reads are
 not measured: the per-line cachegrind run that would show how often a token read misses
-(`contig-bench`, run 41335270525, a simulated M1 cache) was still queued on GitHub's runners when
-this was written. A belief, not a measurement: the room is small, since main retires 2.6
+(`contig-bench`, run 41335270525, a simulated M1 cache) was cancelled in the queue and never ran,
+so no read-side measurement exists. A belief, not a measurement: the room is small, since main retires 2.6
 instructions a cycle on the PC (*Infinite Descent ×2*: 450 G in 169–176 G cycles) and P6-HYPEROPT
 measured 3.4 on an M1, and LIFO reuse already hands a list the cells its predecessor just freed.
 
@@ -88,7 +120,9 @@ compile's cycles): instructions −1.5 to −3.5 %, cycles a little more; the sw
 within ±0.2 % of main.
 
 **Measured** (VERIFIED: the NixOS PC, AMD 7800X3D, `perf stat`, 5 interleaved compiles per
-engine and document, medians; run 41338025620, raw/pc-2/; main `3f835f488`):
+engine and document, medians; run 41338025620, raw/pc-2/; main `3f835f488`; the build measured is
+`3cb785555`, whose tree differs from `cb7108610` only in `src/generated/`, which the run
+regenerates from the same change files, and in `scripts/bench.py`):
 
 | | instructions | cycles | runs with fewer cycles than main |
 |---|---:|---:|---|
@@ -100,8 +134,20 @@ engine and document, medians; run 41338025620, raw/pc-2/; main `3f835f488`):
 An earlier build of the same idea (the switch as a test of its own, the one-node test last; run
 41335252513, raw/pc-1/) gave −6.68 % and −3.00 % cycles: the PC was shared, so the cycle deltas carry about ±2 points between runs, and
 every one of the 28 document medians in the two runs was below main's. Every PDF (210 compiles per
-run) is main's byte for byte, and so are the logs and their memory lines, but for one paper whose
-log prints the binary's own path in four pdfTeX warnings (raw/pc-2/…-log-main-vs-proto.diff).
+run, each run a different build: pc-1 is `d362f5381`) is main's byte for byte, and so are the logs,
+but for one paper whose log prints the binary's own path in four pdfTeX warnings
+(raw/pc-2/…-log-main-vs-proto.diff). None of these documents sets `\tracingstats>1`, so their logs
+hold only the end-of-run "words of memory" line, which reads `hi_mem_min` but not `dyn_used`: these
+runs do **not** test the recomputed `dyn_used`. #2016 tests it against pdfTeX itself (§5). The
+`maxrss_kb` field of these runs is `RUSAGE_CHILDREN`'s running maximum, the same in every row, so
+they carry no memory data; §6's runs record each compile's own peak.
+
+Two biases these cycle numbers do not bound (review of #2008, item 4): the PC was shared (load
+2.9–5.0), and `bench.py`'s rotation put `on` straight after `off` (the same binary and format) in
+4 of 5 reps while `main` never followed its own build, which on a 96 MB L3 could favour `on` in
+cycles but not in instructions. The `off` build's instruction count is measured; the always-on
+build's is not (on and off share a binary). §6 repeats the measurement on #2016's always-on build
+in a random order with an A/A control. All of it is x86; nothing here is measured on an M-series Mac.
 
 So the guess was wrong in an instructive way. The walk is only about 2 % of the instructions (on
 against off, the same binary: −1.8 % on the book, −1.5 % on the papers) but 3–6 % of the cycles.
@@ -116,15 +162,32 @@ inlined copies and `get_avail`'s 93.
 1. **Do not move tokens into contiguous storage.** Rule 2 keeps a separate token store exact only
    with per-token phantom accounting and a new consumer for every one of the list routines above;
    what linked storage measurably costs is the *free*, and §4 removes that without moving a token.
-2. **Land lazy flush always on, in every binary, as its own lane** (not in this one):
-   - without the runtime switch: its off path costs 1.2–1.7 % instructions, so landing it off is a
-     regression, and landing it on for the command line only would leave the hosts paying that;
-   - in the hosts, link the segments into one chain at the entry of `flashtex_checkpoint_hook`
-     (each freed list is linked at most once, so this costs at most the walks saved; to be checked:
-     that every checkpoint, restore and convergence test runs from there), or teach
-     `incr::free_cells` (the hand-written reader of the free list) the segments;
-   - gates: trip, etrip, lockstep with its accounting check, the P-T1/P-T2 fixtures, T2, and the
-     incremental soundness sweeps, the hosts' only new risk. Expected: −2 to −7 % cycles on cold
-     compiles, from §4.
+2. **Land lazy flush always on, in every binary.** Done as its own change, PR #2016
+   (`changes/lazyflush.ch`, `src/lazyflush.rs`), with no runtime switch, since the off path costs
+   1.2–1.7 % instructions. The hosts see one chain: `spill_scalars`, where every reading of the
+   word space starts (checkpoint, restore, hash, convergence test, format image), first links the
+   pending segments (`flashtex_merge_free`). Each node it walks was freed since the previous merge,
+   so it walks at most the nodes the walking `flush_list` would have, but it walks them in a batch,
+   on the edit path (review of #2008, item 3): §6 measures what that does to the host. #2016's
+   gates, all VERIFIED:
+   - perf A/B on the PC against its base `c5763d9b8` (run 41348384137, raw/pc-3/): *Infinite
+     Descent ×2* −0.61 % instructions, −6.33 % cycles; 13 papers −0.66 % instructions, −2.69 %
+     cycles, fewer cycles on 12 of 13; 140 PDFs identical. Same rotation as §4, so its cycle
+     numbers carry §4's bias; §6 bounds it.
+   - `\tracingstats=2` against TeX Live's pdfTeX (run 41349282689, re-compared with
+     `scripts/stats.py --logs`, raw/stats-1/): on a beamer deck (249 memory-usage lines) every
+     field of every line equals pdfTeX's; on arXiv 2501.06980v1 (13 lines) #2016 prints exactly its
+     base's lines and its base's whole log, and both differ from pdfTeX in `dyn_used` by +33 and
+     +44, a difference of main's own (#2039).
+   - T2 on the PC (run 41348460353): reference and candidate each fail the same 22 tests; fixture-wide
+     incremental soundness: 108 documents, 217 compiles, 0 differences.
+   - PR CI (trip, etrip, lockstep, the P-T fixtures, the engine's tests) and the soundness sweeps
+     `sound-a`, `sound-timed`, `sound-d`, `sound-budget-d` with BOX-MEMO on, verify and off (runs
+     41420459736, 41420480889, 41420501650 on `49a5c303b`; again on its final head after main was
+     merged in).
+   - Not done from the review's list: a forced "main memory size" overflow compared with pdfTeX's
+     `runaway` text (by (1) of the change file the overflow comes at the same allocation, but no
+     test shows it), a test with the segment stack full, and a verify-mode assertion on reads of a
+     pending segment's last link.
 3. **Contiguity by placement (Rule 1)** only if a read-side measurement shows token reads missing the
    cache (§3); its parity risk is nil, but it competes with LIFO reuse, which keeps hot cells hot.
