@@ -191,6 +191,9 @@ final class EngineV3Session {
     /// A new project's trust is decided after its first walk (the copy's
     /// sync); until then its COMPILEs send shell escape off.
     @ObservationIgnored private var trustPending = false
+    /// The last decision's files of a shared folder (`Decision.shared`): what
+    /// an untrusted compile there may read of it (`untrustedRoots`).
+    @ObservationIgnored private var trustSharedFiles: [URL]?
     /// The project folder's file set (EngineV3ProjectWatcher): a change makes
     /// the next compile, an edit's included, walk the project and decide
     /// trust again first, so `external_tools`/shell escape never apply to a
@@ -1047,7 +1050,10 @@ final class EngineV3Session {
         let decided: Bool? = !trustPending && project?.source == root ? projectTrusted : nil
         let main = root.appendingPathComponent(Self.mainFile(model: model))
         guard Self.wantsUntrustedConfinement(root: root, main: main, decided: decided) else { return nil }
-        return Self.untrustedRoots(projectRoot: root)
+        // A shared folder: the files the decision found the document reads,
+        // else (not decided yet) the main file alone.
+        let shared = EngineV3Trust.isShared(root) ? (decided != nil ? trustSharedFiles ?? [main] : [main]) : nil
+        return Self.untrustedRoots(projectRoot: root, sharedFiles: shared)
     }
 
     /// Whether a project's compiles are read-confined because it is not
@@ -1068,12 +1074,21 @@ final class EngineV3Session {
     }
 
     /// What an untrusted project's compiles may read besides the job's and
-    /// output folders and files found along the TeX search paths (which the
-    /// engine allows when no link is on their path): the project folder,
+    /// output folders and the distribution's own trees: the project folder,
     /// the TeX Live tree, the app's own resources and the system's font
-    /// folders. Never the home folder.
-    nonisolated static func untrustedRoots(projectRoot: URL) -> [String] {
-        var roots = [projectRoot.resolvingSymlinksInPath().path]
+    /// folders. Never the home folder. The host gets
+    /// `FLASHTEX_CONFINE_SEARCH=roots` with these
+    /// (`EngineV3HostProcess.confinedEnvironment`), so a file the TeX search
+    /// paths find must lie in one of them or in the trees texmf.cnf names for
+    /// the distribution (the engine's `search_trees`): the directories of the
+    /// user's `TEXINPUTS` and `TEXMFHOME` (`~/Library/texmf`) are not read
+    /// (#2026 review, finding 2).
+    /// `sharedFiles`: the project's root is a shared folder (a lone file in
+    /// Downloads, `EngineV3Trust.isShared`): only these files of it, never
+    /// the whole folder, whose other files the copy links too (#2026
+    /// review, finding 1).
+    nonisolated static func untrustedRoots(projectRoot: URL, sharedFiles: [URL]? = nil) -> [String] {
+        var roots = sharedFiles.map { $0.map { $0.resolvingSymlinksInPath().path } } ?? [projectRoot.resolvingSymlinksInPath().path]
         if let tl = texLiveRoot() { roots.append(tl) }
         if let res = Bundle.main.resourceURL { roots.append(res.resolvingSymlinksInPath().path) }
         roots += ["/System/Library/Fonts", "/Library/Fonts"]
@@ -1082,6 +1097,10 @@ final class EngineV3Session {
         for r in roots where !out.contains(r) { out.append(r) }
         return out
     }
+
+    /// Whether `roots` are an untrusted project's (`untrustedRoots`), not a
+    /// Live Share session's (the project alone).
+    nonisolated static func areUntrustedRoots(_ roots: [String]?) -> Bool { roots?.contains("/System/Library/Fonts") == true }
 
     /// The TeX Live tree the engine uses: the year folder above the first
     /// `kpsewhich` it would find (EngineChoice.texLiveCandidates), links
@@ -1127,7 +1146,7 @@ final class EngineV3Session {
         let want = confineRoots(for: model)
         guard host.confineRoots != want else { return false }
         // Live Share confines to the project alone; trust adds the TeX tree and fonts.
-        let why = Self.confineRoots(model) != nil || host.confineRoots?.count == 1 ? "Live Share" : "project trust"
+        let why = Self.confineRoots(model) != nil || (host.confined && !Self.areUntrustedRoots(host.confineRoots)) ? "Live Share" : "project trust"
         log("relaunching the host \(want == nil ? "unconfined" : "confined") (\(why))")
         if host.confined, want == nil { clearOutputAfterSession() }
         blockedReads = []
@@ -1344,6 +1363,7 @@ final class EngineV3Session {
     /// Applies a trust decision (made off the main thread); sets the prompt when untrusted.
     private func applyTrust(_ d: EngineV3Trust.Decision?, root: URL?, main: URL?) {
         trustPending = false
+        trustSharedFiles = d?.shared
         var trusted = true, prompt: TrustPrompt?
         if let d, let root, let main {
             trusted = d.trusted
@@ -1387,9 +1407,15 @@ final class EngineV3Session {
         let t0 = MonotonicClock.nowNs()
         Self.walkQueue.async { [weak self] in
             let shared = root.map(EngineV3Trust.isShared) ?? false
-            let walk = project.sync(except: editorPaths, quarantine: !shared)
+            // A shared folder (a lone file in Downloads): the files the
+            // document reads, found first, decide which of its downloads the
+            // copy links (EngineV3Trust.SharedLinks).
+            let referenced = shared ? root.map { EngineV3Trust.referencedFiles(root: $0, main: main, texts: texts) } : nil
+            var sharedLinks: EngineV3Trust.SharedLinks?
+            if let mainURL, let referenced { sharedLinks = EngineV3Trust.SharedLinks(main: mainURL, referenced: referenced) }
+            let walk = project.sync(except: editorPaths, quarantine: !shared, sharedLinks: sharedLinks)
             let t1 = MonotonicClock.nowNs()
-            let decision = root.map { EngineV3Trust.decide(root: $0, main: main, texts: texts, walkQuarantined: walk.quarantined) }
+            let decision = root.map { EngineV3Trust.decide(root: $0, main: main, texts: texts, walkQuarantined: walk.quarantined, referenced: referenced) }
             let t2 = MonotonicClock.nowNs()
             let ms = String(format: "%.1f (walk %.1f, trust %.1f)", Double(t2 &- t0) / 1e6, Double(t1 &- t0) / 1e6, Double(t2 &- t1) / 1e6)
             EngineV3Session.onMain {
@@ -1603,7 +1629,11 @@ final class EngineV3Session {
             // compiles every document again as a buffer.
             log("the project copy \(project.base.lastPathComponent) vanished; re-creating it and restarting the host")
             project.ensure()
-            _ = project.sync(except: Set(docs.map(\.path)), fingerprints: false, quarantine: false)
+            // (in a shared folder, no other download until the next walk has read the document)
+            let sharedLinks = projectRoot.flatMap { r in
+                EngineV3Trust.isShared(r) ? EngineV3Trust.SharedLinks(main: r.appendingPathComponent(mainFile), referenced: []) : nil
+            }
+            _ = project.sync(except: Set(docs.map(\.path)), fingerprints: false, quarantine: false, sharedLinks: sharedLinks)
             restart("the project copy vanished")
             return
         }
@@ -3525,10 +3555,16 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         texInputNames = made
     }
 
+    /// Where `materializePackages` writes the delivered files (a hidden
+    /// folder of the copy's `src/`, which no project walk links into).
+    var packagesDirectory: URL { root.appendingPathComponent(".flashtex-packages", isDirectory: true) }
+
     /// The resolved packages' files (ProjectPackagesState.documents(), at
     /// `packages/<name>/<file>`), as the new engine finds them: each written
-    /// into this copy's own `packages/` directory (beside `src/`, never in
-    /// the user's project, the package cache or a library) and returned as a
+    /// into this copy's own `src/.flashtex-packages/` directory (never in
+    /// the user's project, the package cache or a library; inside `src/`,
+    /// the host's working directory, so a confined host, Live Share's or an
+    /// untrusted project's, reads them: #2026 review, finding 3) and returned as a
     /// link by file name for `linkTexInputs`, after the texinputs, so a
     /// project file of the same name still wins. The host reads exactly the
     /// text the helper delivered (checked against the cache's SHA-256 when it
@@ -3537,7 +3573,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// `packages/<name>/<file>` with plain names is skipped.
     func materializePackages(_ docs: [ProjectDocuments.ImplicitDocument]) -> [TexInputLink] {
         let fm = FileManager.default
-        let dir = base.appendingPathComponent("packages", isDirectory: true)
+        let dir = packagesDirectory
         var keep = Set<String>()
         var seen = Set<String>()
         var out: [TexInputLink] = []
@@ -3574,7 +3610,11 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         return out
     }
 
-    func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
+    /// `sharedLinks`: the source is a shared folder (`EngineV3Trust.isShared`),
+    /// whose files are linked only as `SharedLinks.links` says; a link to
+    /// one it does not is removed.
+    func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true,
+              sharedLinks: EngineV3Trust.SharedLinks? = nil) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
         guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return Walk(inputs: nil, quarantined: []) }
@@ -3600,6 +3640,10 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             }
             if EngineV3Snapshot.isInput(rel) { inputs?[rel] = EngineV3Snapshot.fingerprint(path) ?? "unreadable" }
             if quarantine, EngineV3Trust.isQuarantined(url) { quarantined.append(url) }
+            if let sharedLinks, !sharedLinks.links(url) {
+                if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
+                continue
+            }
             if editorPaths.contains(rel) {
                 // A link here would let the host write through to the user's file.
                 if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }

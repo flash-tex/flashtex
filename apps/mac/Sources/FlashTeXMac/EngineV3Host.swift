@@ -210,7 +210,10 @@ final class EngineV3HostProcess: @unchecked Sendable {
         refusalsPath = socketPath + ".refused"
         unlink(refusalsPath)
         let refusals = refusalsPath
-        process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0, refusals: refusals) }
+        process.environment = confineRoots.map {
+            Self.confinedEnvironment(Self.environment(host: executable), roots: $0, refusals: refusals,
+                                     searchInRoots: EngineV3Session.areUntrustedRoots($0))
+        }
             ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -385,10 +388,17 @@ final class EngineV3HostProcess: @unchecked Sendable {
     /// name must never start METAFONT). `refusals`: the file the engines
     /// list refused reads in (`FLASHTEX_CONFINE_REFUSED`). The same
     /// environment confines an untrusted project's host
-    /// (`EngineV3Session.wantsUntrustedConfinement`).
-    static func confinedEnvironment(_ base: [String: String], roots: [String], refusals: String? = nil) -> [String: String] {
+    /// (`EngineV3Session.wantsUntrustedConfinement`), with `searchInRoots`
+    /// (its roots name the TeX trees, `EngineV3Session.untrustedRoots`): a
+    /// file found along the search paths must lie in a root too
+    /// (`FLASHTEX_CONFINE_SEARCH=roots`), so `TEXINPUTS` and `TEXMFHOME`
+    /// directories outside them are not read.
+    static func confinedEnvironment(_ base: [String: String], roots: [String], refusals: String? = nil,
+                                    searchInRoots: Bool = false) -> [String: String] {
         var env = base
         env["FLASHTEX_CONFINE_READS"] = "1"
+        env.removeValue(forKey: "FLASHTEX_CONFINE_SEARCH")
+        if searchInRoots { env["FLASHTEX_CONFINE_SEARCH"] = "roots" }
         env.removeValue(forKey: "FLASHTEX_CONFINE_REFUSED")
         if let refusals { env["FLASHTEX_CONFINE_REFUSED"] = refusals }
         env["FLASHTEX_CONFINE_ROOTS"] = roots.joined(separator: ":")

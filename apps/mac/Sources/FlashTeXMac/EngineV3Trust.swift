@@ -286,6 +286,11 @@ enum EngineV3Trust {
         /// What trusting it records: the subjects not yet recorded as they
         /// are now (empty when trusted, or when it cannot be trusted as is).
         var need: [Identity]
+        /// In a shared folder (`isShared`): the main file and the files it
+        /// reads (`referencedFiles`), all an untrusted compile there may read
+        /// of the folder (EngineV3Session.untrustedRoots); nil in a project
+        /// folder.
+        var shared: [URL]? = nil
     }
 
     /// Decides a project's trust. In a project folder, every quarantined
@@ -293,14 +298,44 @@ enum EngineV3Trust {
     /// (`isShared`: a lone file in Downloads), only the files the document
     /// itself reads (`referencedFiles`), so other downloads there never ask.
     /// Reads the disk: call off the main thread.
-    static func decide(root: URL, main: String, texts: [String: String], walkQuarantined: [URL], store: Store = .current) -> Decision {
-        let others = isShared(root) ? referencedFiles(root: root, main: main, texts: texts).filter(isQuarantined) : walkQuarantined
+    /// `referenced`: `referencedFiles` when the caller has it already.
+    static func decide(root: URL, main: String, texts: [String: String], walkQuarantined: [URL],
+                       referenced: [URL]? = nil, store: Store = .current) -> Decision {
+        let shared = isShared(root)
+        let refs = shared ? referenced ?? referencedFiles(root: root, main: main, texts: texts) : []
+        let others = shared ? refs.filter(isQuarantined) : walkQuarantined
+        let files: [URL]? = shared ? [root.appendingPathComponent(main)] + refs : nil
         guard let need = subjects(root: root, main: root.appendingPathComponent(main), others: others, store: store) else {
-            return Decision(trusted: false, others: others, need: [])
+            return Decision(trusted: false, others: others, need: [], shared: files)
         }
         let records = store.load()
         let missing = need.filter { !records.contains($0) }
-        return Decision(trusted: missing.isEmpty, others: others, need: missing)
+        return Decision(trusted: missing.isEmpty, others: others, need: missing, shared: files)
+    }
+
+    /// Which files of a shared folder the project copy links (#2026 review,
+    /// finding 5): all but those quarantined by another download than the
+    /// main file's that the document does not read (`referenced`). So a
+    /// trusted lone file's `\input` of a name built by a macro never reaches
+    /// a later download beside it, which no trust decision has counted (it
+    /// is missing, as if not there); one the document names literally is
+    /// linked and counted (`decide`).
+    struct SharedLinks: Sendable {
+        var mainEvent: String?
+        /// Canonical paths.
+        var referenced: Set<String>
+
+        init(main: URL, referenced: [URL]) {
+            mainEvent = quarantineValue(main).map(quarantineEvent)
+            self.referenced = Set(([main] + referenced).map { EngineV3Trust.canonical($0).path })
+        }
+
+        /// Whether the copy links `url`, a file of the shared folder.
+        func links(_ url: URL) -> Bool {
+            guard let q = quarantineValue(url) else { return true }
+            if let mainEvent, quarantineEvent(q) == mainEvent { return true }
+            return referenced.contains(EngineV3Trust.canonical(url).path)
+        }
     }
 
     /// Files under `root` the document reads as TeX, found lexically from

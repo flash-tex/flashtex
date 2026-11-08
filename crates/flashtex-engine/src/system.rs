@@ -1962,6 +1962,11 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
 ///   colon-separated `FLASHTEX_CONFINE_ROOTS`: the real project folder), or
 ///   be a search-path hit with no link anywhere in its path (a TeX tree
 ///   file). So a project file that is a link to `~/.ssh/id_rsa` is refused.
+///   With `FLASHTEX_CONFINE_SEARCH=roots` (the app's untrusted projects)
+///   such a hit must lie in a root or in the distribution's own trees
+///   (`search_trees`), so the directories of the user's `TEXINPUTS` and
+///   `TEXMFHOME` (`~/Library/texmf`) are not readable by a bare name
+///   (#2026 review, finding 2).
 ///
 /// The format and the string pool are the host's own (its command line),
 /// not the document's, and are not confined. kpathsea's `openin_any = p`
@@ -2125,8 +2130,59 @@ pub(crate) fn confined_path_ok(found: &Path, roots: &[std::path::PathBuf], searc
         return true;
     }
     // A search-path hit (an absolute path kpathsea built from its trees)
-    // with no link anywhere in it is a TeX tree file.
-    searched && found.is_absolute() && real == found
+    // with no link anywhere in it is a TeX tree file; with
+    // `FLASHTEX_CONFINE_SEARCH=roots`, only in the distribution's own trees.
+    if !(searched && found.is_absolute() && real == found) {
+        return false;
+    }
+    !search_hits_in_roots_only() || search_trees().iter().any(|t| real.starts_with(t))
+}
+
+/// `FLASHTEX_CONFINE_SEARCH=roots`: a search-path hit is allowed only in a
+/// root or in one of the distribution's own trees (`search_trees`), never
+/// in a `TEXINPUTS` or `TEXMFHOME` directory (`confined_path_ok`).
+fn search_hits_in_roots_only() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_CONFINE_SEARCH").is_some_and(|v| v == "roots"))
+}
+
+/// The distribution's own trees, links resolved: texmf.cnf's `TEXMFDIST`,
+/// `TEXMFMAIN`, `TEXMFLOCAL`, `TEXMFSYSVAR`, `TEXMFSYSCONFIG` and
+/// `TEXMFVAR` (what the TeX tools generate: font maps, caches), and the
+/// bundle's cache (the distribution fetched without a TeX Live). Not
+/// `TEXMFHOME` or `TEXMFCONFIG`, which are the user's. Read once.
+fn search_trees() -> &'static [std::path::PathBuf] {
+    static TREES: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    TREES.get_or_init(|| {
+        let mut out = vec![];
+        for var in [
+            "TEXMFDIST",
+            "TEXMFMAIN",
+            "TEXMFLOCAL",
+            "TEXMFSYSVAR",
+            "TEXMFSYSCONFIG",
+            "TEXMFVAR",
+        ] {
+            let Some(v) = with_resolver(|r| r.config_var(var)) else {
+                continue;
+            };
+            for p in v.split([',', '{', '}', ':', ';']) {
+                let p = p.trim().trim_start_matches("!!");
+                if p.starts_with('/') {
+                    if let Ok(c) = std::fs::canonicalize(p) {
+                        out.push(c);
+                    }
+                }
+            }
+        }
+        #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+        if let Some(c) =
+            crate::bundle::default_cache_dir().and_then(|d| std::fs::canonicalize(d).ok())
+        {
+            out.push(c);
+        }
+        out
+    })
 }
 
 /// The rule itself (tests call it directly).

@@ -103,3 +103,66 @@ fn without_confinement_nothing_is_refused_or_written() {
     assert_eq!(lines, None);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// `FLASHTEX_CONFINE_SEARCH=roots` (an untrusted project's host, whose roots
+/// name the TeX trees; #2026 review, finding 2): a file found by a bare
+/// name in a directory of the user's `TEXINPUTS` outside the roots is
+/// refused. Without it such a search-path hit stays readable, as for Live
+/// Share, whose roots are the project alone.
+#[test]
+fn search_hits_outside_the_roots_are_refused_when_the_roots_name_the_trees() {
+    let (base, job, outside) = setup("search");
+    std::fs::write(
+        job.join("t.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\
+         \\openin1=sec.tex\n\\ifeof1 \\message{[missing]}\\else\\read1 to\\x \\message{\\x}\\fi\n\
+         \\end\n",
+    )
+    .unwrap();
+    let refused = base.join("refused");
+    // (with its links resolved: a hit through a link, as macOS's /var is,
+    // is refused either way)
+    let texinputs = format!(".:{}:", std::fs::canonicalize(&outside).unwrap().display());
+    let run = |strict: bool| {
+        let _ = std::fs::remove_file(&refused);
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"));
+        cmd.current_dir(&job)
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("TEXINPUTS", &texinputs)
+            .env("FLASHTEX_CONFINE_READS", "1")
+            .env("FLASHTEX_CONFINE_ROOTS", &job)
+            .env("FLASHTEX_CONFINE_REFUSED", &refused)
+            .args([
+                "-ini",
+                "-output-directory=out",
+                "-interaction=nonstopmode",
+                "t.tex",
+            ]);
+        if strict {
+            cmd.env("FLASHTEX_CONFINE_SEARCH", "roots");
+        } else {
+            cmd.env_remove("FLASHTEX_CONFINE_SEARCH");
+        }
+        cmd.output().expect("run flashtex-initex");
+        let log = std::fs::read_to_string(job.join("out/t.log")).unwrap_or_default();
+        let lines: Vec<String> = std::fs::read_to_string(&refused)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        (log, lines)
+    };
+    let (log, lines) = run(false);
+    assert_eq!(
+        log.matches(SECRET).count(),
+        1,
+        "a TEXINPUTS hit is read: {log}"
+    );
+    assert!(lines.is_empty(), "{lines:?}");
+    let (log, lines) = run(true);
+    assert_eq!(log.matches(SECRET).count(), 0, "{log}");
+    assert!(log.contains("[missing]"), "{log}");
+    let real = std::fs::canonicalize(outside.join("sec.tex")).unwrap();
+    assert_eq!(lines, vec![format!("sec.tex\t{}", real.display())]);
+    let _ = std::fs::remove_dir_all(&base);
+}
