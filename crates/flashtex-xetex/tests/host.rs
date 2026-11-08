@@ -2400,3 +2400,183 @@ fn a_font_installed_after_a_lookup_in_the_body_is_found() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `diag-v1` from the engine's own record (`crate::diag`, the pdfTeX
+/// engine's side channel ported): an error's `DIAG` is exact, with the
+/// column of TeX's split, the macro chain TeX's context leaves out under
+/// LaTeX (`\errorcontextlines=-1`) and the macro's definition site; an
+/// overfull box's is placed at its first character; and an incremental
+/// compile (from a page checkpoint, from S₀) sends exactly the `DIAG`s a
+/// compile from scratch of the same text sends.
+#[test]
+fn diags_come_from_the_engine_and_hold_across_edits() {
+    use flashtex_display_list::diag::{Diag, CAPABILITY};
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-diag-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=6 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for k in 0..8 {
+            body.push_str(&para.repeat(3));
+            if i == 3 && k == 2 {
+                body.push_str("\n\\wrap{café x}\n");
+            }
+            if i == 5 && k == 1 {
+                body.push_str("\n\\hbox to 1em{overfull naïve box}\n");
+            }
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\
+         \\newcommand{{\\inner}}[1]{{\\undefinedmacro #1}}\n\
+         \\newcommand{{\\wrap}}[1]{{\\inner{{#1}}}}\n\
+         \\begin{{document}}\n{body}See~\\ref{{p2}} and~\\ref{{nowhere}}.\n\\end{{document}}\n"
+    );
+    let texts = [
+        doc.clone(),
+        doc.replace("See~", "Look at~"),
+        doc.replacen("Words and more", "Wards and more", 1),
+        doc.clone(),
+    ];
+    // (paths in the project's directory, which differs between the hosts,
+    // made relative to it)
+    fn rel(p: &mut Option<String>, root: &str) {
+        if let Some(s) = p {
+            *s = s.replace(root, "<proj>");
+        }
+    }
+    let compile = |c: &mut Client, id: i64, proj: &Path, out: &str, text: &str| {
+        let root = proj.to_str().unwrap().to_string();
+        let mut r = request(id, proj, out);
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        let (ev, done) = events(c, id);
+        let diags: Vec<Diag> = ev
+            .iter()
+            .filter_map(|e| match e {
+                Event::Diag(d) => {
+                    let mut d = d.clone();
+                    d.id = 0;
+                    rel(&mut d.file, &root);
+                    if let Some(e) = d.end.as_mut() {
+                        rel(&mut e.file, &root);
+                    }
+                    for f in d.trace.iter_mut() {
+                        if let Some(l) = f.loc.as_mut() {
+                            rel(&mut l.file, &root);
+                        }
+                        if let Some(l) = f.def.as_mut() {
+                            rel(&mut l.file, &root);
+                        }
+                    }
+                    Some(d)
+                }
+                _ => None,
+            })
+            .collect();
+        let starts = done
+            .get("starts")
+            .and_then(Json::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+        (starts, diags)
+    };
+    // one host, a compile per text: incremental after the first
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let envs = [("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+    let h = start_with(&sub, &envs, &sub.join("host.err"));
+    let mut c = Client::connect_accepting(&h.sock, &[CAPABILITY]).unwrap();
+    let got: Vec<(String, Vec<Diag>)> = texts
+        .iter()
+        .enumerate()
+        .map(|(i, t)| compile(&mut c, i as i64 + 1, &proj, &out, t))
+        .collect();
+    c.bye().unwrap();
+    drop(h);
+    let starts: Vec<&str> = got.iter().map(|g| g.0.as_str()).collect();
+    assert!(starts[1].starts_with("page"), "{starts:?}");
+    assert!(starts[2].starts_with("s0"), "{starts:?}");
+
+    // what the first compile says
+    let d = &got[0].1;
+    let err = d
+        .iter()
+        .find(|x| x.code == "tex/undefined-control-sequence")
+        .unwrap_or_else(|| panic!("no undefined control sequence: {d:#?}"));
+    assert!(err.exact, "{err:#?}");
+    let line = doc.lines().position(|l| l.starts_with("\\wrap{")).unwrap() as i64 + 1;
+    assert_eq!(err.line, Some(line), "{err:#?}");
+    // TeX has read the whole call `\wrap{café x}` (a column in UTF-8 bytes)
+    assert_eq!(err.col, Some("\\wrap{café x}".len() as i64), "{err:#?}");
+    assert_eq!(err.range, Some((0, "\\wrap{café x}".len() as i64)), "{err:#?}");
+    let names: Vec<&str> = err.trace.iter().filter_map(|f| f.name.as_deref()).collect();
+    assert!(
+        names.contains(&"\\inner") && names.contains(&"\\wrap"),
+        "{err:#?}"
+    );
+    let inner = err
+        .trace
+        .iter()
+        .find(|f| f.name.as_deref() == Some("\\inner"))
+        .unwrap();
+    let def_line = doc.lines().position(|l| l.contains("{\\inner}")).unwrap() as i64 + 1;
+    assert_eq!(
+        inner.def.as_ref().and_then(|l| l.line),
+        Some(def_line),
+        "{inner:#?}"
+    );
+    assert!(!err.help.is_empty(), "{err:#?}");
+    let bx = d
+        .iter()
+        .find(|x| x.code == "tex/overfull-hbox")
+        .unwrap_or_else(|| panic!("no overfull box: {d:#?}"));
+    let bline = doc
+        .lines()
+        .position(|l| l.starts_with("\\hbox to 1em"))
+        .unwrap() as i64
+        + 1;
+    assert_eq!(bx.line, Some(bline), "{bx:#?}");
+    assert!(bx.col.is_some() && bx.end.is_some(), "{bx:#?}");
+    assert!(
+        d.iter()
+            .any(|x| x.message.contains("Reference `nowhere' on page")),
+        "{d:#?}"
+    );
+
+    // each text from scratch, in a host of its own
+    for (i, text) in texts.iter().enumerate() {
+        let sub = dir.join(format!("fresh{i}"));
+        let (proj, out) = project(&sub, text);
+        let h = start_with(&sub, &envs, &sub.join("host.err"));
+        let mut c = Client::connect_accepting(&h.sock, &[CAPABILITY]).unwrap();
+        let (_, want) = compile(&mut c, 1, &proj, &out, text);
+        c.bye().unwrap();
+        drop(h);
+        assert_eq!(
+            got[i].1.len(),
+            want.len(),
+            "compile {} ({}): {:#?}\nvs {:#?}",
+            i + 1,
+            got[i].0,
+            got[i].1,
+            want
+        );
+        for (a, b) in got[i].1.iter().zip(&want) {
+            assert_eq!(a, b, "compile {} ({})", i + 1, got[i].0);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

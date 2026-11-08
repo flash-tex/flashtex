@@ -1,11 +1,13 @@
 //! `diag-v1` for Unicode mode (docs/protocol/display-list-v3.md §6.7):
-//! structured diagnostics read from the run's log.
+//! structured diagnostics read from the run's log, for a run in a process
+//! of its own (`FLASHTEX_UNICODE_INPROCESS=0`, an export).
 //!
-//! The pdfTeX engine's host builds its `DIAG`s from the engine's side
-//! channel, with the log's text for what no note covers
-//! (`flashtex_engine::host::diag`). The XeTeX engine runs in a child
-//! process and has no side channel yet, so everything comes from the log,
-//! through the same reader and the same classification
+//! A run in the host's process has the engine's side channel
+//! (`crate::diag`, as the pdfTeX engine's): its notes become `DIAG`s
+//! through the pdfTeX engine host's builder (`flashtex_engine::host::diag`,
+//! `host::compile`), with the terminal's text for what no note covers. A
+//! child's notes do not reach the host, so for it everything comes from
+//! the log, through the same reader and the same classification
 //! (`flashtex_engine::host::diag::scan_terminal`: severity, code, origin,
 //! package, file, line, `fatal`), and then, for an error, what TeX's error
 //! display says beyond its first line ([`complete`]):
