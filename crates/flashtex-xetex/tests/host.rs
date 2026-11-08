@@ -1459,7 +1459,10 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
     assert!(starts[1].starts_with("page"), "{starts:?}");
     assert!(starts[2].starts_with("s0"), "{starts:?}");
     assert!(starts[4].starts_with("page"), "{starts:?}");
-    assert!(got[4].1.len() < got[3].1.len(), "the last PDF is not shorter");
+    assert!(
+        got[4].1.len() < got[3].1.len(),
+        "the last PDF is not shorter"
+    );
     for (i, (a, b)) in got.iter().zip(&own).enumerate() {
         assert!(a.1 == b.1, "compile {}: the PDFs differ", i + 1);
         assert_eq!(a.2, b.2, "compile {}: the logs differ", i + 1);
