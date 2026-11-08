@@ -830,9 +830,11 @@ page the client shows now, between compiles:
 starts a compile: the host records the page, and while no `COMPILE` waits it
 makes the engine's restart points around that page dense again (far from
 the last edit the host keeps fewer, lane MEMORY), so that the first keystroke
-there restarts close by. A `COMPILE` that arrives meanwhile stops that work
-at its next checkpoint and keeps what it did; the pages it typesets again
-are the ones the client holds, and are not sent. A client sends `VIEWPORT`
+there restarts close by. The host starts that work only after about 50 ms
+with nothing else arriving, so a key sent right after the `VIEWPORT` finds
+it not started. A `COMPILE` that arrives while it runs stops it at its next
+stop point and drops it: the pages it typesets again are the ones the client
+holds (they are not sent), so nothing is lost but the restart points. A client sends `VIEWPORT`
 when scrolling settles (about 150 ms after the last scroll), and at once
 after a jump (a search result, an outline click, a SyncTeX reveal), so that
 the host hears of the jump before the next key. It is cheap: sending it

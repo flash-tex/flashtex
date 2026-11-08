@@ -859,13 +859,13 @@ impl Engine {
     }
 
     /// `VIEWPORT` (spec §6.3.1): the client shows `page` now. Far from the
-    /// last edit, retention kept one page checkpoint in a few
-    /// (`incr::Options::far`); while nothing waits, the run from the kept one
-    /// before `page` is made again, nothing changed, so that its checkpoints
-    /// around `page` exist when a key comes (`incr::Session::redensify`).
-    /// A COMPILE from the client stops it at its next checkpoint, and that
-    /// compile keeps what it typeset. Never a compile of its own: no reply,
-    /// and the pages it ships go to the cache only, as they were.
+    /// last edit, retention kept the page checkpoints only (`incr::thin`);
+    /// while nothing waits, the run from a page checkpoint before `page` is
+    /// made again, nothing changed, so that its segment checkpoints around
+    /// `page` exist when a key comes (`incr::Session::redensify`). A
+    /// COMPILE from the client stops it at its next stop point, and that
+    /// compile drops it. Never a compile of its own: no reply, and the
+    /// pages it ships go to the cache only, as they were.
     fn viewport(&mut self, conn: Arc<server::Conn>, page: usize) {
         let debug = std::env::var_os("FLASHTEX_INCR_DEBUG").is_some()
             || std::env::var_os("FLASHTEX_VIEWPORT_DEBUG").is_some();

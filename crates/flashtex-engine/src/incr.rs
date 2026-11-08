@@ -3778,6 +3778,10 @@ struct Baseline {
 struct Paused {
     report: Report,
     t0: Instant,
+    /// An idle run with nothing changed (`Session::redensify`): its pages
+    /// are the old run's, so the next compile drops it at once
+    /// (`abandon_paused`, nothing shipped again).
+    idle: bool,
 }
 
 /// What a pass changes in the session before it completes (`changes`
@@ -4743,14 +4747,15 @@ impl Session {
         {
             return self.settle_paused();
         }
-        self.paused = None;
+        // (an idle run's pages are the old ones, the client's: not again)
+        let idle = self.paused.take().is_some_and(|p| p.idle);
         let obs = g
             .layer()
             .observer
             .take()
             .and_then(|o| o.into_any().downcast::<Obs>().ok());
         self.reemit_from = obs
-            .filter(|o| !o.new_pages.is_empty())
+            .filter(|o| !idle && !o.new_pages.is_empty())
             .and_then(|o| o.keep_r);
         // (the old run's output tails are put back cheaply: a tail the
         // restore kept in its file gets back only the bytes the abandoned
@@ -4828,8 +4833,8 @@ impl Session {
 
     /// The client shows page `page` (0-based; `VIEWPORT`, lane MEMORY): if
     /// it is more than `Options::dense` pages from the retention cursor,
-    /// where retention keeps a page checkpoint only now and then
-    /// (`Options::far`) and no segment checkpoints, run again with nothing
+    /// where retention keeps the page checkpoints and no segment ones
+    /// (`thin`), run again with nothing
     /// changed from a kept page checkpoint `REDENSIFY_BACK` pages or more
     /// before it, through it and the page after (no convergence test
     /// before), so that their checkpoints, segment ones too, are taken (the
@@ -4837,7 +4842,7 @@ impl Session {
     /// converges with the old one and jumps to its end, as an edit's run
     /// does; its pages are the old ones. `None`: nothing to do. The
     /// caller's `set_preempt` stops it for newer work, and the next compile
-    /// keeps what it typeset.
+    /// drops it (`Paused::idle`).
     pub fn redensify(&mut self, page: usize) -> Result<Option<Report>, String> {
         if self.paused.is_some() || self.g.is_none() || page >= self.pages.len() {
             return Ok(None);
@@ -4858,6 +4863,9 @@ impl Session {
         let r = self.compile(None);
         // (never the next edit's: a run that returned before its tests)
         self.tests_from = None;
+        if let Some(p) = self.paused.as_mut() {
+            p.idle = true;
+        }
         r.map(Some)
     }
 
@@ -4894,6 +4902,16 @@ impl Session {
             self.abandon_paused(false)?;
             paused_how = "abandoned";
             self.force_cold = Some(format!("{p} was read while a checkpoint had it ahead"));
+        } else if self.paused.as_ref().is_some_and(|p| p.idle) {
+            // An idle run stopped for this compile (`redensify`): nothing
+            // it did is wanted now, and its pages are the old run's. Not
+            // settled (that drops the old run's later checkpoints and pages,
+            // ~15 ms on 1,000 pages), nor gone on with: back to the
+            // complete run, its word space lazily, nothing shipped again
+            // (lane MEMORY: a key 80 ms after a VIEWPORT).
+            let _busy = crate::busy::enter(crate::busy::Part::Paused);
+            self.abandon_paused(true)?;
+            paused_how = "dropped";
         } else if self.paused.is_some() {
             let _busy = crate::busy::enter(crate::busy::Part::Paused);
             let vs = self.paused_vs_changes();
@@ -7775,6 +7793,7 @@ impl Session {
             self.paused = Some(Paused {
                 report: rep.clone(),
                 t0,
+                idle: false,
             });
             return Ok(());
         }
@@ -7998,6 +8017,7 @@ impl Session {
                 self.paused = Some(Paused {
                     report: rep.clone(),
                     t0,
+                    idle: false,
                 });
                 return Ok(());
             }
