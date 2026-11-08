@@ -4260,8 +4260,17 @@ impl Globals {
     /// `S` with the same tokens become a copy for `R` and a share for `S`.
     /// The reference counts stay what they were; only which control
     /// sequence shares the list differs (review of #2211, REVIEW-C2 M1).
+    ///
+    /// The first replay of the job is left whole: the job's first
+    /// comparison is a full walk (`incr::same_state`'s periodic one), and a
+    /// difference ends the entry's replays, so the swap is met by the
+    /// restricted walk.
     fn bm_swap_share(&self, ops: &[Op]) -> Vec<Op> {
+        static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut ops = ops.to_vec();
+        if SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+            return ops;
+        }
         let body = |g: &Self, src: i32| -> Option<(i32, Vec<i32>)> {
             let w = g.bm_eq(src).hh();
             let (t, e) = (w.b0(), w.rh());

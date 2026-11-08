@@ -514,7 +514,7 @@ fn a_swapped_share_is_found_by_the_restricted_walk_too() {
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
          \\def\\IntrSrc{abc}\n\
          \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\let\\IntrR\\IntrSrc\\gdef\\IntrS{abc}\\endgroup}\n\
-         \\share{x}\\share{x}\\share{x}\\message{[\\meaning\\IntrR|\\meaning\\IntrS]}\\end\n",
+         \\share{x}\\share{x}\\share{x}\\share{x}\\message{[\\meaning\\IntrR|\\meaning\\IntrS]}\\end\n",
     )
     .unwrap();
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
@@ -552,15 +552,15 @@ fn a_swapped_share_is_found_by_the_restricted_walk_too() {
         stat(&s, "full_differences") >= 1,
         "the full walk missed the swap: {err}\n{s}"
     );
-    // the restricted walk on every call but the first: never holds where
-    // the full walk does not
+    // the restricted walk on every call but the first (whose replay the
+    // fault leaves whole): it meets the swap, and must not hold where the
+    // full walk does not
     let (code, err, s) = go("1000000000");
     assert!(!err.contains("WALK_CHECK"), "{code:?}: {err}");
     assert_eq!(code, Some(0), "{err}");
     assert!(stat(&s, "full_verified") >= 2, "{err}\n{s}");
-    assert_eq!(
-        stat(&s, "full_differences"),
-        stat(&s, "full_verified"),
-        "every swapped replay is a difference: {err}\n{s}"
+    assert!(
+        stat(&s, "full_differences") >= 1,
+        "the swap went unreported: {err}\n{s}"
     );
 }
