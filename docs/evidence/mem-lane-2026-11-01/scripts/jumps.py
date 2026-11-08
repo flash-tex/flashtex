@@ -83,7 +83,8 @@ def keys(i, page, n):
             # `queue_by` = what the engine thread did meanwhile, `paused_how`/`paused` = what it
             # did with a run newer work stopped)
             stages.append({k: st.get(k) for k in ('queue', 'queue_by', 'paused_how', 'paused', 'find', 'key',
-                                                  'changes', 'restore', 'first_page', 'edited_page')
+                                                  'changes', 'restore', 'first_page', 'edited_page',
+                                                  'queue_by_instr_k', 'queue_by_kc', 'paused_instr_k')
                            if k in st})
     if n and not ms:
         sys.stderr.write(f'{a.name} page {page}: no keystroke timed (exit {r.returncode})\n{r.stderr[-1500:]}\n')

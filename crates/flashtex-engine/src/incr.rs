@@ -3569,7 +3569,7 @@ pub fn kw(what: std::fmt::Arguments) {
     let us = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_micros());
-    eprintln!("[kw] {us} {what}");
+    eprintln!("[kw] {us} {what} [cpu {:.3}]", thread_cpu_s() * 1e3);
 }
 
 /// CPU time of this thread, in seconds (the machine is shared: wall time
