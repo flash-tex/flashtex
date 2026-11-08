@@ -4988,7 +4988,7 @@ mod tests {
     /// The intrinsics verifier's checks (#2141): a nested checkpoint, the
     /// normal path, a restore to it, the replay, a view of it, its drop.
     /// The older checkpoint stays exact, its log open, and a nested drop
-    /// leaves what a plain checkpoint's drop leaves.
+    /// leaves the state a plain checkpoint's drop leaves at every point.
     #[test]
     fn nested_checkpoints_drop_as_plain_ones() {
         let (mut a, mut arr) = space(100_000);
@@ -5025,16 +5025,27 @@ mod tests {
             b.drop_newest();
             assert_eq!(a.checkpoint_ids(), &[p]);
             assert_eq!(b.checkpoint_ids(), &[q]);
-            assert_eq!(a.open_log_len(), b.open_log_len(), "check {k}");
-            let mut x = a.open_log_chunks();
-            let mut y = b.open_log_chunks();
-            x.sort_unstable();
-            y.sort_unstable();
-            assert_eq!(x, y, "check {k}: the chunks the open log holds");
+            // the plain drop's log leaves out the chunks the seal found
+            // unchanged; the nested one keeps their (equal) pre-images
+            let x: std::collections::BTreeSet<u32> = a.open_log_chunks().into_iter().collect();
+            let y: std::collections::BTreeSet<u32> = b.open_log_chunks().into_iter().collect();
+            assert!(
+                x.is_superset(&y),
+                "check {k}: the chunks the open log holds"
+            );
+            let (va, vb) = (a.view_at(p).unwrap(), b.view_at(q).unwrap());
+            for c in 0..a.chunks() {
+                assert!(
+                    va.chunk(c) == vb.chunk(c),
+                    "check {k}: chunk {c} at the older checkpoint"
+                );
+            }
         }
         assert!(arr[..] == brr[..]);
         a.restore_discard(p).unwrap();
+        b.restore_discard(q).unwrap();
         assert!(arr[..] == at_p[..]);
+        assert!(brr[..] == at_p[..]);
     }
 
     /// A nested checkpoint, then anything else that changes the
