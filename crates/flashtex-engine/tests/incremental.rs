@@ -6779,17 +6779,20 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
     );
 }
 
-/// BOX-MEMO spans (BOX-MEMO.md §17.4) in the host, at its default timed
-/// checkpoints (20 ms apart: a tikz-cd diagram often takes longer). A timed
-/// checkpoint taken inside a span takes the line-shift journal's entries,
-/// after which the span cannot tell its own and is abandoned (`LineShift`);
-/// verified, a span whose recording saw no checkpoint then disagreed with
-/// the guard that let its replay through ("normal path not pure after the
-/// guard passed: LineShift", every run on the PC at the letters typed after
-/// "that is constant" in fixtures/real-world/tikzcd-shaded-notes). The host
-/// now holds a timed checkpoint back until the span ends. In verification
-/// mode with `FLASHTEX_BOXMEMO_VERIFY_FAIL` a difference ends the host
-/// (status 3), so every compile must report, and equal scratch runs.
+/// BOX-MEMO spans (BOX-MEMO.md §17.4) in the host, with a timed checkpoint
+/// asked for at every input line (`FLASHTEX_TIMED_S` near 0; 20 ms by
+/// default, which a tikz-cd diagram often takes). A timed checkpoint taken
+/// inside a span takes the line-shift journal's entries, after which the
+/// span cannot tell its own and is abandoned (`LineShift`); verified, a span
+/// whose recording saw no checkpoint then disagreed with the guard that let
+/// its replay through ("normal path not pure after the guard passed:
+/// LineShift", every run on the PC at the letters typed after "that is
+/// constant" in fixtures/real-world/tikzcd-shaded-notes). The host now holds
+/// a timed checkpoint back until the span ends. Only the spans are offered
+/// (`FLASHTEX_BOXMEMO_NAMES` empty), so the statistics' verified calls are the
+/// spans': at least one, none abandoned for `LineShift`. In verification mode with
+/// `FLASHTEX_BOXMEMO_VERIFY_FAIL` a difference ends the host (status 3), so
+/// every compile must report, and equal scratch runs.
 #[test]
 fn spans_hold_timed_checkpoints_back() {
     let Some(e) = env() else {
@@ -6807,13 +6810,19 @@ fn spans_hold_timed_checkpoints_back() {
     std::fs::create_dir_all(&dir).unwrap();
     let at = src.find("that is constant").unwrap() + "that is constant".len();
     let typed = format!("{}x{}", &src[..at], &src[at..]);
+    let stats = dir.with_extension("stats");
+    let _ = std::fs::remove_file(&stats);
+    let stats_s = stats.to_string_lossy().into_owned();
     let mut h = Host::start_env(
         &e,
         &dir,
         &[
+            ("FLASHTEX_TIMED_S", "0.0000001"),
             ("FLASHTEX_BOXMEMO", "verify"),
             ("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1"),
             ("FLASHTEX_BOXMEMO_SPANS", "tikzcd"),
+            ("FLASHTEX_BOXMEMO_NAMES", ""),
+            ("FLASHTEX_BOXMEMO_STATS", &stats_s),
         ],
     );
     for _ in 0..3 {
@@ -6833,4 +6842,20 @@ fn spans_hold_timed_checkpoints_back() {
             );
         }
     }
+    drop(h);
+    // (written where each compile's window closes, `boxmemo::record_window`)
+    let s = std::fs::read_to_string(&stats).unwrap_or_default();
+    let stat = |key: &str| -> u64 {
+        s.lines()
+            .find_map(|l| {
+                let l = l.trim().trim_end_matches(',');
+                let (k, v) = l.split_once(':')?;
+                (k.trim().trim_matches('"') == key).then(|| v.trim().parse().ok())?
+            })
+            .unwrap_or(0)
+    };
+    // (verification mode counts an admitted replay as `verified`)
+    assert!(stat("verified") >= 1, "no span replayed:\n{s}");
+    assert_eq!(stat("LineShift"), 0, "{s}");
+    assert_eq!(stat("verify_differences"), 0, "{s}");
 }
