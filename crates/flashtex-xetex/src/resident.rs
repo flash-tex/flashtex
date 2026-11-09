@@ -1550,6 +1550,9 @@ impl Engine {
         let mem_len = g.mem.len();
         g.host.dl.set_on(dl_on, mem_len);
         system::set_no_pdf(g, c.no_pdf);
+        g.intr_verify_on = crate::intrinsics::enabled();
+        g.intr_at_switch = false;
+        g.host.intrinsics = crate::intrinsics::Report::default();
         // S₀ is armed by the run's first `big_switch` (`crate::ckpt`); a run
         // from S₀ or a page asks for no S₀
         g.ckpt_request = if want_s0 { REQ_LOOKUP } else { 0 };
@@ -1585,6 +1588,7 @@ impl Engine {
                     Start::Format => g.run_after_format(),
                     Start::S0 | Start::Page(_) => g.resume_main_control(),
                 }
+                g.write_intrinsics_report();
                 system::final_end(g)
             })),
             Err(e) => {
