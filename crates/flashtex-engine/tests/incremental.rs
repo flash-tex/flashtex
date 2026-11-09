@@ -7304,3 +7304,101 @@ fn twocolumn_float_queues_at_restart_points_equal_scratch_runs() {
         );
     }
 }
+
+/// AUDIT-PAGES: edits inside what the page builder holds across a restart
+/// point: the text of a footnote split over two pages, a held float's
+/// caption and height, a mark read as the next page's `\topmarks`, a
+/// deferred `\afterpage` body, and the page count changed by one late page
+/// (read by `\pageref` before it).
+#[test]
+fn edits_inside_held_page_material_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("pages-held");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let long_fn = format!(
+        "A long footnote {}and ends.",
+        "that goes on and on with words ".repeat(30)
+    );
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for (i, s) in [
+        (2, "See the last page, \\pageref{last}.".to_string()),
+        (26, format!("Text\\footnote{{{long_fn}}} here.")),
+        (
+            30,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{5cm}\\caption{Held caption}\\end{figure}"
+                .to_string(),
+        ),
+        (
+            31,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{9cm}\\caption{Second held}\\end{figure}"
+                .to_string(),
+        ),
+        (34, "\\afterpage{\\noindent DEFERRED TEXT\\par}".to_string()),
+        (37, "\\marks1{the mark}".to_string()),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    let body: String = (0..90)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{afterpage}}\\usepackage{{fancyhdr}}\\pagestyle{{fancy}}\n\
+         \\fancyhead[C]{{\\topmarks1/\\firstmarks1/\\botmarks1}}\n\
+         \\begin{{document}}\n{body}\\label{{last}}\\end{{document}}\n"
+    );
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+    }
+    let edits = [
+        (
+            "inside a split footnote",
+            doc.replacen(
+                "and ends.",
+                "and ends, with a few more words that add a line to the split.",
+                1,
+            ),
+        ),
+        (
+            "a held float's caption",
+            doc.replacen("Held caption", "Held caption, longer", 1),
+        ),
+        ("a held float's height", doc.replacen("{5cm}", "{7cm}", 1)),
+        (
+            "a mark's text",
+            doc.replacen("the mark", "a changed mark", 1),
+        ),
+        (
+            "a deferred afterpage body",
+            doc.replacen("DEFERRED TEXT", "DEFERRED TEXT, now longer", 1),
+        ),
+        (
+            "one page more at the end",
+            doc.replacen("\\label{last}", "\\clearpage\\null\\label{last}", 1),
+        ),
+    ];
+    for (what, text) in &edits {
+        assert_ne!(text, &doc, "{what}");
+        page_trace(
+            what,
+            &compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what),
+        );
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc)],
+            &format!("{what}: revert"),
+        );
+    }
+}
