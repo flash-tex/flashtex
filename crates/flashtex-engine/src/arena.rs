@@ -3828,13 +3828,22 @@ fn view_len_mismatch(len: usize, n: usize) -> ! {
 }
 
 impl<T> Arr<T> {
-    /// This array's view (see [`ArrView`]), of length `N`, which must be the
-    /// array's length (checked here, so the view's checks are the array's).
-    /// Only for an array whose length never changes: a view keeps the length
-    /// it was made with.
+    /// This array's view (see [`ArrView`]), of length `N`, which is the
+    /// array's length. Only for an array whose length never changes: a view
+    /// keeps the length it was made with.
+    ///
+    /// `N` is the array's length by construction: web2rust writes the same
+    /// expression as `N` and as the length `Globals::new` creates the array
+    /// with (`__arena.arr(__r_NAME, LEN)`), and it makes views only of an
+    /// array that is never (re)allocated (`--array-view`), whose length
+    /// nothing changes after (`alloc_len`, `resize_len` and the checkpoint's
+    /// `len_mut` serve only the growable arrays). So the check here is a
+    /// debug assertion, which every debug-built test runs at every view: in
+    /// a release build a check per routine call cost more than the constant
+    /// bound saved (PERF-COLD, PR #2411).
     #[inline(always)]
     pub fn view<const N: usize>(&self) -> ArrView<T, N> {
-        if self.len != N {
+        if cfg!(debug_assertions) && self.len != N {
             view_len_mismatch(self.len, N);
         }
         ArrView {
