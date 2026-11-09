@@ -1,0 +1,218 @@
+[
+ {
+  "doc": "long-deck",
+  "shipouts": {
+   "pdftex": 0,
+   "main": 0,
+   "lazy": 0
+  },
+  "memory_lines": {
+   "pdftex": 249,
+   "main": 249,
+   "lazy": 249
+  },
+  "rc": {
+   "pdftex": null,
+   "main": null,
+   "lazy": null
+  },
+  "engines": {
+   "main": {
+    "memory_lines_equal": true,
+    "first_memory_difference": null,
+    "dyn_used_equal": true,
+    "var_fields_equal": true,
+    "memory_lines_equal_to_main": true,
+    "accounting_block_equal": false,
+    "strict_log_equal": true,
+    "strict_diff_lines": 0,
+    "log_equal_to_main": true,
+    "accounting_pdftex": [
+     "Here is how much of TeX's memory you used:",
+     " 22397 strings out of 467050",
+     " 433975 string characters out of 5405784",
+     " 829889 words of memory out of 5000000",
+     " 51098 multiletter control sequences out of 15000+600000",
+     " 635546 words of font info for 65 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 132i,15n,126p,446b,616s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (118 pages, 319491 bytes).",
+     "PDF statistics:",
+     " 3600 PDF objects out of 4296 (max. 8388607)",
+     " 3210 compressed objects within 33 object streams",
+     " 243 named destinations out of 1000 (max. 500000)",
+     " 1051 words of extra memory for PDF output out of 10000 (max. 10000000)"
+    ],
+    "accounting_engine": [
+     "Here is how much of TeX's memory you used:",
+     " 22397 strings out of 467082",
+     " 433975 string characters out of 5406923",
+     " 829889 words of memory out of 5000000",
+     " 51098 multiletter control sequences out of 15000+600000",
+     " 635546 words of font info for 65 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 132i,15n,126p,446b,616s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (118 pages, 319491 bytes).",
+     "PDF statistics:",
+     " 3600 PDF objects out of 4296 (max. 8388607)",
+     " 3210 compressed objects within 33 object streams",
+     " 243 named destinations out of 1000 (max. 500000)",
+     " 1051 words of extra memory for PDF output out of 10000 (max. 10000000)"
+    ]
+   },
+   "lazy": {
+    "memory_lines_equal": true,
+    "first_memory_difference": null,
+    "dyn_used_equal": true,
+    "var_fields_equal": true,
+    "memory_lines_equal_to_main": true,
+    "accounting_block_equal": false,
+    "strict_log_equal": true,
+    "strict_diff_lines": 0,
+    "log_equal_to_main": true,
+    "accounting_pdftex": [
+     "Here is how much of TeX's memory you used:",
+     " 22397 strings out of 467050",
+     " 433975 string characters out of 5405784",
+     " 829889 words of memory out of 5000000",
+     " 51098 multiletter control sequences out of 15000+600000",
+     " 635546 words of font info for 65 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 132i,15n,126p,446b,616s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (118 pages, 319491 bytes).",
+     "PDF statistics:",
+     " 3600 PDF objects out of 4296 (max. 8388607)",
+     " 3210 compressed objects within 33 object streams",
+     " 243 named destinations out of 1000 (max. 500000)",
+     " 1051 words of extra memory for PDF output out of 10000 (max. 10000000)"
+    ],
+    "accounting_engine": [
+     "Here is how much of TeX's memory you used:",
+     " 22397 strings out of 467082",
+     " 433975 string characters out of 5406923",
+     " 829889 words of memory out of 5000000",
+     " 51098 multiletter control sequences out of 15000+600000",
+     " 635546 words of font info for 65 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 132i,15n,126p,446b,616s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (118 pages, 319491 bytes).",
+     "PDF statistics:",
+     " 3600 PDF objects out of 4296 (max. 8388607)",
+     " 3210 compressed objects within 33 object streams",
+     " 243 named destinations out of 1000 (max. 500000)",
+     " 1051 words of extra memory for PDF output out of 10000 (max. 10000000)"
+    ]
+   }
+  }
+ },
+ {
+  "doc": "2501.06980v1",
+  "shipouts": {
+   "pdftex": 0,
+   "main": 0,
+   "lazy": 0
+  },
+  "memory_lines": {
+   "pdftex": 13,
+   "main": 13,
+   "lazy": 13
+  },
+  "rc": {
+   "pdftex": null,
+   "main": null,
+   "lazy": null
+  },
+  "engines": {
+   "main": {
+    "memory_lines_equal": false,
+    "first_memory_difference": 0,
+    "dyn_used_equal": false,
+    "var_fields_equal": true,
+    "memory_lines_equal_to_main": true,
+    "accounting_block_equal": false,
+    "strict_log_equal": true,
+    "strict_diff_lines": 0,
+    "log_equal_to_main": true,
+    "memory_line_pdftex": "Memory usage before: 15249&871509; after: 10760&868622; still untouched: 4090292",
+    "memory_line_engine": "Memory usage before: 15249&871542; after: 10760&868655; still untouched: 4090292",
+    "accounting_pdftex": [
+     "Here is how much of TeX's memory you used:",
+     " 26437 strings out of 467050",
+     " 499399 string characters out of 5405784",
+     " 916708 words of memory out of 5000000",
+     " 55080 multiletter control sequences out of 15000+600000",
+     " 670198 words of font info for 231 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 106i,16n,110p,1390b,1013s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (13 pages, 560539 bytes).",
+     "PDF statistics:",
+     " 1168 PDF objects out of 1200 (max. 8388607)",
+     " 451 compressed objects within 5 object streams",
+     " 76 named destinations out of 1000 (max. 500000)",
+     " 41190 words of extra memory for PDF output out of 42996 (max. 10000000)"
+    ],
+    "accounting_engine": [
+     "Here is how much of TeX's memory you used:",
+     " 26437 strings out of 467082",
+     " 499399 string characters out of 5406923",
+     " 916708 words of memory out of 5000000",
+     " 55080 multiletter control sequences out of 15000+600000",
+     " 670198 words of font info for 231 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 106i,16n,110p,1390b,1013s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (13 pages, 560539 bytes).",
+     "PDF statistics:",
+     " 1168 PDF objects out of 1200 (max. 8388607)",
+     " 451 compressed objects within 5 object streams",
+     " 76 named destinations out of 1000 (max. 500000)",
+     " 41190 words of extra memory for PDF output out of 42996 (max. 10000000)"
+    ]
+   },
+   "lazy": {
+    "memory_lines_equal": false,
+    "first_memory_difference": 0,
+    "dyn_used_equal": false,
+    "var_fields_equal": true,
+    "memory_lines_equal_to_main": true,
+    "accounting_block_equal": false,
+    "strict_log_equal": true,
+    "strict_diff_lines": 0,
+    "log_equal_to_main": true,
+    "memory_line_pdftex": "Memory usage before: 15249&871509; after: 10760&868622; still untouched: 4090292",
+    "memory_line_engine": "Memory usage before: 15249&871542; after: 10760&868655; still untouched: 4090292",
+    "accounting_pdftex": [
+     "Here is how much of TeX's memory you used:",
+     " 26437 strings out of 467050",
+     " 499399 string characters out of 5405784",
+     " 916708 words of memory out of 5000000",
+     " 55080 multiletter control sequences out of 15000+600000",
+     " 670198 words of font info for 231 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 106i,16n,110p,1390b,1013s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (13 pages, 560539 bytes).",
+     "PDF statistics:",
+     " 1168 PDF objects out of 1200 (max. 8388607)",
+     " 451 compressed objects within 5 object streams",
+     " 76 named destinations out of 1000 (max. 500000)",
+     " 41190 words of extra memory for PDF output out of 42996 (max. 10000000)"
+    ],
+    "accounting_engine": [
+     "Here is how much of TeX's memory you used:",
+     " 26437 strings out of 467082",
+     " 499399 string characters out of 5406923",
+     " 916708 words of memory out of 5000000",
+     " 55080 multiletter control sequences out of 15000+600000",
+     " 670198 words of font info for 231 fonts, out of 8000000 for 9000",
+     " 1141 hyphenation exceptions out of 8191",
+     " 106i,16n,110p,1390b,1013s stack positions out of 10000i,1000n,20000p,200000b,200000s",
+     "Output written on main.pdf (13 pages, 560539 bytes).",
+     "PDF statistics:",
+     " 1168 PDF objects out of 1200 (max. 8388607)",
+     " 451 compressed objects within 5 object streams",
+     " 76 named destinations out of 1000 (max. 500000)",
+     " 41190 words of extra memory for PDF output out of 42996 (max. 10000000)"
+    ]
+   }
+  }
+ }
+]

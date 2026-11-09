@@ -1,0 +1,37 @@
+Input index file main.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file vocabulary.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file notation.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file latex.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file main.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file vocabulary.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file notation.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file latex.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file main.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file vocabulary.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file notation.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+Input index file latex.idx not found.
+Usage: makeindex [-ilqrcgLT] [-s sty] [-o ind] [-t log] [-p num] [idx0 idx1 ...]
+system returned with code 256
+flashtex-host: exiting: the connection (--once) closed (22 requests served)

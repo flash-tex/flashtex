@@ -1,0 +1,11 @@
+% Lane CONTIG-TOKENS: overflow after many short lists are freed in between (macro arguments,
+% \toks reassignments), then one huge argument list.
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\tracingstats=2 \tracingonline=1
+\count255=0
+\def\f#1#2{\toks0={#1#2#1}}
+\def\l{\advance\count255 by 1 \f{ab}{cd}\ifnum\count255<30000 \expandafter\l\fi}
+\l
+\def\x{abcdefghij}
+\def\g#1{\edef\x{#1#1}\expandafter\g\expandafter{\x}}
+\expandafter\g\expandafter{\x}
