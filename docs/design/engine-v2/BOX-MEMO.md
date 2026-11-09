@@ -14,6 +14,73 @@ later computation can tell from the state the real expansion leaves, except for 
 memory-usage statistics (DESIGN.md §1.1). When anything the guard cannot vouch for is different, the
 call is expanded for real. A replay is an optimisation, never a second implementation of TeX.
 
+## Soundness hole classes (2026-11-08)
+
+On 2026-11-08 the audit and fuzz lanes (REPLAY-HOLES, AUDIT-EXITS, AUDIT-WRITES, AUDIT-D9,
+AUDIT-GROUPS, AUDIT-SPANS, AUDIT-XETEX-REPLAY, FUZZ-REPLAY with `tools/fuzz-replay`) filed about 25
+replay and restore soundness holes, #2183–#2294, against BOX-MEMO, D9's intrinsics (MACRO-REPLAY.md),
+spans (§17, #1997) and the XeTeX intrinsics verifier. Source:
+`gh issue list --search "BOX-MEMO OR intrinsics OR span OR verify" --state all --limit 100`, and
+each fix PR's body and diff. They fall into a few classes, and each class has one kind of guard.
+Use the table to place a new site before writing it.
+
+**Status.** On 2026-11-08 every issue below was open and every fix PR unmerged (`gh pr view`).
+A guard holds on main only once its PR merges. "No PR" means none was open then.
+
+| Class | Issues | Root cause | Guard (fix PR) | Test |
+|---|---|---|---|---|
+| **A read on an exit with no hook.** `get_next` pushes a list or inserts a template, then goes to `restart`, so neither hook sees the token. | [#2183](https://github.com/flash-tex/flashtex/issues/2183), [#2198](https://github.com/flash-tex/flashtex/issues/2198), [#2199](https://github.com/flash-tex/flashtex/issues/2199) | §364 (`&`/`\cr`/`\span` at `align_state=0`), §381 (a caller's `#n`), §362 (`\everyeof`). A list pushed at the recording's own level passes the `input_ptr < base` (`Level`) test, so a look-ahead takes in the caller's tokens as the call's. | Both hooks, `flashtex_intr_next` and `flashtex_bm_next`, run at each of these pushes, before the list is pushed, as at the exit (`changes/intrinsics.ch`, `changes/boxmemo.ch`; [#2187](https://github.com/flash-tex/flashtex/pull/2187), [#2209](https://github.com/flash-tex/flashtex/pull/2209), [#2217](https://github.com/flash-tex/flashtex/pull/2217)) | `tests/boxmemo.rs` `a_control_sequence_ending_an_alignment_entry_is_keyed`, `a_callers_parameter_read_past_the_call_is_not_the_calls`, `everyeof_read_past_the_call_is_not_the_calls`; `tests/intrinsics.rs` `a_callers_parameter_read_past_the_run_is_not_the_runs`, `everyeof_read_past_the_run_is_not_the_runs` |
+| **A read inside a primitive, not at a hook.** | [#2226](https://github.com/flash-tex/flashtex/issues/2226), [#2267](https://github.com/flash-tex/flashtex/issues/2267) | `print_cs` (§262) reads a control symbol's `\catcode`; `\edef` runs `\detokenize` itself (§478), past `expand`'s hook. `\/` reads the italic correction of the tail from before the call. | `print_cs` reports `flashtex_intr_read(cat_code_base+...)` ([#2236](https://github.com/flash-tex/flashtex/pull/2236)). `flashtex_bm_command` refuses `\/` while the tail is the one from before the call ([#2283](https://github.com/flash-tex/flashtex/pull/2283)) | `tests/intrinsics.rs` `a_printed_control_symbol_reads_its_characters_category`; `tests/boxmemo.rs` `an_italic_correction_of_the_tail_before_the_call_never_replays` |
+| **A write outside `eq_define`.** A recorder that logs only `eq_define`/`eq_word_define` misses words written directly. | [#2184](https://github.com/flash-tex/flashtex/issues/2184), [#2213](https://github.com/flash-tex/flashtex/issues/2213); XeTeX [#2259](https://github.com/flash-tex/flashtex/issues/2259), [#2262](https://github.com/flash-tex/flashtex/issues/2262) | `new_font`'s `common_ending` writes `eqtb[font_id_base+f]` and `font_id_text(f)`, as do `\letterspacefont` and `\pdfcopyfont`. `find_font_dimen` (§580) grows the last font on a `\fontdimen` *read*. | The recording is abandoned (`Command`) at `def_font`, `letterspace_font`, `pdf_copy_font` ([#2188](https://github.com/flash-tex/flashtex/pull/2188)). The growth makes the fonts' next version, named by `(-2, f, n)` (§11.5; [#2215](https://github.com/flash-tex/flashtex/pull/2215)). XeTeX: no PR | `tests/boxmemo.rs` `a_font_identifier_made_by_a_call_never_replays`; `tests/host_incremental.rs` `a_font_grown_by_a_parameter_read_has_another_version` |
+| **A write to the enclosing list's fields.** The end check compared mode, nest level and tail only. | [#2222](https://github.com/flash-tex/flashtex/issues/2222), [#2261](https://github.com/flash-tex/flashtex/issues/2261), [#2266](https://github.com/flash-tex/flashtex/issues/2266), [#2268](https://github.com/flash-tex/flashtex/issues/2268) | `new_graf` (§1091) sets `prev_graf:=0`, even for an empty paragraph. `\over` on an empty math list, `\limits` and scripts change the tail noad in place; a missing letter sets the space factor. `\par\noindent` reuses the paragraph's head, so the tail check passes. | `bm_finish` compares `prev_graf` ([#2223](https://github.com/flash-tex/flashtex/pull/2223); XeTeX `intr_marks`, [#2292](https://github.com/flash-tex/flashtex/pull/2292)). The end frame holds `aux`, `eTeX_aux` and the tail noad's words; a changed scalar `aux` is kept and set on replay ([#2282](https://github.com/flash-tex/flashtex/pull/2282)). `\par` and a math shift at the call's own level in horizontal mode are refused ([#2284](https://github.com/flash-tex/flashtex/pull/2284)) | `tests/boxmemo.rs` `a_call_that_starts_an_empty_paragraph_never_replays`, `changes_a_call_makes_to_its_list_in_place`, `a_call_that_ends_its_paragraph_never_replays`; xetex `tests/intrinsics_verify.rs` `a_call_that_starts_an_empty_paragraph_is_not_replayable` |
+| **Error count and history.** An error was seen only through what it leaves behind. | [#2234](https://github.com/flash-tex/flashtex/issues/2234), [#2294](https://github.com/flash-tex/flashtex/issues/2294) | An error answered at the terminal before the log opens, with `history` already `error_message_issued`, changes no output counter and no `history`. `end_graf` (§1096) sets `error_count:=0`, so the `(error_count, history)` end check holds after an error. | `error` (§82) abandons a D9 recording with `Why::Error` (`flashtex_intr_abort(5)`, [#2239](https://github.com/flash-tex/flashtex/pull/2239)). #2294: no PR | `tests/intrinsics.rs` `an_error_answered_at_the_terminal_is_not_pure` |
+| **Key truncation.** A value too long to keep collapsed to a marker or was cut at a bound. | [#2194](https://github.com/flash-tex/flashtex/issues/2194), [#2258](https://github.com/flash-tex/flashtex/issues/2258) | Lists over `MAX_LIST` (65,536 tokens) and K2 shapes over 65,536 words were all kept as `-2`, so any two compared equal (K1, KR, K2). The XeTeX walks stopped at 1,000,000 tokens. | Over-long values are a `Long` miss or abandon the recording; never a key ([#2195](https://github.com/flash-tex/flashtex/pull/2195)). XeTeX walks go to the list's end, bounded by `mem.len()` only to stop a cycle ([#2278](https://github.com/flash-tex/flashtex/pull/2278)) | `tests/boxmemo.rs` `long_token_lists_are_never_keys`, `long_shapes_are_never_keys`; xetex `tests/intrinsics_verify.rs` `a_value_longer_than_a_million_tokens_is_compared_to_its_end` |
+| **Identity by number or address.** A number or address names a thing only within one timeline or while it is held. | [#2219](https://github.com/flash-tex/flashtex/issues/2219), [#2227](https://github.com/flash-tex/flashtex/issues/2227) | A restore removes fonts made after its checkpoint, and the re-run may make another font at the same number; `bm_font_version` moved only when a loaded font changed. A sparse register's node freed by `delete_sa_ref` is reused for another register at the same address. | Every font creation calls `flashtex_bm_font_new(f)`, which changes the fonts' version ([#2272](https://github.com/flash-tex/flashtex/pull/2272)). A sparse-register watch record that stops holding is `WANT_NEVER` ([#2237](https://github.com/flash-tex/flashtex/pull/2237)) | `tests/incremental.rs` `a_call_measuring_a_font_loaded_at_another_fonts_number`; `tests/intrinsics.rs` `a_sparse_register_let_go_of_is_not_taken_back` |
+| **Stack-limit skips.** A replay does not run the normal path's overflow tests. | [#2265](https://github.com/flash-tex/flashtex/issues/2265) | Near a capacity limit (grouping levels, input stack) pdfTeX stops with `TeX capacity exceeded`; the replay went on. | The entry keeps how far the call takes the group level, `save_ptr`, `input_ptr`, `param_ptr` and `nest_ptr`; an offer replays only where every overflow test would hold ([#2281](https://github.com/flash-tex/flashtex/pull/2281)) | `tests/boxmemo.rs` `a_replay_keeps_the_normal_paths_capacity_errors` |
+| **Span key gaps** (§17, default off). The span key held less than the replay writes back. | [#2185](https://github.com/flash-tex/flashtex/issues/2185), [#2201](https://github.com/flash-tex/flashtex/issues/2201), [#2202](https://github.com/flash-tex/flashtex/issues/2202) | `force_eof` (`\endinput`) was not in the key. A one-line span wrote the recorded line, including text before `\begin`, back to the buffer. A recording that reached its file's end under `\everyeof` did not record the end or set `eof_seen` on replay. | `force_eof` keyed ([#1997](https://github.com/flash-tex/flashtex/pull/1997) at `d9fc04dd6`). `SpanEnd::buf` kept only when the span read a line ([#2206](https://github.com/flash-tex/flashtex/pull/2206)). A changed `eof_seen` abandons the span, `SpanEof` ([#2207](https://github.com/flash-tex/flashtex/pull/2207)) | `tests/boxmemo.rs` `spans_after_an_endinput_on_their_line_are_not_replayed`, `spans_on_one_line_keep_the_text_before_them`, `spans_that_reach_the_files_end_are_not_replayed` |
+| **Verifier false negative** (a wrong replay passes). | [#2203](https://github.com/flash-tex/flashtex/issues/2203), [#2225](https://github.com/flash-tex/flashtex/issues/2225), [#2258](https://github.com/flash-tex/flashtex/issues/2258) | XeTeX's `flashtex_intr_switch` ran the check before looking at the call's own `rec.bad`. When both paths left an `eqtb` list at the same node (both `get_avail` from the same checkpointed free list), only its reference count was compared. | A check whose real path is not replayable is a `not_replayable` difference ([#2205](https://github.com/flash-tex/flashtex/pull/2205)). A list at the same node is compared by its tokens and count; the test-only fault `FLASHTEX_INTRINSICS_FAULT=token` proves the verifier catches a wrong replay ([#2235](https://github.com/flash-tex/flashtex/pull/2235)). #2258: see key truncation | xetex `tests/intrinsics_verify.rs` `a_check_whose_real_path_is_not_replayable_is_no_pass`; `tests/intrinsics.rs` `verify_compares_a_list_at_the_same_node_by_its_tokens` |
+| **Verifier false positive** (a correct replay fails). | [#2210](https://github.com/flash-tex/flashtex/issues/2210), [#2264](https://github.com/flash-tex/flashtex/issues/2264) | A body whose last tokens only expand is used up inside `big_switch`'s `get_x_token`, which ran the next command before the check's state N was taken (§15 is the pdfTeX side). `post_line_break`, `box_end` and displays leave `link(adjust_head)` dangling; `iso.rs` walked it. | XeTeX compares at the body's end ([#2212](https://github.com/flash-tex/flashtex/pull/2212)). The adjust heads' links are dead while both `adjust_tail` and `pre_adjust_tail` are null, as `temp_head`'s are (`scratch_heads_dead`, [#2289](https://github.com/flash-tex/flashtex/pull/2289)) | xetex `tests/intrinsics_verify.rs` `a_body_ending_in_an_expansion_is_compared_at_its_end`; `tests/boxmemo.rs` `material_left_at_the_adjust_heads_is_dead` |
+
+Test paths are under `crates/flashtex-engine/` unless marked "xetex" (`crates/flashtex-xetex/`).
+The XeTeX intrinsics replay nothing into the run (#2203, #2259), so their holes are verifier or
+recorder holes that block promotion, not wrong output.
+
+**The lessons.**
+- The hooks see what goes through them. Every `goto restart`, every primitive that reads state
+  itself, and every write that is not `eq_define` is a place a hook can miss. Find them by grepping
+  the WEB, not by reading the hook.
+- Compare what TeX may read later, not what a call usually changes. An end check of mode, level and
+  tail missed `prev_graf`, `aux`, the tail noad and `error_count`.
+- A key value is exact or the offer is a miss. A marker, a cut or a hash that can collide is a
+  false hit.
+- A number or address is an identity only on one timeline and while held. Across a restore or a
+  free, use a version.
+- The verifier needs its own tests in both directions: a fault it must catch (false negative) and
+  a correct replay it must pass (false positive, dead state).
+
+### Before adding a new replay or recording site
+
+1. **List every exit.** Grep the WEB section for `goto restart`, `back_input`, `begin_token_list`
+   and pushes of the input stack. Each one runs both hooks before it pushes, or abandons the
+   recording.
+2. **List every read.** Include reads inside primitives (`print_cs`, `\the` inside `\edef`, the
+   tail behind `\/`) and look-aheads past the body. Each one is keyed, at a hook, or refused.
+3. **List every write.** Grep for direct stores to `eqtb`, font arrays, `cur_list` fields and
+   globals such as `error_count`, not just `eq_define`. Each is logged and replayed, compared at
+   the end, or refused.
+4. **Never truncate a key.** A value too long to keep is a `Long` miss, never a marker or a cut.
+5. **Name things by version, not by number or address,** wherever a restore or a free can reuse
+   the number.
+6. **Keep the normal path's failures.** Capacity limits, errors and `history` must stop or abandon
+   a replay exactly where the normal path would.
+7. **Write the probe first.** It fails off against on (or verify) on main and passes with the
+   guard; revert the guard and check that it fails again, as #2281–#2284 report.
+8. **Test the verifier both ways.** A fault injection it must catch, and a correct replay with
+   dead state it must pass.
+9. **Run the fuzzer and the verify sweeps.** `tools/fuzz-replay` (#2250) and the sweeps with
+   `boxmemo=verify` (§7) on the final head. A red verify sweep is a finding, never a waiver.
+10. **Add a row here** with the issue, the fix PR and the test.
+
 ## 1. Why (measured)
 
 `docs/evidence/p6-infdesc-page-2026-10-06/` has the measurements. Instructions per keystroke window,
