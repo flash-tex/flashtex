@@ -915,7 +915,7 @@ final class ShellModel {
             }
             CFRunLoopWakeUp(CFRunLoopGetMain())
         }
-        let started = path == entry ? saveEntryTexInBackground(completion: next) : project.saveDocumentInBackground(path, completion: next)
+        let started = path == entry ? saveEntryTexInBackground(completion: next) : project.saveDocumentInBackground(path, completion: { _ in next() })
         if !started { autosaveInBackground(rest, entry: entry, generation: generation) }
     }
 

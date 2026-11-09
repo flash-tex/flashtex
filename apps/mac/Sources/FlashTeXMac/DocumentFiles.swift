@@ -1197,7 +1197,14 @@ extension ShellModel {
     func saveDocumentInteractive(_ path: String) async {
         await enqueueSave(path) { [weak self] in // after any autosave of `path` still in flight
             guard let self else { return }
-            switch project.saveDocumentNow(path) {
+            // Hashed, sent and awaited off the main thread (lane APP-LAG-AUDIT:
+            // a ⌘S held it for the helper's compare-and-replace); made here
+            // when that cannot start (an autosave of it in flight: settled first).
+            let outcome: ProjectDocuments.SaveOutcome? = await withCheckedContinuation { c in
+                if !self.project.saveDocumentInBackground(path, completion: { c.resume(returning: $0) }) { c.resume(returning: self.project.saveDocumentNow(path)) }
+            }
+            guard let outcome else { return } // closed, renamed or another project meanwhile
+            switch outcome {
             case .saved(let p, _): captureNote = "Saved \(p)"
             case .conflict(let c):
                 captureNote = c.summary
@@ -1215,8 +1222,36 @@ extension ShellModel {
         return write(to: url, text: entry.text, expected: expectedOnDisk(for: url), force: false)
     }
 
+    /// Vim's `:wq`: saves the active document, then closes it. A member is
+    /// closed only once its save landed (`saveDocumentInteractive`, awaited
+    /// off the main thread), never while still dirty: a refused or failed
+    /// save (its note says why) keeps it open, as do edits typed meanwhile.
+    /// The entry cannot be closed (E37), so `:wq` there is a save. Returns
+    /// the command line's message.
+    @discardableResult
+    func writeQuit() -> String? {
+        let path = activePath
+        guard path != project.entryPath else {
+            saveTexInteractive()
+            return "E37: cannot close the entry document \(path)"
+        }
+        projectPackages.explicitRequest(compiling: false) // as ⌘S
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await saveDocumentInteractive(path)
+            guard project.isOpen(path), !project.isDirty(path) else { return }
+            _ = await project.detachDocument(path, discardingEdits: false)
+        }
+        return nil
+    }
+
     /// Menu-driven save: on a conflict, asks the user how to resolve it.
-    func saveTexInteractive() {
+    /// `inBackground` (⌘S, the menu, the palette, Vim's `:w`; lane
+    /// APP-LAG-AUDIT): the entry's save is hashed, sent and awaited off the
+    /// main thread (`saveEntryTexInBackground`), which ⌘S used to hold for
+    /// the helper's compare-and-replace — tens of milliseconds at 3 MB.
+    /// false: the entry is saved on the main thread before this returns.
+    func saveTexInteractive(inBackground: Bool = true) {
         projectPackages.explicitRequest(compiling: false) // ProjectPackages.swift: ⌘S ends the typing grace period
         // A non-entry document saves to its own rooted file (never to the
         // entry URL): ProjectDocuments.saveDocumentNow, the rooted
@@ -1228,6 +1263,10 @@ extension ShellModel {
             }
             return
         }
+        if inBackground, documentURL != nil, saveEntryTexInBackground(completion: { [weak self] in
+            guard let self, files.conflict != nil, !Self.runningUnderXCTest else { return }
+            resolveConflictPanel()
+        }) { return }
         if !saveTex(), files.conflict != nil { resolveConflictPanel() }
     }
 

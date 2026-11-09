@@ -217,7 +217,7 @@ struct EditorPane: View {
                 onExCommand: { command in // Vim `:` commands (VimMode.swift) mapped to the shell's own actions
                     switch command {
                     case .write: model.saveTexInteractive(); return nil
-                    case .writeQuit: model.saveTexInteractive(); return closeActiveDocument(discardingEdits: false)
+                    case .writeQuit: return model.writeQuit() // a member closes once its save landed (off the main thread)
                     case .quit(let force): return closeActiveDocument(discardingEdits: force)
                     case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
                     case .setNumber(let on): preferences.showLineNumbers = on; return nil
