@@ -515,12 +515,15 @@ pub fn finish(g: &mut Globals) -> i32 {
                     reports.push(format!("FlashTeX output: {w}"));
                 }
                 if let Err(e) = file.write_all(&bytes).and_then(|_| file.flush()) {
-                    reports.push(format!("FlashTeX output: writing {}: {e}", out.pdf_name));
+                    // an error (`!`): no PDF was made (a full disk, #1612)
+                    reports.push(format!("! FlashTeX output: writing {}: {e}", out.pdf_name));
                     rc = 1;
                 }
             }
             Err(e) => {
-                reports.push(format!("FlashTeX output: {e}"));
+                // an error too: the PDF was not made (a BMP image, a
+                // broken Type 1 font)
+                reports.push(format!("! FlashTeX output: {e}"));
                 rc = 1;
             }
         }

@@ -5388,3 +5388,125 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
     assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A PDF the disk cannot take (#1612: the disk filled, `!pdfTeX error:
+/// pdftex: fwrite() failed`, then the next COMPILE seemed to hang) ends
+/// that compile with a `DONE`, and the host serves the next COMPILE on
+/// the same connection, which compiles the document again. The full disk
+/// is the host's file-size limit (`prlimit`, RLIMIT_FSIZE) lowered after
+/// the first compile, with SIGXFSZ ignored: a write past it fails (EFBIG),
+/// as `ulimit -f` did in #1612's reproduction. (Not `/dev/full` as the
+/// PDF: a restart reads the PDF it wrote back, and `/dev/full` reads as
+/// endless zeros, so the host filled its memory instead.) Every wait is
+/// bounded, so a hang fails the test instead of stalling it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pdf_write_failure_leaves_the_host_serving() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let t0 = Instant::now();
+    let base = common::fresh_dir("flashtex-host-diskfull");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let text = article(4);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    // the host inherits the ignored SIGXFSZ (a write past the limit then
+    // fails instead of ending the process); the test binary's own
+    // disposition is put back once the host is spawned
+    // SAFETY: signal(2) with SIG_IGN has no memory-safety preconditions.
+    let old = unsafe { libc::signal(libc::SIGXFSZ, libc::SIG_IGN) };
+    let h = start_host("diskfull");
+    // SAFETY: as above, with the disposition signal(2) returned.
+    unsafe { libc::signal(libc::SIGXFSZ, old) };
+    let fsize = |bytes: u64| {
+        let l = libc::rlimit64 {
+            rlim_cur: bytes,
+            rlim_max: libc::RLIM64_INFINITY,
+        };
+        // SAFETY: prlimit64(2) on the host (our child) with a valid limit.
+        let r = unsafe {
+            libc::prlimit64(
+                h.0.id() as libc::pid_t,
+                libc::RLIMIT_FSIZE,
+                &l,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(r, 0, "prlimit: {}", std::io::Error::last_os_error());
+    };
+    let mut c = Client::connect(&h.1).unwrap();
+    c.reader()
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_secs(300)))
+        .unwrap();
+    let mut view = View::default();
+    eprintln!("{:?}: compile 1", t0.elapsed());
+    let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(
+        first.done.str_field("status"),
+        Some("ok"),
+        "{:?}",
+        first.done
+    );
+    let pages = first.done.int_field("pages");
+    assert!(pages >= Some(2), "{:?}", first.done);
+    // the disk is full for the PDF only: no file grows past half the PDF's
+    // size, and every other file the compile writes (the log with the
+    // error, the .aux, the edited main file) fits well below that, so the
+    // PDF's write is the one that fails
+    let size = |n: &str| std::fs::metadata(out.join(n)).map_or(0, |m| m.len());
+    let limit = size("main.pdf") / 2;
+    let biggest = std::fs::read_dir(&out)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name() != "main.pdf")
+        .map(|e| e.metadata().unwrap().len())
+        .chain([text.len() as u64])
+        .max()
+        .unwrap();
+    assert!(
+        biggest + 4096 < limit,
+        "the PDF ({} bytes) is not the one file past the limit: another is {biggest} bytes",
+        size("main.pdf")
+    );
+    // (the edit is saved first: it then fits whatever the limit)
+    std::fs::write(proj.join("main.tex"), text.replacen("Start", "Begin", 1)).unwrap();
+    fsize(limit);
+    let r = req(2, &proj, &out, "main.tex");
+    eprintln!("{:?}: compile 2 (the disk is full)", t0.elapsed());
+    let full = compile(&mut c, &mut view, &r);
+    eprintln!("{:?}: DONE {:?}", t0.elapsed(), full.done);
+    assert_ne!(full.done.str_field("status"), Some("ok"), "{:?}", full.done);
+    // the failure is the PDF's write: the log, which fits, ends with
+    // pdfTeX's error for it (`pdftex_fail("fwrite() failed")`, utils.c;
+    // `pdftex/output.rs`). (The Classic host sends no diagnostic for it,
+    // #2218, so the log is where it shows.)
+    let log = std::fs::read_to_string(out.join("main.log")).unwrap();
+    assert!(
+        log.lines()
+            .any(|l| l.starts_with("!pdfTeX error:") && l.ends_with("fwrite() failed")),
+        "the PDF's write is not what failed:\n{log}"
+    );
+    // the disk has room again: the next COMPILE is served
+    fsize(libc::RLIM64_INFINITY);
+    let pdf = out.join("main.pdf");
+    let mut r = req(3, &proj, &out, "main.tex");
+    r.buffers = vec![("main.tex".into(), text.clone())];
+    eprintln!("{:?}: compile 3 (room again)", t0.elapsed());
+    let again = compile(&mut c, &mut view, &r);
+    assert_eq!(
+        again.done.str_field("status"),
+        Some("ok"),
+        "{:?}",
+        again.done
+    );
+    assert_eq!(again.done.int_field("pages"), pages, "{:?}", again.done);
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&base);
+}
