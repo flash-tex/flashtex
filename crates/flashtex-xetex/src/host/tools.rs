@@ -90,12 +90,7 @@ fn find_bib(job: &Job, name: &str) -> Option<PathBuf> {
         return None;
     }
     let ok = |p: &Path, searched: bool| {
-        flashtex_engine::system::host_tool_read_ok(
-            name,
-            p,
-            searched,
-            &[&job.root, &job.output_dir],
-        )
+        flashtex_engine::system::host_tool_read_ok(name, p, searched, &[&job.root, &job.output_dir])
     };
     let p = Path::new(name);
     if p.is_absolute() {
@@ -435,10 +430,8 @@ mod tests {
     /// over the 64 MiB limit (sparse). Returns the job and the scratch
     /// directory.
     fn sentinel_job(tag: &str) -> (Job, PathBuf) {
-        let base = std::env::temp_dir().join(format!(
-            "ft-xetex-tools-{tag}-{}",
-            std::process::id()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("ft-xetex-tools-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let (p, out, outside) = (base.join("p"), base.join("p/out"), base.join("outside"));
         std::fs::create_dir_all(&out).unwrap();
