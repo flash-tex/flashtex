@@ -1,0 +1,90 @@
+# Line and region coverage of crates/flashtex-engine (cargo-llvm-cov), for
+# finding untested branches of the incremental host (incr.rs, checkpoint.rs,
+# revalidate.rs, boxmemo.rs, host/*). Report only: it gates nothing.
+#
+# GitHub-hosted (free for this public repository) with the same pinned
+# TeX Live 2026 tree as the engine-parity shards, so the tests that need the
+# oracle run instead of skipping (FLASHTEX_REQUIRE_TEXLIVE=1). A pull request
+# runs it only when it changes this file; otherwise dispatch it by hand.
+name: coverage (engine)
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: >-
+          cargo test target flags (empty: the library and the incremental
+          host's integration tests)
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/coverage-engine.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+      SOURCE_DATE_EPOCH: "0"
+      FORCE_SOURCE_DATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          extra: |
+            sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
+            translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
+            framed 55e43198fa63236b7f97cfa6b70d141dc0be1976dc385cac3d6cad3f1610ff25
+            ntheorem 030413280971d17decff54f02ac44749010eb127fa684033e811417e391eb84d
+            tikz-cd e225b02dcc2a334508529e27a7d7b3f283939b57507019ab6bcf99ff453ac2cb
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage-engine
+      - name: cargo llvm-cov (release, flashtex-engine)
+        env:
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          if [ -z "$TARGETS" ]; then
+            TARGETS="--lib --test host_incremental --test incremental --test checkpoint --test boxmemo --test host_lifetime --test host_tools --test display_list_host --test lookup_memo --test lookup_memo_db --test lookup_racy --test cache_isolation"
+          fi
+          # shellcheck disable=SC2086
+          cargo llvm-cov --release --locked -p flashtex-engine --no-report --no-fail-fast $TARGETS \
+            2>&1 | tee "$RUNNER_TEMP/test-log.txt" | grep -E '^(test result|running|---- |failures:|test .* FAILED)' || true
+      - name: reports
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/cov"
+          cargo llvm-cov report --release --lcov --output-path "$RUNNER_TEMP/cov/lcov.info"
+          cargo llvm-cov report --release --summary-only > "$RUNNER_TEMP/cov/summary.txt"
+          cp "$RUNNER_TEMP/test-log.txt" "$RUNNER_TEMP/cov/" || true
+          {
+            echo '### flashtex-engine coverage (incremental host files)'
+            echo '```'
+            head -3 "$RUNNER_TEMP/cov/summary.txt"
+            grep -E 'flashtex-engine/src/(incr|checkpoint|revalidate|boxmemo|boxfrag|readset|statediff|dormant|midline|lineshift|host/)' "$RUNNER_TEMP/cov/summary.txt" || true
+            tail -1 "$RUNNER_TEMP/cov/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-engine
+          path: ${{ runner.temp }}/cov
+          retention-days: 14

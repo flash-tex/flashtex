@@ -22,6 +22,7 @@ pub mod client;
 pub mod diag;
 pub mod endpoint;
 pub mod frame;
+pub mod held;
 pub mod json;
 pub mod page;
 pub mod resource;
