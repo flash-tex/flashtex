@@ -10,9 +10,10 @@ instruction, it wins. Deviations need evidence and owner approval and are record
 Appendix A is the master prompt for any Commander session.
 
 **Design review: nightly, lean** (owner, 2026-09-30; see §14). First nightly review: 2026-09-30.
-**Last review:** 2026-11-01, [`reviews/2026-11-01.md`](reviews/2026-11-01.md): the day S7
-and S8 landed (no review was recorded 2026-10-06 … 10-31). Previous:
-[`reviews/2026-10-05.md`](reviews/2026-10-05.md), the critical-path inventory for P3–P5;
+**Last review:** 2026-11-08, [`reviews/2026-11-08.md`](reviews/2026-11-08.md): the week
+after retirement (no review was recorded 2026-11-02 … 11-07). Previous:
+[`reviews/2026-11-01.md`](reviews/2026-11-01.md), the day S7 and S8 landed (no review was
+recorded 2026-10-06 … 10-31); [`reviews/2026-10-05.md`](reviews/2026-10-05.md), the critical-path inventory for P3–P5;
 [`reviews/2026-10-02.md`](reviews/2026-10-02.md),
 which superseded the unmerged 2026-10-01 review (PR #1334); [`reviews/2026-09-30.md`](reviews/2026-09-30.md).
 
@@ -23,8 +24,9 @@ T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 ✔ verified and 
 `2e7203e03` (2026-10-05): preview 669/669 at 0 px, P-T2 86/86, positions 86/86 exact; CI
 `preview-parity.yml` run 37381958089** (§12) · **P4 ✔ met 2026-10-21** under the owner's
 ruling at S4 (T7 reference run #1876, 120/120 gated rows; §12) · **P5: retirement complete
-(S7 #1888, S8 #1902, 2026-11-01); the first board after S7 that has #1915's T3 baseline is
-pending** (§12).
+(S7 #1888, S8 #1902, 2026-11-01); three complete all-green boards with #1915's T3 baseline
+on main `6e66beddf` (41655949084, 41851982711, 42357659737, 11-03 … 11-07); not met while
+main's post-merge CI is red (#2144)** (§12).
 
 *The rest of this block is the 2026-10-05 snapshot, kept as recorded; §12 is current.*
 Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
@@ -436,8 +438,12 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   that must converge with S₁'s run, like any other. `FLASHTEX_S1=off` disables its use.
   Measured (REPORTED, PC): *Infinite Descent ×2* reopened at page 882 shows that page in 0.30 s
   instead of 34.9 s. Its convergence rules landed separately (#1897). Its reopen test
-  `a_reopen_from_s1_puts_back_a_file_rewritten_after_it` failed on main's macOS release leg
-  the same day (#1917; reviews/2026-11-01.md §3).
+  `a_reopen_from_s1_puts_back_a_file_rewritten_after_it` failed intermittently on main's macOS
+  release leg (#1917; reviews/2026-11-01.md §3). #2006 (2026-11-02) makes the S₁ tests wait on
+  the host's `saved_s1`/`no_s1` signal instead of on time, and closed #1917. Later S₀/S₁
+  hardening: a persisted S₀ carries the forms its preamble wrote (#1985), is refused when a full
+  run would load another format (#2025), and its writes remove dead writers' partial files and
+  fail on a failed sync (#2028).
 - **Keep-warm (owner, 2026-09-30, decision 10):** only while the user is typing. After each
   compile the host alternates 100 µs sleeps and spins for 2 s, never while idle, because an idle
   Apple Silicon core runs the next keystroke at about a third of its clock (first page 18 ms
@@ -565,13 +571,15 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
     barrier read point, #1507 makes a changed later lookup block convergence, and #1399 closes
     two interrupted-compile holes.
   - Sweeps A, C and D reported 0 mismatches (`p6-hyperopt-2026-10-04`, REPORTED).
-  - Open soundness issues:
-    - #1348: two restore holes in output-file tracking;
-    - #1550 / #1556: a file read while open for output;
-    - #1552: racy stat signatures, which give wrong output on main;
-    - the fixture-wide soundness test **fails on main**: conf-paper, edit 0, page 3, the named
-      destinations differ. It failed in nightly 37208020073 (10-04) and again on the NixOS PC
-      on `9f29302fe` (2026-10-05, VERIFIED).
+  - Soundness issues open on 2026-10-05, all since closed: #1348 (two restore holes in
+    output-file tracking; closed 10-05), #1550 / #1556 (a file read while open for output;
+    #1556 merged 10-05), #1552 (racy stat signatures; merged 10-05). The fixture-wide
+    soundness test failed on main then (conf-paper, edit 0); the nightly's
+    `incremental soundness (every fixture)` job passed on 11-02 and 11-04 (41500637653,
+    41866551502).
+  - *Open on 2026-11-08 (review 2026-11-08):* #2148, one incremental mismatch in 20 on
+    `sound-vol` `vol-closed` under `profile=low-memory` on main `1fba2ea01`; #2145, the
+    beamer-polish sweep under BOX-MEMO `verify` takes 3,656 s on main.
 - **As built: line shifting** (P4-NEWLINE-CONVERGE, #1570; `src/lineshift.rs`,
   `changes/lineshift.ch`).
   - **Lines moved by δ.** An edit moves the lines after it by δ, the line ends it adds minus
@@ -806,15 +814,16 @@ custom Metal glyph renderer.
       beamer fixtures). Fallback renders are identical by construction and cost a PDF render.
     - **Smoothing on is not 0 px** (4,256/6,820 identical). So smoothing stays off, the
       default (#1304).
-  - **Not done:**
-    - **The sweep is not in CI** (adopted §13 R12). `PreviewParityTests`' fixture sweep skips
-      unless `tools/displaylist/check_positions.py` has run first, and no workflow runs it
-      (VERIFIED by grep, 2026-10-05).
-    - **No re-verification on current main.** About 15 renderer PRs have landed since
-      (beamer v3, tiles, PDF inclusion).
-    - **Protocol numbering.** Tags 7/8/9 still need their minor version (3.4, after Typst's
-      3.3), and the tag-7 hash rule has to be reconciled between `page.rs` and `convert.rs`
-      (#1319 5961663133).
+  - *Status 2026-11-08 (review 2026-11-08):*
+    - **The sweep runs in CI** after every merge (`preview-parity.yml`, #1596; R12), and it was
+      the P3 gate's evidence on 2026-10-05 (§12). Since #2081 (2026-11-02) it also sweeps the 10
+      `fixtures/preview-probes`. On main's head `6e66beddf` it **fails**: 31 renders of three
+      probes differ (`pv-pdf-inclusion` 20, `pv-images` 9, `pv-fonts` 2; up to 64,769 px at 4×;
+      run 41510925218). Every parity fixture passes.
+    - **Protocol numbering.** Sections 7 `ORIGINS` and 9 `RULE_GEOMETRY` take no minor number:
+      they are gated by the `exact-geometry` capability (§13, 2026-10-05;
+      `docs/protocol/display-list-v3.md` §3). Section 8 `PAGE_META` is 3.3's. The tag-7 hash
+      rule between `page.rs` and `convert.rs` (#1319 5961663133) was not re-checked.
 - **Tiling above about 3 pixels per point:** 512 px tiles for the visible area only,
   rasterised in parallel (0.24–0.32 ms per tile, #1228), using a custom tile layer rather
   than `CATiledLayer`, to avoid its fade-in and resize jitter. The tile core (phase-boundary
@@ -854,8 +863,10 @@ custom Metal glyph renderer.
   from it and run T2 and lockstep, so the upgrade is prepared before users' `tlmgr` delivers it
   (D12 builds the format from the user's own `latex.ltx`). Next: LaTeX 2026-11-01
   (`dev-2026-11-01-2a`, 2026-09-24, still the newest pre-release on 2026-10-05); pdfTeX's
-  source is unchanged since TeX Live 2026. No lane has taken the dry run yet (lane
-  LATEX-2026-11-DRY-RUN, reviews/2026-10-05.md §4.4; due before 2026-11-01).
+  source is unchanged since TeX Live 2026. No lane took the dry run (lane
+  LATEX-2026-11-DRY-RUN, reviews/2026-10-05.md §4.4; due before 2026-11-01). *LaTeX
+  2026-11-01 was released on 2026-11-01* (latex-project.org/news), so the dry run is now
+  the upgrade lane of §11 (reviews/2026-11-08.md §5).
 
 ---
 
@@ -1164,9 +1175,16 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
   green (24 rows)": every T3 old cell was `missing`, since no v1 run exists any more. #1915
   makes T3's old column a committed one-off v1 measurement, as T4's already was
   (`tools/parity/baselines/t3-v1-oneoff.json`, from the last complete green board with v1,
-  41203982275, 2026-10-31). **No board has run with #1915 yet** (the scheduled run 41312997356
-  is on `a6b02e7a7`, before it). P5 is met when that board is all green on main and main is
-  green (it is red today, #1917). Decision 3's gate, item by item:
+  41203982275, 2026-10-31). P5 is met when that board is all green on main and main is green.
+  *Status 2026-11-08 (review 2026-11-08, VERIFIED from the runs' summaries):* three complete
+  boards on main `6e66beddf`, which has #1915, read **All green**: 41655949084 (11-03, PC),
+  41851982711 (11-04, PC) and 42357659737 (11-07, hosted); T3 new 100 % on every row, T4
+  3,790/3,790, T2 1,590/1,590. Every old cell is marked CROSS-ORACLE (the v1 baselines were
+  measured against other TeX Live trees). The other scheduled boards failed or were cancelled
+  on infrastructure (hosted T4 shards could not fetch e-prints, 42466277711). **Main is not
+  green:** every completed post-merge `ci.yml` run since 2026-11-02 03:05Z failed (`mac app`,
+  `real-doc gate`; `main-red` #2144, open since 11-02), and so did `preview-parity.yml` on the
+  head (§6.2). So P5 is not met. Decision 3's gate, item by item:
   - **Board all green on a complete nightly: met.** S4 asks for 3 consecutive complete green
     boards. They are 39350717288, 39365978113 and 39388695484, on main, ruled on #1319.
   - **P-T2 ≥ 99 %, P-T1 ≥ 98 % on arXiv and T4; zero T4 panics; T2 with 0 unexpected
@@ -1310,8 +1328,11 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-11-01 | **S7 and S8 landed** (§10, §12): the old engine deleted at once (#1888), `flashtex-v3` renamed `flashtex` (RQ6), `supported-latex.json` generated (RQ5); the oracle crates moved to `tests/oracles/` (#1902). Retirement is complete | Commander (kabir-claude), from the stage preconditions |
 | 2026-11-01 | **T3's old column comes from a committed one-off v1 measurement** (#1915), as T4's does: `tools/parity/baselines/t3-v1-oneoff.json`, copied from the last complete green board with v1 (41203982275, 2026-10-31), with input hashes and an oracle record; a missing, malformed or uncovered baseline makes a cell `missing`, never green. A technique refinement within decision 3 (new ≥ old and the owner bars unchanged) | Commander (kabir-claude) |
 | 2026-11-01 | **Persisted body checkpoint S₁** (§5.1, #1899): a reopen at a stored viewport runs from S₁ instead of typesetting the pages before it, and fills them from S₀ with a pass that must converge. An implementation of decision 8's reopen goal within §5's soundness rules, not a change to them | Commander (kabir-claude), on review (reviews/2026-11-01.md) |
-| 2026-11-01 | **Undefined C behaviour in pdfTeX** (INT_MIN negation, division by 0): FlashTeX matches TeX Live's macOS arm64 build; other compilers may differ; never a crash (web2rust `--total-division` #2080, `--exact-abs` and `changes/intmin.ch` #2089) | Commander (kabir-claude), from lane WEB2RUST-AUDIT's evidence |
+| 2026-11-01 | **Undefined C behaviour in pdfTeX** (INT_MIN negation, division by 0): FlashTeX matches TeX Live's macOS arm64 build; other compilers may differ; never a crash (web2rust `--total-division` #2080, `--exact-abs` and `changes/intmin.ch` in #2089, which is still open on 2026-11-08, so INT_MIN negation is not yet built) | Commander (kabir-claude), from lane WEB2RUST-AUDIT's evidence |
 | 2026-11-01 | **pdfTeX's crashes are not replicated.** Parity means pdfTeX's defined observable output. Where pdfTeX has none (a segfault, an abort, undefined behaviour), FlashTeX keeps going with a clear error or warning instead. The three cases found so far (lane REVIEW-PDF): (1) writettf.c's `assert`s, such as line 1125's on an encoding that names `index0`, `index-1` or `uni0000` (SIGABRT); (2) an empty `\pdfmapline` (subfont.c's `assert(fm->tfm_name != NULL)`, an abort) and a subfont map entry with no font file (`xstrdup(NULL)`, a segfault); (3) subfont.c's warnings that print `cur_file_name` after it was freed | Commander (kabir-claude) |
+| 2026-11-02 | Commander transferred from kabir-claude to daniel-parent (mac-m5pro-dq222) by kabir-claude's quiesced handoff (#1319 6568889251, authority #2115); kabir-claude becomes an engineer | Owner (Kabir): "make sure … he takes over as commander when you stop" |
+| 2026-11-03 | daniel-parent hands command back by a quiesced handoff naming kabir-claude (#1319 6597191600, 06:39Z). No Commander held the seat until kabir-claude's claim on 2026-11-08 (#2152) | Daniel (d-q222), relayed by daniel-parent |
+| 2026-11-08 | Commander returns to kabir-claude (mac-m5pro-kabir): non-force claim #2152 on `6e66beddf` | Owner (Kabir), by re-setting the Commander goal |
 
 ---
 
