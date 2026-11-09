@@ -3854,6 +3854,25 @@ impl<T> Arr<T> {
     }
 }
 
+impl<T> Arr<T> {
+    /// Element `i` of an array of fixed length `N` for reading (web2rust's
+    /// reads of a fixed-length array that is not viewed, through
+    /// `crate::ix`): checked against the constant `N` when `checked`. `N` is
+    /// the array's length by construction, as for [`Arr::view`].
+    #[inline(always)]
+    pub fn at_n<const N: usize>(&self, i: usize, checked: bool) -> &T {
+        if cfg!(debug_assertions) && self.len != N {
+            view_len_mismatch(self.len, N);
+        }
+        if checked && i >= N {
+            out_of_bounds(i, N);
+        }
+        // SAFETY: in bounds when checked; otherwise only the benchmarking
+        // feature `unchecked-reads` gets here (`crate::ix`).
+        unsafe { &*self.ptr.add(i) }
+    }
+}
+
 impl<T, const N: usize> ArrView<T, N> {
     const SIZE: usize = std::mem::size_of::<T>();
     const STRADDLES: bool = !Self::SIZE.is_power_of_two();

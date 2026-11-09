@@ -293,7 +293,7 @@ impl Globals {
             let __for_end_2 = 30i32;
             k = 1i32;
             while k <= __for_end_2 {
-                { let __v4 = (2i32).wrapping_mul(self.two_to_the[crate::ix::U(((k).wrapping_sub(1i32)) as usize)]); self.two_to_the[crate::ix::U((k) as usize)] = __v4; }
+                { let __v4 = (2i32).wrapping_mul((*self.two_to_the.at::<31>(crate::ix::U(((k).wrapping_sub(1i32)) as usize)))); self.two_to_the[crate::ix::U((k) as usize)] = __v4; }
                 k = k.wrapping_add(1);
             }
         }
@@ -314,7 +314,7 @@ impl Globals {
             let __for_end_2 = 27i32;
             k = 14i32;
             while k <= __for_end_2 {
-                { let __v5 = self.two_to_the[crate::ix::U(((27i32).wrapping_sub(k)) as usize)]; self.spec_log[crate::ix::U(((k) - 1) as usize)] = __v5; }
+                { let __v5 = (*self.two_to_the.at::<31>(crate::ix::U(((27i32).wrapping_sub(k)) as usize))); self.spec_log[crate::ix::U(((k) - 1) as usize)] = __v5; }
                 k = k.wrapping_add(1);
             }
         }
@@ -358,7 +358,7 @@ impl Globals {
             let __for_end_2 = prim_size;
             k = 1i32;
             while k <= __for_end_2 {
-                { let __v6 = self.prim[crate::ix::U((0i32) as usize)]; self.prim[crate::ix::U((k) as usize)] = __v6; }
+                { let __v6 = (*self.prim.at::<2101>(crate::ix::U((0i32) as usize))); self.prim[crate::ix::U((k) as usize)] = __v6; }
                 k = k.wrapping_add(1);
             }
         }
@@ -368,7 +368,7 @@ impl Globals {
             let __for_end_2 = hash_top;
             k = 515i32;
             while k <= __for_end_2 {
-                { let __v7 = self.hash[crate::ix::U(((hash_base) - 514) as usize)]; self.hash[crate::ix::U(((k) - 514) as usize)] = __v7; }
+                { let __v7 = (*self.hash.at::<629679>(crate::ix::U(((hash_base) - 514) as usize))); self.hash[crate::ix::U(((k) - 514) as usize)] = __v7; }
                 k = k.wrapping_add(1);
             }
         }
@@ -470,7 +470,7 @@ impl Globals {
             let __for_end_2 = 9i32;
             i = 1i32;
             while i <= __for_end_2 {
-                { let __v9 = (10i32).wrapping_mul(self.ten_pow[crate::ix::U(((i).wrapping_sub(1i32)) as usize)]); self.ten_pow[crate::ix::U((i) as usize)] = __v9; }
+                { let __v9 = (10i32).wrapping_mul((*self.ten_pow.at::<10>(crate::ix::U(((i).wrapping_sub(1i32)) as usize)))); self.ten_pow[crate::ix::U((i) as usize)] = __v9; }
                 i = i.wrapping_add(1);
             }
         }
@@ -1237,10 +1237,10 @@ impl Globals {
         self.stop_at_space = false;
         self.begin_name();
         {
-            let __for_end_2 = (self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]).wrapping_sub(1i32);
-            i = self.str_start[crate::ix::U((s) as usize)];
+            let __for_end_2 = ((*self.str_start.at::<500001>(crate::ix::U(((s).wrapping_add(1i32)) as usize)))).wrapping_sub(1i32);
+            i = (*self.str_start.at::<500001>(crate::ix::U((s) as usize)));
             while i <= __for_end_2 {
-                dummy = self.more_name(self.str_pool[crate::ix::U((i) as usize)]);
+                dummy = self.more_name((*self.str_pool.at::<6250001>(crate::ix::U((i) as usize))));
                 i = i.wrapping_add(1);
             }
         }
@@ -1435,10 +1435,10 @@ impl Globals {
                                     }
                                 }
                             }
-                            if (((__av_eqtb[crate::ix::U(((29340i32) - 1) as usize)].int() > 0i32) && (!self.no_convert)) && (self.mubyte_write[crate::ix::U((s) as usize)] > 0i32)) {
-                                s = self.mubyte_write[crate::ix::U((s) as usize)];
+                            if (((__av_eqtb[crate::ix::U(((29340i32) - 1) as usize)].int() > 0i32) && (!self.no_convert)) && ((*self.mubyte_write.at::<256>(crate::ix::U((s) as usize))) > 0i32)) {
+                                s = (*self.mubyte_write.at::<256>(crate::ix::U((s) as usize)));
                             } else {
-                                if (self.xprn[crate::ix::U((s) as usize)] || self.special_printing) {
+                                if ((*self.xprn.at::<256>(crate::ix::U((s) as usize))) || self.special_printing) {
                                     {
                                         self.print_char(s);
                                         self.no_convert = false;
@@ -1449,10 +1449,10 @@ impl Globals {
                             self.no_convert = false;
                             nl = __av_eqtb[crate::ix::U(((29326i32) - 1) as usize)].int();
                             __av_eqtb[crate::ix::U(((29326i32) - 1) as usize)].set_int((1i32).wrapping_neg());
-                            j = self.str_start[crate::ix::U((s) as usize)];
-                            while (j < self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]) {
+                            j = (*self.str_start.at::<500001>(crate::ix::U((s) as usize)));
+                            while (j < (*self.str_start.at::<500001>(crate::ix::U(((s).wrapping_add(1i32)) as usize)))) {
                                 {
-                                    self.print_char(self.str_pool[crate::ix::U((j) as usize)]);
+                                    self.print_char((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                                     j = (j).wrapping_add(1i32);
                                 }
                             }
@@ -1462,10 +1462,10 @@ impl Globals {
                     }
                 }
             }
-            j = self.str_start[crate::ix::U((s) as usize)];
-            while (j < self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]) {
+            j = (*self.str_start.at::<500001>(crate::ix::U((s) as usize)));
+            while (j < (*self.str_start.at::<500001>(crate::ix::U(((s).wrapping_add(1i32)) as usize)))) {
                 {
-                    self.print_char(self.str_pool[crate::ix::U((j) as usize)]);
+                    self.print_char((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                     j = (j).wrapping_add(1i32);
                 }
             }
@@ -1483,10 +1483,10 @@ impl Globals {
             self.print(s);
         } else {
             {
-                j = self.str_start[crate::ix::U((s) as usize)];
-                while (j < self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]) {
+                j = (*self.str_start.at::<500001>(crate::ix::U((s) as usize)));
+                while (j < (*self.str_start.at::<500001>(crate::ix::U(((s).wrapping_add(1i32)) as usize)))) {
                     {
-                        self.print(self.str_pool[crate::ix::U((j) as usize)]);
+                        self.print((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                         j = (j).wrapping_add(1i32);
                     }
                 }
@@ -1531,10 +1531,10 @@ impl Globals {
         while (k > 0i32) {
             {
                 k = (k).wrapping_sub(1i32);
-                if (self.dig[crate::ix::U((k) as usize)] < 10i32) {
-                    self.print_char((48i32).wrapping_add(self.dig[crate::ix::U((k) as usize)]));
+                if ((*self.dig.at::<23>(crate::ix::U((k) as usize))) < 10i32) {
+                    self.print_char((48i32).wrapping_add((*self.dig.at::<23>(crate::ix::U((k) as usize)))));
                 } else {
-                    self.print_char((55i32).wrapping_add(self.dig[crate::ix::U((k) as usize)]));
+                    self.print_char((55i32).wrapping_add((*self.dig.at::<23>(crate::ix::U((k) as usize)))));
                 }
             }
         }
@@ -1623,14 +1623,14 @@ impl Globals {
             if (((p >= undefined_control_sequence) && (p <= eqtb_size)) || (p > eqtb_top)) {
                 self.print_esc(591i32);
             } else {
-                if ((self.hash[crate::ix::U(((p) - 514) as usize)].rh() < 0i32) || (self.hash[crate::ix::U(((p) - 514) as usize)].rh() >= self.str_ptr)) {
+                if (((*self.hash.at::<629679>(crate::ix::U(((p) - 514) as usize))).rh() < 0i32) || ((*self.hash.at::<629679>(crate::ix::U(((p) - 514) as usize))).rh() >= self.str_ptr)) {
                     self.print_esc(592i32);
                 } else {
                     {
                         if ((p >= prim_eqtb_base) && (p < frozen_null_font)) {
-                            self.print_esc((self.prim[crate::ix::U(((p).wrapping_sub(15526i32)) as usize)].rh()).wrapping_sub(1i32));
+                            self.print_esc(((*self.prim.at::<2101>(crate::ix::U(((p).wrapping_sub(15526i32)) as usize))).rh()).wrapping_sub(1i32));
                         } else {
-                            self.print_esc(self.hash[crate::ix::U(((p) - 514) as usize)].rh());
+                            self.print_esc((*self.hash.at::<629679>(crate::ix::U(((p) - 514) as usize))).rh());
                         }
                         self.print_char(32i32);
                     }
@@ -1659,9 +1659,9 @@ impl Globals {
             }
         } else {
             if ((p >= prim_eqtb_base) && (p < frozen_null_font)) {
-                self.print_esc((self.prim[crate::ix::U(((p).wrapping_sub(15526i32)) as usize)].rh()).wrapping_sub(1i32));
+                self.print_esc(((*self.prim.at::<2101>(crate::ix::U(((p).wrapping_sub(15526i32)) as usize))).rh()).wrapping_sub(1i32));
             } else {
-                self.print_esc(self.hash[crate::ix::U(((p) - 514) as usize)].rh());
+                self.print_esc((*self.hash.at::<629679>(crate::ix::U(((p) - 514) as usize))).rh());
             }
         }
     }
@@ -1677,10 +1677,10 @@ impl Globals {
         must_quote = false;
         if (a != 0i32) {
             {
-                j = self.str_start[crate::ix::U((a) as usize)];
-                while ((!must_quote) && (j < self.str_start[crate::ix::U(((a).wrapping_add(1i32)) as usize)])) {
+                j = (*self.str_start.at::<500001>(crate::ix::U((a) as usize)));
+                while ((!must_quote) && (j < (*self.str_start.at::<500001>(crate::ix::U(((a).wrapping_add(1i32)) as usize))))) {
                     {
-                        must_quote = (self.str_pool[crate::ix::U((j) as usize)] == 32i32);
+                        must_quote = ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) == 32i32);
                         j = (j).wrapping_add(1i32);
                     }
                 }
@@ -1688,10 +1688,10 @@ impl Globals {
         }
         if (n != 0i32) {
             {
-                j = self.str_start[crate::ix::U((n) as usize)];
-                while ((!must_quote) && (j < self.str_start[crate::ix::U(((n).wrapping_add(1i32)) as usize)])) {
+                j = (*self.str_start.at::<500001>(crate::ix::U((n) as usize)));
+                while ((!must_quote) && (j < (*self.str_start.at::<500001>(crate::ix::U(((n).wrapping_add(1i32)) as usize))))) {
                     {
-                        must_quote = (self.str_pool[crate::ix::U((j) as usize)] == 32i32);
+                        must_quote = ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) == 32i32);
                         j = (j).wrapping_add(1i32);
                     }
                 }
@@ -1699,10 +1699,10 @@ impl Globals {
         }
         if (e != 0i32) {
             {
-                j = self.str_start[crate::ix::U((e) as usize)];
-                while ((!must_quote) && (j < self.str_start[crate::ix::U(((e).wrapping_add(1i32)) as usize)])) {
+                j = (*self.str_start.at::<500001>(crate::ix::U((e) as usize)));
+                while ((!must_quote) && (j < (*self.str_start.at::<500001>(crate::ix::U(((e).wrapping_add(1i32)) as usize))))) {
                     {
-                        must_quote = (self.str_pool[crate::ix::U((j) as usize)] == 32i32);
+                        must_quote = ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) == 32i32);
                         j = (j).wrapping_add(1i32);
                     }
                 }
@@ -1713,11 +1713,11 @@ impl Globals {
         }
         if (a != 0i32) {
             {
-                let __for_end_3 = (self.str_start[crate::ix::U(((a).wrapping_add(1i32)) as usize)]).wrapping_sub(1i32);
-                j = self.str_start[crate::ix::U((a) as usize)];
+                let __for_end_3 = ((*self.str_start.at::<500001>(crate::ix::U(((a).wrapping_add(1i32)) as usize)))).wrapping_sub(1i32);
+                j = (*self.str_start.at::<500001>(crate::ix::U((a) as usize)));
                 while j <= __for_end_3 {
-                    if (self.str_pool[crate::ix::U((j) as usize)] != 34i32) {
-                        self.print(self.str_pool[crate::ix::U((j) as usize)]);
+                    if ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) != 34i32) {
+                        self.print((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                     }
                     j = j.wrapping_add(1);
                 }
@@ -1725,11 +1725,11 @@ impl Globals {
         }
         if (n != 0i32) {
             {
-                let __for_end_3 = (self.str_start[crate::ix::U(((n).wrapping_add(1i32)) as usize)]).wrapping_sub(1i32);
-                j = self.str_start[crate::ix::U((n) as usize)];
+                let __for_end_3 = ((*self.str_start.at::<500001>(crate::ix::U(((n).wrapping_add(1i32)) as usize)))).wrapping_sub(1i32);
+                j = (*self.str_start.at::<500001>(crate::ix::U((n) as usize)));
                 while j <= __for_end_3 {
-                    if (self.str_pool[crate::ix::U((j) as usize)] != 34i32) {
-                        self.print(self.str_pool[crate::ix::U((j) as usize)]);
+                    if ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) != 34i32) {
+                        self.print((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                     }
                     j = j.wrapping_add(1);
                 }
@@ -1737,11 +1737,11 @@ impl Globals {
         }
         if (e != 0i32) {
             {
-                let __for_end_3 = (self.str_start[crate::ix::U(((e).wrapping_add(1i32)) as usize)]).wrapping_sub(1i32);
-                j = self.str_start[crate::ix::U((e) as usize)];
+                let __for_end_3 = ((*self.str_start.at::<500001>(crate::ix::U(((e).wrapping_add(1i32)) as usize)))).wrapping_sub(1i32);
+                j = (*self.str_start.at::<500001>(crate::ix::U((e) as usize)));
                 while j <= __for_end_3 {
-                    if (self.str_pool[crate::ix::U((j) as usize)] != 34i32) {
-                        self.print(self.str_pool[crate::ix::U((j) as usize)]);
+                    if ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) != 34i32) {
+                        self.print((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                     }
                     j = j.wrapping_add(1);
                 }
@@ -1824,7 +1824,7 @@ impl Globals {
     pub fn print_file_line(&mut self) {
         let mut level: i32 = 0; // §1904
         level = self.in_open;
-        while ((level > 0i32) && (self.full_source_filename_stack[crate::ix::U((level) as usize)] == 0i32)) {
+        while ((level > 0i32) && ((*self.full_source_filename_stack.at::<16>(crate::ix::U((level) as usize))) == 0i32)) {
             level = (level).wrapping_sub(1i32);
         }
         if (level == 0i32) {
@@ -1832,13 +1832,13 @@ impl Globals {
         } else {
             {
                 self.print_nl(345i32);
-                self.print(self.full_source_filename_stack[crate::ix::U((level) as usize)]);
+                self.print((*self.full_source_filename_stack.at::<16>(crate::ix::U((level) as usize))));
                 self.print(58i32);
                 self.ls_print_level(level);
                 if (level == self.in_open) {
                     self.print_int(((self.line) as i64));
                 } else {
-                    self.print_int(((self.line_stack[crate::ix::U((((level).wrapping_add(1i32)) - 1) as usize)]) as i64));
+                    self.print_int((((*self.line_stack.at::<15>(crate::ix::U((((level).wrapping_add(1i32)) - 1) as usize)))) as i64));
                 }
                 self.print(659i32);
             }
@@ -1893,7 +1893,7 @@ impl Globals {
                         while (self.help_ptr > 0i32) {
                             {
                                 self.help_ptr = (self.help_ptr).wrapping_sub(1i32);
-                                self.print_nl(self.help_line[crate::ix::U((self.help_ptr) as usize)]);
+                                self.print_nl((*self.help_line.at::<6>(crate::ix::U((self.help_ptr) as usize))));
                             }
                         }
                     }
@@ -1923,7 +1923,7 @@ impl Globals {
                             if (self.last == self.first) {
                                 break 'l_exit_f;
                             }
-                            c = self.buffer[crate::ix::U((self.first) as usize)];
+                            c = (*self.buffer.at::<200001>(crate::ix::U((self.first) as usize)));
                             if (c >= 97i32) {
                                 c = (c).wrapping_sub(32i32);
                             }
@@ -1939,8 +1939,8 @@ impl Globals {
                                             s4 = self.align_state;
                                             self.align_state = 1000000i32;
                                             self.OK_to_interrupt = false;
-                                            if (((self.last > (self.first).wrapping_add(1i32)) && (self.buffer[crate::ix::U(((self.first).wrapping_add(1i32)) as usize)] >= 48i32)) && (self.buffer[crate::ix::U(((self.first).wrapping_add(1i32)) as usize)] <= 57i32)) {
-                                                c = (((c).wrapping_mul(10i32)).wrapping_add(self.buffer[crate::ix::U(((self.first).wrapping_add(1i32)) as usize)])).wrapping_sub((48i32).wrapping_mul(11i32));
+                                            if (((self.last > (self.first).wrapping_add(1i32)) && ((*self.buffer.at::<200001>(crate::ix::U(((self.first).wrapping_add(1i32)) as usize))) >= 48i32)) && ((*self.buffer.at::<200001>(crate::ix::U(((self.first).wrapping_add(1i32)) as usize))) <= 57i32)) {
+                                                c = (((c).wrapping_mul(10i32)).wrapping_add((*self.buffer.at::<200001>(crate::ix::U(((self.first).wrapping_add(1i32)) as usize))))).wrapping_sub((48i32).wrapping_mul(11i32));
                                             } else {
                                                 c = (c).wrapping_sub(48i32);
                                             }
@@ -1968,10 +1968,10 @@ impl Globals {
                                 69 => {
                                     // §84
                                     if (self.base_ptr > 0i32) {
-                                        if (self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field >= 256i32) {
+                                        if ((*self.input_stack.at::<10001>(crate::ix::U((self.base_ptr) as usize))).name_field >= 256i32) {
                                             {
-                                                self.edit_name_start = self.str_start[crate::ix::U((self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field) as usize)];
-                                                self.edit_name_length = (self.str_start[crate::ix::U(((self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field) as usize)]);
+                                                self.edit_name_start = (*self.str_start.at::<500001>(crate::ix::U(((*self.input_stack.at::<10001>(crate::ix::U((self.base_ptr) as usize))).name_field) as usize)));
+                                                self.edit_name_length = ((*self.str_start.at::<500001>(crate::ix::U((((*self.input_stack.at::<10001>(crate::ix::U((self.base_ptr) as usize))).name_field).wrapping_add(1i32)) as usize)))).wrapping_sub((*self.str_start.at::<500001>(crate::ix::U(((*self.input_stack.at::<10001>(crate::ix::U((self.base_ptr) as usize))).name_field) as usize))));
                                                 self.edit_line = self.line;
                                                 self.ls_print_level(self.in_open);
                                                 self.jump_out();
@@ -1998,7 +1998,7 @@ impl Globals {
                                                 }
                                                 loop {
                                                     self.help_ptr = (self.help_ptr).wrapping_sub(1i32);
-                                                    self.print(self.help_line[crate::ix::U((self.help_ptr) as usize)]);
+                                                    self.print((*self.help_line.at::<6>(crate::ix::U((self.help_ptr) as usize))));
                                                     self.print_ln();
                                                     if (self.help_ptr == 0i32) { break; }
                                                 }
@@ -2080,7 +2080,7 @@ impl Globals {
                                 self.print_nl(268i32);
                                 self.print_nl(269i32);
                                 if (self.base_ptr > 0i32) {
-                                    if (self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field >= 256i32) {
+                                    if ((*self.input_stack.at::<10001>(crate::ix::U((self.base_ptr) as usize))).name_field >= 256i32) {
                                         self.print(270i32);
                                     }
                                 }
@@ -2116,7 +2116,7 @@ impl Globals {
                 while (self.help_ptr > 0i32) {
                     {
                         self.help_ptr = (self.help_ptr).wrapping_sub(1i32);
-                        self.print_nl(self.help_line[crate::ix::U((self.help_ptr) as usize)]);
+                        self.print_nl((*self.help_line.at::<6>(crate::ix::U((self.help_ptr) as usize))));
                     }
                 }
             }
@@ -2286,10 +2286,10 @@ impl Globals {
         let mut j: pool_pointer = 0; // §45
         let mut result: bool = false; // §45
         'l_not_found_f: {
-            j = self.str_start[crate::ix::U((s) as usize)];
-            while (j < self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]) {
+            j = (*self.str_start.at::<500001>(crate::ix::U((s) as usize)));
+            while (j < (*self.str_start.at::<500001>(crate::ix::U(((s).wrapping_add(1i32)) as usize)))) {
                 {
-                    if (self.str_pool[crate::ix::U((j) as usize)] != self.buffer[crate::ix::U((k) as usize)]) {
+                    if ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) != (*self.buffer.at::<200001>(crate::ix::U((k) as usize)))) {
                         {
                             result = false;
                             break 'l_not_found_f;
@@ -2315,14 +2315,14 @@ impl Globals {
         let mut result: bool = false; // §46
         'l_not_found_f: {
             result = false;
-            if ((self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((s) as usize)]) != (self.str_start[crate::ix::U(((t).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((t) as usize)])) {
+            if (((*self.str_start.at::<500001>(crate::ix::U(((s).wrapping_add(1i32)) as usize)))).wrapping_sub((*self.str_start.at::<500001>(crate::ix::U((s) as usize)))) != ((*self.str_start.at::<500001>(crate::ix::U(((t).wrapping_add(1i32)) as usize)))).wrapping_sub((*self.str_start.at::<500001>(crate::ix::U((t) as usize))))) {
                 break 'l_not_found_f;
             }
-            j = self.str_start[crate::ix::U((s) as usize)];
-            k = self.str_start[crate::ix::U((t) as usize)];
-            while (j < self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]) {
+            j = (*self.str_start.at::<500001>(crate::ix::U((s) as usize)));
+            k = (*self.str_start.at::<500001>(crate::ix::U((t) as usize)));
+            while (j < (*self.str_start.at::<500001>(crate::ix::U(((s).wrapping_add(1i32)) as usize)))) {
                 {
-                    if (self.str_pool[crate::ix::U((j) as usize)] != self.str_pool[crate::ix::U((k) as usize)]) {
+                    if ((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))) != (*self.str_pool.at::<6250001>(crate::ix::U((k) as usize)))) {
                         break 'l_not_found_f;
                     }
                     j = (j).wrapping_add(1i32);
@@ -2349,7 +2349,7 @@ impl Globals {
         let mut len: i32 = 0; // §1883
         'l_found_f: {
             result = 0i32;
-            len = (self.str_start[crate::ix::U(((search).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((search) as usize)]);
+            len = ((*self.str_start.at::<500001>(crate::ix::U(((search).wrapping_add(1i32)) as usize)))).wrapping_sub((*self.str_start.at::<500001>(crate::ix::U((search) as usize))));
             if (len == 0i32) {
                 {
                     result = 345i32;
@@ -2381,7 +2381,7 @@ impl Globals {
                 {
                     {
                         self.str_ptr = (self.str_ptr).wrapping_sub(1i32);
-                        self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
+                        self.pool_ptr = (*self.str_start.at::<500001>(crate::ix::U((self.str_ptr) as usize)));
                     }
                     slow_make_string = s;
                     break 'l_exit_f;
@@ -2506,7 +2506,7 @@ impl Globals {
                                         k = 1i32;
                                         while true {
                                             {
-                                                if ((self.xord[crate::ix::U((n) as usize)] < 48i32) || (self.xord[crate::ix::U((n) as usize)] > 57i32)) {
+                                                if (((*self.xord.at::<256>(crate::ix::U((n) as usize))) < 48i32) || ((*self.xord.at::<256>(crate::ix::U((n) as usize))) > 57i32)) {
                                                     {
                                                         {
                                                             crate::system::wr_str(&mut self.term_out, "! TEX.POOL check sum doesn't have nine digits.");
@@ -2517,7 +2517,7 @@ impl Globals {
                                                         break 'l_exit_f;
                                                     }
                                                 }
-                                                a = (((10i32).wrapping_mul(a)).wrapping_add(self.xord[crate::ix::U((n) as usize)])).wrapping_sub(48i32);
+                                                a = (((10i32).wrapping_mul(a)).wrapping_add((*self.xord.at::<256>(crate::ix::U((n) as usize))))).wrapping_sub(48i32);
                                                 if (k == 9i32) {
                                                     break 'l_done_f;
                                                 }
@@ -2542,7 +2542,7 @@ impl Globals {
                             } else {
                                 // §52
                                 {
-                                    if ((((self.xord[crate::ix::U((m) as usize)] < 48i32) || (self.xord[crate::ix::U((m) as usize)] > 57i32)) || (self.xord[crate::ix::U((n) as usize)] < 48i32)) || (self.xord[crate::ix::U((n) as usize)] > 57i32)) {
+                                    if (((((*self.xord.at::<256>(crate::ix::U((m) as usize))) < 48i32) || ((*self.xord.at::<256>(crate::ix::U((m) as usize))) > 57i32)) || ((*self.xord.at::<256>(crate::ix::U((n) as usize))) < 48i32)) || ((*self.xord.at::<256>(crate::ix::U((n) as usize))) > 57i32)) {
                                         {
                                             {
                                                 crate::system::wr_str(&mut self.term_out, "! TEX.POOL line doesn't begin with two digits.");
@@ -2553,7 +2553,7 @@ impl Globals {
                                             break 'l_exit_f;
                                         }
                                     }
-                                    l = (((self.xord[crate::ix::U((m) as usize)]).wrapping_mul(10i32)).wrapping_add(self.xord[crate::ix::U((n) as usize)])).wrapping_sub((48i32).wrapping_mul(11i32));
+                                    l = ((((*self.xord.at::<256>(crate::ix::U((m) as usize)))).wrapping_mul(10i32)).wrapping_add((*self.xord.at::<256>(crate::ix::U((n) as usize))))).wrapping_sub((48i32).wrapping_mul(11i32));
                                     if (((self.pool_ptr).wrapping_add(l)).wrapping_add(string_vacancies) > pool_size) {
                                         {
                                             {
@@ -2576,7 +2576,7 @@ impl Globals {
                                                     m = crate::system::read_char(&mut self.pool_file);
                                                 }
                                                 {
-                                                    { let __ix38 = self.pool_ptr; let __v39 = self.xord[crate::ix::U((m) as usize)]; self.str_pool[crate::ix::U((__ix38) as usize)] = __v39; }
+                                                    { let __ix38 = self.pool_ptr; let __v39 = (*self.xord.at::<256>(crate::ix::U((m) as usize))); self.str_pool[crate::ix::U((__ix38) as usize)] = __v39; }
                                                     self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                                 }
                                             }
@@ -2645,13 +2645,13 @@ impl Globals {
         let mut u: nonnegative_integer = 0; // §69
         let mut v: nonnegative_integer = 0; // §69
         'l_exit_f: {
-            j = self.str_start[crate::ix::U((262i32) as usize)];
+            j = (*self.str_start.at::<500001>(crate::ix::U((262i32) as usize)));
             v = 1000i32;
             while true {
                 {
                     while (n >= v) {
                         {
-                            self.print_char(self.str_pool[crate::ix::U((j) as usize)]);
+                            self.print_char((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                             n = (n).wrapping_sub(v);
                         }
                     }
@@ -2659,22 +2659,22 @@ impl Globals {
                         break 'l_exit_f;
                     }
                     k = (j).wrapping_add(2i32);
-                    u = (v).total_div((self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
-                    if (self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)] == 50i32) {
+                    u = (v).total_div(((*self.str_pool.at::<6250001>(crate::ix::U(((k).wrapping_sub(1i32)) as usize)))).wrapping_sub(48i32));
+                    if ((*self.str_pool.at::<6250001>(crate::ix::U(((k).wrapping_sub(1i32)) as usize))) == 50i32) {
                         {
                             k = (k).wrapping_add(2i32);
-                            u = (u).total_div((self.str_pool[crate::ix::U(((k).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
+                            u = (u).total_div(((*self.str_pool.at::<6250001>(crate::ix::U(((k).wrapping_sub(1i32)) as usize)))).wrapping_sub(48i32));
                         }
                     }
                     if ((n).wrapping_add(u) >= v) {
                         {
-                            self.print_char(self.str_pool[crate::ix::U((k) as usize)]);
+                            self.print_char((*self.str_pool.at::<6250001>(crate::ix::U((k) as usize))));
                             n = (n).wrapping_add(u);
                         }
                     } else {
                         {
                             j = (j).wrapping_add(2i32);
-                            v = (v).total_div((self.str_pool[crate::ix::U(((j).wrapping_sub(1i32)) as usize)]).wrapping_sub(48i32));
+                            v = (v).total_div(((*self.str_pool.at::<6250001>(crate::ix::U(((j).wrapping_sub(1i32)) as usize)))).wrapping_sub(48i32));
                         }
                     }
                 }
@@ -2687,10 +2687,10 @@ impl Globals {
     // §70
     pub fn print_current_string(&mut self) {
         let mut j: pool_pointer = 0; // §70
-        j = self.str_start[crate::ix::U((self.str_ptr) as usize)];
+        j = (*self.str_start.at::<500001>(crate::ix::U((self.str_ptr) as usize)));
         while (j < self.pool_ptr) {
             {
-                self.print_char(self.str_pool[crate::ix::U((j) as usize)]);
+                self.print_char((*self.str_pool.at::<6250001>(crate::ix::U((j) as usize))));
                 j = (j).wrapping_add(1i32);
             }
         }
@@ -2719,7 +2719,7 @@ impl Globals {
                 let __for_end_3 = (self.last).wrapping_sub(1i32);
                 k = self.first;
                 while k <= __for_end_3 {
-                    self.print(self.buffer[crate::ix::U((k) as usize)]);
+                    self.print((*self.buffer.at::<200001>(crate::ix::U((k) as usize))));
                     k = k.wrapping_add(1);
                 }
             }
@@ -2817,7 +2817,7 @@ impl Globals {
         while (k > 0i32) {
             {
                 k = (k).wrapping_sub(1i32);
-                a = ((a).wrapping_add((self.dig[crate::ix::U((k) as usize)]).wrapping_mul(two)) / 10i32);
+                a = ((a).wrapping_add(((*self.dig.at::<23>(crate::ix::U((k) as usize)))).wrapping_mul(two)) / 10i32);
             }
         }
         round_decimals = ((a).wrapping_add(1i32) / 2i32);
@@ -3220,14 +3220,14 @@ impl Globals {
                 while (x > 1073741828i32) {
                     // §120
                     {
-                        z = (((x).wrapping_sub(1i32)).total_div(self.two_to_the[crate::ix::U((k) as usize)])).wrapping_add(1i32);
+                        z = (((x).wrapping_sub(1i32)).total_div((*self.two_to_the.at::<31>(crate::ix::U((k) as usize))))).wrapping_add(1i32);
                         while (x < (fraction_four).wrapping_add(z)) {
                             {
                                 z = ((z).wrapping_add(1i32) / 2i32);
                                 k = (k).wrapping_add(1i32);
                             }
                         }
-                        y = (y).wrapping_add(self.spec_log[crate::ix::U(((k) - 1) as usize)]);
+                        y = (y).wrapping_add((*self.spec_log.at::<28>(crate::ix::U(((k) - 1) as usize))));
                         x = (x).wrapping_sub(z);
                     }
                 }
@@ -3381,7 +3381,7 @@ impl Globals {
             k = 0i32;
             while k <= __for_end_2 {
                 {
-                    x = (self.randoms[crate::ix::U((k) as usize)]).wrapping_sub(self.randoms[crate::ix::U(((k).wrapping_add(31i32)) as usize)]);
+                    x = ((*self.randoms.at::<55>(crate::ix::U((k) as usize)))).wrapping_sub((*self.randoms.at::<55>(crate::ix::U(((k).wrapping_add(31i32)) as usize))));
                     if (x < 0i32) {
                         x = (x).wrapping_add(268435456i32);
                     }
@@ -3395,7 +3395,7 @@ impl Globals {
             k = 24i32;
             while k <= __for_end_2 {
                 {
-                    x = (self.randoms[crate::ix::U((k) as usize)]).wrapping_sub(self.randoms[crate::ix::U(((k).wrapping_sub(24i32)) as usize)]);
+                    x = ((*self.randoms.at::<55>(crate::ix::U((k) as usize)))).wrapping_sub((*self.randoms.at::<55>(crate::ix::U(((k).wrapping_sub(24i32)) as usize))));
                     if (x < 0i32) {
                         x = (x).wrapping_add(268435456i32);
                     }
@@ -3454,7 +3454,7 @@ impl Globals {
         } else {
             self.j_random = (self.j_random).wrapping_sub(1i32);
         }
-        y = self.take_frac((x).wrapping_abs(), self.randoms[crate::ix::U((self.j_random) as usize)]);
+        y = self.take_frac((x).wrapping_abs(), (*self.randoms.at::<55>(crate::ix::U((self.j_random) as usize))));
         if (y == (x).wrapping_abs()) {
             unif_rand = 0i32;
         } else {
@@ -3483,13 +3483,13 @@ impl Globals {
                 } else {
                     self.j_random = (self.j_random).wrapping_sub(1i32);
                 }
-                x = self.take_frac(112429i32, (self.randoms[crate::ix::U((self.j_random) as usize)]).wrapping_sub(134217728i32));
+                x = self.take_frac(112429i32, ((*self.randoms.at::<55>(crate::ix::U((self.j_random) as usize)))).wrapping_sub(134217728i32));
                 if (self.j_random == 0i32) {
                     self.new_randoms();
                 } else {
                     self.j_random = (self.j_random).wrapping_sub(1i32);
                 }
-                u = self.randoms[crate::ix::U((self.j_random) as usize)];
+                u = (*self.randoms.at::<55>(crate::ix::U((self.j_random) as usize)));
                 if ((x).wrapping_abs() < u) { break; }
             }
             x = self.make_frac(x, u);

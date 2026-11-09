@@ -238,7 +238,7 @@ impl Globals {
                     self.first = (self.last).wrapping_add(1i32);
                 }
                 // §1648
-                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 1695i32)) {
+                if ((self.etex_p() || ((*self.buffer.at::<200001>(crate::ix::U((self.cur_input.loc_field) as usize))) == 42i32)) && (self.format_ident == 1695i32)) {
                     {
                         self.no_new_control_sequence = false;
                         // §1649
@@ -335,7 +335,7 @@ impl Globals {
                         self.primitive(2084i32, set_shape, widow_penalties_loc);
                         self.primitive(2085i32, set_shape, display_widow_penalties_loc);
                         // §1648
-                        if (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32) {
+                        if ((*self.buffer.at::<200001>(crate::ix::U((self.cur_input.loc_field) as usize))) == 42i32) {
                             self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
                         }
                         self.eTeX_mode = 1i32;
@@ -349,7 +349,7 @@ impl Globals {
                     self.no_new_control_sequence = true;
                 } else {
                     // §1517
-                    if (((self.format_ident == 0i32) || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 38i32)) || self.dump_line) {
+                    if (((self.format_ident == 0i32) || ((*self.buffer.at::<200001>(crate::ix::U((self.cur_input.loc_field) as usize))) == 38i32)) || self.dump_line) {
                         {
                             if (self.format_ident != 0i32) {
                                 self.initialize();
@@ -375,7 +375,7 @@ impl Globals {
                             if self.bm_on {
                                 self.flashtex_bm_loaded();
                             }
-                            while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 32i32)) {
+                            while ((self.cur_input.loc_field < self.cur_input.limit_field) && ((*self.buffer.at::<200001>(crate::ix::U((self.cur_input.loc_field) as usize))) == 32i32)) {
                                 self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
                             }
                         }
@@ -406,7 +406,7 @@ impl Globals {
                 self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));
                 self.init_randoms(self.random_seed);
                 // §941
-                self.magic_offset = (self.str_start[crate::ix::U((math_spacing) as usize)]).wrapping_sub((9i32).wrapping_mul(ord_noad));
+                self.magic_offset = ((*self.str_start.at::<500001>(crate::ix::U((math_spacing) as usize)))).wrapping_sub((9i32).wrapping_mul(ord_noad));
                 // §75
                 if (self.interaction == batch_mode) {
                     self.selector = no_print;
@@ -414,7 +414,7 @@ impl Globals {
                     self.selector = term_only;
                 }
                 // §1517
-                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[crate::ix::U((((cat_code_base).wrapping_add(self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)])) - 1) as usize)].hh().rh() != escape)) {
+                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[crate::ix::U((((cat_code_base).wrapping_add((*self.buffer.at::<200001>(crate::ix::U((self.cur_input.loc_field) as usize))))) - 1) as usize)].hh().rh() != escape)) {
                     self.start_input();
                 }
             }
