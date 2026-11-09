@@ -72,7 +72,11 @@ The from-scratch references of a verified run go 3 at a time beside the host
 (`INCR_BENCH_REF_JOBS`, which sweeps.py sets; incr_bench.py's default is 1): the same comparisons,
 in a third of the time for a unit whose references dominate. BOX-MEMO's verify mode is one: a cold
 compile runs the full verifier on every call it replays (beamer-polish: 1289 a compile, 16 s against
-0.8 s; #2145).
+0.8 s; #2145). The plan knows it: with `-f boxmemo=verify` it reads `sweeps-costs-verify.json`
+(sound-a measured in verify mode) over `sweeps-costs.json`, and scales any other unit (beamer
+fixtures by 15, the rest by 2), so sound-a's verify sweep is 6 shards, not one of 90+ minutes.
+Refresh it from a verify run's `costs.json` (`sweeps.py costs` writes measured seconds whatever the
+mode).
 
 `ref` is a branch, a SHA or `refs/pull/N/head` (a fork's pull request). Adding the `run-sweeps`
 label to a pull request does the same for its head, once its branch has the workflow. The run's
