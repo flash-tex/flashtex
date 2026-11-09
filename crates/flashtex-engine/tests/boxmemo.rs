@@ -368,6 +368,33 @@ fn font_parameters_are_part_of_the_key() {
 }
 
 #[test]
+fn a_formula_before_a_replayed_call_is_not_state() {
+    // (lane AUDIT-MATH) a call that typesets a formula leaves
+    // `mlist_to_hlist`'s style, size, mu and penalties as its formula ended;
+    // a replay leaves the last formula's before it. Every conversion sets
+    // them before it reads them, so the full verifier holds them dead, as
+    // it holds `cur_mlist`
+    let Some((files, fonts)) = math_fonts() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "math-scratch",
+        &[
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n",
+            fonts,
+            "\\def\\measure{\\begingroup\\setbox0\\hbox{$x^2$}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\def\\one#1{#1\\measure\\message{[\\the\\dimen1]}}\n\
+             \\one{}\\one{}\\one{\\setbox3\\hbox{$\\scriptscriptstyle u$}}\n\
+             \\one{\\setbox3\\vbox{\\hsize=100pt \\noindent$a$\\par}}\\one{\\setbox3\\hbox{$\\scriptstyle u$}}\\end\n",
+        ]
+        .concat(),
+        &files,
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
 fn boxes_set_at_the_calls_level_replay() {
     // (lane FANCYHDR) fancyhdr's head and foot run `\normalsize` at the
     // call's own level, whose `\size@update` sets `\strutbox` there: a box
@@ -437,12 +464,34 @@ fn a_box_made_in_a_group_is_not_the_calls_after_it() {
 
 /// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
 fn cmr10() -> Option<Vec<u8>> {
+    tex_file("cmr10.tfm")
+}
+
+/// TeX Live's file `name`, or `None` (the test then passes with a note).
+fn tex_file(name: &str) -> Option<Vec<u8>> {
     let bin = flashtex_engine::resolver::find_texlive_bin()?;
     let out = Command::new(bin.join("kpsewhich"))
-        .arg("cmr10.tfm")
+        .arg(name)
         .output()
         .ok()?;
     std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+}
+
+/// Plain TeX's four text-size fonts, as files for [`check_with`], and the
+/// lines that load them into families 0-3 at every size.
+fn math_fonts() -> Option<(Vec<(&'static str, Vec<u8>)>, &'static str)> {
+    let mut files = vec![];
+    for n in ["cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm"] {
+        files.push((n, tex_file(n)?));
+    }
+    Some((
+        files,
+        "\\font\\r=cmr10 \\font\\i=cmmi10 \\font\\s=cmsy10 \\font\\e=cmex10\n\
+         \\textfont0=\\r \\scriptfont0=\\r \\scriptscriptfont0=\\r\n\
+         \\textfont1=\\i \\scriptfont1=\\i \\scriptscriptfont1=\\i\n\
+         \\textfont2=\\s \\scriptfont2=\\s \\scriptscriptfont2=\\s\n\
+         \\textfont3=\\e \\scriptfont3=\\e \\scriptscriptfont3=\\e\n",
+    ))
 }
 
 #[test]

@@ -293,6 +293,14 @@ before it reads. Each item is cited:
   (§913–§918) each set it before reading it. Between two commands it is a dangling pointer to cells
   either path may have reused. The convergence test already treats `temp_head` and `backup_head`
   the same way.
+- `mlist_to_hlist`'s `cur_style`, `cur_size`, `cur_mu` and `mlist_penalties` (lane AUDIT-MATH),
+  held dead with `cur_mlist` (`iso.rs` `DEAD_SCALARS`):
+  - every caller sets `cur_style` and `mlist_penalties` right before the call: `after_math`
+    (§1194, §1196, §1199), `clean_box` (§720), and a nucleus's sub-mlist (§754);
+  - the conversion sets `cur_size` and `cur_mu` from `cur_style` (§703) before it reads them;
+  - all of this happens within the one command that ends the formula.
+
+  A replayed call that typesets a formula leaves them as the last formula *before* the call ended.
 
 Each of these was found by the verifier as a false positive on *Infinite Descent*. Once covered, 0
 differences remained.
