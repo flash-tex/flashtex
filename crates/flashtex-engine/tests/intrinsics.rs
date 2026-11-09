@@ -199,6 +199,25 @@ fn register_arithmetic_is_a_dependency() {
 }
 
 #[test]
+fn a_callers_parameter_read_past_the_run_is_not_the_runs() {
+    // (#2198) `\\count1=5` reads on past the body for more digits; the
+    // caller's `#1` pushes its argument at the input level the body had, so
+    // `7\\relax` looked like the run's own. Once the argument is `8\\relax`
+    // the count is 58, not the recorded 57: such a read is past the run and
+    // abandons the recording
+    let s = check(
+        "caller-param",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\hook{\\global\\count1=5}\\def\\caller#1{\\hook#1}\n\
+         \\def\\show{\\message{[\\the\\count1]}}\n\
+         \\caller{7\\relax}\\show\\caller{7\\relax}\\show\\caller{7\\relax}\\show\n\
+         \\caller{8\\relax}\\show\\caller{8\\relax}\\show\\end\n",
+    );
+    assert_eq!(stat(&s, "replays"), 0, "{s}");
+    assert!(stat(&s, "Level") >= 1, "{s}");
+}
+
+#[test]
 fn verify_all_on_the_test_file() {
     // every parameterless macro big_switch expands is a candidate
     let d = scratch("all");

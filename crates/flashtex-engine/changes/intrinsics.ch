@@ -164,6 +164,13 @@ if cur_cmd<=car_ret then if cur_cmd>=tab_mark then if align_state=0 then
   end
 @z
 
+@x pdftex.web l.8782 - ... and so is a parameter's |out_param|, before its list is read (#2198)
+begin begin_token_list(param_stack[param_start+cur_chr-1],parameter);
+@y
+begin if intr_rec_on then flashtex_intr_next;
+begin_token_list(param_stack[param_start+cur_chr-1],parameter);
+@z
+
 @x pdftex.web l.8961 - an expansion that is not |big_switch|'s own ends |intr_at_switch|
 reswitch:
 if cur_cmd<call then @<Expand a nonmacro@>
