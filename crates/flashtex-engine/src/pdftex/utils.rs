@@ -446,6 +446,7 @@ impl Globals {
         let Some(path) = self.find_input_file(s) else {
             return;
         };
+        crate::system::recorder_record_input(&path);
         let Ok(meta) = std::fs::metadata(&path) else {
             return;
         };
@@ -471,6 +472,7 @@ impl Globals {
         let Some(path) = self.find_input_file(s) else {
             return;
         };
+        crate::system::recorder_record_input(&path);
         let Ok(meta) = std::fs::metadata(&path) else {
             return;
         };
@@ -514,6 +516,8 @@ impl Globals {
         let Ok(data) = std::fs::read(&path) else {
             return;
         };
+        // (texmfmp.c: once the file is open)
+        crate::system::recorder_record_input(&path);
         crate::system::note_whole_read(&path);
         if offset < 0 || outside {
             return;
@@ -536,6 +540,8 @@ impl Globals {
             let Ok(data) = std::fs::read(&path) else {
                 return;
             };
+            // (texmfmp.c: once the file is open)
+            crate::system::recorder_record_input(&path);
             crate::system::note_whole_read(&path);
             md5::digest(&data)
         } else {

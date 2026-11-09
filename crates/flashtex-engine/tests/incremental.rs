@@ -103,10 +103,23 @@ impl Host {
 
     /// With its stderr to `err`.
     fn start_full(e: &Env, dir: &Path, args: &[&str], env: &[(&str, &str)], err: Stdio) -> Host {
+        Host::start_engine(e, dir, args, &[], env, err)
+    }
+
+    /// With engine options (`-recorder`) before [`ARGS`] too.
+    fn start_engine(
+        e: &Env,
+        dir: &Path,
+        args: &[&str],
+        engine: &[&str],
+        env: &[(&str, &str)],
+        err: Stdio,
+    ) -> Host {
         let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
         c.arg("iserve")
             .args(args)
             .arg("--")
+            .args(engine)
             .args(ARGS)
             .current_dir(dir);
         engine_env(&mut c, e);
@@ -5692,6 +5705,121 @@ fn a_stored_s0_with_images_reopens() {
         "s0-images: after the refused open",
     );
     assert!(r.contains("\"mode\":\"cold\""), "{r}");
+}
+
+/// Lane REVIEW-PDF: `-recorder` lists a file found in the current
+/// directory as pdfTeX does (`INPUT defs.tex` for `\input`, not
+/// `./defs.tex`: `system::record_file_as`; `INPUT ./defs.tex` for the
+/// `\pdffilesize` of LaTeX's `\IfFileExists`), while the incremental
+/// journal keeps the path found. So a host with `-recorder` makes the same restarts as one
+/// without, for a body edit (S₀ kept), an edit of a file the preamble read
+/// (S₀'s key fails) and of one the body read, and stores and reopens the
+/// same S₀; every compile equals scratch runs.
+#[test]
+fn the_recorder_leaves_the_journal_keys_alone() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\input{{defs}}\n\\begin{{document}}\n{}\
+             \\input{{body}}\n{}\\end{{document}}\n",
+            paras(0, 8, word),
+            paras(8, 16, "alpha"),
+        )
+    };
+    let defs = |w: &str| format!("\\newcommand\\defword{{{w}}}\n");
+    let body = |w: &str| format!("{}\\defword\n\n", paras(20, 24, w));
+    let steps: Vec<(&str, Vec<(&str, String)>)> = vec![
+        (
+            "cold",
+            vec![
+                ("defs.tex", defs("one")),
+                ("body.tex", body("beta")),
+                ("doc.tex", doc("alpha")),
+            ],
+        ),
+        ("a body edit", vec![("doc.tex", doc("gamma"))]),
+        (
+            "an edit of the preamble's file",
+            vec![("defs.tex", defs("two"))],
+        ),
+        (
+            "an edit of the body's file",
+            vec![("body.tex", body("delta"))],
+        ),
+        ("a revert", vec![("doc.tex", doc("alpha"))]),
+    ];
+    const FIELDS: &[&str] = &[
+        "mode",
+        "restart_preamble",
+        "restart_pages",
+        "rerun_from",
+        "converged_at",
+        "revalidated",
+    ];
+    let mut seen: Vec<Vec<String>> = vec![];
+    for recorder in [false, true] {
+        let dir = e.dir.join(format!("recorder-{recorder}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine: &[&str] = if recorder { &["-recorder"] } else { &[] };
+        let s0 = dir.with_extension("s0");
+        let _ = std::fs::remove_file(&s0);
+        let mut got = vec![];
+        {
+            let mut h = Host::start_engine(&e, &dir, &[], engine, &[], Stdio::null());
+            for (what, files) in &steps {
+                let files: Vec<(&str, &str)> =
+                    files.iter().map(|(n, t)| (*n, t.as_str())).collect();
+                let r = compile_and_check(&e, &mut h, &dir, &files, what);
+                got.push(format!(
+                    "{what}: {}",
+                    FIELDS
+                        .iter()
+                        .map(|f| format!("{f}={}", field(&r, f)))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ));
+            }
+            let r = h.cmd(&format!("save {}", s0.display()));
+            assert!(r.contains("\"saved\""), "recorder {recorder}: {r}");
+        }
+        if recorder {
+            let fls = std::fs::read_to_string(dir.join("doc.fls")).unwrap_or_default();
+            assert!(
+                // (`\input`'s `open_input` spelling, and LaTeX's
+                // `\IfFileExists`, whose `\pdffilesize` lists the lookup's)
+                fls.lines().any(|l| l == "INPUT defs.tex")
+                    && fls.lines().any(|l| l == "INPUT ./defs.tex"),
+                "doc.fls does not list the files as pdfTeX does:\n{fls}"
+            );
+        }
+        let mut h = Host::start_engine(&e, &dir, &[], engine, &[], Stdio::null());
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let r = h.cmd(&format!("open {}", s0.display()));
+        assert!(
+            r.contains("\"mode\":\"open\""),
+            "recorder {recorder}: not opened from S0: {r}"
+        );
+        check_against(&e, &dir, &reference, &r, "the open");
+        got.push(format!("open: mode={}", field(&r, "mode")));
+        seen.push(got);
+    }
+    assert_eq!(seen[0], seen[1], "-recorder changed the restarts");
+    // (the steps test what they say: S₀ kept, then its key failing)
+    assert!(
+        seen[1][1].contains("mode=\"incremental\" restart_preamble=false"),
+        "{:?}",
+        seen[1]
+    );
+    assert!(
+        seen[1][2].contains("restart_preamble=true"),
+        "{:?}",
+        seen[1]
+    );
 }
 
 /// Lane COLD-OPEN: a beamer document (its preamble declares the navigation
