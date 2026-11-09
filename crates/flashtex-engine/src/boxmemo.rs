@@ -95,10 +95,10 @@ struct Config {
     stats_out: Option<String>,
     debug: bool,
     verify_fail: bool,
-    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-share): the replay breaks a
-    /// sharing on purpose (`bm_swap_share`), to show that the full-state
-    /// verifier sees it.
-    fault_swap_share: bool,
+    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-let): the replay swaps which
+    /// control sequence shares which list on purpose (`bm_swap_let`), to
+    /// show that the full-state verifier sees it.
+    fault_swap_let: bool,
 }
 
 /// The macros offered by default (BOX-MEMO.md §2, §11): framed.sty's frame
@@ -693,8 +693,8 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                 stats_out: std::env::var("FLASHTEX_BOXMEMO_STATS").ok(),
                 debug: std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some(),
                 verify_fail: std::env::var_os("FLASHTEX_BOXMEMO_VERIFY_FAIL").is_some(),
-                fault_swap_share: std::env::var("FLASHTEX_BOXMEMO_FAULT").as_deref()
-                    == Ok("swap-share"),
+                fault_swap_let: std::env::var("FLASHTEX_BOXMEMO_FAULT").as_deref()
+                    == Ok("swap-let"),
             });
         }
         f(c.as_ref().unwrap())
@@ -4381,58 +4381,41 @@ impl Globals {
 
     /// Replay entry `i` of `cs`; its trailer token, if any, for the caller
     /// to back up (`main_control` then runs it).
-    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-share): a `\\let` of a macro
-    /// (`R` shares `src`'s list) followed by a definition of another macro
-    /// `S` with the same tokens become a copy for `R` and a share for `S`.
-    /// The reference counts stay what they were; only which control
-    /// sequence shares the list differs (review of #2211, REVIEW-C2 M1).
+    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-let): the first two `\\let`s
+    /// of a control sequence to a macro swap their sources. With
+    /// `\\let\\R\\X \\let\\S\\Y`, `X` and `Y` macros with equal bodies, the
+    /// replay gives `R` `Y`'s list and `S` `X`'s: every reference count is
+    /// what the normal path leaves, so no word of either list differs; only
+    /// the pairing of each list with itself through `X` and `Y`, entries
+    /// neither path wrote, shows it (review of #2211, REVIEW-C2 M1).
     ///
     /// The first replay of the job is left whole: the job's first
     /// comparison is a full walk (`incr::same_state`'s periodic one), and a
     /// difference ends the entry's replays, so the swap is met by the
     /// restricted walk.
-    fn bm_swap_share(&self, ops: &[Op]) -> Vec<Op> {
+    fn bm_swap_let(ops: &[Op]) -> Vec<Op> {
         static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut ops = ops.to_vec();
         if SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
             return ops;
         }
-        let body = |g: &Self, src: i32| -> Option<(i32, Vec<i32>)> {
-            let w = g.bm_eq(src).hh();
-            let (t, e) = (w.b0(), w.rh());
-            if !(CALL..=LONG_OUTER_CALL).contains(&t) || e == 0 {
-                return None;
-            }
-            let mut toks = vec![];
-            let mut q = g.bm_link(e);
-            while q != 0 {
-                toks.push(g.bm_info(q));
-                q = g.bm_link(q);
-            }
-            Some((t, toks))
-        };
-        for i in 0..ops.len() {
-            let Op::Def {
-                v: Val::LetCs(src), ..
-            } = &ops[i]
+        let lets: Vec<usize> = (0..ops.len())
+            .filter(|&i| {
+                matches!(&ops[i], Op::Def { t, v: Val::LetCs(_), .. }
+                    if (CALL..=LONG_OUTER_CALL).contains(t))
+            })
+            .collect();
+        if let [i, j, ..] = lets[..] {
+            let (Op::Def { t: ti, v: vi, .. }, Op::Def { t: tj, v: vj, .. }) =
+                (ops[i].clone(), ops[j].clone())
             else {
-                continue;
+                unreachable!()
             };
-            let src = *src;
-            let Some((t, toks)) = body(self, src) else {
-                continue;
-            };
-            let j = (i + 1..ops.len())
-                .find(|&j| matches!(&ops[j], Op::Def { v: Val::FreshList(l), .. } if *l == toks));
-            if let Some(j) = j {
-                if let Op::Def { t: ti, v, .. } = &mut ops[i] {
-                    *ti = t;
-                    *v = Val::FreshList(toks);
-                }
-                if let Op::Def { v, .. } = &mut ops[j] {
-                    *v = Val::LetCs(src);
-                }
-                break;
+            if let Op::Def { t, v, .. } = &mut ops[i] {
+                (*t, *v) = (tj, vj);
+            }
+            if let Op::Def { t, v, .. } = &mut ops[j] {
+                (*t, *v) = (ti, vi);
             }
         }
         ops
@@ -4467,8 +4450,8 @@ impl Globals {
             }
         }
         let swapped;
-        let run: &[Op] = if with_config(|c| c.fault_swap_share) {
-            swapped = self.bm_swap_share(&ops);
+        let run: &[Op] = if with_config(|c| c.fault_swap_let) {
+            swapped = Self::bm_swap_let(&ops);
             &swapped
         } else {
             &ops
