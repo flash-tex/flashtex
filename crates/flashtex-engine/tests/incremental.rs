@@ -3347,6 +3347,82 @@ fn a_late_barrier_keeps_the_pages_before_it() {
     }
 }
 
+/// AUDIT-CKPT: the old run's external effects come back with the old run.
+/// A compile whose `.aux` changed re-reads the `.aux` alone from the `.aux`
+/// point and goes back to the old run (`Session::aux_patch`: a restore,
+/// then `reattach_pending`). The restore cut the external effects list to
+/// the `.aux` point's count, and the reattach did not put the old run's
+/// later ones back, so the next compile took the old run to have made fewer
+/// external effects than it had (`old_effects_end`), and a convergence
+/// before the late pipe (`\input|"kpsewhich probe.sty"`) kept the old run's
+/// page past it: a barrier (DESIGN.md §5.3) not seen. Here the command's
+/// answer changes between the compiles (`probe.sty` appears), so the page
+/// kept is not a scratch run's.
+#[test]
+fn a_barrier_after_an_aux_patch_still_blocks_reuse() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("fx-after-aux");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str, extra: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..90 {
+            s.push_str(&para(i, if i == 40 { word } else { "lorem" }));
+            match i {
+                20 => s.push_str("\\immediate\\write18{kpsewhich no-such-file.xyz}\n"),
+                30 => s.push_str("\\section{Four}\\label{four} See \\ref{seven}.\n\n"),
+                60 if extra => s.push_str("\\section{Extra}\n"),
+                _ => {}
+            }
+            if i == 60 {
+                s.push_str("\\section{Seven}\\label{seven}\n\n");
+            }
+        }
+        s.push_str(
+            "\\makeatletter Probe: [\\@@input|\"kpsewhich probe.sty\" ]\\makeatother\n\
+             \\end{document}\n",
+        );
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorem", false))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // a section before the label: the `.aux` changes, and its re-read is
+    // patched in
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("lorem", true))],
+        "a new section",
+    );
+    // the command's answer changes, and an edit after the first command
+    // converges before the pipe: the pipe is a barrier still
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[
+            ("doc.tex", &doc("lorme", true)),
+            ("probe.sty", "\\ProvidesPackage{probe}\n"),
+        ],
+        "an edit after the first command",
+    );
+}
+
 /// A file written through the body and read back at the end, opened at
 /// `\begin{document}` (*Infinite Descent*'s hints and solutions: `\hint`s
 /// written to `\jobname.hnt` in every chapter, `\input` in the appendix).
