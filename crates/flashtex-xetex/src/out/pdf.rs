@@ -1254,7 +1254,11 @@ impl<'a> Writer<'a> {
         let fd = self.alloc();
         let d = format!(
             "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile {ff} 0 R>>",
-            type1_flags(&r.program, t1.italic_angle().unwrap_or("0")),
+            type1_flags(
+                t1.font_name().unwrap_or(ps_name),
+                t1.italic_angle().unwrap_or("0"),
+                type1_force_bold(&r.program)
+            ),
             bbox[0],
             bbox[1],
             bbox[2],
@@ -1268,11 +1272,18 @@ impl<'a> Writer<'a> {
         self.object(fd, d.as_bytes());
         let first = used.iter().next().copied().unwrap_or(0).min(255);
         let last = used.iter().next_back().copied().unwrap_or(0).min(255);
-        let widths = self.doc.fonts.widths.get(&r.id);
+        // the program's own widths, `ROUND(w, 0.1)`, 0 for codes not used
+        // (type1.c add_metrics; the supported FontMatrix scales by 1)
         let mut wa = String::from("[");
         for c in first..=last {
-            let w = widths.and_then(|m| m.get(&c)).copied().unwrap_or(0.0);
-            let _ = write!(wa, " {}", n(w, 3));
+            let w = if used.contains(&c) {
+                encoding
+                    .get(c as usize)
+                    .map_or(0.0, |g| type1_width(&t1, &String::from_utf8_lossy(g)))
+            } else {
+                0.0
+            };
+            let _ = write!(wa, " {}", n(w, 8));
         }
         wa.push_str(" ]");
         let mut diffs = String::from("[");
@@ -1793,14 +1804,52 @@ impl FaceInfo {
     }
 }
 
-/// A Type 1 font's `/Flags`: Symbolic (TeX's fonts are re-encoded), and
-/// FixedPitch and Italic from its `FontInfo`.
-fn type1_flags(program: &[u8], italic_angle: &str) -> u32 {
-    let clear_end = program.len().min(16 * 1024);
-    let clear = &program[..clear_end];
+/// Whether a PFB program's Private dict says `/ForceBold true` (its
+/// eexec-encrypted part, decrypted).
+fn type1_force_bold(pfb: &[u8]) -> bool {
+    let mut at = 0;
+    while pfb.get(at) == Some(&0x80) {
+        let Some(len) = pfb
+            .get(at + 2..at + 6)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+        else {
+            return false;
+        };
+        let body = pfb.get(at + 6..at + 6 + len).unwrap_or(&[]);
+        if pfb.get(at + 1) == Some(&2) {
+            let plain = flashtex_pdf::type1::decrypt(body, 55665, 4);
+            return plain.windows(15).any(|w| w == b"/ForceBold true");
+        }
+        at += 6 + len;
+    }
+    false
+}
+
+/// Glyph `name`'s `/Widths` entry as xdvipdfmx's `add_metrics` (type1.c)
+/// writes it: the charstring's width, `ROUND(w, 0.1)`; 0 for a glyph the
+/// program lacks.
+fn type1_width(t1: &flashtex_pdf::type1::Type1Font, name: &str) -> f64 {
+    t1.advance_width(name).map_or(0.0, |w| {
+        ((w.num as f64 / w.den as f64) / 0.1 + 0.5).floor() * 0.1
+    })
+}
+
+/// A Type 1 font's `/Flags` as xdvipdfmx's `get_font_attr` (type1.c) sets
+/// them from its program's `FontName` and `ItalicAngle`: Symbolic, Serif
+/// unless the name contains `Sans`, SmallCap if it contains `Caps`, Italic
+/// for an angle other than 0, ForceBold from the Private dict. (Its
+/// FixedPitch also comes from the Private dict, where a Type 1 font's
+/// `isFixedPitch` is not.)
+fn type1_flags(font_name: &str, italic_angle: &str, force_bold: bool) -> u32 {
     let mut f = 4;
-    if clear.windows(17).any(|w| w == b"/isFixedPitch tru") {
-        f |= 1;
+    if force_bold {
+        f |= 1 << 18;
+    }
+    if !font_name.contains("Sans") {
+        f |= 2;
+    }
+    if font_name.contains("Caps") {
+        f |= 1 << 17;
     }
     if italic_angle.trim().parse::<f64>().is_ok_and(|a| a != 0.0) {
         f |= 64;
@@ -2387,6 +2436,50 @@ mod tests {
     /// A CID-keyed CFF font (CJK): the content stream draws its glyphs by
     /// their CIDs (the charset), the CIDFont program is the font's CFF, and
     /// `/W` is keyed by CID. TeX Live's HaranoAji Mincho; skipped without it.
+    #[test]
+    fn type1_widths_and_flags_are_xdvipdfmxs() {
+        // measured (TeX Live 2026 xetex + xdvipdfmx 20260317, `\font\a=cmr10`
+        // etc.): CMR10 /Widths 555 (fi) 750 (H) 444 (e) 277 (l) 500 (o),
+        // /Flags 6; CMTI10 70; CMTT10 6; CMSY10 70; CMBX12 262150 (ForceBold)
+        let font = |name: &str| {
+            let path = std::process::Command::new("kpsewhich")
+                .arg(name)
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|p| !p.is_empty())?;
+            let data = std::fs::read(path).ok()?;
+            Some((flashtex_pdf::type1::Type1Font::parse_pfb(&data).ok()?, data))
+        };
+        let Some((cmr, _)) = font("cmr10.pfb") else {
+            eprintln!("skipped: no cmr10.pfb (TeX Live)");
+            return;
+        };
+        let w: Vec<f64> = ["fi", "H", "e", "l", "o"]
+            .iter()
+            .map(|g| type1_width(&cmr, g))
+            .collect();
+        assert_eq!(w, [555.0, 750.0, 444.0, 277.0, 500.0]);
+        for (name, flags) in [
+            ("cmr10.pfb", 6),
+            ("cmti10.pfb", 70),
+            ("cmtt10.pfb", 6),
+            ("cmsy10.pfb", 70),
+            ("cmbx12.pfb", 262150),
+        ] {
+            let (t1, data) = font(name).unwrap();
+            assert_eq!(
+                type1_flags(
+                    t1.font_name().unwrap(),
+                    t1.italic_angle().unwrap_or("0"),
+                    type1_force_bold(&data)
+                ),
+                flags,
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn cid_keyed_cff_fonts_are_drawn_by_cid() {
         let Some(path) = std::process::Command::new("kpsewhich")
