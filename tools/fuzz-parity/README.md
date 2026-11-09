@@ -26,6 +26,9 @@ python3 tools/fuzz-parity/fuzz.py --candidate target/release/flashtex-initex \
   with the first difference); `OUT/summary.json` groups seeds by
   signature.
 
+Each engine's `doc.tex` gets the same modification time (2001-09-09),
+so `\pdffilemoddate{doc.tex}` is comparable.
+
 Print one document: `python3 tools/fuzz-parity/gen.py 42`.
 
 ## What runs
@@ -52,7 +55,7 @@ In order; the first difference names the class:
 | `output` | only one engine wrote a PDF/DVI |
 | `pdf` | PDF bytes differ and `tools/parity` `compare_pt2` fails (qpdf-normalised content streams, fonts, resources, media boxes) |
 | `dvi` | DVI bytes differ |
-| `terminal` | stdout differs (after the same normalisation) |
+| `terminal` | stdout and stderr differ (after the same normalisation). kpathsea's `Not writing to`/`Not reading from` refusals are taken out first and compared as a list of their own (`kpse-msg`): the capture merges stderr into stdout, so where a refusal lands depends on when the engine last flushed stdout |
 | `timeout` | one engine exceeded `--timeout` |
 
 Two outcomes are not differences and do not fail a run: `both-hang`
@@ -103,7 +106,27 @@ independent chunks, each balanced on its own:
 - pdfTeX objects and specials (`\pdfliteral`, `\pdfobj`, `\pdfxform`,
   links, destinations, outlines, `\pdfsavepos`, `\pdfcolorstack`), and
   file I/O (`\openout`/`\write`/`\openin`/`\read`/`\readline`,
-  `\scantokens`, `\everyeof`).
+  `\scantokens`, `\everyeof`);
+- 8-bit and control characters through `\message`, `\write`, `\show`
+  and `\tracinglostchars`, `\escapechar`/`\newlinechar`/`\endlinechar`
+  edge values, lines longer than `max_print_line`;
+- runs that end in a capacity overflow or a fatal error (rare, and last);
+- pdfTeX's C parts and web2c (`web2cstuff`): `\pdfmatch` and
+  `\pdflastmatch` (POSIX regex, invalid patterns), `\pdffilesize`,
+  `\pdffiledump`, `\pdfmdfivesum file`, `\pdffilemoddate`, quoted and
+  braced file names, `\tracingstacklevels`, `\showstream`,
+  `\partokenname`/`\partokencontext`, `\lastnodetype`, `\pdfinsertht`,
+  `\pdfcolorstackinit`, the interword-glue and kerning codes
+  (`\knbscode` & co.), `\pdftracingfonts`, map files and lines;
+- the PDF writer (`pdfwriter`): object streams and files, reserved and
+  reused object numbers, annotations, links of every kind, destinations,
+  outlines, threads, the info/trailer/version keys, compression levels,
+  page boxes and sizes, missing images, forms, colour stacks, and
+  `openout_any`/`openin_any` (absolute, `..` and dot-file names).
+
+A document never replaces the font map (`\pdfmapfile` without `+`):
+pdfTeX would then run kpathsea's `mktexpk` for every font, which writes
+into the TeX tree and is not something the two engines share.
 
 Random numbers: every `\pdfuniformdeviate`/`\pdfnormaldeviate` the grammar
 emits follows a `\pdfsetrandomseed`.

@@ -708,8 +708,118 @@ class G:
             "\\count1=0 {\\loop\\advance\\count1 1 \\ifnum\\count1<120 \\undefinedErr\\repeat}",
         ])
 
+    def web2cstuff(self):
+        """pdfTeX's C parts and web2c: regex matching, file primitives, file
+        names, the TeX Live feature change files, pdfTeX's newer parameters."""
+        pats = ["a(b*)c", "^x", "x$", "[[:digit:]]+", "(a|b)+", "a{2,3}", "(", "[",
+                "a**", "\\\\(", "", ".*", "(x)(y)?(z)", "[^a-c]", "\\\\.", "a|", "()",
+                "([a-z]+)@([a-z]+)", "^$", "(((a)))"]
+        subj = ["xabbbcx", "abc", "", "x", "aaa", "123abc456", "bab", "a.b", "xyz",
+                "me@host", "((", "^^e9a", "ab ab"]
+        def match():
+            opts = self.pick(["", "icase ", "subcount %d " % self.n(-1, 12), "icase subcount 2 "])
+            m = "\\message{[\\pdfmatch %s{%s}{%s}]}" % (opts, self.pick(pats), self.pick(subj))
+            for _ in range(self.n(0, 3)):
+                m += "\\message{(\\pdflastmatch%d)}" % self.n(-1, 6)
+            return m
+        return self.pick([
+            match(), match(), match(),
+            "\\message{\\pdffilesize{doc.tex}/\\pdffilesize{nonexistentzz}/\\pdffilesize{}}",
+            "\\message{\\pdffiledump offset %d length %d{doc.tex}}" % (self.n(-2, 40), self.n(-1, 30)),
+            "\\message{\\pdffiledump length 5{nonexistentzz}|\\pdffiledump{doc.tex}}",
+            "\\message{\\pdfmdfivesum file{doc.tex}|\\pdfmdfivesum file{nonexistentzz}}",
+            "\\message{\\pdffilemoddate{doc.tex}|\\pdffilemoddate{nonexistentzz}|\\pdfcreationdate}",
+            "\\immediate\\openout3=\"fz out.tex\" \\immediate\\write3{\\relax q}\\immediate\\closeout3 "
+            "\\openin4=\"fz out\" \\read4 to\\x \\show\\x \\closein4 \\input{\"fz out\"}",
+            "\\immediate\\openout3={fzb.tex}\\immediate\\write3{\\message{in-fzb}}\\immediate\\closeout3 "
+            "\\input{fzb}\\input fzb.tex \\relax",
+            "\\immediate\\openout3=fzc.x.y \\immediate\\write3{c}\\immediate\\closeout3 "
+            "\\message{\\pdffilesize{fzc.x.y}}\\openin5=fzc.x \\ifeof5 E\\else O\\closein5\\fi",
+            "\\pdfximage{nonexistentzz.png}", "\\pdfximage width 1pt{doc.tex}",
+            "{\\tracingstacklevels=%d \\tracingmacros=2 \\def\\ta{\\tb}\\def\\tb{x}\\ta}" % self.n(0, 3),
+            "{\\showstream=%d \\showthe\\count0 \\show\\par}" % self.pick([-1, 16, 3]),
+            "{\\partokenname\\fzpar \\message{\\meaning\\fzpar}\\def\\fzq#1{}\\fzq\n\n}",
+            "{\\partokencontext=%d \\partokenname\\fzpar \\noindent x\\par\\showlists}" % self.n(0, 2),
+            "\\setbox3\\hbox{x\\kern1pt}\\message{\\the\\lastnodetype}"
+            "\\hbox{x\\kern1pt\\message{\\the\\lastnodetype}\\penalty0\\message{\\the\\lastnodetype}}",
+            "\\message{\\the\\pdfinsertht%d}" % self.pick([100, 254, 255, 0]),
+            "\\pdfstartthread num %d \\pdfendthread" % self.n(1, 4),
+            "\\message{\\pdfcolorstackinit page{0 g}|\\pdfcolorstackinit direct{1 g}}",
+            "\\message{\\the\\pdfshellescape|\\pdftexbanner|\\the\\pdftexversion}",
+            "\\quitvmode\\message{\\the\\lastnodetype}",
+            "{\\pdfdecimaldigits=%d \\pdfliteral{q}\\pdfsetmatrix{0.12345 0 0 0.6789}\\hbox{x}}" % self.n(-1, 6),
+            "{\\pdfpxdimen=%s \\message{\\the\\pdfpxdimen}}" % self.pick(["1pt", "-1pt", "0pt", "1sp"]),
+            "{\\pdfadjustinterwordglue=1 \\knbscode\\tenrm`a=%d \\stbscode\\tenrm`a=%d \\shbscode\\tenrm`a=%d "
+            "\\hbox{a b a}\\showbox0}" % (self.n(-1000, 1000), self.n(-1000, 1000), self.n(-1000, 1000)),
+            "{\\pdfprependkern=1 \\pdfappendkern=1 \\knbccode\\tenrm`a=%d \\knaccode\\tenrm`a=%d "
+            "\\setbox5\\hbox{aba a}\\showbox5}" % (self.n(-500, 500), self.n(-500, 500)),
+            "{\\pdftracingfonts=%d \\setbox5\\hbox{\\tenbf x}\\showbox5}" % self.n(0, 2),
+            "\\pdfmapfile{+nonexistentzz.map}", "\\pdfmapline{=cmr10 CMR10 <cmr10.pfb}",
+            "\\pdfincludechars\\tenrm{abc}\\pdfomitcharset 1 ",
+            "{\\pdffakespace\\pdfinterwordspaceon x y\\pdfinterwordspaceoff}",
+            "\\message{\\pdfescapestring{(a)\\\\b}|\\pdfescapename{a b#/}|\\pdfescapehex{^^ff}}",
+            "\\message{\\pdfstrcmp{\\relax}{\\relax}\\pdfstrcmp{^^e9}{e}}",
+            "\\pdfsetrandomseed %d \\message{\\pdfuniformdeviate %s}" % (
+                self.n(0, 9), self.pick(["0", "-5", "2147483647", "1"])),
+            "\\pdfsetrandomseed %s \\message{\\the\\pdfrandomseed}" % self.pick(["0", "-1", "2147483647", "123"]),
+        ])
+
+    def pdfwriter(self):
+        """pdfTeX's PDF writer (C parts): objects, streams, annotations, boxes,
+        version and info keys, image errors; and web2c's openout_any/openin_any."""
+        return self.pick([
+            "\\immediate\\pdfobj stream attr{/T 1}{q 0 g Q}\\pdfrefobj\\pdflastobj",
+            "\\immediate\\pdfobj file{doc.tex}\\message{\\the\\pdflastobj}",
+            "\\immediate\\pdfobj stream file{nonexistentzz}",
+            "\\pdfobj reserveobjnum \\immediate\\pdfobj useobjnum\\pdflastobj{(late)}",
+            "\\immediate\\pdfobj useobjnum %d{(bad)}" % self.n(-1, 40),
+            "\\pdfannot reserveobjnum \\pdfannot useobjnum\\pdflastannot width 2pt{/Subtype/Text}",
+            "\\message{\\the\\pdflastannot|\\the\\pdflastlink|\\the\\pdfretval}",
+            "\\pdfstartlink user{/Subtype/Link/A<</S/URI/URI(http://x)>>}%s\\pdfendlink" % self.words(1, 30),
+            "\\pdfstartlink goto name{d%d}%s\\pdfendlink" % (self.n(0, 9), self.words(1, 4)),
+            "\\pdfstartlink goto file{x.pdf} page %d{/Fit}x\\pdfendlink" % self.n(-1, 3),
+            "\\pdfstartlink thread num 1 x\\pdfendlink", "\\pdfendlink",
+            "\\vbox{\\pdfstartlink goto num 2 x\\pdfendlink}",
+            "\\pdfdest name{d%d} %s" % (self.n(0, 9), self.pick(["xyz zoom 2000", "fitb", "fith", "fitv", "fitbh",
+                                                              "fitbv", "fitr width 10pt height 5pt", "xyz"])),
+            "\\pdfdest num %d fit" % self.pick([0, -1, 1, 2147483647]),
+            "\\pdfoutline user{<</Type/Outlines>>} count 0 {U}",
+            "\\pdfoutline goto name{d1} {(paren) \\\\ back ^^e9}",
+            "\\pdfthread name{t%d} width 5pt{/I<</T(x)>>}" % self.n(0, 2),
+            "\\pdfinfo{/Author (a)}\\pdfinfo{/Author (b)}\\pdfinfoomitdate=%d " % self.n(0, 1),
+            "\\pdfsuppressptexinfo=%d \\pdftrailerid{%s}" % (self.n(-1, 15), self.pick(["", "x", "[<00><01>]"])),
+            "\\pdfminorversion=%d \\pdfmajorversion=%d " % (self.n(0, 9), self.n(1, 2)),
+            "\\pdfcompresslevel=%d \\pdfobjcompresslevel=%d " % (self.n(0, 9), self.n(0, 3)),
+            "\\pdfpagebox=%d \\pdfforcepagebox=%d " % (self.n(0, 6), self.n(0, 6)),
+            "\\pdfpkresolution=%d \\pdfimageresolution=%d " % (self.n(0, 1200), self.n(0, 1200)),
+            "\\pdfximage{nonexistentzz.pdf}", "\\pdfximage page 2{doc.tex}",
+            "\\message{\\the\\pdflastximage|\\the\\pdflastximagepages}",
+            "\\pdfrefximage %d " % self.n(-1, 3),
+            "\\pdfrefxform %d " % self.n(-1, 3), "\\pdfrefobj %d " % self.n(-1, 50),
+            "\\setbox9\\hbox{%s}\\pdfxform 9 \\pdfxform 9 \\message{\\the\\pdflastxform}" % self.words(1, 3),
+            "\\setbox9\\vbox{\\pdfliteral{0 g}\\hrule}\\immediate\\pdfxform resources{/X 1} 9 "
+            "\\setbox8\\hbox{\\pdfrefxform\\pdflastxform}\\showbox8",
+            "\\pdfliteral shipout{q}\\pdfliteral{Q}\\pdfliteral page{BT ET}",
+            "\\pdfcolorstack %d current" % self.n(0, 2), "\\pdfcolorstack0 set{1 0 0 rg}",
+            "\\pdfcolorstack0 pop", "\\pdfrestore", "\\pdfsetmatrix{1 2}", "\\pdfsetmatrix{0 0 0 0}",
+            "\\pdfpageattr{/MediaBox [0 0 %d %d]}" % (self.n(-10, 600), self.n(-10, 800)),
+            "\\pdfpagewidth=%s \\pdfpageheight=%s " % (self.pick(DIMS), self.pick(DIMS)),
+            "\\pdfhorigin=%s \\pdfvorigin=%s " % (self.pick(DIMS), self.pick(DIMS)),
+            "\\pdfnames{/Dests <</Names [(x) 1 0 R]>>}", "\\pdfcatalog{/OpenAction 1 0 R} openaction goto num 1",
+            "\\pdfmovechars=%d " % self.n(0, 2), "\\pdfgentounicode=%d " % self.n(0, 2),
+            "\\pdfinclusionerrorlevel=%d \\pdfinclusioncopyfonts=%d " % (self.n(-1, 2), self.n(0, 1)),
+            "\\immediate\\openout3=/tmp/fzabs.tex \\immediate\\closeout3 ",
+            "\\immediate\\openout3=../fzup.tex \\immediate\\closeout3 ",
+            "\\immediate\\openout3=.fzdot.tex \\immediate\\write3{d}\\immediate\\closeout3 ",
+            "\\openin3=/dev/null \\ifeof3 E\\else O\\closein3\\fi",
+            "\\openin3=../doc.tex \\ifeof3 E\\else O\\closein3\\fi",
+            "\\immediate\\openout3=fz.fls \\immediate\\closeout3 ",
+            "\\pdfstrcmp{\\pdfescapestring{\\pdfunescapehex{%s}}}{x}" % self.pick(["ff00", "4", "zz", "", "6g"]),
+            "\\message{\\pdfmdfivesum{%s}}" % self.pick(["", "abc", "^^e9", "\\relax"]),
+        ])
+
     def chunk(self):
-        k = self.n(0, 103)
+        k = self.n(0, 118)
         if k < 22:
             return self.paragraph()
         if k < 28:
@@ -740,6 +850,10 @@ class G:
             return self.iostuff()
         if k < 103:
             return self.charset()
+        if k < 111:
+            return self.web2cstuff()
+        if k < 118:
+            return self.pdfwriter()
         return "\\setbox%d\\hbox{%s}" % (self.n(10, 12), self.inline(2))
 
     def hyph_setting(self):

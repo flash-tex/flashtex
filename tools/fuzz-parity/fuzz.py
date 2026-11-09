@@ -48,6 +48,18 @@ FSIZE_LIMIT = 64 * 1024 * 1024
 # Classes that are not a difference between the engines.
 NEUTRAL = ("equal", "both-hang", "both-signal")
 DIGITS = re.compile(r"\d+")
+DOC_MTIME = 1000000000  # 2001-09-09T01:46:40Z
+# kpathsea's refusal under openin_any/openout_any, which it writes to stderr
+# as one "\n<program>: Not ... check).\n" (tex-file.c). The capture merges
+# stderr into stdout, so where it lands depends on when each engine last
+# flushed stdout; it is taken out of the terminal and compared on its own.
+KPSE_MSG = re.compile(r"\n([^\n]*: Not (?:writing to|reading from) [^\n]*"
+                      r" \(open(?:in|out)_any = [^\n]*\)\.)\n")
+
+
+def split_kpse(terminal):
+    """(terminal without kpathsea's refusals, the refusals in order)."""
+    return KPSE_MSG.sub("", terminal), KPSE_MSG.findall(terminal)
 
 
 def cap_output():
@@ -63,6 +75,8 @@ def run_one(engine, text, workdir, timeout, env=None, fmt=None):
     tex = os.path.join(workdir, "doc.tex")
     with open(tex, "w", encoding="latin-1") as fh:
         fh.write(text)
+    # One modification time for both engines' copies (\pdffilemoddate).
+    os.utime(tex, (DOC_MTIME, DOC_MTIME))
     try:
         cap = lockstep.capture("doc.tex", engine, workdir, fmt=fmt, extra_env=env,
                                timeout=timeout, halt_on_error=False)
@@ -150,7 +164,14 @@ def compare(text, candidate, oracle, work, timeout, formats=None):
             else:
                 res.update(cls="dvi", sig="dvi-bytes")
                 return res
-    to, tc = co.terminal.split("\n"), cc.terminal.split("\n")
+    (to, ko), (tc, kc) = split_kpse(co.terminal), split_kpse(cc.terminal)
+    d = first_diff(ko, kc)
+    if d is not None:
+        i, x, y = d
+        res.update(cls="terminal", sig=signature("kpse-msg", x + " || " + y),
+                   detail={"message": i + 1, "oracle": x, "candidate": y})
+        return res
+    to, tc = to.split("\n"), tc.split("\n")
     d = first_diff(to, tc)
     if d is not None:
         i, x, y = d
