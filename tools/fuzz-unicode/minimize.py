@@ -111,8 +111,11 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--tmp", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--narrow", action="store_true", help="as fuzz.py --narrow")
     ap.add_argument("finding")
     args = ap.parse_args(argv)
+    if args.narrow:
+        fuzz.set_narrow()
     args.oracle = shutil.which(args.oracle) or args.oracle
     args.candidate = os.path.abspath(args.candidate)
     with open(os.path.join(args.finding, "result.json")) as fh:

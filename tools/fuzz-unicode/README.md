@@ -157,5 +157,6 @@ The pure-logic tests (determinism, balanced lines, ddmin) always run; with
 |---|---|---|
 | #2329 | `\XeTeXinputnormalization` ignored: `input_line` never called the TECkit normalizer | #2340 (crates/flashtex-xetex/src/system.rs) |
 | #2409 | PDF writer: `embolden=` stroke width scaled by the font size twice (only 10 pt right) | #2410 (crates/flashtex-xetex/src/out/page.rs) |
+| #2432 | Thai `\XeTeXlinebreaklocale` breaks of non-dictionary text (fragments, merged words) differ from ICU's ThaiBreakEngine (documented gap: ICU4X segmenter) | open |
 | #2391 | not a difference: xetex segfaults and the port panics on `width(font_glue[f])` of null under `\XeTeXinterwordspaceshaping` | open (decision: keep the crash or deviate) |
 | #2382 | `\XeTeXinputencoding` with an ICU converter name (`latin1`, `cp1252`, ...) reads raw bytes (a documented gap: no ICU converters) | open; the grammar uses XeTeX's built-in names only |
