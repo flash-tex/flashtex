@@ -50,6 +50,9 @@ pub struct Annot {
     pub rect: [f64; 4],
     /// The display-list link this annotation is, if it is one.
     pub link: Option<usize>,
+    /// How many outline entries the document had when it was added (the
+    /// order dvipdfmx's `pdf_doc_add_goto` meets them in).
+    pub outlines_before: usize,
 }
 
 /// Content of a page or form that the display list cannot express (an
@@ -192,6 +195,9 @@ pub struct Doc {
     /// dvipdfmx's colour stack: (fill, stroke). It lasts across pages.
     pub colors: Vec<(Col, Col)>,
     pub tracking: Option<Tracking>,
+    /// dvipdfmx's `-C` flags as `dvipdfmx:config C` on the first page sets
+    /// them (`0x10`: keep every named destination as it is).
+    pub dpx_flags: i32,
     /// `dvipdfmx:catch_phantom`'s mode.
     pub phantom: Phantom,
     /// `pdf:nolink` (until `pdf:link`): what is drawn does not widen the

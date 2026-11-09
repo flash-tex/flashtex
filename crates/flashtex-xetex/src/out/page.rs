@@ -1030,10 +1030,12 @@ impl<'a, M: Metrics> Builder<'a, M> {
         } else {
             None
         };
+        let outlines_before = self.doc.outlines.len();
         page.sup.annots.push(Annot {
             dict,
             rect: r,
             link: link_index,
+            outlines_before,
         });
     }
 
