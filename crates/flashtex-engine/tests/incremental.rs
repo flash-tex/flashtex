@@ -4364,9 +4364,12 @@ fn a_preamble_edit_after_an_edit_far_away_restarts_before_s0() {
 /// Review of #1551 (#1578): a file the run writes and later `\input`s,
 /// changed by another program between compiles. A run from the start writes
 /// it again before reading it; no restart point after the write may read
-/// the other program's version (`consumed_nothing_changed`). In the
-/// preamble (a restart before S₀) and in the body (from S₀ on), with a
-/// timed checkpoint at almost every line; every compile equals scratch runs.
+/// the other program's version (`consumed_nothing_changed`). Written in the
+/// preamble and read in the preamble (a restart before S₀) or in the body
+/// (S₀ itself, `written_before_s0_changed_outside`), and written and read in
+/// the body, pages apart (the body's restart points between the write and
+/// the read), with a timed checkpoint at almost every line; every compile
+/// equals scratch runs.
 #[test]
 fn a_file_the_run_writes_changed_by_another_program_is_written_again() {
     let Some(e) = env() else {
@@ -4377,17 +4380,22 @@ fn a_file_the_run_writes_changed_by_another_program_is_written_again() {
                  \\immediate\\write\\w{\\string\\def\\string\\gen{from the document}}\n\
                  \\immediate\\closeout\\w\n";
     let paras: String = (0..8).map(|k| para(k, "rho")).collect();
-    for (i, place) in ["preamble", "body"].into_iter().enumerate() {
-        let doc = if place == "preamble" {
-            format!(
+    let later: String = (8..40).map(|k| para(k, "rho")).collect();
+    for (i, place) in ["preamble", "body", "body-written"].into_iter().enumerate() {
+        let doc = match place {
+            "preamble" => format!(
                 "\\documentclass{{article}}\n{write}\\usepackage{{amsmath}}\n\\usepackage{{amssymb}}\n\
                  \\input{{gen.tex}}\n\\title{{T}}\n\\begin{{document}}\n{paras}\\gen\n\\end{{document}}\n"
-            )
-        } else {
-            format!(
+            ),
+            "body" => format!(
                 "\\documentclass{{article}}\n{write}\\begin{{document}}\n{paras}\
                  \\input{{gen.tex}}\\gen\n\\end{{document}}\n"
-            )
+            ),
+            // (written on the first page, read pages later)
+            _ => format!(
+                "\\documentclass{{article}}\n\\begin{{document}}\n{paras}{write}{later}\
+                 \\input{{gen.tex}}\\gen\n\\end{{document}}\n"
+            ),
         };
         let dir = e.dir.join(format!("outside-write-{i}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -4410,6 +4418,20 @@ fn a_file_the_run_writes_changed_by_another_program_is_written_again() {
         // and an edit after that, in the same session
         let edited = doc.replacen("Paragraph 3 with", "Paragraph 3 now with", 1);
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &edited)], "then an edit");
+        if place == "body-written" {
+            // changed again, with an edit between the write and the read
+            let between = edited.replacen("Paragraph 20 with", "Paragraph 20 now with", 1);
+            compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[
+                    ("gen.tex", "\\def\\gen{from outside again}\n"),
+                    ("doc.tex", &between),
+                ],
+                "body-written: gen.tex changed again, and an edit after the write",
+            );
+        }
     }
 }
 
