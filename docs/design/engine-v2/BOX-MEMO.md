@@ -98,7 +98,7 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 | K4 | e-TeX's sparse registers (`\count`, `\dimen`, `\skip`, `\muskip` and `\toks` above 255) | conservatively: every entry of the sparse trees, by (type, number, value), values by content as in K2 |
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
 | K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
-| K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, the mode, and `interaction`. Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
+| K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, the mode, `interaction`, and pdfTeX's number of color stacks (`colorstackused`: `\pdfcolorstack <n>` checks `n` against it, and a restore can take a stack away). Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
 
 **Box registers** are not in the key. A box register the recording reads must be one of two kinds:
 - one it wrote first;

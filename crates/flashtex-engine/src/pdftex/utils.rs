@@ -302,6 +302,13 @@ fn force_source_date() -> bool {
         && std::env::var_os("SOURCE_DATE_EPOCH").is_some()
 }
 
+/// `colorstackused` (utils.c) without its initialisation: the number it
+/// would answer, leaving the state as it is (BOX-MEMO's key reads it at
+/// every offer; making stack 0 there would change the C part's state).
+pub fn color_stacks_used() -> i32 {
+    with_state(|s| s.utils.colstacks.len().max(1) as i32)
+}
+
 impl Globals {
     /// `assert` (pdftex.h's `pdfassert`).
     pub fn pdfassert(&mut self, b: bool) {
