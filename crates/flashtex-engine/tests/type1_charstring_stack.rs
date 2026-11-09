@@ -95,8 +95,14 @@ fn number(b: &[u8], at: usize) -> (usize, usize) {
     (std::str::from_utf8(&b[at..e]).unwrap().parse().unwrap(), e)
 }
 
-/// `cmr10` with glyph `a`'s charstring replaced by `glyph`.
-fn font(cmr10: &[u8], glyph: &[C]) -> Vec<u8> {
+/// Which charstring of the font to replace.
+enum Key {
+    Glyph(&'static str),
+    Subr(u32),
+}
+
+/// `cmr10` with the given glyphs' and subrs' charstrings replaced.
+fn font(cmr10: &[u8], entries: &[(Key, Vec<C>)]) -> Vec<u8> {
     // PFB segments: 0x80, type, 4-byte little-endian length
     let mut segs = vec![];
     let mut pos = 0;
@@ -107,14 +113,21 @@ fn font(cmr10: &[u8], glyph: &[C]) -> Vec<u8> {
     }
     let i2 = segs.iter().position(|s| s.0 == 2).unwrap();
     let mut plain = decrypt(&segs[i2].1, 55665);
-    let dict = find(&plain, b"/CharStrings", 0).unwrap();
-    let at = find(&plain, b"\n/a ", dict).unwrap() + 1;
-    let (len, e) = number(&plain, at + b"/a ".len());
-    let data = e + b" RD ".len();
-    let cs = encrypt(&code(glyph), 4330);
-    let mut entry = format!("/a {} RD ", cs.len()).into_bytes();
-    entry.extend_from_slice(&cs);
-    plain.splice(at..data + len, entry);
+    for (key, ops) in entries {
+        // `/a 123 RD <bytes>` in /CharStrings, `dup 5 27 RD <bytes>` in /Subrs
+        let (dict, head) = match key {
+            Key::Glyph(g) => (&b"/CharStrings"[..], format!("/{g} ")),
+            Key::Subr(k) => (&b"/Subrs"[..], format!("dup {k} ")),
+        };
+        let dict = find(&plain, dict, 0).unwrap();
+        let at = find(&plain, format!("\n{head}").as_bytes(), dict).unwrap() + 1;
+        let (len, e) = number(&plain, at + head.len());
+        let data = e + b" RD ".len();
+        let cs = encrypt(&code(ops), 4330);
+        let mut entry = format!("{head}{} RD ", cs.len()).into_bytes();
+        entry.extend_from_slice(&cs);
+        plain.splice(at..data + len, entry);
+    }
     segs[i2].1 = encrypt(&plain, 55665);
     let mut pfb = vec![];
     for (t, d) in segs {
@@ -131,14 +144,49 @@ const RMOVETO: C = C::Op(21);
 const ENDCHAR: C = C::Op(14);
 const CALLOTHERSUBR: C = C::Esc(16);
 
-/// (name, glyph `a`, text).
-fn cases() -> Vec<(&'static str, Vec<C>, &'static str)> {
+const CALLSUBR: C = C::Op(10);
+const RETURN: C = C::Op(11);
+
+/// Glyphs `a` and `b`, and subrs 10 to 15, for REVIEW-A's finding on #1970:
+/// a subr entered again, nested, with the same live stack (empty) and the
+/// same marks, where only an entry above the stack differs. That entry is
+/// what the subr's negative pop uncovers and calls, so the walk is not a
+/// loop: S (10) grows the stack by one and calls the uncovered entry; T11,
+/// T12 and T13 leave 12, 13 and `last` there and call S again. For `b`
+/// every entry is marked already, so S is entered three times in states
+/// that differ only in that entry. With `last` 14, R (14) empties the
+/// stack and the font is fine; with 15, subr 15 sees three operands for
+/// `rmoveto`, which shows that pdfTeX's walk follows the uncovered values.
+fn uncovered_subrs(last: i32) -> Vec<(Key, Vec<C>)> {
     use C::N;
+    let t = |next: i32| vec![N(next), N(3), N(0), CALLOTHERSUBR, N(10), CALLSUBR, RETURN];
+    let glyph = || vec![N(0), N(500), HSBW, N(-3), N(0), N(11), CALLSUBR, ENDCHAR];
+    vec![
+        (Key::Glyph("a"), glyph()),
+        (Key::Glyph("b"), glyph()),
+        (
+            Key::Subr(10),
+            vec![N(-3), N(0), CALLOTHERSUBR, CALLSUBR, RETURN],
+        ),
+        (Key::Subr(11), t(12)),
+        (Key::Subr(12), t(13)),
+        (Key::Subr(13), t(last)),
+        (Key::Subr(14), vec![N(2), N(0), CALLOTHERSUBR, RETURN]),
+        (Key::Subr(15), vec![N(0), RMOVETO, RETURN]),
+    ]
+}
+
+/// (name, the charstrings replaced, text).
+type Case = (&'static str, Vec<(Key, Vec<C>)>, &'static str);
+
+fn cases() -> Vec<Case> {
+    use C::N;
+    let a = |glyph: Vec<C>| vec![(Key::Glyph("a"), glyph)];
     vec![
         // a1 = -5 + 2 = -3: the stack grows by three, to 5, then 7
         (
             "negative-count",
-            vec![
+            a(vec![
                 N(0),
                 N(500),
                 HSBW,
@@ -149,13 +197,13 @@ fn cases() -> Vec<(&'static str, Vec<C>, &'static str)> {
                 N(0),
                 RMOVETO,
                 ENDCHAR,
-            ],
+            ]),
             "a",
         ),
         // a1 = 0: nothing is popped, and the font is fine
         (
             "zero-count",
-            vec![
+            a(vec![
                 N(0),
                 N(500),
                 HSBW,
@@ -164,11 +212,16 @@ fn cases() -> Vec<(&'static str, Vec<C>, &'static str)> {
                 CALLOTHERSUBR,
                 RMOVETO,
                 ENDCHAR,
-            ],
+            ]),
             "a",
         ),
         // two operands left after `a`'s walk: `b`'s hsbw sees four
-        ("leftover", vec![N(0), N(500), HSBW, N(1), N(2)], "a b"),
+        ("leftover", a(vec![N(0), N(500), HSBW, N(1), N(2)]), "a b"),
+        // a subr entered again where only an uncovered entry differs: not a
+        // loop, and the font is fine
+        ("uncovered-entry", uncovered_subrs(14), "a b"),
+        // the same, with the walk following the uncovered entry to subr 15
+        ("uncovered-entry-followed", uncovered_subrs(15), "a b"),
     ]
 }
 
@@ -235,8 +288,8 @@ fn charstring_stack_matches_tex_live() {
     let cmr10 = std::fs::read(kpsewhich(&texbin, "cmr10.pfb")).unwrap();
     let base = common::fresh_dir("flashtex-csstack");
     let mut failures = vec![];
-    for (name, glyph, text) in cases() {
-        let pfb = font(&cmr10, &glyph);
+    for (name, entries, text) in cases() {
+        let pfb = font(&cmr10, &entries);
         let job = format!(
             "\\nopagenumbers \\pdfoutput=1 \\pdfcompresslevel=0 \\pdfobjcompresslevel=0 \
              \\pdfsuppressptexinfo=-1 \\pdfmapline{{=cmr10 CMR10 <stk.pfb}}{text}\\bye\n"
