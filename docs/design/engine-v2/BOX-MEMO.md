@@ -177,6 +177,18 @@ A recording ends at `big_switch` once every input level from the body's on is us
 - the string, hash and font counters;
 - the output counters and the page-builder state of §4.1.
 
+**The list in place** (lane AUDIT-GROUPS, #2266). Some commands change the call's list without
+appending to it:
+- `\over` on an empty math list sets `incompleat_noad` (tex.web §1181);
+- `\limits` sets the tail op noad's subtype (§1159);
+- `^` and `_` fill the tail noad's scripts (§1176, §1186);
+- a letter the font lacks sets `space_factor` (§1034).
+
+The end check therefore also compares the list's `eTeX_aux` and, in math mode, its `aux` and the
+words of its tail noad. Any of these that changed abandons the recording (`OuterList`). Any other
+`aux` is a scalar, `\spacefactor` or `\prevdepth`: the entry keeps it, and every replay sets it, not
+only a draw call's.
+
 ### 4.3 The effects: an operation log, as D9 keeps one
 
 A recording keeps every `eqtb` and sparse-register assignment and every group, in order, at every

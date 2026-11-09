@@ -351,6 +351,32 @@ fn lastskip_glue_and_local_groups() {
 }
 
 #[test]
+fn changes_a_call_makes_to_its_list_in_place() {
+    // (lane AUDIT-GROUPS, #2266) commands that change the call's list
+    // without appending to it: `\\over` on an empty math list sets
+    // `incompleat_noad` (tex.web §1181); `\\limits` sets the tail op
+    // noad's subtype (§1159); `^` fills the tail noad's script, with a
+    // group's list at its `}` (§1176, §1186); a letter `\\nullfont` lacks
+    // sets `space_factor` (§1034). On main a replay left them all as they
+    // were: the math calls are refused now, and the space factor is
+    // replayed
+    let s = check(
+        "in-place",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\catcode`\\^=7 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 \\endgroup#1}\n\
+         \\def\\m#1{\\setbox1\\hbox{$#1\\showlists$}}\n\
+         \\m{\\measure\\over}\\m{\\measure\\over}\\m{\\measure\\over}\n\
+         \\m{\\mathop{x}\\measure\\limits}\\m{\\mathop{x}\\measure\\limits}\\m{\\mathop{x}\\measure\\limits}\n\
+         \\m{x\\measure{^y}}\\m{x\\measure{^y}}\\m{x\\measure{^y}}\n\
+         \\m{x\\measure{^{yy}}}\\m{x\\measure{^{yy}}}\\m{x\\measure{^{yy}}}\n\
+         \\def\\h{\\setbox1\\hbox{\\spacefactor=1234 \\measure A\\message{[\\the\\spacefactor]}}}\n\
+         \\h\\h\\h\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
 fn font_parameters_are_part_of_the_key() {
     // a call that reads a font parameter: a \fontdimen assignment makes the
     // fonts' next version, so the call after it is another key; versions
