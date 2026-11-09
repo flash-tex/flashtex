@@ -121,6 +121,8 @@ public final class CaptureQueue: @unchecked Sendable {
     public let link: MacLink
     public let store: CaptureStore?
     public static let maxInstructionBytes = 4096
+    /// Why a capture was not sent: the Mac has no insertion point pinned.
+    public static let noPinnedDestination = "not sent: the Mac has no pinned insertion point — pin one (Edit > Pin Insertion Point on the Mac), then Retry"
     /// Bound on the list (and the PNGs on disk): oldest terminal records go first.
     public static let maxRecords = 50
 
@@ -259,7 +261,11 @@ public final class CaptureQueue: @unchecked Sendable {
             } else {
                 let fresh = try await session.destinationQuery()
                 guard let fresh else {
-                    throw NearbyError.invalidInput("the Mac has no pinned insertion point (Edit > Pin Insertion Point on the Mac)")
+                    // Nothing was sent and nothing about the capture is wrong:
+                    // it stays retryable (same id, no pin frozen) so the
+                    // drawing Send already cleared from the canvas is not lost.
+                    update(id) { $0.status = .disconnected(reason: Self.noPinnedDestination, attempt: attempt) }
+                    return
                 }
                 dest = fresh
                 update(id) { $0.destinationId = dest.destinationId; $0.baseRevision = dest.baseRevision; $0.pairId = pair.pairId; $0.macFingerprint = pair.fingerprint }
