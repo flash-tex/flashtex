@@ -49,7 +49,7 @@ fn layout(base: &Path) {
 }
 
 /// The child: the snapshot of a compile that wrote `main.aux` and looked
-/// for `main.bbl`; prints the files it read, one per line.
+/// for `main.bbl`; writes the files it read to `read.txt`, one per line.
 #[test]
 fn child_snapshot() {
     let Some(base) = std::env::var_os(CHILD) else {
@@ -69,9 +69,12 @@ fn child_snapshot() {
         found: None,
     });
     let snap = snapshot(&proj, &out, "main", Some(&j));
+    // (a file of its own: the test harness's output shares stdout's lines)
+    let mut list = String::new();
     for f in snap.files_read() {
-        println!("READ\t{f}");
+        list.push_str(&format!("{f}\n"));
     }
+    std::fs::write(base.join("read.txt"), list).unwrap();
 }
 
 /// The files the child read, with confinement on or off.
@@ -104,13 +107,10 @@ fn files_read(tag: &str, confined: bool) -> Vec<String> {
         "{stdout}{}",
         String::from_utf8_lossy(&o.stderr)
     );
+    let list = std::fs::read_to_string(base.join("read.txt")).expect("the child's list");
     let _ = std::fs::remove_dir_all(&base);
     let b = base.to_string_lossy().into_owned();
-    stdout
-        .lines()
-        .filter_map(|l| l.strip_prefix("READ\t"))
-        .map(|l| l.replace(&b, "BASE"))
-        .collect()
+    list.lines().map(|l| l.replace(&b, "BASE")).collect()
 }
 
 #[test]
