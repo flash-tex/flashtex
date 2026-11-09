@@ -215,6 +215,15 @@ const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used
 const S_CALLS: usize = 33; // calls of candidates (for choosing a variant to replace)
 
+// The statistics' high-water marks as they stood when a recording started
+// (#2451): a recording lowers them to 0, so that at its end they hold the
+// exact peak of its own normal path, and then raises them back.
+const S_REC_MAX_IN: usize = 34;
+const S_REC_MAX_PARAM: usize = 35;
+const S_REC_MAX_BUF: usize = 36;
+const S_REC_MAX_SAVE: usize = 37;
+const S_REC_MAX_NEST: usize = 38;
+
 // Layout constants, set by changes/intrinsics.ch at `Set init`.
 const L_HASH_BASE: usize = 100;
 const L_FONT_ID_BASE: usize = 102;
@@ -263,6 +272,17 @@ const F_ROOM_LEVEL: usize = 21;
 const F_ROOM_SAVE: usize = 22;
 const F_ROOM_INPUT: usize = 23;
 const F_ROOM_PARAM: usize = 24;
+// How far above the call's start its normal path raised each of the
+// statistics' high-water marks (#2451), -1 where it raised none: the input
+// stack from the body's push, the parameter stack from `param_ptr` after
+// it, the buffer from `first`, the save and nest stacks from their
+// pointers. A replay raises the marks as far, so that the `stack
+// positions` line of `\tracingstats` is the normal path's.
+const F_PEAK_IN: usize = 25;
+const F_PEAK_PARAM: usize = 26;
+const F_PEAK_BUF: usize = 27;
+const F_PEAK_SAVE: usize = 28;
+const F_PEAK_NEST: usize = 29;
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -1138,6 +1158,7 @@ impl Globals {
         self.set_st(S_REC_PARAM, self.param_ptr);
         self.set_st(S_REC_SAVE, self.save_ptr);
         self.set_st(S_REC_PEAK_LEVEL, -1);
+        self.rec_marks_lower();
         // (the markers `cap_need` reads at the end; their places follow from
         // the pointers just kept)
         self.cap_probe();
@@ -1182,6 +1203,7 @@ impl Globals {
             return;
         }
         self.intr_rec_on = false;
+        self.rec_marks_raise();
         let Some(slot) = self.rec_slot() else { return };
         self.set_st(S_REC_SLOT, 0);
         STATS.with(|s| bump(&mut s.borrow_mut().abandoned, why));
@@ -1465,6 +1487,7 @@ impl Globals {
         }
         let Some(slot) = self.rec_slot() else {
             self.intr_rec_on = false;
+            self.rec_marks_raise();
             return;
         };
         let why = if self.cur_level != self.st(S_REC_LEVEL) {
@@ -1522,10 +1545,14 @@ impl Globals {
         self.intr_rec_on = false;
         self.set_st(S_REC_SLOT, 0);
         if self.st(S_REC_VERIFY) == 1 {
+            self.rec_marks_raise();
             crate::intrinsics_verify::normal_path_done(self, slot);
             return;
         }
+        // (with the marks still the call's own: its room is exact)
         self.intr_keep_room(slot, need);
+        self.rec_keep_peaks(slot);
+        self.rec_marks_raise();
         self.set_sf(slot, F_STATE, ST_VALID);
         STATS.with(|s| s.borrow_mut().committed += 1);
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
@@ -1624,6 +1651,105 @@ impl Globals {
             F_ROOM_PARAM,
             (self.max_param_stack - self.st(S_REC_PARAM)).max(0),
         );
+    }
+
+    /// At a recording's start: keep the statistics' high-water marks and
+    /// lower them to 0 (#2451). Each overflow test that reads a mark makes
+    /// it only after raising the mark, from the pointer it tests, so a
+    /// lower mark changes no test.
+    fn rec_marks_lower(&mut self) {
+        self.set_st(S_REC_MAX_IN, self.max_in_stack);
+        self.set_st(S_REC_MAX_PARAM, self.max_param_stack);
+        self.set_st(S_REC_MAX_BUF, self.max_buf_stack);
+        self.set_st(S_REC_MAX_SAVE, self.max_save_stack);
+        self.set_st(S_REC_MAX_NEST, self.max_nest_stack);
+        self.max_in_stack = 0;
+        self.max_param_stack = 0;
+        self.max_buf_stack = 0;
+        self.max_save_stack = 0;
+        self.max_nest_stack = 0;
+    }
+
+    /// At a recording's end, kept or abandoned: the marks are the larger
+    /// of the ones kept at its start and the call's own peaks (#2451).
+    fn rec_marks_raise(&mut self) {
+        self.max_in_stack = self.max_in_stack.max(self.st(S_REC_MAX_IN));
+        self.max_param_stack = self.max_param_stack.max(self.st(S_REC_MAX_PARAM));
+        self.max_buf_stack = self.max_buf_stack.max(self.st(S_REC_MAX_BUF));
+        self.max_save_stack = self.max_save_stack.max(self.st(S_REC_MAX_SAVE));
+        self.max_nest_stack = self.max_nest_stack.max(self.st(S_REC_MAX_NEST));
+    }
+
+    /// Keep in `slot` how far its normal path raised each mark above the
+    /// call's start (`F_PEAK_IN`..), while the marks are the call's own.
+    fn rec_keep_peaks(&mut self, slot: usize) {
+        let rel = |m: i32, from: i32| if m > 0 { (m - from).max(0) } else { -1 };
+        // (the body's push is at `input_ptr` one below its level)
+        let pushed_at = match self.st(S_REC_BASE) {
+            0 => self.st(S_REC_INPUT),
+            b => b - 1,
+        };
+        self.set_sf(slot, F_PEAK_IN, rel(self.max_in_stack, pushed_at));
+        self.set_sf(
+            slot,
+            F_PEAK_PARAM,
+            rel(self.max_param_stack, self.st(S_REC_PARAM)),
+        );
+        self.set_sf(
+            slot,
+            F_PEAK_BUF,
+            rel(self.max_buf_stack, self.st(S_REC_FIRST)),
+        );
+        self.set_sf(
+            slot,
+            F_PEAK_SAVE,
+            rel(self.max_save_stack, self.st(S_REC_SAVE)),
+        );
+        self.set_sf(
+            slot,
+            F_PEAK_NEST,
+            rel(self.max_nest_stack, self.st(S_REC_NEST_PTR)),
+        );
+    }
+
+    /// In a replay of `slot`: raise the marks as its normal path would
+    /// (#2451). That path's `macro_call` first pops the input levels used
+    /// up ("conserve stack space", §390) and with them the parameters of
+    /// the macros among them, then pushes the body: the peaks are on top
+    /// of the pointers as they would be then.
+    fn replay_raise_marks(&mut self, slot: usize) {
+        const MACRO: i32 = 5;
+        let mut ip = self.input_ptr;
+        let mut pp = self.param_ptr;
+        let mut l = self.cur_input;
+        while l.state_field == 0 && l.loc_field == 0 && l.index_field != V_TEMPLATE {
+            if l.index_field == MACRO {
+                pp = l.limit_field;
+            }
+            if ip == 0 {
+                break;
+            }
+            ip -= 1;
+            l = self.input_stack[ip as usize];
+        }
+        let raise = |m: &mut i32, from: i32, peak: i32| {
+            if peak >= 0 && from + peak > *m {
+                *m = from + peak;
+            }
+        };
+        let (pi, pp_, pb, ps, pn) = (
+            self.sf(slot, F_PEAK_IN),
+            self.sf(slot, F_PEAK_PARAM),
+            self.sf(slot, F_PEAK_BUF),
+            self.sf(slot, F_PEAK_SAVE),
+            self.sf(slot, F_PEAK_NEST),
+        );
+        let (first, save, nest) = (self.first, self.save_ptr, self.nest_ptr);
+        raise(&mut self.max_in_stack, ip, pi);
+        raise(&mut self.max_param_stack, pp, pp_);
+        raise(&mut self.max_buf_stack, first, pb);
+        raise(&mut self.max_save_stack, save, ps);
+        raise(&mut self.max_nest_stack, nest, pn);
     }
 
     /// Whether `slot`'s call, made now, passes every overflow test its
@@ -1772,6 +1898,8 @@ impl Globals {
         if self.rs_on && fault() != Fault::NoReadset {
             self.intr_report_reads(slot);
         }
+        // (before its operations: from the pointers at the call)
+        self.replay_raise_marks(slot);
         let base = Self::region(slot) + R_OPS;
         let n = self.sf(slot, F_NOPS) as usize;
         let fault = fault();
