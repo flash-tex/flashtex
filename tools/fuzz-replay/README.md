@@ -114,7 +114,8 @@ python3 -m unittest discover -s tools/fuzz-replay -p 'test_*.py'
 
 The pure-logic tests (determinism, ddmin, statistics parsing) always run.
 With `FUZZ_REPLAY_ENGINE` naming a built `flashtex-initex`, two more run:
-the fixed seed set (`FIXED_SEEDS` in the test, under 30 s) must be clean,
+the fixed seed set (`FIXED_SEEDS` in the test, sized for under 30 s; a
+slower run warns but does not fail, since time is not a result) must be clean,
 and with D9's fault injection on (`FLASHTEX_INTRINSICS_FAULT=drop-last`) the
 same seeds must give a finding, which shows that the harness can see a
 wrong replay. CI runs the pure-logic tests with the other tools' self-tests
