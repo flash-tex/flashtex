@@ -1057,9 +1057,8 @@ fn the_main_font_changes_on_disk_while_open() {
 /// family: the directory's listing is unchanged, and the resident host's
 /// catalog and a persisted S₀'s key (both kept while the font directories
 /// are) still answer as before the change, where a fresh run reads the
-/// file's names again. Ignored: a known gap, AUDIT-UHOST's finding (see
-/// the issue it names in `tools`' notes); fontconfig's cache, which xelatex
-/// on Linux reads, is kept by directory too.
+/// file's names again. Ignored: a known gap (#2296); fontconfig's cache, which
+/// xelatex reads on Linux, is kept by directory too.
 #[test]
 #[ignore]
 fn a_font_file_rewritten_in_place_with_another_family() {
