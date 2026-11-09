@@ -4735,6 +4735,15 @@ fn terminal_captured() -> bool {
     TERMINAL.with(|t| t.borrow().is_some())
 }
 
+/// The terminal's pending bytes out to stdout now (nothing when a host
+/// captures the terminal): what C's `fflush(stdout)` does for pdfTeX before
+/// a library writes to stderr (xpdf's `libxpdf:` messages, `pdftex/xpdf.rs`).
+pub fn flush_terminal() {
+    if !terminal_captured() {
+        let _ = std::io::stdout().flush();
+    }
+}
+
 fn terminal_capture_byte(b: u8) -> bool {
     TERMINAL.with(|t| match t.borrow_mut().as_mut() {
         Some(v) => {
