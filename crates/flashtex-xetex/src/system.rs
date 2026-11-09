@@ -1515,12 +1515,11 @@ impl Globals {
                 return false;
             }
             self.host.full_name_of_file = Some(s.clone());
-            let Ok(mut child) = std::process::Command::new("/bin/sh")
-                .arg("-c")
-                .arg(cmd)
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-            else {
+            // texmfmp.c's `runpopen`, as the pdfTeX engine runs it: in
+            // restricted mode (`-shell-restricted`, or texmf.cnf's
+            // `shell_escape = p`) only a command in `shell_escape_commands`
+            // runs; any other is refused, as `\write18` refuses it.
+            let Some(mut child) = flashtex_engine::system::run_popen_in(cmd) else {
                 return false;
             };
             let Some(out) = child.stdout.take() else {
@@ -1528,6 +1527,14 @@ impl Globals {
             };
             f.input = Some(TextIn::Pipe(BufReader::new(out)));
             f.child = Some(child);
+            // texmfmp.c's `u_open_in_or_pipe` sniffs no byte order mark
+            // on a pipe (it cannot rewind one): `AUTO` is UTF-8 there, and
+            // the command's first bytes are the first line's.
+            f.err = 0;
+            f.at_eof = false;
+            let mode = if in_mode == AUTO { UTF8 } else { in_mode };
+            self.set_input_file_encoding(f, mode, encoding_data);
+            return true;
         } else {
             let must_exist = self.host.tex_input_type;
             let Some(name) = self.input_path(Format::Tex, must_exist) else {
