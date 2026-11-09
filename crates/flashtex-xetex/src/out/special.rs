@@ -385,13 +385,28 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"code" | b"direct" => self.literal(p.rest()),
             b"literal" => {
-                if p.keyword(b"direct") {
+                // spc_handler_pdfm_literal: `reverse` and `direct` in any
+                // order and number, matched as prefixes (as the C's
+                // strncmp does); `reverse` is ignored with a warning
+                let mut direct = false;
+                loop {
+                    p.skip_white();
+                    if p.rest().starts_with(b"reverse") {
+                        p.i += 7;
+                        self.doc.ignored_special("pdf:literal reverse");
+                    } else if p.rest().starts_with(b"direct") {
+                        p.i += 6;
+                        direct = true;
+                    } else {
+                        break;
+                    }
+                }
+                if p.at_end() {
+                    return;
+                }
+                if direct {
                     self.literal(p.rest());
                 } else {
-                    let reverse = p.keyword(b"reverse");
-                    if reverse {
-                        self.doc.ignored_special("pdf:literal reverse");
-                    }
                     // the origin moved to the current point, and back
                     let (x, y) = self.user_point();
                     let (x, y) = self.rel(x, y);
