@@ -889,7 +889,17 @@ A blocker is one of:
 - **L1–L3**: warnings that name an unimplemented construct, plus the source
   construct at the first divergence (`pagination:`, `content:` or
   `placement:`).
-- **L3→L4**: font/outline notes.
+- **L3→L4**: font/outline notes. A rasteriser that did not run (a timeout,
+  a crash) is `harness: raster not run (…)`, never an ink difference: L4 was
+  not measured.
+
+pdflatex's reference passes (the L0 oracle) run in the candidate's
+environment, `capture.TRACE_ENV` (`max_print_line=10000`, `error_line`,
+`half_error_line`, the pinned dates), so both logs' errors are counted in the
+same lines. At pdflatex's default `max_print_line` of 79, an overfull box's
+wrapped line can begin with `! ` and counted as an error of the reference
+only (arXiv 1604.05044v1). A cached reference without that mark (`log_env`)
+that counted errors is made again.
 
 `definers.py` then **groups constructs by who defines them**, because a
 package is what a lane implements. The index is built once (~5 s) from TeX

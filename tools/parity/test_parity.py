@@ -1444,6 +1444,33 @@ class PTWithOracle(unittest.TestCase):
         self.assertTrue(capture.HALT_ON_ERROR)
         self.assertEqual(tiers.oracle_key({"entry": "main.tex"}, "v", True, "t"), halting_key)
 
+    def test_the_reference_counts_errors_at_the_candidates_line_length(self):
+        """PARITY-ROOT, arXiv 1604.05044v1: at pdflatex's max_print_line of 79
+        an overfull box's wrapped line begins with `! ` and counted as an
+        error of the L0 reference only; it runs in capture.TRACE_ENV now
+        (10000), as the candidate does. A cached entry that counted errors
+        without that environment is made again."""
+        src = os.path.join(self.d, "ovf")
+        os.makedirs(src)
+        with open(os.path.join(src, "main.tex"), "w") as f:  # 63 x's put the `!` at column 80
+            f.write("\\documentclass{article}\\begin{document}\\hbox to 10pt{" + "x" * 63 + "! x}\\end{document}\n")
+        doc = {"id": "ovf", "tier": "t", "dir": src, "entry": "main.tex"}
+        cache = os.path.join(self.d, "cache")
+        pdf, meta = parity.oracle_reference(doc, os.path.dirname(PDFTEX), cache, None)
+        self.assertTrue(pdf)
+        self.assertEqual((meta["exit"], meta["errors"], meta["cached"], meta["log_env"]),
+                         (0, 0, False, parity.LOG_ENV))
+        self.assertIn("max_print_line=10000", meta["argv"])
+        # an entry cached before LOG_ENV with the wrapped line's error is made again; one without errors is kept
+        with open(os.path.join(cache, "oracle", meta["key"][:2], meta["key"], "oracle.json")) as f:
+            entry = json.load(f)
+        mp = os.path.join(cache, "oracle", meta["key"][:2], meta["key"], "oracle.json")
+        for errors, cached in ((1, False), (0, True)):
+            with open(mp, "w") as f:
+                json.dump({k: v for k, v in dict(entry, errors=errors).items() if k != "log_env"}, f)
+            _, again = parity.oracle_reference(doc, os.path.dirname(PDFTEX), cache, None)
+            self.assertEqual((again["cached"], again["errors"]), (cached, 0 if not cached else errors))
+
     def test_no_halt_on_error_a_different_error_count_fails(self):
         """--no-halt-on-error (daniel-parent's review of #1998): a candidate that
         ends with another number of errors than pdfTeX fails L0 and P-T2, even
@@ -3113,6 +3140,17 @@ class CpuLimits(unittest.TestCase):
         self.assertEqual((code, timed_out), (None, True))
         self.assertLess(secs, harness.CPU_WALL_FACTOR)
         self.assertEqual(harness.run(["sleep", "2"], timeout=1)[4], True)  # without cpu: wall-clock, as before
+
+    def test_a_raster_that_did_not_run_is_not_an_ink_difference(self):
+        """PARITY-ROOT, arXiv 2509.09089v1 and 2509.21232v3: a pdftoppm timeout
+        left them at L3 blamed on "ink differs"; it is a harness note now, and
+        the rasteriser runs under a CPU-time limit (harness.run(cpu=True))."""
+        why = "rasterizer exit None timeout=True: "
+        res = {"level": 3, "candidate": {}, "raster": {"available": False, "why": why}}
+        self.assertEqual(parity.causes_for(res, {}), [f"harness: raster not run ({why})"])
+        res["raster"] = {"available": True, "ok": False}
+        self.assertEqual(parity.causes_for(res, {}),
+                         ["raster: ink differs with every glyph origin in place (rules, images, outlines)"])
 
     def test_a_limit_the_host_cannot_give_is_a_harness_error(self):
         import capture
