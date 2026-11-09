@@ -131,6 +131,73 @@ pub fn paper_of(s: &[u8]) -> Option<Option<(Fx, Fx)>> {
     Some(Some((fx(w?), fx(h?))))
 }
 
+/// `dvipdfmx:config g X` or `g X,Y` (dvipdfmx.c's read_config_special,
+/// then its `-g` option): the annotation margin, `(x, y)` in bp; `None` if
+/// `s` is no such special. dpxutil.c's dpx_util_read_length reads each
+/// length: a number, then a unit (bp without one; `true` allowed).
+pub fn config_grow(s: &[u8]) -> Option<(f64, f64)> {
+    let r = trim(s).strip_prefix(b"dvipdfmx:")?;
+    let mut p = Parser::new(r);
+    if !p.keyword(b"config") {
+        return None;
+    }
+    p.skip_white();
+    // parse_ident's characters
+    let ident = |p: &mut Parser| -> Vec<u8> {
+        let st = p.i;
+        while p.i < p.s.len()
+            && (p.s[p.i].is_ascii_alphanumeric() || b"!\"#$&'*+,-.:;=?@\\^_`|~".contains(&p.s[p.i]))
+        {
+            p.i += 1;
+        }
+        p.s[st..p.i].to_vec()
+    };
+    let opt = ident(&mut p);
+    // getopt: `-g` takes the next argument, `-gX` the rest of the word
+    let arg = match opt.as_slice() {
+        b"g" => {
+            p.skip_white();
+            ident(&mut p)
+        }
+        [b'g', rest @ ..] => rest.to_vec(),
+        _ => return None,
+    };
+    let len = |t: &[u8]| -> f64 {
+        // parse_float_decimal and atof, then the unit
+        let mut i = 0;
+        if matches!(t.first(), Some(b'+' | b'-')) {
+            i = 1;
+        }
+        while i < t.len() && (t[i].is_ascii_digit() || t[i] == b'.') {
+            i += 1;
+        }
+        let v: f64 = std::str::from_utf8(&t[..i])
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0.0);
+        let u = t[i..].strip_prefix(b"true").unwrap_or(&t[i..]);
+        let k = match u {
+            b"pt" => 72.0 / 72.27,
+            b"in" => 72.0,
+            b"cm" => 72.0 / 2.54,
+            b"mm" => 72.0 / 25.4,
+            b"pc" => 12.0 * 72.0 / 72.27,
+            b"dd" => 1238.0 / 1157.0 * 72.0 / 72.27,
+            b"cc" => 12.0 * 1238.0 / 1157.0 * 72.0 / 72.27,
+            b"sp" => 72.0 / (72.27 * 65536.0),
+            _ => 1.0,
+        };
+        v * k
+    };
+    Some(match arg.iter().position(|&c| c == b',') {
+        Some(c) => (len(&arg[..c]), len(&arg[c + 1..])),
+        None => {
+            let g = len(&arg);
+            (g, g)
+        }
+    })
+}
+
 fn trim(s: &[u8]) -> &[u8] {
     let st = s
         .iter()
@@ -1120,6 +1187,21 @@ mod tests {
             .unwrap();
         assert!((w.to_f64() - 595.2756).abs() < 1e-3);
         assert_eq!(paper_of(b"pdf:dest (x) [@thispage /Fit]"), None);
+    }
+
+    /// Measured (TeX Live 2026 xdvipdfmx): `dvipdfmx:config g 2.5pt` on
+    /// the first page grows the links of every page by 2.4907 bp (`/Rect
+    /// [74.74 704.239 90.182 722.491]` for a box 77.23 706.73 87.691 720),
+    /// a `g 10` on the second page changes nothing.
+    #[test]
+    fn config_grow_lengths() {
+        let g = |s: &str| config_grow(s.as_bytes());
+        let (x, y) = g("dvipdfmx:config g 2.5pt").unwrap();
+        assert!((x - 2.4906600).abs() < 1e-6 && x == y);
+        assert_eq!(g("dvipdfmx:config g 10"), Some((10.0, 10.0)));
+        assert_eq!(g("dvipdfmx:config g 1bp,2bp"), Some((1.0, 2.0)));
+        assert_eq!(g("dvipdfmx:config C 0x0010"), None);
+        assert_eq!(g("pdf:config g 1"), None);
     }
 
     #[test]

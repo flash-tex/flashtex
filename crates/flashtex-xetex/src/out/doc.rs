@@ -204,6 +204,12 @@ pub struct Doc {
     pub diagnostics: Vec<String>,
     /// The paper size of a page without `pdf:pagesize` (bp).
     pub default_paper: Option<(Fx, Fx)>,
+    /// `dvipdfmx:config g x[,y]` of the first page (dvipdfmx reads the
+    /// first page's config specials before it sets up the document, later
+    /// pages' too late): the margin a `pdf:bann` link's rectangle grows by
+    /// (bp), and whether the first page has been read for it.
+    pub annot_grow: (f64, f64),
+    pub config_read: bool,
     /// The size the last `pdf:pagesize`/`papersize` gave, kept for later
     /// pages (dvipdfmx keeps it).
     pub paper: Option<(Fx, Fx)>,

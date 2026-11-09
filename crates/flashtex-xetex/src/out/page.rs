@@ -1009,6 +1009,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
             return;
         };
         let dict = t.dict.clone();
+        // pdf_doc_break_annot: grown by `dvipdfmx:config g`
+        let (gx, gy) = self.doc.annot_grow;
+        let r = [r[0] - gx, r[1] - gy, r[2] + gx, r[3] + gy];
         self.add_link(dict, r);
     }
 
@@ -1230,7 +1233,14 @@ fn link_action(d: &super::pdfobj::Dict) -> (LinkKind, Vec<u8>, Vec<u8>) {
 /// page (dvipdfmx scans a page's specials for it before the page), else
 /// the size an earlier page set, else the default paper.
 fn page_size(doc: &mut Doc, bytes: &[u8]) -> (Fx, Fx) {
+    let first = !doc.config_read;
+    doc.config_read = true;
     for s in super::special::scan_specials(bytes) {
+        if first {
+            if let Some(g) = super::special::config_grow(&s) {
+                doc.annot_grow = g;
+            }
+        }
         if let Some(sz) = super::special::paper_of(&s) {
             match sz {
                 Some(sz) => doc.paper = Some(sz),
