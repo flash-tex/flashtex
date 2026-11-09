@@ -164,7 +164,27 @@ later.
   untouched; inside its groups anything goes.
 - **Output of any kind** (log and terminal length, `file_offset`, `term_offset`). Errors (`history`,
   `error_count`). `\shipout`, `\end`, `\dump`, interaction-mode changes.
-- **pdfTeX's C-part state changed** (`cstate`).
+- **pdfTeX's C-part state** (`src/pdftex/`, `CState`). No check at the end compares it, and none
+  is cheap:
+  - There is no write counter.
+  - `with_state` is entered by reads too: `colorstackused` runs at every xcolor colour.
+  - `CState::same_as` at each recording's end would encode the PDF writer's state.
+
+  The guarantee rests instead on what the allowed commands and expansions reach (lane
+  AUDIT-WRITES, 2026-11-08, from every call from `src/generated/` into `src/pdftex/`):
+  - `\pdfcolorstack`'s `colorstackused`. Its first call sets up the stacks; every reader does
+    that first, so whether it ran shows only to the convergence test, which is conservative.
+  - `\pdfescapestring`, `\pdfescapename`, `\pdfescapehex` and `\pdfunescapehex`. They touch
+    only the string pool, which the string counters check.
+  - Font expansion's `ext_xn_over_d`, which is pure (a warning would be output).
+  - `pdfassert`.
+  - `\pdfstartlink`'s `pdf_new_objnum`, whose `avl_put_obj` the replay makes again (§11.3).
+
+  Every other C-part write happens at `\shipout` or `\immediate`, or behind a command or
+  expansion this list refuses: images, `\pdfmapfile`/`\pdfmapline`, `\pdfcolorstackinit`,
+  `\pdfdest`/`\pdfannot` (`find_obj`), `\pdffontname` and kin (`pdf_init_font`),
+  `\pdfmatch`, the file and date primitives, and `\pdfresettimer`. The exception is a font made
+  by expansion or `\letterspacefont` (`allocvffnts`), which the `Fonts` check refuses.
 - **A restore while the recording runs** (§6).
 
 ### 4.2 The end
