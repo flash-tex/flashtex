@@ -138,6 +138,9 @@ later.
   `\unkern`, `\unpenalty` or `\lastbox` there, `\lastskip`, `\lastpenalty`, `\lastkern` or
   `\lastnodetype` read there, `\prevdepth`, `\spacefactor` or `\prevgraf` read or set at or below
   it, or a mode change of that level.
+- **The tail before the call.** `\/` reads the tail of its list (tex.web §1113). As the first thing a
+  draw call appends, it reads a node from before the call, which no key holds (lane AUDIT-GROUPS,
+  #2267). After the call's own nodes it reads only those.
 - **The page builder.** `\pagegoal` and the other `\page...` dimensions, `\deadcycles`,
   `\insertpenalties`, `\interactionmode`. At the end, the page and contribution lists, `page_so_far`,
   `last_glue`/`last_penalty`/`last_kern`, `output_active` and `insert_penalties` must be as at the
