@@ -266,6 +266,26 @@ do nothing" is one click, not an investigation.
 Target: a `merge_group` run's critical path **≤ 12 minutes when the group
 touches the engine, ≤ 5 minutes otherwise**.
 
+**On the NixOS PC, with a hosted fallback (2026-11-01).** The gate's jobs are
+minutes long but waited up to 64 minutes for GitHub-hosted runners (the org's
+free plan runs about ten at once, shared with every pull request). When
+`FLASHTEX_SELFHOSTED_LINUX` is 1 and neither the group's own pull request nor
+any pull request in the queue is cross-repository (§9.3; a failed lookup counts
+as a fork), `plan` sets `gate_route=pc`: `build`, `quick`, the checks' Linux leg
+and the engine's parity (three shards) run as `build-pc`, `quick-pc`,
+`checks-pc` and `engine-parity` on the PC's existing runners, each with a warm
+per-runner build directory (`scripts/ci/pc-gate-target.sh`). The hosted
+`gate-pc` job (`scripts/ci/gate-pc.py supervise`) watches them: all passed is
+the gate's result; one failed is red; one not picked up within **5 minutes**
+(`gate_pc_wait`) sends the whole gate to the `*-fallback` copies on hosted
+runners, and a PC job that starts later stands down in seconds. Why 5: a free PC
+runner starts a job in seconds (wait p50 0, p75 1.6 min), one still waiting at
+5 minutes is behind a lane's long job (p90 14), and a hosted job waits 1–3
+minutes at the median. `CI required` (the only required check) judges the PC
+jobs through `gate-pc`'s outputs, never through `needs`, so a PC job that is
+never picked up cannot hold the queue. To try it by hand:
+`gh workflow run ci.yml --ref <branch> -f gate_only=true -f gate_runner=pc [-f gate_pc_wait=0]`.
+
 | Job | Runner | What |
 |---|---|---|
 | `plan` | ubuntu | tier, deduplication, runner choice, path filters |
@@ -422,8 +442,10 @@ slowest shard, not the sum. Two jobs carry the shards:
   once), pull requests and every push to `main`. Described below.
 * **`engine parity (NixOS, <shard>)`**, three shards (lockstep, P-T fixtures,
   engine tests), on the `flashtex-linux` runners (the owner's PC, TeX Live 2026
-  first on their `PATH`): only a full manual run (`workflow_dispatch` without
-  `gate_only`, PC switch on) — never a pull request (§9.3). Each shard keeps a **per-runner**
+  first on their `PATH`): a merge group on the PC route (`gate-pc`), every push
+  to `main` (since 2026-11-08) and a full manual run (`workflow_dispatch` without
+  `gate_only`), PC switch on, each supervised by `gate-pc` with the hosted
+  `engine-parity-fallback` after 5 minutes — never a pull request (§9.3). Each shard keeps a **per-runner**
   `CARGO_TARGET_DIR` under `~/.cache/flashtex-ci/<runner>/` (the warm cache: a
   run rebuilds only what changed). Per runner, not one shared directory: cargo
   locks a target directory for a whole build, so shards sharing one would build
@@ -670,8 +692,9 @@ Routing uses the same eligibility as the Macs but its own switch,
 `FLASHTEX_SELFHOSTED_LINUX` (unset: it follows `FLASHTEX_SELFHOSTED_MAC`):
 `plan`'s `selfhosted_linux` output is `true` for merge_group, push to main and
 workflow_dispatch when that switch is `1` — never for `pull_request` or a
-branch push. In `ci.yml` the PC now runs **only engine parity on a full manual
-run** (`engine_nixos` in `plan`); nothing in the merge queue waits for it. Until
+branch push. In `ci.yml` the PC runs the merge queue's Linux legs (`gate-pc`,
+above), and engine parity on every push to `main` and on a full manual run
+(`engine_nixos` in `plan`); nothing waits for it more than 5 minutes. Until
 2026-10-05 it ran the workspace build, the Linux leg of the Rust workspace and
 engine parity in every merge group, and up to 8 groups at a time queued for its
 three runners (up to 50 minutes; with the slice's CPU cap, the three runners also

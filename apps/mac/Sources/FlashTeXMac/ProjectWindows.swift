@@ -75,6 +75,71 @@ final class ProjectWindows {
 
     init(defaults: UserDefaults? = nil) { self.defaults = defaults }
 
+    // MARK: the front window compiles first
+
+    /// While the frontmost window compiles, the hosts of the windows behind
+    /// it run at background priority (`EngineV3Session.inBackground`), so
+    /// the window you look at finishes first when several compile at once
+    /// (a restore, a file several projects share). Only while it compiles:
+    /// Darwin's background state can hold a process off the CPU entirely on
+    /// a busy machine (seen at a load average of 198: a background host ran
+    /// nothing for minutes), so the others get their turn as soon as the
+    /// front window's DONE comes. `FLASHTEX_BACKGROUND_HOSTS=0` turns it off.
+    @ObservationIgnored var backgroundHosts = ProcessInfo.processInfo.environment["FLASHTEX_BACKGROUND_HOSTS"] != "0" {
+        didSet { updateBackground() }
+    }
+    /// A restore starts the front window's host first and the others once
+    /// its first compile is DONE (`restore`). `FLASHTEX_RESTORE_STAGGER=0` turns it off.
+    @ObservationIgnored var staggerRestore = ProcessInfo.processInfo.environment["FLASHTEX_RESTORE_STAGGER"] != "0"
+    /// How long a restore waits for the front window's DONE before starting the others anyway.
+    @ObservationIgnored var staggerTimeout: TimeInterval = 60
+    /// The windows a restore holds back (until the front one's DONE, their
+    /// own window coming forward, the front one closing, or the timeout).
+    @ObservationIgnored private(set) var held: Set<ProjectWindowID> = []
+    /// While a restore's windows appear, each becomes key for a moment as
+    /// AppKit orders it in: those are not you choosing a window, so until
+    /// then the front window stays the front one and nothing held starts.
+    /// A key change your own input causes (a click, a key, a menu choice:
+    /// `keyChangeIsYours`) still counts, and then the settle leaves the
+    /// window you chose in front (`settleRestore`).
+    @ObservationIgnored private var restoreSettlesAt: Date?
+    @ObservationIgnored var restoreSettle: TimeInterval = 2
+    /// The restore's front window, until the settle.
+    @ObservationIgnored private var restoreFrontID: ProjectWindowID?
+    /// You chose a window while the restore's windows were ordering in.
+    @ObservationIgnored private var choseDuringSettle = false
+    /// Whether the key change now being handled comes from your input, not
+    /// from AppKit ordering a restored window in. Tests replace it.
+    @ObservationIgnored var keyChangeIsYours: @MainActor () -> Bool = { ProjectWindows.currentEventIsInput() }
+
+    /// The event AppKit is handling is a click or a key (a window you click,
+    /// ⌘`, a Window menu choice become key while it is handled).
+    static func currentEventIsInput() -> Bool {
+        guard let e = NSApp?.currentEvent else { return false }
+        switch e.type {
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .keyDown: return true
+        default: return false
+        }
+    }
+
+    /// Tests: whether the front window compiles, in place of its session's `compiling`.
+    @ObservationIgnored var frontCompilingOverride: Bool?
+
+    /// Puts every window's host at normal or background priority.
+    func updateBackground() {
+        let frontBusy = frontCompilingOverride ?? frontmost?.engineV3.compiling ?? false
+        let behind = backgroundHosts && entries.count > 1 && frontBusy
+        for e in entries { e.model.engineV3.inBackground = behind && e.id != frontmostID }
+    }
+
+    /// Starts the hosts a restore held back (`ids`, or all of them).
+    func releaseHeld(_ ids: Set<ProjectWindowID>? = nil) {
+        let release = ids.map { held.intersection($0) } ?? held
+        guard !release.isEmpty else { return }
+        held.subtract(release)
+        for e in entries where release.contains(e.id) { e.model.engineV3.releaseStart() }
+    }
+
     /// The companion's capture sink for the app (FrontWindowCaptures).
     @ObservationIgnored private(set) lazy var captures = FrontWindowCaptures(windows: self)
 
@@ -97,6 +162,11 @@ final class ProjectWindows {
         model.windows = self
         entries.append(Entry(id: id, model: model))
         if frontmostID == nil { frontmostID = id }
+        model.engineV3.compilingChanged = { [weak self, weak model] _ in
+            guard let self, let model, model === self.frontmost else { return }
+            self.updateBackground() // the front window started or finished a compile
+        }
+        updateBackground()
     }
 
     /// The window `id`'s AppKit window appeared (`ProjectWindowAccessor`).
@@ -114,12 +184,19 @@ final class ProjectWindows {
         if window.isKeyWindow { becameKey(id) }
     }
 
-    /// Window `id` became key.
-    func becameKey(_ id: ProjectWindowID) {
+    /// Window `id` became key (`yours`: by your choice, as Open of a
+    /// document already open; nil: as `keyChangeIsYours` says).
+    func becameKey(_ id: ProjectWindowID, yours: Bool? = nil) {
         guard let e = entries.first(where: { $0.id == id }) else { return }
+        if let settles = restoreSettlesAt, Date() < settles, id != frontmostID {
+            guard yours ?? keyChangeIsYours() else { return } // a restored window ordering in
+            choseDuringSettle = true
+        }
         keyCounter += 1
         e.lastKey = keyCounter
         if frontmostID != id { frontmostID = id }
+        releaseHeld([id]) // a held window you bring forward compiles now
+        updateBackground()
     }
 
     /// Window `id` closed: its model (and so its engine session and host) is
@@ -131,7 +208,12 @@ final class ProjectWindows {
         // the copies over anyway, and the app's exit ends the hosts.
         if !terminating { entries[i].model.engineV3.end() }
         entries.remove(at: i)
-        if frontmostID == id { frontmostID = byRecency.first?.id }
+        if frontmostID == id {
+            frontmostID = byRecency.first?.id
+            releaseHeld() // the window the others waited for is gone
+        }
+        held.remove(id)
+        updateBackground()
         saveRestorable()
     }
 
@@ -214,7 +296,7 @@ final class ProjectWindows {
         if let (e, path) = window(showing: file) {
             if e.model.activePath != path { e.model.project.switchDocument(to: path) }
             e.window?.makeKeyAndOrderFront(nil)
-            becameKey(e.id)
+            becameKey(e.id, yours: true)
             return (.focused(e.id, path: path), e.model)
         }
         if let requester, requester.holdsNothing, requester !== placeholder {
@@ -315,6 +397,46 @@ final class ProjectWindows {
         return (try? JSONDecoder().decode([Restorable].self, from: data)) ?? []
     }
 
+    /// After a restore: the last window reopened is the one in front. The
+    /// others' hosts wait for its first DONE (or `staggerTimeout`), and
+    /// run in the background after it; their stored pages show meanwhile.
+    /// The launch window's host may have started already (it appeared
+    /// first): it is only put in the background.
+    private func stagger(_ restored: [ShellModel]) {
+        guard let front = restored.last, let frontID = entry(for: front)?.id else { return }
+        becameKey(frontID)
+        guard restored.count > 1 else { return }
+        // Once the windows are in, the front one comes forward (`settleRestore`).
+        restoreSettlesAt = Date().addingTimeInterval(restoreSettle)
+        restoreFrontID = frontID
+        choseDuringSettle = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + restoreSettle) { [weak self] in _ = self?.settleRestore() }
+        guard staggerRestore else { return }
+        for m in restored.dropLast() {
+            guard let id = entry(for: m)?.id else { continue }
+            m.engineV3.holdStart()
+            held.insert(id)
+        }
+        let waiting = held
+        front.engineV3.afterNextDone = { [weak self] in self?.releaseHeld(waiting) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + staggerTimeout) { [weak self] in self?.releaseHeld(waiting) }
+    }
+
+    /// The restore's windows are in: the front window is ordered in front
+    /// (it may have been ordered in before another), unless you chose a
+    /// window meanwhile; an automation launch is not activated by it.
+    /// Whether the front window is brought forward.
+    @discardableResult
+    func settleRestore() -> Bool {
+        guard let frontID = restoreFrontID else { return false }
+        restoreSettlesAt = nil
+        restoreFrontID = nil
+        defer { choseDuringSettle = false }
+        guard !choseDuringSettle, frontmostID == frontID else { return false }
+        if let w = entries.first(where: { $0.id == frontID })?.window, ProcessInfo.processInfo.environment["FLASHTEX_NO_ACTIVATE"] != "1" { w.orderFront(nil); if NSApp.isActive { w.makeKey() } }
+        return true
+    }
+
     /// Whether this launch reopens the last run's windows: not when it was
     /// told what to open (`FLASHTEX_OPEN`, a seed file, a bench) or not to
     /// (`FLASHTEX_RESTORE_WINDOWS=0`), so automation sees the same app every run.
@@ -331,6 +453,8 @@ final class ProjectWindows {
     /// is skipped (and said in the log); nothing is asked.
     func restore(_ list: [Restorable], first: ShellModel) {
         var into: ShellModel? = first
+        var restored: [ShellModel] = []
+        defer { stagger(restored) }
         for r in list {
             let url = URL(fileURLWithPath: r.path)
             guard FileManager.default.fileExists(atPath: url.path) else {
@@ -341,6 +465,7 @@ final class ProjectWindows {
             guard let model, result != .failed(.readFailed) else { continue }
             if case .failed = result { continue }
             into = nil
+            restored.append(model)
             // Its other documents, read from disk like the sidebar opens them
             // (one that is gone is left out), then the one it showed.
             if r.members?.isEmpty == false || r.activePath != nil {
