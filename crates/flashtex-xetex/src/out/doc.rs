@@ -35,6 +35,8 @@ pub enum Named {
 /// One outline entry (`pdf:outline [-] level <<dict>>`).
 #[derive(Clone, Debug)]
 pub struct Outline {
+    /// The depth, from 1 (dvipdfmx's level less the lowest level so far,
+    /// plus 1).
     pub level: i32,
     /// `[-]`: closed; `[]` or nothing: open (dvipdfmx's default, `-O 0`,
     /// is closed unless the special says `[]`).
@@ -176,6 +178,9 @@ pub struct Doc {
     /// Named objects closed by `pdf:close`.
     pub closed: Vec<Vec<u8>>,
     pub outlines: Vec<Outline>,
+    /// The lowest `pdf:outline` level so far (dvipdfmx's `lowest_level`,
+    /// 255 before the first): an item's depth is its level less it, plus 1.
+    pub outline_lowest: Option<i32>,
     pub docinfo: Dict,
     /// `pdf:docview` and `pdf:put @catalog`.
     pub catalog: Dict,

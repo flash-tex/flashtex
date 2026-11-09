@@ -556,15 +556,36 @@ impl<M: Metrics> Builder<'_, M> {
                     open = !r[..close].contains(&b'-');
                     p.i += (close + 1).min(r.len());
                 }
-                let level = p.number().unwrap_or(1.0) as i32;
+                // spc_handler_pdfm_outline: the depth counts from the
+                // lowest level seen so far (dvipdfmx starts it at 255)
+                let Some(level) = p.number() else {
+                    self.doc
+                        .diag("pdf:outline: Missing number for outline item depth.".into());
+                    return;
+                };
+                let lowest = self.doc.outline_lowest.unwrap_or(255).min(level as i32);
+                self.doc.outline_lowest = Some(lowest);
+                let depth = level as i32 + 1 - lowest;
                 let Some(Obj::Dict(d)) = p.object() else {
                     self.doc
                         .diag(format!("pdf:outline without a dictionary: `{}'", lossy(r)));
                     return;
                 };
                 let d = self.fixup_dict(d);
+                // pdfdoc.c's pdf_doc_bookmarks_down into an empty node: a
+                // jump of more than one level makes a `<No Title>` item for
+                // each level skipped
+                let prev = self.doc.outlines.last().map_or(1, |o| o.level);
+                for l in prev + 1..depth {
+                    self.doc.diag("pdf:outline: You have tried to jump more than 1 level.".into());
+                    self.doc.outlines.push(Outline {
+                        level: l,
+                        open: false,
+                        dict: empty_bookmark(),
+                    });
+                }
                 self.doc.outlines.push(Outline {
-                    level,
+                    level: depth,
                     open,
                     dict: d,
                 });
@@ -1098,6 +1119,29 @@ pub fn read_transform(p: &mut Parser) -> Mat {
         m = m.then(&Mat(x.map(fx)));
     }
     m
+}
+
+/// pdfdoc.c's `<No Title>` item for a level an outline jumps over.
+fn empty_bookmark() -> Dict {
+    let n = |t: &str| Obj::Num(t.as_bytes().to_vec());
+    Dict(vec![
+        (b"Title".to_vec(), Obj::Str(b"<No Title>".to_vec())),
+        (b"C".to_vec(), Obj::Array(vec![n("1"), n("0"), n("0")])),
+        (b"F".to_vec(), n("1")),
+        (
+            b"A".to_vec(),
+            Obj::Dict(Dict(vec![
+                (b"S".to_vec(), Obj::Name(b"JavaScript".to_vec())),
+                (
+                    b"JS".to_vec(),
+                    Obj::Str(
+                        b"app.alert(\"The author of this document made this bookmark item empty!\", 3, 0)"
+                            .to_vec(),
+                    ),
+                ),
+            ])),
+        ),
+    ])
 }
 
 fn lossy(b: &[u8]) -> String {
