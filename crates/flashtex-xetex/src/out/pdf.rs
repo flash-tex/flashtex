@@ -108,6 +108,9 @@ struct Writer<'a> {
     named: BTreeMap<Vec<u8>, u32>,
     named_queue: Vec<Vec<u8>>,
     names_obj: Option<u32>,
+    /// pdfdoc.c's `check_gotos` (on unless `dvipdfmx:config C` set
+    /// `0x10`): the new name of each destination a GoTo uses.
+    gotos: Option<HashMap<Vec<u8>, Vec<u8>>>,
     /// The glyphs (native fonts) and codes (TFM fonts) each font draws.
     used: BTreeMap<u16, BTreeSet<u16>>,
     page_group: Vec<bool>,
@@ -151,6 +154,7 @@ impl<'a> Writer<'a> {
             named: BTreeMap::new(),
             named_queue: Vec::new(),
             names_obj: None,
+            gotos: (doc.dpx_flags & OPT_PDFDOC_NO_DEST_REMOVE == 0).then(|| goto_names(doc)),
             used: BTreeMap::new(),
             page_group: Vec::new(),
             cids: BTreeMap::new(),
@@ -472,6 +476,9 @@ impl<'a> Writer<'a> {
         let mut annots = Vec::new();
         for a in &b.sup.annots {
             let mut d = a.dict.clone();
+            if let Some(m) = &self.gotos {
+                goto_rename(doc, m, &mut d);
+            }
             if d.get(b"Type").is_none() {
                 d.0.insert(0, (b"Type".to_vec(), Obj::Name(b"Annot".to_vec())));
             }
@@ -1321,6 +1328,23 @@ impl<'a> Writer<'a> {
 
     // ---- the document --------------------------------------------------------
 
+    /// The named destinations to write: all of them; or, with
+    /// `check_gotos`, those a GoTo uses, under their new names
+    /// (pdfnames.c's `flat_table` with its filter), the first of a name
+    /// given twice.
+    fn goto_dests(&self) -> Vec<(Vec<u8>, Obj)> {
+        let Some(m) = &self.gotos else {
+            return self.doc.dests.clone();
+        };
+        let mut seen = std::collections::HashSet::new();
+        self.doc
+            .dests
+            .iter()
+            .filter(|(k, _)| seen.insert(k.clone()))
+            .filter_map(|(k, v)| m.get(k).map(|n| (n.clone(), v.clone())))
+            .collect()
+    }
+
     fn catalog_and_tree(&mut self) -> Result<(), String> {
         let doc = self.doc;
         // the page tree
@@ -1342,9 +1366,10 @@ impl<'a> Writer<'a> {
         };
         // named destinations
         let mut names = doc.names.clone();
-        if !doc.dests.is_empty() {
+        let dests = self.goto_dests();
+        if !dests.is_empty() {
             let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
-            for (k, v) in &doc.dests {
+            for (k, v) in &dests {
                 sorted.entry(k.clone()).or_insert_with(|| v.clone());
             }
             let mut arr = Vec::new();
@@ -1462,6 +1487,9 @@ impl<'a> Writer<'a> {
         }
         for (i, par, prev) in order {
             let mut d = items[i].dict.clone().unwrap_or_default();
+            if let Some(m) = &self.gotos {
+                goto_rename(self.doc, m, &mut d);
+            }
             let kids = chain(items[i].first);
             if let (Some(&f), Some(&l)) = (kids.first(), kids.last()) {
                 d.set(b"First", Obj::Ref(nums[f], 0));
@@ -1663,6 +1691,82 @@ fn outline_items(entries: &[Outline]) -> Vec<OlItem> {
         current = item;
     }
     items
+}
+
+/// dvipdfmx's `OPT_PDFDOC_NO_DEST_REMOVE` (`-C 0x10`, which hyperref's
+/// drivers set with `dvipdfmx:config C 0x0010`): without it dvipdfmx
+/// checks its GoTo destinations (`check_gotos`).
+const OPT_PDFDOC_NO_DEST_REMOVE: i32 = 1 << 4;
+
+/// The named destination a link annotation or outline entry goes to, as
+/// pdfdoc.c's `pdf_doc_add_goto` finds it: whether it is the `/D` of a
+/// GoTo `/A` (else the entry's `/Dest`), and the name. None for anything
+/// else (another annotation subtype, another action, an explicit
+/// destination, a malformed entry), which dvipdfmx leaves as it is.
+fn goto_target(doc: &Doc, d: &Dict) -> Option<(bool, Vec<u8>)> {
+    if let Some(s) = d.get(b"Subtype") {
+        if doc.deref(s).as_name() != Some(b"Link") {
+            return None;
+        }
+    }
+    let dest = d.get(b"Dest").map(|o| doc.deref(o));
+    let (in_a, dest) = match d.get(b"A").map(|o| doc.deref(o)) {
+        Some(a) => {
+            let a = a.as_dict().filter(|_| dest.is_none())?;
+            if a.get(b"S").map(|o| doc.deref(o)).and_then(Obj::as_name) != Some(b"GoTo") {
+                return None;
+            }
+            (true, a.get(b"D").map(|o| doc.deref(o)))
+        }
+        None => (false, dest),
+    };
+    Some((in_a, dest?.as_str()?.to_vec()))
+}
+
+/// `pdf_doc_add_goto`'s renaming: each destination name a link or outline
+/// entry uses, in the order dvipdfmx meets them (an outline entry when its
+/// special is read, an annotation when it is added to its page), becomes
+/// the count of names before it in hexadecimal (`0`, `1`, ... `a`, ...).
+fn goto_names(doc: &Doc) -> HashMap<Vec<u8>, Vec<u8>> {
+    let mut map: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+    let visit = |d: &Dict, map: &mut HashMap<Vec<u8>, Vec<u8>>| {
+        if let Some((_, dest)) = goto_target(doc, d) {
+            if !map.contains_key(&dest) {
+                let n = format!("{:x}", map.len()).into_bytes();
+                map.insert(dest, n);
+            }
+        }
+    };
+    let mut next = 0;
+    for b in &doc.pages {
+        for a in &b.sup.annots {
+            while next < a.outlines_before.min(doc.outlines.len()) {
+                visit(&doc.outlines[next].dict, &mut map);
+                next += 1;
+            }
+            visit(&a.dict, &mut map);
+        }
+    }
+    for o in &doc.outlines[next.min(doc.outlines.len())..] {
+        visit(&o.dict, &mut map);
+    }
+    map
+}
+
+/// `d` with its GoTo destination's name replaced as `pdf_doc_add_goto`
+/// replaces it (`/Dest`, or `/D` of an `/A` given inline).
+fn goto_rename(doc: &Doc, map: &HashMap<Vec<u8>, Vec<u8>>, d: &mut Dict) {
+    let Some((in_a, dest)) = goto_target(doc, d) else {
+        return;
+    };
+    let Some(new) = map.get(&dest) else {
+        return;
+    };
+    if !in_a {
+        d.set(b"Dest", Obj::Str(new.clone()));
+    } else if let Some(Obj::Dict(a)) = d.get_mut(b"A") {
+        a.set(b"D", Obj::Str(new.clone()));
+    }
 }
 
 /// The file's first two lines: the version, and a comment of non-ASCII
@@ -2588,6 +2692,104 @@ mod tests {
                 let without = glyphs_pdf(path, gids, None);
                 assert!(with == without, "{path}: glyphs {gids:?}");
             }
+        }
+    }
+
+    /// The page of #2361's measured case written by `write`: destinations
+    /// a, b, c, z; links to b (GoTo), c (`/Dest`) and nowhere; outline
+    /// entries to a (`/Dest`) and b (GoTo), in that order; with `config`
+    /// first if given.
+    fn goto_case(config: Option<&str>) -> Vec<u8> {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let mut doc = Doc::new();
+        let mut body = Vec::new();
+        if let Some(c) = config {
+            body.extend(special(c));
+        }
+        for (n, x) in [("a", 1), ("b", 3), ("c", 5), ("z", 7)] {
+            body.extend(special(&format!(
+                "pdf:dest ({n}) [@thispage /XYZ {x} {} null]",
+                x + 1
+            )));
+        }
+        let ann =
+            |d: &str| format!("pdf:ann width 10bp height 10bp depth 0bp <</Subtype /Link {d}>>");
+        body.extend(special(&ann("/A <</S /GoTo /D (b)>>")));
+        body.extend(special("pdf:outline 1 <</Title (A) /Dest (a)>>"));
+        body.extend(special(&ann("/Dest (c)")));
+        body.extend(special(&ann("/A <</S /GoTo /D (nowhere)>>")));
+        body.extend(special(
+            "pdf:outline 1 <</Title (B) /A <</S /GoTo /D (b)>> >>",
+        ));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        write(&doc, &opts).unwrap().0
+    }
+
+    /// The destination names of `pdf`: the `/Dests` tree's keys, each
+    /// link's and each outline entry's target, in order.
+    fn goto_names_of(pdf: &PdfFile) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let s = |o: Option<&Obj>| match o.map(|o| pdf.resolve(o)) {
+            Some(Obj::String(b)) => String::from_utf8_lossy(b).into_owned(),
+            _ => "?".into(),
+        };
+        let target = |d: &std::collections::BTreeMap<String, Obj>| match d.get("A") {
+            Some(a) => s(pdf.resolve(a).as_dict().and_then(|a| a.get("D"))),
+            None => s(d.get("Dest")),
+        };
+        let cat = pdf.catalog().unwrap();
+        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
+        let tree = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
+        let keys = tree
+            .get("Names")
+            .and_then(Obj::as_array)
+            .unwrap()
+            .iter()
+            .step_by(2)
+            .map(|k| s(Some(k)))
+            .collect();
+        let page = pdf.pages().unwrap()[0];
+        let links = pdf
+            .page_attr(page, "Annots")
+            .and_then(Obj::as_array)
+            .unwrap()
+            .iter()
+            .map(|a| target(pdf.resolve(a).as_dict().unwrap()))
+            .collect();
+        let root = pdf.resolve(cat.get("Outlines").unwrap()).as_dict().unwrap();
+        let mut outline = Vec::new();
+        let mut it = root.get("First").map(|o| pdf.resolve(o));
+        while let Some(e) = it.and_then(Obj::as_dict) {
+            outline.push(target(e));
+            it = e.get("Next").map(|o| pdf.resolve(o));
+        }
+        (keys, links, outline)
+    }
+
+    /// Without `dvipdfmx:config C 0x0010`, xdvipdfmx (TeX Live 2026)
+    /// renames the destinations GoTos use in the order it meets them and
+    /// drops the others (#2361, measured): b 0, a 1, c 2, nowhere 3; z is
+    /// gone and nowhere was never defined.
+    #[test]
+    fn goto_destinations_are_renamed_as_xdvipdfmx_renames_them() {
+        let pdf = PdfFile::parse(&goto_case(None)).unwrap();
+        let (keys, links, outline) = goto_names_of(&pdf);
+        assert_eq!(keys, ["0", "1", "2"]);
+        assert_eq!(links, ["0", "2", "3"]);
+        assert_eq!(outline, ["1", "0"]);
+        // with `C 0x0010` (hyperref's), every name stays
+        for c in ["dvipdfmx:config C 0x0010", "dvipdfmx:config C 16"] {
+            let pdf = PdfFile::parse(&goto_case(Some(c))).unwrap();
+            let (keys, links, outline) = goto_names_of(&pdf);
+            assert_eq!(keys, ["a", "b", "c", "z"]);
+            assert_eq!(links, ["b", "c", "nowhere"]);
+            assert_eq!(outline, ["a", "b"]);
         }
     }
 

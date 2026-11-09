@@ -798,7 +798,68 @@ impl<M: Metrics> Builder<'_, M> {
     fn dvipdfmx_special(&mut self, r: &[u8]) {
         let mut p = Parser::new(r);
         match p.word() {
-            Some(b"config") => {}
+            Some(b"config") => {
+                // dvipdfmx reads `config` as a command-line option while it
+                // scans the first page, before the document opens; `-C`
+                // there decides `check_gotos`: `C n` ORs the flags in,
+                // `C -n` sets them (strtol, base 0)
+                /// C's `strtol(s, &end, 0)` when it reads a number (`end != s`): white
+                /// space, a sign, then `0x` hex, `0` octal or decimal digits, up to the
+                /// first other byte; clamped to the `long` range.
+                fn strtol0(s: &[u8]) -> Option<i64> {
+                    let mut i = 0;
+                    while i < s.len() && matches!(s[i], b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+                    {
+                        i += 1;
+                    }
+                    let neg = match s.get(i) {
+                        Some(b'-') => {
+                            i += 1;
+                            true
+                        }
+                        Some(b'+') => {
+                            i += 1;
+                            false
+                        }
+                        _ => false,
+                    };
+                    let (base, start) = match (s.get(i), s.get(i + 1), s.get(i + 2)) {
+                        (Some(b'0'), Some(b'x' | b'X'), Some(c)) if c.is_ascii_hexdigit() => {
+                            (16, i + 2)
+                        }
+                        (Some(b'0'), _, _) => (8, i),
+                        _ => (10, i),
+                    };
+                    let digits: Vec<u32> = s[start..]
+                        .iter()
+                        .map_while(|&c| (c as char).to_digit(base))
+                        .collect();
+                    if digits.is_empty() {
+                        return None;
+                    }
+                    let mut v: i64 = 0;
+                    for d in digits {
+                        v = v.saturating_mul(base as i64).saturating_add(d as i64);
+                    }
+                    Some(if neg { -v } else { v })
+                }
+                let w = p.word().unwrap_or_default();
+                let arg = if w == b"C" {
+                    p.word()
+                } else {
+                    w.strip_prefix(b"C").filter(|r| !r.is_empty())
+                };
+                if let (1, Some(a)) = (self.page_no, arg) {
+                    if let Some(v) = strtol0(a) {
+                        let flags = v as u32 as i32;
+                        if flags < 0 {
+                            self.doc.dpx_flags = flags.wrapping_neg();
+                        } else {
+                            self.doc.dpx_flags |= flags;
+                        }
+                    }
+                }
+            }
             Some(b"catch_phantom") => self.catch_phantom(&mut p),
             _ => self.doc.unknown_special("dvipdfmx:"),
         }
