@@ -361,6 +361,11 @@ struct Context {
     /// `\prevdepth`) at the call: a draw call's first spaces and lines
     /// depend on it.
     aux: u64,
+    /// pdfTeX's color stacks (`colorstackused`): `\pdfcolorstack <n>`
+    /// checks `n` against them, and a draw call's whatsits name one. Only
+    /// `\pdfcolorstackinit` (refused in a call) adds one, and a restore can
+    /// take one away.
+    color_stacks: i32,
 }
 
 /// How K2 keeps the value at one `eqtb` location.
@@ -449,6 +454,7 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
         ctx.hyph_version,
         ctx.aux as i32,
         (ctx.aux >> 32) as i32,
+        ctx.color_stacks,
         k1.len() as i32,
         k2.len() as i32,
         k4.len() as i32,
@@ -2037,6 +2043,7 @@ impl Globals {
             font_version: self.bm_font_version,
             hyph_version: self.bm_hyph_version,
             aux: self.cur_list.aux_field.0,
+            color_stacks: crate::pdftex::utils::color_stacks_used(),
         }
     }
 

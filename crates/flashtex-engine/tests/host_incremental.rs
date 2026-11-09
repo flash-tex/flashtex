@@ -5784,6 +5784,101 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// A replayed call's color stack must exist where it is replayed (BOX-MEMO).
+/// `\pdfcolorstack <n>` checks `n` against the stacks `\pdfcolorstackinit`
+/// made, which no key held: a draw call recorded while stack 1 existed was
+/// replayed by the compile after an edit that took the stack away, which
+/// pdfTeX answers with "Unknown color stack number 1" and stack 0; the
+/// replay rebuilt the whatsit for stack 1, which the shipout then used.
+#[test]
+fn a_replayed_call_needs_its_color_stack() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-colstack");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    let init = "\\pdfcolorstackinit page direct{0 g}";
+    let text = format!(
+        "\\documentclass{{article}}\n\
+         \\edef\\stk{{{init}}}\n\
+         \\def\\mk{{\\pdfcolorstack 1 push{{1 0 0 rg}}\\vrule width 2pt height 2pt\\pdfcolorstack 1 pop}}\n\
+         \\begin{{document}}\n\
+         Words before the calls. \\mbox{{\\mk}} and \\mbox{{\\mk}} then.\n\
+         \\end{{document}}\n"
+    );
+    std::fs::write(proj.join(main), &text).unwrap();
+    let env = [("FLASHTEX_BOXMEMO", "on"), ("FLASHTEX_BOXMEMO_NAMES", "mk")];
+    let host = start_host_env("cs", &env);
+    let scratch = start_host_env("css", &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let hits = |o: &Outcome| -> i64 {
+        o.done
+            .get("stages")
+            .and_then(|s| s.get("boxmemo"))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.get(1).and_then(|n| n.as_i64()))
+            .unwrap_or(0)
+    };
+    // edits on the calls' page: recorded in the first edit's window, then
+    // replayed
+    let at = text.find("before").unwrap() as u64;
+    let mut replayed = 0;
+    for k in 0..4 {
+        id += 1;
+        let mut r = req(id, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at,
+            delete: if k % 2 == 0 { 0 } else { 1 },
+            insert: if k % 2 == 0 {
+                "x".into()
+            } else {
+                String::new()
+            },
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        replayed += hits(&o);
+    }
+    assert!(replayed > 0, "the calls were never replayed");
+    // the stack goes: `\stk` keeps its meaning (`1`), so only the stack
+    // count tells the states apart
+    id += 1;
+    let mut r = req(id, &proj, &out, main);
+    r.edits = vec![Edit {
+        path: main.into(),
+        offset: text.find(init).unwrap() as u64,
+        delete: init.len() as u64,
+        insert: "1".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert!(o.done.str_field("status").is_some(), "{}", o.done);
+    let (p2, o2) = snapshot(&base, &proj, &out, "cs");
+    compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, "stack gone");
+    let log = std::fs::read_to_string(out.join("main.log")).unwrap_or_default();
+    assert!(
+        log.contains("Unknown color stack number 1"),
+        "the normal path's error is missing: {log}"
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A `COMPILE`'s buffers and edits are written only inside the project
 /// (`host::resident::apply_changes`, through the root's descriptor, no link
 /// followed below it, #2094): through a linked directory, a linked file or a
