@@ -15,7 +15,8 @@ use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-const TEX: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\immediate\\openout3=fz^^e9.tex \
+const TEX: &str =
+    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\^=7 \\immediate\\openout3=fz^^e9.tex \
 \\immediate\\write3{e}\\immediate\\closeout3 \\message{written}\\end\n";
 
 #[derive(Debug, PartialEq)]
