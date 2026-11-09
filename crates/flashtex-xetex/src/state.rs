@@ -446,6 +446,10 @@ impl Globals {
         self.host.protrusion = saved.protrusion;
         self.host.handles = saved.handles;
         self.host.dl.restore(&saved.dl);
+        // (the old run's iterator is the branch's: `linebreak_start` would
+        // keep it for a locale this run makes at the same string number)
+        self.host.brk_iter = saved.brk_iter;
+        self.host.brk_locale_str_num = saved.brk_locale_str_num;
         Ok(b)
     }
 
