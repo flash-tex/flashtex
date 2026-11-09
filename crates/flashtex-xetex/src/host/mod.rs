@@ -185,6 +185,11 @@ pub fn main(argv: Vec<String>) -> i32 {
             return 1;
         }
     };
+    // The per-compile checks' files outside the document (S₀'s key: every
+    // file the preamble read) vouched for by the kernel's events instead of
+    // a `stat` each, as in the pdfTeX host (`fswatch`; `FLASHTEX_FSWATCH=off`
+    // keeps it off): about 1 ms a keystroke on T7's `full-120`.
+    flashtex_engine::fswatch::enable();
     let (texmf, formats) = prepare(&exe, &opts, &children);
     println!("flashtex-host-unicode: {texmf}");
     serve(&exe, &opts, texmf, formats, children)
@@ -411,6 +416,20 @@ enum Msg {
     Profile(Mode),
 }
 
+/// The minor version of a client's `HELLO` (spec §6.2, §3), or `None` when
+/// the host must refuse it (`ERROR` `version`): it names another protocol,
+/// or another major, or no version, as `flashtex-host` refuses them. The
+/// major is the first element of `version`, the minor the second (0 when
+/// absent, as `flashtex-host` reads it).
+fn client_minor(hello: &Json) -> Option<i64> {
+    let version = hello.get("version").and_then(Json::as_array)?;
+    let major = version.first().and_then(Json::as_i64);
+    if hello.str_field("protocol") != Some(PROTOCOL) || major != Some(VERSION_MAJOR as i64) {
+        return None;
+    }
+    Some(version.get(1).and_then(Json::as_i64).unwrap_or(0).max(0))
+}
+
 fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
     let Ok(wconn) = conn.try_clone() else { return };
     let out: Out = Arc::new(Mutex::new(Box::new(BufWriter::new(wconn))));
@@ -428,15 +447,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
         );
         return;
     }
-    let version = hello
-        .get("version")
-        .and_then(Json::as_array)
-        .map(|v| v.iter().filter_map(Json::as_i64).collect::<Vec<_>>());
-    let (major, minor) = match version.as_deref() {
-        Some([a, b, ..]) => (*a, *b),
-        _ => (VERSION_MAJOR as i64, 2),
-    };
-    if major != VERSION_MAJOR as i64 {
+    let Some(minor) = client_minor(&hello) else {
         send_json(
             &out,
             kind::ERROR,
@@ -446,7 +457,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
             ]),
         );
         return;
-    }
+    };
     let accepted: Vec<String> = hello
         .get("accept")
         .and_then(Json::as_array)
@@ -625,6 +636,8 @@ fn compile_thread(
     mut spares: spare::Spares,
 ) {
     let mut memory = tools::Memory::default();
+    // the pages the client was last told each document has (`done`)
+    let mut shown = Shown::new();
     loop {
         let (job, t0, seq) = match rx.recv_timeout(spares.ttl()) {
             Ok(Msg::Compile(job, t0, seq)) => (*job, t0, seq),
@@ -660,7 +673,8 @@ fn compile_thread(
         };
         if superseded {
             let _ = job.apply_files();
-            done(out, &job, &compile::Outcome::none("cancelled"), t0, None);
+            let o = compile::Outcome::none("cancelled");
+            done(out, &job, &o, t0, None, &mut shown);
             continue;
         }
         run_job(
@@ -673,6 +687,7 @@ fn compile_thread(
             t0,
             &mut memory,
             &mut spares,
+            &mut shown,
         );
         running.lock().unwrap().job = None;
     }
@@ -689,6 +704,7 @@ fn run_job(
     t0: Instant,
     memory: &mut tools::Memory,
     spares: &mut spare::Spares,
+    shown: &mut Shown,
 ) {
     if let Err(e) = job.apply_files() {
         send_json(
@@ -700,7 +716,7 @@ fn run_job(
                 ("message", js(e)),
             ]),
         );
-        done(out, job, &compile::Outcome::none("failed"), t0, None);
+        done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
         return;
     }
     let fmt_dir = match host.format_dir(&job.format) {
@@ -715,11 +731,19 @@ fn run_job(
                     ("message", js(e)),
                 ]),
             );
-            done(out, job, &compile::Outcome::none("failed"), t0, None);
+            done(out, job, &compile::Outcome::none("failed"), t0, None, shown);
             return;
         }
     };
     let _ = std::fs::create_dir_all(scratch);
+    // (the document's own directories, which the client and the run write
+    // at every compile, are `stat`ed at every check: `fswatch::exclude`)
+    for d in [job.root.clone(), job.output_dir.clone()] {
+        flashtex_engine::fswatch::exclude(&d.to_string_lossy());
+        if let Ok(c) = std::fs::canonicalize(&d) {
+            flashtex_engine::fswatch::exclude(&c.to_string_lossy());
+        }
+    }
     // `[fonts]` (PROPOSAL.md §4.5), read after the client's buffers are
     // written, so an unsaved manifest counts
     let fonts = fonts::setup(&job.root, &job.format);
@@ -786,7 +810,7 @@ fn run_job(
             spares,
             host.engine.as_ref(),
         );
-        done(out, job, &o, t0, cause);
+        done(out, job, &o, t0, cause, shown);
         if o.fatal {
             // The engine thread died (`inproc::FATAL_EXIT`): its engine is
             // in no known state, and no later compile could run. The DONE
@@ -854,11 +878,40 @@ fn started(out: &Out, job: &Job, exe: &Path) {
     );
 }
 
-fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&str>) {
-    let (status, exit_code, pages, diagnostics, passes, first_page_ms) = (
+/// The compile's `DONE`. Its `pages` is the document's page count as the
+/// client should now show it, as the Classic host's (`resident.rs`): a
+/// compile that ended (`ok`, `error`) sets it; one that `failed` (no run,
+/// or the engine thread died, #2130) keeps the pages last reported, or
+/// more if it sent more, so the preview keeps the last good pages instead
+/// of none. `typeset_pages` is what this compile typeset. `shown` holds
+/// the last reported count of each document of the connection (its root
+/// and PDF: a client that compiles two documents on one connection keeps
+/// each one's pages, never the other's).
+/// The pages last reported for each document (root, PDF path) of a
+/// connection (`done`).
+type Shown = HashMap<(PathBuf, PathBuf), u32>;
+
+fn done(
+    out: &Out,
+    job: &Job,
+    o: &compile::Outcome,
+    t0: Instant,
+    cause: Option<&str>,
+    shown: &mut Shown,
+) {
+    let key = || (job.root.clone(), job.output_dir.join(&job.jobname));
+    let pages = match o.status {
+        _ if job.export => o.pages,
+        "ok" | "error" => {
+            shown.insert(key(), o.pages);
+            o.pages
+        }
+        "failed" => o.pages.max(shown.get(&key()).copied().unwrap_or(0)),
+        _ => o.pages,
+    };
+    let (status, exit_code, diagnostics, passes, first_page_ms) = (
         o.status,
         o.exit_code,
-        o.pages,
         o.diagnostics,
         o.passes,
         o.first_page_ms,
@@ -906,7 +959,7 @@ fn done(out: &Out, job: &Job, o: &compile::Outcome, t0: Instant, cause: Option<&
             Json::Arr(o.starts.iter().map(|s| js(*s)).collect()),
         ),
         ("passes".to_string(), Json::Int(passes as i64)),
-        ("typeset_pages".to_string(), Json::Int(pages as i64)),
+        ("typeset_pages".to_string(), Json::Int(o.pages as i64)),
         ("keep".to_string(), Json::Bool(false)),
     ];
     if let Some(c) = cause {
@@ -938,5 +991,39 @@ mod tests {
         assert!(o.once && o.external_tools);
         assert_eq!(o.formats, ["xelatex"]);
         assert!(Opts::parse(&[]).is_err());
+    }
+
+    /// A `HELLO` of another protocol or major is refused, as `flashtex-host`
+    /// refuses it (lane AUDIT-DL): before, the Unicode host took any
+    /// `protocol`, and a `version` without two numbers (`[4]`, `[4, "x"]`,
+    /// none at all) as 3.2.
+    #[test]
+    fn a_hello_of_another_protocol_or_major_is_refused() {
+        let minor = |s: &str| client_minor(&Json::parse(s).unwrap());
+        assert_eq!(
+            minor(r#"{"protocol": "display-list-v3", "version": [3, 3]}"#),
+            Some(3)
+        );
+        assert_eq!(
+            minor(r#"{"protocol": "display-list-v3", "version": [3, 1], "accept": []}"#),
+            Some(1)
+        );
+        assert_eq!(
+            minor(r#"{"protocol": "display-list-v3", "version": [3]}"#),
+            Some(0)
+        );
+        for refused in [
+            r#"{"protocol": "display-list-v2", "version": [3, 2]}"#,
+            r#"{"version": [3, 2]}"#,
+            r#"{"protocol": "display-list-v3", "version": [4, 0]}"#,
+            r#"{"protocol": "display-list-v3", "version": [4]}"#,
+            r#"{"protocol": "display-list-v3", "version": [4, "x"]}"#,
+            r#"{"protocol": "display-list-v3", "version": ["3", 2]}"#,
+            r#"{"protocol": "display-list-v3"}"#,
+            r#"{"protocol": "display-list-v3", "version": 3}"#,
+            "null",
+        ] {
+            assert_eq!(minor(refused), None, "{refused}");
+        }
     }
 }
