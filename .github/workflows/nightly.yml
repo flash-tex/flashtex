@@ -562,6 +562,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # T6 has no GitHub-hosted fallback (unlike T2, soundness and memory): when
+  # its switch is off, say so instead of leaving a silent skip.
+  engine-fuzz-not-run:
+    name: "engine: fuzzing (T6) did NOT run"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::engine fuzzing (T6) did not run: neither FLASHTEX_SELFHOSTED_LINUX nor FLASHTEX_SELFHOSTED_MAC is 1"
+          echo "engine fuzzing (T6) did not run: neither FLASHTEX_SELFHOSTED_LINUX nor FLASHTEX_SELFHOSTED_MAC is 1" >> "$GITHUB_STEP_SUMMARY"
+
   # The PC switched off: T2, soundness and the memory gate on GitHub-hosted
   # Ubuntu instead (DESIGN §9.2: "a night without the PC is not a night
   # without gates"; review 2026-10-05, lane NIGHTLY-GREEN). Until 2026-10-05
