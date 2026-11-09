@@ -191,6 +191,9 @@ enum Fault {
     SkipRead,
     /// a replayed `\let` shares a list without taking a reference
     NoRef,
+    /// a replay also flips the subtype of the current list's tail in
+    /// place, as `\limits` would (a node the call found, not one it made)
+    InPlace,
 }
 
 fn fault() -> Fault {
@@ -198,6 +201,7 @@ fn fault() -> Fault {
         Ok("drop-last") => Fault::DropLast,
         Ok("skip-read") => Fault::SkipRead,
         Ok("no-ref") => Fault::NoRef,
+        Ok("in-place") => Fault::InPlace,
         _ => Fault::None,
     }
 }
@@ -411,6 +415,11 @@ pub struct Report {
     /// The verifier's own checkpoints not yet dropped (`drop_checkpoint`'s
     /// precondition).
     pub(crate) verifier_cks: Vec<flashtex_engine::arena::CheckpointId>,
+    /// The cells each path of a check allocated or freed (`[replay, real]`,
+    /// `crate::intrinsics_verify`), and which path is running (0: none;
+    /// mirrored in `intr_churn`, which the allocation hooks test).
+    pub(crate) churn: [std::collections::HashSet<i32>; 2],
+    pub(crate) churn_on: u8,
 }
 
 impl Report {
@@ -491,6 +500,7 @@ impl Globals {
     /// progress belongs to a state that is gone. The kept recordings stay.
     pub fn intr_after_restore(&mut self) {
         self.intr_abandon("restored");
+        self.intr_churn_stop();
         self.intr_on = self.host.intrinsics.mode != Mode::Off;
         self.intr_rec_on = false;
         self.intr_weak = false;
@@ -503,6 +513,7 @@ impl Globals {
             return;
         };
         self.intr_rec_on = false;
+        self.intr_churn_stop();
         bump(&mut self.host.intrinsics.stats.abandoned, why);
         if let Some((_, p)) = rec.verify {
             bump(&mut self.host.intrinsics.stats.unverified, why);
@@ -807,6 +818,11 @@ impl Globals {
                 Op::Begin(c) => self.new_save_level(*c),
                 Op::End => self.unsave(),
             }
+        }
+        if fault == Fault::InPlace {
+            let t = self.cur_list.tail_field as usize;
+            let b1 = self.mem[t].hh_b1();
+            self.mem[t].set_hh_b1(b1 ^ 1);
         }
     }
 
@@ -1450,6 +1466,7 @@ impl Globals {
         };
         match (why, rec.verify.take()) {
             (Some(w), Some((id, p))) => {
+                self.intr_churn_stop();
                 self.drop_checkpoint(p.ck());
                 self.intr_check_failed(id, vec![format!("impure.{w}")], vec![]);
             }

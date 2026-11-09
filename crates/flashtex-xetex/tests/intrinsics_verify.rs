@@ -395,6 +395,10 @@ fn faults_in_the_replay_or_the_read_set_are_seen_by_verify() {
         ("skip-read", "verify.differing.eqtb"),
         // `\let` without its reference
         ("no-ref", "verify.differing.refs"),
+        // a node the call found changed in place (`\limits`' kind of
+        // write, which the allowlist keeps out of every recording): only
+        // the `mem` comparison sees it
+        ("in-place", "verify.differing.mem"),
     ] {
         let o = Opts {
             mode: Some("verify"),

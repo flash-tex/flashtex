@@ -28,10 +28,71 @@
 %   output, leaving its own input levels or conditionals); src/intrinsics.rs
 %   abandons the recording at any of those.
 %
+% * |intr_churn|: verify mode is checking a call, one path or the other. The
+%   cells the path allocates or frees (|get_avail|, |fast_get_avail|,
+%   |free_avail|, |flush_list|, |get_node|, |free_node|) are reported to
+%   |flashtex_intr_cell| and |flashtex_intr_flush|: the verifier compares
+%   every other |mem| word either path wrote, so an in-place change of a node
+%   the call found (|\limits|'s |subtype(tail)|) is a difference.
+%
 % The recordings are kept outside the word space (|Host|), so that they
 % survive a restore; their guard compares every read value in full.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-xetex.
+
+@x after changes/displaylist.ch - get_avail: a cell the path allocates (verify)
+dl_new_node(p);
+get_avail:=p;
+@y
+dl_new_node(p);
+if intr_churn then flashtex_intr_cell(p,1);
+get_avail:=p;
+@z
+
+@x xetex.web - free_avail: a cell the path frees (verify)
+@d free_avail(#)== {single-word node liberation}
+  begin link(#):=avail; avail:=#;
+@y
+@d free_avail(#)== {single-word node liberation}
+  begin if intr_churn then flashtex_intr_cell(#,1);
+  link(#):=avail; avail:=#;
+@z
+
+@x after changes/displaylist.ch - fast_get_avail: a cell the path allocates (verify)
+    dl_new_node(#);
+    end;
+@y
+    dl_new_node(#);
+    if intr_churn then flashtex_intr_cell(#,1);
+    end;
+@z
+
+@x xetex.web - flush_list: the cells the path frees (verify)
+begin if p<>null then
+  begin r:=p;
+  repeat q:=r; r:=link(r); @!stat decr(dyn_used);@+tats@/
+@y
+begin if p<>null then
+  begin if intr_churn then flashtex_intr_flush(p);
+  r:=p;
+  repeat q:=r; r:=link(r); @!stat decr(dyn_used);@+tats@/
+@z
+
+@x after changes/displaylist.ch - get_node: the cells the path allocates (verify)
+found: link(r):=null; {this node is now nonempty}
+dl_new_node(r);
+@y
+found: link(r):=null; {this node is now nonempty}
+dl_new_node(r);
+if intr_churn then flashtex_intr_cell(r,s);
+@z
+
+@x xetex.web - free_node: the cells the path frees (verify)
+begin node_size(p):=s; link(p):=empty_flag;
+@y
+begin if intr_churn then flashtex_intr_cell(p,s);
+node_size(p):=s; link(p):=empty_flag;
+@z
 
 @x xetex.web - |print_cs| reads the category code of a one-character name
     else  begin print_esc(p-single_base);
@@ -378,6 +439,7 @@ recordings themselves live outside the word space.
 @!intr_rec_on:boolean; {a recording is in progress}
 @!intr_weak:boolean; {|get_next|'s caller looks only at the token, not its meaning}
 @!intr_let:boolean; {|get_next|'s caller is \.{\\let}, reading its source}
+@!intr_churn:boolean; {verify mode: the cells a checked path allocates or frees are reported}
 
 @ @<Declare the routines of \XeTeX's C parts@>=
 function flashtex_intr_call:boolean; external;
@@ -393,6 +455,8 @@ procedure flashtex_intr_abort(@!r:integer); external;
 procedure flashtex_intr_pop_cond; external;
 procedure flashtex_intr_switch; external;
 procedure flashtex_intr_command; external;
+procedure flashtex_intr_cell(@!p,@!s:integer); external;
+procedure flashtex_intr_flush(@!p:integer); external;
 
 @* \[55] Index.
 @z
