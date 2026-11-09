@@ -1404,6 +1404,33 @@ impl Globals {
             eprintln!("Please increase buf_size in texmf.cnf.");
             exit_process(self, 1);
         }
+        // `\XeTeXinputnormalization` 1 (NFC) or 2 (NFD): C reads the line
+        // into `utf32Buf` and `apply_normalization` writes the normalized
+        // characters at `first` and sets `last`; any other value reads the
+        // line as it is (TeX Live 2026's xetex leaves the line alone for 3
+        // and -1). TECkit failing, a result longer than the room left in
+        // `buffer` included, is C's `buffer_overflow`.
+        let norm = self.get_input_normalization_state();
+        if norm == 1 || norm == 2 {
+            let text: Vec<u32> = self.buffer[self.first as usize..self.last as usize]
+                .iter()
+                .map(|&c| c as u32)
+                .collect();
+            let room = (buf_size - self.first).max(0) as usize;
+            match self.normalize_utf32(&text, norm == 2, room) {
+                Some(out) => {
+                    for (k, c) in out.iter().enumerate() {
+                        self.buffer[self.first as usize + k] = *c as i32;
+                    }
+                    self.last = self.first + out.len() as i32;
+                }
+                None => {
+                    eprintln!("! Unable to read an entire line---bufsize={buf_size}.");
+                    eprintln!("Please increase buf_size in texmf.cnf.");
+                    exit_process(self, 1);
+                }
+            }
+        }
         if i == b'\r' as i32 {
             f.skip_next_lf = true;
         }
