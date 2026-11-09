@@ -177,7 +177,9 @@ fn uncovered_subrs(last: i32) -> Vec<(Key, Vec<C>)> {
 }
 
 /// (name, the charstrings replaced, text).
-fn cases() -> Vec<(&'static str, Vec<(Key, Vec<C>)>, &'static str)> {
+type Case = (&'static str, Vec<(Key, Vec<C>)>, &'static str);
+
+fn cases() -> Vec<Case> {
     use C::N;
     let a = |glyph: Vec<C>| vec![(Key::Glyph("a"), glyph)];
     vec![
