@@ -987,14 +987,14 @@ final class EngineV3PagesView: NSView {
         // content of the forms it draws (by hash, not by when they arrived: a
         // form sent again unchanged, or a fallback PDF reloaded at DONE, keeps
         // the tiles and the kept raster).
-        let key = (currentHash(i) ?? []) + Self.formKey(prepared, session.forms)
+        let key = (currentHash(i) ?? []) + Self.formKey(prepared, session.forms(forPage: i))
         let pdf = session.pdfFallback[i]
         // A page drawn whole (paths, images, forms, PDF) keeps one full-scale
         // raster per source (EngineV3RasterHolder); only a raster over 1 GiB
         // takes a lower scale (DL3Renderer.tileScale, last resort).
         let drawnWhole = pdf != nil || (!DL3Renderer.tilesByTranslation(prepared) && !DL3Renderer.clipExact(prepared))
         let scale = DL3Renderer.tileScale(widthPt: prepared.widthPt, heightPt: prepared.heightPt, drawnWhole: drawnWhole, pixelsPerPoint: pixelsPerPoint)
-        var source = EngineV3TileSource(prepared: prepared, forms: session.forms, pdf: pdf, key: key, pixelsPerPoint: scale,
+        var source = EngineV3TileSource(prepared: prepared, forms: session.forms(forPage: i), pdf: pdf, key: key, pixelsPerPoint: scale,
                                         displayScale: Double(backingScale), screenPixelsPerPoint: pixelsPerPoint, appearance: pageAppearance)
         source.smoothFonts = session.smoothFonts // in `key` already (`currentHash`)
         if pdf != nil {
@@ -1093,7 +1093,7 @@ final class EngineV3PagesView: NSView {
         } else if v.tiles.source != nil {
             v.tiles.removeAll()
         }
-        let forms = session.forms
+        let forms = session.forms(forPage: i)
         let fallback = session.pdfFallback[i]
         let ppp = wholeScale
         let key = currentHash(i)
