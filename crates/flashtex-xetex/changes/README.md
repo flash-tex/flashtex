@@ -60,8 +60,10 @@ show in a document that uses TFM fonts only and none of the features named;
   differs there, so such a read gives other garbage (a checked index, so at
   worst a panic beyond `font_info`, where C reads out of bounds).
 - ICU: `\XeTeXinputencoding` with a name other than XeTeX's built-in ones
-  (`utf8`, `utf16`, `utf16be`, `utf16le`, `bytes`, `auto`) reads bytes, as
-  TeX Live does for a name ICU does not know; ICU line breaking
+  (`utf8`, `utf16`, `utf16be`, `utf16le`, `bytes`, `auto`) and ICU 78.2's
+  aliases of `UTF-8` and `ISO-8859-1` reads bytes, as TeX Live does for a
+  name ICU does not know (issue #2382; the UTF-16 aliases need ICU's
+  byte-line reading); ICU line breaking
   (`\XeTeXlinebreaklocale`) serves native fonts only (S1).
 - Pictures: `\XeTeXpicfile` and `\XeTeXpdffile` find no file (S2).
 - The output driver: `-no-pdf` is the only mode; without it the program

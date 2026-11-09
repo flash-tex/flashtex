@@ -1609,6 +1609,17 @@ impl Globals {
             "bytes" => return RAW,
             _ => {}
         }
+        // `ucnv_open`: the ICU converters this port has so far. ICU's UTF-8
+        // converter reads a line as the built-in UTF-8 mode does, and its
+        // ISO-8859-1 converter is the identity on bytes, as raw mode is.
+        // TeX Live's `ICUMAPPING` mode differs from these modes only in
+        // `enc_info` and in ill-formed UTF-8 (unverified, issue #2382).
+        if icu_alias_of(&name, ICU_UTF8_ALIASES) {
+            return UTF8;
+        }
+        if icu_alias_of(&name, ICU_LATIN1_ALIASES) {
+            return RAW;
+        }
         self.begin_diagnostic();
         self.print_nl(b'U' as i32);
         for b in "nknown encoding `".bytes() {
@@ -2057,4 +2068,53 @@ pub fn tex_string_utf8(g: &Globals, s: i32) -> Vec<u8> {
 fn read_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
     line.clear();
     r.read_until(b'\n', line).map(|n| n > 0).unwrap_or(false)
+}
+
+/// ICU 78.2's aliases of its `UTF-8` converter: icu4c/source/data/mappings/
+/// convrtrs.txt at tag release-78.2 (the ICU TeX Live 2026's xetex links),
+/// the `UTF-8` entry, copied name for name.
+const ICU_UTF8_ALIASES: &[&str] = &[
+    "UTF-8",
+    "ibm-1208",
+    "ibm-1209",
+    "ibm-5304",
+    "ibm-5305",
+    "ibm-13496",
+    "ibm-13497",
+    "ibm-17592",
+    "ibm-17593",
+    "windows-65001",
+    "cp1208",
+    "x-UTF_8J",
+    "unicode-1-1-utf-8",
+    "unicode-2-0-utf-8",
+];
+
+/// ICU 78.2's aliases of its `ISO-8859-1` converter, from the same file's
+/// `ISO-8859-1` entry (its commented-out names excluded).
+const ICU_LATIN1_ALIASES: &[&str] = &[
+    "ISO-8859-1",
+    "ibm-819",
+    "IBM819",
+    "cp819",
+    "latin1",
+    "8859_1",
+    "csISOLatin1",
+    "iso-ir-100",
+    "ISO_8859-1:1987",
+    "l1",
+    "819",
+];
+
+/// `ucnv_compareNames(name, alias) == 0` for some alias: ICU compares
+/// converter names ignoring case and the characters `-`, `_` and ` `.
+fn icu_alias_of(name: &str, aliases: &[&str]) -> bool {
+    fn key(s: &str) -> Vec<u8> {
+        s.bytes()
+            .filter(|b| !matches!(b, b'-' | b'_' | b' '))
+            .map(|b| b.to_ascii_lowercase())
+            .collect()
+    }
+    let k = key(name);
+    aliases.iter().any(|a| key(a) == k)
 }
