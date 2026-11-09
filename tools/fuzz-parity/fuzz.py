@@ -132,6 +132,11 @@ def compare(text, candidate, oracle, work, timeout, formats=None):
         # hit the 64 MiB cap in a runaway loop. Not a difference.
         res.update(cls="both-signal", sig="both-signal:%d" % cc.returncode)
         return res
+    if co.returncode < 0:
+        # pdfTeX itself died (a segfault on some error-recovery paths): no
+        # behaviour to match, but worth a look (and a report upstream).
+        res.update(cls="oracle-crash", sig="oracle-crash:%d" % co.returncode)
+        return res
     if cc.returncode < 0 or cc.returncode == 101:
         res.update(cls="candidate-crash", sig="crash:%d" % cc.returncode)
         return res

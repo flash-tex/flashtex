@@ -50,6 +50,7 @@ In order; the first difference names the class:
 | class | difference |
 |---|---|
 | `candidate-crash` | candidate died by a signal or exited 101 (panic) |
+| `oracle-crash` | pdfTeX died by a signal and the candidate did not: nothing to match, but a pdfTeX bug to look at |
 | `log` | the log after the lockstep normalisation (`compared_lines`: banner, paths, dates and the §1.1 accounting lines replaced by placeholders). It holds every `\showbox`, `\showlists`, `\show...` and tracing line and every shipped box |
 | `rc` | exit codes |
 | `output` | only one engine wrote a PDF/DVI |
@@ -129,6 +130,9 @@ independent chunks, each balanced on its own:
   `\currentgrouptype`/`\currentiftype`/`\currentifbranch`, the glue
   queries, `\lastlinefit`, discards, `\tracingnesting` across
   `\scantokens`, `\protected\edef`;
+- the input file's own bytes (`rawbytes`): CR and CR LF line ends,
+  trailing blanks, form feeds, NUL/DEL/8-bit bytes, `\endlinechar`,
+  `\obeylines`, long lines;
 - the PDF writer (`pdfwriter`): object streams and files, reserved and
   reused object numbers, annotations, links of every kind, destinations,
   outlines, threads, the info/trailer/version keys, compression levels,

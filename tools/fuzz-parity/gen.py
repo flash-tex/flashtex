@@ -953,8 +953,32 @@ class G:
             "\\endinput \\message{same-line}",
         ])
 
+    def rawbytes(self):
+        """The input file's own bytes through texmfmp.c's input_line: CR and
+        CR LF line ends, trailing spaces and tabs, form feeds, NUL, DEL and
+        8-bit bytes, a line of blanks, \\endlinechar and \\catcode changes
+        that see them."""
+        w = self.words(1, 4)
+        return self.pick([
+            "\\message{cr}\r\\message{after-cr}\r\n\\message{crlf}",
+            "{\\catcode13=12 \\message{a}\r\\message{b}}",
+            "\\message{trail}   \t  \n\\message{x}\t\n",
+            "\\def\\fzt{a  \t }\\show\\fzt",
+            "%s\x0c%s\\par" % (w, w),
+            "{\\catcode`\\^^L=12 \\message{\x0c}}",
+            "{\\catcode0=12 \\message{a\x00b}}", "\\message{\x7f}", "{\\catcode127=12 \\message{\x7f}}",
+            "\\message{\xe9\xff\x80}", "{\\catcode`\\\xe9=11 \\def\\\xe9x{E}\\show\\\xe9x}",
+            "   \t \n\\message{blank-line-before}",
+            "{\\endlinechar=%s \\message{a}\n\\message{b}}" % self.pick(["-1", "32", "`\\%", "65"]),
+            "{\\catcode`\\ =12 \\message{sp ace}  }",
+            "{\\catcode9=12 \\message{tab\there}}", "{\\catcode9=10 \\message{tab\there}}",
+            "\\message{\\the\\inputlineno}\r\\message{\\the\\inputlineno}\r\r\\message{\\the\\inputlineno}",
+            "{\\obeylines\\obeyspaces a  b\r c\n}",
+            "\\def\\fzl{%s}\\message{\\fzl}" % ("y" * self.n(900, 1100)),
+        ])
+
     def chunk(self):
-        k = self.n(0, 140)
+        k = self.n(0, 145)
         if k < 22:
             return self.paragraph()
         if k < 28:
@@ -995,6 +1019,8 @@ class G:
             return self.etex()
         if k < 140:
             return self.files()
+        if k < 145:
+            return self.rawbytes()
         return "\\setbox%d\\hbox{%s}" % (self.n(10, 12), self.inline(2))
 
     def hyph_setting(self):
