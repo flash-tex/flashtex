@@ -6778,3 +6778,121 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// (lane AUDIT-SPANS, #2219) A font number names a font only in its
+/// timeline: an edit's restore takes the fonts loaded after the checkpoint
+/// away, and the re-run may load another font at the same number. BOX-MEMO
+/// keys a call's fonts by number (`cur_font` in K2) and their arrays by the
+/// font version, which named only the changes made to loaded fonts
+/// (`\hyphenchar` & co.), not which font was loaded: NFSS's
+/// `\hyphenchar\font=45` on cmsl10 and on cmss10 at the same number reached
+/// the same version. Here a registered `\measure` of a word in `\slshape`
+/// (cmsl10, first used there) is recorded and replayed in edits' windows;
+/// the family then becomes `\sffamily` (cmss10, loaded at cmsl10's number),
+/// every other key equal, and the width typeset after it must be cmss10's,
+/// not the slanted word's replayed. (The `\relax` before the call: BOX-MEMO
+/// offers only a call that `big_switch`'s `get_x_token` expands, not one
+/// after a letter, which the main loop's lookahead expands.)
+#[test]
+fn a_call_measuring_a_font_loaded_at_another_fonts_number() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("font-identity-measure");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let before: String = (0..12).map(|i| para(i, "alpha")).collect();
+    let after: String = (12..30).map(|i| para(i, "beta")).collect();
+    let doc = |shape: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\hbox{{#1}}\\global\\dimen1=\\wd0 \\endgroup}}\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             {{{shape} A\\relax\\measure{{Hello}}\\the\\dimen1\\par}}\n\n{after}\\end{{document}}\n"
+        )
+    };
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[
+            ("FLASHTEX_BOXMEMO", "on"),
+            ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+        ],
+    );
+    let slanted = doc("\\slshape", "plain");
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &slanted)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // edits before the call: their windows record it, then replay it
+    for word in ["plainx", "plain", "plainx", "plain"] {
+        let text = doc("\\slshape", word);
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], word);
+    }
+    // the family changed: cmss10 at cmsl10's number
+    let sans = doc("\\sffamily", "plain");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &sans)], "sans");
+}
+
+/// (lane S-2272, AUDIT-VF's note 2 on #2272) A font's `\hyphenchar` and
+/// `\skewchar` come from `\defaulthyphenchar` and `\defaultskewchar` when it
+/// is loaded (`read_font_info`), so the same file at the same size loaded at
+/// the same number under another default is another font, though its name,
+/// sizes and metrics are equal. A registered `\measure` that reads both is
+/// recorded and replayed in edits' windows while the font is loaded under
+/// one default; the edit then changes the defaults at the load, and the
+/// numbers typeset after the call must be the new font's. Run with BOX-MEMO
+/// off, on and verify.
+#[test]
+fn a_call_reading_the_hyphenchar_a_font_took_from_the_default_at_its_load() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let before: String = (0..12).map(|i| para(i, "alpha")).collect();
+    let after: String = (12..30).map(|i| para(i, "beta")).collect();
+    let doc = |hc: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newcommand\\measure[1]{{\\begingroup\\setbox0\\hbox{{#1}}\\global\\count1=\\hyphenchar\\font \\global\\count2=\\skewchar\\font \\endgroup}}\n\
+             \\begin{{document}}\n{before}Some {word} text.\n\n\
+             {{\\defaulthyphenchar={hc} \\defaultskewchar={hc} \\global\\font\\x=cmr10 at 11.5pt}}\n\
+             {{\\x A\\relax\\measure{{Hello}}[\\the\\count1/\\the\\count2]\\par}}\n\n{after}\\end{{document}}\n"
+        )
+    };
+    for mode in ["off", "on", "verify"] {
+        let dir = e.dir.join(format!("font-default-hyphenchar-{mode}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start_env(
+            &e,
+            &dir,
+            &[
+                ("FLASHTEX_BOXMEMO", mode),
+                ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+                ("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1"),
+            ],
+        );
+        let first = doc("45", "plain");
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &first)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        // edits before the call: their windows record it, then replay it
+        for word in ["plainx", "plain", "plainx", "plain"] {
+            let text = doc("45", word);
+            let what = format!("{mode} {word}");
+            compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+        }
+        // the defaults changed: cmr10 at 11.5pt at the same number, with
+        // another \hyphenchar and \skewchar
+        let other = doc("-1", "plain");
+        let what = format!("{mode} default -1");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &other)], &what);
+    }
+}
