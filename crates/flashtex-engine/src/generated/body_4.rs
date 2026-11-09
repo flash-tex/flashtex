@@ -376,7 +376,7 @@ impl Globals {
         } else {
             {
                 s = { let __a574_0 = self.round_xn_over_d((self.cur_h).wrapping_sub((self.pdf_tj_start_h).wrapping_add(self.pdf_delta_h)), 1000i32, (1000i32).wrapping_add(self.pdf_cur_Tm_a)); let __a574_1 = self.pdf_font_size[crate::ix::U((f) as usize)]; let __a574_2 = 3i32; self.divide_scaled(__a574_0, __a574_1, __a574_2) };
-                if ((s).wrapping_abs() < 32768i32) {
+                if ((((s) as i64).abs()) < ((32768i32) as i64)) {
                     {
                         s_out = { let __a575_0 = self.round_xn_over_d(self.pdf_font_size[crate::ix::U((f) as usize)], (s).wrapping_abs(), 1000i32); let __a575_1 = (1000i32).wrapping_add(self.pdf_cur_Tm_a); let __a575_2 = 1000i32; self.round_xn_over_d(__a575_0, __a575_1, __a575_2) };
                         if (s < 0i32) {
@@ -386,7 +386,7 @@ impl Globals {
                 }
             }
         }
-        if (((self.cur_v).wrapping_sub(self.pdf_v)).wrapping_abs() >= self.min_bp_val) {
+        if (((((self.cur_v).wrapping_sub(self.pdf_v)) as i64).abs()) >= ((self.min_bp_val) as i64)) {
             {
                 v = self.divide_scaled((self.pdf_v).wrapping_sub(self.cur_v), self.one_hundred_bp, (self.fixed_decimal_digits).wrapping_add(2i32));
                 v_out = self.scaled_out;
@@ -399,7 +399,7 @@ impl Globals {
         }
         if (!must_set_text_pos) {
             {
-                must_set_text_pos = ((((v != 0i32) || ((s).wrapping_abs() >= 32768i32)) || (self.get_font_auto_expand_ratio(f) != self.pdf_cur_Tm_a)) || (self.get_font_auto_expand_ratio(f) != self.get_font_auto_expand_ratio(self.pdf_f)));
+                must_set_text_pos = ((((v != 0i32) || ((((s) as i64).abs()) >= ((32768i32) as i64))) || (self.get_font_auto_expand_ratio(f) != self.pdf_cur_Tm_a)) || (self.get_font_auto_expand_ratio(f) != self.get_font_auto_expand_ratio(self.pdf_f)));
             }
         }
         if must_set_text_pos {

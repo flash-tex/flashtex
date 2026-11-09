@@ -12,6 +12,7 @@
 --change crates/flashtex-engine/changes/web2c.ch
 --change crates/flashtex-engine/changes/goto.ch
 --change crates/flashtex-engine/changes/precedence.ch
+--change crates/flashtex-engine/changes/intmin.ch
 --change crates/flashtex-engine/changes/ext.ch
 --change crates/flashtex-engine/changes/filenames.ch
 --change crates/flashtex-engine/changes/virtex.ch
@@ -73,6 +74,7 @@
 --array-view eqtb
 --stat
 --total-division              # as web2rust-default.args
+--exact-abs                   # as web2rust-default.args
 --scalar longinteger=i64
 --macro max_halfword=268435455
 --macro mem_bot=0

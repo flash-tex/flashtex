@@ -2619,7 +2619,7 @@ impl Globals {
     /// a parameter in the range `0<=n<=99`.
     // §66
     pub fn print_two(&mut self, mut n: i32) {
-        n = ((n).wrapping_abs() % 100i32);
+        n = (((((n) as i64).abs()) % ((100i32) as i64)) as i32);
         self.print_char((48i32).wrapping_add((n / 10i32)));
         self.print_char((48i32).wrapping_add((n % 10i32)));
     }
@@ -2848,9 +2848,19 @@ impl Globals {
                 s = (s).wrapping_neg();
             }
         }
-        self.print_int((((s / unity)) as i64));
+        if (s < 0i32) {
+            {
+                self.print_int(((32768i32) as i64));
+                s = 0i32;
+            }
+        } else {
+            {
+                self.print_int((((s / unity)) as i64));
+                s = (s % unity);
+            }
+        }
         self.print_char(46i32);
-        s = ((10i32).wrapping_mul((s % unity))).wrapping_add(5i32);
+        s = ((10i32).wrapping_mul(s)).wrapping_add(5i32);
         delta = 10i32;
         loop {
             if (delta > unity) {
@@ -3420,6 +3430,9 @@ impl Globals {
         let mut k: i32 = 0; // §125
         let mut i: i32 = 0; // §125
         j = (seed).wrapping_abs();
+        if (j < 0i32) {
+            j = fraction_four;
+        }
         while (j >= fraction_one) {
             j = (j / 2i32);
         }
@@ -3495,7 +3508,7 @@ impl Globals {
                     self.j_random = (self.j_random).wrapping_sub(1i32);
                 }
                 u = self.randoms[crate::ix::U((self.j_random) as usize)];
-                if ((x).wrapping_abs() < u) { break; }
+                if ((((x) as i64).abs()) < ((u) as i64)) { break; }
             }
             x = self.make_frac(x, u);
             l = (139548960i32).wrapping_sub(self.m_log(u));
