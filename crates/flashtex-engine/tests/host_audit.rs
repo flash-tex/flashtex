@@ -116,30 +116,82 @@ fn drain(c: &mut Client, n: usize) -> Vec<Json> {
 }
 
 /// What the passes and the tools write; never copied to the fresh run.
-const WRITTEN: &[&str] = &[
-    "pdf", "log", "aux", "toc", "lof", "lot", "out", "fls", "blg", "ilg", "synctex",
-];
+/// What the passes write, by extension: a source of the fresh run only
+/// when it starts from the host's (`keep_aux`).
+const PASS_FILES: &[&str] = &["aux", "toc", "lof", "lot", "out", "fls", "synctex"];
+/// The tools' own logs: neither copied nor compared.
+const TOOL_LOGS: &[&str] = &["blg", "ilg"];
 
-fn written(name: &str) -> bool {
-    name.rsplit_once('.')
-        .is_some_and(|(_, e)| WRITTEN.contains(&e))
+fn ext(name: &str) -> &str {
+    name.rsplit_once('.').map_or("", |(_, e)| e)
 }
 
-/// Copy the sources under `from` to `to`: every file but the passes' own
-/// (`WRITTEN`); `skip` names a subdirectory left out (the output one).
-fn copy_sources(from: &Path, to: &Path, skip: Option<&str>) {
+/// Copy `from` to `to` (every directory), but the job's PDF and log, the
+/// tools' logs and, unless `keep_aux`, the passes' files.
+fn copy_inputs(from: &Path, to: &Path, job: &str, keep_aux: bool) {
     std::fs::create_dir_all(to).unwrap();
     for e in std::fs::read_dir(from).unwrap().flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
         let t = to.join(&n);
         if e.file_type().unwrap().is_dir() {
-            if Some(n.as_str()) != skip {
-                copy_sources(&e.path(), &t, None);
-            }
-        } else if !written(&n) {
+            copy_inputs(&e.path(), &t, job, keep_aux);
+            continue;
+        }
+        let own = n == format!("{job}.pdf") || n == format!("{job}.log");
+        let pass = PASS_FILES.contains(&ext(&n));
+        if !own && !TOOL_LOGS.contains(&ext(&n)) && (keep_aux || !pass) {
             std::fs::copy(e.path(), t).unwrap();
         }
     }
+}
+
+/// A log as compared: the capacity lines (`Here is how much of TeX's
+/// memory you used`, §1.1 normalises them out of P-T1) and the output
+/// size left out, `from` replaced by `to`, the lines joined (a path breaks
+/// across them). Without the first line (the banner) when `banner`.
+fn log_norm(b: &[u8], from: &Path, to: &Path, banner: bool) -> Vec<u8> {
+    let t = String::from_utf8_lossy(b).into_owned();
+    let mut v = String::new();
+    let mut stats = false;
+    for (k, l) in t.lines().enumerate() {
+        if banner && k == 0 {
+            continue;
+        }
+        if l.starts_with("Here is how much of TeX's memory you used:") {
+            stats = true;
+            continue;
+        }
+        if stats && l.starts_with(' ') {
+            continue;
+        }
+        stats = false;
+        v.push_str(l);
+    }
+    // the output size: `Output written on … (N pages, M bytes).`, its
+    // name maybe broken across lines (joined above)
+    if let Some(at) = v.rfind(" bytes).") {
+        let digits = v[..at].trim_end_matches(|c: char| c.is_ascii_digit()).len();
+        v.replace_range(digits..at, "M");
+    }
+    replace_all(
+        v.as_bytes(),
+        from.to_string_lossy().as_bytes(),
+        to.to_string_lossy().as_bytes(),
+    )
+}
+
+/// Where two byte strings first differ, with some context, for messages.
+fn context_difference(a: &[u8], b: &[u8]) -> String {
+    let k = a
+        .iter()
+        .zip(b)
+        .position(|(x, y)| x != y)
+        .unwrap_or(a.len().min(b.len()));
+    let from = k.saturating_sub(80);
+    let show = |x: &[u8]| {
+        String::from_utf8_lossy(&x[from.min(x.len())..(k + 80).min(x.len())]).into_owned()
+    };
+    format!("at byte {k}: host …{:?}… / fresh …{:?}…", show(a), show(b))
 }
 
 /// Every file under `d`, by its path there.
@@ -152,7 +204,7 @@ fn files(d: &Path) -> BTreeMap<String, Vec<u8>> {
             let n = format!("{pre}{}", e.file_name().to_string_lossy());
             if e.file_type().unwrap().is_dir() {
                 walk(&e.path(), &format!("{n}/"), m);
-            } else {
+            } else if !TOOL_LOGS.contains(&ext(&n)) {
                 m.insert(n, std::fs::read(e.path()).unwrap());
             }
         }
@@ -188,23 +240,6 @@ fn without_id(b: &[u8]) -> Vec<u8> {
         out.drain(at..end);
     }
     out
-}
-
-/// The first line where two texts differ, for the message.
-fn first_difference(a: &[u8], b: &[u8]) -> String {
-    let (a, b) = (String::from_utf8_lossy(a), String::from_utf8_lossy(b));
-    let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
-    for k in 0..la.len().max(lb.len()) {
-        if la.get(k) != lb.get(k) {
-            return format!(
-                "line {}: host {:?} / fresh {:?}",
-                k + 1,
-                la.get(k),
-                lb.get(k)
-            );
-        }
-    }
-    format!("same lines, {} vs {} bytes", a.len(), b.len())
 }
 
 /// Lorem prose: `n` paragraphs of about 90 words, deterministic in `seed`.
@@ -390,23 +425,20 @@ impl Audit {
         assert!(st.code().is_some_and(|c| c <= 1), "{argv:?}: {st}");
     }
 
-    /// The fresh run: the sources copied to `<base>/b`, a new host,
-    /// compiled until it changes nothing. Its files, by path.
-    fn fresh(&mut self) -> BTreeMap<String, Vec<u8>> {
+    fn job(&self) -> String {
+        self.jobname
+            .clone()
+            .unwrap_or_else(|| self.main.trim_end_matches(".tex").into())
+    }
+
+    /// The fresh run: the project copied to `<base>/b` (the sources, and
+    /// with `keep_aux` the passes' files as the host left them), a new
+    /// host, compiled until it changes nothing.
+    fn fresh(&mut self, keep_aux: bool) {
         let b = self.base.join("b");
         let _ = std::fs::remove_dir_all(&b);
-        copy_sources(&self.a, &b, self.out_sub);
-        if let Some(o) = self.out_sub {
-            std::fs::create_dir_all(b.join(o)).unwrap();
-            // the tools' own outputs in the output directory are sources
-            // of the fresh run (bibtex wrote them; pdflatex reads them)
-            for e in std::fs::read_dir(self.a.join(o)).unwrap().flatten() {
-                let n = e.file_name().to_string_lossy().into_owned();
-                if e.file_type().unwrap().is_file() && !written(&n) {
-                    std::fs::copy(e.path(), b.join(o).join(&n)).unwrap();
-                }
-            }
-        }
+        copy_inputs(&self.a, &b, &self.job(), keep_aux);
+        std::fs::create_dir_all(self.out_dir(&b)).unwrap();
         let host = start_host("fresh");
         let mut c = Client::connect(&host.1).unwrap();
         let mut settled = false;
@@ -429,94 +461,125 @@ impl Audit {
         }
         assert!(settled, "{}: the fresh run never settled", self.name);
         let _ = c.bye();
-        drop(host);
-        files(&b)
     }
 
-    /// The host's files equal the fresh run's (`what` names the step).
-    /// Err: the differences.
-    fn try_check(&mut self) -> Result<(), String> {
-        let fresh = self.fresh();
-        let a = self.a.to_string_lossy().into_owned();
-        let b = self.base.join("b").to_string_lossy().into_owned();
-        let mut ours = files(&self.a);
-        for (n, v) in ours.iter_mut() {
-            *v = replace_all(v, a.as_bytes(), b.as_bytes());
-            if n.ends_with(".pdf") {
-                *v = without_id(v);
+    /// The host's files against a fresh run's (`fresh(keep_aux)`). Err:
+    /// the differences.
+    fn try_check(&mut self, keep_aux: bool) -> Result<(), String> {
+        self.fresh(keep_aux);
+        let b = self.base.join("b");
+        let norm = |n: &str, v: &[u8], from: &Path| -> Vec<u8> {
+            match ext(n) {
+                "pdf" => without_id(&replace_all(
+                    v,
+                    from.to_string_lossy().as_bytes(),
+                    b.to_string_lossy().as_bytes(),
+                )),
+                "log" => log_norm(v, from, &b, false),
+                _ => replace_all(
+                    v,
+                    from.to_string_lossy().as_bytes(),
+                    b.to_string_lossy().as_bytes(),
+                ),
+            }
+        };
+        let ours = files(&self.a);
+        let fresh = files(&b);
+        let mut bad = vec![];
+        let mut names: Vec<&String> = ours.keys().chain(fresh.keys()).collect();
+        names.sort();
+        names.dedup();
+        for n in names {
+            match (ours.get(n), fresh.get(n)) {
+                (Some(x), Some(y)) => {
+                    let (x, y) = (norm(n, x, &self.a), norm(n, y, &b));
+                    if x != y {
+                        bad.push(format!("{n}: {}", context_difference(&x, &y)));
+                    }
+                }
+                (Some(_), None) => bad.push(format!("{n}: only the host's")),
+                (None, _) => bad.push(format!("{n}: only the fresh run's")),
             }
         }
-        let fresh: BTreeMap<String, Vec<u8>> = fresh
-            .into_iter()
-            .map(|(n, v)| {
-                let v = if n.ends_with(".pdf") {
-                    without_id(&v)
-                } else {
-                    v
-                };
-                (n, v)
-            })
-            .collect();
-        let mut bad = vec![];
-        for n in ours.keys().chain(fresh.keys()) {
-            if bad.iter().any(|(m, _): &(String, String)| m == n) {
-                continue;
-            }
-            match (ours.get(n), fresh.get(n)) {
-                (Some(x), Some(y)) if x == y => {}
-                (Some(x), Some(y)) => bad.push((n.clone(), first_difference(x, y))),
-                (Some(_), None) => bad.push((n.clone(), "only the host's".into())),
-                (None, _) => bad.push((n.clone(), "only the fresh run's".into())),
+        // (the capacity lines, left out above: noted, not failed)
+        let log = format!("{}.log", self.job());
+        let out_rel = self.out_sub.map_or(String::new(), |o| format!("{o}/"));
+        let key = format!("{out_rel}{log}");
+        if let (Some(x), Some(y)) = (ours.get(&key), fresh.get(&key)) {
+            let stats = |v: &[u8]| -> Vec<String> {
+                String::from_utf8_lossy(v)
+                    .lines()
+                    .skip_while(|l| !l.starts_with("Here is how much"))
+                    .take_while(|l| !l.starts_with("Output written"))
+                    .filter(|l| l.contains(" out of "))
+                    .map(String::from)
+                    .collect()
+            };
+            if stats(x) != stats(y) {
+                eprintln!(
+                    "{}: NOTE: the log's capacity lines differ (§1.1 normalises them): {:?} / {:?}",
+                    self.name,
+                    stats(x),
+                    stats(y)
+                );
             }
         }
         if bad.is_empty() {
             Ok(())
         } else {
-            Err(format!("{bad:#?}"))
+            Err(bad.join("\n    "))
         }
     }
 
-    fn check(&mut self, what: &str) {
-        if let Err(e) = self.try_check() {
-            // classify: does one more compile (no edit) put it right?
-            let d = self.compile(vec![]);
-            let again = self.try_check();
-            panic!(
-                "{}: {what}: the host's files differ from a fresh run's: {e}\n\
-                 one more compile ({}): {}",
-                self.name,
-                d.str_field("mode").unwrap_or("?"),
-                match again {
-                    Ok(()) => "then equal (the host stopped short of the fixed point)".into(),
-                    Err(e2) => format!("still differ: {e2}"),
-                }
-            );
+    /// The host's files equal a fresh run's from the host's passes' files
+    /// (the fixed point is pdflatex's on the same directory) and, unless
+    /// `only_kept`, a fresh run's from the sources alone.
+    fn check_with(&mut self, what: &str, only_kept: bool) {
+        for keep_aux in [true, false] {
+            if !keep_aux && only_kept {
+                continue;
+            }
+            let from = if keep_aux {
+                "the host's .aux files"
+            } else {
+                "the sources alone"
+            };
+            if let Err(e) = self.try_check(keep_aux) {
+                // classify: does one more compile (no edit) put it right?
+                let d = self.compile(vec![]);
+                let again = self.try_check(keep_aux);
+                panic!(
+                    "{}: {what}: the host's files differ from a fresh run's from {from}:\n    {e}\n\
+                     one more compile ({}): {}",
+                    self.name,
+                    d.str_field("mode").unwrap_or("?"),
+                    match again {
+                        Ok(()) => "then equal (the host stopped short of the fixed point)".into(),
+                        Err(e2) => format!("still differ:\n    {e2}"),
+                    }
+                );
+            }
         }
         eprintln!("{}: {what}: equal", self.name);
     }
 
+    fn check(&mut self, what: &str) {
+        self.check_with(what, false)
+    }
+
     /// The fresh run's log (in `<base>/b`, from the last `check`) against
     /// TeX Live's pdflatex run to a fixed point on the same sources in
-    /// `<base>/c`.
+    /// `<base>/c`, from the same passes' files.
     fn oracle(&mut self) {
         let bin = find_texlive_bin().expect("TeX Live");
         let c = self.base.join("c");
         let _ = std::fs::remove_dir_all(&c);
-        copy_sources(&self.a, &c, self.out_sub);
-        let job = self
-            .jobname
-            .clone()
-            .unwrap_or_else(|| self.main.trim_end_matches(".tex").into());
+        let job = self.job();
+        // as the last fresh run started (the host's passes' files kept
+        // where only_kept held, else the sources alone)
+        copy_inputs(&self.a, &c, &job, self.includeonly.is_some());
         let out = self.out_dir(&c);
         std::fs::create_dir_all(&out).unwrap();
-        if let Some(o) = self.out_sub {
-            for e in std::fs::read_dir(self.a.join(o)).unwrap().flatten() {
-                let n = e.file_name().to_string_lossy().into_owned();
-                if e.file_type().unwrap().is_file() && !written(&n) {
-                    std::fs::copy(e.path(), out.join(&n)).unwrap();
-                }
-            }
-        }
         let first = match &self.includeonly {
             Some(v) => format!(
                 "\\AtBeginDocument{{\\includeonly{{{}}}}}\\input {}",
@@ -527,13 +590,18 @@ impl Audit {
         };
         let mut last = None;
         for _ in 0..6 {
-            let st = Command::new(bin.join("pdflatex"))
-                .args([
-                    "-interaction=nonstopmode",
-                    &format!("-jobname={job}"),
-                    &format!("-output-directory={}", out.display()),
-                    &first,
-                ])
+            // the host's command line (`server::Job::argv`)
+            let mut argv = vec![
+                "-interaction=nonstopmode".to_string(),
+                "-file-line-error".to_string(),
+            ];
+            if self.out_sub.is_some() {
+                argv.push(format!("-output-directory={}", out.display()));
+            }
+            argv.push(format!("-jobname={job}"));
+            argv.push(first.clone());
+            let _ = Command::new(bin.join("pdflatex"))
+                .args(&argv)
                 .current_dir(&c)
                 .env("SOURCE_DATE_EPOCH", "0")
                 .env("FORCE_SOURCE_DATE", "1")
@@ -542,60 +610,47 @@ impl Audit {
                 .stderr(Stdio::null())
                 .status()
                 .unwrap();
-            let _ = st;
             let now: BTreeMap<String, Vec<u8>> = files(&out)
                 .into_iter()
-                .filter(|(n, _)| n.ends_with(".aux") || n.ends_with(".toc") || n.ends_with(".out"))
+                .filter(|(n, _)| PASS_FILES.contains(&ext(n)))
                 .collect();
             if last.as_ref() == Some(&now) {
                 break;
             }
             last = Some(now);
         }
-        let norm = |b: &[u8], dir: &Path| -> Vec<String> {
-            let b = replace_all(b, dir.to_string_lossy().as_bytes(), b"<dir>");
-            let t = String::from_utf8_lossy(&b).into_owned();
-            let mut v: Vec<String> = vec![];
-            let mut skip = false;
-            for (k, l) in t.lines().enumerate() {
-                if k == 0 {
-                    continue; // the banner: the format's date
-                }
-                if l.starts_with("Here is how much of TeX's memory you used:") {
-                    skip = true;
-                }
-                if skip {
-                    if l.starts_with("Output written on") {
-                        skip = false;
-                    } else {
-                        continue;
-                    }
-                }
-                if let Some(i) = l.find(" pages, ") {
-                    v.push(l[..i].to_string());
-                    continue;
-                }
-                v.push(l.to_string());
-            }
-            v
-        };
         let b = self.base.join("b");
         let ob = std::fs::read(self.out_dir(&b).join(format!("{job}.log"))).unwrap();
         let oc = std::fs::read(out.join(format!("{job}.log"))).unwrap();
-        let (x, y) = (norm(&ob, &b), norm(&oc, &c));
-        if x != y {
-            let k = (0..x.len().max(y.len()))
-                .find(|&k| x.get(k) != y.get(k))
-                .unwrap();
-            panic!(
-                "{}: the fresh run's log differs from pdflatex's at line {}: ours {:?} / pdflatex {:?}",
-                self.name,
-                k + 2,
-                x.get(k),
-                y.get(k)
-            );
+        let (x, y) = (log_norm(&ob, &b, &b, true), log_norm(&oc, &c, &b, true));
+        assert!(
+            x == y,
+            "{}: the fresh run's log differs from pdflatex's {}",
+            self.name,
+            context_difference(&x, &y)
+                .replace("host", "ours")
+                .replace("fresh", "pdflatex")
+        );
+        // and the passes' files
+        let fb = files(&self.out_dir(&b));
+        for (n, v) in files(&out) {
+            if PASS_FILES.contains(&ext(&n)) {
+                let w = replace_all(
+                    &v,
+                    c.to_string_lossy().as_bytes(),
+                    b.to_string_lossy().as_bytes(),
+                );
+                assert!(
+                    fb.get(&n) == Some(&w),
+                    "{}: the fresh run's {n} differs from pdflatex's",
+                    self.name
+                );
+            }
         }
-        eprintln!("{}: oracle: log equal to pdflatex's", self.name);
+        eprintln!(
+            "{}: oracle: log and passes' files equal to pdflatex's",
+            self.name
+        );
     }
 }
 
@@ -683,13 +738,13 @@ fn audit_includeonly() {
     t.check("open");
     t.includeonly = Some(vec!["ch2".into()]);
     t.compile(vec![]);
-    t.check("includeonly ch2");
+    t.check_with("includeonly ch2", true);
     let e = t.splice("ch2.tex", "Paragraph 2.1 ", "Paragraph 2.1 more words ");
     t.compile(vec![e]);
-    t.check("an edit in ch2 under includeonly");
+    t.check_with("an edit in ch2 under includeonly", true);
     t.includeonly = Some(vec!["ch1".into(), "ch3".into()]);
     t.compile(vec![]);
-    t.check("includeonly ch1,ch3");
+    t.check_with("includeonly ch1,ch3", true);
     t.includeonly = None;
     t.compile(vec![]);
     t.check("includeonly dropped");
@@ -699,7 +754,7 @@ fn audit_includeonly() {
         "\\includeonly{ch3}\n\\begin{document}",
     );
     t.compile(vec![e]);
-    t.check("\\includeonly{ch3} added to the preamble");
+    t.check_with("\\includeonly{ch3} added to the preamble", true);
     let e = t.splice("main.tex", "\\includeonly{ch3}\n", "");
     t.compile(vec![e]);
     t.check("\\includeonly removed again");
@@ -1179,5 +1234,235 @@ fn audit_preamble_and_document_start() {
     );
     t.compile(vec![e]);
     t.check("the class option changed");
+    t.oracle();
+}
+
+/// Files the body reads without `\input`: `\openin`/`\read`, a file's MD5
+/// and size (`\pdfmdfivesum file`, `\pdffilesize`), changed by another
+/// program between compiles, and a data file deleted.
+#[test]
+fn audit_read_files() {
+    let main = format!(
+        "{PRE}\\newread\\data\n\\begin{{document}}\n{}\
+         \\openin\\data=data.txt\n\\ifeof\\data No data.\\else\\read\\data to\\line Data: \\line.\\closein\\data\\fi\n\n{}\
+         Sum \\pdfmdfivesum file{{sum.txt}}, size \\pdffilesize{{sum.txt}}.\n\\end{{document}}\n",
+        prose(1, 6),
+        prose(2, 6)
+    );
+    let Some(mut t) = Audit::new(
+        "read",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("data.txt", b"first value\n"),
+            ("sum.txt", b"abc"),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    t.rewrite("data.txt", "first", "second");
+    t.compile(vec![]);
+    t.check("data.txt changed");
+    t.rewrite("sum.txt", "abc", "abd");
+    t.compile(vec![]);
+    t.check("sum.txt changed, the same size");
+    t.rewrite("sum.txt", "abd", "abcdef");
+    t.compile(vec![]);
+    t.check("sum.txt grew");
+    std::fs::remove_file(t.a.join("data.txt")).unwrap();
+    t.compile(vec![]);
+    t.check("data.txt deleted");
+    t.oracle();
+}
+
+/// The editor's whole-file `buffers`: an input file not yet saved, then
+/// saved by the editor with other text.
+#[test]
+fn audit_buffers() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n{}\\input{{part}}\n{}\\end{{document}}\n",
+        prose(1, 6),
+        prose(2, 6)
+    );
+    let part = prose(3, 6);
+    let Some(mut t) = Audit::new(
+        "buffers",
+        &[("main.tex", main.as_bytes()), ("part.tex", part.as_bytes())],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    let a = t.a.clone();
+    let mut r = t.request(&a, vec![]);
+    r.buffers = vec![(
+        "part.tex".into(),
+        part.replacen("Paragraph 3.2 ", "Buffered. Paragraph 3.2 ", 1),
+    )];
+    t.c.compile(&r).unwrap();
+    drain(&mut t.c, 1);
+    t.check("part.tex from a buffer");
+    let mut r = t.request(&a, vec![]);
+    r.buffers = vec![
+        ("part.tex".into(), part.clone()),
+        (
+            "main.tex".into(),
+            main.replacen("Paragraph 2.1 ", "Paragraph 2.1 both ", 1),
+        ),
+    ];
+    t.c.compile(&r).unwrap();
+    drain(&mut t.c, 1);
+    t.check("both files from buffers, part.tex back");
+    t.oracle();
+}
+
+/// A preamble file (`\input{macros}` before `\begin{document}`) and a
+/// package of the project's own changed.
+#[test]
+fn audit_preamble_files() {
+    let main = format!(
+        "{PRE}\\input{{macros}}\n\\usepackage{{mine}}\n\\begin{{document}}\n{}The \\thing{{}} and \\other.\n\n{}\\end{{document}}\n",
+        prose(1, 6),
+        prose(2, 6)
+    );
+    let Some(mut t) = Audit::new(
+        "prefiles",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("macros.tex", b"\\newcommand\\thing{widget}\n"),
+            (
+                "mine.sty",
+                b"\\ProvidesPackage{mine}\n\\newcommand\\other{gizmo}\n",
+            ),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    let e = t.splice("macros.tex", "{widget}", "{gadget, longer}");
+    t.compile(vec![e]);
+    t.check("macros.tex edited");
+    t.rewrite("mine.sty", "{gizmo}", "{doohickey}");
+    t.compile(vec![]);
+    t.check("mine.sty changed by another program");
+    t.oracle();
+}
+
+/// graphicx's extension order: `pic.pdf` created beside `pic.png` takes
+/// over `\includegraphics{pic}`; deleted, the PNG is back.
+#[test]
+fn audit_graphics_extension_appears() {
+    let main = format!(
+        "{PRE}\\usepackage{{graphicx}}\n\\begin{{document}}\n{}\\includegraphics{{pic}}\n\n{}\\end{{document}}\n",
+        prose(1, 5),
+        prose(2, 5)
+    );
+    let Some(mut t) = Audit::new(
+        "gfxext",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("pic.png", &image("png-rgb8.png")),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    std::fs::write(t.a.join("pic.pdf"), image("pdf-hand.pdf")).unwrap();
+    t.compile(vec![]);
+    t.check("pic.pdf created");
+    std::fs::remove_file(t.a.join("pic.pdf")).unwrap();
+    t.compile(vec![]);
+    t.check("pic.pdf deleted");
+    t.oracle();
+}
+
+/// An input file renamed (the old name gone, the document edited to the
+/// new one in the same compile), in a subdirectory.
+#[test]
+fn audit_file_renamed() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n{}\\input{{sec/part}}\n{}\\end{{document}}\n",
+        prose(1, 6),
+        prose(2, 6)
+    );
+    let part = prose(3, 6);
+    let Some(mut t) = Audit::new(
+        "rename",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("sec/part.tex", part.as_bytes()),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    std::fs::rename(t.a.join("sec/part.tex"), t.a.join("sec/renamed.tex")).unwrap();
+    let e = t.splice("main.tex", "\\input{sec/part}", "\\input{sec/renamed}");
+    t.compile(vec![e]);
+    t.check("sec/part.tex renamed");
+    // a new file under the old name, other text
+    std::fs::write(t.a.join("sec/part.tex"), prose(4, 2)).unwrap();
+    let e = t.splice("main.tex", "\\input{sec/renamed}", "\\input{sec/part}");
+    t.compile(vec![e]);
+    t.check("back to the old name, a new file there");
+    t.oracle();
+}
+
+/// The job name changes between compiles of the same document.
+#[test]
+fn audit_jobname_switch() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\nJob \\jobname.\n\n{}\\section{{S}}\\label{{s}}See \\pageref{{s}}.\n\\end{{document}}\n",
+        prose(1, 8)
+    );
+    let Some(mut t) = Audit::new("jobsw", &[("main.tex", main.as_bytes())], None) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    t.jobname = Some("other".into());
+    t.compile(vec![]);
+    t.check("jobname other");
+    let e = t.splice("main.tex", "Paragraph 1.3 ", "Paragraph 1.3 again ");
+    t.compile(vec![e]);
+    t.check("an edit under jobname other");
+    t.jobname = None;
+    let e = t.splice("main.tex", "Paragraph 1.3 again ", "Paragraph 1.3 ");
+    t.compile(vec![e]);
+    t.check("back to main, the edit undone");
+    t.oracle();
+}
+
+/// A file the body writes (`\immediate\write`) and reads back later in
+/// the same run, its text from an edited line.
+#[test]
+fn audit_write_then_input() {
+    let main = format!(
+        "{PRE}\\newwrite\\notes\n\\begin{{document}}\n\\immediate\\openout\\notes=\\jobname.notes\n{}\
+         \\immediate\\write\\notes{{Note one: alpha.}}\n{}\\immediate\\closeout\\notes\n\
+         Notes: \\input{{\\jobname.notes}}\n\\end{{document}}\n",
+        prose(1, 6),
+        prose(2, 6)
+    );
+    let Some(mut t) = Audit::new("writein", &[("main.tex", main.as_bytes())], None) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    let e = t.splice("main.tex", "alpha.", "beta, gamma.");
+    t.compile(vec![e]);
+    t.check("the written note changed");
+    let e = t.splice("main.tex", "Paragraph 1.2 ", "Paragraph 1.2 x ");
+    t.compile(vec![e]);
+    t.check("an edit before the write");
     t.oracle();
 }
