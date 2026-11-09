@@ -25,13 +25,18 @@
 //! * the save stack above C's `save_ptr`, entry by entry, saved macro
 //!   values by their tokens; the input levels still to be read (used-up
 //!   token lists left out) and the macro parameters they use; the
-//!   condition stack's entries; the log file's length.
+//!   condition stack's entries; the log file's length;
+//! * every `mem` word either path wrote, except in the cells either path
+//!   allocated or freed (`flashtex_intr_cell`, `flashtex_intr_flush`) and
+//!   those free in either state: a node the call found and changed in place
+//!   (`\limits` sets `subtype(tail)`, `^` a noad's script) differs there,
+//!   and so does a reference count (a `\let` the replay copies instead of
+//!   sharing). The used-up token lists on top of the input stack are popped
+//!   in both states first, as the next `get_next` pops them.
 //!
-//! **Not compared:** `mem` itself beyond what reaches it from `eqtb`, the
-//! save stack, the input and condition stacks: token-list reference counts
-//! (a replayed `\let` shares its source's list, as `\let` does; a list not
-//! from a control sequence is copied), glue specifications, boxes, marks,
-//! nodes of the current list (only its pointers, which are scalars). State
+//! **Not compared:** the contents of the cells a path allocated or freed,
+//! beyond what reaches them from `eqtb`, the save stack, the input and
+//! condition stacks (two paths' lists are different nodes). State
 //! outside the word space (`Host`: fonts, native handles, the display
 //! list's source map, open files other than the log's length) is not
 //! compared; the replay neither reads nor writes it. A page checkpoint
@@ -39,7 +44,8 @@
 //! path's writes before it are not among the chunks compared.
 
 use crate::generated::consts::{
-    eqtb_size, int_base, level_boundary, macro_, restore_old_value, token_list, v_template,
+    backed_up, eqtb_size, int_base, level_boundary, macro_, mem_top, restore_old_value,
+    token_list, v_template,
 };
 use crate::generated::types::memory_word;
 use crate::intrinsics::{Op, Val, NULL};
@@ -58,7 +64,7 @@ const EXCLUDED_SCALARS: &str = "cur_cmd cur_chr cur_cs cur_tok cur_val cur_val_l
     trick_count base_ptr input_ptr param_ptr cur_input warning_index skip_line \
     dorm_fired dorm_level pop_watch";
 
-const EXCLUDED_REGIONS: &str = "mem dig trick_buf pstack input_stack param_stack";
+const EXCLUDED_REGIONS: &str = "dig trick_buf pstack input_stack param_stack";
 
 /// A check in progress: C and the replay's state I.
 pub(crate) struct Pending {
@@ -96,14 +102,18 @@ impl Globals {
         let save_ptr0 = self.save_ptr;
         let log0 = self.intr_log_len();
         let ck = self.checkpoint();
+        self.intr_churn_stop();
+        self.host.intrinsics.churn_on = 1;
         self.host.intrinsics.replaying = true;
         self.intr_replay(ops);
+        self.intr_pop_used_up();
         self.host.intrinsics.replaying = false;
         let i = self.intr_capture(save_ptr0, true);
         if let Err(e) = self.restore_in_call(ck) {
             // the replay's state cannot be the run's
             panic!("intrinsics verify: cannot restore the call's checkpoint: {e}");
         }
+        self.host.intrinsics.churn_on = 2;
         Pending {
             ck,
             save_ptr0,
@@ -114,7 +124,9 @@ impl Globals {
 
     /// The real path is done: compare, count, drop C.
     pub(crate) fn intr_verify_end(&mut self, p: Pending) {
+        self.intr_pop_used_up();
         let diffs = self.intr_compare(&p);
+        self.intr_churn_stop();
         self.drop_checkpoint(p.ck);
         let r = &mut self.host.intrinsics;
         r.checked += 1;
@@ -132,6 +144,70 @@ impl Globals {
                 r.details.push(d.clone());
             }
         }
+    }
+
+    /// `changes/intrinsics.ch`: cells `p..p+s` allocated or freed by the
+    /// path being checked (`get_avail`, `fast_get_avail`, `free_avail`,
+    /// `get_node`, `free_node`). Their words differ between the two paths
+    /// where those allocate differently; the roots that reach them are
+    /// compared by content instead.
+    pub fn flashtex_intr_cell(&mut self, p: i32, s: i32) {
+        let r = &mut self.host.intrinsics;
+        if r.churn_on != 0 {
+            let set = &mut r.churn[r.churn_on as usize - 1];
+            set.extend(p..p.saturating_add(s.max(1)));
+        }
+    }
+
+    /// `flush_list(p)`: every cell of the list goes free.
+    pub fn flashtex_intr_flush(&mut self, mut p: i32) {
+        if self.host.intrinsics.churn_on == 0 {
+            return;
+        }
+        let mut n = 0;
+        while p != NULL && p >= 0 && (p as usize) < self.mem.len() && n < 10_000_000 {
+            self.flashtex_intr_cell(p, 1);
+            p = self.mem[p as usize].hh().rh();
+            n += 1;
+        }
+    }
+
+    /// Pop the used-up token lists on top of the input stack (backed-up,
+    /// inserted, macro and token-parameter lists), as the next `get_next`
+    /// does at once: in both states before they are compared, so that the
+    /// real path's body (popped by neither yet) and the levels `macro_call`
+    /// popped to conserve stack space (which the replay did not pop) hold
+    /// no reference, no cells and no level the other state lacks.
+    fn intr_pop_used_up(&mut self) {
+        while self.input_ptr > 0
+            && self.cur_input.state_field == token_list
+            && self.cur_input.loc_field == NULL
+            && self.cur_input.index_field >= backed_up
+        {
+            self.end_token_list();
+        }
+    }
+
+    pub(crate) fn intr_churn_stop(&mut self) {
+        let r = &mut self.host.intrinsics;
+        r.churn_on = 0;
+        r.churn[0].clear();
+        r.churn[1].clear();
+    }
+
+    /// The free cells of `mem` in a state read through `w` (a word of `mem`
+    /// by index), its allocation scalars from `sc` (`None` if the free
+    /// lists are not well formed: then no word is free).
+    fn intr_free(&self, w: &dyn Fn(usize) -> u64, sc: &dyn Fn(&str) -> i32) -> Vec<u64> {
+        crate::conv::free_cells(
+            w,
+            sc("avail"),
+            sc("rover"),
+            sc("lo_mem_max"),
+            sc("hi_mem_min"),
+            sc("mem_end"),
+        )
+        .unwrap_or_default()
     }
 
     fn intr_replay(&mut self, ops: &[Op]) {
@@ -338,7 +414,8 @@ impl Globals {
         let mut d: Vec<(&'static str, String)> = vec![];
         let n = self.intr_capture(p.save_ptr0, false);
         let i = &p.i;
-        for sl in crate::statediff::scalar_layout(self) {
+        let layout = crate::statediff::scalar_layout(self);
+        for sl in &layout {
             if EXCLUDED_SCALARS.split_whitespace().any(|s| s == sl.name)
                 || sl.name.starts_with("intr_")
                 || sl.name.starts_with("ckpt_")
@@ -373,6 +450,43 @@ impl Globals {
                 q = w.hh_rh();
             }
             v
+        };
+        // `mem`: a word either path wrote in a cell neither allocated or
+        // freed, and that is free in neither state, is a node the call found
+        // and changed in place (`\limits`' `subtype(tail)`): compared. The
+        // rest is reached from the roots compared below by content.
+        let isc = |name: &str| -> i32 {
+            layout
+                .iter()
+                .find(|sl| sl.name == name)
+                .map(|sl| i32::from_le_bytes(i.scalars[sl.off..sl.off + 4].try_into().unwrap()))
+                .unwrap_or(0)
+        };
+        let free_i = self.intr_free(&|k| iword(mem0 + 8 * k), &isc);
+        let live_mem = |k: usize| self.mem[k].to_bits();
+        let (av, ro, lo, hi, me) = (self.avail, self.rover, self.lo_mem_max, self.hi_mem_min, self.mem_end);
+        let nsc = |name: &str| match name {
+            "avail" => av,
+            "rover" => ro,
+            "lo_mem_max" => lo,
+            "hi_mem_min" => hi,
+            _ => me,
+        };
+        let free_n = self.intr_free(&live_mem, &nsc);
+        let is_free = |f: &[u64], k: i32| {
+            k >= 0 && f.get(k as usize >> 6).is_some_and(|b| b >> (k & 63) & 1 == 1)
+        };
+        let churn = &self.host.intrinsics.churn;
+        // (scratch heads, set before they are read in the command that
+        // uses them, as the convergence test's walk treats them, `crate::iso`:
+        // `temp_head`, `garbage`, `backup_head`)
+        let scratch = [mem_top - 3, mem_top - 12, mem_top - 13];
+        let mem_dead = |k: i32| {
+            scratch.contains(&k)
+                || churn[0].contains(&k)
+                || churn[1].contains(&k)
+                || is_free(&free_i, k)
+                || is_free(&free_n, k)
         };
         let mut all: BTreeSet<u32> = n.touched.iter().copied().collect();
         all.extend(i.touched.iter().copied());
@@ -414,6 +528,7 @@ impl Globals {
                             "str_pool" => idx >= pool_ptr,
                             "str_start" => idx > str_ptr - 65536,
                             "save_stack" => idx >= p.save_ptr0 || idx >= save_ptr,
+                            "mem" => mem_dead(idx),
                             _ => false,
                         };
                     if skip {
@@ -437,7 +552,7 @@ impl Globals {
             );
             let (a, b) = (memory_word::from_bits(iv), memory_word::from_bits(nv));
             // (the hash's extension, past `eqtb_size`, holds control sequences)
-            if (q < int_base || q > eqtb_size)
+            if !(int_base..=eqtb_size).contains(&q)
                 && a.hh_b0() == b.hh_b0()
                 && a.hh_b1() == b.hh_b1()
                 && self.intr_is_list(a.hh_b0(), a.hh_rh())
