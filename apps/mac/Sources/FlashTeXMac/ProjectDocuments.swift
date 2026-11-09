@@ -1074,7 +1074,7 @@ final class ProjectDocuments {
             return "cannot reload \(path): \(size) bytes exceeds the \(ProjectIncludes.maxDocumentBytes)-byte document limit"
         }
         guard let data = try? Data(contentsOf: url) else { return "cannot reload \(path): it is not on disk" }
-        guard let disk = String(data: data, encoding: .utf8) else { return "cannot reload \(path): not readable as UTF-8" }
+        guard let disk = String(exactUTF8: data) else { return "cannot reload \(path): not readable as UTF-8" }
         if isDirty(path), case .failed(let why) = model.preserveDiscardedText(doc.text, at: url, reason: "discarded by a reload of \(path) from disk") {
             return "not reloaded: the unsaved edits to \(path) could not be kept (\(why))"
         }

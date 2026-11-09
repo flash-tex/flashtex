@@ -409,6 +409,30 @@ final class ProjectDocumentsTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: project.main, encoding: .utf8), "\\begin{document}\nMain.\n\\input{chapter}\n\\end{document}\n", "the entry file is untouched")
     }
 
+    /// A member reloaded from a file that starts with a UTF-8 byte-order
+    /// mark keeps the mark: the buffer holds it (U+FEFF, byte for byte with
+    /// the file) and the next save writes it back. The reload decoded with
+    /// `String(data:encoding:)`, which drops the mark, so the save silently
+    /// rewrote the file without it.
+    func testAMemberReloadedFromABOMFileKeepsTheMarkOnSave() async throws {
+        let project = try TempProject()
+        defer { project.remove() }
+        let model = ShellModel()
+        XCTAssertEqual(model.openTex(at: project.main), .opened)
+        let p = model.project
+        _ = await p.openDiscoveredIncludes()
+        let chapterURL = project.root.appendingPathComponent("project/chapter.tex")
+        let bom = Data([0xEF, 0xBB, 0xBF])
+        try (bom + Data("external\n".utf8)).write(to: chapterURL)
+        XCTAssertNil(p.reloadDocumentFromDisk("chapter.tex"))
+        XCTAssertEqual(model.activePath, "chapter.tex")
+        XCTAssertEqual(Data(model.activeText.utf8), bom + Data("external\n".utf8), "the buffer is the file, byte for byte")
+        XCTAssertFalse(p.isDirty("chapter.tex"))
+        model.updateActiveText(model.activeText + "more\n")
+        guard case .saved = p.saveDocumentNow("chapter.tex") else { return XCTFail("save: \(p.status)") }
+        XCTAssertEqual(try Data(contentsOf: chapterURL), bom + Data("external\nmore\n".utf8), "the mark is written back")
+    }
+
     // MARK: transitive discovery
 
     func testClosureIsDepthFirstRefusesCyclesAndListsDiamondsOnce() async throws {

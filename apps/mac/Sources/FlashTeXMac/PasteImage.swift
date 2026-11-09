@@ -343,7 +343,7 @@ enum PasteImage {
 
     nonisolated static func perform(_ job: Job) -> Outcome {
         var disk: String?
-        if job.rootText == nil, let url = job.rootURL { disk = try? String(contentsOf: url, encoding: .utf8) }
+        if job.rootText == nil, let url = job.rootURL { disk = (try? Data(contentsOf: url)).flatMap(String.init(exactUTF8:)) }
         let folder = PasteImageFigure.imageFolder(configured: job.configuredFolder, rootText: job.rootText ?? disk ?? "")
         let saved = job.sources.map { source -> Result<String, SaveError> in
             do {
