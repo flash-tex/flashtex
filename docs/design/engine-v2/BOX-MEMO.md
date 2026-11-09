@@ -342,9 +342,11 @@ operations are all local (§11.2, MACRO-REPLAY revision 5's §11.5).
 - **Checkpoints inside a recording are fine.** A segment or timed checkpoint in the middle of a
   recording is an ordinary checkpoint. A later restore to it finds `bm_rec_on` true and the Rust
   recorder gone, and `after_restore` clears the flag.
-- **Known gap: diagnostics.** A replayed `\xdef` makes a token list without a definition site
-  (`diag::dg_def`), so go-to-definition finds nothing for `\fb@frw`-like macros defined by a
-  replay. That changes no output.
+- **Definition sites.** A replayed `\def` or `\xdef` of a macro notes its definition site as the
+  normal path's did (`diag::dg_def_replayed`: the innermost file level's line, no column, because
+  the `\def` was read from the call's body), so a DIAG's macro chain and go-to-definition are a
+  fresh run's (#2440; a D9 intrinsic's replayed definitions do the same). Until then a replay left
+  the macro without one.
 
 ## 7. Verification
 

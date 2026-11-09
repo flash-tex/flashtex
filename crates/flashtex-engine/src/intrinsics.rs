@@ -1706,6 +1706,18 @@ impl Globals {
                     } else {
                         self.eq_define(a, t, e)
                     }
+                    // a macro the body defined: its definition site, as
+                    // the recorded run's `\def` noted it
+                    // (a control sequence: below `glue_base`, or above
+                    // `eqtb_size` with tex.ch's `hash_extra`)
+                    if k & 0xff == K_FRESH
+                        && !(crate::generated::consts::glue_base
+                            ..=crate::generated::consts::eqtb_size)
+                            .contains(&a)
+                        && (CALL..=LONG_OUTER_CALL).contains(&t)
+                    {
+                        self.dg_def_replayed(e);
+                    }
                 }
                 K_WORD => {
                     if global {

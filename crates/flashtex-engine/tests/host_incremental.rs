@@ -26,6 +26,9 @@
 
 mod common;
 
+#[path = "host_incremental/srcmap_audit.rs"]
+mod srcmap_audit;
+
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::page::{Item, Page};
@@ -193,6 +196,8 @@ struct Outcome {
     /// `SOURCES` declared (new or moved).
     span_shifts: usize,
     declared: usize,
+    /// `DIAG`s (`diag-v1`, spec §6.7), for a client that accepted it.
+    diags: Vec<flashtex_display_list::diag::Diag>,
 }
 
 fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -205,6 +210,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut progress = 0;
     let mut progress_files = vec![];
     let (mut span_shifts, mut declared) = (0, 0);
+    let mut diags = vec![];
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -268,6 +274,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
             }
             Event::Pages(j) => pages_msgs.push(j),
             Event::Image(j) => view.images.push(j),
+            Event::Diag(d) => diags.push(d),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
             Event::Other(k, body) if k == flashtex_display_list::kind::SPAN_SHIFT => {
@@ -301,6 +308,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         progress_files,
         span_shifts,
         declared,
+        diags,
     }
 }
 
