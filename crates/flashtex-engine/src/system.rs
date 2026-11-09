@@ -4711,6 +4711,22 @@ pub fn truncate_external_effects(n: usize) {
     EXTERNAL_EFFECTS.lock().unwrap().truncate(n);
 }
 
+/// The external effects after the first `n` (a restore keeps the old
+/// run's, `checkpoint::Pending`).
+pub fn external_effects_since(n: usize) -> Vec<ExternalEffect> {
+    EXTERNAL_EFFECTS
+        .lock()
+        .unwrap()
+        .get(n..)
+        .unwrap_or(&[])
+        .to_vec()
+}
+
+/// Put back external effects a restore cut (`Globals::reattach_pending`).
+pub fn append_external_effects(e: &[ExternalEffect]) {
+    EXTERNAL_EFFECTS.lock().unwrap().extend_from_slice(e);
+}
+
 pub fn tex_input_type() -> bool {
     TEX_INPUT_TYPE.load(Ordering::SeqCst)
 }
