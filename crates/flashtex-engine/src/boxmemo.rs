@@ -95,6 +95,10 @@ struct Config {
     stats_out: Option<String>,
     debug: bool,
     verify_fail: bool,
+    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-share): the replay breaks a
+    /// sharing on purpose (`bm_swap_share`), to show that the full-state
+    /// verifier sees it.
+    fault_swap_share: bool,
 }
 
 /// The macros offered by default (BOX-MEMO.md §2, §11): framed.sty's frame
@@ -163,6 +167,11 @@ pub struct Stats {
     /// many differed.
     pub full_verified: u64,
     pub full_differences: u64,
+    /// Of those, the comparisons the restricted walk settled, and those
+    /// the full walk did (`incr::same_state`: periodic, or the restricted
+    /// one did not hold).
+    pub restricted_walks: u64,
+    pub full_walks: u64,
     /// Control sequences a replay entered again (`Op::NewCs`, §12.3).
     pub entered: u64,
     /// K3's macro bodies compared token by token, the comparisons §12.4's
@@ -684,6 +693,8 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                 stats_out: std::env::var("FLASHTEX_BOXMEMO_STATS").ok(),
                 debug: std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some(),
                 verify_fail: std::env::var_os("FLASHTEX_BOXMEMO_VERIFY_FAIL").is_some(),
+                fault_swap_share: std::env::var("FLASHTEX_BOXMEMO_FAULT").as_deref()
+                    == Ok("swap-share"),
             });
         }
         f(c.as_ref().unwrap())
@@ -863,6 +874,19 @@ thread_local! {
 /// The host: an edit's window opens (`true`) or closes.
 pub fn record_window(open: bool) {
     WINDOW.with(|w| w.set(Some(open)));
+}
+
+/// `incr::same_state` settled a full-state comparison by the restricted
+/// walk (`true`) or the full one.
+pub(crate) fn note_walk(restricted: bool) {
+    ST.with(|s| {
+        let mut s = s.borrow_mut();
+        if restricted {
+            s.stats.restricted_walks += 1;
+        } else {
+            s.stats.full_walks += 1;
+        }
+    });
 }
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
@@ -4279,6 +4303,63 @@ impl Globals {
 
     /// Replay entry `i` of `cs`; its trailer token, if any, for the caller
     /// to back up (`main_control` then runs it).
+    /// Test only (FLASHTEX_BOXMEMO_FAULT=swap-share): a `\\let` of a macro
+    /// (`R` shares `src`'s list) followed by a definition of another macro
+    /// `S` with the same tokens become a copy for `R` and a share for `S`.
+    /// The reference counts stay what they were; only which control
+    /// sequence shares the list differs (review of #2211, REVIEW-C2 M1).
+    ///
+    /// The first replay of the job is left whole: the job's first
+    /// comparison is a full walk (`incr::same_state`'s periodic one), and a
+    /// difference ends the entry's replays, so the swap is met by the
+    /// restricted walk.
+    fn bm_swap_share(&self, ops: &[Op]) -> Vec<Op> {
+        static SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut ops = ops.to_vec();
+        if SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+            return ops;
+        }
+        let body = |g: &Self, src: i32| -> Option<(i32, Vec<i32>)> {
+            let w = g.bm_eq(src).hh();
+            let (t, e) = (w.b0(), w.rh());
+            if !(CALL..=LONG_OUTER_CALL).contains(&t) || e == 0 {
+                return None;
+            }
+            let mut toks = vec![];
+            let mut q = g.bm_link(e);
+            while q != 0 {
+                toks.push(g.bm_info(q));
+                q = g.bm_link(q);
+            }
+            Some((t, toks))
+        };
+        for i in 0..ops.len() {
+            let Op::Def {
+                v: Val::LetCs(src), ..
+            } = &ops[i]
+            else {
+                continue;
+            };
+            let src = *src;
+            let Some((t, toks)) = body(self, src) else {
+                continue;
+            };
+            let j = (i + 1..ops.len())
+                .find(|&j| matches!(&ops[j], Op::Def { v: Val::FreshList(l), .. } if *l == toks));
+            if let Some(j) = j {
+                if let Op::Def { t: ti, v, .. } = &mut ops[i] {
+                    *ti = t;
+                    *v = Val::FreshList(toks);
+                }
+                if let Op::Def { v, .. } = &mut ops[j] {
+                    *v = Val::LetCs(src);
+                }
+                break;
+            }
+        }
+        ops
+    }
+
     fn bm_replay(&mut self, cs: i32, i: usize) -> Option<i32> {
         let t0 = std::time::Instant::now();
         // Take the entry's operations (an entry is never replayed inside
@@ -4307,7 +4388,14 @@ impl Globals {
                 }
             }
         }
-        for o in &ops {
+        let swapped;
+        let run: &[Op] = if with_config(|c| c.fault_swap_share) {
+            swapped = self.bm_swap_share(&ops);
+            &swapped
+        } else {
+            &ops
+        };
+        for o in run {
             match o {
                 Op::Begin(c) => self.new_save_level(*c),
                 Op::End => self.unsave(),

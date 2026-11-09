@@ -1948,23 +1948,82 @@ fn same_words(
 pub(crate) fn same_state(g: &mut Globals, n: CheckpointId) -> Result<usize, String> {
     let debug = std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some();
     let mut char_or = vec![];
-    let r = crate::iso::align_by_words(|| {
-        same_words(
-            g,
-            n,
-            false,
-            false,
-            true,
-            debug,
-            Box::new(|| false),
-            &mut char_or,
-            None,
-        )
+    let words = |g: &mut Globals, char_or: &mut Vec<(usize, u64)>| {
+        crate::iso::align_by_words(|| {
+            same_words(
+                g,
+                n,
+                false,
+                false,
+                true,
+                debug,
+                Box::new(|| false),
+                char_or,
+                None,
+            )
+        })
+    };
+    // The restricted walk first (`iso::restricted`), the full one when it
+    // fails and at every `FLASHTEX_BOXMEMO_FULL_EVERY`th call (default 32;
+    // 1: always, as before). FLASHTEX_BOXMEMO_WALK_CHECK=1 runs the full
+    // walk after every restricted one that held and aborts if it does not:
+    // the check that the restricted walk is no weaker.
+    let (every, check) = walk_config();
+    let k = FULL_WALKS.with(|c| {
+        let k = c.get();
+        c.set(k + 1);
+        k
     });
+    let restricted = every != 1 && k % every != 0;
+    let mut r = if restricted {
+        crate::iso::restricted(|| words(g, &mut char_or))
+    } else {
+        Err(String::new())
+    };
+    if r.is_ok() && check {
+        let mut c2 = vec![];
+        if let Err(e) = words(g, &mut c2) {
+            eprintln!("FLASHTEX_BOXMEMO_WALK_CHECK: the restricted walk held, the full one: {e}");
+            std::process::abort();
+        }
+    }
+    crate::boxmemo::note_walk(r.is_ok());
+    if let Err(e) = &r {
+        if restricted && (debug || check) {
+            eprintln!("boxmemo verify: the restricted walk did not hold ({e}): the full walk");
+        }
+        r = words(g, &mut char_or);
+    }
     if r.is_ok() && !char_or.is_empty() {
         return Err(format!("pdf_char_used differs in {} words", char_or.len()));
     }
     r
+}
+
+thread_local! {
+    /// `same_state`'s calls so far in this job (its periodic full walk).
+    static FULL_WALKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// A new job in this thread (`crate::pdftex::reset_state`): the periodic
+/// full walk counts from its first call again.
+pub(crate) fn reset_full_walks() {
+    FULL_WALKS.with(|c| c.set(0));
+}
+
+/// `same_state`'s FLASHTEX_BOXMEMO_FULL_EVERY (at least 1) and
+/// FLASHTEX_BOXMEMO_WALK_CHECK.
+fn walk_config() -> (u64, bool) {
+    static C: std::sync::OnceLock<(u64, bool)> = std::sync::OnceLock::new();
+    *C.get_or_init(|| {
+        let every = std::env::var("FLASHTEX_BOXMEMO_FULL_EVERY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(32u64)
+            .max(1);
+        let check = std::env::var_os("FLASHTEX_BOXMEMO_WALK_CHECK").is_some_and(|v| v == "1");
+        (every, check)
+    })
 }
 
 /// Arrays whose elements from a pointer on are dead between two commands,

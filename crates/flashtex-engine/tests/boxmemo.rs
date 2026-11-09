@@ -595,3 +595,71 @@ fn a_call_that_starts_an_empty_paragraph_never_replays() {
     );
     assert_eq!(stat(&s, "hits"), 0, "{s}");
 }
+
+/// #2211's review (REVIEW-C2 M1): a replay that swaps which of two control
+/// sequences shares a third's list. Normal path: `\IntrR` shares
+/// `\IntrSrc`'s list, `\IntrS` holds an equal copy; the replay
+/// (FLASHTEX_BOXMEMO_FAULT=swap-share): `\IntrS` shares it, `\IntrR` holds
+/// the copy. The reference counts are equal, so no word of the shared list
+/// differs: only the pairing of the list with itself through `\IntrSrc`,
+/// whose entry neither path wrote, shows it. The full walk finds it; the
+/// restricted walk must not hold where the full one does not
+/// (FLASHTEX_BOXMEMO_WALK_CHECK=1 aborts if it does).
+#[test]
+fn a_swapped_share_is_found_by_the_restricted_walk_too() {
+    let d = scratch("swap-share");
+    std::fs::write(
+        d.join("t.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\IntrSrc{abc}\n\
+         \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\let\\IntrR\\IntrSrc\\gdef\\IntrS{abc}\\endgroup}\n\
+         \\share{x}\\share{x}\\share{x}\\share{x}\\message{[\\meaning\\IntrR|\\meaning\\IntrS]}\\end\n",
+    )
+    .unwrap();
+    let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
+    let go = |every: &str| {
+        let stats = d.join(format!("stats-{every}.txt"));
+        let _ = std::fs::remove_file(&stats);
+        let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+            .args(["-ini", "-etex", "\\input t"])
+            .current_dir(&d)
+            .env("FLASHTEX_POOL", &pool)
+            .env("FLASHTEX_RESOLVER", "cwd")
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FORCE_SOURCE_DATE", "1")
+            .env("FLASHTEX_BOXMEMO", "verify")
+            .env("FLASHTEX_BOXMEMO_NAMES", "share")
+            .env("FLASHTEX_BOXMEMO_STATS", &stats)
+            .env("FLASHTEX_BOXMEMO_FAULT", "swap-share")
+            .env("FLASHTEX_BOXMEMO_FULL_EVERY", every)
+            .env("FLASHTEX_BOXMEMO_WALK_CHECK", "1")
+            .env_remove("FLASHTEX_BOXMEMO_VERIFY_FAIL")
+            .stdin(Stdio::null())
+            .output()
+            .expect("run flashtex-initex");
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        (
+            out.status.code(),
+            err,
+            std::fs::read_to_string(&stats).unwrap_or_default(),
+        )
+    };
+    // the full walk alone (as before #2211) finds the swap
+    let (code, err, s) = go("1");
+    assert!(stat(&s, "full_verified") >= 1, "{code:?} {err}\n{s}");
+    assert!(
+        stat(&s, "full_differences") >= 1,
+        "the full walk missed the swap: {err}\n{s}"
+    );
+    // the restricted walk on every call but the first (whose replay the
+    // fault leaves whole): it meets the swap, and must not hold where the
+    // full walk does not
+    let (code, err, s) = go("1000000000");
+    assert!(!err.contains("WALK_CHECK"), "{code:?}: {err}");
+    assert_eq!(code, Some(0), "{err}");
+    assert!(stat(&s, "full_verified") >= 2, "{err}\n{s}");
+    assert!(
+        stat(&s, "full_differences") >= 1,
+        "the swap went unreported: {err}\n{s}"
+    );
+}
