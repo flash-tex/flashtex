@@ -52,6 +52,13 @@ pub trait Metrics {
 #[derive(Clone, Debug)]
 pub struct GState {
     pub ctm: Mat,
+    /// dvipdfmx's own CTM (pdf_dev's graphics state): only what specials
+    /// tell it (`pdf:btrans`, `x:scale`, `x:rotate`, `pdf:bcontent`), not
+    /// the `cm` operators of literal PDF code, which dvipdfmx writes without
+    /// reading. Annotation rectangles go through it (`pdf_dev_set_rect`,
+    /// spc_pdfm.c's `set_rect_for_annot`), so a link inside `\rotatebox`
+    /// gets the rotated box's bounds and one inside a TikZ `cm` does not.
+    pub dev_ctm: Mat,
     pub fill: Col,
     pub stroke: Col,
     pub fill_alpha: f64,
@@ -81,6 +88,7 @@ impl GState {
     fn new(ctm: Mat) -> GState {
         GState {
             ctm,
+            dev_ctm: ctm,
             fill: Col::black(),
             stroke: Col::black(),
             fill_alpha: 1.0,
@@ -333,7 +341,7 @@ pub struct Builder<'a, M: Metrics> {
     pub metrics: &'a M,
     /// bp per DVI unit, as the fraction num/den: `mag` · 100 /
     /// (6578176 · 1000).
-    mag: i32,
+    pub mag: i32,
     pub r: Regs,
     pub stack: Vec<Regs>,
     pub font: Option<i32>,
@@ -377,6 +385,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
         marks: Vec<(u32, u32, u16)>,
     ) -> Result<Built, String> {
         let (w, h) = page_size(doc, bytes);
+        if page_no == 1 {
+            doc.check_gotos = config_flags(bytes) & 0x10 == 0;
+        }
         let mut b = Builder {
             doc,
             metrics,
@@ -398,6 +409,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let mut page = Stream::new(StreamKind::Page, page_no - 1, bh, Mat::IDENTITY);
         page.save();
         page.gs.ctm = Mat::translate(Fx(ORIGIN), h - Fx(ORIGIN));
+        page.gs.dev_ctm = page.gs.ctm;
         page.dl.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
         page.dl.width = clamp_i32(w.to_sp());
         page.dl.height = clamp_i32(h.to_sp());
@@ -453,22 +465,24 @@ impl<'a, M: Metrics> Builder<'a, M> {
         (x - tx, y - ty)
     }
 
+    /// User-space point (x, y) as dvipdfmx's own CTM takes it: less
+    /// `pdf:bcontent`'s origin (dvi.c's `compensation`), but not a form's
+    /// reference point, which dvipdfmx puts in the form's `/Matrix`.
+    pub fn dev_rel(&self, x: Fx, y: Fx) -> (Fx, Fx) {
+        let (tx, ty) = self
+            .cur_ref()
+            .coords
+            .last()
+            .copied()
+            .unwrap_or((Fx::ZERO, Fx::ZERO));
+        (x - tx, y - ty)
+    }
+
     /// The current point in stream space.
     pub fn stream_point(&self) -> (Fx, Fx) {
         let (x, y) = self.user_point();
         let (x, y) = self.rel(x, y);
         self.cur_ref().gs.ctm.apply(x, y)
-    }
-
-    /// The current point in page space without the transformations of
-    /// the specials (dvipdfmx's device coordinates): for link rectangles
-    /// and destinations.
-    fn device_point(&self, dx: i32, dy: i32) -> (Fx, Fx) {
-        let (x, y) = (
-            self.dvi_to_bp(self.r.h + dx),
-            -self.dvi_to_bp(self.r.v + dy),
-        );
-        (x + Fx(ORIGIN), self.page_height - Fx(ORIGIN) + y)
     }
 
     // ---- the XDV stream ---------------------------------------------------
@@ -820,9 +834,12 @@ impl<'a, M: Metrics> Builder<'a, M> {
                 let adv = l.advance(g) as f64 * sz * extend / upm;
                 let asc = l.ascent as f64 * sz / upm;
                 let desc = -(l.descent as f64) * sz / upm;
-                let (bx, by) = self.device_point(dx, dy);
-                let (bx, by) = (bx.to_f64(), by.to_f64());
-                self.expand_annot([bx, by - desc, bx + adv, by + asc]);
+                let (ux, uy) = (
+                    self.dvi_to_bp(self.r.h.wrapping_add(dx)),
+                    -self.dvi_to_bp(self.r.v.wrapping_add(dy)),
+                );
+                let r = self.dev_rect(ux, uy, rect_corners(0.0, -desc, adv, asc));
+                self.expand_annot(r);
             }
         }
     }
@@ -921,14 +938,44 @@ impl<'a, M: Metrics> Builder<'a, M> {
         if self.doc.tracking.is_none() {
             return;
         }
-        let (x, y) = self.device_point(dx, 0);
-        let (x, y) = (x.to_f64(), y.to_f64());
+        let (ux, uy) = (
+            self.dvi_to_bp(self.r.h.wrapping_add(dx)),
+            -self.dvi_to_bp(self.r.v),
+        );
         let w = self.dvi_to_bp(wd).to_f64();
         let h = self.dvi_to_bp(ht).to_f64();
         let d = self.dvi_to_bp(dp).to_f64();
-        let (x0, x1) = (x.min(x + w), x.max(x + w));
-        let (y0, y1) = ((y - d).min(y + h), (y - d).max(y + h));
-        self.expand_annot([x0, y0, x1, y1]);
+        let r = self.dev_rect(ux, uy, rect_corners(0.0, -d, w, h));
+        self.expand_annot(r);
+    }
+
+    /// The bounds in stream space (bp) of the quadrilateral whose corners
+    /// are `offs` (bp) from user-space point (`ux`, `uy`), through
+    /// dvipdfmx's own CTM ([`GState::dev_ctm`]): `pdf_dev_set_rect` and
+    /// `set_rect_for_annot`, which transform the four corners and take the
+    /// least and greatest of each coordinate.
+    pub fn dev_rect(&self, ux: Fx, uy: Fx, offs: [(f64, f64); 4]) -> [f64; 4] {
+        let (rx, ry) = self.dev_rel(ux, uy);
+        let m = self.cur_ref().gs.dev_ctm;
+        let (ox, oy) = m.apply(rx, ry);
+        let (ox, oy) = (ox.to_f64(), oy.to_f64());
+        let [a, b, c, d, _, _] = m.to_f64();
+        let linear = a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0;
+        let mut r = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for (dx, dy) in offs {
+            let (x, y) = if linear {
+                (ox + dx, oy + dy)
+            } else {
+                (ox + a * dx + c * dy, oy + b * dx + d * dy)
+            };
+            r = [r[0].min(x), r[1].min(y), r[2].max(x), r[3].max(y)];
+        }
+        r
     }
 
     /// A move to the right by `d` (DVI's `right`, `w` and `x`): dvipdfmx's
@@ -1000,7 +1047,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
         }
     }
 
-    /// Emit the part of the tracked link drawn so far on this page.
+    /// Emit the part of the tracked link drawn so far on this page. The
+    /// first part of a `pdf:bann @name` is the named object (with what
+    /// `pdf:put @name` has added since), and the later parts copies of its
+    /// dictionary as it is then (dvipdfmx's `pdf_doc_break_annot`).
     pub fn break_annot(&mut self) {
         let Some(t) = self.doc.tracking.as_mut() else {
             return;
@@ -1008,12 +1058,56 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let Some(r) = t.rect.take() else {
             return;
         };
-        let dict = t.dict.clone();
-        self.add_link(dict, r);
+        let name = t.name.take();
+        let mut dict = t.dict.clone();
+        if let Some(n) = &name {
+            if let Some(super::doc::Named::Obj(Obj::Dict(d))) = self.doc.named.get(n) {
+                dict = d.clone();
+            }
+            if let Some(t) = self.doc.tracking.as_mut() {
+                t.dict = dict.clone();
+            }
+        }
+        // `pdf_doc_add_annot(…, !broken)`: the first part's destination is
+        // renamed; the later parts share it only through `/A`
+        let first = self.doc.tracking.as_ref().is_some_and(|t| !t.broken);
+        let goto = if first {
+            let g = self.doc.add_goto(&dict);
+            if let Some(t) = self.doc.tracking.as_mut() {
+                t.broken = true;
+                t.goto = g.clone().filter(|g| g.in_action);
+            }
+            g
+        } else {
+            self.doc.tracking.as_ref().and_then(|t| t.goto.clone())
+        };
+        self.add_annot(dict, r, name, goto);
     }
 
-    /// A link annotation with rectangle `r` (stream space, bp).
-    pub fn add_link(&mut self, dict: super::pdfobj::Dict, r: [f64; 4]) {
+    /// An annotation with rectangle `r` (stream space, bp) and its
+    /// destination's new name ([`Doc::add_goto`]); with a name, it is that
+    /// named object (`pdf:ann @name`), its `/Rect` (and new destination
+    /// name) set in it as dvipdfmx's `pdf_doc_add_annot` sets them.
+    pub fn add_annot(
+        &mut self,
+        dict: super::pdfobj::Dict,
+        r: [f64; 4],
+        name: Option<Vec<u8>>,
+        goto: Option<super::doc::Goto>,
+    ) {
+        if let Some(n) = &name {
+            let mut d = dict.clone();
+            if let Some(g) = &goto {
+                g.apply(&mut d);
+            }
+            d.set(
+                b"Rect",
+                Obj::Array(r.iter().map(|v| Obj::num(*v, 3)).collect()),
+            );
+            self.doc
+                .named
+                .insert(n.clone(), super::doc::Named::Obj(Obj::Dict(d)));
+        }
         let page = self.streams.first_mut().expect("the page");
         let (l, t) = page.to_page(fx(r[0]), fx(r[3]));
         let (rr, b) = page.to_page(fx(r[2]), fx(r[1]));
@@ -1034,6 +1128,8 @@ impl<'a, M: Metrics> Builder<'a, M> {
             dict,
             rect: r,
             link: link_index,
+            goto,
+            name,
         });
     }
 
@@ -1226,6 +1322,63 @@ fn link_action(d: &super::pdfobj::Dict) -> (LinkKind, Vec<u8>, Vec<u8>) {
     }
 }
 
+/// The `-C` flags the `dvipdfmx:config C …` specials of a page give, from
+/// TeX Live's default 0 (`dvipdfmx.cfg` has no `C`): dvipdfmx.c's
+/// `read_config_special` as its command line, `strtol(…, 0)`, a negative
+/// value replacing the flags and another or-ed in. dvipdfmx reads the first
+/// page's before it opens the document, so they decide `check_gotos`.
+fn config_flags(bytes: &[u8]) -> i64 {
+    let mut flags: i64 = 0;
+    for s in super::special::scan_specials(bytes) {
+        let mut p = super::pdfobj::Parser::new(&s);
+        let Some(w) = p.word() else { continue };
+        let rest = match w {
+            b"dvipdfmx:config" => p.rest(),
+            b"dvipdfmx:" if p.keyword(b"config") => p.rest(),
+            _ => continue,
+        };
+        let mut q = super::pdfobj::Parser::new(rest);
+        if q.word() != Some(b"C") {
+            continue;
+        }
+        let Some(v) = q.word().and_then(strtol0) else {
+            continue;
+        };
+        if v < 0 {
+            flags = -v;
+        } else {
+            flags |= v;
+        }
+    }
+    flags
+}
+
+/// C's `strtol(s, NULL, 0)` of a whole word: an optional sign, then `0x`
+/// hexadecimal, `0` octal or decimal digits (the leading digits only).
+fn strtol0(w: &[u8]) -> Option<i64> {
+    let s = std::str::from_utf8(w).ok()?;
+    let (neg, s) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let (radix, digits) = if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        (16, h)
+    } else if s.len() > 1 && s.starts_with('0') {
+        (8, &s[1..])
+    } else {
+        (10, s)
+    };
+    let end = digits
+        .find(|c: char| !c.is_digit(radix))
+        .unwrap_or(digits.len());
+    if end == 0 {
+        return (radix == 8).then_some(0);
+    }
+    let v = i64::from_str_radix(&digits[..end], radix).ok()?;
+    Some(if neg { -v } else { v })
+}
+
 /// The page's size: the last `pdf:pagesize`/`papersize` special of the
 /// page (dvipdfmx scans a page's specials for it before the page), else
 /// the size an earlier page set, else the default paper.
@@ -1241,6 +1394,12 @@ fn page_size(doc: &mut Doc, bytes: &[u8]) -> (Fx, Fx) {
     doc.paper
         .or(doc.default_paper)
         .unwrap_or((Fx(612 * ONE), Fx(792 * ONE)))
+}
+
+/// The corners of a box `w` wide from `x` and from `y0` up to `y1` (bp
+/// offsets), in `pdf_dev_set_rect`'s order.
+pub fn rect_corners(x: f64, y0: f64, w: f64, y1: f64) -> [(f64, f64); 4] {
+    [(x, y0), (x + w, y0), (x + w, y1), (x, y1)]
 }
 
 #[cfg(test)]
@@ -1472,5 +1631,162 @@ pub(crate) mod tests {
         let bp = 72.0 / 72.27;
         assert!((r[2] - r[0] - 15.0 * bp).abs() < 2e-5, "{r:?}");
         assert!((r[3] - r[1] - 8.0 * bp).abs() < 2e-5, "{r:?}");
+    }
+
+    /// Annotation rectangles go through dvipdfmx's own CTM, which follows
+    /// `x:rotate`, `pdf:btrans` and `pdf:bcontent` but not the `cm` of
+    /// literal PDF code; `pdf:ann @name` makes the annotation that named
+    /// object. The rectangles are TeX Live 2026's xetex and xdvipdfmx's, as
+    /// written (3 decimals), for a plain XeTeX file with `pdf:pagesize
+    /// width 614.295pt height 794.96999pt` and each special in its own
+    /// `\hbox{\kern30pt …}` line (baselines 10, 22, 46 and 58 pt down):
+    /// `x:rotate 90` around `pdf:ann width 20pt height 10pt depth 2pt`; the
+    /// same after `pdf:literal 1 0 0 1 50 0 cm`; `pdf:btrans rotate 30`
+    /// around `pdf:ann bbox 0 -2 20 10`; and, inside `pdf:bcontent`, the
+    /// named `@w`, which has `pdf:put @w`'s keys and is the object `@w`
+    /// names.
+    #[test]
+    fn annotation_rects_follow_dvipdfmx_ctm() {
+        let mut doc = Doc::new();
+        let pt = |x: f64| (x * 65536.0).round() as i32;
+        let ann = |name: &str| {
+            special(&format!(
+                "pdf:ann width 20pt height 10pt depth 2pt <</Subtype/Link/A<</S/URI/URI({name})>>>>"
+            ))
+        };
+        // one line: push, down to its baseline, the kern, the specials, pop
+        let line = |down: f64, specials: &[Vec<u8>]| {
+            let mut b = vec![141, 160];
+            b.extend_from_slice(&pt(down).to_be_bytes());
+            b.extend(right4(pt(30.0)));
+            for s in specials {
+                b.extend_from_slice(s);
+            }
+            b.push(142);
+            b
+        };
+        let mut body = special("pdf:pagesize width 614.295pt height 794.96999pt");
+        body.extend(line(
+            10.0,
+            &[
+                special("x:gsave"),
+                special("x:rotate 90"),
+                ann("rot"),
+                special("x:grestore"),
+            ],
+        ));
+        body.extend(line(
+            22.0,
+            &[
+                special("pdf:literal 1 0 0 1 50 0 cm"),
+                ann("lit"),
+                special("pdf:literal -1 0 0 -1 50 0 cm"),
+            ],
+        ));
+        body.extend(line(
+            46.0,
+            &[
+                special("pdf:btrans rotate 30"),
+                special("pdf:ann bbox 0 -2 20 10 <</Subtype/Link/A<</S/URI/URI(bbox)>>>>"),
+                special("pdf:etrans"),
+            ],
+        ));
+        body.extend(line(
+            58.0,
+            &[
+                special("pdf:bcontent"),
+                special(
+                    "pdf:ann @w width 20pt height 10pt depth 2pt <</Subtype/Widget/FT/Tx/T(w)>>",
+                ),
+                special("pdf:econtent"),
+                special("pdf:put @w <</V(filled)>>"),
+            ],
+        ));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let a = &built.sup.annots;
+        assert_eq!(a.len(), 4);
+        // xdvipdfmx's PDF (measured)
+        let want = [
+            [91.925, 710.037, 103.88, 729.963],
+            [101.888, 696.09, 121.813, 708.045],
+            [96.888, 672.44, 120.208, 692.832],
+            [101.888, 660.224, 121.813, 672.179],
+        ];
+        for (got, want) in a.iter().zip(want) {
+            let r = got.rect.map(|v| (v * 1000.0).round() / 1000.0);
+            assert!(
+                r.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-9),
+                "{r:?}, xdvipdfmx {want:?}"
+            );
+        }
+        assert_eq!(a[3].name.as_deref(), Some(&b"w"[..]));
+        let Some(super::super::doc::Named::Obj(Obj::Dict(d))) = doc.named.get(&b"w"[..]) else {
+            panic!("@w is not a dictionary");
+        };
+        assert!(d.get(b"Rect").is_some() && d.get(b"V").is_some(), "{d:?}");
+        assert!(a[1].dict.get(b"Type").is_none());
+    }
+
+    /// A `pdf:bann` while a link is open is ignored (spc_pdfm.c: "Can't
+    /// begin an annotation when one is pending."): the first link goes on
+    /// and the `pdf:eann` ends it (measured, the plain XeTeX file of
+    /// `annotation_rects_follow_dvipdfmx_ctm`: one GoTo link over both
+    /// letters).
+    #[test]
+    fn a_link_begun_inside_a_link_is_ignored() {
+        let mut doc = Doc::new();
+        let pt = |x: f64| (x * 65536.0).round() as i32;
+        let mut body = special("dvipdfmx:catch_phantom true height 8pt");
+        body.extend(link("first"));
+        body.extend(right4(pt(10.0)));
+        body.extend(link("second"));
+        body.extend(right4(pt(10.0)));
+        body.extend(special("pdf:eann"));
+        body.extend(right4(pt(10.0)));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let got = links(&built);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, "first");
+        let bp = 72.0 / 72.27;
+        assert!(
+            (got[0].1[2] - got[0].1[0] - 20.0 * bp).abs() < 2e-5,
+            "{got:?}"
+        );
+    }
+
+    /// `pdf:bcolor`/`pdf:scolor` with `fill` and `stroke` (spc_pdfm.c),
+    /// measured with TeX Live 2026's xetex and xdvipdfmx (plain XeTeX,
+    /// rules and stroked lines): `fill [1 0 0] stroke [0 0 1]` is `0 0 1 RG
+    /// 1 0 0 rg`; `stroke [0 1 0]` alone keeps the fill in effect (black);
+    /// `scolor fill 0.7` after `bcolor [0.2]` keeps the 0.2 stroke; both
+    /// keywords in either order; `fill` with no colour is an error and
+    /// pushes nothing.
+    #[test]
+    fn colours_by_fill_and_stroke_keywords() {
+        let mut doc = Doc::new();
+        let run = |doc: &mut Doc, n: u32, specials: &[&str]| {
+            let mut body = Vec::new();
+            for s in specials {
+                body.extend(special(s));
+            }
+            Builder::page(doc, &NoTfm, 1000, n, &page_bytes(&body)).unwrap();
+            doc.colors.last().map(|(f, s)| (f.0.clone(), s.0.clone()))
+        };
+        let c = |f: &[f64], s: &[f64]| Some((f.to_vec(), s.to_vec()));
+        let got = run(&mut doc, 1, &["pdf:bcolor fill [1 0 0] stroke [0 0 1]"]);
+        assert_eq!(got, c(&[1.0, 0.0, 0.0], &[0.0, 0.0, 1.0]));
+        let got = run(&mut doc, 2, &["pdf:ecolor", "pdf:bcolor stroke [0 1 0]"]);
+        assert_eq!(got, c(&[0.0], &[0.0, 1.0, 0.0]));
+        let got = run(
+            &mut doc,
+            3,
+            &["pdf:ecolor", "pdf:bcolor [0.2]", "pdf:scolor fill 0.7"],
+        );
+        assert_eq!(got, c(&[0.7], &[0.2]));
+        let got = run(&mut doc, 4, &["pdf:scolor stroke [1 0 1] fill [0 1 1]"]);
+        assert_eq!(got, c(&[0.0, 1.0, 1.0], &[1.0, 0.0, 1.0]));
+        let depth = doc.colors.len();
+        run(&mut doc, 5, &["pdf:bcolor fill"]);
+        assert_eq!(doc.colors.len(), depth, "pushed nothing");
     }
 }

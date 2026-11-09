@@ -2545,7 +2545,7 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
                 let base = self.o.l.eqtb;
                 // (entries are whole words inside a chunk: the region and
                 // the chunks are 8-aligned)
-                debug_assert!(base % 8 == 0 && CHUNK_BYTES % 8 == 0);
+                debug_assert!(base.is_multiple_of(8) && CHUNK_BYTES.is_multiple_of(8));
                 let mut ps = vec![];
                 for (i, &x) in w.iter().enumerate() {
                     let mut x = x;

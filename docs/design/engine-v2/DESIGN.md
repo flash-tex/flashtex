@@ -1072,6 +1072,17 @@ Rules:
     - The app latency rows (§1.2) are T7's ten gating runs (§12 P4).
     - The S6 app rulings (E2, E3, E5/RQ7, RQ20) are in §13 (2026-10-21).
 - **Multi-window and multi-project (owner, 2026-09-30, decision 7):** after switch-over, in P6.
+  - *Status 2026-11-01 (lane MULTI-WINDOW; #1926, #1928 and this PR):* every window is one
+    project with its own model, engine session and `flashtex-host` (one host per project).
+    A document already open comes forward instead of opening twice. The app reopens its
+    windows at launch. While the front window compiles, the hosts behind it run at Darwin
+    background priority. A restore starts the front window's host first and the others
+    after its first DONE. Measured on an M5 Pro: about 0.6 GB per host and 0.23 GB of app
+    per 1,000-page project; no main-thread turn over 16 ms while typing with three windows open.
+    Restoring 4 × 1,000-page projects at a load average of about 130, the front window's
+    DONE came at 40.8 s (before this change: 47.0 and 42.6 s) and the last window's at
+    76.9 s (before: 50.5 and 46.7 s). Those figures were measured under load (load average
+    123–140 from other agents' work throughout); the gain on an idle Mac is not measured.
 - **New:** `tools/web2rust`, `crates/flashtex-engine`, the incremental system,
   `display-list-v3`, the socket protocol, `scripts/gate.sh`, and the CI tiers and
   runners.
