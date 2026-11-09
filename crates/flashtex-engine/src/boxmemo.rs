@@ -2455,8 +2455,10 @@ impl Globals {
         }
     }
 
-    /// What font `f` is: its name, area, sizes and check sum, and its
-    /// characters' metrics and its parameters as `font_info` holds them.
+    /// What font `f` is: its name, area, sizes and check sum, the
+    /// `\hyphenchar` and `\skewchar` it took from the defaults at its load,
+    /// and its characters' metrics and its parameters as `font_info` holds
+    /// them.
     fn bm_font_id(&self, f: i32) -> u64 {
         use std::hash::Hasher;
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -2475,6 +2477,11 @@ impl Globals {
         h.write_i32(self.font_size[fu]);
         h.write_i32(self.font_dsize[fu]);
         h.write_u32(self.font_check[fu].0);
+        // what a load takes from the state, not the file: `read_font_info`
+        // sets these from `\defaulthyphenchar` and `\defaultskewchar` (lane
+        // S-2272, AUDIT-VF's note 2 on #2272)
+        h.write_i32(self.hyphen_char[fu]);
+        h.write_i32(self.skew_char[fu]);
         let (bc, ec, np) = (self.font_bc[fu], self.font_ec[fu], self.font_params[fu]);
         h.write_i32(bc);
         h.write_i32(ec);
