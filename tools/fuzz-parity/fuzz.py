@@ -49,6 +49,10 @@ FSIZE_LIMIT = 64 * 1024 * 1024
 NEUTRAL = ("equal", "both-hang", "both-signal")
 DIGITS = re.compile(r"\d+")
 DOC_MTIME = 1000000000  # 2001-09-09T01:46:40Z
+# kpathsea's mktex scripts off for both engines: a missing TFM or PK would
+# run METAFONT, write missfont.log and the TeX tree, and interleave a child's
+# output with the engine's at a point that depends on stdout buffering.
+NO_MKTEX = {"MKTEXTFM": "0", "MKTEXPK": "0", "MKTEXMF": "0", "MKTEXTEX": "0"}
 # kpathsea's refusal under openin_any/openout_any, which it writes to stderr
 # as one "\n<program>: Not ... check).\n" (tex-file.c). The capture merges
 # stderr into stdout, so where it lands depends on when each engine last
@@ -78,7 +82,8 @@ def run_one(engine, text, workdir, timeout, env=None, fmt=None):
     # One modification time for both engines' copies (\pdffilemoddate).
     os.utime(tex, (DOC_MTIME, DOC_MTIME))
     try:
-        cap = lockstep.capture("doc.tex", engine, workdir, fmt=fmt, extra_env=env,
+        cap = lockstep.capture("doc.tex", engine, workdir, fmt=fmt,
+                               extra_env=dict(NO_MKTEX, **(env or {})),
                                timeout=timeout, halt_on_error=False)
     except subprocess.TimeoutExpired:
         return None

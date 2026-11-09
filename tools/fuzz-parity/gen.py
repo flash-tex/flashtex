@@ -1015,10 +1015,39 @@ class G:
             "\\char\"E9\\'e\\\"o\\ss{}\\c{c}\\textquotedblleft x\\textquotedblright\\texteuro",
         ])
 
+    def web2cch(self):
+        """What changes/web2c.ch re-specifies from tex.ch: more than 256 fonts
+        (16-bit font numbers, DVI fnt_def2), repeated \\hyphenation words,
+        fonts at 2048pt or more, TFM names past 255 characters, \\mkern and
+        \\mskip with non-mu units, many fonts in one DVI page."""
+        n = self.n(250, 300)
+        return self.pick([
+            "{\\count1=0 \\loop\\advance\\count1 1 \\expandafter\\font\\csname fzf\\the\\count1\\endcsname=cmr10 at \\the\\count1 sp"
+            "\\ifnum\\count1<%d \\repeat \\setbox3\\hbox{\\csname fzf%d\\endcsname a\\csname fzf%d\\endcsname b}\\showbox3 \\shipout\\box3}"
+            % (n, self.n(1, n), self.n(1, n)),
+            "{\\count1=0 \\loop\\advance\\count1 1 \\expandafter\\font\\csname fzg\\the\\count1\\endcsname=cmr10 scaled %d"
+            "\\csname fzg\\the\\count1\\endcsname x\\ifnum\\count1<%d \\repeat\\par}" % (self.n(500, 3000), self.n(5, 40)),
+            "\\hyphenation{%s %s %s}\\showhyphens{%s}" % ("fu-zz-word", "fuz-zword", "f-uzzword", "fuzzword"),
+            "\\hyphenation{%s}\\hyphenation{%s}\\showhyphens{%s %s}" % (
+                self.pick(["ab-cd-ef", "abc-def"]), self.pick(["a-bcdef", "abcd-ef", "ab-cd-ef"]), "abcdef", "abcdefs"),
+            "{\\lccode`\\^^e9=`\\^^e9 \\hyphenation{caf-^^e9s}\\showhyphens{caf^^e9s}}",
+            "{\\uchyph=%d \\hyphenation{FUZZ-WORD}\\showhyphens{Fuzzword FUZZWORD fuzzword}}" % self.n(-1, 1),
+            "\\font\\fzbig=cmr10 at %s \\fzbig x" % self.pick(["2048pt", "2047.99998pt", "4095pt", "-1pt", "0pt", "16383.99999pt"]),
+            "\\font\\fzbig=cmr10 scaled %d \\fzbig x" % self.pick([32768, 32769, 0, -1, 204800, 1]),
+            "\\font\\fzlong=%s \\fzlong x" % ("a" * self.pick([254, 255, 256, 300])),
+            "$\\mkern %s \\mskip %s x$" % (self.pick(["3pt", "1em", "-2mu", "0.5\\hsize"]), self.pick(["1pt plus 1fil", "2mu minus 1mu", "\\baselineskip"])),
+            "$\\mskip\\thinmuskip\\mkern\\dimen0 \\mskip\\skip0 x$",
+            "{\\count1=0 \\loop\\advance\\count1 1 \\expandafter\\font\\csname fzh\\the\\count1\\endcsname=cmr%s at %dpt"
+            "\\ifnum\\count1<%d \\repeat \\message{\\fontname\\csname fzh%d\\endcsname}}"
+            % (self.pick(["10", "7", "5"]), self.n(1, 30), self.n(257, 300), self.n(1, 256)),
+            "\\showhyphens{%s}" % " ".join(self.pick(WORDS) for _ in range(self.n(3, 12))),
+            "{\\language=%d \\showhyphens{%s}}" % (self.n(0, 3), " ".join(self.pick(WORDS) for _ in range(self.n(3, 8)))),
+        ])
+
     def chunk(self):
         if self.latex and self.chance(0.4):
             return self.latexstuff()
-        k = self.n(0, 145)
+        k = self.n(0, 150)
         if k < 22:
             return self.paragraph()
         if k < 28:
@@ -1061,6 +1090,8 @@ class G:
             return self.files()
         if k < 145:
             return self.rawbytes()
+        if k < 150:
+            return self.web2cch()
         return "\\setbox%d\\hbox{%s}" % (self.n(10, 12), self.inline(2))
 
     def hyph_setting(self):

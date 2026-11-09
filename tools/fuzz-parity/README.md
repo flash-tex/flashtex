@@ -40,7 +40,8 @@ Print one document: `python3 tools/fuzz-parity/gen.py 42`.
 Both engines run each document through the lockstep harness's
 `capture()` (`tools/lockstep/run.py`): `-ini -etex`, nonstopmode without
 `-halt-on-error` (so error recovery is compared too), max_print_line 1000,
-error_line 254, `SOURCE_DATE_EPOCH=0`, `FORCE_SOURCE_DATE=1`, the same
+error_line 254, `SOURCE_DATE_EPOCH=0`, `FORCE_SOURCE_DATE=1`, kpathsea's mktex scripts
+off (`MKTEXTFM=0` & co.: a missing font is an error, not a METAFONT run), the same
 `pdftex` argv[0], and shell escape off (`-cnf-line=shell_escape=f`). Each
 engine gets its own directory. A document starts with
 `\input plain` in INITEX (so `\patterns` are still allowed), sets
@@ -143,6 +144,10 @@ independent chunks, each balanced on its own:
   enumitem, amsmath, siunitx, soul/ulem, framed boxes, pdfpages,
   multicols, babel languages, 8-bit input; the preamble loads 0-4 of
   37 packages;
+- what `changes/web2c.ch` re-specifies (`web2cch`): more than 256
+  fonts (16-bit font numbers, DVI `fnt_def2`), repeated `\hyphenation`
+  words, fonts at 2048pt or more, TFM names past 255 characters, `\mkern`
+  and `\mskip` with non-mu units;
 - the PDF writer (`pdfwriter`): object streams and files, reserved and
   reused object numbers, annotations, links of every kind, destinations,
   outlines, threads, the info/trailer/version keys, compression levels,
