@@ -596,6 +596,91 @@ fn calls_in_math_groups_compare_their_save_stack() {
 }
 
 #[test]
+fn negative_globaldefs_and_a_pending_afterassignment_are_misses() {
+    // K6 (BOX-MEMO.md §3): `\globaldefs<0` makes the call's `\global`
+    // assignments local (tex.web §1214), like `\globaldefs>0` makes its
+    // local ones global; and a pending `\afterassignment` fires inside the
+    // call on the normal path (here after its `\setbox`). Each offer is a
+    // miss, and the logs agree
+    let s = check(
+        "k6",
+        &[
+            PRELUDE,
+            "\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\
+             \\w=1pt \\h=1pt {\\globaldefs=-1 \\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show}\\show\
+             \\def\\after{\\message{[after]}}\\n=0 \\afterassignment\\after\\measure{5pt}\\show\
+             \\n=0 \\measure{5pt}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "Preconditions"), 3, "{s}");
+    assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
+#[test]
+fn the_space_factor_at_a_draw_call_is_part_of_the_key() {
+    // the context's `aux` (BOX-MEMO.md §3): a draw call whose first space
+    // is typeset at the space factor of the moment (`\xspaceskip` from
+    // 2000 on, tex.web §1043) appends other glue at another space factor
+    let s = check(
+        "aux",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\spaceskip=1pt \\xspaceskip=5pt\n\
+         \\def\\space{ }\\def\\measure#1{\\begingroup\\space\\vrule width #1\\endgroup}\n\
+         \\def\\one#1{\\setbox1\\hbox{\\vrule width 1pt\\spacefactor=#1 \\measure{2pt}}\\showbox1 }\n\
+         \\one{1000}\\one{1000}\\one{1000}\\one{2000}\\one{2000}\\one{1000}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn hyphenation_exceptions_are_part_of_the_key() {
+    // K5's `bm_hyph_version` (BOX-MEMO.md §3): a `\hyphenation` between
+    // two calls that break the same paragraph gives the second call other
+    // break points, here 1 line before and 4 after
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "hyph",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\font\\f=cmr10 \\hyphenchar\\f=45 \\pretolerance=-1 \\tolerance=10000 \\hyphenpenalty=0\n\
+         \\hbadness=10000 \\vbadness=10000 \\hfuzz=16383pt \\vfuzz=16383pt \\parindent=0pt \\baselineskip=12pt\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\hsize=12pt \\f\\noindent\\hskip0pt #1\\par}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1]}}\n\
+         \\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\n\
+         \\hyphenation{ab-cd-ef-gh}\\measure{abcdefgh}\\show\\measure{abcdefgh}\\show\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+/// e-TeX's penalty arrays are K2 values kept by content, not by pointer
+/// (BOX-MEMO.md §3): `\clubpenalties` set three times, the third array is
+/// allocated where the first one was freed, and a call that breaks a
+/// paragraph reads its other penalty. (Not `\interlinepenalties`: e-TeX's
+/// `normal_paragraph` resets it at the paragraph's end, a write that
+/// abandons the recording.)
+#[test]
+fn etex_penalty_arrays_are_compared_by_content() {
+    let s = check(
+        "etexpen",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\hsize=10pt \\tolerance=10000 \\hbadness=10000 \
+         \\noindent\\hbox to 10pt{}\\hskip 0pt\\hbox to #1{}\\par\\setbox2\\lastbox\\unskip\
+         \\global\\count1=\\lastpenalty}\\endgroup}\n\
+         \\def\\show{\\message{[\\the\\count1]}}\n\
+         \\clubpenalties=1 100 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         \\clubpenalties=1 5000 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         \\clubpenalties=1 7000 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         {\\clubpenalties=1 300 \\measure{10pt}\\show\\measure{10pt}\\show}\n\
+         {\\clubpenalties=1 400 \\measure{10pt}\\show\\measure{10pt}\\show}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
 fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
     // (lane REVIEW, #1977) the call's body skips `\foo` in a false
     // conditional, read in place (changes/throughput.ch [4]); then `\foo`

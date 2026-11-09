@@ -7382,3 +7382,112 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// One edit whose changed bytes run from a comment on page 1 to a word on
+/// page 8, of the same length: the pages between are equal, but the old
+/// run read the old bytes after them. The run converges only after the
+/// last changed byte (DESIGN.md §5.3, `Edit::old_end`), so the word is the
+/// new one.
+#[test]
+fn an_edit_from_one_page_to_another_converges_after_its_end() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("conv-edit-end");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = lines_doc("", 120, &[(3, "% note A")]);
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let edited = doc.replacen("% note A", "% note B", 1).replacen(
+        "Paragraph 100 with the word lorem",
+        "Paragraph 100 with the word lorex",
+        1,
+    );
+    assert_eq!(edited.len(), doc.len());
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit from page 1 to page 8",
+    );
+    assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
+
+/// The first page checkpoint after a lookup whose answer changed, with
+/// that lookup the last one before it, has consumed the lookup and is no
+/// restart point: `extra-probe.tex` appears, and nothing else changes. The
+/// run restarts before the `\openin` (one lookup; LaTeX's `\IfFileExists`
+/// makes more), and its page says FOUND.
+#[test]
+fn a_checkpoint_just_after_a_changed_lookup_is_no_restart_point() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("rs-after-lookup");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for i in 0..120 {
+        doc.push_str(&para(i, "lorem"));
+        if i == 40 {
+            doc.push_str(
+                "\\openin5=extra-probe.tex \\ifeof5 MISSING\\else FOUND\\closein5\\fi\n\n",
+            );
+        }
+    }
+    doc.push_str("\\end{document}\n");
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("extra-probe.tex", "The extra file.\n")],
+        "a file a page looks for appears",
+    );
+    std::fs::remove_file(dir.join("extra-probe.tex")).unwrap();
+    compile_and_check(&e, &mut h, &dir, &[], "and goes again");
+}
+
+/// A file `\input` twice, text appended to it: the first reading, closed
+/// at the file's old end, read that end, so a checkpoint in the second
+/// reading is no restart point (review of #1551). The run restarts before
+/// the first reading, and both have the new text.
+#[test]
+fn an_earlier_reading_closed_at_the_old_end_saw_the_appended_text() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("rs-closed-at-end");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = "\\documentclass{article}\n\\begin{document}\n\\input{chap}\n\n\
+               \\input{chap}\n\n\\end{document}\n";
+    let chap: String = (0..60).map(|i| para(i, "lorem")).collect();
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", doc), ("chap.tex", &chap)],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("chap.tex", &format!("{chap}Paragraph appended.\n"))],
+        "text appended to a file read twice",
+    );
+}

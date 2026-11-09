@@ -9229,4 +9229,31 @@ mod tests {
             }
         }
     }
+
+    /// `read_through` (review of #1551): a reader at the old end of a file
+    /// whose last byte was not `\n`, or just after an `\r`, has seen one
+    /// byte more (text appended there extends its line); elsewhere, the
+    /// bytes before its offset.
+    #[test]
+    fn read_through_counts_the_byte_a_line_end_peeked_at() {
+        use super::{read_through, Edit};
+        let e = |prefix, old_mid, new_mid| Edit {
+            path: "t.tex".into(),
+            prefix,
+            old_mid,
+            new_mid,
+        };
+        // "ab\ncd" with "EF" appended: a reader at the old end
+        let now = b"ab\ncdEF";
+        assert_eq!(read_through(5, &e(5, 0, 2), Some(now)), 6);
+        assert_eq!(read_through(5, &e(5, 0, 2), None), 6);
+        // after a "\n" before the end: what is before it
+        assert_eq!(read_through(3, &e(5, 0, 2), Some(now)), 3);
+        // "ab\ncd\n" with "EF" appended: the last line had ended
+        assert_eq!(read_through(6, &e(6, 0, 2), Some(b"ab\ncd\nEF")), 6);
+        // just after an "\r": the byte after it was peeked at
+        assert_eq!(read_through(3, &e(4, 1, 1), Some(b"ab\rcX")), 4);
+        // past the change: as it is
+        assert_eq!(read_through(9, &e(4, 1, 1), Some(b"ab\rcX")), 9);
+    }
 }
