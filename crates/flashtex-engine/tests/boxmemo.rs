@@ -499,13 +499,19 @@ fn calls_in_math_groups_compare_their_save_stack() {
 
 /// #2211's review (REVIEW-C2 M1): a replay that swaps which control
 /// sequence shares which of two equal lists. Normal path: `\IntrR` shares
-/// `\IntrX`'s list, `\IntrS` `\IntrY`'s; the replay
-/// (FLASHTEX_BOXMEMO_FAULT=swap-let): `\IntrR` shares `\IntrY`'s, `\IntrS`
-/// `\IntrX`'s. Both lists have two references in both states, so no word
-/// of either differs: only the pairing of each list with itself through
-/// `\IntrX` and `\IntrY`, entries neither path wrote, shows it. The full
-/// walk finds it; the restricted walk must not hold where the full one does
-/// not (FLASHTEX_BOXMEMO_WALK_CHECK=1 aborts if it does).
+/// `\IntrSrcX`'s list, `\IntrS` `\IntrSrcY`'s; the replay
+/// (FLASHTEX_BOXMEMO_FAULT=swap-let): `\IntrR` shares `\IntrSrcY`'s,
+/// `\IntrS` `\IntrSrcX`'s. Both lists have two references in both states,
+/// so no word of either differs: only the pairing of each list with itself
+/// through `\IntrSrcX` and `\IntrSrcY`, entries neither path wrote, shows
+/// it. The full walk finds it; the restricted walk must not hold where the
+/// full one does not (FLASHTEX_BOXMEMO_WALK_CHECK=1 aborts if it does).
+///
+/// The names keep the sources' `eqtb` entries out of the chunks the call
+/// writes: `\IntrR` and `\IntrS` hash to 3336 and 3337 (chunk 26 of 128
+/// entries), `\IntrSrcX` and `\IntrSrcY` to 6838 and 6839 (chunk 53).
+/// With sources next to `\IntrR` (`\IntrX`, 3342) their chunk is written,
+/// the restricted walk walks them, and the test cannot fail.
 ///
 /// (The review's own example, a share and a copy swapped, changes a
 /// reference count: the shared list has two, the copy one, so the
@@ -516,8 +522,8 @@ fn a_swapped_share_is_found_by_the_restricted_walk_too() {
     std::fs::write(
         d.join("t.tex"),
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
-         \\def\\IntrX{abc}\\def\\IntrY{abc}\n\
-         \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\let\\IntrR\\IntrX\\global\\let\\IntrS\\IntrY\\endgroup}\n\
+         \\def\\IntrSrcX{abc}\\def\\IntrSrcY{abc}\n\
+         \\def\\share#1{\\begingroup\\setbox0\\hbox{#1}\\global\\let\\IntrR\\IntrSrcX\\global\\let\\IntrS\\IntrSrcY\\endgroup}\n\
          \\share{x}\\share{x}\\share{x}\\share{x}\\message{[\\meaning\\IntrR|\\meaning\\IntrS]}\\end\n",
     )
     .unwrap();
@@ -566,5 +572,10 @@ fn a_swapped_share_is_found_by_the_restricted_walk_too() {
     assert!(
         stat(&s, "full_differences") >= 1,
         "the swap went unreported: {err}\n{s}"
+    );
+    // and it was the restricted walk that met the swap, and did not hold
+    assert!(
+        err.contains("the restricted walk did not hold"),
+        "{err}\n{s}"
     );
 }
