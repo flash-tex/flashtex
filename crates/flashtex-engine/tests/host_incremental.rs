@@ -5450,7 +5450,11 @@ fn a_replayed_call_needs_its_color_stack() {
             path: main.into(),
             offset: at,
             delete: if k % 2 == 0 { 0 } else { 1 },
-            insert: if k % 2 == 0 { "x".into() } else { String::new() },
+            insert: if k % 2 == 0 {
+                "x".into()
+            } else {
+                String::new()
+            },
         }];
         let o = compile(&mut c, &mut view, &r);
         assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
