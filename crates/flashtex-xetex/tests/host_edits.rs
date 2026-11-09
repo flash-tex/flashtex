@@ -369,6 +369,12 @@ fn check(name: &str, steps: &[Step]) {
             ));
         }
     }
+    // the final state against xelatex, when the run names one: the text of
+    // the pages (`pdftotext`), a belief about the engine, not the host, so
+    // reported and not failed
+    if let (Ok(xl), Some(Some(last))) = (std::env::var("AUDIT_XELATEX"), want.last()) {
+        eprintln!("{name}: xelatex: {}", against_xelatex(&dir, &xl, last));
+    }
     assert!(
         bad.is_empty(),
         "{name}: the resident host differs from runs of their own\n  {}\n(started: {said:?}; kept in {})",
@@ -377,6 +383,62 @@ fn check(name: &str, steps: &[Step]) {
     );
     eprintln!("{name}: {said:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// xelatex run on the project as the last step left it (to a fixed point
+/// of its `.aux`, at most four runs), its pages' text against ours.
+fn against_xelatex(dir: &Path, xelatex: &str, ours: &Out) -> String {
+    let src = dir.join("run");
+    let xl = dir.join("xl");
+    let _ = std::fs::remove_dir_all(&xl);
+    let cp = Command::new("cp")
+        .arg("-R")
+        .arg(src.join("proj"))
+        .arg(&xl)
+        .status();
+    if !cp.is_ok_and(|s| s.success()) {
+        return "could not copy the project".into();
+    }
+    let mut aux = None;
+    for _ in 0..4 {
+        let _ = Command::new(xelatex)
+            .args(["-interaction=nonstopmode", "-halt-on-error", "main.tex"])
+            .current_dir(&xl)
+            .env("OSFONTDIR", src.join("fonts"))
+            .env("SOURCE_DATE_EPOCH", "0")
+            .env("FORCE_SOURCE_DATE", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let a = std::fs::read(xl.join("main.aux")).ok();
+        if a == aux {
+            break;
+        }
+        aux = a;
+    }
+    let text = |pdf: &Path| -> Option<String> {
+        let o = Command::new("pdftotext").arg(pdf).arg("-").output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    let mine = dir.join("ours.pdf");
+    std::fs::write(&mine, &ours.pdf).unwrap();
+    match (text(&mine), text(&xl.join("main.pdf"))) {
+        (Some(a), Some(b)) if a == b => format!("same text ({} bytes)", a.len()),
+        (Some(a), Some(b)) => {
+            let (la, lb): (Vec<_>, Vec<_>) = (a.lines().collect(), b.lines().collect());
+            let k = la.iter().zip(&lb).position(|(x, y)| x != y).unwrap_or(la.len().min(lb.len()));
+            format!(
+                "XELATEX-DIFF at line {}: ours {:?} / xelatex {:?} ({} / {} lines)",
+                k + 1,
+                la.get(k),
+                lb.get(k),
+                la.len(),
+                lb.len()
+            )
+        }
+        (_, None) => "XELATEX-DIFF: xelatex made no PDF".into(),
+        (None, _) => "XELATEX-DIFF: no text from our PDF".into(),
+    }
 }
 
 const PARA: &str = "Words and more words that fill the page, again and again, until the \
