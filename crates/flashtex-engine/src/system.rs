@@ -2044,6 +2044,23 @@ pub(crate) fn tool_read_ok(
     confined_path_ok(path, &roots, searched)
 }
 
+/// [`tool_read_ok`]'s rules for a host outside this crate (the XeTeX host's
+/// tool rules, `flashtex-xetex` `host::tools`), whose job directories need
+/// not be this process's directory or output directory: `dirs` (the
+/// project and the output directory) are the roots besides
+/// `FLASHTEX_CONFINE_ROOTS`. True when confinement is off.
+pub fn host_tool_read_ok(name: &str, path: &Path, searched: bool, dirs: &[&Path]) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !searched && !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    roots.extend(dirs.iter().filter_map(|d| std::fs::canonicalize(d).ok()));
+    confined_path_ok(path, &roots, searched)
+}
+
 /// The second rule on its own (tests call it directly).
 pub(crate) fn confined_path_ok(found: &Path, roots: &[std::path::PathBuf], searched: bool) -> bool {
     let Ok(real) = std::fs::canonicalize(found) else {

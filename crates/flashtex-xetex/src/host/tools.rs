@@ -79,7 +79,24 @@ fn aux_lines(aux: &str) -> (String, Vec<String>) {
 /// project, the output directory (biblatex's `JOB-blx.bib` with
 /// `backend=bibtex`), then the TeX tree through the engine's resolver (the
 /// bundle's without a TeX Live: `xampl.bib`, `biblatex-examples.bib`).
+///
+/// Under read confinement (`FLASHTEX_CONFINE_READS`) the pdfTeX host's
+/// rules apply (`system::host_tool_read_ok`): an absolute, `~`, `$` or `..`
+/// name is refused, and what is found must lie in the project, the output
+/// directory or a confinement root, or be a TeX tree file. A refused name
+/// is missing: it is neither read nor hashed, and bibtex is not run.
 fn find_bib(job: &Job, name: &str) -> Option<PathBuf> {
+    if !flashtex_engine::system::input_name_confined_ok(name) {
+        return None;
+    }
+    let ok = |p: &Path, searched: bool| {
+        flashtex_engine::system::host_tool_read_ok(
+            name,
+            p,
+            searched,
+            &[&job.root, &job.output_dir],
+        )
+    };
     let p = Path::new(name);
     if p.is_absolute() {
         return Some(p.to_path_buf()).filter(|p| p.is_file());
@@ -87,14 +104,14 @@ fn find_bib(job: &Job, name: &str) -> Option<PathBuf> {
     for d in [&job.root, &job.output_dir] {
         let c = d.join(p);
         if c.is_file() {
-            return Some(c);
+            return ok(&c, false).then_some(c);
         }
     }
     flashtex_engine::system::with_resolver_for("xelatex", |r| {
         r.find_ex(name, flashtex_engine::resolver::Format::Bib, true)
             .0
     })
-    .filter(|p| p.is_absolute() && p.is_file())
+    .filter(|p| p.is_absolute() && p.is_file() && ok(p, true))
 }
 
 fn rules(job: &Job) -> Vec<Rule> {
@@ -102,7 +119,9 @@ fn rules(job: &Job) -> Vec<Rule> {
     let jn = &job.jobname;
     let mut v = vec![];
     let bcf = out.join(format!("{jn}.bcf"));
-    if let Ok(d) = std::fs::read(&bcf) {
+    // Every source goes through the pdfTeX host's reader (`external::read`):
+    // a regular file of at most the tools' 64 MiB limit, else missing.
+    if let Some(d) = external::read(&bcf) {
         v.push(Rule {
             tool: "biber",
             file: format!("{jn}.bcf"),
@@ -117,7 +136,9 @@ fn rules(job: &Job) -> Vec<Rule> {
                 jn.clone(),
             ],
         });
-    } else if let Ok(aux) = std::fs::read_to_string(out.join(format!("{jn}.aux"))) {
+    } else if let Some(aux) =
+        external::read(&out.join(format!("{jn}.aux"))).and_then(|d| String::from_utf8(d).ok())
+    {
         let (rel, bibs) = aux_lines(&aux);
         if !bibs.is_empty() {
             let mut state = rel.into_bytes();
@@ -128,7 +149,7 @@ fn rules(job: &Job) -> Vec<Rule> {
                 } else {
                     format!("{b}.bib")
                 };
-                match find_bib(job, &name).and_then(|p| std::fs::read(p).ok()) {
+                match find_bib(job, &name).and_then(|p| external::read(&p)) {
                     Some(d) => state.extend_from_slice(&sha256(&d)),
                     None => missing.push(name),
                 }
@@ -143,7 +164,7 @@ fn rules(job: &Job) -> Vec<Rule> {
             });
         }
     }
-    if let Ok(d) = std::fs::read(out.join(format!("{jn}.idx"))) {
+    if let Some(d) = external::read(&out.join(format!("{jn}.idx"))) {
         v.push(Rule {
             tool: "makeindex",
             file: format!("{jn}.idx"),
@@ -406,5 +427,110 @@ mod tests {
             "\\citation{a}\n\\bibstyle{plain}\n\\bibdata{refs,more.bib}\n"
         );
         assert_eq!(bibs, ["refs", "more.bib"]);
+    }
+
+    /// A scratch project (`p/`, output `p/out/`) whose `.aux` names a
+    /// project `.bib`, sentinel `.bib` files outside it (by absolute path,
+    /// through `..`, through a link in the project) and a project `.bib`
+    /// over the 64 MiB limit (sparse). Returns the job and the scratch
+    /// directory.
+    fn sentinel_job(tag: &str) -> (Job, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "ft-xetex-tools-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let (p, out, outside) = (base.join("p"), base.join("p/out"), base.join("outside"));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let secret = outside.join("secret.bib");
+        std::fs::write(&secret, "SECRET-OUTSIDE-READ").unwrap();
+        std::fs::write(p.join("refs.bib"), "@misc{a}").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&secret, p.join("link.bib")).unwrap();
+        std::fs::File::create(p.join("huge.bib"))
+            .unwrap()
+            .set_len((64 << 20) + 1)
+            .unwrap();
+        std::fs::write(
+            out.join("main.aux"),
+            format!(
+                "\\bibdata{{refs,{},../outside/secret,link,huge}}\n",
+                outside.join("secret").display()
+            ),
+        )
+        .unwrap();
+        let j = Json::parse(&format!(
+            r#"{{"id": 1, "root": "{}", "main": "main.tex", "output_dir": "{}"}}"#,
+            p.display(),
+            out.display()
+        ))
+        .unwrap();
+        (Job::parse(&j, &out).unwrap(), base)
+    }
+
+    fn missing_bibs(job: &Job) -> Vec<String> {
+        let r = rules(job);
+        assert_eq!(r.len(), 1, "one bibtex rule");
+        assert_eq!(r[0].tool, "bibtex");
+        r[0].missing.clone()
+    }
+
+    /// REVIEW-SEC (#2324, #2026): the rules read and hashed `.bib` files
+    /// outside the project after every compile, tools on or off, with no
+    /// size limit. Confined, only the project's own `.bib` is read; the
+    /// sentinels outside count as missing. Runs in a child process, because
+    /// confinement is read from the environment once per process.
+    #[test]
+    fn confined_rules_read_no_bib_outside_the_project() {
+        const CHILD: &str = "FLASHTEX_TEST_TOOLS_CONFINED_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let (job, base) = sentinel_job("confined");
+            let missing = missing_bibs(&job);
+            let _ = std::fs::remove_dir_all(&base);
+            assert_eq!(
+                missing,
+                [
+                    format!("{}.bib", base.join("outside/secret").display()),
+                    "../outside/secret.bib".into(),
+                    "link.bib".into(),
+                    "huge.bib".into(),
+                ]
+            );
+            println!("CONFINED-CHILD-CHECKED");
+            return;
+        }
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "host::tools::tests::confined_rules_read_no_bib_outside_the_project",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("FLASHTEX_CONFINE_READS", "1")
+            .env_remove("FLASHTEX_CONFINE_ROOTS")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            o.status.success() && text.contains("CONFINED-CHILD-CHECKED"),
+            "confined child failed: {text}{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+
+    /// The control: unconfined (pdfTeX's own rules), every sentinel is
+    /// found, so the confined test above can see a read. The over-limit
+    /// file is missing either way.
+    #[test]
+    fn unconfined_rules_find_every_bib_but_the_huge_one() {
+        if std::env::var_os("FLASHTEX_CONFINE_READS").is_some() {
+            return;
+        }
+        let (job, base) = sentinel_job("open");
+        let missing = missing_bibs(&job);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(missing, ["huge.bib"]);
     }
 }

@@ -314,7 +314,7 @@ const MAX_INPUT: u64 = 64 << 20;
 /// A file's bytes, if it is a regular file (after following links) of at
 /// most [`MAX_INPUT`] bytes: a `refs.bib` that is a link to `/dev/zero`, a
 /// FIFO or a huge file is treated as missing, never read into memory.
-fn read(p: &Path) -> Option<Vec<u8>> {
+pub fn read(p: &Path) -> Option<Vec<u8>> {
     let m = std::fs::metadata(p).ok()?;
     if !m.is_file() || m.len() > MAX_INPUT {
         return None;
