@@ -176,9 +176,8 @@ fn seed(from: &Path, to: &Path, what: Seed, top: bool, skip: &[&Path]) -> std::i
                 Seed::Job(job) => {
                     n.ends_with(".aux")
                         || (top
-                            && n.strip_prefix(job).is_some_and(|r| {
-                                r.starts_with('.') && !SOURCES.iter().any(|s| r == *s)
-                            }))
+                            && n.strip_prefix(job)
+                                .is_some_and(|r| r.starts_with('.') && !SOURCES.contains(&r)))
                 }
             };
             if take {
