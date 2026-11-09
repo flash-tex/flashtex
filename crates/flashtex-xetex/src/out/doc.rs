@@ -194,6 +194,11 @@ pub struct Doc {
     pub tracking: Option<Tracking>,
     /// `dvipdfmx:catch_phantom`'s mode.
     pub phantom: Phantom,
+    /// `html:` specials (spc_html.c): the anchor open (`Some(true)` a link,
+    /// `Some(false)` a name) and the `<base href>`, both lasting across
+    /// pages.
+    pub html_anchor: Option<bool>,
+    pub html_base: Option<Vec<u8>>,
     /// `pdf:nolink` (until `pdf:link`): what is drawn does not widen the
     /// link being tracked (dvipdfmx's `link_annot` off).
     pub nolink: bool,

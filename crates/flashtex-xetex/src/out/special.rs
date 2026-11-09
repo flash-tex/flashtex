@@ -131,6 +131,98 @@ pub fn paper_of(s: &[u8]) -> Option<Option<(Fx, Fx)>> {
     Some(Some((fx(w?), fx(h?))))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum HtmlTag {
+    Open,
+    Close,
+    Empty,
+}
+
+/// spc_html.c's read_html_tag: `<name key="value" key='value' ...>`,
+/// `</name>`, `<name .../>`; the name and keys lowercased. An attribute
+/// without a quoted value is an error (the whole tag is not read).
+fn html_tag(r: &[u8]) -> Option<(Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>, HtmlTag)> {
+    let sp = |c: u8| c.is_ascii_whitespace() || c == 0x0b;
+    let mut i = 0;
+    let skip = |i: &mut usize| {
+        while *i < r.len() && sp(r[*i]) {
+            *i += 1;
+        }
+    };
+    skip(&mut i);
+    if r.get(i) != Some(&b'<') {
+        return None;
+    }
+    i += 1;
+    skip(&mut i);
+    let mut kind = HtmlTag::Open;
+    if r.get(i) == Some(&b'/') {
+        kind = HtmlTag::Close;
+        i += 1;
+        skip(&mut i);
+    }
+    let delim = |c: u8| c == b'>' || c == b'/' || sp(c);
+    let st = i;
+    while i < r.len() && i - st < 127 && !delim(r[i]) {
+        i += 1;
+    }
+    if i == st || i >= r.len() || !delim(r[i]) {
+        return None;
+    }
+    let name = r[st..i].to_ascii_lowercase();
+    skip(&mut i);
+    let mut attrs = Vec::new();
+    while i < r.len() && r[i] != b'/' && r[i] != b'>' {
+        // parse_key_val
+        let ks = i;
+        while i < r.len() && (r[i].is_ascii_alphanumeric() || r[i] == b'-' || r[i] == b':') {
+            i += 1;
+        }
+        if i == ks || i + 2 >= r.len() || r[i] != b'=' || !matches!(r[i + 1], b'"' | b'\'') {
+            return None;
+        }
+        let key = r[ks..i].to_ascii_lowercase();
+        let q = r[i + 1];
+        i += 2;
+        let vs = i;
+        while i < r.len() && r[i] != q {
+            i += 1;
+        }
+        if i >= r.len() {
+            return None;
+        }
+        attrs.push((key, r[vs..i].to_vec()));
+        i += 1;
+        skip(&mut i);
+    }
+    if r.get(i) == Some(&b'/') {
+        kind = HtmlTag::Empty;
+        i += 1;
+        skip(&mut i);
+    }
+    if r.get(i) != Some(&b'>') {
+        return None;
+    }
+    Some((name, attrs, kind))
+}
+
+/// spc_html.c's fqurl: `name` after the `<base href>` (its trailing `/`
+/// dropped, a `/` put between unless `name` starts with one).
+fn fqurl(base: Option<&[u8]>, name: &[u8]) -> Vec<u8> {
+    let mut q = Vec::new();
+    if let Some(b) = base.filter(|b| !b.is_empty()) {
+        q.extend_from_slice(b);
+        if q.last() == Some(&b'/') {
+            q.pop();
+        }
+        if !name.is_empty() && name[0] != b'/' {
+            q.push(b'/');
+        }
+    }
+    q.extend_from_slice(name);
+    q
+}
+
 fn trim(s: &[u8]) -> &[u8] {
     let st = s
         .iter()
@@ -236,6 +328,8 @@ impl<M: Metrics> Builder<'_, M> {
                 Some(c) => self.background(c),
                 None => self.doc.diag(format!("bad colour in `{}'", lossy(t))),
             }
+        } else if let Some(r) = t.strip_prefix(b"html:") {
+            self.html_special(r);
         } else if let Some(r) = t.strip_prefix(b"dvipdfmx:") {
             self.dvipdfmx_special(r);
         } else if t.starts_with(b"papersize=") {
@@ -793,6 +887,106 @@ impl<M: Metrics> Builder<'_, M> {
         self.expand_annot(r);
     }
 
+    /// `html:<a href="...">`, `<a name="...">`, `</a>`, `<base href="...">`
+    /// (spc_html.c's spc_handler_html_default). A link is a `pdf:bann`
+    /// with `<</Type /Annot /Subtype /Link /C [0 0 1] /A <</Type /Action
+    /// /S /URI /URI (url)>>>>` (or `/Dest (name)` for `#name` with no
+    /// base), a name a destination `[@thispage /XYZ null y+24 null]`.
+    /// Other tags are ignored, as the C ignores them.
+    fn html_special(&mut self, r: &[u8]) {
+        let Some((name, attrs, kind)) = html_tag(r) else {
+            if !trim(r).is_empty() {
+                self.doc.diag(format!("html: tag not read: `{}'", lossy(r)));
+            }
+            return;
+        };
+        let attr = |k: &[u8]| {
+            attrs
+                .iter()
+                .rev()
+                .find(|(a, _)| a == k)
+                .map(|(_, v)| v.clone())
+        };
+        match (name.as_slice(), kind) {
+            (b"a", HtmlTag::Open) => {
+                if self.doc.html_anchor.is_some() {
+                    self.doc.diag("html: Nested html anchors found!".into());
+                    return;
+                }
+                match (attr(b"href"), attr(b"name")) {
+                    (Some(_), Some(_)) => self.doc.diag(
+                        "html: Sorry, you can't have both \"href\" and \"name\" in anchor tag..."
+                            .into(),
+                    ),
+                    (Some(href), None) => {
+                        let url = fqurl(self.doc.html_base.as_deref(), &href);
+                        let n = |v: &str| Obj::Num(v.as_bytes().to_vec());
+                        let mut d = Dict(vec![
+                            (b"Type".to_vec(), Obj::Name(b"Annot".to_vec())),
+                            (b"Subtype".to_vec(), Obj::Name(b"Link".to_vec())),
+                            (b"C".to_vec(), Obj::Array(vec![n("0"), n("0"), n("1")])),
+                        ]);
+                        match url.strip_prefix(b"#") {
+                            Some(dest) => d.set(b"Dest", Obj::Str(dest.to_vec())),
+                            None => d.set(
+                                b"A",
+                                Obj::Dict(Dict(vec![
+                                    (b"Type".to_vec(), Obj::Name(b"Action".to_vec())),
+                                    (b"S".to_vec(), Obj::Name(b"URI".to_vec())),
+                                    (b"URI".to_vec(), Obj::Str(url)),
+                                ])),
+                            ),
+                        }
+                        if self.doc.tracking.is_some() {
+                            self.break_annot();
+                        }
+                        self.doc.tracking = Some(Tracking {
+                            dict: d,
+                            depth: self.stack.len(),
+                            rect: None,
+                        });
+                        self.doc.html_anchor = Some(true);
+                    }
+                    (None, Some(nm)) => {
+                        let (_, y) = self.stream_point_device();
+                        let arr = [
+                            Obj::Named(format!("page{}", self.page_no).into_bytes()),
+                            Obj::Name(b"XYZ".to_vec()),
+                            Obj::Null,
+                            Obj::num(y.to_f64() + 24.0, 8),
+                            Obj::Null,
+                        ];
+                        self.add_dest(nm, &arr);
+                        self.doc.html_anchor = Some(false);
+                    }
+                    (None, None) => self
+                        .doc
+                        .diag("html: You should have \"href\" or \"name\" in anchor tag!".into()),
+                }
+            }
+            (b"a", HtmlTag::Close) => match self.doc.html_anchor.take() {
+                Some(true) => {
+                    self.break_annot();
+                    self.doc.tracking = None;
+                }
+                Some(false) => {}
+                None => self
+                    .doc
+                    .diag("html: No corresponding opening tag for html anchor.".into()),
+            },
+            (b"a", HtmlTag::Empty) => self.doc.diag("html: Empty html anchor tag???".into()),
+            (b"base", HtmlTag::Close) => self.doc.diag("html: Close tag for \"base\"???".into()),
+            (b"base", _) => match attr(b"href") {
+                Some(h) => self.doc.html_base = Some(h),
+                None => self
+                    .doc
+                    .diag("html: \"href\" not found for \"base\" tag!".into()),
+            },
+            (b"img", _) => self.doc.ignored_special("html:<img>"),
+            _ => {}
+        }
+    }
+
     /// `dvipdfmx:` specials (dvipdfmx's spc_dvipdfmx.c): `config`, read
     /// before the run, and `catch_phantom`.
     fn dvipdfmx_special(&mut self, r: &[u8]) {
@@ -1120,6 +1314,25 @@ mod tests {
             .unwrap();
         assert!((w.to_f64() - 595.2756).abs() < 1e-3);
         assert_eq!(paper_of(b"pdf:dest (x) [@thispage /Fit]"), None);
+    }
+
+    #[test]
+    fn html_tags() {
+        let (n, a, k) = html_tag(b" <A HREF=\"https://e.x/\" target='t'>").unwrap();
+        assert_eq!((n.as_slice(), k), (&b"a"[..], HtmlTag::Open));
+        assert_eq!(a[0], (b"href".to_vec(), b"https://e.x/".to_vec()));
+        assert_eq!(a[1], (b"target".to_vec(), b"t".to_vec()));
+        assert_eq!(html_tag(b"</a>").unwrap().2, HtmlTag::Close);
+        assert_eq!(html_tag(b"<base href=\"x\"/>").unwrap().2, HtmlTag::Empty);
+        assert!(html_tag(b"<a href=x>").is_none());
+        assert!(html_tag(b"<a href=\"x\"").is_none());
+        // measured: base http://b.example/dir/ makes #here and page.html
+        // http://b.example/dir/#here and http://b.example/dir/page.html
+        let b = Some(&b"http://b.example/dir/"[..]);
+        assert_eq!(fqurl(b, b"#here"), b"http://b.example/dir/#here");
+        assert_eq!(fqurl(b, b"page.html"), b"http://b.example/dir/page.html");
+        assert_eq!(fqurl(b, b"/abs"), b"http://b.example/dir/abs");
+        assert_eq!(fqurl(None, b"#here"), b"#here");
     }
 
     #[test]
