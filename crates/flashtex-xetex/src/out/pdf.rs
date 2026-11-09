@@ -928,6 +928,7 @@ impl<'a> Writer<'a> {
                 n_base,
                 palette,
                 idat,
+                trans,
             }) = png_passthrough(&data)
             {
                 let base = if let Some(icc) = &col.icc {
@@ -964,6 +965,27 @@ impl<'a> Writer<'a> {
                     .copied()
                     .unwrap_or("Perceptual");
                     dict.push_str(&format!(" /Intent /{name}"));
+                }
+                match &trans {
+                    PngTrans::None => {}
+                    PngTrans::Key(k) => {
+                        let k: Vec<String> = k.iter().map(u32::to_string).collect();
+                        dict.push_str(&format!(" /Mask [{}]", k.join(" ")));
+                    }
+                    PngTrans::Alpha(a) => {
+                        // the decoded indices: the PNG without its tRNS
+                        let rows = flashtex_pdf::raster::decode_png(&png_without_trns(&data))
+                            .map_err(|e| format!("{}: {e}", img.path))?;
+                        let sm =
+                            png_soft_mask(&rows.samples, rows.bits, rows.width, rows.height, a);
+                        let o = self.alloc();
+                        let d = format!(
+                            " /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceGray /BitsPerComponent 8",
+                            rows.width, rows.height
+                        );
+                        self.stream(o, d.as_bytes(), &sm, true);
+                        dict.push_str(&format!(" /SMask {o} 0 R"));
+                    }
                 }
                 self.stream(num, dict.as_bytes(), &idat, false);
                 return Ok(());
@@ -2142,6 +2164,42 @@ struct PngPass {
     n_base: u8,
     palette: Option<Vec<u8>>,
     idat: Vec<u8>,
+    /// What `tRNS` makes of the image (pngimage.c `check_transparency`).
+    trans: PngTrans,
+}
+
+/// pngimage.c's transparency of an 8-bit-or-less PNG without an alpha
+/// channel (`check_transparency`, `create_ckey_mask`, `create_soft_mask`).
+#[derive(Clone, Debug, PartialEq)]
+enum PngTrans {
+    None,
+    /// `PDF_TRANS_TYPE_BINARY`: `/Mask` with these numbers (a grey or RGB
+    /// image's `tRNS` colour, each twice; a palette's fully transparent
+    /// indices, each twice).
+    Key(Vec<u32>),
+    /// `PDF_TRANS_TYPE_ALPHA`: a palette `tRNS` with partial alpha; an
+    /// 8-bit `/SMask` from these alphas (index `i` < their count, else 255).
+    Alpha(Vec<u8>),
+}
+
+/// pngimage.c `create_soft_mask`'s samples: index `i` of the image is read
+/// at bit `bpc * i` of the decoded rows *as if they were not padded* (the
+/// C's `image_data_ptr[bpc * i / 8] >> (shift - bpc * i % 8)`), so with
+/// rows that do not fill their last byte the mask drifts from the second
+/// row on (measured: a 7-pixel-wide 4-bit palette PNG's pixel 7 takes
+/// index 0 of row 0's padding nibble on TeX Live 2026's xdvipdfmx).
+fn png_soft_mask(rows: &[u8], bpc: u8, width: u32, height: u32, trans: &[u8]) -> Vec<u8> {
+    let bpc = bpc as usize;
+    let mask = 0xffu32 >> (8 - bpc);
+    let shift = 8 - bpc;
+    let n = width as usize * height as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let byte = rows.get(bpc * i / 8).copied().unwrap_or(0) as u32;
+        let idx = ((byte >> (shift - bpc * i % 8)) & mask) as usize;
+        out.push(if idx < trans.len() { trans[idx] } else { 0xff });
+    }
+    out
 }
 
 /// A PNG whose `IDAT` data a PDF can take as it is (8 bits or fewer per
@@ -2154,6 +2212,7 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
     let mut pos = 8;
     let (mut w, mut h, mut bits, mut ctype, mut interlace) = (0u32, 0u32, 0u8, 0u8, 0u8);
     let mut plte: Option<&[u8]> = None;
+    let mut trns: Option<&[u8]> = None;
     let mut idat = Vec::new();
     let mut col = PngColor::default();
     let be32 = |p: usize| -> Option<u32> {
@@ -2172,7 +2231,7 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
                 interlace = body[12];
             }
             b"PLTE" => plte = Some(body),
-            b"tRNS" => return None,
+            b"tRNS" => trns = Some(body),
             b"IDAT" => idat.extend_from_slice(body),
             b"iCCP" => {
                 let z = body.iter().position(|&c| c == 0)?;
@@ -2192,7 +2251,11 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
         }
         pos += 12 + len;
     }
-    if interlace != 0 || bits > 8 || !matches!(ctype, 0 | 2 | 3) {
+    // A 16-bit grey or RGB PNG with a colour key passes through too (PDF
+    // takes 16-bit samples with the PNG predictor): the other route has no
+    // colour keys.
+    let key16 = bits == 16 && matches!(ctype, 0 | 2) && trns.is_some();
+    if interlace != 0 || (bits > 8 && !key16) || !matches!(ctype, 0 | 2 | 3) {
         return None;
     }
     let colors = if ctype == 2 { 3 } else { 1 };
@@ -2204,13 +2267,55 @@ fn png_passthrough(data: &[u8]) -> Option<PngPass> {
     } else {
         None
     };
+    // libpng keeps a tRNS of the right length only (png_handle_tRNS: grey
+    // 2 bytes, RGB 6, a palette's 1 to its entries); a 16-bit sample in
+    // the chunk is the value as written.
+    let be16 = |b: &[u8], i: usize| u16::from_be_bytes([b[i], b[i + 1]]) as u32;
+    let trans = match (ctype, trns) {
+        (0, Some(t)) if t.len() == 2 => PngTrans::Key(vec![be16(t, 0); 2]),
+        (2, Some(t)) if t.len() == 6 => {
+            let (r, g, b) = (be16(t, 0), be16(t, 2), be16(t, 4));
+            PngTrans::Key(vec![r, r, g, g, b, b])
+        }
+        (3, Some(t)) if !t.is_empty() && t.len() <= palette.as_ref().map_or(0, |p| p.len() / 3) => {
+            if t.iter().all(|&a| a == 0x00 || a == 0xff) {
+                let mut k = Vec::new();
+                for (i, &a) in t.iter().enumerate() {
+                    if a == 0 {
+                        k.extend([i as u32, i as u32]);
+                    }
+                }
+                PngTrans::Key(k)
+            } else {
+                PngTrans::Alpha(t.to_vec())
+            }
+        }
+        _ => PngTrans::None,
+    };
     Some(PngPass {
         dict,
         color: col,
         n_base: if ctype == 0 { 1 } else { 3 },
         palette,
         idat,
+        trans,
     })
+}
+
+/// `data` with its `tRNS` chunks left out (a PNG still).
+fn png_without_trns(data: &[u8]) -> Vec<u8> {
+    let mut out = data[..8.min(data.len())].to_vec();
+    let mut pos = 8;
+    while pos + 8 <= data.len() {
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let end = (pos + 12 + len).min(data.len());
+        if &data[pos + 4..pos + 8] != b"tRNS" {
+            out.extend_from_slice(&data[pos..end]);
+        }
+        pos = end;
+    }
+    out
 }
 
 /// A CIE-based space from a PNG's `sRGB` chunk, or its `gAMA` and `cHRM`
@@ -3126,5 +3231,96 @@ mod tests {
         for n in ["(3)", "(alpha)", "(beta)", "(gamma)", "(delta)"] {
             assert!(!dests.contains(n), "{n}: {dests}");
         }
+    }
+
+    /// A PNG's chunks with dummy CRCs (png_passthrough does not check them).
+    fn png(ihdr: (u32, u32, u8, u8), extra: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let mut v = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let mut chunk = |k: &[u8; 4], b: &[u8]| {
+            v.extend((b.len() as u32).to_be_bytes());
+            v.extend(k);
+            v.extend(b);
+            v.extend([0; 4]);
+        };
+        let mut h = ihdr.0.to_be_bytes().to_vec();
+        h.extend(ihdr.1.to_be_bytes());
+        h.extend([ihdr.2, ihdr.3, 0, 0, 0]);
+        chunk(b"IHDR", &h);
+        for (k, b) in extra {
+            chunk(k, b);
+        }
+        chunk(b"IDAT", &[]);
+        chunk(b"IEND", &[]);
+        v
+    }
+
+    /// pngimage.c's transparency, measured on TeX Live 2026's xdvipdfmx
+    /// (lane AUDIT-DVIPDFMX): grey `tRNS` 10 -> `/Mask [10 10]`; RGB
+    /// (0, 255, 0) -> `/Mask [0 0 255 255 0 0]`; palette ff ff 00 -> `/Mask
+    /// [2 2]`; palette 00 ff 00 -> `/Mask [0 0 2 2]`; palette 00 80 ff 40 ->
+    /// an `/SMask`.
+    #[test]
+    fn png_trns_as_xdvipdfmx() {
+        let plte = [0u8; 18];
+        let t = |d: Vec<u8>| png_passthrough(&d).expect("passes through").trans;
+        assert_eq!(
+            t(png((7, 5, 8, 0), &[(b"tRNS", &[0, 10])])),
+            PngTrans::Key(vec![10, 10])
+        );
+        assert_eq!(
+            t(png((7, 5, 8, 2), &[(b"tRNS", &[0, 0, 0, 255, 0, 0])])),
+            PngTrans::Key(vec![0, 0, 255, 255, 0, 0])
+        );
+        assert_eq!(
+            t(png(
+                (7, 5, 4, 3),
+                &[(b"PLTE", &plte), (b"tRNS", &[0xff, 0xff, 0])]
+            )),
+            PngTrans::Key(vec![2, 2])
+        );
+        assert_eq!(
+            t(png(
+                (7, 5, 8, 3),
+                &[(b"PLTE", &plte), (b"tRNS", &[0, 0xff, 0])]
+            )),
+            PngTrans::Key(vec![0, 0, 2, 2])
+        );
+        assert_eq!(
+            t(png(
+                (7, 5, 4, 3),
+                &[(b"PLTE", &plte), (b"tRNS", &[0, 0x80, 0xff, 0x40])]
+            )),
+            PngTrans::Alpha(vec![0, 0x80, 0xff, 0x40])
+        );
+        // a tRNS longer than the palette is dropped by libpng
+        assert_eq!(
+            t(png((7, 5, 4, 3), &[(b"PLTE", &plte), (b"tRNS", &[0; 7])])),
+            PngTrans::None
+        );
+        assert_eq!(t(png((7, 5, 8, 0), &[])), PngTrans::None);
+        // 16-bit grey, tRNS 300: "/BitsPerComponent 16 ... /Mask [300 300]"
+        let d = png((7, 5, 16, 0), &[(b"tRNS", &[1, 44])]);
+        let p = png_passthrough(&d).expect("passes through");
+        assert_eq!(p.trans, PngTrans::Key(vec![300, 300]));
+        assert!(p.dict.contains("/BitsPerComponent 16"), "{}", p.dict);
+        // without a key it still takes the other route
+        assert!(png_passthrough(&png((7, 5, 16, 0), &[])).is_none());
+    }
+
+    /// The soft mask of a 7 x 5, 4-bit palette PNG with `tRNS` 00 80 ff
+    /// 40, as TeX Live 2026's xdvipdfmx writes it (its `/SMask` stream,
+    /// decoded): `create_soft_mask` reads the packed rows as if unpadded.
+    #[test]
+    fn png_soft_mask_reads_rows_unpadded() {
+        let rows = [
+            0x00, 0x12, 0x34, 0x50, 0x12, 0x23, 0x45, 0x00, 0x23, 0x45, 0x50, 0x10, 0x34, 0x50,
+            0x12, 0x20, 0x55, 0x01, 0x23, 0x40,
+        ];
+        let want = [
+            0x00, 0x00, 0x80, 0xff, 0x40, 0xff, 0xff, 0x00, 0x80, 0xff, 0xff, 0x40, 0xff, 0xff,
+            0x00, 0x00, 0xff, 0x40, 0xff, 0xff, 0xff, 0x00, 0x80, 0x00, 0x40, 0xff, 0xff, 0x00,
+            0x80, 0xff, 0xff, 0x00, 0xff, 0xff, 0x00,
+        ];
+        assert_eq!(png_soft_mask(&rows, 4, 7, 5, &[0, 0x80, 0xff, 0x40]), want);
     }
 }
