@@ -506,6 +506,77 @@ fn protrusion_around_a_replayed_call_is_the_normal_paths() {
 }
 
 #[test]
+fn whatsits_of_a_call_act_at_its_shipout() {
+    // (lane AUDIT-WHATSIT) the shipout-time whatsits a recorded call
+    // leaves, replayed: a `\\write` and a `\\special shipout` /
+    // `\\pdfliteral shipout` keep their tokens unexpanded and expand them
+    // at the shipout with the definitions of then (`\\x` changes after the
+    // call); every `\\pdfliteral` mode; a link, a colour push and a
+    // `\\pdfsave` begun in the call and ended after it, and the reverse
+    // (ended in the call, begun before it); `\\setlanguage` (the list's
+    // `clang`); a link in a box the call throws away (its object is made
+    // again, `\\pdflastlink` read after the call). Logs and PDFs are the
+    // normal path's, and pdfTeX's (TeX Live 2026, by hand)
+    let s = check(
+        "whatsits",
+        &[
+            PDF_PRELUDE,
+            "\\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\def\\x{X}\n\
+             \\pdfobj reserveobjnum \\def\\in{\\pdfstartlink goto page 1 {/Fit}\\vrule width 1pt height 1pt\
+             \\pdfcolorstack0 push{0 0 1 rg}\\pdfsave}\\def\\out{\\pdfrestore\\pdfcolorstack0 pop\\pdfendlink}\n\
+             \\def\\measure#1{\\out\\write-1{w:\\x:#1}\\special{s:#1}\\special shipout{sl:\\x}\
+             \\pdfliteral{0 0 m}\\pdfliteral direct{1 0 m}\\pdfliteral page{2 0 m}\\pdfliteral shipout{\\x}\
+             \\pdfcolorstack0 current\\setlanguage3 \\begingroup\\setbox0\\hbox{\\pdfstartlink user{/S/URI/URI(#1)}\\pdfendlink}\\endgroup\
+             \\pdfstartlink user{/S/URI/URI(#1)}\\vrule width 2pt height 1pt\\pdfcolorstack0 push{1 0 0 rg}\
+             \\pdfsave\\pdfsetmatrix{1 0 0 1}\\kern1pt\\relax}\n\
+             \\def\\one#1{\\setbox1\\hbox{\\in\\measure{a}\\message{[\\the\\pdflastlink]}\\out\\vrule width 1pt}\\showbox1 \
+             \\def\\x{#1}\\shipout\\box1 \\def\\x{X}}\n\
+             \\one{A}\\one{B}\\one{C}\\one{D}\\end\n",
+        ]
+        .concat(),
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn objects_and_immediate_whatsits_in_a_call_never_replay() {
+    // (lane AUDIT-WHATSIT) what a call may not do with pdfTeX's objects and
+    // files, in a draw call and in a box it throws away: an annotation, a
+    // destination, a thread, an object and a reference to one (reserved
+    // outside the call), a form, `\\immediate\\write`, `\\pdfsavepos` in the
+    // output, `\\pdflastlink` read: each abandons the recording, and the
+    // logs and PDFs are the normal path's
+    let bodies = [
+        "\\pdfannot width 1pt height 1pt depth 0pt{/Subtype/Text}",
+        "\\pdfdest name{d\\the\\count9} xyz",
+        "\\pdfthread width 1pt height 1pt depth 0pt name{t}",
+        "\\pdfobj{(o)}\\pdfrefobj\\pdflastobj",
+        "\\pdfrefobj\\res",
+        "\\immediate\\write-1{i:\\x}",
+        "\\setbox0\\hbox{\\kern1pt}\\pdfxform0 ",
+        "\\pdfstartlink user{/S/URI/URI(h)}\\kern1pt\\pdfendlink\\xdef\\l{\\the\\pdflastlink}",
+        "\\pdfsavepos",
+        "\\begingroup\\setbox0\\hbox{\\pdfdest num 99 fit\\pdfrefobj\\res}\\global\\dimen1=\\wd0 \\endgroup",
+    ];
+    for (i, b) in bodies.iter().enumerate() {
+        let s = check(
+            &format!("objects-{i}"),
+            &[
+                PDF_PRELUDE,
+                "\\def\\x{X}\\pdfobj reserveobjnum \\edef\\res{\\the\\pdflastobj}\n\\def\\measure{",
+                b,
+                "\\kern1pt\\relax}\n\
+                 \\def\\one{\\advance\\count9 1 \\setbox1\\hbox{\\measure}\
+                 \\message{[\\the\\pdflastlink|\\the\\pdflastannot|\\the\\pdflastobj|\\the\\pdflastxform]}\\shipout\\box1 }\n\
+                 \\one\\one\\one\\one\\pdfobj useobjnum\\res{(r)}\\end\n",
+            ]
+            .concat(),
+        );
+        assert_eq!(stat(&s, "hits"), 0, "{b}: {s}");
+    }
+}
+
+#[test]
 fn calls_in_math_groups_compare_their_save_stack() {
     // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
     // display, and of a display's `\\eqno` (cleveref's prefix under
