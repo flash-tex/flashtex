@@ -131,11 +131,15 @@ impl Images {
             let p = pic::dvipdfmx_page(path, page, pagebox)
                 .ok_or_else(|| format!("{path}: cannot read page {page} of the PDF file"))?;
             let [lx, ly, rx, ry] = p.bbox;
-            let rotate = match p.matrix {
-                [_, b, _, _, _, _] if b == -1.0 => 90,
-                [a, _, _, _, _, _] if a == -1.0 => 180,
-                [_, b, _, _, _, _] if b == 1.0 => 270,
-                _ => 0,
+            let [a, b, ..] = p.matrix;
+            let rotate = if b == -1.0 {
+                90
+            } else if a == -1.0 {
+                180
+            } else if b == 1.0 {
+                270
+            } else {
+                0
             };
             let info = Json::Obj(vec![
                 ("id".into(), Json::Int(id as i64)),
