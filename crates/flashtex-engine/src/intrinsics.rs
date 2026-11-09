@@ -1138,8 +1138,8 @@ impl Globals {
         self.set_st(S_REC_PARAM, self.param_ptr);
         self.set_st(S_REC_SAVE, self.save_ptr);
         self.set_st(S_REC_PEAK_LEVEL, -1);
-        // (the windows `cap_need` reads at the end; their place is the
-        // pointers just kept)
+        // (the markers `cap_need` reads at the end; their places follow from
+        // the pointers just kept)
         self.cap_probe();
         self.set_st(S_REC_VERIFY, verify as i32);
         self.set_st(S_REC_CATCODES, 0);
@@ -1510,7 +1510,7 @@ impl Globals {
             return self.rec_abort(w);
         }
         // (how much of the buffer, the pool and the string table the call
-        // used: unknown when it came close to a window's end, #2308)
+        // used: unknown when it may have been cut short at the top, #2308)
         let probe = crate::capacity::Probe::at(
             self.st(S_REC_FIRST),
             self.st(S_REC_POOL_PTR),

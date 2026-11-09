@@ -573,8 +573,8 @@ struct ObjRef {
 
 struct Rec {
     cs: i32,
-    /// The windows above the buffer's, the pool's and the string table's
-    /// pointers the call is measured in (`crate::capacity`).
+    /// Where the call started in the buffer, the pool and the string
+    /// table, whose markers measure it (`crate::capacity`).
     cap: crate::capacity::Probe,
     obj_refs: Vec<ObjRef>,
     new_objs: Vec<i32>,
@@ -3676,7 +3676,7 @@ impl Globals {
         self.bm_rec_on = false;
         let mut rec = ST.with(|s| s.borrow_mut().rec.take()).unwrap();
         // (how much of the buffer, the pool and the string table it used:
-        // unknown when it came close to a window's end, #2308)
+        // unknown when it may have been cut short at the top, #2308)
         if self.cap_need(&rec.cap).is_none() {
             return self.bm_abort_taken(rec, "Capacity");
         }
