@@ -1735,9 +1735,10 @@ impl Obs {
                     && name_of(&l.name).is_some_and(|n| {
                         written.contains(&n) || written.contains(&format!("{n}.tex"))
                     })
-                    && verify.lookup_again_deps(l).0.is_some_and(|p| {
-                        !self.fixed_created.contains(&system::out_key(&p))
-                    })
+                    && verify
+                        .lookup_again_deps(l)
+                        .0
+                        .is_some_and(|p| !self.fixed_created.contains(&system::out_key(&p)))
             })
             .map(|l| l.name.clone())
     }
