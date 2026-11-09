@@ -5206,6 +5206,11 @@ impl Session {
         if let Some(why) = self.force_cold.take() {
             return self.cold(t0, stop_at, Some(why));
         }
+        // #2291 (Commander ruling): with `-recorder` every pass runs from the
+        // format, so its `.fls` lists every file a from-scratch run opens
+        if system::run().recorder {
+            return self.cold(t0, stop_at, Some("-recorder".into()));
+        }
         let (clock, first_line) = (self.clock, self.first_line.clone());
         let Some(s0) = self.s0.as_mut() else {
             return self.cold(t0, stop_at, None);
@@ -6766,6 +6771,8 @@ impl Session {
         self.reemit_from = None;
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
+        // (a new run: a new `.fls`, #2291)
+        system::reset_recorder();
         system::truncate_terminal(0);
         crate::diag::reset();
         system::truncate_external_effects(0);

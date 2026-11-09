@@ -2349,6 +2349,13 @@ fn record_file(prefix: &str, name: &str) {
     }
 }
 
+/// A resident host's next run starts a new `.fls`, as a from-scratch run
+/// does (#2291): the recorder opens again at the run's first file open,
+/// truncating `<program><pid>.fls`, and is renamed over `<jobname>.fls`.
+pub fn reset_recorder() {
+    *RECORDER.lock().unwrap() = None;
+}
+
 /// `recorder_change_filename`.
 fn recorder_change_filename(new_name: &str) {
     let mut g = RECORDER.lock().unwrap();

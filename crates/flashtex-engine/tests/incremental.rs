@@ -6778,3 +6778,90 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// `.fls` text without its `PWD` line, with `from` (the reference
+/// directory's path) read as `to`.
+fn fls_text(path: &Path, from: &Path, to: &Path) -> String {
+    let t = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    t.lines()
+        .filter(|l| !l.starts_with("PWD "))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(&*from.to_string_lossy(), &to.to_string_lossy())
+}
+
+/// #2291 (Commander ruling): with `-recorder`, each compile of a resident
+/// host starts a new `.fls` and runs from the format, so the `.fls` is the
+/// one a from-scratch run writes (the last of the scratch chain's runs),
+/// before and after an edit.
+#[test]
+fn recorder_fls_equals_a_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("recorder");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let args: Vec<&str> = std::iter::once("-recorder")
+        .chain(ARGS.iter().copied())
+        .collect();
+    let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
+    c.arg("iserve").arg("--").args(&args).current_dir(&dir);
+    engine_env(&mut c, &e);
+    let mut child = c
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdin = child.stdin.take().unwrap();
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut h = Host {
+        child,
+        stdin,
+        stdout,
+    };
+    let body: String = (0..20).map(|i| para(i, "alpha")).collect();
+    let doc = "\\documentclass{article}\n\\begin{document}\n\\section{One}\\label{one}\n\
+               See page~\\pageref{one}.\n\\input{body}\n\\end{document}\n";
+    let edited = body.replacen(
+        "Paragraph 12 with the word alpha",
+        "Paragraph 12 with the word alphb",
+        1,
+    );
+    assert_ne!(edited, body);
+    for (what, b) in [("first", &body), ("edit", &edited)] {
+        std::fs::write(dir.join("doc.tex"), doc).unwrap();
+        std::fs::write(dir.join("body.tex"), b).unwrap();
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let report = h.cmd("compile");
+        let mut seen = vec![];
+        for _ in 0..5 {
+            seen.push(dir_state(&reference));
+            let mut c = Command::new(e.fmt.join("pdftex"));
+            c.args(&args).current_dir(&reference);
+            engine_env(&mut c, &e);
+            c.env("FLASHTEX_PREVIEW", "1");
+            c.stdin(Stdio::null()).stdout(Stdio::null());
+            c.status().unwrap();
+            if seen.contains(&dir_state(&reference)) {
+                break;
+            }
+        }
+        let x = fls_text(&dir.join("doc.fls"), &reference, &dir);
+        let y = fls_text(&reference.join("doc.fls"), &reference, &dir);
+        assert!(
+            x == y,
+            "{what}: doc.fls differs from a scratch run's\nhost:\n{x}\nscratch:\n{y}\n{report}"
+        );
+        for ext in ["pdf", "aux"] {
+            assert!(
+                std::fs::read(dir.join(format!("doc.{ext}"))).ok()
+                    == std::fs::read(reference.join(format!("doc.{ext}"))).ok(),
+                "{what}: doc.{ext} differs from a scratch run's\n{report}"
+            );
+        }
+    }
+}
