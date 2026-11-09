@@ -109,8 +109,9 @@ struct Writer<'a> {
     named_queue: Vec<Vec<u8>>,
     names_obj: Option<u32>,
     /// pdfdoc.c's `check_gotos` (on unless `dvipdfmx:config C` set
-    /// `0x10`): the new name of each destination a GoTo uses.
-    gotos: Option<HashMap<Vec<u8>, Vec<u8>>>,
+    /// `0x10`): the new name of each destination a GoTo uses, and the
+    /// GoTo actions given by reference that it renamed.
+    gotos: Option<Gotos>,
     /// The glyphs (native fonts) and codes (TFM fonts) each font draws.
     used: BTreeMap<u16, BTreeSet<u16>>,
     page_group: Vec<bool>,
@@ -420,6 +421,15 @@ impl<'a> Writer<'a> {
         let num = self.named[name];
         match self.doc.named.get(name).cloned() {
             Some(Named::Obj(o)) => {
+                // a GoTo action a link or outline entry renamed
+                let renamed = self.gotos.as_ref().and_then(|g| g.actions.get(name));
+                let o = match (o, renamed) {
+                    (Obj::Dict(mut d), Some(n)) => {
+                        d.set(b"D", Obj::Str(n.clone()));
+                        Obj::Dict(d)
+                    }
+                    (o, _) => o,
+                };
                 let body = self.ser(&o);
                 self.object(num, &body);
             }
@@ -1341,7 +1351,7 @@ impl<'a> Writer<'a> {
             .dests
             .iter()
             .filter(|(k, _)| seen.insert(k.clone()))
-            .filter_map(|(k, v)| m.get(k).map(|n| (n.clone(), v.clone())))
+            .filter_map(|(k, v)| m.names.get(k).map(|n| (n.clone(), v.clone())))
             .collect()
     }
 
@@ -1698,42 +1708,80 @@ fn outline_items(entries: &[Outline]) -> Vec<OlItem> {
 /// checks its GoTo destinations (`check_gotos`).
 const OPT_PDFDOC_NO_DEST_REMOVE: i32 = 1 << 4;
 
+/// What `pdf_doc_add_goto` renames: each destination name (old to new),
+/// and for a GoTo action given by reference (`/A @name`) the `/D` it
+/// leaves in that object, which it changes in place.
+#[derive(Default)]
+struct Gotos {
+    names: HashMap<Vec<u8>, Vec<u8>>,
+    actions: HashMap<Vec<u8>, Vec<u8>>,
+}
+
+/// Where a GoTo's destination name sits.
+enum GotoAt {
+    /// The entry's `/Dest`.
+    Dest,
+    /// `/D` of an `/A` given inline.
+    InlineA,
+    /// `/D` of the named object `/A @name` refers to.
+    NamedA(Vec<u8>),
+}
+
 /// The named destination a link annotation or outline entry goes to, as
-/// pdfdoc.c's `pdf_doc_add_goto` finds it: whether it is the `/D` of a
-/// GoTo `/A` (else the entry's `/Dest`), and the name. None for anything
-/// else (another annotation subtype, another action, an explicit
-/// destination, a malformed entry), which dvipdfmx leaves as it is.
-fn goto_target(doc: &Doc, d: &Dict) -> Option<(bool, Vec<u8>)> {
+/// pdfdoc.c's `pdf_doc_add_goto` finds it: where it sits, and the name it
+/// has now (for an action given by reference, after any earlier renaming
+/// of that object's `/D`). None for anything else (another annotation
+/// subtype, another action, an explicit destination, a malformed entry),
+/// which dvipdfmx leaves as it is.
+fn goto_target(
+    doc: &Doc,
+    d: &Dict,
+    actions: &HashMap<Vec<u8>, Vec<u8>>,
+) -> Option<(GotoAt, Vec<u8>)> {
     if let Some(s) = d.get(b"Subtype") {
         if doc.deref(s).as_name() != Some(b"Link") {
             return None;
         }
     }
     let dest = d.get(b"Dest").map(|o| doc.deref(o));
-    let (in_a, dest) = match d.get(b"A").map(|o| doc.deref(o)) {
-        Some(a) => {
-            let a = a.as_dict().filter(|_| dest.is_none())?;
-            if a.get(b"S").map(|o| doc.deref(o)).and_then(Obj::as_name) != Some(b"GoTo") {
-                return None;
-            }
-            (true, a.get(b"D").map(|o| doc.deref(o)))
-        }
-        None => (false, dest),
+    let Some(a_obj) = d.get(b"A") else {
+        return Some((GotoAt::Dest, dest?.as_str()?.to_vec()));
     };
-    Some((in_a, dest?.as_str()?.to_vec()))
+    let a = doc.deref(a_obj).as_dict().filter(|_| dest.is_none())?;
+    if a.get(b"S").map(|o| doc.deref(o)).and_then(Obj::as_name) != Some(b"GoTo") {
+        return None;
+    }
+    let named = match a_obj {
+        Obj::Named(n) => Some(n.clone()),
+        _ => None,
+    };
+    if let Some(cur) = named.as_ref().and_then(|n| actions.get(n)) {
+        let cur = cur.clone();
+        return Some((GotoAt::NamedA(named.unwrap_or_default()), cur));
+    }
+    let cur = a.get(b"D").map(|o| doc.deref(o))?.as_str()?.to_vec();
+    Some((named.map_or(GotoAt::InlineA, GotoAt::NamedA), cur))
 }
 
 /// `pdf_doc_add_goto`'s renaming: each destination name a link or outline
 /// entry uses, in the order dvipdfmx meets them (an outline entry when its
 /// special is read, an annotation when it is added to its page), becomes
 /// the count of names before it in hexadecimal (`0`, `1`, ... `a`, ...).
-fn goto_names(doc: &Doc) -> HashMap<Vec<u8>, Vec<u8>> {
-    let mut map: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
-    let visit = |d: &Dict, map: &mut HashMap<Vec<u8>, Vec<u8>>| {
-        if let Some((_, dest)) = goto_target(doc, d) {
-            if !map.contains_key(&dest) {
-                let n = format!("{:x}", map.len()).into_bytes();
-                map.insert(dest, n);
+/// An action object two entries share is renamed at each: the second
+/// time its `/D` already holds the new name, which is renamed again (as
+/// in dvipdfmx, whose link then goes nowhere).
+fn goto_names(doc: &Doc) -> Gotos {
+    let mut g = Gotos::default();
+    let visit = |d: &Dict, g: &mut Gotos| {
+        if let Some((at, dest)) = goto_target(doc, d, &g.actions) {
+            let len = g.names.len();
+            let new = g
+                .names
+                .entry(dest)
+                .or_insert_with(|| format!("{len:x}").into_bytes())
+                .clone();
+            if let GotoAt::NamedA(n) = at {
+                g.actions.insert(n, new);
             }
         }
     };
@@ -1741,31 +1789,37 @@ fn goto_names(doc: &Doc) -> HashMap<Vec<u8>, Vec<u8>> {
     for b in &doc.pages {
         for a in &b.sup.annots {
             while next < a.outlines_before.min(doc.outlines.len()) {
-                visit(&doc.outlines[next].dict, &mut map);
+                visit(&doc.outlines[next].dict, &mut g);
                 next += 1;
             }
-            visit(&a.dict, &mut map);
+            visit(&a.dict, &mut g);
         }
     }
     for o in &doc.outlines[next.min(doc.outlines.len())..] {
-        visit(&o.dict, &mut map);
+        visit(&o.dict, &mut g);
     }
-    map
+    g
 }
 
 /// `d` with its GoTo destination's name replaced as `pdf_doc_add_goto`
-/// replaces it (`/Dest`, or `/D` of an `/A` given inline).
-fn goto_rename(doc: &Doc, map: &HashMap<Vec<u8>, Vec<u8>>, d: &mut Dict) {
-    let Some((in_a, dest)) = goto_target(doc, d) else {
+/// replaces it: `/Dest`, or `/D` of an `/A` given inline. An action given
+/// by reference keeps its reference; the object is renamed where it is
+/// written ([`Gotos::actions`]).
+fn goto_rename(doc: &Doc, g: &Gotos, d: &mut Dict) {
+    let Some((at, dest)) = goto_target(doc, d, &HashMap::new()) else {
         return;
     };
-    let Some(new) = map.get(&dest) else {
+    let Some(new) = g.names.get(&dest) else {
         return;
     };
-    if !in_a {
-        d.set(b"Dest", Obj::Str(new.clone()));
-    } else if let Some(Obj::Dict(a)) = d.get_mut(b"A") {
-        a.set(b"D", Obj::Str(new.clone()));
+    match at {
+        GotoAt::Dest => d.set(b"Dest", Obj::Str(new.clone())),
+        GotoAt::InlineA => {
+            if let Some(Obj::Dict(a)) = d.get_mut(b"A") {
+                a.set(b"D", Obj::Str(new.clone()));
+            }
+        }
+        GotoAt::NamedA(_) => {}
     }
 }
 
@@ -2791,6 +2845,55 @@ mod tests {
             assert_eq!(links, ["b", "c", "nowhere"]);
             assert_eq!(outline, ["a", "b"]);
         }
+    }
+
+    /// A GoTo action given by reference (`/A @act`) is renamed in its own
+    /// object, as `pdf_doc_add_goto` changes the object it dereferences
+    /// (measured, xdvipdfmx TeX Live 2026): with links to y (inline) then
+    /// `@act` (x), the names are y 0, x 1 and `@act`'s `/D` is `(1)`. An
+    /// action two entries share is renamed twice: its `/D` becomes `(1)`
+    /// while `/Dests` holds only `(0)`, as in dvipdfmx.
+    #[test]
+    fn goto_actions_given_by_reference_are_renamed_in_place() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let case = |shared: bool| {
+            let mut doc = Doc::new();
+            let mut body = Vec::new();
+            body.extend(special("pdf:dest (x) [@thispage /XYZ 1 2 null]"));
+            body.extend(special("pdf:dest (y) [@thispage /XYZ 3 4 null]"));
+            body.extend(special("pdf:obj @act <</S /GoTo /D (x)>>"));
+            let ann = |d: &str| {
+                format!("pdf:ann width 10bp height 10bp depth 0bp <</Subtype /Link {d}>>")
+            };
+            if !shared {
+                body.extend(special(&ann("/A <</S /GoTo /D (y)>>")));
+            }
+            body.extend(special(&ann("/A @act")));
+            body.extend(special(if shared {
+                "pdf:outline 1 <</Title (T) /A @act>>"
+            } else {
+                "pdf:outline 1 <</Title (T) /Dest (y)>>"
+            }));
+            let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+            doc.pages.push(std::sync::Arc::new(built));
+            let opts = Options {
+                producer: "test".into(),
+                date: None,
+                compress: false,
+            };
+            let bytes = write(&doc, &opts).unwrap().0;
+            let pdf = PdfFile::parse(&bytes).unwrap();
+            goto_names_of(&pdf)
+        };
+        let (keys, links, outline) = case(false);
+        assert_eq!(keys, ["0", "1"]);
+        assert_eq!(links, ["0", "1"]);
+        assert_eq!(outline, ["0"]);
+        let (keys, links, outline) = case(true);
+        assert_eq!(keys, ["0"]);
+        assert_eq!(links, ["1"]);
+        assert_eq!(outline, ["1"]);
     }
 
     /// 日 and 文 share their glyphs with the Kangxi radicals U+2F47 and
