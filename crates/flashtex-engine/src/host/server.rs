@@ -1212,20 +1212,46 @@ pub(crate) mod rooted {
     use std::fs::File;
     use std::io;
     use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::ffi::OsStrExt;
-    use std::path::Path;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Path, PathBuf};
 
-    pub(crate) use libc::{O_CREAT, O_RDONLY, O_WRONLY};
+    pub(crate) use libc::{O_CREAT, O_RDONLY, O_RDWR, O_WRONLY};
+
+    /// The project root, pinned: its directory, and the names it was opened
+    /// by (as given, and with its links resolved), against which a link
+    /// whose target is absolute is placed.
+    pub(crate) struct Root {
+        pub(crate) dir: File,
+        names: Vec<PathBuf>,
+    }
+
+    impl Root {
+        /// `abs`, an absolute link target, as a path below the root, if it
+        /// names one (`None`: it names a place outside, or the root itself
+        /// by a name it was not opened by).
+        pub(crate) fn below<'a>(&self, abs: &'a Path) -> Option<&'a Path> {
+            self.names.iter().find_map(|n| abs.strip_prefix(n).ok())
+        }
+    }
 
     /// The project root, pinned. A symlink *at* the root is followed (a
     /// project opened as `~/thesis -> ~/Dropbox/thesis` is the user's own
-    /// choice); everything below it is walked from this fd, no-follow.
-    pub(crate) fn open_root(root: &Path) -> io::Result<File> {
+    /// choice); everything below it is walked from this fd, no-follow
+    /// (`open_confined`).
+    pub(crate) fn open_root(root: &Path) -> io::Result<Root> {
         use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
+        let dir = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NONBLOCK)
-            .open(root)
+            .open(root)?;
+        let mut names = vec![root.to_path_buf()];
+        // (a name only: the walk is from `dir` whatever the names say)
+        if let Ok(c) = root.canonicalize() {
+            if c != root {
+                names.push(c);
+            }
+        }
+        Ok(Root { dir, names })
     }
 
     /// `openat(dir, name, flags | O_CLOEXEC | O_NONBLOCK, mode)`. (The
@@ -1269,7 +1295,7 @@ pub(crate) mod rooted {
         }
     }
 
-    fn is_symlink_at(dir: &File, name: &OsStr) -> bool {
+    pub(crate) fn is_symlink_at(dir: &File, name: &OsStr) -> bool {
         let Ok(c) = CString::new(name.as_bytes()) else {
             return false;
         };
@@ -1287,40 +1313,127 @@ pub(crate) mod rooted {
         // SAFETY: `fstatat` returned 0, so it filled the struct.
         rc == 0 && (unsafe { st.assume_init() }.st_mode & libc::S_IFMT) == libc::S_IFLNK
     }
+
+    /// The target of link `name` in `dir` (`readlinkat`).
+    pub(crate) fn read_link_at(dir: &File, name: &OsStr) -> io::Result<PathBuf> {
+        let c = CString::new(name.as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path component"))?;
+        let mut buf = vec![0u8; libc::PATH_MAX as usize];
+        // SAFETY: a valid C string, an open directory descriptor, and a
+        // buffer of `buf.len()` bytes, which readlinkat does not overrun.
+        let n = unsafe {
+            libc::readlinkat(
+                dir.as_raw_fd(),
+                c.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        };
+        if n < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        buf.truncate(n as usize);
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(buf)))
+    }
 }
 
-/// Open a project file from a pinned root. Each directory and the file
-/// itself refuses symlinks, including one swapped in during the walk.
+/// The links [`open_confined`] follows for one path, at most: a longer
+/// chain, or a loop, is refused (`ELOOP`).
+#[cfg(unix)]
+pub(crate) const MAX_LINKS: usize = 8;
+
+/// Open a project file from a pinned root, walking `rel` one component at a
+/// time from the root's descriptor and opening each no-follow. A link met
+/// on the way (a directory's or the file's) is read (`readlinkat`) and its
+/// target walked the same way in its place -- from the link's directory,
+/// or from the root when it is absolute and names a place below the root
+/// -- one hop at a time, at most [`MAX_LINKS`]. Fails closed: a target
+/// outside the root (absolute elsewhere, or a `..` above the root), too
+/// many links, or anything the walk cannot read is an error, and nothing
+/// is opened outside the root, a link swapped in during the walk included.
+/// (A `..` steps back along the directories walked, never `openat("..")`.)
+///
+/// Known limit: a directory the walk holds that another process renames
+/// out of the root before the last `openat` still takes the open (the walk
+/// is from its descriptor, wherever it now is). That needs write access to
+/// the root and to the place outside; no link is involved.
 #[cfg(unix)]
 pub(crate) fn open_confined(
-    root: &std::fs::File,
+    root: &rooted::Root,
     rel: &Path,
     flags: i32,
 ) -> std::io::Result<std::fs::File> {
+    use std::collections::VecDeque;
+    use std::ffi::OsString;
+    use std::io::{Error, ErrorKind};
+    use std::path::Component;
     if !inside(rel) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
             "a path inside root is required",
         ));
     }
-    let mut parts = rel
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(n) => Some(n),
-            _ => None,
-        })
-        .peekable();
-    let mut dir = root.try_clone()?;
-    while let Some(name) = parts.next() {
-        if parts.peek().is_none() {
-            return rooted::open_at(&dir, name, flags | libc::O_NOFOLLOW, 0o666);
+    let names = |p: &Path| -> VecDeque<OsString> {
+        p.components()
+            .filter_map(|c| match c {
+                Component::Normal(n) => Some(n.to_os_string()),
+                Component::ParentDir => Some(OsString::from("..")),
+                _ => None,
+            })
+            .collect()
+    };
+    let outside = |to: &Path| {
+        Error::new(
+            ErrorKind::PermissionDenied,
+            format!("a link leads outside root, to {}", to.display()),
+        )
+    };
+    let mut todo = names(rel);
+    // (the directories walked, the root first: a `..` steps back one)
+    let mut dirs = vec![root.dir.try_clone()?];
+    let mut links = 0;
+    while let Some(name) = todo.pop_front() {
+        if name == ".." {
+            // (only from a link's target: `inside` refuses one in `rel`)
+            if dirs.len() == 1 {
+                return Err(outside(Path::new("..")));
+            }
+            dirs.pop();
+            continue;
         }
-        dir = rooted::open_dir_at_nofollow(&dir, name)?;
+        let dir = dirs.last().expect("the root at least");
+        let r = if todo.is_empty() {
+            rooted::open_at(dir, &name, flags | libc::O_NOFOLLOW, 0o666)
+        } else {
+            rooted::open_dir_at_nofollow(dir, &name)
+        };
+        match r {
+            Ok(f) if todo.is_empty() => return Ok(f),
+            Ok(d) => {
+                dirs.push(d);
+                continue;
+            }
+            Err(e)
+                if e.raw_os_error() == Some(libc::ELOOP) && rooted::is_symlink_at(dir, &name) => {}
+            Err(e) => return Err(e),
+        }
+        links += 1;
+        if links > MAX_LINKS {
+            return Err(Error::from_raw_os_error(libc::ELOOP));
+        }
+        let to = rooted::read_link_at(dir, &name)?;
+        let mut next = if to.is_absolute() {
+            let below = root.below(&to).ok_or_else(|| outside(&to))?;
+            dirs.truncate(1);
+            names(below)
+        } else {
+            names(&to)
+        };
+        next.extend(todo.drain(..));
+        todo = next;
     }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        "empty path",
-    ))
+    // (the names ran out on a directory: a link to the root, or to `..`)
+    Err(Error::new(ErrorKind::InvalidInput, "not a file"))
 }
 
 /// The font keys a `COMPILE` says the client holds.
@@ -1689,7 +1802,7 @@ mod job_tests {
         assert!(open_confined(
             &pinned,
             Path::new("sub/b.tex"),
-            sys::O_WRONLY | sys::O_CREAT
+            libc::O_WRONLY | sys::O_CREAT
         )
         .is_err());
         assert_eq!(std::fs::read(away.join("b.tex")).unwrap(), b"b");
@@ -1708,11 +1821,102 @@ mod job_tests {
         assert!(open_confined(
             &pinned,
             Path::new("missing/file.tex"),
-            sys::O_WRONLY | sys::O_CREAT
+            libc::O_WRONLY | sys::O_CREAT
         )
         .is_err());
         assert!(!root.join("missing/file.tex").exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Links whose targets stay below the root are followed, one hop at a
+    /// time (relative, absolute by the root's name, to a file, to a
+    /// directory, through `..`, dangling to a file to make); links out of
+    /// it (relative, absolute, by `..` above the root), loops and chains of
+    /// more than `MAX_LINKS` are refused, and nothing outside is written or
+    /// made.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn rooted_open_follows_links_that_stay_below_the_root() {
+        use super::rooted as sys;
+        use std::io::{Read, Write};
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("flashtex-inlinks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, away) = (base.join("root"), base.join("away"));
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::fs::write(root.join("real.tex"), "inside").unwrap();
+        std::fs::write(root.join("sub/a.tex"), "a").unwrap();
+        std::fs::write(away.join("b.tex"), "outside").unwrap();
+        let ln = |to: &Path, at: &str| symlink(to, root.join(at)).unwrap();
+        ln(Path::new("real.tex"), "alias.tex");
+        ln(&root.join("real.tex"), "abs.tex");
+        ln(Path::new("sub"), "shared");
+        ln(Path::new("../real.tex"), "sub/up.tex");
+        ln(Path::new("../sub"), "sub/again");
+        ln(Path::new("sub/new.tex"), "dangling.tex");
+        ln(Path::new("../away"), "out");
+        ln(&away.join("b.tex"), "outabs.tex");
+        ln(Path::new("../../away/b.tex"), "sub/esc.tex");
+        ln(Path::new(".."), "parent");
+        ln(Path::new("loop2"), "loop1");
+        ln(Path::new("loop1"), "loop2");
+        ln(Path::new("me"), "me");
+        // chains: `c0` .. `c7` (8 links) and `d0` .. `d8` (9) to real.tex
+        for (p, n) in [("c", super::MAX_LINKS), ("d", super::MAX_LINKS + 1)] {
+            for i in 0..n {
+                let to = if i + 1 == n {
+                    "real.tex".to_string()
+                } else {
+                    format!("{p}{}", i + 1)
+                };
+                ln(Path::new(&to), &format!("{p}{i}"));
+            }
+        }
+        let pinned = sys::open_root(&root).unwrap();
+        let read = |p: &str| -> Result<String, String> {
+            let mut s = String::new();
+            open_confined(&pinned, Path::new(p), sys::O_RDONLY)
+                .and_then(|mut f| f.read_to_string(&mut s))
+                .map(|_| s)
+                .map_err(|e| e.to_string())
+        };
+        for p in [
+            "alias.tex",
+            "abs.tex",
+            "sub/up.tex",
+            "c0",
+            "sub/again/again/up.tex",
+        ] {
+            assert_eq!(read(p).as_deref(), Ok("inside"), "{p}");
+        }
+        assert_eq!(read("shared/a.tex").as_deref(), Ok("a"));
+        let mut f = open_confined(
+            &pinned,
+            Path::new("dangling.tex"),
+            sys::O_RDWR | sys::O_CREAT,
+        )
+        .expect("a dangling link inside the root");
+        f.write_all(b"made").unwrap();
+        assert_eq!(std::fs::read(root.join("sub/new.tex")).unwrap(), b"made");
+        for p in [
+            "out/b.tex",
+            "out/new.tex",
+            "outabs.tex",
+            "sub/esc.tex",
+            "parent/away/b.tex",
+            "loop1",
+            "me",
+            "d0",
+        ] {
+            assert!(
+                open_confined(&pinned, Path::new(p), sys::O_RDWR | sys::O_CREAT).is_err(),
+                "{p}: opened"
+            );
+        }
+        assert_eq!(std::fs::read(away.join("b.tex")).unwrap(), b"outside");
+        assert_eq!(std::fs::read_dir(&away).unwrap().count(), 1, "made outside");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Strict mode (lane ERROR-RECOVERY): `halt_on_error` is pdflatex's

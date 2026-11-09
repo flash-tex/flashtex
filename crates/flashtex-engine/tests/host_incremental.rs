@@ -5785,11 +5785,11 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
 }
 
 /// A `COMPILE`'s buffers and edits are written only inside the project
-/// (`host::resident::apply_changes`, through the root's descriptor, no link
-/// followed below it, #2094): through a linked directory, a linked file or a
-/// dangling link that leads out of the root, the request is refused and
-/// nothing outside is written or created. A link that stays inside the root
-/// is refused too (failing closed), and its file left as it was.
+/// (`host::resident::apply_changes`, walked from the root's descriptor, a
+/// link only where its target stays below the root: `server::open_confined`):
+/// through a linked directory, a linked file or a dangling link that leads
+/// out of the root, the request is refused and nothing outside is written
+/// or created. A link that stays inside the root is written through.
 #[cfg(unix)]
 #[test]
 fn buffers_through_a_symlink_out_of_the_project_are_refused() {
@@ -5870,13 +5870,13 @@ fn buffers_through_a_symlink_out_of_the_project_are_refused() {
             "{what}: away/kept.tex changed"
         );
     }
-    // a link inside the project is refused as well
+    // a link inside the project is written through
     let mut r = req(9, &proj, &out, "main.tex");
     r.buffers = vec![("alias.tex".into(), "inside, edited\n".into())];
-    assert!(refusal(&mut c, &r).is_some(), "a link inside the root");
+    assert_eq!(refusal(&mut c, &r), None, "a link inside the root");
     assert_eq!(
         std::fs::read_to_string(proj.join("real.tex")).unwrap(),
-        "inside\n"
+        "inside, edited\n"
     );
     let _ = c.bye();
     drop(host);
