@@ -324,18 +324,55 @@ const MAX_INPUT: u64 = 64 << 20;
 /// A file's bytes, if it is a regular file (after following links) of at
 /// most [`MAX_INPUT`] bytes: a `refs.bib` that is a link to `/dev/zero`, a
 /// FIFO or a huge file is treated as missing, never read into memory.
+///
+/// The file is opened first (non-blocking on unix, so opening a FIFO with
+/// no writer cannot hang the host) and the checks use the opened handle's
+/// metadata (`fstat`), then the bytes are read from that same handle: a
+/// swap of the name between check and read cannot substitute another file.
 fn read(p: &Path) -> Option<Vec<u8>> {
-    let m = std::fs::metadata(p).ok()?;
+    read_checked(p, |_| true)
+}
+
+/// [`read`], and also `ok(real)` for `real`, the canonical path of `p`,
+/// which must be the very file that was opened (same device and inode), so
+/// a link swapped after the check is refused rather than followed
+/// (REVIEW-SEC2 on #2403).
+fn read_checked(p: &Path, ok: impl FnOnce(&Path) -> bool) -> Option<Vec<u8>> {
+    read_handle(open_nonblocking(p)?, p, ok)
+}
+
+fn open_nonblocking(p: &Path) -> Option<std::fs::File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NONBLOCK);
+    }
+    o.open(p).ok()
+}
+
+/// The checks of [`read_checked`] on `f`, opened from `p`.
+fn read_handle(f: std::fs::File, p: &Path, ok: impl FnOnce(&Path) -> bool) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let m = f.metadata().ok()?;
     if !m.is_file() || m.len() > MAX_INPUT {
         return None;
     }
-    use std::io::Read;
+    let real = std::fs::canonicalize(p).ok()?;
+    if !ok(&real) {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let r = std::fs::metadata(&real).ok()?;
+        if (r.dev(), r.ino()) != (m.dev(), m.ino()) {
+            return None;
+        }
+    }
     let mut d = vec![];
-    std::fs::File::open(p)
-        .ok()?
-        .take(MAX_INPUT + 1)
-        .read_to_end(&mut d)
-        .ok()?;
+    f.take(MAX_INPUT + 1).read_to_end(&mut d).ok()?;
     (d.len() as u64 <= MAX_INPUT).then_some(d)
 }
 
@@ -400,20 +437,27 @@ fn aux_chain_in(
         return;
     }
     let path = out.join(rel);
-    if !crate::system::tool_read_ok(rel, &path, false, Some(out)) {
-        return;
-    }
-    let Ok(real) = std::fs::canonicalize(&path) else {
-        return;
-    };
     let total: u64 = files.iter().map(|(_, d)| d.len() as u64).sum();
-    if seen.contains(&real) || !std::fs::metadata(&real).is_ok_and(|m| total + m.len() <= MAX_INPUT)
-    {
+    if total >= MAX_INPUT {
         return;
     }
-    let Some(d) = read(&path) else {
+    // The confinement rule and the repeat check run on the canonical path
+    // of the file actually opened, and the bytes come from that handle, so
+    // a link swapped between check and read is refused (REVIEW-SEC2 on
+    // #2324).
+    let mut checked = None;
+    let Some(d) = read_checked(&path, |real| {
+        if seen.iter().any(|s| s == real)
+            || !crate::system::tool_read_ok(rel, real, false, Some(out))
+        {
+            return false;
+        }
+        checked = Some(real.to_path_buf());
+        true
+    }) else {
         return;
     };
+    let Some(real) = checked else { return };
     if total + d.len() as u64 > MAX_INPUT {
         return;
     }
@@ -1601,7 +1645,7 @@ Scanning input file main.idx...\n\
 
 #[cfg(test)]
 mod read_tests {
-    use super::{read, MAX_INPUT};
+    use super::{open_nonblocking, read, read_checked, read_handle, MAX_INPUT};
 
     /// A rule's inputs are read only when they are regular files within the
     /// limit: a `.bib` that links to `/dev/zero` must not fill the host's
@@ -1622,6 +1666,47 @@ mod read_tests {
         f.set_len(MAX_INPUT + 1).unwrap();
         drop(f);
         assert_eq!(read(&d.join("big.bib")), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// REVIEW-SEC2 on #2403/#2324: the check and the read used the name
+    /// separately, so a link swapped in between was followed, and a FIFO
+    /// swapped in blocked `open`. Now the file is opened first (non-blocking),
+    /// checked on the handle, and the checked path must be that same file.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_swapped_after_the_open_is_refused_and_fifos_never_block() {
+        let d = std::env::temp_dir().join(format!("flashtex-ext-toctou-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("inside.bib"), "INSIDE").unwrap();
+        std::fs::write(d.join("outside-sentinel.bib"), "SENTINEL-OUTSIDE").unwrap();
+        let link = d.join("link.bib");
+        std::os::unix::fs::symlink(d.join("inside.bib"), &link).unwrap();
+        // The control: no swap, the checked file is read.
+        assert_eq!(
+            read_checked(&link, |real| real.ends_with("inside.bib")).as_deref(),
+            Some(&b"INSIDE"[..])
+        );
+        // The race: the link pointed out of the project when it was opened
+        // and is swapped back inside before the check resolves it. The check
+        // passes on `inside.bib`, but that is not the file the handle holds.
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(d.join("outside-sentinel.bib"), &link).unwrap();
+        let f = open_nonblocking(&link).unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(d.join("inside.bib"), &link).unwrap();
+        let swapped = read_handle(f, &link, |real| real.ends_with("inside.bib"));
+        assert_eq!(swapped, None, "read the swapped-in sentinel");
+        // A FIFO with no writer: refused at once, not a blocked `open`.
+        let fifo = d.join("fifo.bib");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_checked(&fifo, |_| true));
+        });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(None));
         let _ = std::fs::remove_dir_all(&d);
     }
 }
