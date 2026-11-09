@@ -34,6 +34,10 @@
 %   a delimited argument, [6] a group, [7] a definition's body; [9] tests
 %   |bm_rec_on| itself) go through |get_next| as they did before those
 %   changes, so that |flashtex_bm_next| sees each control sequence read.
+%   A control sequence |get_next| delivers to a caller that looks only at
+%   the token (|intr_weak|, |matching|, |skipping|) is keyed by whether it
+%   is \.{\\outer}, a \.\# or an alignment tab, or an \.{\\if} or \.{\\fi}
+%   (BOX-MEMO.md \S17).
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
