@@ -139,7 +139,10 @@ final class ShellModel {
         // now, in this run-loop turn, before the editor ingests the text.
         // While an open is choosing its engine (`engineChoicePending`), the
         // open path tells the session itself once the engine is known.
-        didSet { if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
+        didSet {
+            if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) }
+            if oldValue == nil, documentURL != nil { dropUntitledDraft() } // UntitledDrafts.swift: the buffer has a file now
+        }
     }
     /// When `replaceProject` began (engine-v3 open → pixels timing).
     @ObservationIgnored var engineV3OpenedAt: UInt64?
@@ -653,6 +656,7 @@ final class ShellModel {
         }
         if startup == .untitledDocument {
             loadUntitledDocument()
+            recoverUntitledDraft() // UntitledDrafts.swift: a crash's unsaved untitled text, if any
         } else if let fixtures = Self.locateFixturesDirectory() {
             loadFixtures(request: fixtures.appendingPathComponent("compile-request.json"),
                          result: fixtures.appendingPathComponent("compile-result.json"))
@@ -829,7 +833,9 @@ final class ShellModel {
     func scheduleAutosave() {
         autosaveWork?.cancel()
         autosaveWork = nil
-        guard EditorPreferences.shared.autosave, documentURL != nil else { return }
+        // A buffer with no file keeps a crash draft instead, whatever the
+        // setting (UntitledDrafts.swift); never a Save panel.
+        guard documentURL == nil || EditorPreferences.shared.autosave else { return }
         let item = DispatchWorkItem { [weak self] in self?.performAutosave() }
         autosaveWork = item
         guard !Self.autosaveSuppressedUnderTest else { return } // flushPendingAutosave() performs it, on demand
@@ -844,7 +850,8 @@ final class ShellModel {
     /// skipped here; `enqueueSave` re-arms autosave if it was edited meanwhile.
     private func performAutosave() {
         autosaveWork = nil
-        guard EditorPreferences.shared.autosave, documentURL != nil else { return }
+        if documentURL == nil { keepUntitledDraft(); return } // UntitledDrafts.swift
+        guard EditorPreferences.shared.autosave else { return }
         let entry = project.entryPath
         if project.isDirty(entry), files.conflict == nil, savesInFlight[entry] == nil {
             saveEntryTex()

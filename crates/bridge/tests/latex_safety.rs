@@ -14,7 +14,9 @@ fn proposal(latex: &str) -> Proposal {
     }
 }
 fn rejected(latex: &str) {
-    let err = proposal(latex).validate().unwrap_err();
+    let Err(err) = proposal(latex).validate() else {
+        panic!("expected rejection of {latex:?}");
+    };
     assert_eq!(err.code, "invalid_proposal", "payload: {latex:?}");
 }
 fn accepted(latex: &str) {
@@ -35,6 +37,8 @@ fn shell_escape_is_rejected() {
 #[test]
 fn file_io_primitives_are_rejected() {
     rejected(r"\input{/etc/passwd}");
+    rejected(r"\input{chap1}");
+    rejected(r"\input chap1");
     rejected(r"\include{secret}");
     rejected(r"\openin0=/etc/passwd ");
     rejected(r"\read0 to\x");
@@ -346,4 +350,269 @@ fn control_sequence_names_built_or_rescanned_at_run_time_are_rejected() {
     rejected(r"\readline0 to\x");
     // Lookalikes stay accepted.
     accepted(r"\readlines \scantoken \Usename \csuses");
+}
+
+#[test]
+fn file_readers_may_not_name_a_path_outside_the_project() {
+    // Absolute, home-relative, variable-expanded or `..` paths reach
+    // files outside the project; a name built by a macro cannot be
+    // checked here, so it is refused too.
+    rejected(r"\includegraphics{/etc/passwd}");
+    rejected(r"\includegraphics[width=\linewidth]{../../secret.png}");
+    rejected(r"\includegraphics{ {/Users}/me/.ssh/id_rsa}");
+    rejected(r"\includegraphics{~/Pictures/x}");
+    rejected(r"\includegraphics{$HOME/x}");
+    rejected(r"\includegraphics{figs/../../x}");
+    rejected(r"\includegraphics{\string/etc/passwd}");
+    rejected(r"\newcommand\p{/etc/passwd}\includegraphics\p");
+    rejected(r"\pdfximage width 2pt {/etc/passwd}");
+    rejected(r"\pdfobj file {/etc/passwd}");
+    rejected(r"\pdfmdfivesum file {../x}");
+    rejected(r"\verbatiminput{/etc/hosts}");
+    rejected(r"\lstinputlisting[language=C]{/etc/hosts}");
+    rejected(r"\inputminted{c}{/etc/hosts}");
+    rejected(r"\import{/etc/}{passwd}");
+    rejected(r"\InputIfFileExists{/etc/passwd}{}{}");
+    rejected(r"\includepdf[pages=-]{../other.pdf}");
+    // Project-relative literal paths stay accepted; \newcommand is allowed by
+    // policy (Commander ruling).
+    accepted(r"\includegraphics[width=0.5\linewidth]{figs/plot.pdf}");
+    accepted(r"\includegraphics[width=3cm]{figs/plot.pdf}");
+    accepted(r"\includegraphics{plot}");
+    accepted(r"\inputminted{c}{src/main.c}");
+    accepted(r"\import{chapters/}{intro}");
+    accepted(r"\newcommand{\R}{\mathbb{R}} \renewcommand{\vec}[1]{\mathbf{#1}}");
+}
+
+#[test]
+fn reader_arguments_are_checked_after_tex_comments_are_removed() {
+    rejected("\\verbatiminput%comment\n{/etc/hosts}");
+    rejected("\\input%comment\n{/etc/hosts}");
+    rejected("\\input%comment\rpasswd");
+    rejected("\\includegraphics{%\n/etc/passwd}");
+    rejected("\\includegraphics[%]\n]{/etc/passwd}");
+    rejected("\\graphicspath{{figs/}%}\n{/tmp/}}");
+    accepted("\\verbatiminput%comment\n{figs/a.pdf}");
+    accepted("% a figure\n\\includegraphics[width=.5\\linewidth]{figs/a.pdf}");
+    accepted("\\includegraphics{figs/a.pdf} % trailing note");
+    accepted(r"100\% correct \includegraphics{figs/a.pdf}");
+    accepted("\\includegraphics{% comment\r\n  \tfigs/a.pdf}");
+    rejected("\\includegraphics{\\\\% comment\n/etc/passwd}");
+}
+
+#[test]
+fn comments_end_at_cr_lf_or_crlf() {
+    for ending in ["\r", "\n", "\r\n"] {
+        for command in [
+            r"\includegraphics{/etc/passwd}",
+            r"\input{/etc/passwd}",
+            r"\pdffilesize{/etc/passwd}",
+        ] {
+            rejected(&format!("% ignore{ending}{command}"));
+        }
+    }
+}
+
+#[test]
+fn caret_encoded_reader_paths_are_rejected() {
+    rejected(r"\pdffilesize{^^2fetc/hosts}");
+    rejected(r"^^ \includegraphics{figs/a.pdf}");
+}
+
+#[test]
+fn pdftex_file_primitives_are_denied_without_scanning_keywords() {
+    rejected(r"\pdfximage attr {} {/tmp/private.pdf}");
+    rejected(r"\pdfobj attr {} file {/tmp/x}");
+    rejected(r"\pdfximage ATTR {} {/tmp/x}");
+    rejected(r"\pdfximage height 1ptattr {} {/tmp/x}");
+    rejected(r"\pdfximage named {} {/tmp/x}");
+    rejected(r"\pdfximage attr \% {} {/tmp/x}");
+    for primitive in [
+        r"\pdfximage{figs/a.pdf}",
+        r"\pdfobj file {figs/a.pdf}",
+        r"\pdfmdfivesum file {figs/a.pdf}",
+        r"\pdffiledump{figs/a.pdf}",
+        r"\pdffilesize{figs/a.pdf}",
+        r"\pdffilemoddate{figs/a.pdf}",
+    ] {
+        rejected(primitive);
+    }
+    rejected(r"\newcommand{\p}{{/tmp/private.pdf}}\pdffilesize\p");
+}
+
+#[test]
+fn each_graphics_search_directory_is_checked() {
+    rejected(r"\graphicspath{{figs/}{/tmp/private/}}\includegraphics{secret.pdf}");
+    rejected(r"\graphicspath{{figs/}{../private/}}");
+    rejected(r"\graphicspath{}");
+    rejected(r"\graphicspath{{figs}{img/}}");
+    accepted(r"\graphicspath{{figs/}{img/}}\includegraphics{secret.pdf}");
+    accepted(r"\graphicspath{{figs/} {img/}}");
+}
+
+#[test]
+fn reader_arguments_follow_the_literal_allowlist() {
+    rejected(r"\includegraphics{.{}./x}");
+    rejected(r"\includegraphics{{.}./x}");
+    rejected(r"\includegraphics<2>{/etc/passwd}");
+    rejected(r"\includegraphics\p");
+    rejected(r"\includegraphics*{/etc/passwd}");
+    rejected(r"\includegraphics[width=\input]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\csname]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\linewidthx]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\linewidthé]{figs/a.pdf}");
+    rejected(r"\includegraphics[width=\linewidth\relax]{/etc/passwd}");
+    rejected(r"\includegraphics[width=\linewidth\relax{/etc/passwd}]{figs/a.pdf}");
+    rejected(r"\includegraphics{figs/a.pdf\p}");
+    rejected(r"\includegraphics{figs//../x}");
+    rejected(r"\includegraphics{figs/a^b.pdf}");
+    rejected(r"\includegraphics{figs/a<b>.pdf}");
+    rejected(r"\includegraphics[width={3cm}]{figs/a.pdf}");
+    accepted(r"\includegraphics{figs/a.pdf}");
+    accepted(r"\includegraphics*{figs/a.pdf}");
+    accepted(r"\includegraphics*[width=.5\linewidth]{figs/a.pdf}");
+    accepted(r"\includegraphics[width=3cm]{img/b}");
+    accepted(r"\includegraphics[width=.5\linewidth]{figs/a.pdf}");
+    for dimension in [
+        "textwidth",
+        "columnwidth",
+        "textheight",
+        "paperwidth",
+        "paperheight",
+        "hsize",
+        "vsize",
+    ] {
+        accepted(&format!(
+            r"\includegraphics[width=.5\{dimension}]{{figs/a.pdf}}"
+        ));
+    }
+    accepted(r"\verbatiminput{code/x.txt}");
+    accepted(r"\inputminted{c}{src/main.c}");
+}
+
+#[test]
+fn file_readers_written_as_environments_are_refused() {
+    // `\begin{X}` runs `\X` on what follows, so the environment form of a
+    // reader must not skip the path check (REVIEW-SEC on #2005). The paths
+    // are sentinels that are only parsed, never read.
+    for reader in [
+        "verbatiminput",
+        "includegraphics",
+        "lstinputlisting",
+        "VerbatimInput",
+        "includepdf",
+        "import",
+        "bibliography",
+    ] {
+        rejected(&format!(
+            r"\begin{{{reader}}}{{/nonexistent/flashtex-sentinel}}\end{{{reader}}}"
+        ));
+        rejected(&format!(
+            r"\begin{{{reader}}}{{../flashtex-sentinel}}\end{{{reader}}}"
+        ));
+        rejected(&format!(
+            r"\begin{{{reader}*}}{{/nonexistent/flashtex-sentinel}}"
+        ));
+        rejected(&format!(
+            r"\begin{{{reader}}}{{figs/a.pdf}}\end{{{reader}}}"
+        ));
+        rejected(&format!(r"\end{{{reader}}}"));
+    }
+    // Ordinary environments are unaffected.
+    accepted(r"\begin{figure}\includegraphics{figs/a.pdf}\end{figure}");
+    accepted(r"\begin{verbatim}x\end{verbatim}");
+}
+
+#[test]
+fn bibliography_lists_and_accented_names_are_checked_per_file() {
+    accepted(r"\bibliography{refs,more/refs2}");
+    accepted(r"\includegraphics{figs/café.pdf}");
+    accepted(r"\includegraphics{图/图1.png}");
+    rejected(r"\bibliography{refs,/nonexistent/flashtex-sentinel}");
+    rejected(r"\bibliography{refs,../flashtex-sentinel}");
+    rejected(r"\bibliography{refs, /nonexistent/flashtex-sentinel}");
+    rejected(r"\bibliography{refs,}");
+    rejected(r"\includegraphics{figs/a,b.pdf}");
+    // A leading space is skipped by TeX's file-name scan, so spaces stay out.
+    rejected(r"\includegraphics{ /nonexistent/flashtex-sentinel}");
+    rejected(r"\includegraphics{figs/my plot.pdf}");
+    rejected("\\includegraphics{figs/\u{FF0E}\u{FF0E}/x}");
+}
+
+#[test]
+fn percent_inside_verbatim_arguments_does_not_hide_later_commands() {
+    // REVIEW-SEC2 on #2005: inside these arguments `%` is ordinary text, so
+    // TeX runs what follows on the same line (the TL 2026 pdflatex oracle
+    // read a sentinel after `\verb|%|` and `\lstinline|%|`). The sentinel
+    // paths are only parsed, never read.
+    let s = "/nonexistent/flashtex-sentinel";
+    rejected(&format!(r"\verb|%|\verbatiminput{{{s}}}"));
+    rejected(&format!(r"\verb|%|\input{{{s}}}"));
+    rejected(r"\verb|%|\write18{touch /nonexistent/flashtex-sentinel}");
+    rejected(&format!(r"\verb*|%|\input{{{s}}}"));
+    rejected(&format!(r"\Verb[x]!%!\input{{{s}}}"));
+    rejected(&format!(r"\lstinline|%|\input {s}"));
+    rejected(&format!(r"\lstinline[language=C]|%|\input {s}"));
+    rejected(&format!(r"\lstinline{{a%}}\input{{{s}}}"));
+    rejected(&format!(r"\mintinline{{c}}|%|\input{{{s}}}"));
+    rejected(&format!("\\url{{a%}}\\input{{{s}}}\n}}"));
+    rejected(&format!(r"\href{{a%}}{{b}}\includegraphics{{{s}}}"));
+    rejected(&format!(r"\nolinkurl{{%}}\input{{{s}}}"));
+    // A verbatim environment, a short-verb character or a `v` argument is
+    // not modelled, so combined with a comment it is refused outright.
+    rejected(&format!(
+        "\\begin{{verbatim}}%\\end{{verbatim}}\\input{{{s}}}\n\\end{{verbatim}}"
+    ));
+    rejected(&format!(
+        "\\begin%\n{{lstlisting}}%\\end{{lstlisting}}\\input{{{s}}}\n\\end{{lstlisting}}"
+    ));
+    rejected(&format!(r"\MakeShortVerb{{\|}}|%|\input{{{s}}}"));
+    rejected(&format!(
+        r"\NewDocumentCommand{{\x}}{{v}}{{}}\x|%|\input{{{s}}}"
+    ));
+    rejected(&format!("\\verb |a%|\\input{{{s}}}"));
+    // Ordinary uses stay accepted.
+    accepted(r"\verb|100%| and \url{https://example.org/a%20b}");
+    accepted(r"\lstinline|x % y| then \includegraphics{figs/a.pdf}");
+    accepted("\\verb|x| % trailing note");
+    accepted("\\begin{verbatim}x\\end{verbatim}");
+    accepted("% a note\n\\includegraphics{figs/a.pdf}");
+}
+
+#[test]
+fn more_file_readers_and_file_primitives_are_checked() {
+    // REVIEW-SEC2 on #2005: each of these opened `/etc/passwd` unchecked.
+    let s = "/nonexistent/flashtex-sentinel";
+    for reader in [
+        "BVerbatimInput",
+        "LVerbatimInput",
+        "verbatimtabinput",
+        "embedfile",
+        "attachfile",
+        "textattachfile",
+        "loadglsentries",
+        "csvautotabular",
+        "pgfplotstableread",
+        "pgfimage",
+    ] {
+        rejected(&format!(r"\{reader}{{{s}}}"));
+        rejected(&format!(r"\{reader}{{../flashtex-sentinel}}"));
+        accepted(&format!(r"\{reader}{{data/x.txt}}"));
+    }
+    rejected(&format!(r"\listinginput{{1}}{{{s}}}"));
+    rejected(&format!(r"\DTLloaddb{{db}}{{{s}}}"));
+    accepted(r"\DTLloaddb{db}{data/x.csv}");
+    for primitive in ["XeTeXpicfile", "XeTeXpdffile", "pdfmapfile", "pdfmapline"] {
+        rejected(&format!(r"\{primitive}{{{s}}}"));
+        rejected(&format!(r"\{primitive} {s}"));
+    }
+    rejected(r"\pdfmapfile{+/nonexistent/flashtex-sentinel}");
+    rejected(&format!(r"\font\x={s}"));
+    rejected(&format!(r"\font\x = {s} at 10pt"));
+    rejected(r"\font\x=../flashtex-sentinel");
+    rejected(&format!(r#"\font\x="{s}""#));
+    rejected(&format!(r"\font\x={{{s}}}"));
+    rejected(r"\font=cmr10");
+    accepted(r"\font\x=cmr10 at 12pt \x hi");
+    accepted(r"\fontsize{10}{12}\selectfont x");
 }
