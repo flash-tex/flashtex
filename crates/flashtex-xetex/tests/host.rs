@@ -248,18 +248,23 @@ fn cancels_are_never_lost_in(inproc: &str) {
             i + 1
         );
     }
-    // superseded: a looping compile, then a newer one that ends
+    // superseded: a looping compile, then a newer one that ends. The newer
+    // one is another file of the project: rewriting `main.tex` under the
+    // looping compile (#2132) let that compile read an empty or partial
+    // file, stop at once with a TeX error (`error`, ~2 ms) and so never be
+    // superseded; or read the new document and end by itself.
+    std::fs::write(
+        proj.join("ends.tex"),
+        "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
+    )
+    .unwrap();
     for i in 0..20i64 {
         let id = 100 + 2 * i;
-        std::fs::write(proj.join("main.tex"), LOOP).unwrap();
         c.compile(&request(id, &proj, &out)).unwrap();
         std::thread::sleep(Duration::from_micros((i as u64 % 10) * 2000));
-        std::fs::write(
-            proj.join("main.tex"),
-            "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
-        )
-        .unwrap();
-        c.compile(&request(id + 1, &proj, &out)).unwrap();
+        let mut ends = CompileRequest::new(id + 1, proj.to_str().unwrap(), "ends.tex");
+        ends.output_dir = Some(out.clone());
+        c.compile(&ends).unwrap();
         let (_, done) = events(&mut c, id);
         assert_eq!(done.str_field("status"), Some("cancelled"), "{done:?}");
         let (_, done) = events(&mut c, id + 1);
@@ -1066,7 +1071,12 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     let _ = std::fs::remove_dir_all(&dir);
     let doc = "\\documentclass{article}\n\\usepackage{fontspec}\n\\font\\mine=\"[myfont.otf]\" at 11pt\n\\begin{document}\n\\section{One}\\label{one}\n{\\mine Our own font, ffi.} See section~\\ref{one}.\n\\end{document}\n";
     let (proj, out) = project(&dir, doc);
-    std::fs::copy(find("lmroman10-regular.otf"), proj.join("myfont.otf")).unwrap();
+    // (the bytes, not `fs::copy`, which keeps the source's mode: TeX Live's
+    // files are read-only in a Nix store, and the copy is overwritten below)
+    let put_font = |name: &str| {
+        std::fs::write(proj.join("myfont.otf"), std::fs::read(find(name)).unwrap()).unwrap()
+    };
+    put_font("lmroman10-regular.otf");
     let cache = dir.join("cache");
     let cache_s = cache.to_string_lossy().into_owned();
     let with_cache = [
@@ -1167,7 +1177,7 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     .unwrap();
     assert_eq!(against_scratch("body"), "s0", "a body edit goes on from S0");
     // its font file changed while closed: S₀ refused
-    std::fs::copy(find("lmroman12-regular.otf"), proj.join("myfont.otf")).unwrap();
+    put_font("lmroman12-regular.otf");
     assert_eq!(
         against_scratch("font"),
         "fresh",
@@ -1461,6 +1471,121 @@ fn an_edit_late_in_a_long_document_restarts_near_it() {
         assert_eq!(a.3, b.3, "compile {}: the .aux differs", i + 1);
         assert!(a.4.len() > 4, "compile {}: {} pages", i + 1, a.4.len());
         assert!(a.4 == b.4, "compile {}: the pages differ", i + 1);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// dvipdfmx's destination renaming across a page checkpoint (out::doc::Goto):
+/// a document without hyperref (no `dvipdfmx:config C 0x0010`) whose links
+/// and outline entries name destinations on many pages, some through named
+/// objects (`/Dest @n`, `/A @n`, also from the last page), renamed `(0)`,
+/// `(1)`, … in the order met. An edit on the last page restarts at a page
+/// checkpoint, and the counter, the table of new names and the named
+/// actions renamed in place come back with it: every PDF is byte for byte a
+/// run of its own's.
+#[test]
+fn destination_renaming_survives_a_page_checkpoint() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-gotos-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let link = |d: &str, text: &str| {
+        format!("\\special{{pdf:bann <</Subtype/Link/A<</S/GoTo/D({d})>>>>}}{text}\\special{{pdf:eann}}")
+    };
+    let mut body = String::from("\\special{pdf:obj @act <</S/GoTo/D(sec.1)>>}%\n");
+    for i in 1..=6 {
+        body.push_str(&format!(
+            "\\section{{Part {i}}}\\special{{pdf:dest (sec.{i}) [@thispage /XYZ @xpos @ypos null]}}%\n\
+             \\special{{pdf:outline 1 <</Title (Part {i}) /A <</S/GoTo/D (sec.{i})>>>>}}%\n\
+             \\special{{pdf:obj @d{i} (sec.{i})}}%\n"
+        ));
+        for k in 0..8 {
+            body.push_str(&para.repeat(3));
+            if k == 3 {
+                // links back, forward, by named objects
+                body.push_str(&link(&format!("sec.{}", (i % 6) + 1), "forward"));
+                body.push_str(&format!(
+                    " \\special{{pdf:ann width 20pt height 8pt <</Subtype/Link/Dest @d{}>>}}",
+                    (i + 4) % 6 + 1
+                ));
+                body.push_str(" \\special{pdf:ann width 20pt height 8pt <</Subtype/Link/A @act>>}");
+            }
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}See~{}.\n\\end{{document}}\n",
+        link("sec.3", "three")
+    );
+    let texts = [
+        doc.clone(),
+        doc.replace("See~", "Look at~"),
+        doc.replace(
+            "See~",
+            &format!("Look at~{}, ", link("new.dest", "nowhere")),
+        ),
+        doc.clone(),
+    ];
+    let run = |envs: &[(&str, &str)]| -> Vec<(String, Vec<u8>)> {
+        let sub = dir.join("run");
+        let _ = std::fs::remove_dir_all(&sub);
+        let (proj, out) = project(&sub, &doc);
+        let mut e = vec![("FLASHTEX_PIN_CLOCK", "1760000000.5")];
+        e.extend_from_slice(envs);
+        let h = start_with(&sub, &e, &sub.join("host.err"));
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (i, text) in texts.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text.clone())];
+            c.compile(&r).unwrap();
+            let (_ev, done) = events(&mut c, id);
+            let starts = done
+                .get("starts")
+                .and_then(Json::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            outs.push((
+                starts,
+                std::fs::read(Path::new(&out).join("main.pdf")).unwrap_or_default(),
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        outs
+    };
+    let own = run(&[("FLASHTEX_UNICODE_INPROCESS", "0")]);
+    let got = run(&[]);
+    let starts: Vec<&str> = got.iter().map(|o| o.0.as_str()).collect();
+    assert!(starts[1].starts_with("page"), "{starts:?}");
+    assert!(starts[2].starts_with("page"), "{starts:?}");
+    for (i, (a, b)) in got.iter().zip(&own).enumerate() {
+        // the destinations are renamed: 0 to 5, none under its old name
+        use flashtex_pdf::reader::{Obj, PdfFile};
+        let pdf = PdfFile::parse(&b.1).unwrap();
+        let cat = pdf.catalog().unwrap();
+        let names = pdf.resolve(cat.get("Names").unwrap()).as_dict().unwrap();
+        let dests = pdf.resolve(names.get("Dests").unwrap()).as_dict().unwrap();
+        let list = dests.get("Names").and_then(Obj::as_array).unwrap();
+        let keys: Vec<&Obj> = list.iter().step_by(2).collect();
+        assert_eq!(keys.len(), 6, "compile {}: {keys:?}", i + 1);
+        assert!(
+            keys.iter()
+                .all(|k| matches!(k, Obj::String(s) if s.len() == 1)),
+            "compile {}: {keys:?}",
+            i + 1
+        );
+        assert!(a.1 == b.1, "compile {}: the PDFs differ", i + 1);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2243,6 +2368,74 @@ fn the_font_lists_name_the_families_a_lookup_finds() {
         "every math family is listed"
     );
     let _ = std::fs::remove_dir_all(&cache);
+}
+
+/// FS-WATCH in the Unicode host (`flashtex_runtime::fswatch`, as in the
+/// pdfTeX host): a file outside the document that the preamble read is
+/// vouched for by the kernel's events at the next compile's check of S₀
+/// (no `stat`), and a change to it is still seen: the compile after it
+/// runs the preamble again.
+#[test]
+fn files_outside_the_document_are_watched_and_their_changes_seen() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-fswatch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // the file outside the document, its time in the past (a signature taken
+    // within its file's time tick is racy: compared by content, not kept)
+    let ext = dir.join("ext").join("ext.tex");
+    std::fs::create_dir_all(ext.parent().unwrap()).unwrap();
+    let write_ext = |word: &str, ago: u64| {
+        std::fs::write(&ext, format!("\\def\\extword{{{word}}}\n")).unwrap();
+        let f = std::fs::File::options().write(true).open(&ext).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(ago))
+            .unwrap();
+    };
+    write_ext("Alpha", 7200);
+    let ext = std::fs::canonicalize(&ext).unwrap();
+    let doc = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\input{{{}}}\n\\typeout{{EXT:\\extword}}\n\
+             \\begin{{document}}\n{body} \\extword.\n\\end{{document}}\n",
+            ext.display()
+        )
+    };
+    let (proj, out) = project(&dir, &doc("One"));
+    let err = dir.join("host.err");
+    let h = start_with(&dir, &[("FLASHTEX_FSWATCH_DEBUG", "1")], &err);
+    let mut c = Client::connect(&h.sock).unwrap();
+    let log = || std::fs::read_to_string(Path::new(&out).join("main.log")).unwrap();
+    let compile = |c: &mut Client, id: i64, text: String| {
+        let mut r = request(id, &proj, &out);
+        r.buffers = vec![("main.tex".into(), text)];
+        c.compile(&r).unwrap();
+        let (_, done) = events(c, id);
+        assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    };
+    compile(&mut c, 1, doc("One"));
+    assert!(log().contains("EXT:Alpha"), "{}", log());
+    // an edit in the body: S₀ holds, and its check keeps the file's
+    // signature from the watcher's first `stat` of it
+    compile(&mut c, 2, doc("Two"));
+    assert!(log().contains("EXT:Alpha"), "{}", log());
+    // the file changes (another time in the past): the next compile's check
+    // sees its event, `stat`s it again, and the preamble runs again
+    write_ext("Beta", 3600);
+    compile(&mut c, 3, doc("Two"));
+    assert!(log().contains("EXT:Beta"), "{}", log());
+    c.bye().unwrap();
+    drop(h);
+    let said = std::fs::read_to_string(&err).unwrap();
+    let ext = ext.to_string_lossy();
+    assert!(
+        said.lines().any(|l| l.starts_with("[fswatch] stat ")
+            && l.contains(&*ext)
+            && l.ends_with(": kept")),
+        "the host's checks did not watch {ext}:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `font` (an sfnt file) with `from` replaced by `to` (as long) in its
