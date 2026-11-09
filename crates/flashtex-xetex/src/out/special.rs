@@ -578,7 +578,7 @@ impl<M: Metrics> Builder<'_, M> {
             b"docview" => {
                 if let Some(Obj::Dict(d)) = p.object() {
                     let d = self.fixup_dict(d);
-                    self.doc.catalog.merge(&d);
+                    docview(&mut self.doc.catalog, d);
                 }
             }
             b"mapline" => {
@@ -1100,6 +1100,20 @@ pub fn read_transform(p: &mut Parser) -> Mat {
     m
 }
 
+/// `pdf:docview <<...>>` into the catalog (spc_pdfm.c's
+/// spc_handler_pdfm_docview): a `/ViewerPreferences` dictionary merges
+/// into the one the catalog has ("Avoid overriding whole
+/// ViewerPreferences"), every other entry replaces.
+fn docview(catalog: &mut Dict, mut d: Dict) {
+    if let Some(Obj::Dict(old)) = catalog.get_mut(b"ViewerPreferences") {
+        if let Some(Obj::Dict(add)) = d.get(b"ViewerPreferences") {
+            old.merge(add);
+            d.remove(b"ViewerPreferences");
+        }
+    }
+    catalog.merge(&d);
+}
+
 fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
@@ -1132,6 +1146,35 @@ mod tests {
         assert_eq!(c("[0 0.5 1]"), Some(Col(vec![0.0, 0.5, 1.0])));
         assert_eq!(c("Red"), Some(Col(vec![0.0, 1.0, 1.0, 0.0])));
         assert_eq!(c("hsb 0 1 1"), Some(Col(vec![1.0, 0.0, 0.0])));
+    }
+
+    /// Measured (TeX Live 2026 xdvipdfmx): `pdf:docview <</ViewerPreferences
+    /// <</HideToolbar true /FitWindow true>> /PageMode /UseOutlines>>`, then
+    /// `pdf:docview <</ViewerPreferences <</HideMenubar true>> >>`, gives a
+    /// catalog with `/PageMode /UseOutlines` and all three preferences.
+    #[test]
+    fn docview_merges_viewer_preferences() {
+        let dict = |s: &str| match Parser::new(s.as_bytes()).object() {
+            Some(Obj::Dict(d)) => d,
+            o => panic!("{o:?}"),
+        };
+        let mut cat = Dict::default();
+        docview(
+            &mut cat,
+            dict("<</ViewerPreferences <</HideToolbar true /FitWindow true>> /PageMode /UseOutlines>>"),
+        );
+        docview(
+            &mut cat,
+            dict("<</ViewerPreferences <</HideMenubar true>> >>"),
+        );
+        assert_eq!(
+            cat.get(b"PageMode"),
+            Some(&Obj::Name(b"UseOutlines".to_vec()))
+        );
+        let vp = cat.get(b"ViewerPreferences").unwrap().as_dict().unwrap();
+        for k in [&b"HideToolbar"[..], b"FitWindow", b"HideMenubar"] {
+            assert_eq!(vp.get(k), Some(&Obj::Bool(true)), "{}", lossy(k));
+        }
     }
 
     #[test]
