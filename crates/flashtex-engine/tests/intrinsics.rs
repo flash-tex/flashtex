@@ -79,6 +79,16 @@ fn check(tag: &str, src: &str) -> String {
     check_with(tag, src, &[], &["-ini", "\\input t"])
 }
 
+/// [`check`] in e-TeX's mode.
+fn check_etex(tag: &str, src: &str) -> String {
+    check_args(tag, src, &["-ini", "-etex", "\\input t"])
+}
+
+/// [`check`] with the command line `args`.
+fn check_args(tag: &str, src: &str, args: &[&str]) -> String {
+    check_with(tag, src, &[], args)
+}
+
 /// [`check`] with `files` (name, bytes) next to `t.tex`, and the command
 /// line `args`.
 fn check_with(tag: &str, src: &str, files: &[(&str, &[u8])], args: &[&str]) -> String {
@@ -190,6 +200,25 @@ fn impure_macro_is_not_replayed() {
     }
 }
 
+/// `print_cs` prints a control symbol with a space after it when its
+/// character is a letter, so a run that prints one (here e-TeX's
+/// `\detokenize`, which `\edef`'s `scan_toks` runs itself, not through
+/// `expand`) reads that character's category. Before, nothing recorded it:
+/// the hook kept replaying `\@ ` after `\@` stopped being a letter.
+#[test]
+fn a_printed_control_symbol_reads_its_characters_category() {
+    let s = check_etex(
+        "detok",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\scrollmode\\catcode`\\@=11\n\
+         \\def\\hook{\\edef\\w{\\detokenize{\\@}}}\n\
+         \\hook\\hook\\message{[\\meaning\\w]}\\catcode`\\@=12\n\
+         \\hook\\message{[\\meaning\\w]}\\hook\\message{[\\meaning\\w]}\\end\n",
+    );
+    // calls 2 and 4 replay; call 3 sees the new category and records again
+    assert_eq!(stat(&s, "replays"), 2, "{s}");
+    assert_eq!(stat(&s, "Deps"), 1, "{s}");
+}
+
 #[test]
 fn everyeof_read_past_the_run_is_not_the_runs() {
     // (#2199) `\\count1=5` reads on past the body for more digits; at the
@@ -231,6 +260,26 @@ fn register_arithmetic_is_a_dependency() {
         ),
     );
     assert_eq!(stat(&s, "replays"), 2, "{s}");
+}
+
+/// An e-TeX sparse register (`\countdef` above 255) is a node, and a watch
+/// record compares a meaning's node by its address. Here `\a`'s register
+/// node is freed (`\let\a\relax`) and the next `\countdef\a` makes count302
+/// in the same node, so `\a` held its recorded value again and the hook
+/// kept replaying `\count300` for `\meaning\a`. A sparse register let go
+/// of is never taken back.
+#[test]
+fn a_sparse_register_let_go_of_is_not_taken_back() {
+    let s = check_etex(
+        "sparse",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\scrollmode\\countdef\\b=301 \\countdef\\a=300\n\
+         \\def\\hook{\\edef\\w{\\meaning\\a}}\n\
+         \\hook\\hook\\message{[\\meaning\\w]}\\let\\a\\relax \\countdef\\a=302\n\
+         \\hook\\message{[\\meaning\\w]}\\hook\\message{[\\meaning\\w]}\\end\n",
+    );
+    // calls 2 and 4 replay; call 3 records count302's meaning afresh
+    assert_eq!(stat(&s, "replays"), 2, "{s}");
+    assert_eq!(stat(&s, "Deps"), 1, "{s}");
 }
 
 #[test]

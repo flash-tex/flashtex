@@ -20,7 +20,8 @@
 % * |intr_rec_on|: a recording is in progress. The hooks behind it report
 %   every state the recorded run reads (the meaning of every control
 %   sequence |get_next| delivers, |\csname| and |\ifcsname| look-ups, the
-%   internal quantities |scan_something_internal| fetches), every change it
+%   internal quantities |scan_something_internal| fetches, the category of
+%   each control symbol's character |print_cs| prints), every change it
 %   makes (|eq_define|, |geq_define|, |eq_word_define|, |geq_word_define|,
 %   |new_save_level|, |unsave|), every command and expandable primitive it
 %   runs, and the points where a run stops being a pure function of what it
@@ -49,6 +50,13 @@ text(p):=make_string; pool_ptr:=pool_ptr+d;
 @!stat incr(cs_count);@+tats@;@/
 if intr_on then flashtex_intr_new_cs(p);
 end
+@z
+
+@x pdftex.web l.6693 - printing a control symbol reads its character's category
+      if cat_code(p-single_base)=letter then print_char(" ");
+@y
+      if intr_rec_on then flashtex_intr_read(cat_code_base+p-single_base);
+      if cat_code(p-single_base)=letter then print_char(" ");
 @z
 
 @x pdftex.web l.7122 - a recorded run opens a group
