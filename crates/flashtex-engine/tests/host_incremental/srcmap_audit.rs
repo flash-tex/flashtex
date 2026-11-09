@@ -200,6 +200,19 @@ fn audit(
     steps: &[Step],
     env: &[(&str, &str)],
 ) -> Vec<String> {
+    audit_counting(name, files, main, steps, env).0
+}
+
+/// [`audit`], and the BOX-MEMO hits of the edited session's host (the
+/// `boxmemo` counts of its last edit's `DONE`).
+fn audit_counting(
+    name: &str,
+    files: &[(&str, String)],
+    main: &str,
+    steps: &[Step],
+    env: &[(&str, &str)],
+) -> (Vec<String>, i64) {
+    let mut hits = 0;
     let base = common::fresh_dir(&format!("flashtex-srcmap-{name}"));
     let _ = std::fs::remove_dir_all(&base);
     let (proj, out) = (base.join("proj"), base.join("out"));
@@ -277,6 +290,16 @@ fn audit(
         let files: Vec<&str> = s.edits.iter().map(|e| e.0).collect();
         let what = format!("step {k} ({}: {})", files.join(", "), s.what);
         eprintln!("{name}: {what}: {}", o.done);
+        if let Some(n) = o
+            .done
+            .get("stages")
+            .and_then(|s| s.get("boxmemo"))
+            .and_then(Json::as_array)
+            .and_then(|a| a.get(1))
+            .and_then(Json::as_i64)
+        {
+            hits = n;
+        }
         compare_all(
             &scratch.1,
             &view,
@@ -295,7 +318,7 @@ fn audit(
     if bad.is_empty() {
         let _ = std::fs::remove_dir_all(&base);
     }
-    bad
+    (bad, hits)
 }
 
 fn para(tag: &str, i: usize) -> String {
@@ -452,7 +475,7 @@ fn spans_and_diagnostics_of_replayed_calls_equal_a_fresh_run() {
     }
     let mut main = String::from(
         "\\documentclass{article}\n\
-         \\newcommand{\\measure}[1]{{\\setbox0\\hbox{#1}\\xdef\\lastw{\\the\\wd0\\noexpand\\undefinedw}}}\n\
+         \\newcommand{\\measure}[1]{{\\setbox0\\hbox{#1}\\xdef\\lastw{\\the\\wd0 \\noexpand\\undefinedw}}}\n\
          \\newcommand{\\drawit}[1]{\\kern1pt #1\\kern1pt}\n\
          \\begin{document}\n",
     );
@@ -486,21 +509,17 @@ fn spans_and_diagnostics_of_replayed_calls_equal_a_fresh_run() {
             "a letter typed on the calls' moved line",
         ));
     }
-    let stats = common::fresh_dir("flashtex-srcmap-bmstats").join("stats");
-    let bad = audit(
+    let (bad, hits) = audit_counting(
         "boxmemo",
         &[("main.tex", main)],
         "main.tex",
         &steps,
-        &[
-            ("FLASHTEX_BOXMEMO_NAMES", "measure,drawit"),
-            ("FLASHTEX_BOXMEMO_STATS", stats.to_str().unwrap()),
-        ],
+        &[("FLASHTEX_BOXMEMO_NAMES", "measure,drawit")],
     );
-    if let Ok(s) = std::fs::read_to_string(&stats) {
-        eprintln!("BOX-MEMO stats:\n{s}");
-    }
     assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad.join("\n"));
+    // (both calls, at each keystroke after the first that recorded them)
+    eprintln!("BOX-MEMO hits: {hits}");
+    assert!(hits >= 8, "the calls were replayed {hits} times");
 }
 
 /// A longer two-chapter project with hyperref (links carry spans), errors
