@@ -367,6 +367,60 @@ fn font_parameters_are_part_of_the_key() {
     assert!(stat(&s, "recordings") >= 3, "{s}");
 }
 
+/// `\\toks0` (and `\\toks4`): `\\kern.1pt` (`0 `) doubled 15 (16) times,
+/// lists longer than the key's `MAX_LIST` (65,536 tokens).
+const LONG_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+    \\toks0={\\kern.1pt}\\toks4={0 }\n\
+    \\def\\dbl#1{\\edef\\x{\\the\\toks#1 \\the\\toks#1}\\toks#1=\\expandafter{\\x}}\n\
+    \\def\\dbls#1{\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1\\dbl#1}\n\
+    \\dbls0\\dbl0\\dbl0\\dbl0\\dbl0\\dbl0\\dbl0\\dbl0 \\dbls4\\dbls4\n\
+    \\def\\show{\\message{[\\the\\dimen1|\\the\\count1]}}\n";
+
+#[test]
+fn long_token_lists_are_never_keys() {
+    // (#2194) a token list longer than `MAX_LIST` was kept as one value,
+    // -2, that every other such list matched: a `\\toks` register the call
+    // reads (KR) and its argument (K1), each one `\\kern.1pt` longer after
+    // the second call, replayed the old width. Such a call is never
+    // replayed
+    let s = check(
+        "long-lists",
+        &[
+            LONG_PRELUDE,
+            "\\def\\measure#1{\\begingroup\\setbox0\\hbox{\\the\\toks0}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\measure{a}\\show\\measure{a}\\show\\toks0=\\expandafter{\\the\\toks0\\kern.1pt}\
+             \\measure{a}\\show\\measure{a}\\show\n\
+             \\def\\measure#1{\\begingroup\\setbox0\\hbox{#1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+             \\edef\\go{\\noexpand\\measure{\\the\\toks0}}\\go\\show\\go\\show\
+             \\edef\\go{\\noexpand\\measure{\\the\\toks0\\kern.1pt}}\\go\\show\\go\\show\\end\n",
+        ]
+        .concat(),
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn long_shapes_are_never_keys() {
+    // (#2194) the same for a shape in K2: e-TeX's `\\widowpenalties` with
+    // 65,541 entries, whose first one the penalty between a two-line
+    // paragraph's lines takes, changed from 100 to 200
+    let s = check(
+        "long-shapes",
+        &[
+            LONG_PRELUDE,
+            "\\hsize=10pt \\tolerance=10000 \\hbadness=10000 \\vbadness=10000\n\
+             \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\noindent\\vrule width 5pt\\penalty-10000 \\vrule width 5pt\\par\
+             \\setbox3\\lastbox\\unskip\\global\\count1=\\lastpenalty}\\endgroup}\n\
+             \\widowpenalties 65541 100 \\the\\toks4 0 0 0 0 \\measure{a}\\show\\measure{a}\\show\n\
+             \\widowpenalties 65541 200 \\the\\toks4 0 0 0 0 \\measure{a}\\show\\measure{a}\\show\n\
+             \\widowpenalties 3 300 0 0 \\measure{a}\\show\\measure{a}\\show\\end\n",
+        ]
+        .concat(),
+    );
+    // (the short shape's calls replay)
+    assert_eq!(stat(&s, "hits"), 1, "{s}");
+}
+
 #[test]
 fn boxes_set_at_the_calls_level_replay() {
     // (lane FANCYHDR) fancyhdr's head and foot run `\normalsize` at the
