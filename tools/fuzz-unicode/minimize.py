@@ -47,6 +47,8 @@ class Oracle:
     def key(self, res):
         if res["cls"] == "log":
             return DIGITS.sub("#", res["detail"]["oracle"])
+        if res["cls"] == "pdf":
+            return res.get("sig")
         return None
 
     def test(self, lines):
@@ -56,7 +58,8 @@ class Oracle:
         self.checks += 1
         work = tempfile.mkdtemp(prefix="fzu-min-", dir=self.tmp)
         try:
-            res = fuzz.compare(text, self.candidate, self.oracle, work, self.timeout)
+            res = fuzz.compare(text, self.candidate, self.oracle, work, self.timeout,
+                               pdf=self.want_cls == "pdf")
         finally:
             shutil.rmtree(work, ignore_errors=True)
         if res["cls"] != self.want_cls:
@@ -119,6 +122,9 @@ def main(argv=None):
     o = Oracle(args.candidate, args.oracle, args.timeout, r["cls"], None, args.tmp)
     if r["cls"] == "log":
         o.want_key = DIGITS.sub("#", r["detail"]["oracle"])
+    elif r["cls"] == "pdf":
+        # The same kinds of PDF difference (run under a Python with fontTools).
+        o.want_key = r.get("sig")
     if not o.test(lines):
         print("the finding does not reproduce", file=sys.stderr)
         return 2
