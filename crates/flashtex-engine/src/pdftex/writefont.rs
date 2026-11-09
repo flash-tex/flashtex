@@ -129,6 +129,11 @@ pub struct State {
     /// `ttf_cmap_tree` (writettf.c): the `cmap` subtables read so far, by
     /// (font file name, platform id, encoding id); code to glyph index.
     pub ttf_cmaps: BTreeMap<(Vec<u8>, i32, i32), Vec<i32>>,
+    /// writettf.c's `static TTF_USHORT upem`: set by `ttf_read_head`, it
+    /// keeps its value from one font to the next, so an OpenType font
+    /// without a `head` table scales its `hhea`/`PCLT` metrics by the
+    /// units per em of the font written before it (0 for the first).
+    pub ttf_upem: u16,
 }
 
 // Checkpoint registration (crate::checkpoint): the state is cloned at a
@@ -139,7 +144,8 @@ crate::codec_struct!(State {
     fos,
     fo_tree,
     t1,
-    ttf_cmaps
+    ttf_cmaps,
+    ttf_upem
 });
 
 fn fm_of(st: &Fonts, id: usize) -> &FmEntry {
