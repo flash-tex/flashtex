@@ -2451,19 +2451,23 @@ fn a_picture_replaced_in_place_is_sent_again() {
         let h = start_with(&sub, &e, &sub.join("host.err"));
         let mut c = Client::connect(&h.sock).unwrap();
         let mut outs = vec![];
-        for (i, fig) in [&a, &a, &b].into_iter().enumerate() {
-            // the same modification time in both runs (the key holds it)
+        // the picture written before compiles 1 and 3 (compile 2 runs on
+        // with nothing changed), with the same modification time in both
+        // runs (the key holds it)
+        for (i, fig) in [Some(&a), None, Some(&b)].into_iter().enumerate() {
             let f = proj.join("fig.pdf");
-            std::fs::write(&f, fig).unwrap();
-            std::fs::File::options()
-                .write(true)
-                .open(&f)
-                .unwrap()
-                .set_modified(
-                    std::time::SystemTime::UNIX_EPOCH
-                        + Duration::from_secs(1_700_000_000 + 60 * i as u64),
-                )
-                .unwrap();
+            if let Some(fig) = fig {
+                std::fs::write(&f, fig).unwrap();
+                std::fs::File::options()
+                    .write(true)
+                    .open(&f)
+                    .unwrap()
+                    .set_modified(
+                        std::time::SystemTime::UNIX_EPOCH
+                            + Duration::from_secs(1_700_000_000 + 60 * i as u64),
+                    )
+                    .unwrap();
+            }
             let id = i as i64 + 1;
             c.compile(&request(id, &proj, &out)).unwrap();
             let (ev, done) = events(&mut c, id);
