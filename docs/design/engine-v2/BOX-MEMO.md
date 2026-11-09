@@ -202,6 +202,8 @@ A recording ends at `big_switch` once every input level from the body's on is us
 - `cur_level`, `save_ptr` and the save stack below it;
 - `cond_ptr`/`if_limit`/`cur_if`/`if_line`;
 - `align_state`, `nest_ptr`, the mode, `tail`, `scanner_status` and `after_token`;
+- the list's `prev_graf`, which `new_graf` sets to 0 even for an empty paragraph that appends
+  nothing (`\noindent\par`, tex.web §1091; lane AUDIT-WRITES, #2222);
 - the string, hash and font counters;
 - the output counters and the page-builder state of §4.1.
 
