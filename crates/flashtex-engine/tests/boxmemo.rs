@@ -479,25 +479,6 @@ fn protrusion_around_a_replayed_call_is_the_normal_paths() {
 }
 
 #[test]
-fn calls_in_math_groups_compare_their_save_stack() {
-    // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
-    // display, and of a display's `\\eqno` (cleveref's prefix under
-    // `\\label` in `equation`). The full verifier walks the save stack
-    // group by group as `show_save_groups` does; it took the display's
-    // nest level for inline math under a math group, read the `$$` as an
-    // `\\eqno` with a saved word, and misread every entry below
-    let s = check(
-        "math-group",
-        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
-         \\hsize=100pt \\tracingonline=0\n\
-         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
-         \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
-         \\one\\one\\one\\end\n",
-    );
-    assert!(stat(&s, "hits") >= 2, "{s}");
-}
-
-#[test]
 fn a_font_identifier_made_by_a_call_never_replays() {
     // (#2184) `\\font\\b=cmr10` of a font already loaded makes `\\b` the
     // font's identifier (`eqtb[font_id_base+f]`, `font_id_text(f)`, what
@@ -520,5 +501,26 @@ fn a_font_identifier_made_by_a_call_never_replays() {
          \\font\\c=cmr10 \\measure{x}\\show\\measure{x}\\show\\end\n",
         &[("cmr10.tfm", tfm)],
     );
+    // (`0` pins this fix's refusal. A later change that replays `\\font`
+    // and sets the identifier itself, #2184's other option, changes it)
     assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn calls_in_math_groups_compare_their_save_stack() {
+    // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
+    // display, and of a display's `\\eqno` (cleveref's prefix under
+    // `\\label` in `equation`). The full verifier walks the save stack
+    // group by group as `show_save_groups` does; it took the display's
+    // nest level for inline math under a math group, read the `$$` as an
+    // `\\eqno` with a saved word, and misread every entry below
+    let s = check(
+        "math-group",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\$=3 \\scrollmode\n\
+         \\hsize=100pt \\tracingonline=0\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width #1}\\global\\dimen1=\\wd0 \\endgroup}\n\
+         \\def\\one{\\begingroup\\count1=1 $$ {\\measure{2pt}} \\eqno {\\measure{3pt}} $$\\endgroup\\message{[\\the\\dimen1]}}\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
 }
