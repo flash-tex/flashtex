@@ -6778,3 +6778,39 @@ fn a_file_embedded_by_pdfobj_is_read_whole() {
         "the revert",
     );
 }
+
+/// PREAMBLE-PATCH (#2436): a character of math code `"8000` in a formula
+/// stands for its active character, whose meaning tex.web §1152 reads
+/// directly (`eq_type(cur_cs)`), not through `get_next`. Keystrokes in the
+/// active character's definition go on from the old run (from the second
+/// on) at its newest checkpoint before the first read of the changed
+/// meaning, which must be the formula's on a later page: every compile
+/// equals scratch runs.
+#[test]
+fn preamble_patch_of_an_active_math_character() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |def: &str| {
+        let pre = format!("\\mathcode`\\Q=\"8000\n{{\\catcode`\\Q=13 \\gdef Q{{{def}}}}}");
+        patch_doc("A title", &pre, "", "", false)
+            .replacen("\\section{Two}", "A formula $aQb$.\n\\section{Two}", 1)
+    };
+    let dir = e.dir.join("prepatch-mathactive");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc("x"));
+    let keys = [
+        (doc("xy"), "a letter"),
+        (doc("xyz"), "the next letter"),
+        (doc("xyzw"), "and the next"),
+        (doc("x"), "the revert"),
+    ];
+    for (text, what) in &keys {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+        assert_eq!(field(&r, "restart_preamble"), "true", "{what}: {r}");
+        eprintln!("{what}: preamble_patched={}", field(&r, "preamble_patched"));
+    }
+}
