@@ -878,3 +878,110 @@ fn calls_in_math_groups_compare_their_save_stack() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+/// `t.tex`'s `\pfile` writes `p.tex` afresh from `\toks0`, `\toks2` and
+/// `\toks4`, one line each.
+const SPAN_PFILE: &str =
+    "\\def\\pfile{\\immediate\\openout3=p.tex \\immediate\\write3{\\the\\toks0}\
+    \\immediate\\write3{\\the\\toks2}\\immediate\\write3{\\the\\toks4}\\immediate\\closeout3 }\n\
+    \\toks2={pt\\vrule height 5pt width 1pt\\global\\advance\\n by 1 }\\toks4={\\end{pic}}\n";
+
+#[test]
+fn a_spans_key_holds_its_lines_last_byte() {
+    // read with `\endlinechar=-1`, a line's last byte is its last
+    // character, not the end-of-line character: the first line of the
+    // picture rewritten to end in `\kern 2` for `\kern 1` (the next line
+    // begins with `pt`) is another key
+    let s = check_files(
+        "span-lastbyte",
+        &[(
+            "t.tex",
+            &[
+                SPAN_PRELUDE,
+                SPAN_PFILE,
+                "\\toks0={\\begin{pic}\\vrule width 3pt height 2pt\\kern1}\\pfile\n\
+                 \\endlinechar=-1 \\one\\one\\endlinechar=13\n\
+                 \\toks0={\\begin{pic}\\vrule width 3pt height 2pt\\kern2}\\pfile\n\
+                 \\endlinechar=-1 \\one\\one\\endlinechar=13\n\
+                 \\par\\showlists\\stop\n",
+            ]
+            .concat(),
+        )],
+        "pic",
+    );
+    assert_eq!(stat(&s, "hits"), 2, "{s}");
+}
+
+#[test]
+fn a_spans_last_line_is_compared() {
+    // the picture's last line rewritten (`\kern` before `\end{pic}`), the
+    // lines before it as they were: the recorded lines are not the file's
+    let s = check_files(
+        "span-lastline",
+        &[(
+            "t.tex",
+            &[
+                SPAN_PRELUDE,
+                SPAN_PFILE,
+                "\\toks0={\\begin{pic}\\vrule width 3pt height 2pt\\kern1}\\toks2={pt\\vrule width 1pt}\n\
+                 \\toks4={\\kern1pt\\end{pic}}\\pfile \\one\\one\n\
+                 \\toks4={\\kern4pt\\end{pic}}\\pfile \\one\\one\n\
+                 \\par\\showlists\\stop\n",
+            ]
+            .concat(),
+        )],
+        "pic",
+    );
+    assert_eq!(stat(&s, "hits"), 2, "{s}");
+}
+
+#[test]
+fn a_spans_line_number_is_part_of_its_key() {
+    // two equal pictures in one file, on lines 1-3 and 4-6: each is its
+    // own key, and the line after each picture is the normal path's
+    // (`\inputlineno`). (No `\advance\n` in them: the second would read
+    // another `\n`.)
+    let pic = "\\begin{pic}\\vrule width 3pt height 2pt\\kern2pt\n\
+               \\vrule height 5pt width 1pt\\def\\x{y}\n\
+               \\end{pic}\\message{[\\the\\inputlineno]}\n";
+    let s = check_files(
+        "span-lineno",
+        &[
+            ("p.tex", &[pic, pic].concat()),
+            (
+                "t.tex",
+                &[SPAN_PRELUDE, "\\one\\one\\one\\par\\showlists\\stop\n"].concat(),
+            ),
+        ],
+        "pic",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
+fn a_span_in_a_longer_buffer_raises_its_high_mark() {
+    // `max_buf_stack` ("b" in `\tracingstats`' memory usage): recorded
+    // below the buffer's high mark, the picture is read again from a file
+    // begun after a long line, where its lines raise the mark; it is not
+    // replayed there
+    let long = "x".repeat(300);
+    let s = check_files(
+        "span-highmark",
+        &[
+            ("p.tex", SPAN_PIC),
+            (
+                "t.tex",
+                &[
+                    SPAN_PRELUDE,
+                    &format!("%{long}\n"),
+                    "\\one\\one\\one\n",
+                    &format!("\\one\\one %{}\n", &long[..290]),
+                    "\\one\\par\\showlists\\tracingstats=1 \\stop\n",
+                ]
+                .concat(),
+            ),
+        ],
+        "pic",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
