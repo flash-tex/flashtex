@@ -1231,7 +1231,8 @@ final class EngineV3PagesView: NSView {
 
     func formArrived(_ id: UInt32) {
         guard let session else { return }
-        for (i, _) in pageViews {
+        // (a page holding an older run's forms does not draw this one)
+        for (i, _) in pageViews where !session.holdsForms(page: i) {
             if session.pages[i]?.page.items.contains(where: { if case .form(let f, _) = $0 { f == id } else { false } }) == true {
                 raster(i, compileID: nil)
             }

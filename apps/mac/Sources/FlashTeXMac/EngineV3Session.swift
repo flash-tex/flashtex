@@ -217,6 +217,8 @@ final class EngineV3Session {
     @ObservationIgnored private var heldForms: [Int: [UInt32: DL3PreparedPage]] = [:]
     /// The forms page `i` draws with.
     func forms(forPage i: Int) -> [UInt32: DL3PreparedPage] { heldForms[i] ?? forms }
+    /// Whether page `i` draws forms kept from an older run (a new FORM does not change it).
+    func holdsForms(page i: Int) -> Bool { heldForms[i] != nil }
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
@@ -1964,11 +1966,11 @@ final class EngineV3Session {
                 // resources when it arrived), stale until they are sent again,
                 // and so do the stored pages of an instant reopen.
                 markStale(Set(pages.keys))
-                // Form ids restart too: each kept page keeps the forms it was made with.
-                if !forms.isEmpty {
-                    for (i, p) in pages where !p.formIDs.isEmpty && heldForms[i] == nil { heldForms[i] = forms }
-                    forms = [:]
-                }
+                // Form ids restart too: each kept page keeps the forms it was
+                // made with, even none (a run superseded between a page and
+                // its FORM: the page draws no form, never a later run's).
+                for (i, p) in pages where !p.formIDs.isEmpty && heldForms[i] == nil { heldForms[i] = forms }
+                forms = [:]
             }
         case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
@@ -2261,7 +2263,8 @@ final class EngineV3Session {
         let visible = visiblePage
         var chosen: [Int: DL3PreparedPage] = [:]
         for i in Array(0 ..< min(3, pageCount)) + Array(max(0, visible - 2) ... min(pageCount - 1, visible + 5)) where chosen.count < EngineV3Snapshot.maxPages {
-            chosen[i] = pages[i]
+            // (a page holding an older run's forms is not saved: the save draws with the live table)
+            if heldForms[i] == nil { chosen[i] = pages[i] }
         }
         let sizes = (0 ..< pageCount).map { pageSizes[$0]! }
         // The texts' SHA-256 on the snapshot queue, not here: a 4 MB document
@@ -2940,6 +2943,7 @@ final class EngineV3Reader: @unchecked Sendable {
     private var bindings = DL3Bindings()
     /// The forms a page rasterised here draws with: the connection's, until
     /// a `STARTED` with `keep: false` restarts the ids (as the bindings).
+    /// Reader thread only: readable for tests, never from main.
     private(set) var forms: [UInt32: DL3PreparedPage] = [:]
     private let cache: DL3ResourceCache
     private let plan: EngineV3RasterPlan
