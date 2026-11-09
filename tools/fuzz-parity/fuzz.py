@@ -114,7 +114,35 @@ def doc_fmt(text):
     return "pdflatex" if "\\documentclass" in text else None
 
 
+# The classes that mean "the engines differ", which a second oracle run checks.
+DIFFERS = ("log", "rc", "output", "pdf", "dvi", "terminal")
+
+
+def outcome(r):
+    """What one run showed, for comparing a run with a rerun of itself."""
+    cap, out = r
+    data = None
+    if out:
+        with open(out, "rb") as fh:
+            data = fh.read()
+    return (cap.returncode, lockstep.compared_lines(cap.log), split_kpse(cap.terminal), data)
+
+
 def compare(text, candidate, oracle, work, timeout, formats=None):
+    """`compare_once`, and when the engines differ, the oracle once more:
+    a run whose oracle does not repeat itself (uninitialised memory in
+    pdfTeX's C parts: a `\\pdfcopyfont`'s DVI checksum) is
+    `oracle-nondet`, not a difference."""
+    res = compare_once(text, candidate, oracle, work, timeout, formats)
+    first = res.pop("_oracle", None)
+    if res.get("cls") in DIFFERS and first is not None:
+        again = run_one(oracle, text, os.path.join(work, "oracle-again"), timeout, fmt=doc_fmt(text))
+        if again is None or outcome(again) != outcome(first):
+            res.update(cls="oracle-nondet", sig="oracle-nondet:" + res.get("sig", "")[:120])
+    return res
+
+
+def compare_once(text, candidate, oracle, work, timeout, formats=None):
     """Run both engines on text; return a result dict (cls, sig, detail).
 
     A LaTeX document runs as -fmt=pdflatex: the oracle with TeX Live's
@@ -131,7 +159,7 @@ def compare(text, candidate, oracle, work, timeout, formats=None):
         side = "oracle" if ro is None else "candidate"
         return {"cls": "timeout", "sig": "timeout:" + side}
     (co, po), (cc, pc) = ro, rc
-    res = {"rc": [co.returncode, cc.returncode], "logs": (co.log, cc.log)}
+    res = {"rc": [co.returncode, cc.returncode], "logs": (co.log, cc.log), "_oracle": ro}
     if cc.returncode < 0 and co.returncode == cc.returncode:
         # Both killed by the same signal: in practice SIGXFSZ, both logs
         # hit the 64 MiB cap in a runaway loop. Not a difference.

@@ -55,6 +55,7 @@ In order; the first difference names the class:
 | class | difference |
 |---|---|
 | `candidate-crash` | candidate died by a signal or exited 101 (panic) |
+| `oracle-nondet` | the engines differed, and a second pdfTeX run differed from the first: pdfTeX is not repeatable on this input (uninitialised memory, e.g. a `\pdfcopyfont` font's DVI checksum), so there is nothing to match |
 | `oracle-crash` | pdfTeX died by a signal and the candidate did not: nothing to match, but a pdfTeX bug to look at |
 | `log` | the log after the lockstep normalisation (`compared_lines`: banner, paths, dates and the §1.1 accounting lines replaced by placeholders). It holds every `\showbox`, `\showlists`, `\show...` and tracing line and every shipped box |
 | `rc` | exit codes |
