@@ -2311,6 +2311,7 @@ fn audit_written_file_changed_outside() {
 /// preamble macro and new cross-references, each step checked against a
 /// fresh run.
 #[test]
+#[ignore = "long; run with --ignored in nightly"]
 fn audit_random_sequences() {
     let seeds: u64 = std::env::var("AUDIT_SEEDS")
         .ok()
