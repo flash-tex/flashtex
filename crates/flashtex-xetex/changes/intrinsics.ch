@@ -162,6 +162,26 @@ begin if intr_verify_on then flashtex_intr_op(16,0,0,0);
     scan_and_pack_name; {scan a filename-like arg for the input encoding}
 @z
 
+@x xetex.web - \.{\\XeTeXdefaultencoding} writes |eqtb| directly: not replayable (kind 18)
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@y
+@ @<Implement \.{\\XeTeXdefaultencoding}@>=
+begin if intr_verify_on then flashtex_intr_op(18,0,0,0);
+  scan_and_pack_name; {scan a filename-like arg for the input encoding}
+@z
+
+@x xetex.web - \.{\\XeTeXlinebreaklocale} writes |eqtb| directly: not replayable (kind 18)
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin
+  scan_file_name; {scan a filename-like arg for the locale name}
+@y
+@ @<Implement \.{\\XeTeXlinebreaklocale}@>=
+begin if intr_verify_on then flashtex_intr_op(18,0,0,0);
+  scan_file_name; {scan a filename-like arg for the locale name}
+@z
+
 @x xetex.web - a sparse-array definition ends a recording's replayability
 procedure sa_def(@!p:pointer;@!e:halfword);
   {new data for sparse array elements}
