@@ -629,23 +629,31 @@ impl Globals {
 
     /// `copyOtherResources`: every resource but fonts and procedure sets.
     fn copy_other_resources(&mut self, cx: &mut Ctx, obj: &Obj, key: &[u8]) {
-        let k = String::from_utf8_lossy(key).into_owned();
+        // The warnings print the key's bytes as they are (`%s`): a name
+        // like `/Sh#E9` has a byte that is not UTF-8.
+        let warn = |g: &mut Self, what: &[u8]| {
+            let mut m = what.to_vec();
+            m.extend_from_slice(b" (key '");
+            m.extend_from_slice(key);
+            m.extend_from_slice(b"', type <");
+            m.extend_from_slice(&obj.type_name());
+            m.extend_from_slice(b">); ignored.");
+            g.pdftex_warn_bytes(&m);
+        };
         // if Subtype is present, it must be a name
         if key == b"Subtype" {
             if !obj.is_name() {
-                let t = String::from_utf8_lossy(&obj.type_name()).into_owned();
-                self.pdftex_warn(&format!(
-                    "PDF inclusion: Subtype in Resources dict is not a name \
-                     (key '{k}', type <{t}>); ignored."
-                ));
+                warn(
+                    self,
+                    b"PDF inclusion: Subtype in Resources dict is not a name",
+                );
                 return;
             }
         } else if !obj.is_dict() {
-            let t = String::from_utf8_lossy(&obj.type_name()).into_owned();
-            self.pdftex_warn(&format!(
-                "PDF inclusion: invalid other resource which is no dict \
-                 (key '{k}', type <{t}>); ignored."
-            ));
+            warn(
+                self,
+                b"PDF inclusion: invalid other resource which is no dict",
+            );
             return;
         }
         self.copy_name(key);
