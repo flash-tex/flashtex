@@ -259,9 +259,45 @@ pub fn scan_hex4(s: &[u8]) -> Option<u64> {
     (r == 1).then_some(v as u64)
 }
 
+/// `sscanf(s, " %lf %lf %lf %lf %c", &a, &b, &c, &d, &dummy)` (utils.c's
+/// `pdfsetmatrix`): the assignment count and the four numbers. `%lf` is
+/// `strtod`'s grammar, so numbers need no blank between them where one
+/// ends before the next begins (`1-0`, `.5.5`), and hexadecimal, `inf`
+/// and `nan(...)` forms are numbers.
+pub fn scan_matrix(s: &[u8]) -> (i32, [f64; 4]) {
+    let cs = c_string(s);
+    let mut v = [0f64; 4];
+    let mut dummy: c_char = 0;
+    // SAFETY: four double conversions, each into its own element of `v`,
+    // and one char conversion into `dummy`.
+    let r = unsafe {
+        sscanf(
+            cs.as_ptr() as *const c_char,
+            c" %lf %lf %lf %lf %c".as_ptr(),
+            &mut v[0] as *mut f64,
+            &mut v[1] as *mut f64,
+            &mut v[2] as *mut f64,
+            &mut v[3] as *mut f64,
+            &mut dummy as *mut c_char,
+        )
+    };
+    (r, v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matrix_scans_as_sscanf() {
+        assert_eq!(scan_matrix(b"1 0 0 1"), (4, [1.0, 0.0, 0.0, 1.0]));
+        assert_eq!(scan_matrix(b"1-0 0 1"), (4, [1.0, -0.0, 0.0, 1.0]));
+        assert_eq!(scan_matrix(b".5.5 0 1"), (4, [0.5, 0.5, 0.0, 1.0]));
+        assert_eq!(scan_matrix(b"0x1p-1 0 0 2"), (4, [0.5, 0.0, 0.0, 2.0]));
+        assert_eq!(scan_matrix(b"1 0 0 1 x").0, 5);
+        assert_eq!(scan_matrix(b"1 0 0").0, 3);
+        assert_eq!(scan_matrix(b"1 0 x 1").0, 2);
+    }
 
     #[test]
     fn g_is_cs() {

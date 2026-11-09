@@ -1000,21 +1000,15 @@ impl Globals {
     /// numbers.
     pub fn pdfsetmatrix(&mut self, p: i32, cur_h: i32, cur_v: i32) -> i32 {
         let text = self.pool_bytes_from(p);
-        let text = String::from_utf8_lossy(&text);
         with_state(|st| {
             if !st.utils.page_mode {
                 return 1;
             }
-            let nums: Vec<&str> = text.split_whitespace().collect();
-            if nums.len() != 4 {
-                return 0;
-            }
-            let mut v = [0f64; 4];
-            for (i, n) in nums.iter().enumerate() {
-                match n.parse::<f64>() {
-                    Ok(x) => v[i] = x,
-                    Err(_) => return 0,
-                }
+            // C's own sscanf, not Rust's float parsing: it splits `1-0` and
+            // `.5.5` into two numbers and reads hexadecimal ones
+            let (n, v) = super::cfmt::scan_matrix(&text);
+            if n != 4 {
+                return 0; // failure
             }
             let [a, b, c, d] = v;
             let e = cur_h as f64 * (1.0 - a) - cur_v as f64 * c;
@@ -1052,6 +1046,13 @@ impl Globals {
                 (true, Some(m)) => {
                     u.last = [llx, lly, urx, ury];
                     let tr = |x: i32, y: i32| {
+                        // utils.c:1496-1497 casts with `(scaled) DO_ROUND(x_new)`.
+                        // A NaN or out-of-range double cast to int is undefined
+                        // behaviour in C (C11 6.3.1.4); a NaN or infinite
+                        // \pdfsetmatrix entry reaches it. FlashTeX follows TeX
+                        // Live on macOS arm64 (fcvtzs: NaN -> 0, saturating),
+                        // which Rust's `as i32` matches, per the DESIGN §13
+                        // ruling of 2026-11-01.
                         let round = |v: f64| if v > 0.0 { v + 0.5 } else { v - 0.5 } as i32;
                         let (x, y) = (x as f64, y as f64);
                         (
