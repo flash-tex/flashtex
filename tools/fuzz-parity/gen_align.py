@@ -381,6 +381,16 @@ class A:
         if self.quiet and k in (11, 14, 18):
             k = 0  # page-builder integers, \showlists, \message
         if k <= 3:
+            if self.plain and not self.quiet and self.chance(0.4):
+                # plain.tex's insertions: \footins split across pages
+                # (\vsplit of an insert, tex.web §1010), floats held over
+                return self.pick([
+                    "\\noindent %s\\footnote{*}{%s %s\\par %s}\\par" % (
+                        self.text(), self.text(), "\\hrule height %s" % self.pick(DIMS[:8]), self.text()),
+                    "\\topinsert\\hrule height %s\\endinsert" % self.pick(["5pt", "20pt", "70pt"]),
+                    "\\midinsert\\hrule height %s\\endinsert" % self.pick(["5pt", "30pt", "90pt"]),
+                    "\\pageinsert\\hbox{page}\\endinsert",
+                    "\\vfootnote{\\dag}{\\vrule height 40pt}"])
             return self.vstuff()
         if k <= 5:
             return "\\insert%s{%s}" % (self.pick(INSERTS), " ".join(
@@ -466,7 +476,7 @@ REPLAY_PRELUDE = [
     r"\dimendef\maxdimen=10 \maxdimen=16383.99999pt %",
     r"\hbadness=10000 \vbadness=10000 \hfuzz=\maxdimen \vfuzz=\maxdimen %",
     r"\let\amp=& \let\endrow=\cr \def\mycr{\cr}\def\pre{\hfil}\count7=0 \count8=0 \count9=0 %",
-    r"\def\show{\message{[\the\count7/\the\count8/\the\count9/\the\dimen1/\the\dimen2/\the\dimen3]}}%",
+    r"\def\show{\message{[\the\count7/\the\count8/\the\count9/\the\dimen1/\the\dimen2/\the\dimen3/\the\count5/\the\dimen5/\meaning\z]}}%",
 ]
 
 
@@ -480,16 +490,27 @@ def generate_replay(seed, fonts=False):
     if fonts:
         lines.append(r"\font\fa=cmr10 \fa %")
     lines.append(r"\output={\shipout\box255}%")
+    lines.append(r"\countdef\ca=5 \dimendef\da=5 \ca=0 \da=0pt \let\z\relax \let\w\relax %")
     # box/page: measure calls (BOX-MEMO.md §2); draw: calls that append
     # their nodes to the list they are called in (§10.3)
-    style = a.pick(["box", "box", "page", "draw", "draw", "cell"])
+    style = a.pick(["box", "box", "page", "draw", "draw", "cell", "pure", "pure"])
     arity = a.pick([0, 0, 1])
     a.quiet = True
     body = []
     for _ in range(a.n(1, 4)):
         # a measure call (BOX-MEMO.md §2): local boxes inside a group,
         # results out through \global registers
-        if style == "cell":
+        if style == "pure":
+            # expansion and assignments only (D9's kind), through \countdef'd
+            # and \dimendef'd names (D9 reads assign_int, not \count)
+            body.append(a.pick([
+                "\\global\\ca=3 ", "\\xdef\\z{\\the\\ca}", "\\global\\da=\\dimen1 ",
+                "\\ifnum\\ca>2 \\global\\da=1pt \\else\\global\\da=2pt \\fi",
+                "\\global\\tabskip=%s" % a.pick(GLUES), "\\gdef\\pre{\\hfil}",
+                "\\xdef\\z{\\meaning\\endrow}", "{\\global\\let\\w=\\amp}",
+                "{\\ifx\\endrow\\cr\\global\\advance\\ca 2 \\fi}",
+                "\\global\\advance\\ca by 1 ", "\\xdef\\z{\\the\\currentgrouptype}"]))
+        elif style == "cell":
             # a call inside an alignment's cell, that may itself end the cell
             body.append(a.pick(["\\kern1pt", "\\vrule width 1pt", "\\hbox{\\kern2pt}",
                                 a.alignment(wrap=True).replace("#", "##")]))
@@ -531,7 +552,7 @@ def generate_replay(seed, fonts=False):
             "\\setbox4\\hbox{\\valign{#\\cr %s\\cr}}" % call,
             "{\\output={\\setbox4\\vbox{%s\\unvbox255}\\shipout\\box4}\\hbox{p}\\penalty-10000}" % call,
             call])
-    if style == "cell":
+    if style in ("cell", "pure"):
         # inside a cell (not at its start, where the \omit look-ahead
         # expands the call), in a template, in \everycr; the body may end
         # the cell (& or \span) or the row (\cr)
@@ -539,12 +560,12 @@ def generate_replay(seed, fonts=False):
                       "\\cr\\noalign{\\kern1pt}\\kern0pt"])
         body.append(end.replace("#", "##"))
         call = a.pick([
-            "\\setbox4\\vbox{\\halign{#&#\\cr \\kern0pt %s\\cr \\kern0pt %s&x\\cr}}" % (call, call),
-            "\\setbox4\\vbox{\\halign{\\kern0pt%s#&#\\cr a&b\\cr c&d\\cr}}" % call,
-            "\\setbox4\\vbox{\\halign{#\\kern0pt%s&#\\cr a&b\\cr c\\cr}}" % call,
-            "\\setbox4\\vbox{\\halign{&#\\kern0pt%s\\cr a&b\\cr c\\cr}}" % call,
+            "\\setbox4\\vbox{\\halign{#&#\\cr \\kern0pt\\relax %s\\cr \\kern0pt\\relax %s&x\\cr}}" % (call, call),
+            "\\setbox4\\vbox{\\halign{\\kern0pt\\relax %s#&#\\cr a&b\\cr c&d\\cr}}" % call,
+            "\\setbox4\\vbox{\\halign{#\\kern0pt\\relax %s&#\\cr a&b\\cr c\\cr}}" % call,
+            "\\setbox4\\vbox{\\halign{&#\\kern0pt\\relax %s\\cr a&b\\cr c\\cr}}" % call,
             "{\\everycr{\\noalign{\\setbox4\\hbox{%s}}}\\setbox5\\vbox{\\halign{#&#\\cr a&b\\cr c\\cr}}}" % call,
-            "\\setbox4\\vbox{\\tabskip=1pt\\halign to 50pt{#\\tabskip=0pt plus 1fil&#\\cr \\kern0pt%s&\\kern0pt%s\\cr}}"
+            "\\setbox4\\vbox{\\tabskip=1pt\\halign to 50pt{#\\tabskip=0pt plus 1fil&#\\cr \\kern0pt\\relax %s&\\kern0pt\\relax %s\\cr}}"
             % (call, call)])
     steps = [call + "\\show%", call + "\\show%"]
     for _ in range(a.n(3, 10)):
