@@ -75,12 +75,6 @@
 --array-view eqtb
 --array-view input_stack
 --array-view param_stack
---array-view save_stack
---array-view hash
---array-view str_pool
---array-view str_start
---array-view buffer
---array-view font_info
 
 # Every array subscript becomes crate::ix::U(...), so that src/ix.rs decides
 # how it is checked: always, except in a benchmarking build with the
