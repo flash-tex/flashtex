@@ -1682,6 +1682,9 @@ fn audit_rapid_edits_two_files() {
     t.oracle();
 }
 
+/// A change made to the project while no host runs.
+type Change = dyn Fn(&Path);
+
 /// A reopen from the persisted S₀/S₁ (§5.1) after the project changed
 /// while no host ran: an input file read after S₁, one read before it, a
 /// graphic replaced, an optional file created, the `.bbl` rewritten.
@@ -1703,7 +1706,7 @@ fn audit_reopen_after_changes_while_closed() {
     let main = format!(
         "{PRE}\\usepackage{{graphicx}}\n\\begin{{document}}\n\\tableofcontents\n{body}\\bibliographystyle{{plain}}\n\\bibliography{{refs}}\n\\end{{document}}\n"
     );
-    let variants: &[(&str, &dyn Fn(&Path))] = &[
+    let variants: &[(&str, &Change)] = &[
         ("nothing", &|_| {}),
         ("late.tex changed", &|a| {
             std::fs::write(
