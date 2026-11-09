@@ -926,12 +926,66 @@ impl<M: Metrics> Builder<'_, M> {
             return;
         };
         let t = read_dims(p);
+        if t.info().error {
+            // spc_util_read_dimtrns failed: nothing is drawn
+            self.doc
+                .diag(format!("pdf:uxobj: invalid options: `{}'", lossy(p.s)));
+            return;
+        }
         match self.doc.named.get(&name).cloned() {
-            Some(Named::Form(id)) => self.draw_form(id, Mat::IDENTITY),
+            Some(Named::Form(id)) => self.place_form(id, &t),
             Some(Named::Image(id)) => self.place_image(id, &t),
             _ => self
                 .doc
                 .diag(format!("pdf:uxobj: no XObject @{}", lossy(&name))),
+        }
+    }
+
+    /// `pdf:uxobj @form [dims]`: a `pdf:bxobj` form placed as
+    /// `pdf_dev_put_image` places it (`scale_to_fit_F` over the form's
+    /// box as `pdf_ximage_set_form` keeps it, then the options' matrix
+    /// about the current point; `clip` with a `bbox`).
+    fn place_form(&mut self, id: u32, t: &Dims) {
+        let Some(f) = self.doc.forms.get((id as usize).wrapping_sub(1)) else {
+            return;
+        };
+        let ti = t.info();
+        let attr = crate::pic::dpx_form_bounds(f.dl.pdf_box, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        let (m1, v) = scale_to_fit_f(&ti, attr);
+        let place = Mat(m1.map(fx)).then(&Mat(ti.matrix.map(fx)));
+        if ti.clip {
+            let (x, y) = self.user_point();
+            let (x, y) = self.rel(x, y);
+            let to_stream = place
+                .then(&Mat::translate(x, y))
+                .then(&self.cur_ref().gs.ctm);
+            let s = self.cur();
+            s.save();
+            let m = s.matrix(to_stream.to_f64());
+            s.dl.paths.push(Path {
+                paint: paint::CLIP,
+                matrix: m,
+                stroke: None,
+                segs: clip_rect_segs(v),
+            });
+            let n = s.dl.paths.len() as u32 - 1;
+            s.push(Item::Clip(n));
+        }
+        self.draw_form(id, place);
+        if ti.clip {
+            self.cur().restore();
+        }
+        if self.doc.tracking.is_some() {
+            // the form's box, placed at the current point (device space)
+            let (px, py) = self.stream_point_device();
+            let to_dev = place.then(&Mat::translate(px, py));
+            let mut r = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
+            for (cx, cy) in [(v[0], v[1]), (v[2], v[1]), (v[0], v[3]), (v[2], v[3])] {
+                let (qx, qy) = to_dev.apply(fx(cx), fx(cy));
+                let (qx, qy) = (qx.to_f64(), qy.to_f64());
+                r = [r[0].min(qx), r[1].min(qy), r[2].max(qx), r[3].max(qy)];
+            }
+            self.expand_annot(r);
         }
     }
 
@@ -946,6 +1000,13 @@ impl<M: Metrics> Builder<'_, M> {
             None
         };
         let t = read_dims(p);
+        if t.info().error {
+            // spc_util_read_blahblah failed: "Reading option field in
+            // pdf:image failed." and nothing is loaded
+            self.doc
+                .diag(format!("pdf:image: invalid options: `{}'", lossy(p.s)));
+            return;
+        }
         let Some(file) = p.literal_string() else {
             self.doc
                 .diag(format!("pdf:image without a file name: `{}'", lossy(p.s)));
@@ -986,48 +1047,40 @@ impl<M: Metrics> Builder<'_, M> {
         }
     }
 
-    /// Draw image `id` at the current point as `t` says (dvipdfmx's
-    /// placement: the viewport, `bbox` or the image's own box, scaled to
-    /// `width`/`height`, its lower left corner at the current point less
-    /// `depth`, then `rotate` and `matrix` about that point; `clip 1` clips
-    /// to the viewport).
+    /// Draw image `id` at the current point as `t` says: dvipdfmx's
+    /// `pdf_dev_put_image`. `pdf_ximage_scale_image` fits the image
+    /// (`scale_to_fit_I` for raster images, whose unit square it maps;
+    /// `scale_to_fit_F` for PDF pages, in the form's space), then the
+    /// options' matrix applies about the current point; `clip` (on by
+    /// default with a `bbox`) clips to the box in the fitted space.
     fn place_image(&mut self, id: u32, t: &Dims) {
         let Some(img) = self.doc.images.get(id).cloned() else {
             return;
         };
-        let nat = img.bbox;
-        let v = t.bbox.unwrap_or(nat);
-        let (vw, vh) = (v[2] - v[0], v[3] - v[1]);
-        let depth = t.depth.unwrap_or(0.0);
-        let (mut sx, mut sy) = match (t.width, t.height) {
-            (Some(w), Some(h)) if vw > 0.0 && vh > 0.0 => (w / vw, (h + depth) / vh),
-            (Some(w), None) if vw > 0.0 => (w / vw, w / vw),
-            (None, Some(h)) if vh > 0.0 => ((h + depth) / vh, (h + depth) / vh),
-            _ => (1.0, 1.0),
+        let ti = t.info();
+        let raster = img.kind != super::images::Kind::Pdf;
+        let (m1, r) = if raster {
+            scale_to_fit_i(&ti, &img)
+        } else {
+            scale_to_fit_f(&ti, img.attr_bbox)
         };
-        sx *= t.scale.unwrap_or(1.0) * t.xscale.unwrap_or(1.0);
-        sy *= t.scale.unwrap_or(1.0) * t.yscale.unwrap_or(1.0);
         // image space -> user space with the reference point at (0, 0)
-        let to_ref = Mat([
-            fx(sx),
-            Fx::ZERO,
-            Fx::ZERO,
-            fx(sy),
-            fx(-v[0] * sx),
-            fx(-v[1] * sy - depth),
-        ]);
-        let mut place = to_ref;
-        if let Some(r) = t.rotate {
-            place = place.then(&rotation(r));
-        }
-        if let Some(m) = t.matrix {
-            place = place.then(&Mat(m.map(fx)));
-        }
+        let place = Mat(m1.map(fx)).then(&Mat(ti.matrix.map(fx)));
+        // The form's /Matrix is flashtex_pdf's (`from_pdf_page_box`):
+        // xdvipdfmx's (`set_transform_matrix`) less (llx, lly) for a
+        // rotated page, made up here; the clip and the link box are in
+        // xdvipdfmx's space.
+        let draw = if !raster && img.rotate != 0 {
+            Mat::translate(fx(img.bbox[0]), fx(img.bbox[1])).then(&place)
+        } else {
+            place
+        };
+        let v = r;
         let (x, y) = self.user_point();
         let (x, y) = self.rel(x, y);
         let ctm = self.cur_ref().gs.ctm;
         let to_stream = place.then(&Mat::translate(x, y)).then(&ctm);
-        let clip = t.clip.unwrap_or(false) && t.bbox.is_some();
+        let clip = ti.clip;
         let s = self.cur();
         if clip {
             s.save();
@@ -1036,26 +1089,12 @@ impl<M: Metrics> Builder<'_, M> {
                 paint: paint::CLIP,
                 matrix: m,
                 stroke: None,
-                segs: super::page::rect_segs(v[0], v[1], vw, vh),
+                segs: clip_rect_segs(v),
             });
             let n = s.dl.paths.len() as u32 - 1;
             s.push(Item::Clip(n));
         }
-        let m = match img.kind {
-            super::images::Kind::Pdf => to_stream,
-            _ => {
-                // the unit square onto the natural box
-                let unit = Mat([
-                    fx(nat[2] - nat[0]),
-                    Fx::ZERO,
-                    Fx::ZERO,
-                    fx(nat[3] - nat[1]),
-                    fx(nat[0]),
-                    fx(nat[1]),
-                ]);
-                unit.then(&to_stream)
-            }
-        };
+        let m = draw.then(&Mat::translate(x, y)).then(&ctm);
         if img.kind == super::images::Kind::Bmp {
             s.unsupported(format!("BMP image {}", img.path), None);
         } else {
@@ -1115,10 +1154,201 @@ pub struct Dims {
     pub page: Option<i32>,
     pub pagebox: Option<i32>,
     pub hide: bool,
+    /// The C's `xscale` and `yscale` after the keys in their order (`scale`
+    /// sets both, `xscale`/`yscale` one), from 1.
+    pub sxy: (f64, f64),
+}
+
+/// `transform_info` as `spc_util_read_blahblah` (and
+/// `spc_read_dimtrns_pdfm`) leave it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Info {
+    pub width: f64,
+    pub height: f64,
+    pub depth: f64,
+    /// `INFO_HAS_WIDTH`, `INFO_HAS_HEIGHT` (set by `height` and by `depth`),
+    /// `INFO_HAS_USER_BBOX`, `INFO_DO_CLIP`.
+    pub has_width: bool,
+    pub has_height: bool,
+    pub has_bbox: bool,
+    pub clip: bool,
+    pub bbox: [f64; 4],
+    pub matrix: [f64; 6],
+    /// The consistency check failed ("Can't supply overall scale along
+    /// with axis scales."): the special does nothing.
+    pub error: bool,
+}
+
+impl Dims {
+    /// The C's checks after the keys: `xscale` with a width, else `yscale`
+    /// with a height or depth, is ignored; else `scale` with an axis scale
+    /// is an error. `matrix` replaces scales and rotation
+    /// (`make_transmatrix` only without it). Clipping is on by default,
+    /// and only with a `bbox`.
+    pub fn info(&self) -> Info {
+        let has_width = self.width.is_some();
+        let has_height = self.height.is_some() || self.depth.is_some();
+        let (mut xs, mut ys) = self.sxy;
+        let mut error = false;
+        if self.xscale.is_some() && has_width {
+            xs = 1.0;
+        } else if self.yscale.is_some() && has_height {
+            ys = 1.0;
+        } else if self.scale.is_some() && (self.xscale.is_some() || self.yscale.is_some()) {
+            error = true;
+        }
+        let matrix = match self.matrix {
+            Some(m) => m,
+            None => {
+                // make_transmatrix(M, 0, 0, xscale, yscale, M_PI * rotate / 180)
+                let r = std::f64::consts::PI * self.rotate.unwrap_or(0.0) / 180.0;
+                let (c, s) = (r.cos(), r.sin());
+                [xs * c, xs * s, -ys * s, ys * c, 0.0, 0.0]
+            }
+        };
+        Info {
+            width: self.width.unwrap_or(0.0),
+            height: self.height.unwrap_or(0.0),
+            depth: self.depth.unwrap_or(0.0),
+            has_width,
+            has_height,
+            has_bbox: self.bbox.is_some(),
+            clip: self.clip.unwrap_or(true) && self.bbox.is_some(),
+            bbox: self.bbox.unwrap_or([0.0; 4]),
+            matrix,
+            error,
+        }
+    }
+}
+
+/// `pdf_dev_rectclip(r.llx, r.lly, r.urx - r.llx, r.ury - r.lly)` as
+/// `pdf_dev__rectshape` writes it: the corner and the two lengths, each
+/// to the device's 3 decimals, in the fitted space (a raster image's unit
+/// square, where the rounding shows at the image's size).
+fn clip_rect_segs(v: [f64; 4]) -> Vec<flashtex_display_list::page::Seg> {
+    let r = |x: f64| super::num::round_num(x, 3);
+    super::page::rect_segs(r(v[0]), r(v[1]), r(v[2] - v[0]), r(v[3] - v[1]))
+}
+
+/// `scale_to_fit_I` (pdfximage.c): the matrix that maps a raster image's
+/// unit square, and the clip rectangle in that square. Natural sizes come
+/// from the pixels and the density; a width or height alone keeps the
+/// *pixel* aspect ratio, as the C does.
+pub fn scale_to_fit_i(p: &Info, img: &super::images::Image) -> ([f64; 6], [f64; 4]) {
+    let (w_px, h_px) = (img.pixels.0 as f64, img.pixels.1 as f64);
+    // I->attr.width * I->attr.xdensity
+    let (nat_w, nat_h) = (img.bbox[2] - img.bbox[0], img.bbox[3] - img.bbox[1]);
+    let (mut wd0, mut ht0, xscale, yscale, d_x, d_y);
+    if p.has_bbox {
+        wd0 = p.bbox[2] - p.bbox[0];
+        ht0 = p.bbox[3] - p.bbox[1];
+        xscale = nat_w / wd0;
+        yscale = nat_h / ht0;
+        d_x = -p.bbox[0] / wd0;
+        d_y = -p.bbox[1] / ht0;
+    } else {
+        wd0 = nat_w;
+        ht0 = nat_h;
+        xscale = 1.0;
+        yscale = 1.0;
+        d_x = 0.0;
+        d_y = 0.0;
+    }
+    if wd0 == 0.0 {
+        wd0 = 1.0;
+    }
+    if ht0 == 0.0 {
+        ht0 = 1.0;
+    }
+    let (s_x, s_y, dp);
+    if p.has_width && p.has_height {
+        s_x = p.width * xscale;
+        s_y = (p.height + p.depth) * yscale;
+        dp = p.depth * yscale;
+    } else if p.has_width {
+        s_x = p.width * xscale;
+        s_y = s_x * (h_px / w_px);
+        dp = 0.0;
+    } else if p.has_height {
+        s_y = (p.height + p.depth) * yscale;
+        s_x = s_y * (w_px / h_px);
+        dp = p.depth * yscale;
+    } else {
+        s_x = wd0;
+        s_y = ht0;
+        dp = 0.0;
+    }
+    let m = [
+        s_x,
+        0.0,
+        0.0,
+        s_y,
+        d_x * s_x / xscale,
+        d_y * s_y / yscale - dp,
+    ];
+    let r = if p.has_bbox {
+        [
+            p.bbox[0] / nat_w,
+            p.bbox[1] / nat_h,
+            p.bbox[2] / nat_w,
+            p.bbox[3] / nat_h,
+        ]
+    } else {
+        [0.0, 0.0, 1.0, 1.0]
+    };
+    (m, r)
+}
+
+/// `scale_to_fit_F` (pdfximage.c): the matrix for a form (a PDF page, or a
+/// `pdf:bxobj` form) whose box is `attr` (`I->attr.bbox`), and the clip
+/// rectangle in the form's space.
+pub fn scale_to_fit_f(p: &Info, attr: [f64; 4]) -> ([f64; 6], [f64; 4]) {
+    let (mut wd0, mut ht0, d_x, d_y);
+    if p.has_bbox {
+        wd0 = p.bbox[2] - p.bbox[0];
+        ht0 = p.bbox[3] - p.bbox[1];
+        d_x = -p.bbox[0];
+        d_y = -p.bbox[1];
+    } else {
+        wd0 = attr[2] - attr[0];
+        ht0 = attr[3] - attr[1];
+        d_x = 0.0;
+        d_y = 0.0;
+    }
+    if wd0 == 0.0 {
+        wd0 = 1.0;
+    }
+    if ht0 == 0.0 {
+        ht0 = 1.0;
+    }
+    let (s_x, s_y, dp);
+    if p.has_width && p.has_height {
+        s_x = p.width / wd0;
+        s_y = (p.height + p.depth) / ht0;
+        dp = p.depth;
+    } else if p.has_width {
+        s_x = p.width / wd0;
+        s_y = s_x;
+        dp = 0.0;
+    } else if p.has_height {
+        s_y = (p.height + p.depth) / ht0;
+        s_x = s_y;
+        dp = p.depth;
+    } else {
+        s_x = 1.0;
+        s_y = 1.0;
+        dp = 0.0;
+    }
+    let m = [s_x, 0.0, 0.0, s_y, s_x * d_x, s_y * d_y - dp];
+    let r = if p.has_bbox { p.bbox } else { attr };
+    (m, r)
 }
 
 pub fn read_dims(p: &mut Parser) -> Dims {
-    let mut t = Dims::default();
+    let mut t = Dims {
+        sxy: (1.0, 1.0),
+        ..Dims::default()
+    };
     loop {
         let save = p.i;
         let Some(w) = p.word() else { break };
@@ -1126,9 +1356,24 @@ pub fn read_dims(p: &mut Parser) -> Dims {
             b"width" => t.width = p.dimension(),
             b"height" => t.height = p.dimension(),
             b"depth" => t.depth = p.dimension(),
-            b"scale" => t.scale = p.number(),
-            b"xscale" => t.xscale = p.number(),
-            b"yscale" => t.yscale = p.number(),
+            b"scale" => {
+                t.scale = p.number();
+                if let Some(v) = t.scale {
+                    t.sxy = (v, v);
+                }
+            }
+            b"xscale" => {
+                t.xscale = p.number();
+                if let Some(v) = t.xscale {
+                    t.sxy.0 = v;
+                }
+            }
+            b"yscale" => {
+                t.yscale = p.number();
+                if let Some(v) = t.yscale {
+                    t.sxy.1 = v;
+                }
+            }
             b"rotate" => t.rotate = p.number(),
             b"bbox" => {
                 let v: Option<Vec<f64>> = (0..4).map(|_| p.number()).collect();
@@ -1140,7 +1385,12 @@ pub fn read_dims(p: &mut Parser) -> Dims {
             }
             b"clip" => t.clip = p.number().map(|v| v != 0.0),
             b"page" => t.page = p.number().map(|v| v as i32),
-            b"pagebox" => t.pagebox = p.word().and_then(super::images::pagebox_code),
+            // strcasecmp; no box name: pdf_page_boundary__auto
+            b"pagebox" => {
+                t.pagebox = p
+                    .word()
+                    .map(|w| super::images::pagebox_code(&w.to_ascii_lowercase()).unwrap_or(0))
+            }
             b"hide" => t.hide = true,
             _ => {
                 p.i = save;
@@ -1151,23 +1401,11 @@ pub fn read_dims(p: &mut Parser) -> Dims {
     t
 }
 
-/// `pdf:btrans`'s transformation: `matrix a b c d e f`, `scale`,
-/// `xscale`, `yscale`, `rotate` (in that order of application: scale, then
-/// rotate, then matrix).
+/// `pdf:btrans`'s transformation: `ti.matrix` of `spc_read_dimtrns_pdfm`
+/// ([`Dims::info`]): `matrix a b c d e f` if given, else the scales and
+/// `rotate` (`make_transmatrix`).
 pub fn read_transform(p: &mut Parser) -> Mat {
-    let t = read_dims(p);
-    let (sx, sy) = (
-        t.scale.unwrap_or(1.0) * t.xscale.unwrap_or(1.0),
-        t.scale.unwrap_or(1.0) * t.yscale.unwrap_or(1.0),
-    );
-    let mut m = Mat([fx(sx), Fx::ZERO, Fx::ZERO, fx(sy), Fx::ZERO, Fx::ZERO]);
-    if let Some(r) = t.rotate {
-        m = m.then(&rotation(r));
-    }
-    if let Some(x) = t.matrix {
-        m = m.then(&Mat(x.map(fx)));
-    }
-    m
+    Mat(read_dims(p).info().matrix.map(fx))
 }
 
 fn lossy(b: &[u8]) -> String {
@@ -1214,5 +1452,122 @@ mod tests {
             b"matrix 1.0 0.0 0.0 1.0 88.75949 26.16994",
         ));
         assert_eq!(m.to_f64()[4], 88.75949);
+    }
+
+    /// A 7 x 5 pixel raster image at `dpi`.
+    fn raster(dpi: (f64, f64)) -> super::super::images::Image {
+        let (w, h) = (7.0 * 72.0 / dpi.0, 5.0 * 72.0 / dpi.1);
+        super::super::images::Image {
+            id: 1,
+            key: [0; 32],
+            kind: super::super::images::Kind::Png,
+            path: String::new(),
+            bbox: [0.0, 0.0, w, h],
+            pixels: (7, 5),
+            res: dpi,
+            page: 1,
+            page_box: "crop",
+            rotate: 0,
+            matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            attr_bbox: [0.0, 0.0, w, h],
+            info: flashtex_display_list::json::Json::Null,
+        }
+    }
+
+    fn info(s: &str) -> Info {
+        read_dims(&mut Parser::new(s.as_bytes())).info()
+    }
+
+    fn close(a: &[f64], b: &[f64], tol: f64) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() <= tol)
+    }
+
+    /// Expected values: TeX Live 2026 xetex -ini + xdvipdfmx 20260317
+    /// (macOS arm64), each `\special{pdf:image ...}` on its own page, the
+    /// image's `cm` and clip `re` read from the PDF (lane AUDIT-DVIPDFMX).
+    #[test]
+    fn pdf_image_fits_as_xdvipdfmx() {
+        let img = raster((72.0, 72.0));
+        let fit = |s: &str, img: &super::super::images::Image| {
+            let ti = info(s);
+            let (m1, r) = scale_to_fit_i(&ti, img);
+            let m = Mat(m1.map(fx)).then(&Mat(ti.matrix.map(fx))).to_f64();
+            (m, r, ti)
+        };
+        // `bbox` without a size: the whole image at the box's size,
+        // clipped by default ("q 3 0 0 2 -.429 -.4 cm n .143 .2 .429 .4 re W n")
+        let (m, r, ti) = fit("bbox 1 1 4 3", &img);
+        assert!(
+            close(&m, &[3.0, 0.0, 0.0, 2.0, -0.428571, -0.4], 1e-5),
+            "{m:?}"
+        );
+        assert!(ti.clip);
+        let segs = clip_rect_segs(r);
+        assert_eq!(
+            segs,
+            super::super::page::rect_segs(0.143, 0.2, 0.429, 0.4),
+            "the rectangle as `.143 .2 .429 .4 re`"
+        );
+        // `clip 0` turns it off
+        assert!(!info("bbox 1 1 4 3 clip 0").clip);
+        // no bbox: no clip
+        assert!(!info("width 3pt").clip);
+        // `depth` alone is a height: "13.948 0 0 9.963 ... -9.963"
+        let (m, _, _) = fit("depth 10pt", &img);
+        assert!(
+            close(&m, &[13.9477, 0.0, 0.0, 9.9626, 0.0, -9.9626], 1e-3),
+            "{m:?}"
+        );
+        // `xscale` with `width` is ignored: "29.888 0 0 21.349"
+        let (m, _, _) = fit("width 30pt xscale 2", &img);
+        assert!(
+            close(&m, &[29.888, 0.0, 0.0, 21.349, 0.0, 0.0], 1e-3),
+            "{m:?}"
+        );
+        // `scale` with `xscale` is an error: no image
+        assert!(info("scale 2 xscale 3").error);
+        // `matrix` replaces `scale`: "7 0 0 5 5 6"
+        let (m, _, _) = fit("matrix 1 0 0 1 5 6 scale 2", &img);
+        assert!(close(&m, &[7.0, 0.0, 0.0, 5.0, 5.0, 6.0], 1e-9), "{m:?}");
+        // a width alone keeps the pixel aspect ratio, not the density's:
+        // 144 x 300 dpi, "49.8132 0 0 35.58086"
+        let dpi = raster((144.0, 300.0));
+        let (m, _, _) = fit("width 50pt", &dpi);
+        assert!(
+            close(&m, &[49.8132, 0.0, 0.0, 35.58086, 0.0, 0.0], 1e-4),
+            "{m:?}"
+        );
+        // and a height alone: "69.73848 0 0 49.8132"
+        let (m, _, _) = fit("height 50pt", &dpi);
+        assert!(
+            close(&m, &[69.73848, 0.0, 0.0, 49.8132, 0.0, 0.0], 1e-4),
+            "{m:?}"
+        );
+    }
+
+    /// Forms (`scale_to_fit_F`): a `pdf:bxobj @f1 bbox 10 10 80 50` form
+    /// placed `height 40bp` is scaled by 40/50, not 40/40, because
+    /// `pdf_ximage_set_form` never sets its second corner's y (measured 0
+    /// on the ruling build); `width 35bp` by 35/70. A PDF page's /Rotate
+    /// 270 over CropBox [10 10 80 50]: /Matrix [0 1 -1 0 60 0].
+    #[test]
+    fn forms_fit_as_xdvipdfmx() {
+        let id = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let attr = crate::pic::dpx_form_bounds([10.0, 10.0, 80.0, 50.0], id);
+        assert_eq!(attr, [10.0, 0.0, 80.0, 50.0]);
+        let (m, r) = scale_to_fit_f(&info("height 40bp"), attr);
+        assert!(close(&m, &[0.8, 0.0, 0.0, 0.8, 0.0, 0.0], 1e-12), "{m:?}");
+        assert_eq!(r, attr);
+        let (m, _) = scale_to_fit_f(&info("width 35bp"), attr);
+        assert!(close(&m, &[0.5, 0.0, 0.0, 0.5, 0.0, 0.0], 1e-12), "{m:?}");
+        // a user bbox moves the form by its corner: [1 0 0 1 -0 -0]
+        let (m, r) = scale_to_fit_f(&info("bbox 0 0 10 10"), attr);
+        assert!(close(&m, &[1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 1e-12), "{m:?}");
+        assert_eq!(r, [0.0, 0.0, 10.0, 10.0]);
+        let rot = [0.0, 1.0, -1.0, 0.0, 60.0, 0.0];
+        assert_eq!(
+            crate::pic::dpx_form_bounds([10.0, 10.0, 80.0, 50.0], rot),
+            [10.0, 10.0, 60.0, 80.0]
+        );
     }
 }
