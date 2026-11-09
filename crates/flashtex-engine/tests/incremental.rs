@@ -7402,3 +7402,74 @@ fn edits_inside_held_page_material_equal_scratch_runs() {
         );
     }
 }
+
+/// AUDIT-PAGES: a compile preempted at a between-page stop point (a held
+/// segment checkpoint materialised mid-page, DESIGN.md §5.2) with floats
+/// held and a footnote split across the page, then a newer edit before or
+/// after that point, or the revert.
+#[test]
+fn a_preemption_mid_page_with_held_floats_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let long_fn = format!(
+        "A long footnote {}and ends.",
+        "that goes on and on with words ".repeat(30)
+    );
+    let mut at: std::collections::BTreeMap<usize, String> = Default::default();
+    for (i, s) in [
+        (
+            7,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{6cm}\\caption{One}\\end{figure}".to_string(),
+        ),
+        (
+            8,
+            "\\begin{figure}[t]\\centering\\rule{4cm}{8cm}\\caption{Two}\\end{figure}".to_string(),
+        ),
+        (12, format!("Text\\footnote{{{long_fn}}} here.")),
+        (14, "\\marks1{m14}".to_string()),
+        (
+            21,
+            "\\begin{figure}[p]\\centering\\rule{4cm}{15cm}\\caption{Three}\\end{figure}"
+                .to_string(),
+        ),
+    ] {
+        at.entry(i).or_default().push_str(&s);
+    }
+    let body: String = (0..60)
+        .map(|i| {
+            format!(
+                "{}{}",
+                at.get(&i).map_or("", |s| s.as_str()),
+                para(i, "beta")
+            )
+        })
+        .collect();
+    let base = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fancyhdr}}\\pagestyle{{fancy}}\
+         \\fancyhead[C]{{\\topmarks1/\\botmarks1}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let longer = |t: &str, i: usize| {
+        t.replacen(
+            &format!("Paragraph {i} with"),
+            &format!(
+                "Paragraph {i}, now edited and longer so that it takes a line or two more, with"
+            ),
+            1,
+        )
+    };
+    let early = longer(&base, 3);
+    for (k, (at, second)) in [
+        ("1 1 2", longer(&base, 30)),
+        ("1 1 3", base.clone()),
+        ("1 2 2", longer(&early, 20)),
+        ("1 2 4", longer(&base, 10)),
+        ("1 3 2", longer(&early, 45)),
+    ]
+    .iter()
+    .enumerate()
+    {
+        interrupt_then(&e, &format!("preempt-{k}"), &base, &early, at, second);
+    }
+}
