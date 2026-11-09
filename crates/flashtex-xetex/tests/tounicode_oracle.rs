@@ -262,10 +262,10 @@ fn differences(want: &BTreeMap<u16, Vec<u16>>, got: &BTreeMap<u16, Vec<u16>>) ->
             cargo test --release --test tounicode_oracle -- --ignored \
             (CI: unicode-tounicode-mac.yml)"]
 fn aat_arabic_tounicode_is_xdvipdfmx_s() {
-    assert!(
-        cfg!(target_os = "macos"),
-        "Geeza Pro is a macOS system font: this test runs only on macOS"
-    );
+    // (clippy::assertions_on_constants: cfg! is a constant, so test it with an if)
+    if !cfg!(target_os = "macos") {
+        panic!("Geeza Pro is a macOS system font: this test runs only on macOS");
+    }
     let measured = [(GEEZA, GEEZA_SHA256), (TIMES, TIMES_SHA256)]
         .iter()
         .all(|&(path, want)| {
