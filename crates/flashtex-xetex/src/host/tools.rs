@@ -85,28 +85,77 @@ fn aux_lines(aux: &str) -> (String, Vec<String>) {
 /// name is refused, and what is found must lie in the project, the output
 /// directory or a confinement root, or be a TeX tree file. A refused name
 /// is missing: it is neither read nor hashed, and bibtex is not run.
-fn find_bib(job: &Job, name: &str) -> Option<PathBuf> {
+///
+/// The rules are checked on the canonical path of the file actually opened
+/// and read through that handle (`external::read_checked`), so a link
+/// swapped between the check and the read is refused (REVIEW-SEC2 on #2403).
+/// A search hit counts as a TeX tree file only if its path has no link.
+fn read_bib(job: &Job, name: &str) -> Option<Vec<u8>> {
     if !flashtex_engine::system::input_name_confined_ok(name) {
         return None;
     }
-    let ok = |p: &Path, searched: bool| {
-        flashtex_engine::system::host_tool_read_ok(name, p, searched, &[&job.root, &job.output_dir])
+    let read = |p: &Path, searched: bool| {
+        external::read_checked(p, |real| {
+            flashtex_engine::system::host_tool_read_ok(
+                name,
+                real,
+                searched && real == p,
+                &[&job.root, &job.output_dir],
+            )
+        })
     };
     let p = Path::new(name);
     if p.is_absolute() {
-        return Some(p.to_path_buf()).filter(|p| p.is_file());
+        return read(p, false);
     }
     for d in [&job.root, &job.output_dir] {
         let c = d.join(p);
         if c.is_file() {
-            return ok(&c, false).then_some(c);
+            return read(&c, false);
         }
     }
     flashtex_engine::system::with_resolver_for("xelatex", |r| {
         r.find_ex(name, flashtex_engine::resolver::Format::Bib, true)
             .0
     })
-    .filter(|p| p.is_absolute() && p.is_file() && ok(p, true))
+    .filter(|p| p.is_absolute())
+    .and_then(|p| read(&p, true))
+}
+
+/// A file in the output directory (a tool's output or log), read through
+/// the capped, handle-checked reader; confined, it must resolve into the
+/// project or the output directory.
+fn read_output(job: &Job, name: &str) -> Option<Vec<u8>> {
+    external::read_checked(&job.output_dir.join(name), |real| {
+        flashtex_engine::system::host_tool_read_ok(name, real, false, &[&job.root, &job.output_dir])
+    })
+}
+
+/// The data sources a `.bcf` names that biber would read. Confined, a
+/// source that is not a plain file (`location=remote`, a URL) or not found
+/// within the rules is missing, so biber does not run; unconfined nothing
+/// is missing (biber resolves them itself), and found ones are hashed.
+fn bcf_state(job: &Job, d: &[u8]) -> ([u8; 32], Vec<String>) {
+    let confined = !flashtex_engine::system::input_name_confined_ok("/");
+    let mut state = sha256(d).to_vec();
+    let mut missing = vec![];
+    for l in String::from_utf8_lossy(d).lines() {
+        let l = l.trim();
+        if !l.starts_with("<bcf:datasource") {
+            continue;
+        }
+        let name = match (l.find('>'), l.rfind("</bcf:datasource>")) {
+            (Some(a), Some(b)) if a < b => l[a + 1..b].to_string(),
+            _ => l.to_string(),
+        };
+        let file = l.contains("type=\"file\"");
+        match file.then(|| read_bib(job, &name)).flatten() {
+            Some(b) => state.extend_from_slice(&sha256(&b)),
+            None if confined && !missing.contains(&name) => missing.push(name),
+            None => {}
+        }
+    }
+    (sha256(&state), missing)
 }
 
 fn rules(job: &Job) -> Vec<Rule> {
@@ -117,12 +166,13 @@ fn rules(job: &Job) -> Vec<Rule> {
     // Every source goes through the pdfTeX host's reader (`external::read`):
     // a regular file of at most the tools' 64 MiB limit, else missing.
     if let Some(d) = external::read(&bcf) {
+        let (state, missing) = bcf_state(job, &d);
         v.push(Rule {
             tool: "biber",
             file: format!("{jn}.bcf"),
-            state: sha256(&d),
+            state,
             output: format!("{jn}.bbl"),
-            missing: vec![],
+            missing,
             argv: vec![
                 "--input-directory".into(),
                 job.root.to_string_lossy().into_owned(),
@@ -144,7 +194,7 @@ fn rules(job: &Job) -> Vec<Rule> {
                 } else {
                     format!("{b}.bib")
                 };
-                match find_bib(job, &name).and_then(|p| external::read(&p)) {
+                match read_bib(job, &name) {
                     Some(d) => state.extend_from_slice(&sha256(&d)),
                     None => missing.push(name),
                 }
@@ -250,8 +300,10 @@ pub fn after_compile(
             break;
         }
         let key = format!("{}:{}", r.tool, r.file);
-        let out_file = job.output_dir.join(&r.output);
-        let have = std::fs::read(&out_file).ok().map(|d| sha256(&d));
+        // Through the capped, handle-checked reader: a `.bbl` that is a
+        // FIFO, a device or a link out of the project is missing, never
+        // opened blocking or read without limit (REVIEW-SEC2 on #2403).
+        let have = read_output(job, &r.output).map(|d| sha256(&d));
         let reason = match memory.last.get(&key) {
             None if have.is_none() => Some("its output is missing"),
             None => Some("first run"),
@@ -343,15 +395,18 @@ pub fn after_compile(
         }
         ran = true;
         memory.last.insert(key.clone(), r.state);
-        let now = std::fs::read(&out_file).ok().map(|d| sha256(&d));
+        let now = read_output(job, &r.output).map(|d| sha256(&d));
         let ch = now.is_some() && now != have;
         changed |= ch && code.is_some();
         let log_ext = if r.tool == "makeindex" { "ilg" } else { "blg" };
-        let log_path = job.output_dir.join(format!(
+        let log_name = format!(
             "{}.{log_ext}",
             r.file.rsplit_once('.').map_or(r.file.as_str(), |x| x.0)
-        ));
-        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        );
+        let log_path = job.output_dir.join(&log_name);
+        let log = read_output(job, &log_name)
+            .map(|d| String::from_utf8_lossy(&d).into_owned())
+            .unwrap_or_default();
         let msgs = match r.tool {
             "biber" => external::biber_messages(&log),
             "bibtex" => external::bibtex_messages(&log),
@@ -525,5 +580,117 @@ mod tests {
         let missing = missing_bibs(&job);
         let _ = std::fs::remove_dir_all(&base);
         assert_eq!(missing, ["huge.bib"]);
+    }
+
+    /// REVIEW-SEC2 on #2403: `after_compile` read the `.bbl` with
+    /// `std::fs::read` before the `auto` check, so a `main.bbl` FIFO blocked
+    /// the host on `open` with tools off, and a link to `/dev/zero` read
+    /// without limit. Now it is missing, and the call returns at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_or_device_bbl_does_not_block_or_flood_after_compile() {
+        for (tag, device) in [("fifo", false), ("zero", true)] {
+            let (job, base) = sentinel_job(&format!("bbl-{tag}"));
+            let bbl = job.output_dir.join("main.bbl");
+            if device {
+                std::os::unix::fs::symlink("/dev/zero", &bbl).unwrap();
+            } else {
+                let c = std::ffi::CString::new(bbl.as_os_str().as_encoded_bytes()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+            }
+            assert_eq!(read_output(&job, "main.bbl"), None);
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let out: Out = Arc::new(Mutex::new(Box::new(std::io::sink())));
+                let programs = Programs {
+                    bin: None,
+                    bibtex: None,
+                    biber: None,
+                    makeindex: None,
+                    kpsewhich: None,
+                };
+                let children = Children::new(Path::new("/nonexistent/flashtex-sentinel")).unwrap();
+                let running = Arc::new(Mutex::new(Running::default()));
+                let r = after_compile(
+                    &job,
+                    false,
+                    &programs,
+                    &mut Memory::default(),
+                    &out,
+                    Duration::from_secs(1),
+                    &children,
+                    &running,
+                );
+                let _ = tx.send(r);
+            });
+            let r = rx.recv_timeout(Duration::from_secs(5));
+            let _ = std::fs::remove_dir_all(&base);
+            assert_eq!(r, Ok((false, false)), "after_compile with a {tag} main.bbl");
+        }
+    }
+
+    /// REVIEW-SEC2 on #2403: biber reads the `.bcf`'s data sources itself,
+    /// unconfined. Confined, a source outside the project, through a link,
+    /// or remote is missing, so biber does not run; the project's own is not.
+    #[test]
+    fn confined_biber_rule_checks_the_bcf_data_sources() {
+        const CHILD: &str = "FLASHTEX_TEST_TOOLS_BCF_CHILD";
+        let bcf = |job: &Job, base: &Path| {
+            let src = |s: &str| {
+                format!("<bcf:datasource type=\"file\" datatype=\"bibtex\" glob=\"false\">{s}</bcf:datasource>\n")
+            };
+            let d = format!(
+                "<bcf:bibdata section=\"0\">\n{}{}{}{}<bcf:datasource type=\"url\" datatype=\"bibtex\">https://example.invalid/x.bib</bcf:datasource>\n</bcf:bibdata>\n",
+                src("refs.bib"),
+                src(&base.join("outside/secret.bib").display().to_string()),
+                src("../outside/secret.bib"),
+                src("link.bib"),
+            );
+            std::fs::write(job.output_dir.join("main.bcf"), d).unwrap();
+            let r = rules(job);
+            assert_eq!(r[0].tool, "biber");
+            r[0].missing.clone()
+        };
+        if std::env::var_os(CHILD).is_some() {
+            let (job, base) = sentinel_job("bcf-confined");
+            let missing = bcf(&job, &base);
+            let _ = std::fs::remove_dir_all(&base);
+            assert_eq!(
+                missing,
+                [
+                    base.join("outside/secret.bib").display().to_string(),
+                    "../outside/secret.bib".into(),
+                    "link.bib".into(),
+                    "https://example.invalid/x.bib".into(),
+                ]
+            );
+            println!("BCF-CHILD-CHECKED");
+            return;
+        }
+        if std::env::var_os("FLASHTEX_CONFINE_READS").is_none() {
+            // The control: unconfined, biber resolves its sources itself.
+            let (job, base) = sentinel_job("bcf-open");
+            let missing = bcf(&job, &base);
+            let _ = std::fs::remove_dir_all(&base);
+            assert!(missing.is_empty(), "{missing:?}");
+        }
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "host::tools::tests::confined_biber_rule_checks_the_bcf_data_sources",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("FLASHTEX_CONFINE_READS", "1")
+            .env_remove("FLASHTEX_CONFINE_ROOTS")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&o.stdout);
+        assert!(
+            o.status.success() && text.contains("BCF-CHILD-CHECKED"),
+            "confined child failed: {text}{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
     }
 }
