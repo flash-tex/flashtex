@@ -1071,7 +1071,12 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     let _ = std::fs::remove_dir_all(&dir);
     let doc = "\\documentclass{article}\n\\usepackage{fontspec}\n\\font\\mine=\"[myfont.otf]\" at 11pt\n\\begin{document}\n\\section{One}\\label{one}\n{\\mine Our own font, ffi.} See section~\\ref{one}.\n\\end{document}\n";
     let (proj, out) = project(&dir, doc);
-    std::fs::copy(find("lmroman10-regular.otf"), proj.join("myfont.otf")).unwrap();
+    // (the bytes, not `fs::copy`, which keeps the source's mode: TeX Live's
+    // files are read-only in a Nix store, and the copy is overwritten below)
+    let put_font = |name: &str| {
+        std::fs::write(proj.join("myfont.otf"), std::fs::read(find(name)).unwrap()).unwrap()
+    };
+    put_font("lmroman10-regular.otf");
     let cache = dir.join("cache");
     let cache_s = cache.to_string_lossy().into_owned();
     let with_cache = [
@@ -1172,7 +1177,7 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     .unwrap();
     assert_eq!(against_scratch("body"), "s0", "a body edit goes on from S0");
     // its font file changed while closed: S₀ refused
-    std::fs::copy(find("lmroman12-regular.otf"), proj.join("myfont.otf")).unwrap();
+    put_font("lmroman12-regular.otf");
     assert_eq!(
         against_scratch("font"),
         "fresh",
