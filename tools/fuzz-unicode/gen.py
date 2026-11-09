@@ -507,6 +507,35 @@ class Gen:
                      '\\showbox13 \\shipout\\box13%%' % (m, self.pick(TEXT_FONTS)[0], m))
         return L
 
+    def chunk_print(self):
+        """Printing Unicode: \\message, \\write, \\show, \\string, \\meaning,
+        \\detokenize and \\csname of odd characters (controls, bidi marks,
+        combining marks, astral and private-use characters, U+FFFD, a lone
+        U+FEFF), with \\newlinechar and \\escapechar changes, and box dumps
+        cut short by small \\showboxbreadth and \\showboxdepth."""
+        odd = ["^^^^0007", "^^^^007f", "^^^^0085", "^^^^200f", "^^^^202e", "^^^^0301",
+               "^^^^fffd", "^^^^feff", "^^^^e000", "^^^^^1f600", "^^^^^10ffff", "^^^^00ad",
+               "^^^^2028", "^^^^0000", "^^^^001b", "é", "ß", "א", "ا"]
+        s = "".join(self.pick(odd) for _ in range(self.r.randint(1, 6)))
+        k = self.r.random()
+        if k < 0.2:
+            return ["\\message{[%s]}%%" % s]
+        if k < 0.35:
+            return ["{\\newlinechar=%s \\immediate\\write16{[%s]}}%%" % (self.pick(["-1", "10", "`^^^^0085", "`é"]), s)]
+        if k < 0.5:
+            return ["\\def\\x{%s}{\\escapechar=%s \\show\\x \\message{\\meaning\\x}}%%" % (
+                s, self.pick(["-1", "92", "`é", "\"1F600", "\"200F"]))]
+        if k < 0.6:
+            return ["\\message{\\detokenize{%s}\\string\\%s}%%" % (s, self.pick(["é", "א", "x", "^^^^0301"]))]
+        if k < 0.7:
+            return ["\\expandafter\\def\\csname q%s\\endcsname{1}\\expandafter\\show\\csname q%s\\endcsname%%" % (s, s)]
+        if k < 0.8:
+            return ["\\showtokens{%s}%%" % s]
+        f = self.pick(self.fonts)
+        return ["{\\showboxbreadth=%d \\showboxdepth=%d \\setbox14=\\hbox{\\%s %s \\hbox{\\%s %s}}\\showbox14}%%" % (
+            self.r.choice([-1, 0, 1, 2, 3]), self.r.choice([-1, 0, 1, 2]), f,
+            self.text(self.r.randint(2, 8), fonts=False), f, s)]
+
     def chunk_showlists(self):
         return ["\\setbox11=\\hbox{%s\\showlists}\\shipout\\box11%%" % self.text(self.r.randint(1, 5))]
 
@@ -514,7 +543,7 @@ class Gen:
         kinds = [self.chunk_paragraph] * 4 + [self.chunk_bidi] * 3 + [self.chunk_interchar] * 2 + \
                 [self.chunk_queries] * 2 + [self.chunk_ligkern] * 3 + [self.chunk_glyph] + \
                 [self.chunk_hyph] * 2 + [self.chunk_math] * 3 + [self.chunk_picture] + \
-                [self.chunk_fontchange] * 2 + [self.chunk_showlists] + [self.chunk_locale] * 2 + [self.chunk_encoding]
+                [self.chunk_fontchange] * 2 + [self.chunk_showlists] + [self.chunk_locale] * 2 + [self.chunk_encoding] + [self.chunk_print] * 2
         if self.area:
             # A dense run of one area (`--area bidi`, ...): its chunks only.
             kinds = [getattr(self, "chunk_" + self.area)]
@@ -592,7 +621,7 @@ class Gen:
 
 
 AREAS = ["paragraph", "bidi", "interchar", "queries", "ligkern", "glyph", "hyph", "math",
-         "picture", "fontchange", "showlists", "locale", "encoding"]
+         "picture", "fontchange", "showlists", "locale", "encoding", "print"]
 
 
 def generate(seed, latex=False, area=None, replay=False):
