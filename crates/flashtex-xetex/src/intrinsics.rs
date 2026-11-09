@@ -15,8 +15,9 @@
 //! alignment state, strings, errors, mode, list tail, scanner and output as
 //! it found them, and made no glue, shape, box or sparse-register
 //! definition, no write to a `\tracing...` parameter, no `\read`,
-//! `\openin`, `\closein` or `\XeTeXinputencoding`, and no `\aftergroup` at its own level
-//! (`not_replayable.*` otherwise).
+//! `\openin`, `\closein` or `\XeTeXinputencoding`, no `\XeTeXlinebreaklocale`
+//! or `\XeTeXdefaultencoding` (which write `eqtb` outside `eq_define`), and
+//! no `\aftergroup` at its own level (`not_replayable.*` otherwise).
 //!
 //! An eligible call with a kept recording from the previous guarded call is
 //! *checked* (`crate::intrinsics_verify`): checkpoint C, replay the previous
@@ -309,6 +310,9 @@ impl Globals {
         let op = match k {
             // the input files' positions and encodings are not compared
             16 => Err("FileInput"),
+            // `\XeTeXlinebreaklocale` and `\XeTeXdefaultencoding` assign
+            // their parameters directly, which the recording does not see
+            18 => Err("DirectWrite"),
             // an `\aftergroup` token left at the call's level (or below,
             // after closing an outer group) is on the save stack after the
             // call, which a replay does not push; one inside a group the

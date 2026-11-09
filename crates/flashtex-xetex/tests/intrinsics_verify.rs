@@ -458,3 +458,35 @@ fn a_check_whose_real_path_was_too_long_to_record_is_no_difference() {
     assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
     assert_eq!(count(&s, "semantic.identical"), 0, "{s}");
 }
+
+/// `\XeTeXlinebreaklocale` and `\XeTeXdefaultencoding` write their `eqtb`
+/// words directly (`XeTeX_linebreak_locale:=cur_name`,
+/// `XeTeX_default_input_mode:=i`), not through `eq_define`: the recording
+/// does not see the write, so its replay would leave the old value. Once
+/// the names' strings exist, nothing else the end check compares moves. Not
+/// replayable.
+#[test]
+fn direct_parameter_writes_are_not_replayable() {
+    for (set, reset) in [
+        (
+            "\\XeTeXlinebreaklocale \"zh\"",
+            "\\XeTeXlinebreaklocale \"ja\"",
+        ),
+        (
+            "\\XeTeXdefaultencoding \"bytes\"",
+            "\\XeTeXdefaultencoding \"utf8\"",
+        ),
+    ] {
+        let Some(s) = verify_matches_off(&format!(
+            "\\documentclass{{article}}{set}\\relax{reset}\\relax\n\
+             \\def\\pdfstringdefPreHook{{{set}\\relax}}\n\
+             \\begin{{document}}\\relax\n\\pdfstringdefPreHook\n{reset}\\relax\\pdfstringdefPreHook\n\
+             {reset}\\relax\\pdfstringdefPreHook\n{reset}\\relax x\\end{{document}}\n"
+        )) else {
+            return;
+        };
+        assert_eq!(count(&s, "not_replayable.DirectWrite"), 3, "{set}: {s}");
+        assert_eq!(count(&s, "semantic.checked"), 0, "{set}: {s}");
+        assert_eq!(count(&s, "semantic.differing"), 0, "{set}: {s}");
+    }
+}
