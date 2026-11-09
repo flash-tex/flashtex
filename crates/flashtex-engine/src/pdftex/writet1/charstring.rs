@@ -279,17 +279,45 @@ impl Stack {
     fn fingerprint_or(&self, empty: (u64, u64)) -> (u64, u64) {
         self.hashes.last().copied().unwrap_or(empty)
     }
+
+    /// The array entries above the stack's top, which a pop of a negative
+    /// count uncovers (`backing[depth..]`, without trailing zeros: an entry
+    /// never written reads 0 too). Empty once the stack is past the array.
+    fn uncoverable(&self) -> &[i32] {
+        let rest = &self.backing[self.values.len().min(self.backing.len())..];
+        let end = rest.iter().rposition(|&v| v != 0).map_or(0, |i| i + 1);
+        &rest[..end]
+    }
+
+    /// A hash of [`Stack::uncoverable`], for [`EntryState`].
+    fn uncoverable_hash(&self) -> u64 {
+        self.uncoverable()
+            .iter()
+            .fold(0x4528_21E6_38D0_1377, |h: u64, &v| {
+                h.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .wrapping_add(u64::from(v as u32))
+            })
+    }
 }
 
 /// The state a subr is entered in, as `cs_mark` compares them: the subr,
-/// the stack's depth and hashes, `lastargOtherSubr3`, and how many marks
-/// and fixes the font has had. What pdfTeX's walk from a subr's entry does
-/// depends on nothing else.
+/// the stack's depth and hashes, the array entries above the stack that a
+/// negative pop can uncover, `lastargOtherSubr3`, and how many marks and
+/// fixes the font has had. What pdfTeX's walk from a subr's entry does
+/// depends on nothing else. (Without the uncoverable entries two entries
+/// of a subr that differ only there looked the same, and a walk that ends
+/// was taken for one that does not: REVIEW-A on #1970.)
+///
+/// The loop check only stops a walk on an exact repeat of this state while
+/// the first is still being parsed, which pdfTeX's deterministic walk
+/// repeats for ever; more state here makes that check stricter, never
+/// looser. That every walk here ends is `WORK_FACTOR`'s job, not this one's.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct EntryState {
     subr: usize,
     depth: usize,
     hash: (u64, u64),
+    uncoverable: u64,
     last_arg_other_subr3: i32,
     marks: u64,
 }
@@ -362,9 +390,9 @@ struct Walk {
     frames: Vec<Frame>,
     /// How many frames were entered in each state.
     active: HashMap<EntryState, u32>,
-    /// For a state entered a second time, the stack it was entered with
-    /// and the depth of the frame that saw it.
-    confirm: HashMap<EntryState, (Vec<i32>, usize)>,
+    /// For a state entered a second time, the stack and the uncoverable
+    /// entries it was entered with, and the depth of the frame that saw it.
+    confirm: HashMap<EntryState, (Vec<i32>, Vec<i32>, usize)>,
 }
 
 impl Walk {
@@ -387,7 +415,7 @@ impl Walk {
             if self
                 .confirm
                 .get(k)
-                .is_some_and(|c| c.1 == self.frames.len())
+                .is_some_and(|c| c.2 == self.frames.len())
             {
                 self.confirm.remove(k);
             }
@@ -643,23 +671,31 @@ impl Charstrings {
                 subr: idx,
                 depth: self.stack.values.len(),
                 hash: self.stack.fingerprint_or((0, 0)),
+                uncoverable: self.stack.uncoverable_hash(),
                 last_arg_other_subr3: *env.last_arg_other_subr3,
                 marks: self.marks,
             };
             // A frame being parsed was entered in a state with this key. If
-            // the key comes again and the stack is the one saved at the
-            // first repeat, that frame (still being parsed) was entered in
-            // exactly this state: the call pdfTeX never returns from.
+            // the key comes again and the stack and the uncoverable entries
+            // are the ones saved at the first repeat, that frame (still
+            // being parsed) was entered in exactly this state: the call
+            // pdfTeX never returns from.
             if walk.active.contains_key(&state) {
                 match walk.confirm.get(&state) {
-                    Some((stack, _)) if *stack == self.stack.values => {
+                    Some((stack, above, _))
+                        if *stack == self.stack.values && above.as_slice() == self.stack.uncoverable() =>
+                    {
                         let caller = walk.frames.last().map_or(&frame.owner, |f| &f.owner);
                         return Err(caller.error(format_args!(
                             "cannot call subr ({idx}): it would call itself without end"
                         )));
                     }
                     _ => {
-                        let seen = (self.stack.values.clone(), walk.frames.len());
+                        let seen = (
+                            self.stack.values.clone(),
+                            self.stack.uncoverable().to_vec(),
+                            walk.frames.len(),
+                        );
                         walk.confirm.insert(state.clone(), seen);
                     }
                 }
