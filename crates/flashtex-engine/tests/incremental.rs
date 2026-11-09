@@ -6794,8 +6794,11 @@ fn preamble_patch_of_an_active_math_character() {
     };
     let doc = |def: &str| {
         let pre = format!("\\mathcode`\\Q=\"8000\n{{\\catcode`\\Q=13 \\gdef Q{{{def}}}}}");
-        patch_doc("A title", &pre, "", "", false)
-            .replacen("\\section{Two}", "A formula $aQb$.\n\\section{Two}", 1)
+        patch_doc("A title", &pre, "", "", false).replacen(
+            "\\section{Two}",
+            "A formula $aQb$.\n\\section{Two}",
+            1,
+        )
     };
     let dir = e.dir.join("prepatch-mathactive");
     let _ = std::fs::remove_dir_all(&dir);
