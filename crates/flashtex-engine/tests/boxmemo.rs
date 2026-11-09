@@ -207,6 +207,24 @@ fn void_box_reads_are_part_of_the_key() {
 }
 
 #[test]
+fn the_error_count_is_part_of_the_key() {
+    // (#2294, lane FUZZ-REPLAY) a paragraph's end sets `error_count` to 0
+    // (`end_graf`, tex.web §1096). A call recorded at 0 replayed after an
+    // error left the count at 1, and the 99 errors after it then stopped
+    // the run at 100 ("That makes 100 errors"), where pdfTeX goes on
+    let s = check(
+        "error-count",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\hsize=100pt \\parfillskip=0pt plus 1fil\n\
+         \\def\\measure#1{\\setbox0\\vbox{\\noindent\\vrule\\par}\\global\\dimen1=\\ht0 \\setbox0\\hbox{}}\n\
+         \\def\\e#1{\\ifnum#1>0 \\errmessage{e}\\expandafter\\e\\expandafter{\\number\\numexpr#1-1\\relax}\\fi}\n\
+         \\errmessage{s}\\noindent\\par\n\
+         \\measure{1}\\measure{1}\\measure{1}\\errmessage{a}\\measure{1}\\e{99}\\message{[done]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
 fn draw_calls_replay_with_their_hole() {
     // a call in restricted horizontal mode that moves a box out of a
     // register it did not make (`\\box9`) and appends a frame around it:

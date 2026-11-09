@@ -361,6 +361,11 @@ struct Context {
     /// `\prevdepth`) at the call: a draw call's first spaces and lines
     /// depend on it.
     aux: u64,
+    /// `error_count` at the call (#2294): a paragraph's end sets it to 0
+    /// (`end_graf`, tex.web §1096), and `error` stops the run at 100. A
+    /// recording ends with the count it started with (`bm_finish`'s
+    /// `Error`), so a replay is the normal path's only from an equal count.
+    error_count: i32,
 }
 
 /// How K2 keeps the value at one `eqtb` location.
@@ -449,6 +454,7 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
         ctx.hyph_version,
         ctx.aux as i32,
         (ctx.aux >> 32) as i32,
+        ctx.error_count,
         k1.len() as i32,
         k2.len() as i32,
         k4.len() as i32,
@@ -2037,6 +2043,7 @@ impl Globals {
             font_version: self.bm_font_version,
             hyph_version: self.bm_hyph_version,
             aux: self.cur_list.aux_field.0,
+            error_count: self.error_count,
         }
     }
 
