@@ -76,19 +76,22 @@ fn child_snapshot() {
 
 /// The files the child read, with confinement on or off.
 fn files_read(tag: &str, confined: bool) -> Vec<String> {
-    let base = std::env::temp_dir().join(format!(
-        "flashtex-confine-aux-{tag}-{}",
-        std::process::id()
-    ));
+    let base =
+        std::env::temp_dir().join(format!("flashtex-confine-aux-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     // (links resolved: macOS's temporary directory is under a link)
     let base = std::fs::canonicalize(&base).unwrap();
     layout(&base);
     let mut cmd = Command::new(std::env::current_exe().unwrap());
-    cmd.args(["--exact", "child_snapshot", "--nocapture", "--test-threads=1"])
-        .env(CHILD, &base)
-        .env_remove("FLASHTEX_CONFINE_ROOTS");
+    cmd.args([
+        "--exact",
+        "child_snapshot",
+        "--nocapture",
+        "--test-threads=1",
+    ])
+    .env(CHILD, &base)
+    .env_remove("FLASHTEX_CONFINE_ROOTS");
     if confined {
         cmd.env("FLASHTEX_CONFINE_READS", "1");
     } else {
