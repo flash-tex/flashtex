@@ -138,8 +138,8 @@ jobs:
     runs-on: &pc-light-runner >-
       ${{ fromJSON(((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' &&
       (github.event_name == 'merge_group' ||
-       (github.event_name == 'push' && github.ref != 'refs/heads/main') ||
-       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)))
+       (vars.FLASHTEX_PC_PR_CI != '0' && github.event_name == 'push' && github.ref != 'refs/heads/main') ||
+       (vars.FLASHTEX_PC_PR_CI != '0' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)))
       && '["self-hosted","Linux","X64","flashtex-linux"]' || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     permissions:
@@ -239,6 +239,10 @@ jobs:
           # FLASHTEX_SELFHOSTED_MAC (the single switch both used to share).
           SELFHOSTED_MAC_VAR: ${{ vars.FLASHTEX_SELFHOSTED_MAC }}
           SELFHOSTED_LINUX_VAR: ${{ vars.FLASHTEX_SELFHOSTED_LINUX }}
+          # Owner, 2026-11-09 ("sweeps first on the PC"): 0 sends pull_request
+          # and branch-push runs to hosted runners while sweeps are queued
+          # (the MERGE lane's loop sets it); merge groups keep the PC. Unset = on.
+          PC_PR_CI_VAR: ${{ vars.FLASHTEX_PC_PR_CI }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -416,7 +420,7 @@ jobs:
           gate_route=hosted
           fork_check=n/a
           pc_direct=false
-          if [ "$linux_switch" = "1" ]; then
+          if [ "$linux_switch" = "1" ] && [ "${PC_PR_CI_VAR:-1}" != "0" ]; then
             case "$EVENT" in
               pull_request) [ -n "$HEAD_REPO" ] && [ "$HEAD_REPO" = "$THIS_REPO" ] && pc_direct=true ;;
               push) [ "$REF" != "refs/heads/main" ] && pc_direct=true ;;
