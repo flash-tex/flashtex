@@ -1164,7 +1164,14 @@ extension ShellModel {
     func saveDocumentInteractive(_ path: String) async {
         await enqueueSave(path) { [weak self] in // after any autosave of `path` still in flight
             guard let self else { return }
-            switch project.saveDocumentNow(path) {
+            // Hashed, sent and awaited off the main thread (lane APP-LAG-AUDIT:
+            // a ⌘S held it for the helper's compare-and-replace); made here
+            // when that cannot start (an autosave of it in flight: settled first).
+            let outcome: ProjectDocuments.SaveOutcome? = await withCheckedContinuation { c in
+                if !self.project.saveDocumentInBackground(path, completion: { c.resume(returning: $0) }) { c.resume(returning: self.project.saveDocumentNow(path)) }
+            }
+            guard let outcome else { return } // closed, renamed or another project meanwhile
+            switch outcome {
             case .saved(let p, _): captureNote = "Saved \(p)"
             case .conflict(let c):
                 captureNote = c.summary
@@ -1183,7 +1190,12 @@ extension ShellModel {
     }
 
     /// Menu-driven save: on a conflict, asks the user how to resolve it.
-    func saveTexInteractive() {
+    /// `inBackground` (⌘S, the menu, the palette, Vim's `:w`; lane
+    /// APP-LAG-AUDIT): the entry's save is hashed, sent and awaited off the
+    /// main thread (`saveEntryTexInBackground`), which ⌘S used to hold for
+    /// the helper's compare-and-replace — tens of milliseconds at 3 MB. Vim's
+    /// `:wq` passes false: the document must be saved before it is closed.
+    func saveTexInteractive(inBackground: Bool = true) {
         projectPackages.explicitRequest(compiling: false) // ProjectPackages.swift: ⌘S ends the typing grace period
         // A non-entry document saves to its own rooted file (never to the
         // entry URL): ProjectDocuments.saveDocumentNow, the rooted
@@ -1195,6 +1207,10 @@ extension ShellModel {
             }
             return
         }
+        if inBackground, documentURL != nil, saveEntryTexInBackground(completion: { [weak self] in
+            guard let self, files.conflict != nil, !Self.runningUnderXCTest else { return }
+            resolveConflictPanel()
+        }) { return }
         if !saveTex(), files.conflict != nil { resolveConflictPanel() }
     }
 

@@ -740,6 +740,52 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.files.lateReplies, [])
     }
 
+    /// Lane APP-LAG-AUDIT: ⌘S waits for the helper off the main thread, for
+    /// the entry and for a member (the fake answers every save 1 s late).
+    func testSaveCommandWaitsForTheHelperOffTheMainThread() async throws {
+        let dir = try tempDir("bg-save-command")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        try "chapter\n".write(to: dir.appendingPathComponent("chapter.tex"), atomically: true, encoding: .utf8)
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        let opened = await model.project.openDocument("chapter.tex")
+        XCTAssertEqual(opened, .opened(path: "chapter.tex"))
+        model.documentWatcher.stop() // the fake's write would probe the slow fake
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+
+        // The entry.
+        model.updateActiveText("edited\n")
+        var t0 = Date()
+        model.saveTexInteractive()
+        var held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, "⌘S held the main thread for the helper's reply (\(held) s)")
+        XCTAssertEqual(model.files.backgroundSavesSent, 1)
+        try await waitUntil("the entry's save to be applied", state: { "note=\(model.captureNote ?? "nil") status=\(model.files.status)" }) {
+            model.savedText == "edited\n"
+        }
+        XCTAssertEqual(model.captureNote, "Saved paper.tex")
+        XCTAssertEqual(try disk(url), "edited\n")
+        XCTAssertNil(model.files.conflict)
+
+        // A member: the main actor keeps running while its save is out.
+        guard case .switched = model.project.switchDocument(to: "chapter.tex") else { return XCTFail("no switch to chapter.tex") }
+        model.updateActiveText("chapter edited\n")
+        t0 = Date()
+        let save = Task { @MainActor in await model.saveDocumentInteractive("chapter.tex") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, "the member's ⌘S held the main actor (\(held) s)")
+        XCTAssertEqual(model.files.backgroundSavesSent, 2)
+        await save.value
+        XCTAssertEqual(model.captureNote, "Saved chapter.tex")
+        XCTAssertFalse(model.project.isDirty("chapter.tex"))
+        XCTAssertEqual(try disk(dir.appendingPathComponent("chapter.tex")), "chapter edited\n")
+        XCTAssertEqual(model.files.lateReplies, [])
+    }
+
     func testGarbageReplyIsAProtocolFailureNotASave() throws {
         let dir = try tempDir("garbage")
         let url = dir.appendingPathComponent("paper.tex")

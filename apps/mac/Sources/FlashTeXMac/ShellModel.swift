@@ -885,7 +885,7 @@ final class ShellModel {
         let next: @MainActor () -> Void = { [weak self] in
             self?.autosaveInBackground(due.dropFirst(), entry: entry, generation: generation)
         }
-        let started = path == entry ? saveEntryTexInBackground(completion: next) : project.saveDocumentInBackground(path, completion: next)
+        let started = path == entry ? saveEntryTexInBackground(completion: next) : project.saveDocumentInBackground(path, completion: { _ in next() })
         if !started { autosaveInBackground(due.dropFirst(), entry: entry, generation: generation) }
     }
 
