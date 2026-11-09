@@ -676,8 +676,40 @@ class G:
             "\\showgroups{\\begingroup\\showgroups\\endgroup}", "\\middle|", "\\pdfstrcmp{a}",
         ])
 
+    def charset(self):
+        """8-bit and control characters through printing, \\write and lost-char tracing."""
+        return self.pick([
+            "\\message{^^e9^^ff^^80^^7f^^00^^1f}", "\\showtokens{^^e9^^M^^I a}",
+            "\\immediate\\write16{^^e9^^a0 x^^7f}", "\\immediate\\write-1{^^c3^^a9}",
+            "{\\tracinglostchars=%s \\tenrm ^^e9^^80\\char200 \\char`\\^^A x}" % self.pick(["1", "2", "3"]),
+            "\\catcode`^^e9=11 \\def\\^^e9{E}\\show\\^^e9", "\\catcode`\\^^@=12 \\message{a^^@b}",
+            "{\\escapechar=%s \\message{\\string\\par\\meaning\\relax}}" % self.pick(["-1", "`\\^^e9", "`/", "256", "10"]),
+            "{\\newlinechar=%s \\message{a^^Jb%%c}\\immediate\\write16{x^^Jy}}" % self.pick(["`\\^^J", "`\\%", "-1", "`a"]),
+            "{\\endlinechar=%s \\scantokens{a\n b}}" % self.pick(["-1", "`A", "13", "256"]),
+            "\\message{%s}" % ("long" * self.n(200, 300)),
+            "\\message{%s\\undefinedlongline}" % ("x" * self.n(240, 600)),
+            "\\hbox{%s\\undefinedB %s}" % (" ".join(self.pick(WORDS) for _ in range(60)),
+                                              " ".join(self.pick(WORDS) for _ in range(60))),
+            "\\uccode`^^e9=`^^c9 \\uppercase{\\message{^^e9}}",
+        ])
+
+    def capacity(self):
+        """Runs that end in an overflow or fatal error (rare; ends the document)."""
+        return self.pick([
+            "\\def\\ovA{\\ovA x}\\ovA", "\\def\\ovG{{\\ovG}\\ovG",
+            "\\def\\ovP#1{\\ovP{#1#1}}\\ovP x", "\\def\\ovL{\\ovL\\relax}\\setbox0\\hbox{\\ovL}",
+            "\\def\\ovS{\\begingroup\\count1=1 \\ovS}\\ovS",
+            "\\def\\ovI{\\ifnum1=1 \\ovI\\fi}\\ovI",
+            "\\def\\ovC{\\csname\\ovC\\endcsname}\\ovC",
+            "\\count1=0 \\def\\ovH{\\advance\\count1 1 \\expandafter\\def\\csname h\\the\\count1\\endcsname{}\\ovH}\\ovH",
+            "\\errorstopmode\\undefinedatend", "\\errorstopmode\\read16 to\\x",
+            "\\endinput", "\\input nonexistentfilezz ", "\\batchmode\\input nonexistentfilezz ",
+            "{\\fz", "\\def\\run#1{#1}\\run{\\par", "\\outer\\def\\ou{}\\message{\\ou}",
+            "\\count1=0 {\\loop\\advance\\count1 1 \\ifnum\\count1<120 \\undefinedErr\\repeat}",
+        ])
+
     def chunk(self):
-        k = self.n(0, 99)
+        k = self.n(0, 103)
         if k < 22:
             return self.paragraph()
         if k < 28:
@@ -706,6 +738,8 @@ class G:
             return self.pdfstuff()
         if k < 99:
             return self.iostuff()
+        if k < 103:
+            return self.charset()
         return "\\setbox%d\\hbox{%s}" % (self.n(10, 12), self.inline(2))
 
     def hyph_setting(self):
@@ -801,6 +835,8 @@ def generate(seed, nchunks=None, latex=None):
     pre = preamble(g, pdf)
     k = nchunks or g.n(4, 14)
     chunks = [g.chunk() for _ in range(k)]
+    if g.chance(0.04):
+        chunks.append(g.capacity())
     return Doc(seed, pre, chunks, pdf)
 
 
