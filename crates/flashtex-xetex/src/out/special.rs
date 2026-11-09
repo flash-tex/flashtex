@@ -527,25 +527,24 @@ impl<M: Metrics> Builder<'_, M> {
                 self.break_annot();
                 self.doc.tracking = None;
             }
+            // spc_handler_pdfm_dest: a string and an array, or nothing
             b"dest" => {
-                let name = match p.object() {
-                    Some(Obj::Str(s)) | Some(Obj::Name(s)) => s,
-                    _ => {
-                        self.doc
-                            .diag(format!("pdf:dest without a name: `{}'", lossy(r)));
-                        return;
-                    }
-                };
-                let Some(o) = p.object() else {
-                    self.doc
-                        .diag(format!("pdf:dest without a destination: `{}'", lossy(r)));
+                let Some(Obj::Str(name)) = p.object() else {
+                    self.doc.diag(format!(
+                        "pdf:dest: PDF string expected for destination name: `{}'",
+                        lossy(r)
+                    ));
                     return;
                 };
-                match self.fixup(o) {
-                    Obj::Array(a) => self.add_dest(name, &a),
-                    o => self.doc.dests.push((name, o)),
+                match p.object().map(|o| self.fixup(o)) {
+                    Some(Obj::Array(a)) => self.add_dest(name, &a),
+                    _ => self.doc.diag(format!(
+                        "pdf:dest: Destination not specified as an array object: `{}'",
+                        lossy(r)
+                    )),
                 }
             }
+            b"names" => self.names_special(&mut p),
             b"outline" | b"out" => {
                 // `[-]`: closed, `[]`: open; without either, dvipdfmx's
                 // default (`-O 0`, TeX Live's `dvipdfmx.cfg`): closed.
@@ -692,6 +691,80 @@ impl<M: Metrics> Builder<'_, M> {
                     }
                 }
             }
+        }
+    }
+
+    /// `pdf:names /Category [(key) value ...]` or `pdf:names /Category
+    /// (key) value` (spc_pdfm.c's spc_handler_pdfm_names): entries of the
+    /// catalog's name trees. `/Dests` entries are destinations as
+    /// `pdf:dest` makes them; an unknown category, a key that is not a
+    /// string or one already there stops the special (entries before it
+    /// stay).
+    fn names_special(&mut self, p: &mut Parser) {
+        let Some(Obj::Name(cat)) = p.object() else {
+            self.doc
+                .diag("pdf:names: PDF name expected but not found.".into());
+            return;
+        };
+        let pairs: Vec<(Obj, Obj)> = match p.object().map(|o| self.fixup(o)) {
+            Some(Obj::Array(a)) => {
+                if a.len() % 2 != 0 {
+                    self.doc
+                        .diag("pdf:names: Array size not multiple of 2 for pdf:names.".into());
+                    return;
+                }
+                let mut it = a.into_iter();
+                std::iter::from_fn(|| Some((it.next()?, it.next()?))).collect()
+            }
+            Some(Obj::Str(k)) => match p.object() {
+                Some(v) => vec![(Obj::Str(k), self.fixup(v))],
+                None => {
+                    self.doc
+                        .diag("pdf:names: PDF object expected but not found.".into());
+                    return;
+                }
+            },
+            _ => {
+                self.doc
+                    .diag("pdf:names: Invalid object type for pdf:names.".into());
+                return;
+            }
+        };
+        for (k, v) in pairs {
+            let Obj::Str(k) = k else {
+                self.doc
+                    .diag("pdf:names: Name tree key must be string.".into());
+                return;
+            };
+            if !NAME_CATEGORIES.contains(&cat.as_slice()) {
+                self.doc.diag(format!(
+                    "pdf:names: Unknown name dictionary category \"{}\".",
+                    lossy(&cat)
+                ));
+                return;
+            }
+            if cat == b"Dests" {
+                match v {
+                    Obj::Array(a) => self.add_dest(k, &a),
+                    o => self.doc.dests.push((k, o)),
+                }
+                continue;
+            }
+            if self
+                .doc
+                .name_trees
+                .get(&cat)
+                .is_some_and(|t| t.contains_key(&k))
+            {
+                self.doc
+                    .diag(format!("pdf:names: Object @{} already defined.", lossy(&k)));
+                return;
+            }
+            self.doc
+                .name_trees
+                .entry(cat.clone())
+                .or_default()
+                .insert(k, v);
         }
     }
 
@@ -1099,6 +1172,21 @@ pub fn read_transform(p: &mut Parser) -> Mat {
     }
     m
 }
+
+/// The name trees dvipdfmx writes (pdfdoc.c's `name_dict_categories`, in
+/// its order).
+pub const NAME_CATEGORIES: [&[u8]; 10] = [
+    b"Dests",
+    b"AP",
+    b"JavaScript",
+    b"Pages",
+    b"Templates",
+    b"IDS",
+    b"URLS",
+    b"EmbeddedFiles",
+    b"AlternatePresentations",
+    b"Renditions",
+];
 
 fn lossy(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()

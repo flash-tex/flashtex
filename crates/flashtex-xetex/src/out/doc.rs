@@ -184,6 +184,9 @@ pub struct Doc {
     /// Named destinations, in order: the name and the destination array
     /// (with `@page<n>` for its page).
     pub dests: Vec<(Vec<u8>, Obj)>,
+    /// `pdf:names` entries of the other name trees, by category (the
+    /// first entry of a key is kept).
+    pub name_trees: BTreeMap<Vec<u8>, BTreeMap<Vec<u8>, Obj>>,
     /// Forms by id - 1.
     pub forms: Vec<std::sync::Arc<Built>>,
     /// `pdf:majorversion`, `pdf:minorversion` (dvipdfmx's default 1.7 is
