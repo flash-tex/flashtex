@@ -708,9 +708,30 @@ impl<M: Metrics> Builder<'_, M> {
             ));
             return;
         };
-        let dict = match p.object() {
-            Some(Obj::Dict(d)) => self.fixup_dict(d),
-            _ => Dict::default(),
+        // spc_handler_pdfm_stream_with_type: the data is the stream's
+        // decoded data; of the special's dictionary, /Length is dropped,
+        // or else /Filter (a /Filter given with a /Length stays). A
+        // dictionary that does not read loses the stream.
+        let dict = if p.peek() == Some(b'<') {
+            match p.object() {
+                Some(Obj::Dict(d)) => {
+                    let mut d = self.fixup_dict(d);
+                    if d.remove(b"Length").is_none() {
+                        d.remove(b"Filter");
+                    }
+                    d
+                }
+                _ => {
+                    self.doc.diag(format!(
+                        "pdf:{} @{}: Parsing dictionary failed.",
+                        lossy(cmd),
+                        lossy(&name)
+                    ));
+                    return;
+                }
+            }
+        } else {
+            Dict::default()
         };
         let data = if cmd == b"fstream" {
             let f = String::from_utf8_lossy(&s).into_owned();
