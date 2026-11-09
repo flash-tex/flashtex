@@ -1,0 +1,120 @@
+# Unicode differential fuzzer (fuzz-unicode)
+
+Differential fuzzing of FlashTeX's XeTeX engine (`crates/flashtex-xetex`)
+against TeX Live 2026's `xetex` on generated documents. MIT, Python 3
+standard library only (plus fontTools and qpdf for `--pdf`). TeX Live's
+xetex is the oracle and only the oracle (DESIGN.md §13); nothing here is
+in the product path. It is the Unicode counterpart of `tools/fuzz-parity`
+(pdfTeX) and reuses `tools/xetex-lockstep` for running and comparing.
+
+## Run
+
+```sh
+(cd crates/flashtex-xetex && CARGO_TARGET_DIR=/tmp/fx cargo build --release --locked)
+python3 tools/fuzz-unicode/fuzz.py --candidate /tmp/fx/release/flashtex-xetex \
+    --seeds 0:500 --workers 2 --out /tmp/fzu --timeout 60
+python3 tools/fuzz-unicode/fuzz.py ... --latex          # xelatex + fontspec documents
+python3 tools/fuzz-unicode/fuzz.py ... --pdf            # also the PDFs (python with fontTools)
+python3 tools/fuzz-unicode/show.py /tmp/fzu/log/17      # the first difference
+python3 tools/fuzz-unicode/minimize.py --candidate BIN /tmp/fzu/log/17   # delta-debug
+python3 tools/fuzz-unicode/gen.py 17 [--latex]          # print one document
+```
+
+- `--seeds START:COUNT`: each seed is one document; `gen.generate(seed)` is
+  a pure function of the seed, so a seed number plus gen.py's revision is
+  the whole test case. A grammar change renumbers the cases.
+- `--workers` is capped at 2. On a shared Mac run it under `nice -n 19`.
+- Each non-equal seed is written to `OUT/<class>/<seed>/` (`doc.tex`, both
+  normalised logs, `result.json` with the first difference);
+  `OUT/summary.json` groups seeds by signature. Exit 0 when every seed was
+  equal or neutral.
+
+About 0.7 s a document per engine on an M-series Mac: 300 seeds take
+about four minutes with two workers.
+
+## What runs
+
+Plain documents run through `tools/xetex-lockstep/run.py`'s `run_one`:
+both engines through a symlink named `xetex`, `-ini -etex -no-pdf`,
+`-interaction=nonstopmode` **without** `-halt-on-error` (error recovery is
+compared too), max_print_line 1000, error_line 254, `SOURCE_DATE_EPOCH=0`,
+`FORCE_SOURCE_DATE=1`, `TZ=UTC`, each in its own directory holding the
+picture files of `tools/xetex-lockstep/pictures`.
+
+`--latex` documents run through `tools/xetex-lockstep/latex.py`: each
+engine builds its own `xelatex.fmt` once (`OUT/fmt`, about a minute each),
+then each document runs untraced and then traced to its box dumps.
+
+## What is compared (P-T1, and the XDV rule of docs/design/xetex/PLAN.md §3.5)
+
+In order; the first difference names the class:
+
+| class | difference |
+|---|---|
+| `candidate-crash` | the candidate died by a signal or panicked (exit 101) |
+| `log` | the log after the lockstep normalisation (`compared_lines`) |
+| `rc` | exit statuses |
+| `xdv` | the XDV after `normalise_xdv` (preamble date, font paths) |
+| `terminal` | the terminal output |
+| `timeout` | one engine exceeded `--timeout` |
+| `pdf` | with `--pdf`: tools/xetex-pdfparity/compare.py (structural, `--no-visual`) fails on the two PDFs (xdvipdfmx's and the candidate's own) |
+| `latex-*` | with `--latex`: latex.py's verdict (log, XDV, exit status, panic) |
+
+Neutral outcomes, not failures: `both-hang`, `both-signal` (the same signal
+in both), and `oracle-crash`: xetex itself died by a signal (undefined
+behaviour; kept under `OUT/oracle-crash/` for reference). TeX Live 2026's
+xetex segfaults, for example, on `\XeTeXinterwordspaceshaping=2` with a
+native word, a space in `\nullfont` and another native word in one
+paragraph; the port then stops on a checked index (exit 101).
+
+## Grammar (gen.py)
+
+A document is a preamble and 4-12 independent chunks, every line balanced
+on its own. Fonts are TeX Live's, named by file (`"[name.otf]"`), so no
+system font lookup is involved: Latin Modern, TeX Gyre, Libertinus, Amiri
+(Arabic), David CLM (Hebrew), Charis SIL, Fandol Song (CJK), Garuda and
+Norasi (Thai), the variable Junicode VF and Pennstander VF, and the Latin
+Modern, TeX Gyre and Libertinus math fonts. The preamble picks the
+tracing switches, paragraph parameters, `\patterns` and `\hyphenation`,
+2-5 fonts with random OpenType features, scripts, languages, `mapping`,
+`letterspace`, `extend`, `slant`, `embolden` and `color`, sometimes a math
+setup through `\Umathcode`/`\Udelcode`/`\Umathchardef`, and
+`\XeTeXinterwordspaceshaping`, `\XeTeXdashbreakstate`,
+`\XeTeXupwardsmode`, `\XeTeXuseglyphmetrics`, `\XeTeXinputnormalization`,
+`\XeTeXtracingfonts` and `\XeTeXlinebreaklocale`. Chunks:
+
+- paragraphs and boxes of mixed Latin, Hebrew, Arabic and digit words, with
+  font changes inside words, bidi and joining controls, `\XeTeXglyph`,
+  `\char`, `\Uchar`, kerns, penalties and discretionaries;
+- bidi boxes (one RTL script, Latin and numbers, controls, TeX--XeT);
+- `\XeTeXinterchartoks` with `\XeTeXcharclass` (classes 0, 1-4, 4095);
+- font queries (`\XeTeXcountglyphs`, the `\XeTeXOT...` queries,
+  `\XeTeXglyphindex`, `\XeTeXglyphname`, `\XeTeXglyphbounds`, ...);
+- ligatures and kerns across font changes, `\/`, `\noboundary`;
+- hyphenation of native words in narrow boxes, `\language`;
+- OpenType math: scripts, fractions, radicals, accents, delimiters,
+  `\Umathchar`, `\Uoverdelimiter`, `\Uroot`, `\Ustack`, displays;
+- `\XeTeXpicfile`/`\XeTeXpdffile` with every size keyword;
+- a new font mid-document, `\fontdimen` changes;
+- ICU line breaking under `\XeTeXlinebreaklocale` (Thai, CJK);
+- `\showlists` inside a box.
+
+`gen.py --latex` writes `xelatex` documents with fontspec (main font by
+name or file, Hebrew and Arabic families, feature changes,
+`\XeTeXinterwordspaceshaping`) and sometimes unicode-math.
+
+## Tests
+
+```sh
+python3 -m unittest discover -s tools/fuzz-unicode -p 'test_*.py'
+FUZZ_UNICODE_ENGINE=/tmp/fx/release/flashtex-xetex python3 -m unittest discover -s tools/fuzz-unicode -p 'test_*.py'
+```
+
+The pure-logic tests (determinism, balanced lines, ddmin) always run; with
+`FUZZ_UNICODE_ENGINE` and xetex on PATH, fixed seeds must be clean.
+
+## Findings
+
+| issue | what | fix |
+|---|---|---|
+| #2329 | `\XeTeXinputnormalization` ignored: `input_line` never called the TECkit normalizer | crates/flashtex-xetex/src/system.rs |
