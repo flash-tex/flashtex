@@ -119,9 +119,9 @@ HEAD = ("\\catcode`\\{=1 \\catcode`\\}=2 \\pdfoutput=1 "
 def job_text(batch, variant):
     out = [HEAD]
     for tfm, line, ff in batch:
-        if variant == "full":
-            if ff.startswith("<<"):
-                continue
+        # An entry pdftex.map already embeds whole (<<) needs no rewrite, but
+        # is still typeset so the full sweep covers it (#2054).
+        if variant == "full" and not ff.startswith("<<"):
             whole = line.replace(ff, "<<" + ff.lstrip("<["), 1)
             out.append("\\pdfmapline{=%s}" % whole)
         chars = "".join("\\char%d " % c for c in codes(tfm, variant))
