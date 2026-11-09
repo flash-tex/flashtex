@@ -45,7 +45,8 @@ struct T3 {
     glyph_num: i32,
     /// `t3_font_scale` (a C `float`).
     font_scale: f32,
-    /// `t3_b0`..`t3_b3`: the font's bounding box.
+    /// `t3_b0`..`t3_b3`: the font's bounding box (kept from font to font
+    /// in [`super::writefont::State::t3_bbox`]).
     b: [i32; 4],
     /// `t3_image_used`.
     image_used: bool,
@@ -433,6 +434,8 @@ impl Globals {
     /// `objnum`; `fm` is its map entry, if it has one.
     pub fn writet3(&mut self, st: &mut Fonts, fm: Option<usize>, objnum: i32, f: i32) {
         let mut t = T3::new();
+        // t3_b0..t3_b3 are statics: they start as the last font left them
+        t.b = st.wf.t3_bbox;
         let fm_e = fm.and_then(|i| st.map.fms[i].clone());
         let fe = match fm_e.as_ref().and_then(|m| m.encname.clone()) {
             Some(enc) => self.get_fe_entry(st, &enc),
@@ -545,6 +548,9 @@ impl Globals {
             )
             .as_bytes(),
         );
+        if st.wf.t3_bbox != t.b {
+            st.wf.t3_bbox = t.b;
+        }
         self.pdf_printf(
             format!(
                 "/Resources << /ProcSet [ /PDF {}] >>\n",
