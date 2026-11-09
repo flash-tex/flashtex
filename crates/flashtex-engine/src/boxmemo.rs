@@ -3484,6 +3484,16 @@ impl Globals {
             }
         }
         let outer = self.bm_with_rec(|r| r.start.nest_ptr).unwrap_or(i32::MAX);
+        // a list below the call's level is the current one again: the call
+        // ended its own paragraph (`end_graf` popped it), and whatever runs
+        // now writes to an outer list. `new_graf` sets that list's
+        // `prev_graf` to 0 and may append `\parskip` to it, and its
+        // `push_nest` can get the same head back from `get_avail`, so
+        // `nest_ptr`, the mode and `tail` at the end may all match the
+        // start (#2449)
+        if outer != i32::MAX && self.nest_ptr < outer {
+            return self.bm_abort("OuterList");
+        }
         let ok = if c == k::extension {
             [
                 k::open_node,

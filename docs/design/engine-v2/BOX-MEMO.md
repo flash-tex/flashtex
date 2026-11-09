@@ -137,7 +137,10 @@ later.
 - **The outer list.** Touching it at all: a node appended at the call's nest level, `\unskip`,
   `\unkern`, `\unpenalty` or `\lastbox` there, `\lastskip`, `\lastpenalty`, `\lastkern` or
   `\lastnodetype` read there, `\prevdepth`, `\spacefactor` or `\prevgraf` read or set at or below
-  it, or a mode change of that level.
+  it, or a mode change of that level. Any command run while a list below the call's level is the
+  current one, after the call ended its own paragraph (`\par\noindent` sets the enclosing vertical
+  list's `prev_graf` to 0 and may append `\parskip` there, with `nest_ptr`, the mode and `tail` back
+  as they were; #2449).
 - **The page builder.** `\pagegoal` and the other `\page...` dimensions, `\deadcycles`,
   `\insertpenalties`, `\interactionmode`. At the end, the page and contribution lists, `page_so_far`,
   `last_glue`/`last_penalty`/`last_kern`, `output_active` and `insert_penalties` must be as at the
