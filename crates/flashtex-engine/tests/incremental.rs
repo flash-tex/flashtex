@@ -6836,6 +6836,375 @@ fn a_link_broken_across_lines_does_not_stop_convergence() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Lane TEST-GAPS: the convergence test's refusals (`incr::Obs::test`) that no
+// test reached (cargo-llvm-cov, 2026-11-01). Each compile equals scratch runs
+// (`compile_and_check`), and the refusal is the one named.
+// ---------------------------------------------------------------------------
+
+/// Whether any convergence test of `report` refused with a reason holding
+/// every one of `parts`.
+fn refused_with(report: &str, parts: &[&str]) -> bool {
+    diffs_before(report, usize::MAX)
+        .iter()
+        .any(|(_, why)| parts.iter().all(|p| why.contains(p)))
+}
+
+/// A session on a new directory `name` holding `files`, compiled until a
+/// compile changes nothing.
+fn settled(e: &Env, name: &str, files: &[(&str, &str)]) -> (PathBuf, Host) {
+    settled_env(e, name, files, &[])
+}
+
+/// [`settled`], the host with `env` too.
+fn settled_env(
+    e: &Env,
+    name: &str,
+    files: &[(&str, &str)],
+    env: &[(&str, &str)],
+) -> (PathBuf, Host) {
+    let dir = e.dir.join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start_env(e, &dir, env);
+    let mut last = String::new();
+    for k in 0..4 {
+        last = compile_and_check(e, &mut h, &dir, if k == 0 { files } else { &[] }, "settle");
+        if last.contains("\"mode\":\"unchanged\"") {
+            return (dir, h);
+        }
+    }
+    panic!("{name}: no compile of 4 came back unchanged: {last}")
+}
+
+/// An external command (`\write18`) the edit adds after the restart point:
+/// the new run has made one more than the old run had at each later
+/// checkpoint, so none converges ("an external effect since the restart");
+/// the revert, one fewer, likewise.
+#[test]
+fn an_external_command_the_edit_adds_blocks_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |run: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..60 {
+            s.push_str(&para(i, "lorem"));
+            if i == 5 && run {
+                s.push_str("\\immediate\\write18{kpsewhich no-such-file.xyz}\n");
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let (dir, mut h) = settled(&e, "gaps-effect", &[("doc.tex", &doc(false))]);
+    for (run, what) in [(true, "a \\write18 added"), (false, "its removal")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(run))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert!(
+            refused_with(&r, &["an external effect since the restart"]),
+            "{what}: no test refused for the external command: {r}"
+        );
+        assert_eq!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+}
+
+/// The edit makes the run `\input` another file with the same text up to
+/// its last paragraph: at a page inside it the new run's input position is
+/// the old run's, in another file ("reading ..., the old run ..."). A
+/// convergence there would keep the old run's pages from the first file's
+/// end.
+#[test]
+fn an_input_of_another_file_does_not_converge_inside_it() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let chap = |last: &str| -> String {
+        let mut s = String::new();
+        for i in 0..120 {
+            s.push_str(&para(i, if i == 119 { last } else { "lorem" }));
+        }
+        s
+    };
+    let doc = |which: &str| -> String {
+        // (the file named on a line of its own, so that the lines the
+        // runs hold while they read it are the same)
+        let mut s = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\def\\chapname{{{which}}}\n"
+        );
+        for i in 0..8 {
+            s.push_str(&para(i, "alpha"));
+        }
+        s.push_str("\\input{\\chapname}\n");
+        for i in 0..20 {
+            s.push_str(&para(i, "omega"));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let (ca, cb) = (chap("lorem"), chap("other"));
+    let (dir, mut h) = settled(
+        &e,
+        "gaps-input",
+        &[
+            ("doc.tex", &doc("chapa")),
+            ("chapa.tex", &ca),
+            ("chapb.tex", &cb),
+        ],
+    );
+    for (which, what) in [("chapb", "the other file"), ("chapa", "back")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(which))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let old = if which == "chapb" { "chapa" } else { "chapb" };
+        assert!(
+            refused_with(
+                &r,
+                &["reading ", &format!("{which}.tex, the old run "), old]
+            ),
+            "{what}: no test refused for the other file: {r}"
+        );
+    }
+}
+
+/// The edit makes the run write to another file (`\openout`) the same
+/// lines: at a later page the new run's output stream is at the old run's
+/// position in another file ("writing ..., the old run ...").
+#[test]
+fn a_write_to_another_file_does_not_converge_while_it_is_open() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |out: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\newwrite\\w\n\\begin{document}\n");
+        for i in 0..60 {
+            if i == 3 {
+                s.push_str(&format!("\\immediate\\openout\\w={out}\n"));
+            }
+            s.push_str(&para(i, "lorem"));
+            if i >= 3 {
+                s.push_str(&format!("\\immediate\\write\\w{{line {i}}}\n"));
+            }
+        }
+        s.push_str("\\immediate\\closeout\\w\n\\end{document}\n");
+        s
+    };
+    let (dir, mut h) = settled(&e, "gaps-output", &[("doc.tex", &doc("outa.txt"))]);
+    for (out, what) in [("outb.txt", "the other file"), ("outa.txt", "back")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(out))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert!(
+            refused_with(&r, &["writing ", &format!("{out}, the old run ")]),
+            "{what}: no test refused for the other file: {r}"
+        );
+        // the file as a scratch run leaves it: every line written
+        let lines = std::fs::read_to_string(dir.join(out)).unwrap();
+        assert_eq!(lines.lines().count(), 57, "{what}: {out}: {lines}");
+    }
+}
+
+/// L5's refusal (`Session::aux_patch`): an `.aux` pass whose re-run of the
+/// `.aux` read prints something other than the old read printed (an `.aux`
+/// line's `\typeout` of what the edit changed) re-reads the `.aux` from the
+/// `.aux` point instead of patching the meanings in. (What TeX prints goes
+/// to the log too, which is compared first: "wrote other bytes to
+/// doc.log".) Every compile equals scratch runs.
+#[test]
+fn l5_refuses_an_aux_read_that_prints_something_else() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |word: &str| -> String {
+        let mut s = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\makeatletter\n\
+             \\def\\gaptw{{{word}}}\n\
+             \\immediate\\write\\@auxout{{\\string\\typeout{{AUX: the word is \\gaptw}}}}\n\
+             \\makeatother\n"
+        );
+        for i in 0..30 {
+            s.push_str(&para(i, "kappa"));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let (dir, mut h) = settled(&e, "gaps-l5", &[("doc.tex", &doc("one"))]);
+    for (word, what) in [("two", "the word changed"), ("one", "and back")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            l5.contains("re-read from the .aux point: the .aux read wrote other bytes to doc.log"),
+            "{what}: {l5}"
+        );
+    }
+}
+
+/// `Session::finish` with no run paused is refused ("no run is paused"),
+/// and the session goes on: the next compile is unchanged.
+#[test]
+fn finish_with_no_run_paused_is_refused() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc: String = String::from("\\documentclass{article}\n\\begin{document}\n")
+        + &(0..10).map(|i| para(i, "beta")).collect::<String>()
+        + "\\end{document}\n";
+    let (dir, mut h) = settled(&e, "gaps-finish", &[("doc.tex", &doc)]);
+    writeln!(h.stdin, "finish").unwrap();
+    h.stdin.flush().unwrap();
+    let mut line = String::new();
+    h.stdout.read_line(&mut line).unwrap();
+    assert!(line.contains("no run is paused"), "{line}");
+    let r = compile_and_check(&e, &mut h, &dir, &[], "after the refusal");
+    assert!(r.contains("\"mode\":\"unchanged\""), "{r}");
+}
+
+/// `incr::consumed_nothing_changed`: a checkpoint at which a changed file
+/// is open twice (an `\openin` stream left open on it while it is
+/// `\input`) is no restart point ("open twice at once: unknown"): an edit
+/// late in the file restarts before the `\input`, where the same edit with
+/// no `\openin` restarts near it. (READ-REVALIDATE off: with it the run may
+/// restart later, once the window from before the `\openin` to the next
+/// page has left nothing behind -- the third case, which equals scratch
+/// runs too.)
+#[test]
+fn a_changed_file_open_twice_is_no_restart_point() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let chap = |word: &str| -> String {
+        (0..200)
+            .map(|i| para(i, if i == 160 { word } else { "lorem" }))
+            .collect()
+    };
+    let doc = |openin: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\newread\\rd\n\\begin{document}\n");
+        for i in 0..6 {
+            s.push_str(&para(i, "alpha"));
+        }
+        if openin {
+            s.push_str("\\openin\\rd=chap.tex \\read\\rd to\\firstline\n");
+        }
+        // (TeX's own `\input`: LaTeX's looks the file up and takes its
+        // size first, a whole read before every checkpoint in it)
+        s.push_str("\\makeatletter\\@@input chap \\makeatother\n");
+        if openin {
+            s.push_str("\\closein\\rd\n");
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut restarts = vec![];
+    let off = [("FLASHTEX_REVALIDATE", "off")];
+    for (k, (openin, env)) in [(false, &off[..]), (true, &off[..]), (true, &[][..])]
+        .into_iter()
+        .enumerate()
+    {
+        let (dir, mut h) = settled_env(
+            &e,
+            &format!("gaps-twice-{k}"),
+            &[("doc.tex", &doc(openin)), ("chap.tex", &chap("lorem"))],
+            env,
+        );
+        let what = format!("openin {openin}: the edit");
+        let r = compile_and_check(&e, &mut h, &dir, &[("chap.tex", &chap("lorme"))], &what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        assert!(pages >= 8, "{what}: {pages} pages");
+        restarts.push(field(&r, "restart_pages").parse::<usize>().unwrap());
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("chap.tex", &chap("lorem"))],
+            "the revert",
+        );
+    }
+    // (the `\input` starts on the first page)
+    assert!(
+        restarts[0] >= 5,
+        "no \\openin: restart after page {}",
+        restarts[0]
+    );
+    assert!(
+        restarts[1] <= 1,
+        "\\openin: restart after page {}",
+        restarts[1]
+    );
+}
+
+/// A file the run writes through the body (open across pages), changed by
+/// another program between compiles, with an edit before its later writes:
+/// no checkpoint is restored over it ("cannot restore: ... was changed by
+/// another program", `checkpoint::changed_outside`), the compile runs from
+/// scratch, and the file ends as a scratch run leaves it. The control, the
+/// same edit and revert with the file left alone, restores and converges,
+/// so the file's change is what refuses. (`Obs::test`'s own check of an
+/// output changed by another program, during the run, is not reached by a
+/// change between compiles: the restore refuses it first. Review of #1978.)
+#[test]
+fn an_output_changed_by_another_program_is_not_restored_over() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |word: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\newwrite\\w\n\\begin{document}\n");
+        for i in 0..80 {
+            if i == 2 {
+                s.push_str("\\immediate\\openout\\w=outw.txt\n");
+            }
+            s.push_str(&para(i, if i == 20 { word } else { "lorem" }));
+            if i >= 2 {
+                s.push_str(&format!("\\immediate\\write\\w{{line {i}}}\n"));
+            }
+        }
+        s.push_str("\\immediate\\closeout\\w\n\\end{document}\n");
+        s
+    };
+    let (dir, mut h) = settled(&e, "gaps-foreign", &[("doc.tex", &doc("lorem"))]);
+    // (the control: the same edit and revert with the file left alone
+    // restore and converge)
+    for (word, what) in [
+        ("lorme", "control: an edit"),
+        ("lorem", "control: the revert"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert!(field(&r, "converged_at") != "null", "{what}: {r}");
+        assert!(
+            !refused_with(&r, &["was changed by another program"]),
+            "{what}: {r}"
+        );
+    }
+    for (word, what) in [
+        ("lorme", "an edit, the file changed"),
+        ("lorem", "the revert"),
+    ] {
+        let p = dir.join("outw.txt");
+        let mut d = std::fs::read(&p).unwrap();
+        d.extend_from_slice(b"another program's line\n");
+        std::fs::write(&p, d).unwrap();
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(
+            r.contains(
+                "\"mode\":\"cold\",\"cold_reason\":\"cannot restore: outw.txt was changed by another program\""
+            ),
+            "{what}: {r}"
+        );
+        let mine = std::fs::read(&p).unwrap();
+        let theirs = std::fs::read(dir.with_extension("ref").join("outw.txt")).unwrap();
+        assert!(
+            mine == theirs,
+            "{what}: outw.txt differs from a scratch run's: {r}"
+        );
+    }
+}
+
 /// Lane REVIEW-INCR: `\pdfobj file` (pdftex.web's "Write out a PDF object":
 /// `tex_b_openin`, then every byte to the end) reads the whole file, as
 /// `\pdfmdfivesum file` does. A document that embeds its own source while
