@@ -315,6 +315,7 @@ final class ProjectWindowsTests: XCTestCase {
         windows.backgroundHosts = true
         windows.frontCompilingOverride = true
         windows.restoreSettle = 60 // the windows are still ordering in for the whole test
+        windows.keyChangeIsYours = { false } // every key change here is AppKit ordering a window in
         let launch = windows.model(for: ProjectWindowID())
         windows.restore(urls.map { .init(path: $0.path) }, first: launch)
         let models = windows.entries.map(\.model)
@@ -351,6 +352,50 @@ final class ProjectWindowsTests: XCTestCase {
         XCTAssertTrue(windows.frontmost === models[0])
         windows.closed(try XCTUnwrap(windows.entry(for: models[0])?.id))
         XCTAssertFalse(models[1].engineV3.startHeld, "the front window closed: nothing waits for it")
+    }
+
+    func testAWindowYouClickWhileARestoreSettlesStaysInFront() throws {
+        let urls = try (0 ..< 3).map { try write("s\($0)/main.tex", Self.document("S\($0)")) }
+        let windows = makeWindows()
+        windows.staggerRestore = true
+        windows.restoreSettle = 60 // still ordering in: the settle is run by hand below
+        var yours = false
+        windows.keyChangeIsYours = { yours }
+        windows.restore(urls.map { .init(path: $0.path) }, first: windows.model(for: ProjectWindowID()))
+        let models = windows.entries.map(\.model)
+        let front = try XCTUnwrap(models.last)
+        let first = try XCTUnwrap(windows.entry(for: models[0])?.id), second = try XCTUnwrap(windows.entry(for: models[1])?.id)
+
+        windows.becameKey(second) // AppKit ordering it in
+        XCTAssertTrue(windows.frontmost === front, "the restore's own key change is not a choice")
+        XCTAssertTrue(models[1].engineV3.startHeld)
+
+        yours = true
+        windows.becameKey(first) // you click it while the others still order in
+        XCTAssertTrue(windows.frontmost === models[0], "your click counts during the settle")
+        XCTAssertFalse(models[0].engineV3.startHeld, "the window you chose starts at once")
+        XCTAssertTrue(models[1].engineV3.startHeld)
+
+        yours = false
+        windows.becameKey(try XCTUnwrap(windows.entry(for: front)?.id)) // the restore ordering the old front window in again
+        windows.becameKey(second)
+        XCTAssertFalse(windows.settleRestore(), "the settle does not bring the restore's front window back over your choice")
+        XCTAssertTrue(windows.frontmost === models[0], "AppKit's ordering-in did not count; your window stays in front")
+    }
+
+    func testTheSettleBringsTheRestoresFrontWindowForwardWhenYouChoseNone() throws {
+        let urls = try (0 ..< 2).map { try write("t\($0)/main.tex", Self.document("T\($0)")) }
+        let windows = makeWindows()
+        windows.restoreSettle = 60
+        windows.keyChangeIsYours = { false }
+        windows.restore(urls.map { .init(path: $0.path) }, first: windows.model(for: ProjectWindowID()))
+        let models = windows.entries.map(\.model)
+        windows.becameKey(try XCTUnwrap(windows.entry(for: models[0])?.id))
+        XCTAssertTrue(windows.frontmost === models.last)
+        XCTAssertTrue(windows.settleRestore(), "nothing chosen: the front window comes forward")
+        XCTAssertFalse(windows.settleRestore(), "once")
+        windows.becameKey(try XCTUnwrap(windows.entry(for: models[0])?.id))
+        XCTAssertTrue(windows.frontmost === models[0], "after the settle every key change is yours")
     }
 
     func testRestorationIsOffWhenTheLaunchSaysWhatToOpen() {

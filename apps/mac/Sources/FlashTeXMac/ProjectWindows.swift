@@ -99,8 +99,28 @@ final class ProjectWindows {
     /// While a restore's windows appear, each becomes key for a moment as
     /// AppKit orders it in: those are not you choosing a window, so until
     /// then the front window stays the front one and nothing held starts.
+    /// A key change your own input causes (a click, a key, a menu choice:
+    /// `keyChangeIsYours`) still counts, and then the settle leaves the
+    /// window you chose in front (`settleRestore`).
     @ObservationIgnored private var restoreSettlesAt: Date?
     @ObservationIgnored var restoreSettle: TimeInterval = 2
+    /// The restore's front window, until the settle.
+    @ObservationIgnored private var restoreFrontID: ProjectWindowID?
+    /// You chose a window while the restore's windows were ordering in.
+    @ObservationIgnored private var choseDuringSettle = false
+    /// Whether the key change now being handled comes from your input, not
+    /// from AppKit ordering a restored window in. Tests replace it.
+    @ObservationIgnored var keyChangeIsYours: @MainActor () -> Bool = { ProjectWindows.currentEventIsInput() }
+
+    /// The event AppKit is handling is a click or a key (a window you click,
+    /// ⌘`, a Window menu choice become key while it is handled).
+    static func currentEventIsInput() -> Bool {
+        guard let e = NSApp?.currentEvent else { return false }
+        switch e.type {
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .keyDown: return true
+        default: return false
+        }
+    }
 
     /// Tests: whether the front window compiles, in place of its session's `compiling`.
     @ObservationIgnored var frontCompilingOverride: Bool?
@@ -164,10 +184,14 @@ final class ProjectWindows {
         if window.isKeyWindow { becameKey(id) }
     }
 
-    /// Window `id` became key.
-    func becameKey(_ id: ProjectWindowID) {
+    /// Window `id` became key (`yours`: by your choice, as Open of a
+    /// document already open; nil: as `keyChangeIsYours` says).
+    func becameKey(_ id: ProjectWindowID, yours: Bool? = nil) {
         guard let e = entries.first(where: { $0.id == id }) else { return }
-        if let settles = restoreSettlesAt, Date() < settles, id != frontmostID { return } // a restored window ordering in
+        if let settles = restoreSettlesAt, Date() < settles, id != frontmostID {
+            guard yours ?? keyChangeIsYours() else { return } // a restored window ordering in
+            choseDuringSettle = true
+        }
         keyCounter += 1
         e.lastKey = keyCounter
         if frontmostID != id { frontmostID = id }
@@ -272,7 +296,7 @@ final class ProjectWindows {
         if let (e, path) = window(showing: file) {
             if e.model.activePath != path { e.model.project.switchDocument(to: path) }
             e.window?.makeKeyAndOrderFront(nil)
-            becameKey(e.id)
+            becameKey(e.id, yours: true)
             return (.focused(e.id, path: path), e.model)
         }
         if let requester, requester.holdsNothing, requester !== placeholder {
@@ -373,9 +397,6 @@ final class ProjectWindows {
         return (try? JSONDecoder().decode([Restorable].self, from: data)) ?? []
     }
 
-    /// Whether this launch reopens the last run's windows: not when it was
-    /// told what to open (`FLASHTEX_OPEN`, a seed file, a bench) or not to
-    /// (`FLASHTEX_RESTORE_WINDOWS=0`), so automation sees the same app every run.
     /// After a restore: the last window reopened is the one in front. The
     /// others' hosts wait for its first DONE (or `staggerTimeout`), and
     /// run in the background after it; their stored pages show meanwhile.
@@ -385,14 +406,11 @@ final class ProjectWindows {
         guard let front = restored.last, let frontID = entry(for: front)?.id else { return }
         becameKey(frontID)
         guard restored.count > 1 else { return }
-        // Once the windows are in, the front one comes forward (it may have
-        // been ordered in before another); an automation launch is not activated by it.
+        // Once the windows are in, the front one comes forward (`settleRestore`).
         restoreSettlesAt = Date().addingTimeInterval(restoreSettle)
-        DispatchQueue.main.asyncAfter(deadline: .now() + restoreSettle) { [weak self] in
-            guard let self else { return }
-            self.restoreSettlesAt = nil
-            if self.frontmostID == frontID, let w = self.entry(for: front)?.window, ProcessInfo.processInfo.environment["FLASHTEX_NO_ACTIVATE"] != "1" { w.orderFront(nil); if NSApp.isActive { w.makeKey() } }
-        }
+        restoreFrontID = frontID
+        choseDuringSettle = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + restoreSettle) { [weak self] in _ = self?.settleRestore() }
         guard staggerRestore else { return }
         for m in restored.dropLast() {
             guard let id = entry(for: m)?.id else { continue }
@@ -404,6 +422,24 @@ final class ProjectWindows {
         DispatchQueue.main.asyncAfter(deadline: .now() + staggerTimeout) { [weak self] in self?.releaseHeld(waiting) }
     }
 
+    /// The restore's windows are in: the front window is ordered in front
+    /// (it may have been ordered in before another), unless you chose a
+    /// window meanwhile; an automation launch is not activated by it.
+    /// Whether the front window is brought forward.
+    @discardableResult
+    func settleRestore() -> Bool {
+        guard let frontID = restoreFrontID else { return false }
+        restoreSettlesAt = nil
+        restoreFrontID = nil
+        defer { choseDuringSettle = false }
+        guard !choseDuringSettle, frontmostID == frontID else { return false }
+        if let w = entries.first(where: { $0.id == frontID })?.window, ProcessInfo.processInfo.environment["FLASHTEX_NO_ACTIVATE"] != "1" { w.orderFront(nil); if NSApp.isActive { w.makeKey() } }
+        return true
+    }
+
+    /// Whether this launch reopens the last run's windows: not when it was
+    /// told what to open (`FLASHTEX_OPEN`, a seed file, a bench) or not to
+    /// (`FLASHTEX_RESTORE_WINDOWS=0`), so automation sees the same app every run.
     static func restoresWindows(_ env: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
         if let v = env["FLASHTEX_RESTORE_WINDOWS"] { return v != "0" }
         return ["FLASHTEX_OPEN", "FLASHTEX_SEED_FILE", "FLASHTEX_V3_BENCH", "FLASHTEX_V3_CAPTURE_OUT", "FLASHTEX_LIVE_SHARE_HOST", "FLASHTEX_LIVE_SHARE_JOIN_FILE"]

@@ -48,7 +48,10 @@ final class EngineV3Session {
         case failed(String)
     }
 
-    private(set) var phase: Phase = .idle
+    private(set) var phase: Phase = .idle {
+        // A host that failed to start sends no DONE: what waited for one goes on (`afterNextDone`).
+        didSet { if case .failed = phase, let after = afterNextDone { afterNextDone = nil; DispatchQueue.main.async(execute: after) } }
+    }
     /// What the host prepared: which TeX Live, the format's status.
     private(set) var environmentNote = ""
     /// A bundle fetch in progress (no TeX Live), for the status bar:
@@ -475,7 +478,8 @@ final class EngineV3Session {
         if heldStart, let model { heldStart = false; start(model: model) }
     }
 
-    /// Called once, on the main thread, after the next DONE (ProjectWindows' restore order).
+    /// Called once, on the main thread, after the next DONE, or when the
+    /// host fails (`phase` `.failed`, no DONE comes) (ProjectWindows' restore order).
     @ObservationIgnored var afterNextDone: (() -> Void)?
 
     /// Starts the host (once) and compiles the model's documents.

@@ -385,9 +385,21 @@ final class EngineV3HostProcess: @unchecked Sendable {
         didSet { if background != oldValue { applyBackground() } }
     }
 
+    /// A failed `setpriority` is logged once per app run (the DESIGN §10
+    /// status line describes this as happening; a failure would be silent).
+    private static let backgroundFailureLock = NSLock()
+    nonisolated(unsafe) private static var backgroundFailureSaid = false
+
     private func applyBackground() {
         guard process.isRunning else { return }
-        _ = setpriority(PRIO_DARWIN_PROCESS, id_t(process.processIdentifier), background ? PRIO_DARWIN_BG : 0)
+        let pid = process.processIdentifier
+        guard setpriority(PRIO_DARWIN_PROCESS, id_t(pid), background ? PRIO_DARWIN_BG : 0) != 0 else { return }
+        let why = String(cString: strerror(errno))
+        Self.backgroundFailureLock.lock()
+        let first = !Self.backgroundFailureSaid
+        Self.backgroundFailureSaid = true
+        Self.backgroundFailureLock.unlock()
+        if first { FlashTeXLog.write("engine-v3: setpriority(PRIO_DARWIN_PROCESS, \(pid), \(background ? "PRIO_DARWIN_BG" : "0")) failed: \(why) (logged once)") }
     }
 
     /// Ends the host: the caller has said BYE (the host leaves on its own,

@@ -1081,7 +1081,8 @@ Rules:
     per 1,000-page project; no main-thread turn over 16 ms while typing with three windows open.
     Restoring 4 × 1,000-page projects at a load average of about 130, the front window's
     DONE came at 40.8 s (before this change: 47.0 and 42.6 s) and the last window's at
-    76.9 s (before: 50.5 and 46.7 s).
+    76.9 s (before: 50.5 and 46.7 s). Those figures were measured under load (load average
+    123–140 from other agents' work throughout); the gain on an idle Mac is not measured.
 - **New:** `tools/web2rust`, `crates/flashtex-engine`, the incremental system,
   `display-list-v3`, the socket protocol, `scripts/gate.sh`, and the CI tiers and
   runners.
