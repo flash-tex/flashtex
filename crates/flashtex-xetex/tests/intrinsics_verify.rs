@@ -278,6 +278,28 @@ fn box_dimensions_are_not_replayable() {
     assert_eq!(count(&s, "semantic.checked"), 0, "{s}");
 }
 
+/// `\font` defines its identifier with `eq_define`, and then writes
+/// `eqtb[font_id_base+f]` and `font_id_text(f)` outside it. With
+/// `\font\IntrC` naming the same font between the calls, a replay of the
+/// first call left `\IntrC` as the font's identifier, and the check of the
+/// second call differed (`hash`, as #2184 on the pdfTeX side). Not
+/// replayable (#2259). (`\relax` ends each font name: the size keywords'
+/// scan would otherwise expand the next call.)
+#[test]
+fn font_assignments_are_not_replayable() {
+    let Some(s) = verify_matches_off(
+        "\\documentclass{article}\\font\\IntrA=cmr10 \\def\\IntrY{\\font\\IntrB=cmr10\\relax}\n\
+         \\def\\pdfstringdefPreHook{\\IntrY}\n\
+         \\begin{document}\\relax\n\\pdfstringdefPreHook\n\\font\\IntrC=cmr10\\relax\\pdfstringdefPreHook\n\
+         \\IntrA\\expandafter\\string\\the\\font\\end{document}\n",
+    ) else {
+        return;
+    };
+    assert_eq!(count(&s, "calls"), 2, "{s}");
+    assert_eq!(count(&s, "not_replayable.Font"), 2, "{s}");
+    assert_eq!(count(&s, "semantic.differing"), 0, "{s}");
+}
+
 /// `\immediate\write` changes a file, which is not compared: a call that
 /// writes is not replayable.
 #[test]

@@ -2457,6 +2457,9 @@ impl Globals {
         let mut t: str_number = 0; // §1311
         let mut old_setting: i32 = 0; // §1311
         'l_common_ending_f: {
+            if self.intr_verify_on {
+                self.flashtex_intr_op(18i32, 0i32, 0i32, 0i32);
+            }
             if (self.job_name == 0i32) {
                 self.open_log_file();
             }
