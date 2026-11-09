@@ -23,19 +23,23 @@ const ACCEPT: &[&str] = &[
     flashtex_display_list::SPAN_SHIFT_CAPABILITY,
 ];
 
-/// One edit: `find` (which must occur once) in `file` becomes `replace`.
+/// The edits of one compile, in order: in each, `find` (which must occur
+/// once in the file as the edits before it left it) becomes `replace`.
 struct Step {
-    file: &'static str,
-    find: String,
-    replace: String,
+    edits: Vec<(&'static str, String, String)>,
     what: String,
 }
 
 fn step(file: &'static str, find: &str, replace: &str, what: &str) -> Step {
+    steps(&[(file, find, replace)], what)
+}
+
+fn steps(edits: &[(&'static str, &str, &str)], what: &str) -> Step {
     Step {
-        file,
-        find: find.into(),
-        replace: replace.into(),
+        edits: edits
+            .iter()
+            .map(|&(f, a, b)| (f, a.to_string(), b.to_string()))
+            .collect(),
         what: what.into(),
     }
 }
@@ -237,31 +241,41 @@ fn audit(
     };
     settle(&mut c, &mut view, &mut bad, &mut id, "open");
     for (k, s) in steps.iter().enumerate() {
-        let text = std::fs::read_to_string(proj.join(s.file)).unwrap();
-        assert_eq!(
-            text.matches(s.find.as_str()).count(),
-            1,
-            "{name} step {k} ({}): {:?} not once in {}",
-            s.what,
-            s.find,
-            s.file
-        );
-        let at = text.find(s.find.as_str()).unwrap();
-        let line = text[..at].matches('\n').count() as u32 + 1;
-        let edit = Edit {
-            path: s.file.into(),
-            offset: at as u64,
-            delete: s.find.len() as u64,
-            insert: s.replace.clone(),
-        };
+        let mut texts: BTreeMap<&str, String> = BTreeMap::new();
+        let mut edits = vec![];
+        let mut viewport = None;
+        for (file, find, replace) in &s.edits {
+            let text = texts
+                .entry(file)
+                .or_insert_with(|| std::fs::read_to_string(proj.join(file)).unwrap());
+            assert_eq!(
+                text.matches(find.as_str()).count(),
+                1,
+                "{name} step {k} ({}): {find:?} not once in {file}",
+                s.what
+            );
+            let at = text.find(find.as_str()).unwrap();
+            let line = text[..at].matches('\n').count() as u32 + 1;
+            viewport = viewport.or_else(|| page_of(&view, file, line));
+            edits.push(Edit {
+                path: (*file).into(),
+                offset: at as u64,
+                delete: find.len() as u64,
+                insert: replace.clone(),
+            });
+            text.replace_range(at..at + find.len(), replace);
+        }
         let (p2, o2) = snapshot(&base, &proj, &out, &format!("{k}"));
-        std::fs::write(p2.join(s.file), text.replacen(&s.find, &s.replace, 1)).unwrap();
+        for (file, text) in &texts {
+            std::fs::write(p2.join(file), text).unwrap();
+        }
         id += 1;
         let mut r = req(id, &proj, &out, main);
-        r.edits = vec![edit];
-        r.viewport = page_of(&view, s.file, line);
+        r.edits = edits;
+        r.viewport = viewport;
         let o = compile(&mut c, &mut view, &r);
-        let what = format!("step {k} ({}: {})", s.file, s.what);
+        let files: Vec<&str> = s.edits.iter().map(|e| e.0).collect();
+        let what = format!("step {k} ({}: {})", files.join(", "), s.what);
         eprintln!("{name}: {what}: {}", o.done);
         compare_all(
             &scratch.1,
@@ -486,5 +500,101 @@ fn spans_and_diagnostics_of_replayed_calls_equal_a_fresh_run() {
     if let Ok(s) = std::fs::read_to_string(&stats) {
         eprintln!("BOX-MEMO stats:\n{s}");
     }
+    assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad.join("\n"));
+}
+
+/// A longer two-chapter project with hyperref (links carry spans), errors
+/// in footnotes and inside a macro, UTF-8 text before an error on its line
+/// (columns are bytes), and edits that converge early so that later pages
+/// and their notes are kept: a word made longer (byte offsets move, lines
+/// do not), lines inserted and deleted, two files edited in one compile,
+/// and two edits in one file in one compile.
+#[test]
+fn kept_pages_and_their_diagnostics_follow_edits_with_hyperref() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let main = "\\documentclass{article}\n\
+                \\usepackage[T1]{fontenc}\n\
+                \\usepackage{hyperref}\n\
+                \\newcommand{\\bad}[1]{\\textbf{#1}\\nothere}\n\
+                \\begin{document}\n\
+                \\tableofcontents\n\
+                \\input{ch1}\n\
+                \\input{ch2}\n\
+                \\end{document}\n"
+        .to_string();
+    let chapter = |tag: &str, other: &str| {
+        let mut s = format!("\\section{{{tag}}}\\label{{sec:{tag}}}\n");
+        for i in 0..36 {
+            s.push_str(&para(tag, i));
+            match i % 9 {
+                2 => s.push_str(&format!(
+                    "Naïve café text before \\bad{{{tag}{i}}} on one line.\n\n"
+                )),
+                4 => s.push_str(&format!(
+                    "A footnote\\footnote{{With \\nofoot{{}} in {tag} {i}.}} here, \
+                     see Section~\\ref{{sec:{other}}} and \\href{{https://example.org/{i}}}{{a link}}.\n\n"
+                )),
+                6 => s.push_str(&format!("\\subsection{{Part {i} of {tag}}}\n")),
+                _ => {}
+            }
+        }
+        s
+    };
+    let files = vec![
+        ("main.tex", main),
+        ("ch1.tex", chapter("One", "Two")),
+        ("ch2.tex", chapter("Two", "One")),
+    ];
+    let p = |t: &str, i: usize| para(t, i);
+    let all = vec![
+        step(
+            "ch1.tex",
+            "One paragraph 1 has enough plain words",
+            "One paragraph 1 has enough plainer words",
+            "a word made longer early in ch1",
+        ),
+        step(
+            "ch1.tex",
+            &p("One", 3),
+            &format!("% one\n% two\n{}", p("One", 3)),
+            "two lines inserted early in ch1",
+        ),
+        step(
+            "ch2.tex",
+            &p("Two", 20),
+            &format!("% a line late in ch2\n{}", p("Two", 20)),
+            "a line inserted late in ch2",
+        ),
+        steps(
+            &[
+                ("ch1.tex", "% one\n% two\n", ""),
+                ("ch2.tex", "% a line late in ch2\n", ""),
+            ],
+            "lines deleted in two files in one compile",
+        ),
+        steps(
+            &[
+                ("ch1.tex", &p("One", 30), &format!("% x\n{}", p("One", 30))),
+                ("ch1.tex", &p("One", 5), &format!("{}% y\n", p("One", 5))),
+            ],
+            "two lines inserted in one file in one compile, the later first",
+        ),
+        step(
+            "ch1.tex",
+            "With \\nofoot{} in One 13.",
+            "With \\relax{} in One 13.",
+            "a footnote's error fixed",
+        ),
+        step(
+            "ch1.tex",
+            "Naïve café text before \\bad{One11}",
+            "Naïve café, naïve text before \\bad{One11}",
+            "UTF-8 text inserted before an error on its line",
+        ),
+    ];
+    let bad = audit("hyperref", &files, "main.tex", &all, &[]);
     assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad.join("\n"));
 }
