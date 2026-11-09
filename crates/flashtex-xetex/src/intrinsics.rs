@@ -101,7 +101,7 @@ pub struct Report {
     pub(crate) identical: u64,
     pub(crate) differing: u64,
     pub(crate) classes: BTreeMap<&'static str, u64>,
-    unverified: BTreeMap<&'static str, u64>,
+    pub(crate) unverified: BTreeMap<&'static str, u64>,
     not_replayable: BTreeMap<&'static str, u64>,
     pub(crate) details: Vec<String>,
 }
@@ -547,5 +547,30 @@ mod tests {
         g.set_intrinsics_verify(false);
         g.restore(s0).unwrap();
         assert!(!g.intr_verify_on);
+    }
+
+    /// A checkpoint taken between a check's C and its end opened a new
+    /// log, so the real path's writes before it are not compared: the
+    /// call counts as `unverified.checkpoint`, not as checked (REVIEW-B on
+    /// #2140). Without one, the same empty check is checked and identical.
+    #[test]
+    fn a_checkpoint_inside_the_window_leaves_the_call_unverified() {
+        let mut g = Globals::new();
+        g.set_intrinsics_verify(true);
+        let p = g.intr_verify_begin(&[]);
+        g.intr_verify_end(p);
+        assert_eq!(g.host.intrinsics.checked, 1);
+        assert_eq!(g.host.intrinsics.identical, 1);
+        assert!(g.host.intrinsics.unverified.is_empty());
+
+        let n = g.arena.checkpoint_ids().len();
+        let p = g.intr_verify_begin(&[]);
+        let inner = g.checkpoint();
+        g.intr_verify_end(p);
+        assert_eq!(g.host.intrinsics.checked, 1);
+        assert_eq!(g.host.intrinsics.unverified.get("checkpoint"), Some(&1));
+        // C is gone, the inner checkpoint stays
+        assert_eq!(g.arena.checkpoint_ids(), &[inner][..]);
+        assert_eq!(n, 0);
     }
 }
