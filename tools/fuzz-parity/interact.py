@@ -12,8 +12,8 @@ delete tokens, `i`/`I` insertions, `x`, `q`/`r`/`s`, `e`/`E`, plain lines,
 Control-D). Both engines run `-ini` in directories of their own, as
 `pdftex`, with `SOURCE_DATE_EPOCH=0`, the mktex scripts off and
 `TEXEDIT=true`, so `E` runs no editor. Compared: the exit code, stdout
-after the banner (each engine's own path masked) and the log after the
-banner. A differing case is written to OUT/<case>/ (`t.tex`, `stdin`).
+after the banner (each engine's own path masked), stderr on its own and
+the log after the banner. A differing case is written to OUT/<case>/ (`t.tex`, `stdin`).
 Exit 0 when every case was equal.
 """
 import argparse
@@ -49,7 +49,9 @@ def case(n):
 
 
 def run(engine, d, doc, stdin, timeout):
-    """(exit code, stdout after the banner, log after the banner), None on a timeout."""
+    """(exit code, stdout after the banner, log after the banner, stderr), None on
+    a timeout. stderr is apart: where it would land in a merged stream depends
+    on when the engine last flushed its buffered stdout."""
     os.makedirs(d)
     with open(os.path.join(d, "t.tex"), "w", encoding="latin-1") as fh:
         fh.write(doc)
@@ -59,16 +61,17 @@ def run(engine, d, doc, stdin, timeout):
                MKTEXPK="0", MKTEXMF="0", TEXEDIT="true %d %s")
     try:
         p = subprocess.run([exe, "-ini", "t.tex"], cwd=d, env=env, input=stdin,
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
     except subprocess.TimeoutExpired:
         return None
     out = p.stdout.decode("latin-1").replace(exe, "PDFTEX").partition("\n")[2]
+    err = p.stderr.decode("latin-1").replace(exe, "PDFTEX")
     try:
         with open(os.path.join(d, "t.log"), encoding="latin-1") as fh:
             log = fh.read().partition("\n")[2]
     except OSError:
         log = None
-    return p.returncode, out, log
+    return p.returncode, out, log, err
 
 
 def compare(n, candidate, oracle, tmp=None, timeout=20):
@@ -86,9 +89,9 @@ def compare(n, candidate, oracle, tmp=None, timeout=20):
         return "timeout", "oracle" if o is None else "candidate"
     if o[0] != c[0]:
         return "rc", "%s/%s" % (o[0], c[0])
-    i = 1 if o[1] != c[1] else 2
+    i = next(k for k in (1, 3, 2) if o[k] != c[k])
     d = list(difflib.unified_diff((o[i] or "").split("\n"), (c[i] or "").split("\n"), lineterm="", n=1))
-    return ("stdout" if i == 1 else "log"), "\n".join(x[:160] for x in d[:14])
+    return {1: "stdout", 2: "log", 3: "stderr"}[i], "\n".join(x[:160] for x in d[:14])
 
 
 def main(argv=None):
