@@ -1584,6 +1584,14 @@ pub(crate) fn diagnostics(r: impl BufRead, out: &Out, id: i64, root: &Path) -> u
             n += 1;
             continue;
         }
+        // pdfTeX's fatal error (`pdftex_fail`: no PDF is produced, e.g. a
+        // full disk's `fwrite() failed`, #2218), as diag-v1 reads it
+        // (`diag::scan_terminal`)
+        if l.starts_with("!pdfTeX error") {
+            send_d("error", None, None, l.trim_start_matches('!').to_string());
+            n += 1;
+            continue;
+        }
         let warn = ["LaTeX Warning: ", "Package ", "Class "]
             .iter()
             .any(|p| l.starts_with(p))
