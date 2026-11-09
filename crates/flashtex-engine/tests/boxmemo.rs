@@ -557,3 +557,27 @@ fn hyphenation_exceptions_are_part_of_the_key() {
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
+
+/// e-TeX's penalty arrays are K2 values kept by content, not by pointer
+/// (BOX-MEMO.md §3): `\clubpenalties` set three times, the third array is
+/// allocated where the first one was freed, and a call that breaks a
+/// paragraph reads its other penalty. (Not `\interlinepenalties`: e-TeX's
+/// `normal_paragraph` resets it at the paragraph's end, a write that
+/// abandons the recording.)
+#[test]
+fn etex_penalty_arrays_are_compared_by_content() {
+    let s = check(
+        "etexpen",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\hsize=10pt \\tolerance=10000 \\hbadness=10000 \
+         \\noindent\\hbox to 10pt{}\\hskip 0pt\\hbox to #1{}\\par\\setbox2\\lastbox\\unskip\
+         \\global\\count1=\\lastpenalty}\\endgroup}\n\
+         \\def\\show{\\message{[\\the\\count1]}}\n\
+         \\clubpenalties=1 100 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         \\clubpenalties=1 5000 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         \\clubpenalties=1 7000 \\measure{10pt}\\show\\measure{10pt}\\show\n\
+         {\\clubpenalties=1 300 \\measure{10pt}\\show\\measure{10pt}\\show}\n\
+         {\\clubpenalties=1 400 \\measure{10pt}\\show\\measure{10pt}\\show}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
