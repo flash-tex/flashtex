@@ -5,6 +5,11 @@ latency-*.json, visual.json, startup-*.json, classic-*.json), by corpus
 family where a case has one.
 
     python3 tools/unicode-m3/summarize.py DIR [DIR ...]
+
+Exit status: 1 when a correctness result failed (a case of pt1 or export that
+did not pass, or an edit-sweep compile that differs), else 0. The host-corpus
+and notex tables, and the latency, start-up, size and Core Graphics tables,
+never change it (the host-corpus count has no R1 set yet, #2116).
 """
 import collections
 import glob
@@ -33,7 +38,12 @@ def families(dirs):
     return fam
 
 
-def by_family(rows, fam, ok):
+# Correctness results that failed in this run: main() returns non-zero when
+# there are any (CI gates on it; timing and latency tables never count).
+FAILED = []
+
+
+def by_family(rows, fam, ok, gate=True):
     t = collections.OrderedDict()
     for r in rows:
         f = fam.get(r["case"], r.get("family") or "?")
@@ -43,6 +53,8 @@ def by_family(rows, fam, ok):
             a[1] += 1
         else:
             a[2].append(r["case"])
+            if gate:
+                FAILED.append(r["case"])
     lines = ["| family | cases | pass | failing |", "|---|---:|---:|---|"]
     for f, (n, p, bad) in t.items():
         lines.append("| %s | %d | %d | %s |" % (f, n, p, ", ".join(bad) or "-"))
@@ -80,7 +92,10 @@ def main(argv):
         for p, j in load(dirs, name):
             out += ["### Host corpus run: %s (HELLO texlive=%s, resolver=%s)" % (
                 j["mode"], (j.get("hello") or {}).get("texlive"), (j.get("hello") or {}).get("resolver")), ""]
-            out += by_family(j["cases"], fam, lambda r: r.get("status") == "ok" and r.get("pdf"))
+            # (not gating yet: the count has no R1 set, so it counts the cases
+            # xelatex itself fails as failures; export's R1 set comes from a
+            # reference run these jobs do not make, #2116)
+            out += by_family(j["cases"], fam, lambda r: r.get("status") == "ok" and r.get("pdf"), gate=False)
             if any("bytes_equal_texlive" in r for r in j["cases"]):
                 eq = sum(1 for r in j["cases"] if r.get("bytes_equal_texlive"))
                 st = sum(1 for r in j["cases"] if r.get("structural_vs_xelatex") == 0)
@@ -89,6 +104,8 @@ def main(argv):
             out.append("")
     for p, j in load(dirs, "sweep.json"):
         t = j["totals"]
+        if t.get("differ"):
+            FAILED.append("edit sweep: %d compiles differ" % t["differ"])
         out += ["### Edit sweep through the host (spares against cold)", "",
                 "%(documents)d documents, %(compiles)d compiles: %(equal)d equal, %(differ)d differ, "
                 "%(failed)d failed or empty." % t, ""]
@@ -125,6 +142,9 @@ def main(argv):
                 j.get("hello_ms_median"), j.get("instructions_median")))
         out.append("")
     print("\n".join(out))
+    if FAILED:
+        print("summarize: %d correctness result(s) failed: %s" % (len(FAILED), ", ".join(FAILED)), file=sys.stderr)
+        return 1
     return 0
 
 

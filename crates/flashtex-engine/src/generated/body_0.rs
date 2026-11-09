@@ -653,346 +653,351 @@ impl Globals {
         self.bm_font_version = 0i32;
         self.bm_hyph_version = 0i32;
         self.bm_on = self.flashtex_bm_enabled();
-        // §182
-        {
-            let __for_end_2 = lo_mem_stat_max;
-            k = 1i32;
-            while k <= __for_end_2 {
-                __av_mem[crate::ix::U((k) as usize)].set_int(0i32);
-                k = k.wrapping_add(1);
-            }
-        }
-        k = mem_bot;
-        while (k <= lo_mem_stat_max) {
-            {
-                __av_mem[crate::ix::U((k) as usize)].set_hh_rh(1i32);
-                __av_mem[crate::ix::U((k) as usize)].set_hh_b0(normal);
-                __av_mem[crate::ix::U((k) as usize)].set_hh_b1(normal);
-                k = (k).wrapping_add(4i32);
-            }
-        }
-        __av_mem[crate::ix::U((6i32) as usize)].set_int(unity);
-        __av_mem[crate::ix::U((fil_glue) as usize)].set_hh_b0(fil);
-        __av_mem[crate::ix::U((10i32) as usize)].set_int(unity);
-        __av_mem[crate::ix::U((fill_glue) as usize)].set_hh_b0(fill);
-        __av_mem[crate::ix::U((14i32) as usize)].set_int(unity);
-        __av_mem[crate::ix::U((ss_glue) as usize)].set_hh_b0(fil);
-        __av_mem[crate::ix::U((15i32) as usize)].set_int(unity);
-        __av_mem[crate::ix::U((ss_glue) as usize)].set_hh_b1(fil);
-        __av_mem[crate::ix::U((18i32) as usize)].set_int((65536i32).wrapping_neg());
-        __av_mem[crate::ix::U((fil_neg_glue) as usize)].set_hh_b0(fil);
-        self.rover = 20i32;
-        { let __ix11 = self.rover; __av_mem[crate::ix::U((__ix11) as usize)].set_hh_rh(empty_flag); }
-        { let __ix12 = self.rover; __av_mem[crate::ix::U((__ix12) as usize)].set_hh_lh(1000i32); }
-        { let __ix13 = (self.rover).wrapping_add(1i32); let __v14 = self.rover; __av_mem[crate::ix::U((__ix13) as usize)].set_hh_lh(__v14); }
-        { let __ix15 = (self.rover).wrapping_add(1i32); let __v16 = self.rover; __av_mem[crate::ix::U((__ix15) as usize)].set_hh_rh(__v16); }
-        self.lo_mem_max = (self.rover).wrapping_add(1000i32);
-        { let __ix17 = self.lo_mem_max; __av_mem[crate::ix::U((__ix17) as usize)].set_hh_rh(null); }
-        { let __ix18 = self.lo_mem_max; __av_mem[crate::ix::U((__ix18) as usize)].set_hh_lh(null); }
-        {
-            let __for_end_2 = mem_top;
-            k = hi_mem_stat_min;
-            while k <= __for_end_2 {
-                { let __v19 = __av_mem[crate::ix::U((self.lo_mem_max) as usize)]; __av_mem[crate::ix::U((k) as usize)] = __v19; }
-                k = k.wrapping_add(1);
-            }
-        }
-        // §966
-        __av_mem[crate::ix::U((omit_template) as usize)].set_hh_lh(end_template_token);
-        // §973
-        __av_mem[crate::ix::U((end_span) as usize)].set_hh_rh(256i32);
-        __av_mem[crate::ix::U((end_span) as usize)].set_hh_lh(null);
-        // §996
-        __av_mem[crate::ix::U((last_active) as usize)].set_hh_b0(hyphenated);
-        __av_mem[crate::ix::U((4999993i32) as usize)].set_hh_lh(max_halfword);
-        __av_mem[crate::ix::U((last_active) as usize)].set_hh_b1(0i32);
-        // §1158
-        __av_mem[crate::ix::U((page_ins_head) as usize)].set_hh_b1(255i32);
-        __av_mem[crate::ix::U((page_ins_head) as usize)].set_hh_b0(split_up);
-        __av_mem[crate::ix::U((page_ins_head) as usize)].set_hh_rh(page_ins_head);
-        // §1165
-        __av_mem[crate::ix::U((page_head) as usize)].set_hh_b0(glue_node);
-        __av_mem[crate::ix::U((page_head) as usize)].set_hh_b1(normal);
-        // §182
-        self.avail = null;
-        self.mem_end = mem_top;
-        self.hi_mem_min = hi_mem_stat_min;
-        self.var_used = 20i32;
-        self.dyn_used = hi_mem_stat_usage;
-        // §240
-        __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)].set_hh_b0(undefined_cs);
-        __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)].set_hh_rh(null);
-        __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)].set_hh_b1(level_zero);
-        {
-            let __for_end_2 = eqtb_top;
-            k = active_base;
-            while k <= __for_end_2 {
-                { let __v20 = __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v20; }
-                k = k.wrapping_add(1);
-            }
-        }
-        // §246
-        __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)].set_hh_rh(zero_glue);
-        __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)].set_hh_b1(level_one);
-        __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)].set_hh_b0(glue_ref);
-        {
-            let __for_end_2 = 27157i32;
-            k = 26629i32;
-            while k <= __for_end_2 {
-                { let __v21 = __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v21; }
-                k = k.wrapping_add(1);
-            }
-        }
-        { let __v22 = (__av_mem[crate::ix::U((zero_glue) as usize)].hh().rh()).wrapping_add(530i32); __av_mem[crate::ix::U((zero_glue) as usize)].set_hh_rh(__v22); }
-        // §250
-        __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)].set_hh_rh(null);
-        __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)].set_hh_b0(shape_ref);
-        __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)].set_hh_b1(level_one);
-        {
-            let __for_end_2 = 27432i32;
-            k = etex_pen_base;
-            while k <= __for_end_2 {
-                { let __v23 = __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v23; }
-                k = k.wrapping_add(1);
-            }
-        }
-        {
-            let __for_end_2 = 27428i32;
-            k = output_routine_loc;
-            while k <= __for_end_2 {
-                { let __v24 = __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v24; }
-                k = k.wrapping_add(1);
-            }
-        }
-        __av_eqtb[crate::ix::U(((27433i32) - 1) as usize)].set_hh_rh(null);
-        __av_eqtb[crate::ix::U(((box_base) - 1) as usize)].set_hh_b0(box_ref);
-        __av_eqtb[crate::ix::U(((box_base) - 1) as usize)].set_hh_b1(level_one);
-        {
-            let __for_end_2 = 27688i32;
-            k = 27434i32;
-            while k <= __for_end_2 {
-                { let __v25 = __av_eqtb[crate::ix::U(((box_base) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v25; }
-                k = k.wrapping_add(1);
-            }
-        }
-        __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].set_hh_rh(null_font);
-        __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].set_hh_b0(data);
-        __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].set_hh_b1(level_one);
-        {
-            let __for_end_2 = 27740i32;
-            k = math_font_base;
-            while k <= __for_end_2 {
-                { let __v26 = __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v26; }
-                k = k.wrapping_add(1);
-            }
-        }
-        __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)].set_hh_rh(0i32);
-        __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)].set_hh_b0(data);
-        __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)].set_hh_b1(level_one);
-        {
-            let __for_end_2 = 29276i32;
-            k = 27742i32;
-            while k <= __for_end_2 {
-                { let __v27 = __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v27; }
-                k = k.wrapping_add(1);
-            }
-        }
-        {
-            let __for_end_2 = 255i32;
-            k = 0i32;
-            while k <= __for_end_2 {
-                {
-                    __av_eqtb[crate::ix::U((((cat_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(other_char);
-                    __av_eqtb[crate::ix::U((((math_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(0i32));
-                    __av_eqtb[crate::ix::U((((sf_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(1000i32);
-                }
-                k = k.wrapping_add(1);
-            }
-        }
-        __av_eqtb[crate::ix::U(((27754i32) - 1) as usize)].set_hh_rh(car_ret);
-        __av_eqtb[crate::ix::U(((27773i32) - 1) as usize)].set_hh_rh(spacer);
-        __av_eqtb[crate::ix::U(((27833i32) - 1) as usize)].set_hh_rh(escape);
-        __av_eqtb[crate::ix::U(((27778i32) - 1) as usize)].set_hh_rh(comment);
-        __av_eqtb[crate::ix::U(((27868i32) - 1) as usize)].set_hh_rh(invalid_char);
-        __av_eqtb[crate::ix::U(((27741i32) - 1) as usize)].set_hh_rh(ignore);
-        {
-            let __for_end_2 = 57i32;
-            k = 48i32;
-            while k <= __for_end_2 {
-                __av_eqtb[crate::ix::U((((math_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(28672i32));
-                k = k.wrapping_add(1);
-            }
-        }
-        {
-            let __for_end_2 = 90i32;
-            k = 65i32;
-            while k <= __for_end_2 {
-                {
-                    __av_eqtb[crate::ix::U((((cat_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(letter);
-                    __av_eqtb[crate::ix::U(((((cat_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh(letter);
-                    __av_eqtb[crate::ix::U((((math_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(28928i32));
-                    __av_eqtb[crate::ix::U(((((math_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh((k).wrapping_add(28960i32));
-                    __av_eqtb[crate::ix::U((((lc_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(32i32));
-                    __av_eqtb[crate::ix::U(((((lc_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh((k).wrapping_add(32i32));
-                    __av_eqtb[crate::ix::U((((uc_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(k);
-                    __av_eqtb[crate::ix::U(((((uc_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh(k);
-                    __av_eqtb[crate::ix::U((((sf_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(999i32);
-                }
-                k = k.wrapping_add(1);
-            }
-        }
-        // §258
-        {
-            let __for_end_2 = 29646i32;
-            k = int_base;
-            while k <= __for_end_2 {
-                __av_eqtb[crate::ix::U(((k) - 1) as usize)].set_int(0i32);
-                k = k.wrapping_add(1);
-            }
-        }
-        __av_eqtb[crate::ix::U(((29332i32) - 1) as usize)].set_int(256i32);
-        __av_eqtb[crate::ix::U(((29333i32) - 1) as usize)].set_int((1i32).wrapping_neg());
-        __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].set_int(1000i32);
-        __av_eqtb[crate::ix::U(((29278i32) - 1) as usize)].set_int(10000i32);
-        __av_eqtb[crate::ix::U(((29318i32) - 1) as usize)].set_int(1i32);
-        __av_eqtb[crate::ix::U(((29317i32) - 1) as usize)].set_int(25i32);
-        __av_eqtb[crate::ix::U(((29322i32) - 1) as usize)].set_int(92i32);
-        __av_eqtb[crate::ix::U(((29325i32) - 1) as usize)].set_int(carriage_return);
-        {
-            let __for_end_2 = 255i32;
-            k = 0i32;
-            while k <= __for_end_2 {
-                __av_eqtb[crate::ix::U((((del_code_base).wrapping_add(k)) - 1) as usize)].set_int((1i32).wrapping_neg());
-                k = k.wrapping_add(1);
-            }
-        }
-        __av_eqtb[crate::ix::U(((29693i32) - 1) as usize)].set_int(0i32);
-        __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].set_int((1i32).wrapping_neg());
-        // §268
-        {
-            let __for_end_2 = eqtb_size;
-            k = dimen_base;
-            while k <= __for_end_2 {
-                __av_eqtb[crate::ix::U(((k) - 1) as usize)].set_int(0i32);
-                k = k.wrapping_add(1);
-            }
-        }
-        // §277
-        self.prim_used = prim_size;
-        self.hash_used = frozen_control_sequence;
-        self.hash_high = 0i32;
-        self.cs_count = 0i32;
-        __av_eqtb[crate::ix::U(((frozen_dont_expand) - 1) as usize)].set_hh_b0(dont_expand);
-        self.hash[crate::ix::U(((frozen_dont_expand) - 514) as usize)].set_rh(585i32);
-        __av_eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_b0(ignore_spaces);
-        __av_eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_rh(1i32);
-        __av_eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_b1(level_one);
-        self.hash[crate::ix::U(((frozen_primitive) - 514) as usize)].set_rh(586i32);
-        // §578
-        self.font_ptr = null_font;
-        self.fmem_ptr = 7i32;
-        self.font_name[crate::ix::U((null_font) as usize)] = 968i32;
-        self.font_area[crate::ix::U((null_font) as usize)] = 345i32;
-        self.hyphen_char[crate::ix::U((null_font) as usize)] = 45i32;
-        self.skew_char[crate::ix::U((null_font) as usize)] = (1i32).wrapping_neg();
-        self.bchar_label[crate::ix::U((null_font) as usize)] = non_address;
-        self.font_bchar[crate::ix::U((null_font) as usize)] = non_char;
-        self.font_false_bchar[crate::ix::U((null_font) as usize)] = non_char;
-        self.font_bc[crate::ix::U((null_font) as usize)] = 1i32;
-        self.font_ec[crate::ix::U((null_font) as usize)] = 0i32;
-        self.font_size[crate::ix::U((null_font) as usize)] = 0i32;
-        self.font_dsize[crate::ix::U((null_font) as usize)] = 0i32;
-        self.char_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.width_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.height_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.depth_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.italic_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.lig_kern_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.kern_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.exten_base[crate::ix::U((null_font) as usize)] = 0i32;
-        self.font_glue[crate::ix::U((null_font) as usize)] = null;
-        self.font_params[crate::ix::U((null_font) as usize)] = 7i32;
-        self.param_base[crate::ix::U((null_font) as usize)] = (1i32).wrapping_neg();
-        {
-            let __for_end_2 = 6i32;
-            k = 0i32;
-            while k <= __for_end_2 {
-                self.font_info[crate::ix::U((k) as usize)].set_int(0i32);
-                k = k.wrapping_add(1);
-            }
-        }
-        // §672
-        { let __v28 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); __av_eqtb[crate::ix::U(((29924i32) - 1) as usize)].set_int(__v28); }
-        { let __v29 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); __av_eqtb[crate::ix::U(((29925i32) - 1) as usize)].set_int(__v29); }
-        __av_eqtb[crate::ix::U(((29343i32) - 1) as usize)].set_int(9i32);
-        __av_eqtb[crate::ix::U(((29363i32) - 1) as usize)].set_int(0i32);
-        __av_eqtb[crate::ix::U(((29344i32) - 1) as usize)].set_int(3i32);
-        __av_eqtb[crate::ix::U(((29346i32) - 1) as usize)].set_int(72i32);
-        __av_eqtb[crate::ix::U(((29351i32) - 1) as usize)].set_int(1i32);
-        __av_eqtb[crate::ix::U(((29352i32) - 1) as usize)].set_int(4i32);
-        __av_eqtb[crate::ix::U(((29356i32) - 1) as usize)].set_int(1000i32);
-        __av_eqtb[crate::ix::U(((29357i32) - 1) as usize)].set_int(2200i32);
-        __av_eqtb[crate::ix::U(((29358i32) - 1) as usize)].set_int(1i32);
-        __av_eqtb[crate::ix::U(((29359i32) - 1) as usize)].set_int(0i32);
-        { let __v30 = self.one_bp; __av_eqtb[crate::ix::U(((29936i32) - 1) as usize)].set_int(__v30); }
-        __av_eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(0i32);
-        // §1064
-        __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].set_int((65536000i32).wrapping_neg());
-        { let __v31 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29933i32) - 1) as usize)].set_int(__v31); }
-        { let __v32 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29934i32) - 1) as usize)].set_int(__v32); }
-        { let __v33 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29931i32) - 1) as usize)].set_int(__v33); }
-        { let __v34 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29932i32) - 1) as usize)].set_int(__v34); }
-        // §1123
-        {
-            let __for_end_2 = trie_op_size;
-            k = (trie_op_size).wrapping_neg();
-            while k <= __for_end_2 {
-                self.trie_op_hash[crate::ix::U(((k) + 35111) as usize)] = 0i32;
-                k = k.wrapping_add(1);
-            }
-        }
-        {
-            let __for_end_2 = 255i32;
-            k = 0i32;
-            while k <= __for_end_2 {
-                self.trie_used[crate::ix::U((k) as usize)] = min_quarterword;
-                k = k.wrapping_add(1);
-            }
-        }
-        self.trie_op_ptr = 0i32;
-        // §1128
-        self.trie_not_ready = true;
-        self.trie_l[crate::ix::U((0i32) as usize)] = 0i32;
-        self.trie_c[crate::ix::U((0i32) as usize)] = 0i32;
-        self.trie_ptr = 0i32;
-        // §1394
-        self.hash[crate::ix::U(((frozen_protection) - 514) as usize)].set_rh(1621i32);
-        // §1479
+        // §8
         if self.ini_version() {
-            self.format_ident = 1695i32;
-        }
-        // §1616
-        self.hash[crate::ix::U(((end_write) - 514) as usize)].set_rh(1918i32);
-        __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b1(level_one);
-        __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b0(outer_call);
-        __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_rh(null);
-        // §1653
-        self.eTeX_mode = 0i32;
-        // §1812
-        self.max_reg_num = 255i32;
-        self.max_reg_help_line = 799i32;
-        // §1818
-        {
-            let __for_end_2 = tok_val;
-            i = int_val;
-            while i <= __for_end_2 {
-                self.sa_root[crate::ix::U((i) as usize)] = null;
-                i = i.wrapping_add(1);
+            {
+                // §182
+                {
+                    let __for_end_4 = lo_mem_stat_max;
+                    k = 1i32;
+                    while k <= __for_end_4 {
+                        __av_mem[crate::ix::U((k) as usize)].set_int(0i32);
+                        k = k.wrapping_add(1);
+                    }
+                }
+                k = mem_bot;
+                while (k <= lo_mem_stat_max) {
+                    {
+                        __av_mem[crate::ix::U((k) as usize)].set_hh_rh(1i32);
+                        __av_mem[crate::ix::U((k) as usize)].set_hh_b0(normal);
+                        __av_mem[crate::ix::U((k) as usize)].set_hh_b1(normal);
+                        k = (k).wrapping_add(4i32);
+                    }
+                }
+                __av_mem[crate::ix::U((6i32) as usize)].set_int(unity);
+                __av_mem[crate::ix::U((fil_glue) as usize)].set_hh_b0(fil);
+                __av_mem[crate::ix::U((10i32) as usize)].set_int(unity);
+                __av_mem[crate::ix::U((fill_glue) as usize)].set_hh_b0(fill);
+                __av_mem[crate::ix::U((14i32) as usize)].set_int(unity);
+                __av_mem[crate::ix::U((ss_glue) as usize)].set_hh_b0(fil);
+                __av_mem[crate::ix::U((15i32) as usize)].set_int(unity);
+                __av_mem[crate::ix::U((ss_glue) as usize)].set_hh_b1(fil);
+                __av_mem[crate::ix::U((18i32) as usize)].set_int((65536i32).wrapping_neg());
+                __av_mem[crate::ix::U((fil_neg_glue) as usize)].set_hh_b0(fil);
+                self.rover = 20i32;
+                { let __ix11 = self.rover; __av_mem[crate::ix::U((__ix11) as usize)].set_hh_rh(empty_flag); }
+                { let __ix12 = self.rover; __av_mem[crate::ix::U((__ix12) as usize)].set_hh_lh(1000i32); }
+                { let __ix13 = (self.rover).wrapping_add(1i32); let __v14 = self.rover; __av_mem[crate::ix::U((__ix13) as usize)].set_hh_lh(__v14); }
+                { let __ix15 = (self.rover).wrapping_add(1i32); let __v16 = self.rover; __av_mem[crate::ix::U((__ix15) as usize)].set_hh_rh(__v16); }
+                self.lo_mem_max = (self.rover).wrapping_add(1000i32);
+                { let __ix17 = self.lo_mem_max; __av_mem[crate::ix::U((__ix17) as usize)].set_hh_rh(null); }
+                { let __ix18 = self.lo_mem_max; __av_mem[crate::ix::U((__ix18) as usize)].set_hh_lh(null); }
+                {
+                    let __for_end_4 = mem_top;
+                    k = hi_mem_stat_min;
+                    while k <= __for_end_4 {
+                        { let __v19 = __av_mem[crate::ix::U((self.lo_mem_max) as usize)]; __av_mem[crate::ix::U((k) as usize)] = __v19; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                // §966
+                __av_mem[crate::ix::U((omit_template) as usize)].set_hh_lh(end_template_token);
+                // §973
+                __av_mem[crate::ix::U((end_span) as usize)].set_hh_rh(256i32);
+                __av_mem[crate::ix::U((end_span) as usize)].set_hh_lh(null);
+                // §996
+                __av_mem[crate::ix::U((last_active) as usize)].set_hh_b0(hyphenated);
+                __av_mem[crate::ix::U((4999993i32) as usize)].set_hh_lh(max_halfword);
+                __av_mem[crate::ix::U((last_active) as usize)].set_hh_b1(0i32);
+                // §1158
+                __av_mem[crate::ix::U((page_ins_head) as usize)].set_hh_b1(255i32);
+                __av_mem[crate::ix::U((page_ins_head) as usize)].set_hh_b0(split_up);
+                __av_mem[crate::ix::U((page_ins_head) as usize)].set_hh_rh(page_ins_head);
+                // §1165
+                __av_mem[crate::ix::U((page_head) as usize)].set_hh_b0(glue_node);
+                __av_mem[crate::ix::U((page_head) as usize)].set_hh_b1(normal);
+                // §182
+                self.avail = null;
+                self.mem_end = mem_top;
+                self.hi_mem_min = hi_mem_stat_min;
+                self.var_used = 20i32;
+                self.dyn_used = hi_mem_stat_usage;
+                // §240
+                __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)].set_hh_b0(undefined_cs);
+                __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)].set_hh_rh(null);
+                __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)].set_hh_b1(level_zero);
+                {
+                    let __for_end_4 = eqtb_top;
+                    k = active_base;
+                    while k <= __for_end_4 {
+                        { let __v20 = __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v20; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                // §246
+                __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)].set_hh_rh(zero_glue);
+                __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)].set_hh_b1(level_one);
+                __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)].set_hh_b0(glue_ref);
+                {
+                    let __for_end_4 = 27157i32;
+                    k = 26629i32;
+                    while k <= __for_end_4 {
+                        { let __v21 = __av_eqtb[crate::ix::U(((glue_base) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v21; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                { let __v22 = (__av_mem[crate::ix::U((zero_glue) as usize)].hh().rh()).wrapping_add(530i32); __av_mem[crate::ix::U((zero_glue) as usize)].set_hh_rh(__v22); }
+                // §250
+                __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)].set_hh_rh(null);
+                __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)].set_hh_b0(shape_ref);
+                __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)].set_hh_b1(level_one);
+                {
+                    let __for_end_4 = 27432i32;
+                    k = etex_pen_base;
+                    while k <= __for_end_4 {
+                        { let __v23 = __av_eqtb[crate::ix::U(((par_shape_loc) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v23; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                {
+                    let __for_end_4 = 27428i32;
+                    k = output_routine_loc;
+                    while k <= __for_end_4 {
+                        { let __v24 = __av_eqtb[crate::ix::U(((undefined_control_sequence) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v24; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                __av_eqtb[crate::ix::U(((27433i32) - 1) as usize)].set_hh_rh(null);
+                __av_eqtb[crate::ix::U(((box_base) - 1) as usize)].set_hh_b0(box_ref);
+                __av_eqtb[crate::ix::U(((box_base) - 1) as usize)].set_hh_b1(level_one);
+                {
+                    let __for_end_4 = 27688i32;
+                    k = 27434i32;
+                    while k <= __for_end_4 {
+                        { let __v25 = __av_eqtb[crate::ix::U(((box_base) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v25; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].set_hh_rh(null_font);
+                __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].set_hh_b0(data);
+                __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)].set_hh_b1(level_one);
+                {
+                    let __for_end_4 = 27740i32;
+                    k = math_font_base;
+                    while k <= __for_end_4 {
+                        { let __v26 = __av_eqtb[crate::ix::U(((cur_font_loc) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v26; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)].set_hh_rh(0i32);
+                __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)].set_hh_b0(data);
+                __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)].set_hh_b1(level_one);
+                {
+                    let __for_end_4 = 29276i32;
+                    k = 27742i32;
+                    while k <= __for_end_4 {
+                        { let __v27 = __av_eqtb[crate::ix::U(((cat_code_base) - 1) as usize)]; __av_eqtb[crate::ix::U(((k) - 1) as usize)] = __v27; }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                {
+                    let __for_end_4 = 255i32;
+                    k = 0i32;
+                    while k <= __for_end_4 {
+                        {
+                            __av_eqtb[crate::ix::U((((cat_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(other_char);
+                            __av_eqtb[crate::ix::U((((math_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(0i32));
+                            __av_eqtb[crate::ix::U((((sf_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(1000i32);
+                        }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                __av_eqtb[crate::ix::U(((27754i32) - 1) as usize)].set_hh_rh(car_ret);
+                __av_eqtb[crate::ix::U(((27773i32) - 1) as usize)].set_hh_rh(spacer);
+                __av_eqtb[crate::ix::U(((27833i32) - 1) as usize)].set_hh_rh(escape);
+                __av_eqtb[crate::ix::U(((27778i32) - 1) as usize)].set_hh_rh(comment);
+                __av_eqtb[crate::ix::U(((27868i32) - 1) as usize)].set_hh_rh(invalid_char);
+                __av_eqtb[crate::ix::U(((27741i32) - 1) as usize)].set_hh_rh(ignore);
+                {
+                    let __for_end_4 = 57i32;
+                    k = 48i32;
+                    while k <= __for_end_4 {
+                        __av_eqtb[crate::ix::U((((math_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(28672i32));
+                        k = k.wrapping_add(1);
+                    }
+                }
+                {
+                    let __for_end_4 = 90i32;
+                    k = 65i32;
+                    while k <= __for_end_4 {
+                        {
+                            __av_eqtb[crate::ix::U((((cat_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(letter);
+                            __av_eqtb[crate::ix::U(((((cat_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh(letter);
+                            __av_eqtb[crate::ix::U((((math_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(28928i32));
+                            __av_eqtb[crate::ix::U(((((math_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh((k).wrapping_add(28960i32));
+                            __av_eqtb[crate::ix::U((((lc_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh((k).wrapping_add(32i32));
+                            __av_eqtb[crate::ix::U(((((lc_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh((k).wrapping_add(32i32));
+                            __av_eqtb[crate::ix::U((((uc_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(k);
+                            __av_eqtb[crate::ix::U(((((uc_code_base).wrapping_add(k)).wrapping_add(32i32)) - 1) as usize)].set_hh_rh(k);
+                            __av_eqtb[crate::ix::U((((sf_code_base).wrapping_add(k)) - 1) as usize)].set_hh_rh(999i32);
+                        }
+                        k = k.wrapping_add(1);
+                    }
+                }
+                // §258
+                {
+                    let __for_end_4 = 29646i32;
+                    k = int_base;
+                    while k <= __for_end_4 {
+                        __av_eqtb[crate::ix::U(((k) - 1) as usize)].set_int(0i32);
+                        k = k.wrapping_add(1);
+                    }
+                }
+                __av_eqtb[crate::ix::U(((29332i32) - 1) as usize)].set_int(256i32);
+                __av_eqtb[crate::ix::U(((29333i32) - 1) as usize)].set_int((1i32).wrapping_neg());
+                __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].set_int(1000i32);
+                __av_eqtb[crate::ix::U(((29278i32) - 1) as usize)].set_int(10000i32);
+                __av_eqtb[crate::ix::U(((29318i32) - 1) as usize)].set_int(1i32);
+                __av_eqtb[crate::ix::U(((29317i32) - 1) as usize)].set_int(25i32);
+                __av_eqtb[crate::ix::U(((29322i32) - 1) as usize)].set_int(92i32);
+                __av_eqtb[crate::ix::U(((29325i32) - 1) as usize)].set_int(carriage_return);
+                {
+                    let __for_end_4 = 255i32;
+                    k = 0i32;
+                    while k <= __for_end_4 {
+                        __av_eqtb[crate::ix::U((((del_code_base).wrapping_add(k)) - 1) as usize)].set_int((1i32).wrapping_neg());
+                        k = k.wrapping_add(1);
+                    }
+                }
+                __av_eqtb[crate::ix::U(((29693i32) - 1) as usize)].set_int(0i32);
+                __av_eqtb[crate::ix::U(((29337i32) - 1) as usize)].set_int((1i32).wrapping_neg());
+                // §268
+                {
+                    let __for_end_4 = eqtb_size;
+                    k = dimen_base;
+                    while k <= __for_end_4 {
+                        __av_eqtb[crate::ix::U(((k) - 1) as usize)].set_int(0i32);
+                        k = k.wrapping_add(1);
+                    }
+                }
+                // §277
+                self.prim_used = prim_size;
+                self.hash_used = frozen_control_sequence;
+                self.hash_high = 0i32;
+                self.cs_count = 0i32;
+                __av_eqtb[crate::ix::U(((frozen_dont_expand) - 1) as usize)].set_hh_b0(dont_expand);
+                self.hash[crate::ix::U(((frozen_dont_expand) - 514) as usize)].set_rh(585i32);
+                __av_eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_b0(ignore_spaces);
+                __av_eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_rh(1i32);
+                __av_eqtb[crate::ix::U(((frozen_primitive) - 1) as usize)].set_hh_b1(level_one);
+                self.hash[crate::ix::U(((frozen_primitive) - 514) as usize)].set_rh(586i32);
+                // §578
+                self.font_ptr = null_font;
+                self.fmem_ptr = 7i32;
+                self.font_name[crate::ix::U((null_font) as usize)] = 968i32;
+                self.font_area[crate::ix::U((null_font) as usize)] = 345i32;
+                self.hyphen_char[crate::ix::U((null_font) as usize)] = 45i32;
+                self.skew_char[crate::ix::U((null_font) as usize)] = (1i32).wrapping_neg();
+                self.bchar_label[crate::ix::U((null_font) as usize)] = non_address;
+                self.font_bchar[crate::ix::U((null_font) as usize)] = non_char;
+                self.font_false_bchar[crate::ix::U((null_font) as usize)] = non_char;
+                self.font_bc[crate::ix::U((null_font) as usize)] = 1i32;
+                self.font_ec[crate::ix::U((null_font) as usize)] = 0i32;
+                self.font_size[crate::ix::U((null_font) as usize)] = 0i32;
+                self.font_dsize[crate::ix::U((null_font) as usize)] = 0i32;
+                self.char_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.width_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.height_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.depth_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.italic_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.lig_kern_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.kern_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.exten_base[crate::ix::U((null_font) as usize)] = 0i32;
+                self.font_glue[crate::ix::U((null_font) as usize)] = null;
+                self.font_params[crate::ix::U((null_font) as usize)] = 7i32;
+                self.param_base[crate::ix::U((null_font) as usize)] = (1i32).wrapping_neg();
+                {
+                    let __for_end_4 = 6i32;
+                    k = 0i32;
+                    while k <= __for_end_4 {
+                        self.font_info[crate::ix::U((k) as usize)].set_int(0i32);
+                        k = k.wrapping_add(1);
+                    }
+                }
+                // §672
+                { let __v28 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); __av_eqtb[crate::ix::U(((29924i32) - 1) as usize)].set_int(__v28); }
+                { let __v29 = ((self.one_hundred_inch).wrapping_add(50i32) / 100i32); __av_eqtb[crate::ix::U(((29925i32) - 1) as usize)].set_int(__v29); }
+                __av_eqtb[crate::ix::U(((29343i32) - 1) as usize)].set_int(9i32);
+                __av_eqtb[crate::ix::U(((29363i32) - 1) as usize)].set_int(0i32);
+                __av_eqtb[crate::ix::U(((29344i32) - 1) as usize)].set_int(3i32);
+                __av_eqtb[crate::ix::U(((29346i32) - 1) as usize)].set_int(72i32);
+                __av_eqtb[crate::ix::U(((29351i32) - 1) as usize)].set_int(1i32);
+                __av_eqtb[crate::ix::U(((29352i32) - 1) as usize)].set_int(4i32);
+                __av_eqtb[crate::ix::U(((29356i32) - 1) as usize)].set_int(1000i32);
+                __av_eqtb[crate::ix::U(((29357i32) - 1) as usize)].set_int(2200i32);
+                __av_eqtb[crate::ix::U(((29358i32) - 1) as usize)].set_int(1i32);
+                __av_eqtb[crate::ix::U(((29359i32) - 1) as usize)].set_int(0i32);
+                { let __v30 = self.one_bp; __av_eqtb[crate::ix::U(((29936i32) - 1) as usize)].set_int(__v30); }
+                __av_eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(0i32);
+                // §1064
+                __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].set_int((65536000i32).wrapping_neg());
+                { let __v31 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29933i32) - 1) as usize)].set_int(__v31); }
+                { let __v32 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29934i32) - 1) as usize)].set_int(__v32); }
+                { let __v33 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29931i32) - 1) as usize)].set_int(__v33); }
+                { let __v34 = __av_eqtb[crate::ix::U(((29935i32) - 1) as usize)].int(); __av_eqtb[crate::ix::U(((29932i32) - 1) as usize)].set_int(__v34); }
+                // §1123
+                {
+                    let __for_end_4 = trie_op_size;
+                    k = (trie_op_size).wrapping_neg();
+                    while k <= __for_end_4 {
+                        self.trie_op_hash[crate::ix::U(((k) + 35111) as usize)] = 0i32;
+                        k = k.wrapping_add(1);
+                    }
+                }
+                {
+                    let __for_end_4 = 255i32;
+                    k = 0i32;
+                    while k <= __for_end_4 {
+                        self.trie_used[crate::ix::U((k) as usize)] = min_quarterword;
+                        k = k.wrapping_add(1);
+                    }
+                }
+                self.trie_op_ptr = 0i32;
+                // §1128
+                self.trie_not_ready = true;
+                self.trie_l[crate::ix::U((0i32) as usize)] = 0i32;
+                self.trie_c[crate::ix::U((0i32) as usize)] = 0i32;
+                self.trie_ptr = 0i32;
+                // §1394
+                self.hash[crate::ix::U(((frozen_protection) - 514) as usize)].set_rh(1621i32);
+                // §1479
+                if self.ini_version() {
+                    self.format_ident = 1695i32;
+                }
+                // §1616
+                self.hash[crate::ix::U(((end_write) - 514) as usize)].set_rh(1918i32);
+                __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b1(level_one);
+                __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b0(outer_call);
+                __av_eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_rh(null);
+                // §1653
+                self.eTeX_mode = 0i32;
+                // §1812
+                self.max_reg_num = 255i32;
+                self.max_reg_help_line = 799i32;
+                // §1818
+                {
+                    let __for_end_4 = tok_val;
+                    i = int_val;
+                    while i <= __for_end_4 {
+                        self.sa_root[crate::ix::U((i) as usize)] = null;
+                        i = i.wrapping_add(1);
+                    }
+                }
+                // §1854
+                self.trie_r[crate::ix::U((0i32) as usize)] = 0i32;
+                self.hyph_start = 0i32;
             }
         }
-        // §1854
-        self.trie_r[crate::ix::U((0i32) as usize)] = 0i32;
-        self.hyph_start = 0i32;
     }
 
     /// The macros of \.{pdftex.h}, as \PASCAL\ routines. They come after the
