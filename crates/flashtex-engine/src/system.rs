@@ -3477,11 +3477,13 @@ impl Globals {
             name.push_str(".tcx");
         }
         let Some(found) = resolve(&name, Format::Web2c) else {
-            with_run(|r| r.translate_filename = Some(name.clone()));
-            eprintln!(
-                "{}: warning: Could not open char translation file `{name}'.",
-                invocation_name()
-            );
+            // `translate_filename` is now kpse_find_file's NULL: no TCX file
+            // after the banner or in the log, and the format's `xord`,
+            // `xchr` and `xprn` stand (tex.ch [50.1308]). kpathsea's
+            // WARNING1 names no program.
+            with_run(|r| r.translate_filename = None);
+            self.translate_filename_p = false;
+            eprintln!("warning: Could not open char translation file `{name}'.");
             return;
         };
         with_run(|r| r.translate_filename = Some(found.clone()));
