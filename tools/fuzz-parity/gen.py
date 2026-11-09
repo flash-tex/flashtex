@@ -977,7 +977,47 @@ class G:
             "\\def\\fzl{%s}\\message{\\fzl}" % ("y" * self.n(900, 1100)),
         ])
 
+    def latexstuff(self):
+        """LaTeX-level material for pdflatex documents; a command from a
+        package that is not loaded is an undefined control sequence, which
+        both engines report the same way."""
+        w = lambda: self.words(1, 8)
+        return self.pick([
+            "\\section{%s}%s\\label{s%d}" % (w(), w(), self.n(0, 3)),
+            "See \\ref{s%d} and \\pageref{s%d} and \\cref{s1}." % (self.n(0, 3), self.n(0, 3)),
+            "%s\\footnote{%s}\\marginpar{%s}" % (w(), w(), w()),
+            "\\begin{tikzpicture}\\draw[%s] (0,0) -- (%d,1) circle (3pt) node[above]{%s};\\fill[blue!30] (0,0) rectangle (1,%d);\\end{tikzpicture}"
+            % (self.pick(["thick", "red", "->", "dashed"]), self.n(-2, 3), self.words(1, 2), self.n(1, 3)),
+            "\\tikz[remember picture,overlay]\\node at (current page.center){%s};" % w(),
+            "\\textcolor{%s}{%s}\\colorbox{yellow}{%s}" % (self.pick(["red", "blue!50!black", "Maroon", "nonexistentcolor"]), w(), w()),
+            "\\begin{tabular}{|l|c|r|}\\hline %s & %s & %s\\\\\\hline\\multicolumn{2}{c}{%s} & x\\\\\\end{tabular}" % (w(), w(), w(), w()),
+            "\\begin{tabularx}{\\linewidth}{lX}%s & %s\\\\\\end{tabularx}" % (w(), self.words(10, 30)),
+            "\\begin{longtable}{ll}%s\\end{longtable}" % "".join("%s & %s\\\\" % (self.words(1, 2), self.words(1, 2)) for _ in range(self.n(1, 60))),
+            "\\begin{lstlisting}\nint main() { return %d; }\n  x <- y;\n\\end{lstlisting}" % self.n(0, 9),
+            "\\url{http://example.com/a_b%%20c#d}\\href{http://x.org}{%s}" % w(),
+            "\\begin{figure}[%s]\\centering\\includegraphics[width=%s]{example-image-a}\\caption{%s}\\end{figure}"
+            % (self.pick(["htbp", "h", "!t", "H", "p"]), self.pick(["2cm", "0.5\\linewidth", "10pt"]), w()),
+            "\\begin{itemize}[%s]\\item %s\\item %s\\end{itemize}" % (self.pick(["", "label=--", "noitemsep", "leftmargin=*"]), w(), w()),
+            "\\begin{align}a&=b\\label{eq%d}\\\\c&=d\\notag\\end{align}\\eqref{eq%d}" % (self.n(0, 2), self.n(0, 2)),
+            "\\SI{%s}{\\metre\\per\\second}\\num{%s}" % (self.pick(["3.5e3", "-1.2", "1/2"]), self.pick(["12345.678", "0.0001", "1e10"])),
+            "\\cite{knuth84}\\citep{x}\\nocite{*}",
+            "\\so{%s}\\ul{%s}\\sout{%s}" % (w(), w(), w()),
+            "\\begin{wrapfigure}{r}{2cm}x\\end{wrapfigure}%s" % self.words(20, 50),
+            "\\begin{framed}%s\\end{framed}\\begin{mdframed}%s\\end{mdframed}" % (w(), w()),
+            "\\begin{tcolorbox}[title=%s]%s\\end{tcolorbox}" % (w(), w()),
+            "\\includepdf[pages=%s]{example-image-a4-numbered.pdf}" % self.pick(["1", "2-3", "-"]),
+            "\\begin{multicols}{%d}%s\\end{multicols}" % (self.n(1, 4), self.words(40, 120)),
+            "\\newpage\\thispagestyle{%s}%s" % (self.pick(["empty", "plain", "fancy", "headings"]), w()),
+            "\\tableofcontents\\listoffigures", "\\clearpage", "\\appendix\\section{%s}" % w(),
+            "\\begin{equation}\\bm{x}\\coloneqq\\frac{1}{2}\\end{equation}",
+            "\\verb|%s|\\texttt{%s}\\emph{%s}" % (self.words(1, 3), w(), w()),
+            "\\selectlanguage{%s}%s\\today" % (self.pick(["english", "ngerman", "french"]), w()),
+            "\\char\"E9\\'e\\\"o\\ss{}\\c{c}\\textquotedblleft x\\textquotedblright\\texteuro",
+        ])
+
     def chunk(self):
+        if self.latex and self.chance(0.4):
+            return self.latexstuff()
         k = self.n(0, 145)
         if k < 22:
             return self.paragraph()
@@ -1080,7 +1120,11 @@ def preamble(g, pdf):
 
 
 LATEX_PACKAGES = ["amsmath", "amssymb", "microtype", "array", "multicol", "color",
-                  "graphicx", "hyperref", "fontenc", "lmodern", "textcomp", "booktabs"]
+                  "graphicx", "hyperref", "fontenc", "lmodern", "textcomp", "booktabs",
+                  "tikz", "xcolor", "geometry", "fancyhdr", "longtable", "tabularx",
+                  "listings", "url", "caption", "enumitem", "mathtools", "bm",
+                  "babel", "inputenc", "siunitx", "cleveref", "natbib", "pdfpages",
+                  "soul", "ulem", "float", "wrapfig", "framed", "mdframed", "tcolorbox"]
 
 
 def latex_preamble(g):
@@ -1090,7 +1134,10 @@ def latex_preamble(g):
                                         g.pick(["article", "article", "report", "book"]))]
     for p in sorted(set(g.pick(LATEX_PACKAGES) for _ in range(g.n(0, 4)))):
         opt = {"microtype": g.pick(["", "[protrusion=true,expansion=true]", "[final]", "[expansion=false]"]),
-               "fontenc": "[T1]", "hyperref": g.pick(["", "[draft]"])}.get(p, "")
+               "fontenc": "[T1]", "hyperref": g.pick(["", "[draft]"]),
+               "babel": g.pick(["[english]", "[ngerman]", "[french,english]"]),
+               "inputenc": "[latin1]", "geometry": "[a5paper,margin=1cm]",
+               "xcolor": g.pick(["", "[dvipsnames]"])}.get(p, "")
         lines.append("\\usepackage%s{%s}" % (opt, p))
     lines.append("\\font\\tenrm=cmr10 \\font\\tenbf=cmbx10 \\font\\tenit=cmti10 \\font\\tensl=cmsl10"
                  " \\font\\tentt=cmtt10 \\font\\sevenrm=cmr7 \\font\\fiverm=cmr5 \\font\\teni=cmmi10")

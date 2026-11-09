@@ -188,7 +188,7 @@ def compare(text, candidate, oracle, work, timeout, formats=None):
 
 
 def fuzz_seed(seed, args):
-    doc = gen.generate(seed, latex=None if args.formats else False)
+    doc = gen.generate(seed, latex=(True if args.latex else None) if args.formats else False)
     text = doc.render()
     work = tempfile.mkdtemp(prefix="fzp-%d-" % seed, dir=args.tmp)
     try:
@@ -227,6 +227,8 @@ def main(argv=None):
     ap.add_argument("--tmp", default=None)
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--latex", action="store_true",
+                    help="only LaTeX documents (needs --formats)")
     ap.add_argument("--formats", default=None,
                     help="dir holding the candidate's own pdflatex.fmt; without it no LaTeX documents")
     args = ap.parse_args(argv)

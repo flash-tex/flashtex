@@ -29,6 +29,10 @@ python3 tools/fuzz-parity/fuzz.py --candidate target/release/flashtex-initex \
 Each engine's `doc.tex` gets the same modification time (2001-09-09),
 so `\pdffilemoddate{doc.tex}` is comparable.
 
+`--formats DIR` (a directory holding the candidate's own
+`pdflatex.fmt`) lets 15% of the documents be pdflatex documents;
+`--latex` makes them all LaTeX.
+
 Print one document: `python3 tools/fuzz-parity/gen.py 42`.
 
 ## What runs
@@ -133,6 +137,12 @@ independent chunks, each balanced on its own:
 - the input file's own bytes (`rawbytes`): CR and CR LF line ends,
   trailing blanks, form feeds, NUL/DEL/8-bit bytes, `\endlinechar`,
   `\obeylines`, long lines;
+- in a pdflatex document, LaTeX material (`latexstuff`, 40% of its
+  chunks): sectioning and references, TikZ, colour, tabular/tabularx/
+  longtable, listings, hyperref links, figures and `\includegraphics`,
+  enumitem, amsmath, siunitx, soul/ulem, framed boxes, pdfpages,
+  multicols, babel languages, 8-bit input; the preamble loads 0-4 of
+  37 packages;
 - the PDF writer (`pdfwriter`): object streams and files, reserved and
   reused object numbers, annotations, links of every kind, destinations,
   outlines, threads, the info/trailer/version keys, compression levels,
