@@ -232,8 +232,7 @@ Detects your OS/CPU, verifies the download against the release's
 `SHA256SUMS` (refuses on a mismatch), and installs into `~/.local/bin` +
 `~/.local/share/flashtex` — pass `--prefix /usr/local` for a system install,
 `--version vX.Y.Z` for another release, or `--uninstall` to remove it. Or
-extract the tarball yourself and run `bin/flashtex build main.tex` directly;
-`bin/flashtex install-cli` links it into `/usr/local/bin`.
+extract the tarball yourself and run `bin/flashtex build main.tex` directly.
 
 ### B. Engine + native GUI (macOS only, for now)
 

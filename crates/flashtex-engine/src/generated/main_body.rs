@@ -120,14 +120,16 @@ impl Globals {
                     }
                 }
                 self.initialize();
-                if (!self.get_strings_started()) {
-                    break 'l_final_end_f;
-                }
-                self.init_prim();
-                self.init_str_ptr = self.str_ptr;
-                self.init_pool_ptr = self.pool_ptr;
                 if self.ini_version() {
-                    self.fix_date_and_time();
+                    {
+                        if (!self.get_strings_started()) {
+                            break 'l_final_end_f;
+                        }
+                        self.init_prim();
+                        self.init_str_ptr = self.str_ptr;
+                        self.init_pool_ptr = self.pool_ptr;
+                        self.fix_date_and_time();
+                    }
                 }
                 self.ready_already = 314159i32;
             }
