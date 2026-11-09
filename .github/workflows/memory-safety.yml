@@ -106,3 +106,15 @@ jobs:
             ${{ runner.temp }}/san/leaks/
             ${{ runner.temp }}/incr-bench-soak/soak/
           if-no-files-found: ignore
+
+  # The ASan host / leaks / soak checks run only on the self-hosted Mac: when
+  # its switch is off, say so instead of leaving a silent skip.
+  memory-mac-not-run:
+    name: "ASan/LSan host and macOS leaks did NOT run (self-hosted Mac switch off)"
+    if: ${{ vars.FLASHTEX_SELFHOSTED_MAC != '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::ASan/LSan host and macOS leaks checks did not run: FLASHTEX_SELFHOSTED_MAC is not 1"
+          echo "ASan/LSan host and macOS leaks checks did not run: FLASHTEX_SELFHOSTED_MAC is not 1" >> "$GITHUB_STEP_SUMMARY"

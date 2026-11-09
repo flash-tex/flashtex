@@ -1227,6 +1227,7 @@ impl Globals {
                 q = self.new_native_character(self.cur_f, self.cur_c);
                 g = self.get_native_glyph(q, 0i32);
                 s = self.get_ot_math_accent_pos(self.cur_f, g);
+                self.flashtex_dead_node(q);
             }
         } else {
             {
@@ -2135,6 +2136,7 @@ impl Globals {
                             {
                                 script_c = self.new_native_character(self.cur_f, self.cur_c);
                                 script_g = self.get_native_glyph(script_c, 0i32);
+                                self.flashtex_dead_node(script_c);
                                 script_f = self.cur_f;
                             }
                         }
@@ -2266,6 +2268,7 @@ impl Globals {
                                 {
                                     script_c = self.new_native_character(self.cur_f, self.cur_c);
                                     script_g = self.get_native_glyph(script_c, 0i32);
+                                    self.flashtex_dead_node(script_c);
                                     script_f = self.cur_f;
                                 }
                             }
@@ -2409,6 +2412,7 @@ impl Globals {
                                     {
                                         script_c = self.new_native_character(self.cur_f, self.cur_c);
                                         script_g = self.get_native_glyph(script_c, 0i32);
+                                        self.flashtex_dead_node(script_c);
                                         script_f = self.cur_f;
                                     }
                                 }

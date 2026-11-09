@@ -11,8 +11,10 @@
 #     here;
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
 #     so a crate that has quietly started passing is noticed;
-#   * the new engine's T2 (the LaTeX team's suites) and its fixture-wide
-#     incremental soundness test, on the NixOS PC. Lockstep and P-T1/P-T2 run
+#   * the new engine's T2 (the LaTeX team's suites), its fixture-wide
+#     incremental soundness test and T6 (tools/fuzz/nightly.py: every
+#     differential and parser fuzzer in tools/fuzz, in a one-hour budget), on
+#     the NixOS PC. Lockstep and P-T1/P-T2 run
 #     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
 #     regression tests beside it;
 #   * the macOS legs that left the merge queue (release workspace, standalone
@@ -37,10 +39,13 @@
 # sharded, resumable and ratcheted against a baseline recorded on the NixOS PC
 # itself (tools/parity/nightly.py).
 #
+# T6 (DESIGN §8: fuzzing, continuous) runs here nightly, the `engine-fuzz`
+# job below (tools/fuzz/nightly.py), on the NixOS runners only for now.
+#
 # WHAT IS NOT HERE YET. DESIGN §8 also specifies T5 (30,000+ documents, weekly,
-# kept out of the repository) and T6 (differential fuzzing, continuous).
-# Neither has an implementation in this repository yet, so this workflow does
-# not pretend to run them. Add each one to this file in the lane that builds it.
+# kept out of the repository). It has no implementation in this repository yet,
+# so this workflow does not pretend to run it. Add it to this file in the lane
+# that builds it.
 name: nightly
 
 on:
@@ -522,6 +527,53 @@ jobs:
           [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
           { echo "### Host memory gate"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
 
+  # T6 (DESIGN §8): tools/fuzz/nightly.py through scripts/engine-parity.sh,
+  # i.e. the lockstep-seeded and document-level differential fuzzers against
+  # TeX Live's pdftex and the parser fuzzers in tools/fuzz/parsers, in a
+  # 60-minute budget (FLASHTEX_FUZZ_MINUTES). A finding not in
+  # tools/fuzz/known-findings.json, or a harness failure, fails the job; the
+  # fuzz directory (summary plus one input per distinct finding) is the
+  # `engine-fuzz` artifact. On the NixOS runners, so it follows their switch
+  # (FLASHTEX_SELFHOSTED_LINUX; unset: the Mac switch, as #1349 does
+  # elsewhere). It does not run on the heavy Mac while the PC is off.
+  engine-fuzz:
+    name: "engine: fuzzing (T6)"
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    # 60 minutes of fuzzing (nightly.py hard-kills a fuzzer past its share),
+    # the engine and format build, and slack.
+    timeout-minutes: 120
+    env:
+      FLASHTEX_FUZZ_MINUTES: "60"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: build the engine and its formats, then fuzz
+        run: scripts/engine-parity.sh build fuzz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-fuzz
+          # summary.md/json plus one stored input and sidecar per distinct
+          # finding signature (the fuzzers dedupe), so it stays small.
+          path: ${{ runner.temp }}/engine-parity/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # T6 has no GitHub-hosted fallback (unlike T2, soundness and memory): when
+  # its switch is off, say so instead of leaving a silent skip.
+  engine-fuzz-not-run:
+    name: "engine: fuzzing (T6) did NOT run"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::engine fuzzing (T6) did not run: neither FLASHTEX_SELFHOSTED_LINUX nor FLASHTEX_SELFHOSTED_MAC is 1"
+          echo "engine fuzzing (T6) did not run: neither FLASHTEX_SELFHOSTED_LINUX nor FLASHTEX_SELFHOSTED_MAC is 1" >> "$GITHUB_STEP_SUMMARY"
+
   # The PC switched off: T2, soundness and the memory gate on GitHub-hosted
   # Ubuntu instead (DESIGN §9.2: "a night without the PC is not a night
   # without gates"; review 2026-10-05, lane NIGHTLY-GREEN). Until 2026-10-05
@@ -794,13 +846,64 @@ jobs:
         if: always()
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
 
+  # T7's real documents, the full set (lane REAL-DOC-GATE; DESIGN §1.2, §9: the
+  # PR CI runs one row of them, ci.yml's real-doc-gate): Infinite Descent x2
+  # (1,152 pages) at five sites, early, middle and late in its first copy and
+  # late and at the end of its second (page ~887, the owner's page 883); a long
+  # arXiv paper, a real beamer deck and a book-class thesis at their start,
+  # middle and end (tools/incr-bench/realdocs.json). At each site a letter@
+  # row (each key after DONE) and typing@50ms and typing@150ms rows, target
+  # <= 20 ms to the edited page, every key painted by its own compile; the
+  # external tools on, as the app compiles (the host's page count is then the
+  # oracle's: 1,152 for infdesc-x2). A miss fails the job (and files main-red).
+  # GitHub-hosted macos-15 with MacTeX (the beamer deck is a TeX Live
+  # document): a non-reference run; the reference one is t7-reference.yml's.
+  t7-real-documents:
+    name: "T7 real documents (infdesc-x2, arXiv, beamer, thesis)"
+    runs-on: macos-15
+    timeout-minutes: 330
+    env:
+      INCR_BENCH_DIR: /tmp/ib
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: TeX Live 2026 (MacTeX 2026, mactex-no-gui)
+        run: |
+          set -euo pipefail
+          brew install --cask mactex-no-gui >/dev/null
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          /Library/TeX/texbin/kpsewhich pdflatex.ini
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/ib/cache
+          key: t7-real-${{ hashFiles('tools/parity/corpus/books.json', 'tools/incr-bench/realdocs.json') }}
+      - name: t7.py, every real document
+        run: |
+          set +e -o pipefail
+          docs="$(python3 -c 'import json; print(",".join(json.load(open("tools/incr-bench/realdocs.json"))["docs"]))')"
+          python3 tools/incr-bench/t7.py --build --engine real --docs "$docs" --out "$RUNNER_TEMP/t7-real" 2>&1 | tee "$RUNNER_TEMP/t7-real.log"
+          code=${PIPESTATUS[0]}
+          { echo "### T7 real documents (hosted, non-reference; exit $code)"; echo
+            cat "$RUNNER_TEMP/t7-real/table.md" 2>/dev/null || echo "(no table)"; } >> "$GITHUB_STEP_SUMMARY"
+          # 0 and 3 (non-reference, nothing missed) pass; 1 (a miss) and 2 (a harness error) fail.
+          case $code in 0|3) exit 0 ;; *) exit 1 ;; esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t7-real-documents
+          path: ${{ runner.temp }}/t7-real
+          if-no-files-found: ignore
+          retention-days: 30
+
   # A failed macOS leg or debug-profile workspace job tonight opens or
   # updates `main-red` (scripts/ci/main-red.sh, the issue ci.yml's post-merge
   # jobs file). A green night does not close it: these legs are a few of the
   # post-merge jobs, and only a green ci.yml run on main's tip covers them all.
   main-red:
     name: main-red issue
-    needs: [macos-legs, workspace-debug]
+    needs: [macos-legs, workspace-debug, t7-real-documents]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -813,4 +916,4 @@ jobs:
       - name: open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'macos|debug profile' --no-close
+        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'macos|debug profile|T7 real' --no-close

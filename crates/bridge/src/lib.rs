@@ -952,13 +952,17 @@ impl Bridge {
             BridgeError::new(
                 "unsupported_construct_requires_confirmation",
                 "This proposal is not legal LaTeX at the caret it would land on (it would nest \
-                 or unbalance math delimiters). Move the caret, convert again, or have a human \
+                 or unbalance math delimiters, or form ^^ notation). Move the caret, convert again, or have a human \
                  re-author it.",
             )
         };
         let body = caret::insertable(&proposal.latex, &context).ok_or_else(unsafe_here)?;
         let replacement = format!("{prefix}{body}{suffix}");
-        if caret::insertable(&replacement, &context).is_none() {
+        if caret::insertable(&replacement, &context).is_none()
+            || replacement.contains("^^")
+            || (replacement.starts_with('^') && doc.text[..a.start_byte].ends_with('^'))
+            || (replacement.ends_with('^') && doc.text[a.end_byte..].starts_with('^'))
+        {
             return Err(unsafe_here());
         }
         let edit = PreparedEdit {

@@ -5922,7 +5922,9 @@ impl Globals {
                 if (self.ckpt_request != 0i32) {
                     self.flashtex_checkpoint_hook();
                 }
+                self.intr_at_switch = self.intr_verify_on;
                 self.get_x_token();
+                self.intr_at_switch = false;
             }
             if __goto_1 <= 2 { // reswitch
                 if (self.interrupt != 0i32) {

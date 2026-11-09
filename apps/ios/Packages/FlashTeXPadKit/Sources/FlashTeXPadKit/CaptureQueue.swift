@@ -121,6 +121,8 @@ public final class CaptureQueue: @unchecked Sendable {
     public let link: MacLink
     public let store: CaptureStore?
     public static let maxInstructionBytes = 4096
+    /// Why a capture was not sent: the Mac has no insertion point pinned.
+    public static let noPinnedDestination = "not sent: the Mac has no pinned insertion point — pin one (Edit > Pin Insertion Point on the Mac), then Retry"
     /// Bound on the list (and the PNGs on disk): oldest terminal records go first.
     public static let maxRecords = 50
 
@@ -140,8 +142,12 @@ public final class CaptureQueue: @unchecked Sendable {
         }
     }
 
-    /// Caller must hold `lock`. `store.save` runs under that lock so a concurrent
-    /// `records` read cannot observe a torn list; CaptureStore has its own lock too.
+    /// Caller must hold `lock`. Prunes, then hands a snapshot to `persistQueue`:
+    /// the disk write (PNG, `captures.json`) never runs on the caller's thread
+    /// or under `lock`, so `draft` on the main actor and every `records` read
+    /// return without waiting for the disk. Snapshots are enqueued while
+    /// `lock` is held, so the serial queue writes them in mutation order and
+    /// the last state wins.
     private func persistLocked() {
         guard let store else { return }
         if _records.count > Self.maxRecords {
@@ -149,9 +155,29 @@ public final class CaptureQueue: @unchecked Sendable {
             for i in stride(from: kept.count - 1, through: 0, by: -1) where kept.count > Self.maxRecords && kept[i].status.isTerminal { kept.remove(at: i) }
             _records = kept
         }
-        do { try store.save(_records) } catch { _lastStoreError = "\(error)" }
+        let snapshot = Snapshot(records: _records)
+        persistQueue.async { [self] in
+            do {
+                try store.save(snapshot.records)
+                lock.withLock { _lastStoreError = nil }
+            } catch {
+                lock.withLock { _lastStoreError = "\(error)" }
+            }
+        }
     }
+    private let persistQueue = DispatchQueue(label: "flashtex.pad.capture-store", qos: .utility)
+    /// A copied list handed to `persistQueue`. `@unchecked`: value types
+    /// only, never mutated after the copy (NearbyWire's payload structs are
+    /// not marked Sendable).
+    private struct Snapshot: @unchecked Sendable { let records: [CaptureRecord] }
     public var lastStoreError: String? { lock.withLock { _lastStoreError } }
+
+    /// Resolves once every change made so far is on disk (or failed:
+    /// `lastStoreError`). `send` waits for it before the bytes leave, so a
+    /// capture the Mac may have received is always one a relaunch lists.
+    public func flush() async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in persistQueue.async { done.resume() } }
+    }
     private var _lastStoreError: String?
 
     /// Client-side checks the Mac would fail anyway (`NearbyWire.checkImage`,
@@ -175,16 +201,52 @@ public final class CaptureQueue: @unchecked Sendable {
         update(id) { if !$0.status.isTerminal { $0.status = .discarded } }
     }
 
+    /// One delivery attempt taken by `beginSend`: the record as it was when
+    /// the attempt was claimed, and the attempt number now on the row.
+    public struct SendClaim {
+        public let id: String
+        public let attempt: Int
+        let record: CaptureRecord
+    }
+
+    /// Claims `id` for one delivery attempt and flips it to `sending` in the
+    /// same locked step, so a second tap (Send / Retry pressed again while the
+    /// first attempt is out) finds `sending` and is refused here instead of
+    /// starting a second `capture_submit`. Nil when the record is terminal,
+    /// unknown, or an attempt is already in flight. Synchronous, so the caller
+    /// can publish the `sending` row before the first suspension.
+    public func beginSend(_ id: String) -> SendClaim? {
+        lock.withLock {
+            guard let i = _records.firstIndex(where: { $0.id == id }) else { return nil }
+            let attempt: Int
+            switch _records[i].status {
+            case .drafted: attempt = 1
+            case .disconnected(_, let n): attempt = n + 1
+            case .sending, .received, .refused, .discarded: return nil
+            }
+            let r = _records[i]
+            _records[i].status = .sending(attempt: attempt)
+            persistLocked()
+            return SendClaim(id: id, attempt: attempt, record: r)
+        }
+    }
+
     /// `capture_submit` → `capture_received`; any `error` reply is terminal for
     /// this payload (`refused`); a closed connection leaves the record
-    /// retryable with the same id.
+    /// retryable with the same id. A no-op while another attempt is in flight.
     public func send(_ id: String) async {
-        guard let r = record(id), !r.status.isTerminal else { return }
-        let attempt: Int
-        if case .disconnected(_, let n) = r.status { attempt = n + 1 } else { attempt = 1 }
-        update(id) { $0.status = .sending(attempt: attempt) }
+        guard let claim = beginSend(id) else { return }
+        await send(claim)
+    }
+
+    /// Delivers an attempt `beginSend` claimed.
+    public func send(_ claim: SendClaim) async {
+        let id = claim.id, r = claim.record, attempt = claim.attempt
         do {
             guard let session = link.session, let pair = link.pair else { throw NearbyError.closed("not connected to a Mac") }
+            // On disk before the bytes leave: a capture the Mac may hold is
+            // always one a relaunch lists.
+            await flush()
             if let bound = r.pairId, bound != pair.pairId {
                 throw NearbyError.invalidInput("this capture was first sent to \(r.macFingerprint.map { "the Mac \($0)" } ?? "another Mac") (pair \(bound)); the current link is \(pair.macName) (pair \(pair.pairId)) — discard it and draft a new capture for this Mac")
             }
@@ -199,10 +261,18 @@ public final class CaptureQueue: @unchecked Sendable {
             } else {
                 let fresh = try await session.destinationQuery()
                 guard let fresh else {
-                    throw NearbyError.invalidInput("the Mac has no pinned insertion point (Edit > Pin Insertion Point on the Mac)")
+                    // Nothing was sent and nothing about the capture is wrong:
+                    // it stays retryable (same id, no pin frozen) so the
+                    // drawing Send already cleared from the canvas is not lost.
+                    update(id) { $0.status = .disconnected(reason: Self.noPinnedDestination, attempt: attempt) }
+                    return
                 }
                 dest = fresh
                 update(id) { $0.destinationId = dest.destinationId; $0.baseRevision = dest.baseRevision; $0.pairId = pair.pairId; $0.macFingerprint = pair.fingerprint }
+                // The frozen pin is on disk before the bytes leave (saves run
+                // on `persistQueue`): a relaunch after the Mac got the capture
+                // retries this exact envelope, never a re-queried pin.
+                await flush()
             }
             let submit = try session.makeCapture(captureId: id, image: r.png, mimeType: "image/png", instructions: r.instructions, destination: dest)
             let ack = try await session.submitCapture(submit)

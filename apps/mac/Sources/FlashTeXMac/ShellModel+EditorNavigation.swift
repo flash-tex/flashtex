@@ -250,11 +250,35 @@ extension ShellModel {
     /// Outline items of every open document ranked by `query` (all of them,
     /// in document order, for the empty query).
     func symbolPickerEntries(query: String) -> [SymbolPickerEntry] {
-        var out: [SymbolPickerEntry] = []
+        Self.symbolPickerEntries(query: query, outlines: renameDocuments.map { SymbolOutline(path: $0.path, items: DocumentOutline.scan($0.text)) })
+    }
+
+    /// One open document's outline, what Go to Symbol ranks.
+    struct SymbolOutline: Equatable {
+        var path: String
+        var items: [DocumentOutline.Item]
+    }
+
+    /// The outlines of every open document (active first), scanned off the
+    /// main thread once when Go to Symbol opens. The sheet used to scan every
+    /// document on each body evaluation: each typed letter and each arrow
+    /// key, 240 ms per scan of a 1.9 MB book (debug build).
+    func symbolPickerOutlinesOffMain() async -> [SymbolOutline] {
+        var out: [SymbolOutline] = []
         for doc in renameDocuments {
-            for item in DocumentOutline.scan(doc.text) {
+            out.append(SymbolOutline(path: doc.path, items: await DocumentOutline.scanOffMain(doc.text)))
+        }
+        return out
+    }
+
+    /// `outlines`' items ranked by `query` (all of them, in document order,
+    /// for the empty query); no scanning.
+    static func symbolPickerEntries(query: String, outlines: [SymbolOutline]) -> [SymbolPickerEntry] {
+        var out: [SymbolPickerEntry] = []
+        for outline in outlines {
+            for item in outline.items {
                 guard let score = EditorNavigation.fuzzyScore(query, in: item.title) ?? (query.isEmpty ? 0 : EditorNavigation.fuzzyScore(query, in: item.command)) else { continue }
-                out.append(SymbolPickerEntry(path: doc.path, item: item, score: score))
+                out.append(SymbolPickerEntry(path: outline.path, item: item, score: score))
             }
         }
         return query.isEmpty ? out : out.enumerated().sorted { ($1.element.score, $0.offset) < ($0.element.score, $1.offset) }.map(\.element)
@@ -414,16 +438,22 @@ struct WrapEnvironmentSheet: View {
     static let identifier = "wrap.environment"
     static let common = ["itemize", "enumerate", "equation", "align", "figure", "table", "center", "theorem", "proof", "verbatim", "minipage", "tabular"]
 
-    var candidates: [String] {
-        let used = Set(DocumentOutline.scan(model.activeText).filter { $0.kind == .environment }.map(\.title))
-        return Self.common + used.subtracting(Self.common).sorted()
+    /// The document's environments, scanned off the main thread when the
+    /// sheet opens (a scan of a 1.9 MB book is 240 ms in a debug build).
+    @State private var used: [String] = []
+
+    static func candidates(used: some Sequence<String>) -> [String] {
+        common + Set(used).subtracting(common).sorted()
     }
 
     var body: some View {
         WrapNameSheet(title: "Wrap selection in environment", fieldLabel: "Environment name", identifier: Self.identifier,
-                      candidates: candidates,
+                      candidates: Self.candidates(used: used),
                       wrap: { model.wrapSelection(inEnvironment: $0) },
                       cancel: { model.editorNavigation.wrapShown = false })
+        .task {
+            used = await DocumentOutline.scanOffMain(model.activeText).filter { $0.kind == .environment }.map(\.title)
+        }
     }
 }
 
@@ -501,10 +531,15 @@ struct SymbolPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var selected: String?
+    /// Scanned once, off the main thread, when the sheet opens; nil until then.
+    @State private var outlines: [ShellModel.SymbolOutline]?
     @FocusState private var focused: Bool
     static let identifier = "symbol.picker"
 
-    private var entries: [SymbolPickerEntry] { Array(model.symbolPickerEntries(query: query).prefix(200)) }
+    private var entries: [SymbolPickerEntry] {
+        guard let outlines else { return [] }
+        return Array(ShellModel.symbolPickerEntries(query: query, outlines: outlines).prefix(200))
+    }
 
     var body: some View {
         let rows = entries
@@ -523,7 +558,9 @@ struct SymbolPickerSheet: View {
             }
             .padding(.horizontal, DS.Space.l).padding(.vertical, DS.Space.m)
             Divider()
-            if rows.isEmpty {
+            if outlines == nil {
+                ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if rows.isEmpty {
                 ContentUnavailableView.search(text: query).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(rows, selection: $selected) { e in
@@ -545,6 +582,10 @@ struct SymbolPickerSheet: View {
         }
         .frame(width: DS.Layout.pickerWindowSize.width, height: DS.Layout.pickerWindowSize.height)
         .onAppear { focused = true; selected = rows.first?.id }
+        .task {
+            outlines = await model.symbolPickerOutlinesOffMain()
+            if selected == nil { selected = entries.first?.id }
+        }
         .onChange(of: query) { _, _ in selected = entries.first?.id }
     }
 

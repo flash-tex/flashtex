@@ -640,6 +640,23 @@ pub fn file_id(m: &std::fs::Metadata) -> u64 {
     }
 }
 
+/// Whether the file whose metadata `m` is (a descriptor's `fstat`) still
+/// has a name: its link count is above 0. A file another program deleted,
+/// or replaced by renaming another file over it, has none. `false` where
+/// the standard library has no link count (Windows), so that callers there
+/// ask the path instead.
+pub fn still_linked(m: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::MetadataExt::nlink(m) > 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = m;
+        false
+    }
+}
+
 /// `path`'s metadata (following links, as `std::fs::metadata`) and its
 /// status-change time in ns since the Unix epoch, for [`crate::statsig`].
 /// The change time moves with every write and every metadata change, and
