@@ -740,6 +740,40 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(model.files.lateReplies, [])
     }
 
+    /// Lane APP-LAG-AUDIT: switching back to the app (and the file watcher)
+    /// probes the disk without holding the main thread. The probe used to
+    /// hash the baseline and wait for the helper (which reads and hashes the
+    /// whole file) on main, per window, at every activation. Here the fake
+    /// answers 1 s late: the main actor keeps running meanwhile, and the
+    /// external change is still reported when the reply comes.
+    func testActivationProbeWaitsForTheHelperOffTheMainThread() async throws {
+        let dir = try tempDir("bg-status")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop() // the probe under test is the activation's
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+        try "changed elsewhere\n".write(to: url, atomically: true, encoding: .utf8)
+
+        let t0 = Date()
+        let probe = Task { @MainActor in await model.refreshDiskStatus() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let ran = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(ran, 0.6, "the main actor was held for the probe's reply (\(ran) s)")
+        XCTAssertEqual(model.files.backgroundStatusesSent, 1)
+        XCTAssertTrue(model.files.backgroundRequestsInFlight, "the reply is still to come")
+        XCTAssertNil(model.files.conflict)
+        let state = await probe.value
+        XCTAssertEqual(state, .modified)
+        XCTAssertEqual(model.files.conflict?.kind, .modifiedExternally)
+        XCTAssertEqual(model.files.conflict?.theirs, SourceDigest.sha256Hex("changed elsewhere\n"))
+        XCTAssertFalse(model.files.backgroundRequestsInFlight)
+        XCTAssertEqual(model.files.lateReplies, [])
+    }
+
     /// REVIEW-E (#2277): the unsaved-edit checks (the quit question, Open,
     /// Reload, restore) settle an autosave in flight before they look. They
     /// used to count the edits it was writing as unsaved: ⌘Q asked to save
@@ -837,6 +871,67 @@ final class DocumentFilesTests: XCTestCase {
         XCTAssertEqual(try disk(chapterURL), "chapter edited\n")
         XCTAssertNil(model.files.conflict)
         XCTAssertNil(model.project.saveConflict(for: "chapter.tex"))
+    }
+
+    /// REVIEW-E (#2285): a probe answered "unchanged" that a main-thread
+    /// check overtook is dropped when that check recorded a conflict meanwhile.
+    /// It used to be applied after it, and cleared the newer conflict.
+    func testAStaleUnchangedProbeNeverClearsANewerConflict() async throws {
+        let dir = try tempDir("bg-status-stale")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "2"])
+
+        // The probe reads the file (unchanged) and answers 2 s later.
+        let probe = Task { @MainActor in await model.refreshDiskStatus() }
+        try await waitUntil("the probe to go out") { model.files.backgroundStatusesSent == 1 }
+        try await pump(0.8)
+        // An external edit, seen by a main-thread check that settles the probe first.
+        try "changed outside\n".write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(model.checkDiskStatus(), .modified)
+        XCTAssertNotNil(model.files.conflict)
+        _ = await probe.value
+        XCTAssertNotNil(model.files.conflict, "the stale unchanged probe cleared the newer conflict")
+        XCTAssertEqual(model.files.conflict?.kind, .modifiedExternally)
+    }
+
+    /// REVIEW-E (#2285): a burst of watcher events (or activations) while a
+    /// probe is out waits for it off the main thread and is answered by at
+    /// most one more probe. Each used to block main for the previous probe's
+    /// round trip, then send a probe of its own.
+    func testABurstOfProbesIsCoalescedOffTheMainThread() async throws {
+        let dir = try tempDir("bg-status-burst")
+        let url = dir.appendingPathComponent("paper.tex")
+        try "base\n".write(to: url, atomically: true, encoding: .utf8)
+
+        let model = ShellModel()
+        model.files.policy = fake([])
+        model.files.helperTimeout = 20
+        XCTAssertEqual(model.openTex(at: url), .opened)
+        model.documentWatcher.stop()
+        model.files.policy = fake(["--mode", "late", "--delay", "1"])
+
+        let first = Task { @MainActor in await model.refreshDiskStatus() }
+        try await waitUntil("the first probe to go out") { model.files.backgroundStatusesSent == 1 }
+        let t0 = Date()
+        let burst = (0..<5).map { _ in Task { @MainActor in await model.refreshDiskStatus() } }
+        try await pump(0.1)
+        let held = Date().timeIntervalSince(t0)
+        XCTAssertLessThan(held, 0.6, "the burst held the main thread for the probe in flight (\(held) s)")
+        let firstState = await first.value
+        XCTAssertEqual(firstState, .unchanged)
+        for task in burst {
+            let state = await task.value
+            XCTAssertEqual(state, .unchanged)
+        }
+        XCTAssertLessThanOrEqual(model.files.backgroundStatusesSent, 2, "each event of the burst sent a probe of its own")
+        XCTAssertNil(model.files.conflict)
     }
 
     func testGarbageReplyIsAProtocolFailureNotASave() throws {

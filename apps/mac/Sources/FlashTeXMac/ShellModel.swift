@@ -197,6 +197,10 @@ final class ShellModel {
     /// outstanding after the watcher's single retry; the late reply consumes
     /// it with one more `watcherFired` (#831; DocumentWatcher.swift).
     @ObservationIgnored var pendingWatcherRecheck = false
+    /// Background disk probes sent by `refreshDiskStatus`, and the last one's
+    /// number and applied state: a burst of requests is answered by one probe.
+    @ObservationIgnored var diskProbesStarted = 0
+    @ObservationIgnored var lastDiskProbe: (number: Int, state: ProjectFilesV1.DiskState?)?
     var appliedCaptureIDs: Set<String> = []
     /// Past proposal decisions with outcomes (ReviewHistory.swift); persisted
     /// under Application Support (`FLASHTEX_REVIEW_HISTORY_DIR` overrides, `off` = memory only).
