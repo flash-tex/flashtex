@@ -237,7 +237,7 @@ says which bundle the host reads and from which configuration.
 |---|---|---|
 | protocol + decoder (MIT, Foundation only) | `Sources/FlashTeXDisplayListV3/` | frames, PAGE/FORM/FONT/IMAGE/SOURCES/control messages, COMPILE requests, the socket; `DL3Canonical` is the decoder-parity form (`dl3-dump --canonical`) |
 | renderer (Core Graphics/Core Text) | `Sources/FlashTeXPreviewV3/DL3Renderer.swift` | draws a decoded page exactly as Core Graphics draws the engine's PDF |
-| host process | `Sources/FlashTeXMac/EngineV3Host.swift` | locate, spawn (`--socket`, `--s0-cache ~/Library/Caches/FlashTeX/engine-v3/s0` or `s0-unicode`, each kept under `s0BudgetBytes` by `trimS0`), start-up line, `listening` |
+| host process | `Sources/FlashTeXMac/EngineV3Host.swift` | locate, spawn (`--socket`, `--s0-cache ~/Library/Caches/FlashTeX/engine-v3/s0` or `s0-unicode`, each kept under `s0BudgetBytes` by `trimS0` off the main thread, least recently used document first, its files together; the Unicode `.xs0base` bases are not counted), start-up line, `listening` |
 | session | `Sources/FlashTeXMac/EngineV3Session.swift` | one incremental connection, edits per keystroke, pages in place, PAGES stale ranges, PDF fallback, latency |
 | pane | `Sources/FlashTeXMac/EngineV3Preview.swift` | fit-to-width pages times the zoom (25–400 %, `PreviewZoom.swift`; pinch); only pages near the viewport hold bitmaps; rastered off the main thread; above 3 px/pt a page on screen is 512 px tiles (`EngineV3Tiles.swift`) |
 | bench | `Sources/FlashTeXMac/EngineV3Bench.swift` | `FLASHTEX_V3_BENCH=main.tex`: keystroke → pixels |

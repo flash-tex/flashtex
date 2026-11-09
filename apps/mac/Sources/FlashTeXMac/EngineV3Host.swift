@@ -190,34 +190,58 @@ final class EngineV3HostProcess: @unchecked Sendable {
         EngineV3.cacheDirectory.appendingPathComponent(mode == .unicode ? "s0-unicode" : "s0", isDirectory: true)
     }
 
-    /// Each S0 folder stays under this many bytes (`trimS0`): some 35–60
-    /// documents' S0s at 17–28 MB each.
+    /// Each S0 folder's S0 and S1 files (`s0Extensions`) stay under this many
+    /// bytes (`trimS0`): some 35–60 documents' S0s at 17–28 MB each. The
+    /// Unicode host's format bases (`.xs0base`, about 90 MB each) are not
+    /// counted or removed (the host collects unused ones itself), so
+    /// `s0-unicode` can hold more than this by its bases.
     static let s0BudgetBytes = 1 << 30
 
     /// The files a host writes in its S0 folder: the pdfTeX host's S0 and
     /// S1 (`<hash>.s0`, `<hash>.s1`), the Unicode host's S0 (`<hash>.xs0`).
     static let s0Extensions: Set<String> = ["s0", "s1", "xs0"]
 
+    /// Where `trimS0Later` trims, off the main thread.
+    static let s0TrimQueue = DispatchQueue(label: "flashtex.engine-v3.s0-trim", qos: .utility)
+
     /// Keeps the S0 files in `dir` under `budget` bytes, least recently
-    /// written first out (`EngineV3Snapshot.trim`'s rule). Only those files
-    /// (`s0Extensions`) are counted or removed; a host's temporary files are
-    /// its own to clean. An S0 removed while a host reads it stays readable
-    /// to that host; one removed before a host opens it costs that document
-    /// one full run, as a first open does.
+    /// used document first out. A document's files share a stem
+    /// (`<hash>.s0`, `<hash>.s1`, `<hash>.xs0`) and go together; their
+    /// newest modification date is the document's last use: a reopen only
+    /// reads the S0, which is written once, but each idle save rewrites the
+    /// S1. (By each file's own date, the most-used documents' S0s were the
+    /// oldest and went first, leaving their S1s, useless without the S0.)
+    /// Only `s0Extensions` files are counted or removed; a host's temporary
+    /// files are its own to clean. An S0 removed while a host reads it stays
+    /// readable to that host; one removed before a host opens it costs that
+    /// document one full run, as a first open does.
     static func trimS0(_ dir: URL, budget: Int = s0BudgetBytes) {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
         guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
-        var files: [(url: URL, date: Date, bytes: Int)] = []
+        var groups: [String: (date: Date, bytes: Int, urls: [URL])] = [:]
         for u in urls where s0Extensions.contains(u.pathExtension) {
             guard let v = try? u.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
-            files.append((u, v.contentModificationDate ?? .distantPast, v.fileSize ?? 0))
+            let stem = u.deletingPathExtension().lastPathComponent
+            var g = groups[stem] ?? (.distantPast, 0, [])
+            g.date = max(g.date, v.contentModificationDate ?? .distantPast)
+            g.bytes += v.fileSize ?? 0
+            g.urls.append(u)
+            groups[stem] = g
         }
-        var total = files.reduce(0) { $0 + $1.bytes }
-        for f in files.sorted(by: { $0.date < $1.date }) where total > budget {
-            try? fm.removeItem(at: f.url)
-            total -= f.bytes
+        var total = groups.values.reduce(0) { $0 + $1.bytes }
+        for g in groups.values.sorted(by: { $0.date < $1.date }) where total > budget {
+            for u in g.urls { try? fm.removeItem(at: u) }
+            total -= g.bytes
         }
+    }
+
+    /// `trimS0` on `queue`, so that starting a host (on the main actor)
+    /// never waits on the folder: a first trim of an uncapped folder can
+    /// remove dozens of large files. The hosts tolerate an S0 that vanishes
+    /// meanwhile: that document's run starts cold.
+    static func trimS0Later(_ dir: URL, budget: Int = s0BudgetBytes, queue: DispatchQueue = s0TrimQueue) {
+        queue.async { trimS0(dir, budget: budget) }
     }
 
     /// The host's command line. `--once`: serve one connection, then exit
@@ -244,7 +268,7 @@ final class EngineV3HostProcess: @unchecked Sendable {
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
         let s0 = Self.s0Directory(mode: mode)
         try? FileManager.default.createDirectory(at: s0, withIntermediateDirectories: true)
-        Self.trimS0(s0)
+        Self.trimS0Later(s0)
         process.executableURL = executable
         process.arguments = Self.arguments(
             socketPath: socketPath, mode: mode, s0Directory: s0,

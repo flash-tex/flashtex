@@ -41,7 +41,7 @@ final class EngineV3ModeTests: XCTestCase {
     }
 
     /// Each S0 folder (Classic's and Unicode's) is kept under its budget by
-    /// one rule: least recently written S0 files first out; files that are
+    /// one rule: least recently used document first out; files that are
     /// not a host's S0 or S1 are neither counted nor removed.
     func testS0FoldersStayUnderTheirBudget() throws {
         let fm = FileManager.default
@@ -63,6 +63,47 @@ final class EngineV3ModeTests: XCTestCase {
         EngineV3HostProcess.trimS0(dir, budget: 1000)
         XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: dir.path)), left, "under the budget nothing goes")
         XCTAssertEqual(EngineV3HostProcess.s0Extensions, ["s0", "s1", "xs0"])
+    }
+
+    /// A document's files (one stem) are dated by their newest member and
+    /// go together. `often` was first opened long ago (its S0 is the oldest
+    /// file) but its S1 was saved just now; `once` was opened once since.
+    /// By each file's own write date (the old rule) `often.s0` went first
+    /// and `often.s1` was left without it.
+    func testS0TrimRemovesLeastRecentlyUsedDocumentsWhole() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ftx-s0lru-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let files: [(String, Double)] = [("often.s0", 0), ("stale.s0", 1), ("stale.s1", 2), ("once.s0", 5), ("often.s1", 10)]
+        for (n, minutes) in files {
+            let u = dir.appendingPathComponent(n)
+            try Data(count: 100).write(to: u)
+            try fm.setAttributes([.modificationDate: base.addingTimeInterval(minutes * 60)], ofItemAtPath: u.path)
+        }
+        EngineV3HostProcess.trimS0(dir, budget: 350)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: dir.path)), ["often.s0", "often.s1", "once.s0"], "the least recently used document goes whole")
+        EngineV3HostProcess.trimS0(dir, budget: 250)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: dir.path)), ["often.s0", "often.s1"], "the most recently used document stays with its S0")
+    }
+
+    /// Starting a host (on the main actor) does not trim the folder on the
+    /// calling thread: `init` calls `trimS0Later`, which trims on its queue.
+    func testS0TrimRunsOffTheCallingThread() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ftx-s0later-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        for n in ["a.s0", "b.s0"] { try Data(count: 100).write(to: dir.appendingPathComponent(n)) }
+        let queue = DispatchQueue(label: "ftx-test-s0trim")
+        queue.suspend()
+        EngineV3HostProcess.trimS0Later(dir, budget: 0, queue: queue)
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: dir.path).count, 2, "nothing removed on the calling thread")
+        queue.resume()
+        queue.sync {}
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: dir.path), [], "removed on the queue")
+        XCTAssertEqual(EngineV3HostProcess.s0TrimQueue.label, "flashtex.engine-v3.s0-trim")
     }
 
     func testResolutionOrder() {
