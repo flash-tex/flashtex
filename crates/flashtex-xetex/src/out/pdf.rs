@@ -1357,6 +1357,31 @@ impl<'a> Writer<'a> {
             self.object(tree, &body);
             names.set(b"Dests", Obj::Ref(tree, 0));
         }
+        // `pdf:names`' other trees, in dvipdfmx's category order; each
+        // value an indirect object (pdfnames.c's build_name_tree writes
+        // pdf_ref_obj of it), a reference as it is
+        for cat in super::special::NAME_CATEGORIES {
+            let Some(entries) = doc.name_trees.get(cat) else {
+                continue;
+            };
+            let mut arr = Vec::new();
+            for (k, v) in entries {
+                arr.push(Obj::Str(k.clone()));
+                match v {
+                    Obj::Named(_) | Obj::Ref(..) => arr.push(v.clone()),
+                    _ => {
+                        let r = self.alloc();
+                        let body = self.ser(v);
+                        self.object(r, &body);
+                        arr.push(Obj::Ref(r, 0));
+                    }
+                }
+            }
+            let tree = self.alloc();
+            let body = self.ser(&Obj::Dict(Dict(vec![(b"Names".to_vec(), Obj::Array(arr))])));
+            self.object(tree, &body);
+            names.set(cat, Obj::Ref(tree, 0));
+        }
         let names_ref = if !names.0.is_empty() || self.names_obj.is_some() {
             let o = match self.names_obj {
                 Some(o) => o,
