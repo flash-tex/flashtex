@@ -5388,3 +5388,116 @@ fn a_reopen_at_a_viewport_before_s1_runs_from_s0() {
     assert!(log == log0, "the log differs from a scratch compile's");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// (lane AUDIT-HYPH) Hyphenation exceptions added mid-document are state a
+/// checkpoint restores (`hyph_word`, `hyph_list`, `hyph_count` and their
+/// strings), and the version BOX-MEMO keys on (K5). `\hyphenation` on page
+/// 2 changes how a word breaks in the narrow paragraphs of pages 2 and 3,
+/// and in the box `\measure` measures on every page. Each edit (an
+/// exception changed, one removed, one added on page 1, a word on page 3
+/// and on page 1, the exception back) restores a checkpoint from before or
+/// after it; every page must equal a scratch compile's.
+#[test]
+fn hyphenation_exceptions_added_mid_document_restore_with_their_checkpoint() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let para = "availability representation characteristically availability \
+                representation availability characteristically representation \
+                availability representation.";
+    let page = |tag: &str| {
+        format!(
+            "\\measure{{availability representation}}\\typeout{{[\\the\\dimen1]}}\n\
+             {tag} {para} {para}\n\n{para} {para}\n\\newpage\n"
+        )
+    };
+    let text = format!(
+        "\\documentclass{{article}}\n\\setlength\\textwidth{{2.5cm}}\n\
+         \\newcommand\\measure[1]{{\\begingroup\\setbox0\\vbox{{\\hsize=2cm \\hbadness10000 \
+         \\hfuzz\\maxdimen #1}}\\global\\dimen1=\\ht0 \\endgroup}}\n\
+         \\begin{{document}}\n%P1\n{}\\hyphenation{{availabil-ity}}%X\n{}{}\\end{{document}}\n",
+        page("One"),
+        page("Two"),
+        page("Three")
+    );
+    let base = common::fresh_dir("flashtex-host-hyphexc");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    std::fs::write(proj.join(main), &text).unwrap();
+    let env = [
+        ("FLASHTEX_BOXMEMO", "on"),
+        ("FLASHTEX_BOXMEMO_NAMES", "measure"),
+    ];
+    let host = start_host_env("hx", &env);
+    let scratch = start_host_env("hxs", &[("FLASHTEX_BOXMEMO", "off")]);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let mut cur = text.clone();
+    // (what, find, replace)
+    let edits: [(&str, &str, &str); 6] = [
+        (
+            "an exception changed",
+            "availabil-ity}",
+            "avail-a-bil-i-ty}",
+        ),
+        (
+            "an exception removed",
+            "\\hyphenation{avail-a-bil-i-ty}%X",
+            "%X",
+        ),
+        (
+            "an exception added on page 1",
+            "%P1",
+            "\\hyphenation{rep-resen-tation}",
+        ),
+        ("a word on page 3", "Three", "Third"),
+        ("a word on page 1", "One", "First"),
+        (
+            "the exception back on page 2",
+            "%X",
+            "\\hyphenation{availabil-ity}%X",
+        ),
+    ];
+    for (n, (what, find, repl)) in edits.iter().enumerate() {
+        let at = cur.find(find).unwrap_or_else(|| panic!("{what}: {find}"));
+        let mut r = req(2 + n as i64, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at as u64,
+            delete: find.len() as u64,
+            insert: (*repl).into(),
+        }];
+        cur.replace_range(at..at + find.len(), repl);
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{what}: {}", o.done);
+        // a restore, not a cold compile (restart pages 1, 1, 0, 2, 0, 1 on
+        // 2026-11-09)
+        assert_eq!(
+            o.done.str_field("mode"),
+            Some("incremental"),
+            "{what}: {}",
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("hx{n}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("after {what}: {}", o.done),
+        );
+    }
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
