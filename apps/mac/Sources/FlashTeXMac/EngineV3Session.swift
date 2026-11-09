@@ -2703,13 +2703,20 @@ final class EngineV3Session {
     /// Pages the display list cannot draw exactly render from the compile's PDF.
     /// The PDF (whole: `DL3PDFBytes`) is read and opened off main, `data`
     /// when the caller has read it already; its pages are taken on main if
-    /// no later load or page drop came first (`fallbackLoad`). The next
+    /// no later load or page drop came first (`fallbackLoad`), and only for
+    /// the pages that are still the ones the load was for (a newer run's
+    /// page may arrive while the PDF is read: it never gets the older run's
+    /// PDF page, REVIEW-E on #1971). The next
     /// compile may already be rewriting the file in place: bytes that do not
     /// end whole (`DL3Renderer.endsWhole`) are not opened, so a torn read
     /// gives no fallback page rather than a page mixing two runs.
     private func loadFallbacks(pdf: String?, data: Data? = nil) {
         fallbackLoad &+= 1
-        let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms(forPage: $0)) == true }.sorted()
+        // Each page with its identity (its hash) as the load found it.
+        let need: [(index: Int, hash: [UInt8])] = fallbackCandidates.sorted().compactMap { i in
+            guard let p = pages[i], p.needsPDFFallback(forms: forms(forPage: i)) else { return nil }
+            return (i, p.page.hash)
+        }
         guard !need.isEmpty, let pdf else { return }
         let token = fallbackLoad
         let ref = EngineV3WeakRef(self)
@@ -2720,7 +2727,11 @@ final class EngineV3Session {
                 guard let self = ref.value, token == self.fallbackLoad, let doc else { return }
                 let start = DispatchTime.now().uptimeNanoseconds
                 defer { self.lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
-                let still = need.filter { self.fallbackCandidates.contains($0) && self.pages[$0]?.needsPDFFallback(forms: self.forms(forPage: $0)) == true }
+                let still = need.compactMap { n -> Int? in
+                    guard self.fallbackCandidates.contains(n.index), let p = self.pages[n.index], p.page.hash == n.hash,
+                          p.needsPDFFallback(forms: self.forms(forPage: n.index)) else { return nil }
+                    return n.index
+                }
                 guard !still.isEmpty else { return }
                 self.pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
                 for i in still { if let p = DL3Renderer.page(of: doc, at: i + 1) { self.pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
