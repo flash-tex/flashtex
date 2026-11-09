@@ -489,6 +489,26 @@ fn a_box_made_in_a_group_is_not_the_calls_after_it() {
     assert!(stat(&s, "hits") >= 3, "{s}");
 }
 
+#[test]
+fn everyeof_read_past_the_call_is_not_the_calls() {
+    // (#2199) `\\count1=5` reads on past the body for more digits. At the
+    // end of `u.tex`, whose last token is the call, e-TeX pushes
+    // `\\everyeof` at the input level the body had, so its `7` and
+    // `\\relax` looked like the call's own. They are not in its key: once
+    // `\\everyeof` is `8\\relax` the call reads 58, not the recorded 57.
+    // Such a read is past the call and abandons the recording
+    let s = check_with(
+        "everyeof",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure{\\global\\count1=5}\\def\\show{\\message{[\\the\\count1]}}\n\
+         \\everyeof{7\\relax}\\input u \\show\\input u \\show\\input u \\show\n\
+         \\everyeof{8\\relax}\\input u \\show\\input u \\show\\end\n",
+        &[("u.tex", b"\\measure\n".to_vec())],
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+    assert!(stat(&s, "Level") >= 1, "{s}");
+}
+
 /// TeX Live's `cmr10.tfm`, or `None` (the test then passes with a note).
 fn cmr10() -> Option<Vec<u8>> {
     let bin = flashtex_engine::resolver::find_texlive_bin()?;

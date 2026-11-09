@@ -171,6 +171,24 @@ begin if intr_rec_on then flashtex_intr_next;
 begin_token_list(param_stack[param_start+cur_chr-1],parameter);
 @z
 
+@x pdftex.web l.8836 - ... and so is the end of a file, before its \.{\\everyeof} is read (#2199)
+      begin limit:=first-1; eof_seen[index]:=true; {fake one empty line}
+      begin_token_list(every_eof,every_eof_text); goto restart;
+@y
+      begin limit:=first-1; eof_seen[index]:=true; {fake one empty line}
+      if intr_rec_on then flashtex_intr_next;
+      begin_token_list(every_eof,every_eof_text); goto restart;
+@z
+
+@x pdftex.web l.8845
+    begin limit:=first-1; eof_seen[index]:=true; {fake one empty line}
+    begin_token_list(every_eof,every_eof_text); goto restart;
+@y
+    begin limit:=first-1; eof_seen[index]:=true; {fake one empty line}
+    if intr_rec_on then flashtex_intr_next;
+    begin_token_list(every_eof,every_eof_text); goto restart;
+@z
+
 @x pdftex.web l.8961 - an expansion that is not |big_switch|'s own ends |intr_at_switch|
 reswitch:
 if cur_cmd<call then @<Expand a nonmacro@>
