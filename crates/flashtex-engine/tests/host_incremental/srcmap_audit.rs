@@ -136,9 +136,17 @@ fn compare_all(
     rs.output_dir = Some(o2.to_str().unwrap().into());
     let so = compile(&mut s, &mut sv, &rs);
     let _ = s.bye();
-    assert_eq!(so.done.str_field("mode"), Some("cold"), "{what}: {}", so.done);
+    assert_eq!(
+        so.done.str_field("mode"),
+        Some("cold"),
+        "{what}: {}",
+        so.done
+    );
     if sv.count != view.count {
-        bad.push(format!("{what}: {} pages, scratch {}", view.count, sv.count));
+        bad.push(format!(
+            "{what}: {} pages, scratch {}",
+            view.count, sv.count
+        ));
         return;
     }
     assert_eq!(view.pages.len(), view.count, "{what}: pages missing");
@@ -227,31 +235,28 @@ fn audit_counting(
     let mut view = View::default();
     let mut bad = vec![];
     let mut id = 0;
-    let settle = |c: &mut Client,
-                  view: &mut View,
-                  bad: &mut Vec<String>,
-                  id: &mut i64,
-                  what: &str| {
-        for n in 0..4 {
-            let (p2, o2) = snapshot(&base, &proj, &out, &format!("{id}s{n}"));
-            *id += 1;
-            let o = compile(c, view, &req(*id, &proj, &out, main));
-            if o.done.str_field("mode") == Some("unchanged") {
-                break;
+    let settle =
+        |c: &mut Client, view: &mut View, bad: &mut Vec<String>, id: &mut i64, what: &str| {
+            for n in 0..4 {
+                let (p2, o2) = snapshot(&base, &proj, &out, &format!("{id}s{n}"));
+                *id += 1;
+                let o = compile(c, view, &req(*id, &proj, &out, main));
+                if o.done.str_field("mode") == Some("unchanged") {
+                    break;
+                }
+                eprintln!("{name}: {what}, compile {n}: {}", o.done);
+                compare_all(
+                    &scratch.1,
+                    view,
+                    &o.diags,
+                    (&proj, &out),
+                    (&p2, &o2),
+                    main,
+                    &format!("{what} (compile {n})"),
+                    bad,
+                );
             }
-            eprintln!("{name}: {what}, compile {n}: {}", o.done);
-            compare_all(
-                &scratch.1,
-                view,
-                &o.diags,
-                (&proj, &out),
-                (&p2, &o2),
-                main,
-                &format!("{what} (compile {n})"),
-                bad,
-            );
-        }
-    };
+        };
     settle(&mut c, &mut view, &mut bad, &mut id, "open");
     for (k, s) in steps.iter().enumerate() {
         let mut texts: BTreeMap<&str, String> = BTreeMap::new();
@@ -458,7 +463,12 @@ fn spans_and_diagnostics_across_edits_in_a_multi_file_project() {
         ),
     ];
     let bad = audit("multi", &multi_file(), "main.tex", &steps, &[]);
-    assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "{} differences:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
 
 /// Calls BOX-MEMO records in an edit's window and replays at the next
@@ -516,7 +526,12 @@ fn spans_and_diagnostics_of_replayed_calls_equal_a_fresh_run() {
         &steps,
         &[("FLASHTEX_BOXMEMO_NAMES", "measure,drawit")],
     );
-    assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "{} differences:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
     // (both calls, at two keystrokes or more; 6 measured on the PC)
     eprintln!("BOX-MEMO hits: {hits}");
     assert!(hits >= 4, "the calls were replayed {hits} times");
@@ -615,5 +630,10 @@ fn kept_pages_and_their_diagnostics_follow_edits_with_hyperref() {
         ),
     ];
     let bad = audit("hyperref", &files, "main.tex", &all, &[]);
-    assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad.join("\n"));
+    assert!(
+        bad.is_empty(),
+        "{} differences:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
 }
