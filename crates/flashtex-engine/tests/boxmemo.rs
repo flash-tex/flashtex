@@ -498,6 +498,23 @@ fn calls_in_math_groups_compare_their_save_stack() {
 }
 
 #[test]
+fn a_call_that_starts_an_empty_paragraph_never_replays() {
+    // (lane AUDIT-WRITES) `\\noindent\\par` at the call's own vertical level,
+    // on an empty list (here a `\\vbox` whose one line `\\lastbox` took
+    // back), appends nothing, but `new_graf` sets that list's `prev_graf` to
+    // 0 (tex.web §1091) outside `eq_define`, and `\\prevgraf` reads it. On
+    // main a replay left the line count: off `[0] [0] [0]`, on `[0] [1] [1]`
+    let s = check(
+        "prevgraf",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup\\noindent\\par\\endgroup}\n\
+         \\def\\one{\\setbox2\\vbox{x\\par\\setbox3\\lastbox\\measure{}\\message{[\\the\\prevgraf]}}}\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
 fn a_control_sequence_skipped_by_a_false_conditional_is_in_the_key() {
     // (lane REVIEW, #1977) the call's body skips `\foo` in a false
     // conditional, read in place (changes/throughput.ch [4]); then `\foo`

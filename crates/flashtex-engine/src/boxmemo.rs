@@ -543,6 +543,10 @@ struct Frame {
     nest_ptr: i32,
     mode: i32,
     tail: i32,
+    /// The call's list's `prev_graf` (`\\prevgraf` of a vertical list):
+    /// `new_graf` sets it to 0 outside `eq_define` (tex.web §1091), even
+    /// for an empty paragraph that appends nothing (`\\noindent\\par`).
+    prev_graf: i32,
     page: Vec<i64>,
     fonts: (i32, i32),
     font_glue: Vec<i32>,
@@ -2090,6 +2094,7 @@ impl Globals {
             nest_ptr: self.nest_ptr,
             mode: self.cur_list.mode_field,
             tail: self.cur_list.tail_field,
+            prev_graf: self.cur_list.pg_field,
             page,
             fonts: (self.font_ptr, self.fmem_ptr),
             font_glue,
@@ -3611,7 +3616,10 @@ impl Globals {
             Some("Error")
         } else if self.after_token != 0 || self.scanner_status != scanner {
             Some("State")
-        } else if end.nest_ptr != start.nest_ptr || end.mode != start.mode {
+        } else if end.nest_ptr != start.nest_ptr
+            || end.mode != start.mode
+            || end.prev_graf != start.prev_graf
+        {
             Some("OuterList")
         } else if end.tail != start.tail && start.mode != -k::hmode {
             // only in restricted horizontal mode may a call append: no
