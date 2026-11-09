@@ -105,9 +105,12 @@ pub fn link_engine(target: &std::path::Path, link: &std::path::Path) {
 /// the call (`body`, then the part that needs room) runs three times with
 /// room to spare, so it is recorded and replayed; then the room left is less
 /// than it needs, and it runs once more. Each pair is (the start of the
-/// message pdfTeX stops with, the file).
+/// message pdfTeX stops with, the file). The pool's call reads a macro of
+/// `big` characters, after `fill` names of about 1004 characters leave
+/// less room than that: 20000 and 6183, or 3000 and 6188 where the
+/// recording keeps what the macro it reads holds (D9).
 #[allow(dead_code)]
-pub fn capacity_cases(m: &str, body: &str) -> Vec<(&'static str, String)> {
+pub fn capacity_cases(m: &str, body: &str, big: usize, fill: usize) -> Vec<(&'static str, String)> {
     let h = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\%=14 \\scrollmode\n";
     let calls = format!("\\{m}\\{m}\\{m}\n");
     // the buffer: the call's `\csname` of a 50-letter name, on a line of
@@ -120,17 +123,16 @@ pub fn capacity_cases(m: &str, body: &str) -> Vec<(&'static str, String)> {
          \\def\\{m}{{\\begingroup{body}\\expandafter\\ifx\\csname {name}\\endcsname\\relax\\fi\\endgroup}}\n\
          {calls}{line}\n\\end\n"
     );
-    // the pool: the call's `\meaning` of a macro of 20000 characters, after
-    // 6183 names of about 1004 characters leave less room than that
-    // (pool_size=6250000)
+    // the pool: the call's `\meaning` of `\big` (in `\pdfstrcmp`'s
+    // argument, so that no recording keeps it) (pool_size=6250000)
     let pool = format!(
         "{h}\\def\\big{{{}}}\n\
-         \\def\\{m}{{\\begingroup{body}\\edef\\y{{\\meaning\\big}}\\endgroup}}\n{calls}\
+         \\def\\{m}{{\\begingroup{body}\\ifnum\\pdfstrcmp{{\\meaning\\big}}{{}}=0 \\fi\\endgroup}}\n{calls}\
          \\def\\X{{{}}}\n\
-         \\count1=0 \\def\\fill{{\\ifnum\\count1<6183 \\advance\\count1 1 \
+         \\count1=0 \\def\\fill{{\\ifnum\\count1<{fill} \\advance\\count1 1 \
          \\expandafter\\let\\csname\\the\\count1 \\X\\endcsname\\relax \\expandafter\\fill\\fi}}\n\
          \\fill\\relax\\{m}\\message{{[survived]}}\n\\end\n",
-        "y".repeat(20_000),
+        "y".repeat(big),
         "x".repeat(1000)
     );
     vec![

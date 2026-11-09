@@ -504,7 +504,7 @@ fn a_replay_keeps_the_buffers_and_the_pools_overflows() {
     // recorded with room to spare was replayed where its normal path stops
     // with `TeX capacity exceeded` (on main: `[survived]`, exit 0)
     let body = "\\setbox0\\hbox{\\vrule width 2pt}\\global\\dimen1=\\wd0 ";
-    for (i, (want, src)) in common::capacity_cases("measure", body)
+    for (i, (want, src)) in common::capacity_cases("measure", body, 20_000, 6183)
         .into_iter()
         .enumerate()
     {

@@ -277,7 +277,7 @@ fn a_replay_keeps_the_normal_paths_capacity_errors() {
     // makes again, stopped there with the replay's context instead of the
     // call's
     let h = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n";
-    let mut cases = common::capacity_cases("hook", "\\global\\count2=1 ");
+    let mut cases = common::capacity_cases("hook", "\\global\\count2=1 ", 3000, 6188);
     // four macro levels, 9993 levels deep (stack_size=10000)
     cases.push((
         "! TeX capacity exceeded, sorry [input stack size=10000]",
