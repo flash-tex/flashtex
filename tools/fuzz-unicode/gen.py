@@ -167,6 +167,13 @@ class Gen:
                 w = "\\Uchar\"%X%s" % (self.r.choice([0x5D0, 0x627, 0x41, 0x301, 0x200F]), w)
             elif k < 0.30 and fonts and self.fonts:
                 w = "{\\%s %s}" % (self.pick(self.fonts), w)
+            elif k < 0.33:
+                # \accent with a native font (make_accent's native branch).
+                w = "\\accent%s %s%s" % (self.pick(["\"301 ", "\"7E ", "`^", "\"2D9 ", "\"5B4 ", "\"64E "]),
+                                         self.pick(["e", "o", "A", "\u05d1", "^^^^0628", "{}", "\\XeTeXglyph36 "]),
+                                         w)
+            elif k < 0.35:
+                w = "\\uppercase{%s}" % w if self.chance(0.5) else "\\lowercase{%s}" % w
             out.append(w)
         sep = self.pick([" ", " ", " ", "~", " \\ "])
         return sep.join(out)
@@ -358,6 +365,12 @@ class Gen:
             "\\the\\XeTeXinterwordspaceshaping",
             "\\the\\XeTeXmathcode`a", "\\the\\Umathcode`+" if self.math else "\\the\\Umathcodenum`x",
             "\\the\\Umathcodenum`=",
+            "\\the\\fontcharwd\\%s`%s" % (f, self.pick(["A", "é", "f", "\\^^^^05d0", "\\^^^^0627"])),
+            "\\the\\fontcharht\\%s`%s" % (f, self.pick(["A", "g", "\\^^^^fb01"])),
+            "\\the\\fontchardp\\%s`%s" % (f, self.pick(["g", "y", "("])),
+            "\\the\\fontcharic\\%s`%s" % (f, self.pick(["f", "A"])),
+            "\\iffontchar\\%s`%s Y\\else N\\fi" % (f, self.pick(["A", "\\^^^^05d0", "\\^^^^0e01", "\\^^^^4e2d"])),
+            "\\the\\XeTeXlastfontchar\\%s" % f,
         ]
         return ["{\\%s %s}%%" % (f, "".join("\\message{[%s]}" % q
                                              for q in self.r.sample(qs, self.r.randint(2, 7))))]
@@ -409,7 +422,7 @@ class Gen:
                  "\\displaystyle\\sum", "\\Udelimiter\"4\"1\"28 ", "\\Uoverdelimiter\"1\"23DE {x+y}",
                  "\\Uunderdelimiter\"1\"23DF {x+y}", "\\Uroot\"1\"221A {3}{x}",
                  "\\mathop{\\Umathchar\"1\"1\"222B }\\limits_a^b", "(a)", "x\\mkern3mu y",
-                 "\\Umathaccent bottom \"0\"1\"332 {x}", "\\Ustack{a\\over b}",
+                 "\\Umathaccent bottom \"0\"1\"332 {x}",
                  "\\Umathaccent fixed \"0\"1\"303 {x}"]
         body = " ".join(self.r.sample(atoms, self.r.randint(1, 5)))
         L = []

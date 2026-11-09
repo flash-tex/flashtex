@@ -125,7 +125,7 @@ setup through `\Umathcode`/`\Udelcode`/`\Umathchardef`, and
 - ligatures and kerns across font changes, `\/`, `\noboundary`;
 - hyphenation of native words in narrow boxes, `\language`;
 - OpenType math: scripts, fractions, radicals, accents, delimiters,
-  `\Umathchar`, `\Uoverdelimiter`, `\Uroot`, `\Ustack`, displays;
+  `\Umathchar`, `\Uoverdelimiter`, `\Uroot`, displays;
 - `\XeTeXpicfile`/`\XeTeXpdffile` with every size keyword;
 - a new font mid-document, `\fontdimen` changes;
 - ICU line breaking under `\XeTeXlinebreaklocale` (Thai, CJK);
