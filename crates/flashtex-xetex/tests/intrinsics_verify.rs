@@ -468,7 +468,10 @@ fn a_check_whose_real_path_was_too_long_to_record_is_no_difference() {
 #[test]
 fn direct_parameter_writes_are_not_replayable() {
     for (set, reset) in [
-        ("\\XeTeXlinebreaklocale \"zh\"", "\\XeTeXlinebreaklocale \"ja\""),
+        (
+            "\\XeTeXlinebreaklocale \"zh\"",
+            "\\XeTeXlinebreaklocale \"ja\"",
+        ),
         (
             "\\XeTeXdefaultencoding \"bytes\"",
             "\\XeTeXdefaultencoding \"utf8\"",
