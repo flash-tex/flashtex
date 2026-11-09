@@ -538,9 +538,14 @@ struct Obs {
     old_journal_all: std::sync::Arc<Vec<system::FileRead>>,
     /// The old run's lookups, and how many it had made at its last page
     /// checkpoint (`old_reads_end`'s count of lookups): the barrier test
-    /// (b'') needs the later ones that found nothing.
+    /// (b'') needs the later ones that found nothing. `None`: no last page
+    /// checkpoint (every later lookup).
     old_journal_lookups: std::sync::Arc<Vec<system::Lookup>>,
-    old_lookups_end: usize,
+    old_lookups_end: Option<usize>,
+    /// `Session::fixed_created` when the run started: a lookup of one that
+    /// found nothing is taken as the run it stands for made it (`changes`
+    /// skips it), and (b'') does too.
+    fixed_created: Vec<String>,
     converge: bool,
     stop_at: Option<usize>,
     converged: Option<(usize, CheckpointId)>,
@@ -1699,14 +1704,16 @@ impl Obs {
     /// record `o` (up to its last page checkpoint, as (b)) that found
     /// nothing and finds a file now that one of the runs opened for output.
     /// The candidates are matched by file name first (with TeX's `.tex`),
-    /// then made again (`system::lookup_again`).
+    /// then made again as `Session::changes` makes the compile's lookups
+    /// again (`lookupproof::Verifier`, from the proof where it holds), and
+    /// one that finds a file of `fixed_created` is passed over as there: the
+    /// two cannot disagree about a lookup.
     fn later_lookup_now_written(&self, o: &ExtRecord) -> Option<String> {
         let lookups = &self.old_journal_lookups;
         let from = o.reads.1.min(lookups.len());
-        let end = match self.old_lookups_end {
-            0 => lookups.len(),
-            e => e.min(lookups.len()),
-        };
+        let end = self
+            .old_lookups_end
+            .map_or(lookups.len(), |e| e.min(lookups.len()));
         if from >= end || !lookups[from..end].iter().any(|l| l.found.is_none()) {
             return None;
         }
@@ -1720,6 +1727,7 @@ impl Obs {
             .chain(self.old_outputs.iter())
             .filter_map(|p| name_of(p))
             .collect();
+        let mut verify = crate::lookupproof::Verifier::new();
         lookups[from..end]
             .iter()
             .find(|l| {
@@ -1727,7 +1735,9 @@ impl Obs {
                     && name_of(&l.name).is_some_and(|n| {
                         written.contains(&n) || written.contains(&format!("{n}.tex"))
                     })
-                    && system::lookup_again(l).is_some()
+                    && verify.lookup_again_deps(l).0.is_some_and(|p| {
+                        !self.fixed_created.contains(&system::out_key(&p))
+                    })
             })
             .map(|l| l.name.clone())
     }
@@ -6693,7 +6703,8 @@ impl Session {
             old_journal_files: vec![],
             old_journal_all: Default::default(),
             old_journal_lookups: Default::default(),
-            old_lookups_end: 0,
+            old_lookups_end: None,
+            fixed_created: vec![],
             converge: false,
             stop_at,
             converged: None,
@@ -6967,9 +6978,9 @@ impl Session {
         let (old_reads_end, old_lookups_end) = match end {
             Some(e) => {
                 let r = g.record_of(e)?;
-                (r.reads.0, r.reads.1)
+                (r.reads.0, Some(r.reads.1))
             }
-            None => (0, 0),
+            None => (0, None),
         };
         // Output files written and closed before `r` are the new run's own
         // too: nothing to put back. Restore, keeping the old future: the
@@ -7157,6 +7168,7 @@ impl Session {
         obs.old_journal_all = jr.files.clone();
         obs.old_journal_lookups = jr.lookups.clone();
         obs.old_lookups_end = old_lookups_end;
+        obs.fixed_created = self.fixed_created.clone();
         obs.old_outputs = jr
             .outputs
             .iter()
