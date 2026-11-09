@@ -357,19 +357,21 @@ impl<M: Metrics> Builder<'_, M> {
                     .diag(format!("bad colour in `color push{}'", lossy(r)));
                 return;
             };
-            self.doc.colors.push((c.clone(), c.clone()));
-            self.set_colors(Some(c.clone()), Some(c));
+            if self.doc.color_push((c.clone(), c.clone())) {
+                self.set_colors(Some(c.clone()), Some(c));
+            }
         } else if p.keyword(b"pop") {
-            self.doc.colors.pop();
+            self.doc.color_pop();
             self.reset_color();
         } else {
             let Some(c) = read_color(&mut p) else {
                 self.doc.diag(format!("bad colour in `color{}'", lossy(r)));
                 return;
             };
-            // `color SPEC`: the stack is that colour alone.
+            // `color SPEC` (pdf_color_clear_stack, pdf_color_set): the
+            // stack is emptied and its bottom entry is that colour.
             self.doc.colors.clear();
-            self.doc.colors.push((c.clone(), c.clone()));
+            self.doc.color_base = Some((c.clone(), c.clone()));
             self.set_colors(Some(c.clone()), Some(c));
         }
     }
@@ -382,9 +384,7 @@ impl<M: Metrics> Builder<'_, M> {
     fn pdf_colors(&mut self, p: &mut Parser) -> Option<(Col, Col)> {
         let (cf, cs) = self
             .doc
-            .colors
-            .last()
-            .cloned()
+            .color_current()
             .unwrap_or((Col::black(), Col::black()));
         let read = |p: &mut Parser, default: &Col| -> Option<Col> {
             if p.at_end() {
@@ -575,22 +575,25 @@ impl<M: Metrics> Builder<'_, M> {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                self.doc.colors.push((f.clone(), s.clone()));
-                self.set_colors(Some(f), Some(s));
+                if self.doc.color_push((f.clone(), s.clone())) {
+                    self.set_colors(Some(f), Some(s));
+                }
             }
             b"scolor" | b"setcolor" => {
                 let Some((f, s)) = self.pdf_colors(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
+                // the top entry, which is the bottom one when nothing is
+                // pushed
                 match self.doc.colors.last_mut() {
                     Some(top) => *top = (f.clone(), s.clone()),
-                    None => self.doc.colors.push((f.clone(), s.clone())),
+                    None => self.doc.color_base = Some((f.clone(), s.clone())),
                 }
                 self.set_colors(Some(f), Some(s));
             }
             b"ecolor" | b"endcolor" => {
-                self.doc.colors.pop();
+                self.doc.color_pop();
                 self.reset_color();
             }
             b"bgcolor" => {
