@@ -5134,6 +5134,113 @@ fn edits_after_a_reopen_from_s1_equal_scratch_compiles() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The S₀/S₁ cache (`--s0-cache`) is pruned: a host prunes it in the
+/// background once it has opened its first document, least recently used
+/// first, to the performance mode's cap (`FLASHTEX_S0_CACHE_CAP` here).
+/// Another project's pair goes together; the open project's files, and
+/// anything not named as the cache names its files, stay.
+#[test]
+fn the_s0_cache_is_pruned_least_recently_used_first() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s0-prune");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    for d in [&proj, &out, &cache] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(proj.join("main.tex"), article(1)).unwrap();
+    let day = Duration::from_secs(86_400);
+    let now = std::time::SystemTime::now();
+    let fake = |name: &str, kb: usize, age: Duration| {
+        let p = cache.join(name);
+        std::fs::write(&p, vec![7u8; kb << 10]).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(now - age)
+            .unwrap();
+        p
+    };
+    let h = |c: char| c.to_string().repeat(32);
+    // (oldest first: one S₀ alone, a pair, a newer S₀; 1.8 MB in all, over
+    // the 1 MB cap until the first two go)
+    let old1 = fake(&format!("{}.s0", h('a')), 600, 4 * day);
+    let old2 = [
+        fake(&format!("{}.s0", h('b')), 300, 3 * day),
+        fake(&format!("{}.s1", h('b')), 300, 3 * day),
+    ];
+    let newer = fake(&format!("{}.s0", h('c')), 600, day);
+    let kept = [
+        fake("notes.s0", 600, 9 * day),
+        fake(&format!("{}.txt", h('d')), 600, 9 * day),
+        fake(&format!("{}.s0.123.456.0.tmp", h('e')), 600, 9 * day),
+    ];
+    let env = [
+        ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ("FLASHTEX_S0_CACHE_CAP", "1000000"),
+    ];
+    let host = start_host_env("pr", &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let gone = || !old1.exists() && old2.iter().all(|p| !p.exists());
+    while !gone() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(gone(), "the least recently used files were not pruned");
+    for p in &kept {
+        assert!(
+            p.exists(),
+            "{} is not the cache's, and was removed",
+            p.display()
+        );
+    }
+    // the current project's S₀, saved after the compile
+    let own_s0 = || {
+        std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == "s0") && *p != newer && !kept.contains(p))
+    };
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while own_s0().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let own = own_s0().expect("the current project's S0 was not saved");
+    let _ = c.bye();
+    drop(host);
+    // A second host for the project prunes again: the newer S₀ goes, and
+    // the project's own (the cache's largest file, over the cap alone)
+    // stays while the project is open.
+    let host = start_host_env("pr2", &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while newer.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!newer.exists(), "the newer S0 was not pruned");
+    assert!(own.exists(), "the open project's S0 was pruned");
+    for p in &kept {
+        assert!(
+            p.exists(),
+            "{} is not the cache's, and was removed",
+            p.display()
+        );
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 // ---------------------------------------------------------------------------
 // Lane TEST-GAPS: host/server.rs's error and cancellation paths that the CI
 // coverage run (coverage-engine.yml, 2026-11-01) found untaken.
