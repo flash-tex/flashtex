@@ -23,6 +23,89 @@ final class EngineV3ModeTests: XCTestCase {
         XCTAssertNil(EngineV3Mode.magicComment("% !TEX root = main.tex\n"))
     }
 
+    /// Both hosts are resident and take the S0 cache (each mode its own
+    /// folder) and the performance mode; only the pdfTeX host takes the
+    /// checkpoint interval. (The Unicode host was started without either,
+    /// so a reopened Unicode document ran its preamble again.)
+    func testBothHostsTakeTheS0CacheAndTheProfile() {
+        for mode in [EngineV3Mode.classic, .unicode] {
+            let s0 = EngineV3HostProcess.s0Directory(mode: mode)
+            let a = EngineV3HostProcess.arguments(socketPath: "/tmp/x.sock", mode: mode, s0Directory: s0, profile: "low-memory", timed: "0.05")
+            XCTAssertEqual(Array(a.prefix(3)), ["--socket", "/tmp/x.sock", "--once"], "\(mode)")
+            XCTAssertEqual(a.firstIndex(of: "--s0-cache").map { a[$0 + 1] }, s0.path, "\(mode): \(a)")
+            XCTAssertEqual(a.firstIndex(of: "--profile").map { a[$0 + 1] }, "low-memory", "\(mode): \(a)")
+            XCTAssertEqual(a.contains("--timed"), mode == .classic, "\(mode): \(a)")
+        }
+        XCTAssertNotEqual(EngineV3HostProcess.s0Directory(mode: .classic), EngineV3HostProcess.s0Directory(mode: .unicode))
+        XCTAssertFalse(EngineV3HostProcess.arguments(socketPath: "/s", mode: .classic, s0Directory: URL(fileURLWithPath: "/c"), profile: "balanced", timed: "x").contains("--timed"), "a malformed interval is dropped")
+    }
+
+    /// Each S0 folder (Classic's and Unicode's) is kept under its budget by
+    /// one rule: least recently used document first out; files that are
+    /// not a host's S0 or S1 are neither counted nor removed.
+    func testS0FoldersStayUnderTheirBudget() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ftx-s0trim-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let names = ["a.s0", "b.s1", "c.xs0", "d.xs0", "e.s0"] // oldest first
+        let kept = ["old.tmp", "notes.txt", "f.xs0.123.456.0.tmp"]
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for (i, n) in (kept + names).enumerated() {
+            let u = dir.appendingPathComponent(n)
+            try Data(count: 100).write(to: u)
+            try fm.setAttributes([.modificationDate: base.addingTimeInterval(Double(i) * 60)], ofItemAtPath: u.path)
+        }
+        try fm.createDirectory(at: dir.appendingPathComponent("z.s0", isDirectory: true), withIntermediateDirectories: true)
+        EngineV3HostProcess.trimS0(dir, budget: 250)
+        let left = Set(try fm.contentsOfDirectory(atPath: dir.path))
+        XCTAssertEqual(left, Set(kept + ["d.xs0", "e.s0", "z.s0"]), "the two newest S0 files fit 250 bytes")
+        EngineV3HostProcess.trimS0(dir, budget: 1000)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: dir.path)), left, "under the budget nothing goes")
+        XCTAssertEqual(EngineV3HostProcess.s0Extensions, ["s0", "s1", "xs0"])
+    }
+
+    /// A document's files (one stem) are dated by their newest member and
+    /// go together. `often` was first opened long ago (its S0 is the oldest
+    /// file) but its S1 was saved just now; `once` was opened once since.
+    /// By each file's own write date (the old rule) `often.s0` went first
+    /// and `often.s1` was left without it.
+    func testS0TrimRemovesLeastRecentlyUsedDocumentsWhole() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ftx-s0lru-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let files: [(String, Double)] = [("often.s0", 0), ("stale.s0", 1), ("stale.s1", 2), ("once.s0", 5), ("often.s1", 10)]
+        for (n, minutes) in files {
+            let u = dir.appendingPathComponent(n)
+            try Data(count: 100).write(to: u)
+            try fm.setAttributes([.modificationDate: base.addingTimeInterval(minutes * 60)], ofItemAtPath: u.path)
+        }
+        EngineV3HostProcess.trimS0(dir, budget: 350)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: dir.path)), ["often.s0", "often.s1", "once.s0"], "the least recently used document goes whole")
+        EngineV3HostProcess.trimS0(dir, budget: 250)
+        XCTAssertEqual(Set(try fm.contentsOfDirectory(atPath: dir.path)), ["often.s0", "often.s1"], "the most recently used document stays with its S0")
+    }
+
+    /// Starting a host (on the main actor) does not trim the folder on the
+    /// calling thread: `init` calls `trimS0Later`, which trims on its queue.
+    func testS0TrimRunsOffTheCallingThread() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ftx-s0later-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        for n in ["a.s0", "b.s0"] { try Data(count: 100).write(to: dir.appendingPathComponent(n)) }
+        let queue = DispatchQueue(label: "ftx-test-s0trim")
+        queue.suspend()
+        EngineV3HostProcess.trimS0Later(dir, budget: 0, queue: queue)
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: dir.path).count, 2, "nothing removed on the calling thread")
+        queue.resume()
+        queue.sync {}
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: dir.path), [], "removed on the queue")
+        XCTAssertEqual(EngineV3HostProcess.s0TrimQueue.label, "flashtex.engine-v3.s0-trim")
+    }
+
     func testResolutionOrder() {
         let doc = "% !TEX program = xelatex\n\\documentclass{article}"
         XCTAssertEqual(EngineV3Mode.resolve(environment: nil, manifest: nil, mainText: doc).mode, .unicode)

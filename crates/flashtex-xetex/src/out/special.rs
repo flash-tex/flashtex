@@ -348,11 +348,18 @@ impl<M: Metrics> Builder<'_, M> {
     /// Concatenate `m` to the CTM as a transformation about the current
     /// point (dvipdfmx's `pdf:btrans`, `x:scale`, `x:rotate`).
     pub fn concat_about_point(&mut self, m: Mat) {
-        let (x, y) = self.user_point();
-        let (x, y) = self.rel(x, y);
+        let (ux, uy) = self.user_point();
+        let (x, y) = self.rel(ux, uy);
         let t = Mat::translate(-x, -y).then(&m).then(&Mat::translate(x, y));
+        // dvipdfmx's `pdf_dev_concat`: its own CTM follows, about the
+        // point as it has it (the same on a page)
+        let (dx, dy) = self.dev_rel(ux, uy);
+        let td = Mat::translate(-dx, -dy)
+            .then(&m)
+            .then(&Mat::translate(dx, dy));
         let s = self.cur();
         s.gs.ctm = t.then(&s.gs.ctm);
+        s.gs.dev_ctm = td.then(&s.gs.dev_ctm);
     }
 
     fn pdf_special(&mut self, r: &[u8]) {
@@ -419,10 +426,12 @@ impl<M: Metrics> Builder<'_, M> {
             b"bcontent" => {
                 let (x, y) = self.user_point();
                 let (tx, ty) = self.coord_top();
+                let (dx, dy) = self.dev_rel(x, y);
                 let s = self.cur();
                 s.save();
                 s.coords.push((x, y));
                 s.gs.ctm = Mat::translate(x - tx, y - ty).then(&s.gs.ctm);
+                s.gs.dev_ctm = Mat::translate(dx, dy).then(&s.gs.dev_ctm);
             }
             b"econtent" => {
                 let s = self.cur();
@@ -440,20 +449,18 @@ impl<M: Metrics> Builder<'_, M> {
                 self.reset_color();
             }
             b"bcolor" | b"begincolor" => {
-                let Some(f) = read_color(&mut p) else {
+                let Some((f, s)) = self.read_fill_stroke(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
                 self.doc.colors.push((f.clone(), s.clone()));
                 self.set_colors(Some(f), Some(s));
             }
             b"scolor" | b"setcolor" => {
-                let Some(f) = read_color(&mut p) else {
+                let Some((f, s)) = self.read_fill_stroke(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
                 };
-                let s = read_color(&mut p).unwrap_or_else(|| f.clone());
                 match self.doc.colors.last_mut() {
                     Some(top) => *top = (f.clone(), s.clone()),
                     None => self.doc.colors.push((f.clone(), s.clone())),
@@ -503,24 +510,42 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"stream" | b"fstream" => self.stream_special(&cmd, &mut p),
             b"ann" | b"annot" | b"annotate" | b"annotation" => self.ann(&mut p),
-            b"xann" => self.xann(&mut p),
+            b"xann" | b"xannot" | b"extendann" => self.xann(&mut p),
             b"link" => self.doc.nolink = false,
             b"nolink" => self.doc.nolink = true,
             b"bann" | b"bannot" | b"beginann" => {
+                // dvipdfmx's `spc_handler_pdfm_bann`: a link already open
+                // stays open and this one is ignored
+                if self.doc.tracking.is_some() {
+                    self.doc
+                        .diag("pdf:bann: Can't begin an annotation when one is pending.".into());
+                    return;
+                }
+                let name = match p.peek() {
+                    Some(b'@') => match p.object() {
+                        Some(Obj::Named(n)) => Some(n),
+                        _ => None,
+                    },
+                    _ => None,
+                };
                 let Some(Obj::Dict(d)) = p.object() else {
                     self.doc
                         .diag(format!("pdf:bann without a dictionary: `{}'", lossy(r)));
                     return;
                 };
                 let d = self.fixup_dict(d);
-                if self.doc.tracking.is_some() {
-                    self.doc.diag("pdf:bann inside another pdf:bann".into());
-                    self.break_annot();
+                if let Some(n) = &name {
+                    self.doc
+                        .named
+                        .insert(n.clone(), Named::Obj(Obj::Dict(d.clone())));
                 }
                 self.doc.tracking = Some(Tracking {
                     dict: d,
                     depth: self.stack.len(),
                     rect: None,
+                    name,
+                    broken: false,
+                    goto: None,
                 });
             }
             b"eann" | b"eannot" | b"endann" => {
@@ -563,10 +588,13 @@ impl<M: Metrics> Builder<'_, M> {
                     return;
                 };
                 let d = self.fixup_dict(d);
+                // `pdf_doc_bookmarks_add` ends with `pdf_doc_add_goto`
+                let goto = self.doc.add_goto(&d);
                 self.doc.outlines.push(Outline {
                     level,
                     open,
                     dict: d,
+                    goto,
                 });
             }
             b"docinfo" => {
@@ -592,6 +620,42 @@ impl<M: Metrics> Builder<'_, M> {
         }
     }
 
+    /// The colours of `pdf:bcolor`/`pdf:scolor` (spc_pdfm.c): a fill colour
+    /// and an optional stroke colour (the fill's when there is none), or
+    /// `fill COLOUR` and `stroke COLOUR` in any order, each starting from
+    /// the colour in effect (the colour stack's top) and kept where a
+    /// colour does not read (`spc_util_read_pdfcolor`'s default).
+    fn read_fill_stroke(&mut self, p: &mut Parser) -> Option<(Col, Col)> {
+        if !matches!(p.peek(), Some(b'f' | b's')) {
+            let f = read_color(p)?;
+            let s = read_color(p).unwrap_or_else(|| f.clone());
+            return Some((f, s));
+        }
+        let (mut f, mut s) = self
+            .doc
+            .colors
+            .last()
+            .cloned()
+            .unwrap_or_else(|| (Col::black(), Col::black()));
+        loop {
+            let which = if p.keyword(b"fill") {
+                &mut f
+            } else if p.keyword(b"stroke") {
+                &mut s
+            } else {
+                // dvipdfmx loops here for ever on anything else
+                break;
+            };
+            if p.at_end() {
+                return None;
+            }
+            if let Some(c) = read_color(p) {
+                *which = c;
+            }
+        }
+        Some((f, s))
+    }
+
     /// `@thispage`, `@prevpage`, `@nextpage` as `@page<n>`; `@xpos` and
     /// `@ypos` as the current point (bp, page coordinates).
     pub fn fixup(&self, o: Obj) -> Obj {
@@ -603,9 +667,12 @@ impl<M: Metrics> Builder<'_, M> {
                 ),
                 b"nextpage" => Obj::Named(format!("page{}", self.page_no + 1).into_bytes()),
                 b"xpos" | b"ypos" => {
+                    // specials.c: the DVI position through dvipdfmx's own
+                    // CTM, `ROUND(…, .01)`
                     let (x, y) = self.stream_point_device();
                     let v = if n == b"xpos" { x } else { y };
-                    Obj::num(v.to_f64(), 3)
+                    let v = (v.to_f64() / 0.01 + 0.5).floor() * 0.01;
+                    Obj::num(v, 2)
                 }
                 _ => Obj::Named(n),
             },
@@ -619,14 +686,12 @@ impl<M: Metrics> Builder<'_, M> {
         Dict(d.0.into_iter().map(|(k, v)| (k, self.fixup(v))).collect())
     }
 
-    /// The current point as `@xpos`/`@ypos` give it: dvipdfmx's device
-    /// coordinates (the page's, without the specials' transformations).
+    /// The current point as `@xpos`/`@ypos` give it: the DVI position
+    /// (`dvi_dev_xpos`, not less `pdf:bcontent`'s origin) through
+    /// dvipdfmx's own CTM.
     fn stream_point_device(&self) -> (Fx, Fx) {
         let (x, y) = self.user_point();
-        (
-            x + Fx(super::page::ORIGIN),
-            self.page_height - Fx(super::page::ORIGIN) + y,
-        )
+        self.cur_ref().gs.dev_ctm.apply(x, y)
     }
 
     fn put(&mut self, p: &mut Parser) {
@@ -734,29 +799,47 @@ impl<M: Metrics> Builder<'_, M> {
     /// `pdf:ann [@name] dims|bbox <<dict>>`: an annotation at the current
     /// point.
     fn ann(&mut self, p: &mut Parser) {
-        let _name = if p.peek() == Some(b'@') {
-            p.object()
-        } else {
-            None
+        let name = match p.peek() {
+            Some(b'@') => match p.object() {
+                Some(Obj::Named(n)) => Some(n),
+                _ => None,
+            },
+            _ => None,
         };
         let t = read_dims(p);
+        if t.bbox.is_some() && (t.width.is_some() || t.height.is_some()) {
+            self.doc
+                .diag("pdf:ann: You can't specify both bbox and width/height.".into());
+            return;
+        }
         let Some(Obj::Dict(d)) = p.object() else {
             self.doc.diag("pdf:ann without a dictionary".into());
             return;
         };
         let d = self.fixup_dict(d);
-        let (x, y) = self.stream_point_device();
-        let (x, y) = (x.to_f64(), y.to_f64());
-        let r = match t.bbox {
-            Some(b) => [x + b[0], y + b[1], x + b[2], y + b[3]],
-            None => [
-                x,
-                y - t.depth.unwrap_or(0.0),
-                x + t.width.unwrap_or(0.0),
-                y + t.height.unwrap_or(0.0),
-            ],
+        let r = self.annot_rect(&t);
+        let goto = self.doc.add_goto(&d);
+        self.add_annot(d, r, name, goto);
+    }
+
+    /// dvipdfmx's `set_rect_for_annot`: the box of `width`, `height` and
+    /// `depth` (times `\mag`) or of `bbox` at the current point, through
+    /// dvipdfmx's own CTM.
+    fn annot_rect(&self, t: &Dims) -> [f64; 4] {
+        let (x, y) = self.user_point();
+        let offs = match t.bbox {
+            Some(b) => [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])],
+            None => {
+                let mag = self.mag as f64 / 1000.0;
+                super::page::rect_corners(
+                    0.0,
+                    -mag * t.depth.unwrap_or(0.0),
+                    mag * t.width.unwrap_or(0.0),
+                    mag * t.height.unwrap_or(0.0),
+                )
+            }
         };
-        self.add_link(d, r);
+        self.dev_rect(x, y, offs)
     }
 
     /// `pdf:xann width … height … depth …` (or `bbox …`): the box at the
@@ -768,28 +851,12 @@ impl<M: Metrics> Builder<'_, M> {
             return;
         }
         let t = read_dims(p);
-        if t.bbox.is_some() && (t.width.is_some() || t.height.is_some() || t.depth.is_some()) {
+        if t.bbox.is_some() && (t.width.is_some() || t.height.is_some()) {
             self.doc
                 .diag("pdf:xann: You can't specify both bbox and width/height.".into());
             return;
         }
-        let (x, y) = self.stream_point_device();
-        let (x, y) = (x.to_f64(), y.to_f64());
-        let r = match t.bbox {
-            Some(b) => [x + b[0], y + b[1], x + b[2], y + b[3]],
-            None => [
-                x,
-                y - t.depth.unwrap_or(0.0),
-                x + t.width.unwrap_or(0.0),
-                y + t.height.unwrap_or(0.0),
-            ],
-        };
-        let r = [
-            r[0].min(r[2]),
-            r[1].min(r[3]),
-            r[0].max(r[2]),
-            r[1].max(r[3]),
-        ];
+        let r = self.annot_rect(&t);
         self.expand_annot(r);
     }
 
@@ -1035,9 +1102,12 @@ impl<M: Metrics> Builder<'_, M> {
             s.restore();
         }
         if self.doc.tracking.is_some() {
-            // the image's box, placed at the current point (device space)
-            let (px, py) = self.stream_point_device();
-            let to_dev = place.then(&Mat::translate(px, py));
+            // the image's box through the placement and dvipdfmx's own CTM
+            // (`pdf_dev_put_image`'s `pdf_dev_set_rect` after its concat)
+            let dev = self.cur_ref().gs.dev_ctm;
+            let (ux, uy) = self.user_point();
+            let (dx, dy) = self.dev_rel(ux, uy);
+            let to_dev = place.then(&Mat::translate(dx, dy)).then(&dev);
             let mut r = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
             for (cx, cy) in [(v[0], v[1]), (v[2], v[1]), (v[0], v[3]), (v[2], v[3])] {
                 let (qx, qy) = to_dev.apply(fx(cx), fx(cy));
