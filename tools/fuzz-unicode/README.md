@@ -15,6 +15,8 @@ python3 tools/fuzz-unicode/fuzz.py --candidate /tmp/fx/release/flashtex-xetex \
     --seeds 0:500 --workers 2 --out /tmp/fzu --timeout 60
 python3 tools/fuzz-unicode/fuzz.py ... --latex          # xelatex + fontspec documents
 python3 tools/fuzz-unicode/fuzz.py ... --pdf            # also the PDFs (python with fontTools)
+python3 tools/fuzz-unicode/fuzz.py ... --narrow         # max_print_line 60, error_line 50: wrapping cuts UTF-8 output
+python3 tools/fuzz-unicode/fuzz.py ... --area bidi      # every chunk from one area (gen.AREAS)
 python3 tools/fuzz-unicode/show.py /tmp/fzu/log/17      # the first difference
 python3 tools/fuzz-unicode/minimize.py --candidate BIN /tmp/fzu/log/17   # delta-debug
 python3 tools/fuzz-unicode/gen.py 17 [--latex]          # print one document
