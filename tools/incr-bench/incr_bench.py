@@ -39,6 +39,7 @@ math), verbatim_blank (an extra blank line inside a verbatim environment), cell_
 line inside a tabular cell).
 """
 import argparse
+import concurrent.futures
 import json
 import os
 import random
@@ -123,14 +124,33 @@ host = subprocess.Popen(pre + [f'{E}/flashtex-host', 'iserve'] + a.host_args.spl
                         text=True, bufsize=1)
 
 
+# INCR_BENCH_REF_JOBS=N (default 1): with --verify, the from-scratch references run N at a time
+# beside the host (sweeps.py sets it). A reference depends only on what the compile it checks
+# started from and wrote (taken when that compile ends: `compare_start`), so the comparisons are the
+# same; the host goes on to its next compile meanwhile, and each record is written, in order, when
+# its reference is done. The references are most of a verified run's time: a cold compile of a beamer
+# fixture in BOX-MEMO's verify mode runs the full verifier (BOX-MEMO.md §7) on every call it replays,
+# 1289 for beamer-polish (16 s against 0.8 s; #2145), and sound-a has two a trial.
+REF_JOBS = max(1, int(os.environ.get('INCR_BENCH_REF_JOBS', '1')))
+POOL = concurrent.futures.ThreadPoolExecutor(REF_JOBS) if REF_JOBS > 1 and a.verify else None
+PENDING = []  # (reference future or None, finish) per compile, in order
+
+
+def cancel_refs():
+    if POOL is not None:
+        POOL.shutdown(wait=False, cancel_futures=True)
+
+
 def cmd(c):
     host.stdin.write(c + '\n')
     host.stdin.flush()
     line = host.stdout.readline()
     if not line:
+        cancel_refs()
         raise SystemExit(f'host died on {c}')
     d = json.loads(line)
     if 'error' in d:
+        cancel_refs()
         raise SystemExit(f'host error on {c}: {d["error"]}')
     return d
 
@@ -219,17 +239,26 @@ def state(d):
                         if os.path.isfile(os.path.join(d, n)) and not n.endswith(SKIP)))
 
 
-def run_cli(pre, content, tag):
+def ref_times(pre):
+    """The modification times the reference gives its copies of `pre`'s files, taken now (after
+    the host's compile, before the next): the compile saw them (`\\pdffilemoddate`, genlookup.py's
+    `mtime` probe), and a fresh copy's crossed a second now and then, a difference of the reference."""
+    times = {}
+    for n, b in pre.items():
+        w = os.path.join(work, n)
+        if n != editfile and os.path.isfile(w) and open(w, 'rb').read() == b:
+            st = os.stat(w)
+            times[n] = (st.st_atime_ns, st.st_mtime_ns)
+    return times
+
+
+def run_cli(pre, content, tag, times):
     d = tempfile.mkdtemp(prefix=f'scr-{tag}.', dir=BASE)
     for n, b in pre.items():
         with open(os.path.join(d, n), 'wb') as f:
             f.write(b)
-        # the modification time the compile saw (`\pdffilemoddate`, genlookup.py's `mtime`
-        # probe): a fresh copy's crossed a second now and then, a difference of the reference
-        w = os.path.join(work, n)
-        if n != editfile and os.path.isfile(w) and open(w, 'rb').read() == b:
-            st = os.stat(w)
-            os.utime(os.path.join(d, n), ns=(st.st_atime_ns, st.st_mtime_ns))
+        if n in times:
+            os.utime(os.path.join(d, n), ns=times[n])
     with open(os.path.join(d, editfile), 'wb') as f:
         f.write(content)
     e2 = dict(env, FLASHTEX_PREVIEW='1')
@@ -259,12 +288,33 @@ from capture import split_accounting  # noqa: E402
 ACCT = []
 REFRUNS = {}
 
+def drain(block=False, keep=0):
+    """Finish the compiles whose references are done, in order; with `block`, wait until at most
+    `keep` are left."""
+    while PENDING and (block and len(PENDING) > keep or PENDING[0][0] is None or PENDING[0][0].done()):
+        PENDING.pop(0)[1]()
 
-def compare(tag, pre, content):
+
+def compare_start(tag, pre, content):
+    """What the comparison needs from the host, taken now; the reference, started."""
     if not a.verify:
         return None
     got = snapshot(work)
-    ref = run_cli(pre, content, tag)
+    term = cmd('terminal')['terminal'].encode('utf-8', 'surrogateescape')
+    times = ref_times(pre)
+    if POOL is None:
+        fut = concurrent.futures.Future()
+        fut.set_result(run_cli(pre, content, tag, times))
+    else:
+        fut = POOL.submit(run_cli, pre, content, tag, times)
+    return got, term, fut
+
+
+def compare(tag, started):
+    if started is None:
+        return None
+    got, term, fut = started
+    ref = fut.result()
     REFRUNS[tag] = ref['<runs>']
     bad = []
     for ext in ('pdf', 'log', 'aux', 'out', 'toc'):
@@ -285,7 +335,6 @@ def compare(tag, pre, content):
                 for k, v in (('got', got.get(n)), ('ref', ref.get(n))):
                     if v is not None:
                         open(f'{BASE}/mm/{a.doc}.{safe}.{k}.{ext}', 'wb').write(v)
-    term = cmd('terminal')['terminal'].encode('utf-8', 'surrogateescape')
     if term.decode('utf-8', 'replace') != ref['<stdout>'].decode('utf-8', 'replace'):
         bad.append('terminal')
     return bad
@@ -313,11 +362,15 @@ def one(content, tag, interrupt=None, pre=None):
         rec = dict(tag=tag, mode=r['mode'], interrupted=True, interrupt=interrupt, mismatch=None,
                    pass_modes=r.get('pass_modes'), pages=r['pages'], restart_pages=r['restart_pages'],
                    edited_page_s=None, edited_page_cpu=None, converged_at=None, passes=r.get('passes'))
-        results.append(rec)
-        if out:
-            out.write(json.dumps(rec) + '\n')
-            out.flush()
-        log(f'{tag}: interrupted in pass {interrupt[0]} after {interrupt[1]} pages ({r.get("pass_modes")})')
+
+        def finish_paused():
+            results.append(rec)
+            if out:
+                out.write(json.dumps(rec) + '\n')
+                out.flush()
+            log(f'{tag}: interrupted in pass {interrupt[0]} after {interrupt[1]} pages ({r.get("pass_modes")})')
+        PENDING.append((None, finish_paused))
+        drain()
         return r
     new_frames = frames()
     changed_pages = sum(1 for x, y in zip(old_frames, new_frames) if x != y) + abs(len(old_frames) - len(new_frames))
@@ -333,32 +386,41 @@ def one(content, tag, interrupt=None, pre=None):
         edited_page = first
         edited_s = pt.get(first) if first else None
         edited_cpu = pc.get(first) if first else None
-    bad = compare(tag, pre, content)
-    rec = dict(tag=tag, mode=r['mode'], restart_pages=r['restart_pages'], converged_at=r['converged_at'],
-               rerun_pages=r['rerun_pages'], pages=r['pages'], first_changed=first, edited_page=edited_page,
-               edited_page_s=edited_s, edited_page_cpu=edited_cpu,
-               restore_s=r['restore_s'], find_s=r['find_s'], key_s=r.get('key_s'), changes_s=r.get('changes_s'), total_s=r['total_s'], wall=wall, tests=r['tests'],
-               test_s=r['test_s'], log_bytes=r['log_bytes'], checkpoints=r['checkpoints'],
-               diffs=r['diffs'][:3], mismatch=bad, cold_reason=r['cold_reason'],
-               accounting_only=tag in ACCT, changed_pages=changed_pages,
-               passes=r.get('passes', 1), pass_modes=r.get('pass_modes'), pass_s=r.get('pass_s'),
-               oscillation=r.get('oscillation'), ref_runs=REFRUNS.get(tag),
-               restart_mid_page=r.get('restart_mid_page'), restart_gap=r.get('restart_gap'),
-               restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'), revalidated=r.get('revalidated'),
-               preamble_patched=r.get('preamble_patched'),
-               l5=r.get('l5'), rs_events=r.get('rs_events'), ck_stats=r.get('ck_stats'))
-    results.append(rec)
-    if out:
-        out.write(json.dumps(rec) + '\n')
-        out.flush()
-    ms = lambda x: 'None' if x is None else f'{1000*x:.1f}'
-    log(f'{tag}: {r["mode"]} restart@{r["restart_pages"]}{"m" if r.get("restart_mid_page") else ""}/gap{r.get("restart_gap")} conv@{r["converged_at"]} rerun={r["rerun_pages"]} '
-        f'edited={edited_page}:{ms(edited_s)}ms cpu={ms(edited_cpu)} first={first} total={ms(r["total_s"])}ms restore={ms(r["restore_s"])} '
-        f'find={ms(r["find_s"])}(key {ms(r.get("key_s"))}) tests={r["tests"]}/{ms(r["test_s"])} logs={r["log_bytes"]>>20}MB '
-        f'passes={r.get("pass_modes")} ref_runs={REFRUNS.get(tag)} '
-        f'{"OK" if bad == [] else ("MISMATCH " + str(bad)) if bad else ""}'
-        + (f' diff={r["diffs"][:1]}' if r['diffs'] and r['converged_at'] is None else ''))
-    return rec
+    started = compare_start(tag, pre, content)
+
+    def finish():
+        """The record and the log line, once the reference is done."""
+        bad = compare(tag, started)
+        rec = dict(tag=tag, mode=r['mode'], restart_pages=r['restart_pages'], converged_at=r['converged_at'],
+                   rerun_pages=r['rerun_pages'], pages=r['pages'], first_changed=first, edited_page=edited_page,
+                   edited_page_s=edited_s, edited_page_cpu=edited_cpu,
+                   restore_s=r['restore_s'], find_s=r['find_s'], key_s=r.get('key_s'), changes_s=r.get('changes_s'), total_s=r['total_s'], wall=wall, tests=r['tests'],
+                   test_s=r['test_s'], log_bytes=r['log_bytes'], checkpoints=r['checkpoints'],
+                   diffs=r['diffs'][:3], mismatch=bad, cold_reason=r['cold_reason'],
+                   accounting_only=tag in ACCT, changed_pages=changed_pages,
+                   passes=r.get('passes', 1), pass_modes=r.get('pass_modes'), pass_s=r.get('pass_s'),
+                   oscillation=r.get('oscillation'), ref_runs=REFRUNS.get(tag),
+                   restart_mid_page=r.get('restart_mid_page'), restart_gap=r.get('restart_gap'),
+                   restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'), revalidated=r.get('revalidated'),
+                   preamble_patched=r.get('preamble_patched'),
+                   l5=r.get('l5'), rs_events=r.get('rs_events'), ck_stats=r.get('ck_stats'))
+        results.append(rec)
+        if out:
+            out.write(json.dumps(rec) + '\n')
+            out.flush()
+        ms = lambda x: 'None' if x is None else f'{1000*x:.1f}'
+        log(f'{tag}: {r["mode"]} restart@{r["restart_pages"]}{"m" if r.get("restart_mid_page") else ""}/gap{r.get("restart_gap")} conv@{r["converged_at"]} rerun={r["rerun_pages"]} '
+            f'edited={edited_page}:{ms(edited_s)}ms cpu={ms(edited_cpu)} first={first} total={ms(r["total_s"])}ms restore={ms(r["restore_s"])} '
+            f'find={ms(r["find_s"])}(key {ms(r.get("key_s"))}) tests={r["tests"]}/{ms(r["test_s"])} logs={r["log_bytes"]>>20}MB '
+            f'passes={r.get("pass_modes")} ref_runs={REFRUNS.get(tag)} '
+            f'{"OK" if bad == [] else ("MISMATCH " + str(bad)) if bad else ""}'
+            + (f' diff={r["diffs"][:1]}' if r['diffs'] and r['converged_at'] is None else ''))
+
+    PENDING.append((started[2] if started else None, finish))
+    drain()
+    # at most two compiles a reference ahead (a host that ends early leaves little behind)
+    drain(block=True, keep=2 * REF_JOBS)
+    return r
 
 
 TOGGLE = [n for n in a.toggle_files.split(',') if n]
@@ -529,6 +591,9 @@ for i in range(a.trials):
 host.stdin.write('quit\n')
 host.stdin.flush()
 host.wait()
+drain(block=True)
+if POOL is not None:
+    POOL.shutdown()
 ok = sum(1 for r in results if r['mismatch'] == [])
 bad = sum(1 for r in results if r['mismatch'])
 interrupted = sum(1 for r in results if r.get('interrupted'))
