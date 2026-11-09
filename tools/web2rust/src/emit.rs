@@ -134,9 +134,10 @@ struct E<'a> {
     /// `--inline NAME=always|never` (main.rs): routine name -> attribute.
     inline: HashMap<String, String>,
     /// `--array-view` (main.rs): the fixed-length arena arrays a routine
-    /// indexes through a local view (`crate::arena::ArrView`), and whether
-    /// the routine being emitted does.
-    views: HashSet<String>,
+    /// indexes through a local view (`crate::arena::ArrView`), each with its
+    /// length (a Rust expression of type `usize`: the view's const
+    /// parameter), and whether the routine being emitted does.
+    views: HashMap<String, String>,
     view_on: bool,
     /// The views the routine being emitted uses.
     used_views: std::cell::RefCell<std::collections::BTreeSet<String>>,
@@ -600,7 +601,7 @@ impl<'a> E<'a> {
     fn view_of(&self, b: &Expr) -> Option<String> {
         match b {
             Expr::Var(g)
-                if self.view_on && self.views.contains(g) && self.lookup_local(g).is_none() =>
+                if self.view_on && self.views.contains_key(g) && self.lookup_local(g).is_none() =>
             {
                 self.used_views.borrow_mut().insert(g.clone());
                 Some(format!("__av_{}", rid(g)))
@@ -1975,7 +1976,7 @@ pub fn emit(
         arena_globals: HashMap::new(),
         index_type: index_type.map(str::to_string),
         inline: inline.iter().cloned().collect(),
-        views: HashSet::new(),
+        views: HashMap::new(),
         view_on: false,
         used_views: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         total_division,
@@ -2004,7 +2005,7 @@ pub fn emit(
                 if len != cap || allocs.contains_key(&g.name) {
                     return Err(format!("--array-view {}: not a fixed-length array", g.name));
                 }
-                e.views.insert(g.name.clone());
+                e.views.insert(g.name.clone(), len.clone());
             }
         }
         kinds.push(k);
@@ -2015,7 +2016,7 @@ pub fn emit(
         }
     }
     for n in array_views {
-        if !e.views.contains(n) {
+        if !e.views.contains_key(n) {
             return Err(format!("--array-view {n}: not an array global"));
         }
     }
@@ -2530,9 +2531,19 @@ fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {
     e.seq(&r.body, &mut body, 2);
     e.view_on = false;
     for g in std::mem::take(&mut *e.used_views.borrow_mut()) {
+        // The length is the view's const parameter, so that a subscript's
+        // check compares with a constant (and folds away for a constant
+        // subscript); `Arr::view` checks it against the array's length. A
+        // length that is not a literal is a const block.
+        let n = &e.views[&g];
+        let n = if n.bytes().all(|b| b.is_ascii_digit()) {
+            n.clone()
+        } else {
+            format!("{{ {n} }}")
+        };
         let _ = writeln!(
             s,
-            "        #[allow(unused_mut)]\n        let mut __av_{0} = self.{0}.view();",
+            "        #[allow(unused_mut)]\n        let mut __av_{0} = self.{0}.view::<{n}>();",
             rid(&g)
         );
     }

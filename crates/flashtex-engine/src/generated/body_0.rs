@@ -32,9 +32,9 @@ impl Globals {
         let mut k: i32 = 0; // §181
         let mut z: hyph_pointer = 0; // §1104
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         // §1871
         self.obj_tab.alloc_len(((inf_obj_tab_size) as usize) + 1);
         self.pdf_mem.alloc_len(((inf_pdf_mem_size) as usize) + 1);
@@ -1217,7 +1217,7 @@ impl Globals {
         let mut save_stop_at_space: bool = false; // §1882
         let mut dummy: bool = false; // §1882
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         save_scanner_status = self.scanner_status;
         save_def_ref = self.def_ref;
         save_cur_cs = self.cur_cs;
@@ -1297,7 +1297,7 @@ impl Globals {
     // §58
     pub fn print_char(&mut self, mut s: ASCII_code) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         'l_exit_f: {
             if (s == __av_eqtb[crate::ix::U(((29326i32) - 1) as usize)].int()) {
                 if (self.selector < pseudo) {
@@ -1402,7 +1402,7 @@ impl Globals {
         let mut j: pool_pointer = 0; // §59
         let mut nl: i32 = 0; // §59
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         'l_exit_f: {
             if (s >= self.str_ptr) {
                 s = 261i32;
@@ -1512,7 +1512,7 @@ impl Globals {
     pub fn print_esc(&mut self, mut s: str_number) {
         let mut c: i32 = 0; // §63
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         // §261
         c = __av_eqtb[crate::ix::U(((29322i32) - 1) as usize)].int();
         // §63
@@ -1595,7 +1595,7 @@ impl Globals {
     // §284
     pub fn print_cs(&mut self, mut p: i32) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         if (p < hash_base) {
             if (p >= single_base) {
                 if (p == null_cs) {
@@ -1781,7 +1781,7 @@ impl Globals {
     // §1602
     pub fn print_write_whatsit(&mut self, mut s: str_number, mut p: halfword) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.print_esc(s);
         if (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh() < 16i32) {
             self.print_int(((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()) as i64));
@@ -1801,7 +1801,7 @@ impl Globals {
     pub fn print_sa_num(&mut self, mut q: halfword) {
         let mut n: halfword = 0; // §1822
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (__av_mem[crate::ix::U((q) as usize)].hh().b0() < dimen_val_limit) {
             n = __av_mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().rh();
         } else {
@@ -3522,7 +3522,7 @@ impl Globals {
         let mut match_chr: ASCII_code = 0; // §314
         let mut n: ASCII_code = 0; // §314
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             self.ls_show(p);
             match_chr = 35i32;
@@ -3620,7 +3620,7 @@ impl Globals {
     pub fn runaway(&mut self) {
         let mut p: halfword = 0; // §328
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.scanner_status > skipping) {
             {
                 match self.scanner_status {
@@ -3669,7 +3669,7 @@ impl Globals {
         let mut get_avail: halfword = 0;
         let mut p: halfword = 0; // §138
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.avail;
         if (p != null) {
             self.avail = __av_mem[crate::ix::U((self.avail) as usize)].hh().rh();
@@ -3707,7 +3707,7 @@ impl Globals {
         let mut q: halfword = 0; // §141
         let mut r: halfword = 0; // §141
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (p != null) {
             {
                 r = p;
@@ -3737,7 +3737,7 @@ impl Globals {
         let mut r: i32 = 0; // §143
         let mut t: i32 = 0; // §143
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         // goto labels: restart, found, exit
         let mut __goto_1: i32 = 0;
         'l_dispatch_1: loop {
@@ -3850,7 +3850,7 @@ impl Globals {
     pub fn free_node(&mut self, mut p: halfword, mut s: halfword) {
         let mut q: halfword = 0; // §148
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         __av_mem[crate::ix::U((p) as usize)].set_hh_lh(s);
         __av_mem[crate::ix::U((p) as usize)].set_hh_rh(empty_flag);
         q = __av_mem[crate::ix::U(((self.rover).wrapping_add(1i32)) as usize)].hh().lh();
@@ -3872,7 +3872,7 @@ impl Globals {
         let mut r: halfword = 0; // §149
         let mut old_rover: halfword = 0; // §149
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(1073741824i32);
         p = __av_mem[crate::ix::U(((self.rover).wrapping_add(1i32)) as usize)].hh().rh();
         { let __ix54 = (self.rover).wrapping_add(1i32); __av_mem[crate::ix::U((__ix54) as usize)].set_hh_rh(max_halfword); }
@@ -3920,7 +3920,7 @@ impl Globals {
         let mut new_null_box: halfword = 0;
         let mut p: halfword = 0; // §154
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(box_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(hlist_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(min_quarterword);
@@ -3944,7 +3944,7 @@ impl Globals {
         let mut new_rule: halfword = 0;
         let mut p: halfword = 0; // §157
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(rule_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(rule_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(0i32);
@@ -3965,7 +3965,7 @@ impl Globals {
         let mut new_ligature: halfword = 0;
         let mut p: halfword = 0; // §162
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(small_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(ligature_node);
         __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b0(f);
@@ -3986,7 +3986,7 @@ impl Globals {
         let mut new_lig_item: halfword = 0;
         let mut p: halfword = 0; // §162
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(small_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(c);
         __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(null);
@@ -4014,7 +4014,7 @@ impl Globals {
         let mut new_disc: halfword = 0;
         let mut p: halfword = 0; // §163
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(small_node_size);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(disc_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(0i32);

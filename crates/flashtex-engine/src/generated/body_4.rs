@@ -117,7 +117,7 @@ impl Globals {
     // §692
     pub fn pdf_use_font(&mut self, mut f: internal_font_number, mut fontnum: i32) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         {
             if (self.divide_scaled(self.font_size[crate::ix::U((f) as usize)], self.one_hundred_bp, 6i32) != 0i32) {
             }
@@ -204,7 +204,7 @@ impl Globals {
         let mut p: halfword = 0; // §693
         let mut k: internal_font_number = 0; // §693
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_found_f: {
             self.pdf_f = f;
             if (!self.font_used[crate::ix::U((f) as usize)]) {
@@ -1536,7 +1536,7 @@ impl Globals {
         let mut c: halfword = 0; // §705
         let mut f: internal_font_number = 0; // §705
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (!((!(g >= self.hi_mem_min)) && (__av_mem[crate::ix::U((g) as usize)].hh().b0() == glue_node))) {
             {
                 self.pdf_warning(1089i32, 1090i32, true, true);
@@ -1613,9 +1613,9 @@ impl Globals {
         let mut k: i32 = 0; // §705
         let mut p: halfword = 0; // §705
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.pdfassert(((l >= 0i32) && (r >= 0i32)));
         get_auto_kern = null;
         if ((__av_eqtb[crate::ix::U(((29366i32) - 1) as usize)].int() <= 0i32) && (__av_eqtb[crate::ix::U(((29365i32) - 1) as usize)].int() <= 0i32)) {
@@ -2233,7 +2233,7 @@ impl Globals {
         let mut f: internal_font_number = 0; // §706
         let mut k: internal_font_number = 0; // §706
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         self.get_r_token();
         u = self.cur_cs;
         if (u >= hash_base) {
@@ -2382,7 +2382,7 @@ impl Globals {
         let mut f: internal_font_number = 0; // §706
         let mut k: internal_font_number = 0; // §706
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         self.get_r_token();
         u = self.cur_cs;
         if (u >= hash_base) {
@@ -3217,7 +3217,7 @@ impl Globals {
         let mut r: halfword = 0; // §727
         let mut old_mode: i32 = 0; // §727
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         old_setting = self.selector;
         if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == pdf_lateliteral_node) {
             {
@@ -3297,7 +3297,7 @@ impl Globals {
         let mut stack_no: i32 = 0; // §727
         let mut literal_mode: i32 = 0; // §727
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         cmd = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh();
         stack_no = __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh();
         if (stack_no >= self.colorstackused()) {
@@ -3395,7 +3395,7 @@ impl Globals {
         let mut old_setting: i32 = 0; // §727
         let mut s: str_number = 0; // §727
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         old_setting = self.selector;
         self.selector = new_string;
         self.show_token_list(__av_mem[crate::ix::U((__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh()) as usize)].hh().rh(), null, (pool_size).wrapping_sub(self.pool_ptr));
@@ -3491,7 +3491,7 @@ impl Globals {
         let mut r: halfword = 0; // §727
         let mut old_mode: i32 = 0; // §727
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         old_setting = self.selector;
         self.selector = self.selector;
         if (__av_mem[crate::ix::U((p) as usize)].hh().b1() == latespecial_node) {

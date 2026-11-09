@@ -112,7 +112,7 @@ impl Globals {
         let mut r: halfword = 0; // §1733
         let mut words: i32 = 0; // §1733
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         while (p != null) {
             {
                 'l_not_found_f: {
@@ -364,7 +364,7 @@ impl Globals {
         let mut m: halfword = 0; // §1738
         let mut n: halfword = 0; // §1738
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_done_f: {
             m = min_halfword;
             n = min_halfword;
@@ -488,9 +488,9 @@ impl Globals {
         let mut v: scaled = 0; // §1316
         let mut d: scaled = 0; // §1316
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.get_token();
         if ((self.cur_cmd == math_shift) && (self.cur_list.mode_field > 0i32)) {
             // §1323
@@ -837,7 +837,7 @@ impl Globals {
     // §1320
     pub fn start_eq_no(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         { let __ix1697 = (self.save_ptr).wrapping_add(0i32); let __v1698 = self.cur_chr; self.save_stack[crate::ix::U((__ix1697) as usize)].set_int(__v1698); }
         self.save_ptr = (self.save_ptr).wrapping_add(1i32);
         // §1317
@@ -860,9 +860,9 @@ impl Globals {
     pub fn scan_math(&mut self, mut p: halfword) {
         let mut c: i32 = 0; // §1329
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         // goto labels: restart, reswitch, exit
         let mut __goto_1: i32 = 0;
         'l_dispatch_1: loop {
@@ -954,9 +954,9 @@ impl Globals {
     pub fn set_math_char(&mut self, mut c: i32) {
         let mut p: halfword = 0; // §1333
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (c >= 32768i32) {
             // §1330
             {
@@ -993,7 +993,7 @@ impl Globals {
     // §1337
     pub fn math_limit_switch(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             if (self.cur_list.head_field != self.cur_list.tail_field) {
                 if (__av_mem[crate::ix::U((self.cur_list.tail_field) as usize)].hh().b0() == op_noad) {
@@ -1030,9 +1030,9 @@ impl Globals {
     // §1338
     pub fn scan_delimiter(&mut self, mut p: halfword, mut r: bool) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if r {
             self.scan_twenty_seven_bit_int();
         } else {
@@ -1094,7 +1094,7 @@ impl Globals {
     // §1341
     pub fn math_radical(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         {
             self.prev_tail = self.cur_list.tail_field;
             { let __ix1709 = self.cur_list.tail_field; let __v1710 = self.get_node(radical_noad_size); __av_mem[crate::ix::U((__ix1709) as usize)].set_hh_rh(__v1710); }
@@ -1113,9 +1113,9 @@ impl Globals {
     // §1343
     pub fn math_ac(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.cur_cmd == accent) {
             // §1344
             {
@@ -1168,7 +1168,7 @@ impl Globals {
     // §1350
     pub fn append_choices(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         {
             self.prev_tail = self.cur_list.tail_field;
             { let __ix1736 = self.cur_list.tail_field; let __v1737 = self.new_choice(); __av_mem[crate::ix::U((__ix1736) as usize)].set_hh_rh(__v1737); }
@@ -1191,7 +1191,7 @@ impl Globals {
         let mut fin_mlist: halfword = 0;
         let mut q: halfword = 0; // §1362
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.cur_list.aux_field.int() != null) {
             // §1363
             {
@@ -1228,7 +1228,7 @@ impl Globals {
     pub fn build_choices(&mut self) {
         let mut p: halfword = 0; // §1352
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             self.unsave();
             p = self.fin_mlist(null);
@@ -1263,7 +1263,7 @@ impl Globals {
         let mut t: small_number = 0; // §1354
         let mut p: halfword = 0; // §1354
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         t = empty;
         p = null;
         if (self.cur_list.tail_field != self.cur_list.head_field) {
@@ -1336,7 +1336,7 @@ impl Globals {
     pub fn math_fraction(&mut self) {
         let mut c: small_number = 0; // §1359
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         c = self.cur_chr;
         if (self.cur_list.aux_field.int() != null) {
             // §1361
@@ -1415,7 +1415,7 @@ impl Globals {
         let mut p: halfword = 0; // §1369
         let mut q: halfword = 0; // §1369
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         t = self.cur_chr;
         if ((t != left_noad) && (self.cur_group != math_left_group)) {
             // §1370
@@ -1517,9 +1517,9 @@ impl Globals {
         let mut t: halfword = 0; // §1744
         let mut u: halfword = 0; // §1744
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         s = __av_eqtb[crate::ix::U(((29918i32) - 1) as usize)].int();
         x = __av_eqtb[crate::ix::U(((29384i32) - 1) as usize)].int();
         if (x == 0i32) {
@@ -1670,9 +1670,9 @@ impl Globals {
         let mut pre_t: halfword = 0; // §1376
         let mut j: halfword = 0; // §1741
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         danger = false;
         // §1742
         if (self.cur_list.mode_field == mmode) {
@@ -2057,7 +2057,7 @@ impl Globals {
     // §1378
     pub fn resume_after_display(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         if (self.cur_group != math_shift_group) {
             self.confusion(1597i32);
         }
@@ -2143,7 +2143,7 @@ impl Globals {
     // §1407
     pub fn trap_zero_glue(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (((__av_mem[crate::ix::U(((self.cur_val).wrapping_add(1i32)) as usize)].int() == 0i32) && (__av_mem[crate::ix::U(((self.cur_val).wrapping_add(2i32)) as usize)].int() == 0i32)) && (__av_mem[crate::ix::U(((self.cur_val).wrapping_add(3i32)) as usize)].int() == 0i32)) {
             {
                 { let __v1824 = (__av_mem[crate::ix::U((zero_glue) as usize)].hh().rh()).wrapping_add(1i32); __av_mem[crate::ix::U((zero_glue) as usize)].set_hh_rh(__v1824); }
@@ -2165,9 +2165,9 @@ impl Globals {
         let mut e: bool = false; // §1414
         let mut w: i32 = 0; // §1414
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             'l_found_f: {
                 q = self.cur_cmd;
@@ -2578,9 +2578,9 @@ impl Globals {
         let mut c: small_number = 0; // §1425
         let mut b: halfword = 0; // §1425
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         c = self.cur_chr;
         self.scan_register_num();
         {
@@ -2616,7 +2616,7 @@ impl Globals {
         let mut t: str_number = 0; // §1435
         let mut old_setting: i32 = 0; // §1435
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         'l_common_ending_f: {
             if (self.job_name == 0i32) {
                 self.open_log_file();
@@ -2801,9 +2801,9 @@ impl Globals {
         let mut n: i32 = 0; // §1389
         let mut e: bool = false; // §1389
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             'l_done_f: {
                 a = 0i32;
@@ -3750,9 +3750,9 @@ impl Globals {
         let mut c: i32 = 0; // §1457
         let mut s: str_number = 0; // §1457
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         c = self.cur_chr;
         { let __v1865 = self.scan_toks(false, true); __av_mem[crate::ix::U((garbage) as usize)].set_hh_rh(__v1865); }
         old_setting = self.selector;
@@ -3840,9 +3840,9 @@ impl Globals {
         let mut t: halfword = 0; // §1466
         let mut c: eight_bits = 0; // §1466
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         b = self.cur_chr;
         p = self.scan_toks(false, false);
         p = __av_mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
@@ -3879,9 +3879,9 @@ impl Globals {
         let mut l: i32 = 0; // §1471
         let mut n: i32 = 0; // §1471
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_common_ending_f: {
             match self.cur_chr {
                 show_lists_code => {
@@ -4123,9 +4123,9 @@ impl Globals {
         let mut x: i32 = 0; // §1480
         let mut w: four_quarters = four_quarters::default(); // §1480
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         // §1482
         if (self.save_ptr != 0i32) {
             {
@@ -5000,7 +5000,7 @@ impl Globals {
     pub fn new_whatsit(&mut self, mut s: small_number, mut w: small_number) {
         let mut p: halfword = 0; // §1529
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(w);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b0(whatsit_node);
         __av_mem[crate::ix::U((p) as usize)].set_hh_b1(s);
@@ -5014,7 +5014,7 @@ impl Globals {
     // §1530
     pub fn new_write_whatsit(&mut self, mut w: small_number) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.new_whatsit(self.cur_chr, w);
         if (w != write_node_size) {
             self.scan_four_bit_int();
@@ -5039,7 +5039,7 @@ impl Globals {
     // §1537
     pub fn check_pdfoutput(&mut self, mut s: str_number, mut is_error: bool) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         if (__av_eqtb[crate::ix::U(((29342i32) - 1) as usize)].int() <= 0i32) {
             {
                 if is_error {
@@ -5149,7 +5149,7 @@ impl Globals {
         let mut default_res: i32 = 0; // §1552
         let mut image: i32 = 0; // §1552
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         image = self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(4i32)) as usize)];
         if ((self.image_rotate(image) == 90i32) || (self.image_rotate(image) == 270i32)) {
             {
@@ -5303,7 +5303,7 @@ impl Globals {
     // §1552
     pub fn scan_alt_rule(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (self.alt_rule == null) {
             self.alt_rule = self.new_rule();
         }
@@ -5346,9 +5346,9 @@ impl Globals {
         let mut pagebox: i32 = 0; // §1552
         let mut colorspace: i32 = 0; // §1552
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.pdf_ximage_count = (self.pdf_ximage_count).wrapping_add(1i32);
         self.pdf_create_obj(obj_type_ximage, self.pdf_ximage_count);
         k = self.obj_ptr;
@@ -5443,7 +5443,7 @@ impl Globals {
         let mut scan_action: halfword = 0;
         let mut p: i32 = 0; // §1556
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         p = self.get_node(pdf_action_size);
         scan_action = p;
         __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(null);
@@ -5588,7 +5588,7 @@ impl Globals {
     // §1556
     pub fn new_annot_whatsit(&mut self, mut w: small_number, mut s: small_number) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.new_whatsit(w, s);
         self.scan_alt_rule();
         { let __ix2005 = (self.cur_list.tail_field).wrapping_add(1i32); let __v2006 = __av_mem[crate::ix::U(((self.alt_rule).wrapping_add(1i32)) as usize)].int(); __av_mem[crate::ix::U((__ix2005) as usize)].set_int(__v2006); }
@@ -5640,7 +5640,7 @@ impl Globals {
     // §1566
     pub fn scan_thread_id(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if self.scan_keyword(1207i32) {
             {
                 self.scan_int();
@@ -5672,7 +5672,7 @@ impl Globals {
         let mut new_snap_node: halfword = 0;
         let mut p: halfword = 0; // §1573
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         self.scan_glue(glue_val);
         if (__av_mem[crate::ix::U(((self.cur_val).wrapping_add(1i32)) as usize)].int() < 0i32) {
             self.pdf_error(1777i32, 1866i32);
@@ -5695,7 +5695,7 @@ impl Globals {
         let mut concat_tokens: halfword = 0;
         let mut p: halfword = 0; // §1577
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (q == null) {
             {
                 concat_tokens = r;
@@ -5802,7 +5802,7 @@ impl Globals {
     pub fn pdf_fix_thread(&mut self, mut thread: i32) {
         let mut a: halfword = 0; // §1600
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         self.pdf_warning(1826i32, 1887i32, true, false);
         if (self.obj_tab[crate::ix::U((thread) as usize)].int0 < 0i32) {
             {
@@ -6043,9 +6043,9 @@ impl Globals {
         let mut q: halfword = 0; // §1528
         let mut r: halfword = 0; // §1528
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         match self.cur_chr {
             open_node => {
                 // §1531
@@ -7118,9 +7118,9 @@ impl Globals {
     pub fn fix_language(&mut self) {
         let mut l: ASCII_code = 0; // §1624
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         if (__av_eqtb[crate::ix::U(((29327i32) - 1) as usize)].int() <= 0i32) {
             l = 0i32;
         } else {
@@ -7149,9 +7149,9 @@ impl Globals {
         let mut d: scaled = 0; // §1246
         let mut f: i32 = 0; // §1246
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         match self.cur_group {
             simple_group => {
                 self.unsave();
@@ -7509,9 +7509,9 @@ impl Globals {
         let mut tmp_k1: halfword = 0; // §1207
         let mut tmp_k2: halfword = 0; // §1207
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         // goto labels: L60, reswitch, L70, L80, L90, L91, L92, L100, L101, L110, L111, L112, L95, L120, exit
         let mut __goto_1: i32 = 0;
         'l_dispatch_1: loop {
@@ -8751,7 +8751,7 @@ impl Globals {
     // §1462
     pub fn give_err_help(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         self.token_show(__av_eqtb[crate::ix::U(((err_help_loc) - 1) as usize)].hh().rh());
     }
 
@@ -8831,9 +8831,9 @@ impl Globals {
         let mut x: i32 = 0; // §1481
         let mut w: four_quarters = four_quarters::default(); // §1481
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             'l_L6666_f: {
                 // §1486
@@ -9950,7 +9950,7 @@ impl Globals {
         let mut names_head: i32 = 0; // §1513
         let mut names_tail: i32 = 0; // §1513
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         // §1626
         {
             let __for_end_2 = 15i32;
@@ -11694,9 +11694,9 @@ impl Globals {
     pub fn final_cleanup(&mut self) {
         let mut c: small_number = 0; // §1515
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         #[allow(unused_mut)]
-        let mut __av_mem = self.mem.view();
+        let mut __av_mem = self.mem.view::<5000000>();
         'l_exit_f: {
             c = self.cur_chr;
             if (c != 1i32) {
@@ -11804,7 +11804,7 @@ impl Globals {
     // §1516
     pub fn init_prim(&mut self) {
         #[allow(unused_mut)]
-        let mut __av_eqtb = self.eqtb.view();
+        let mut __av_eqtb = self.eqtb.view::<630192>();
         self.no_new_control_sequence = false;
         self.first = 0i32;
         // §244
