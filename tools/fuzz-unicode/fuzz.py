@@ -55,6 +55,17 @@ LS = XL.LS
 PICTURES = XL.PICTURES
 ARGS_XDV = [a for a in XL.ENGINE_ARGS if a != "-halt-on-error"]
 ARGS_PDF = [a for a in ARGS_XDV if a != "-no-pdf"]
+# --narrow: short terminal and log lines and error contexts, so that line
+# wrapping and error-context truncation cut through multi-byte UTF-8 output.
+NARROW = ["-cnf-line=max_print_line = 60", "-cnf-line=error_line = 50",
+          "-cnf-line=half_error_line = 30"]  # tex.web §14: half_error_line >= 30, <= error_line-15
+
+
+def set_narrow():
+    global ARGS_XDV, ARGS_PDF
+    keep = [a for a in ARGS_XDV if not a.startswith("-cnf-line=")]
+    ARGS_XDV = NARROW + keep
+    ARGS_PDF = [a for a in ARGS_XDV if a != "-no-pdf"]
 FSIZE_LIMIT = 64 * 1024 * 1024
 NEUTRAL = ("equal", "both-hang", "both-signal", "oracle-crash")
 DIGITS = re.compile(r"\d+")
@@ -80,7 +91,8 @@ def stage(text, workdir):
     os.utime(tex, (DOC_MTIME, DOC_MTIME))
 
 
-def run(engine, text, workdir, timeout, args=ARGS_XDV, env=None):
+def run(engine, text, workdir, timeout, args=None, env=None):
+    args = ARGS_XDV if args is None else args
     stage(text, workdir)
     old = dict(os.environ)
     try:
@@ -163,7 +175,7 @@ def compare_runs(ro, rc):
 def compare_pdf(text, candidate, oracle, work, timeout):
     od, cd = os.path.join(work, "pdf-oracle"), os.path.join(work, "pdf-candidate")
     ro = run(oracle, text, od, timeout, ARGS_PDF)
-    rc = run(candidate, text, cd, timeout, ARGS_PDF)
+    rc = run(candidate, text, cd, timeout, ARGS_PDF)  # (module globals: --narrow applies)
     if ro is None or rc is None or "error" in ro or "error" in rc:
         return None
     po, pc = os.path.join(od, "doc.pdf"), os.path.join(cd, "doc.pdf")
@@ -410,12 +422,16 @@ def main(argv=None):
                     help="xelatex/fontspec documents instead of xetex -ini ones")
     ap.add_argument("--formats", default=None,
                     help="with --latex: dir for the two xelatex.fmt files (default OUT/fmt)")
+    ap.add_argument("--narrow", action="store_true",
+                    help="max_print_line 60, error_line 50, half_error_line 30")
     ap.add_argument("--replay", action="store_true",
                     help="the replay axis: xelatex documents, candidate only, FLASHTEX_INTRINSICS off/on/verify")
     args = ap.parse_args(argv)
     args.oracle = shutil.which(args.oracle) or args.oracle
     args.candidate = os.path.abspath(args.candidate)
     cap_output()
+    if args.narrow:
+        set_narrow()
     os.makedirs(args.out, exist_ok=True)
     one = fuzz_seed
     if args.latex or args.replay:
