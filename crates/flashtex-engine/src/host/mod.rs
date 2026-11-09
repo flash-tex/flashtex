@@ -136,6 +136,42 @@ pub fn engine_build() -> [u64; 2] {
     })
 }
 
+/// What a reader of a text file has seen past its offset (`peek`).
+#[derive(Debug, PartialEq)]
+enum Peek {
+    Nothing,
+    /// The byte at the offset: the line it read ended at a CR, and
+    /// `read_tex_line` looked at the next byte for an LF.
+    Byte,
+    /// The end of the file: the reader is there, after a CR or a last byte
+    /// that is not an LF (or in an empty file), so its last line ended at
+    /// the end and text appended would have been part of it.
+    End,
+}
+
+/// `incr::read_through`'s rule for a reader of `path` at `offset`, on the
+/// file as it is.
+fn peek(path: &str, offset: u64) -> Result<Peek, String> {
+    use std::io::{Read, Seek};
+    let mut f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let len = f.metadata().map_err(|e| format!("{path}: {e}"))?.len();
+    let before = match offset.checked_sub(1) {
+        Some(i) if i < len => {
+            let mut b = [0u8; 1];
+            f.seek(std::io::SeekFrom::Start(i))
+                .and_then(|_| f.read_exact(&mut b))
+                .map_err(|e| format!("{path}: {e}"))?;
+            Some(b[0])
+        }
+        _ => None,
+    };
+    Ok(match before {
+        _ if offset >= len && before != Some(b'\n') => Peek::End,
+        Some(b'\r') => Peek::Byte,
+        _ => Peek::Nothing,
+    })
+}
+
 fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
     let (h, n) =
         crate::persist::hash128_file(path, Some(len)).map_err(|e| format!("{path}: {e}"))?;
@@ -673,12 +709,35 @@ pub fn make_key_from(
     {
         let mut prefixes = vec![];
         let mut open_paths = vec![];
+        // (a stream that has looked at the end of its file: keyed whole)
+        let mut at_end: Vec<(String, [u64; 2], StatSig)> = vec![];
         for f in &rec.files {
             if let Stream::In { path, offset } = &f.stream {
+                // A reader at `offset` has seen one byte more where the line
+                // it read ended at a CR (`read_tex_line` peeked for an LF) or
+                // at the end of a file whose last byte is not an LF
+                // (`incr::read_through`): text appended there extends that
+                // line, or adds one, which the prefix alone does not show
+                // (lane REVIEW-INCR, `tests/incremental.rs`). Keyed by one
+                // byte more, or, at the end, by the whole file.
+                let len = match peek(path, *offset)? {
+                    Peek::Nothing => *offset,
+                    Peek::Byte => *offset + 1,
+                    Peek::End => {
+                        at_end.push((
+                            path.clone(),
+                            crate::persist::hash128_file(path, None)
+                                .map_err(|e| format!("{path}: {e}"))?
+                                .0,
+                            StatSig::of(path).unwrap_or_default(),
+                        ));
+                        *offset
+                    }
+                };
                 prefixes.push((
                     path.clone(),
-                    *offset,
-                    hash_prefix(path, *offset)?,
+                    len,
+                    hash_prefix(path, len)?,
                     StatSig::of(path).unwrap_or_default(),
                 ));
                 open_paths.push(path.clone());
@@ -709,7 +768,52 @@ pub fn make_key_from(
         // (S₁'s key, from S₀'s counts on: its whole reads are the body's,
         // keyed by content like any other)
         let arm = g.layer().arm_reads.filter(|_| from == (0, 0));
-        let files = reads.files[..nf.min(reads.files.len())]
+        // An earlier read of a file open here, closed again after its first
+        // `n` bytes (a first `\input` of it; `\openin`, `\read`, `\closein`:
+        // `system::note_close`), is keyed by what it saw, as the session's
+        // restart test takes it (`incr::consumed_nothing_changed`): the
+        // first `n + 1` bytes (a line ended at `n` may have looked at the
+        // next byte, `incr::read_through`), or the whole file where that is
+        // past its end. Left out (the filter below drops every other read
+        // of a file open here), a preamble that read its own source to the
+        // end kept what it found there after a change past S₀'s position in
+        // it (lane REVIEW-INCR, `tests/incremental.rs`).
+        let mut closed_prefixes: Vec<(String, u64, [u64; 2], StatSig)> = vec![];
+        let mut closed_whole: Vec<(String, [u64; 2], StatSig)> = vec![];
+        for f in reads.files[..nf.min(reads.files.len())].iter().skip(from.0) {
+            let Some(n) = f.closed_at.filter(|&n| n != u64::MAX) else {
+                continue;
+            };
+            if !open_paths.contains(&f.path) {
+                continue;
+            }
+            let want = n.saturating_add(1);
+            match &f.content {
+                Some(c) if want <= c.len() as u64 => {
+                    let k = (
+                        f.path.clone(),
+                        want,
+                        crate::persist::hash128(&c[..want as usize]),
+                        f.stat,
+                    );
+                    if !closed_prefixes.contains(&k) {
+                        closed_prefixes.push(k);
+                    }
+                }
+                c => {
+                    let hash = match (c, f.hash) {
+                        (Some(c), [0, 0]) => crate::persist::hash128(c),
+                        (_, h) => h,
+                    };
+                    let k = (f.path.clone(), hash, f.stat);
+                    if !closed_whole.contains(&k) {
+                        closed_whole.push(k);
+                    }
+                }
+            }
+        }
+        prefixes.extend(closed_prefixes);
+        let mut files: Vec<(String, [u64; 2], StatSig)> = reads.files[..nf.min(reads.files.len())]
             .iter()
             .enumerate()
             .skip(from.0)
@@ -731,6 +835,8 @@ pub fn make_key_from(
                 (f.path.clone(), hash, f.stat)
             })
             .collect();
+        files.extend(closed_whole);
+        files.extend(at_end);
         // (the journal lists a repeated lookup each time; the key once)
         let mut lookup_seen = std::collections::HashSet::new();
         let hi = nl.min(reads.lookups.len());
