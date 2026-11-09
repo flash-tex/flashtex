@@ -29,10 +29,17 @@ struct Run {
     stats: String,
     /// The PDF, when the test made one.
     pdf: Option<Vec<u8>>,
+    /// What the engine wrote on stderr.
+    err: String,
 }
 
 /// Run `\input t` in INITEX with BOX-MEMO in `mode`, offering `names`.
 fn run(dir: &Path, mode: &str, names: &str) -> Run {
+    run_env(dir, mode, names, &[])
+}
+
+/// [`run`] with the variables `env` set besides.
+fn run_env(dir: &Path, mode: &str, names: &str, env: &[(&str, &str)]) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
@@ -47,6 +54,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         .env("FLASHTEX_BOXMEMO_NAMES", names)
         .env("FLASHTEX_BOXMEMO_STATS", &stats)
         .env("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1")
+        .envs(env.iter().copied())
         .stdin(Stdio::null())
         .output()
         .expect("run flashtex-initex");
@@ -58,6 +66,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         log: std::fs::read_to_string(dir.join("t.log")).unwrap(),
         stats: std::fs::read_to_string(&stats).unwrap_or_default(),
         pdf,
+        err: err.into_owned(),
     }
 }
 
@@ -705,4 +714,64 @@ fn a_call_that_ends_a_paragraph_is_not_replayed_after_an_error() {
          \\measure{1pt}\\end\n",
     );
     assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
+/// (lane TESTGAPS2, #2093's review) BOX-MEMO.md §15.7's two folds end to
+/// end. Inside the call's group `\fa` is defined, `\global\let` from
+/// (which ends the run, and keeps the group in the replay: a value from
+/// the state reads what the group assigned), then defined twice more and
+/// `\global\let` from again. After the group `\fp` is `\xdef`'d twice in
+/// a row with nothing between, and `\fs` twice with a `\global\let` that
+/// reads it between. The logs must agree off, on and in verify (`\fr`
+/// shows what a fold across the read would get wrong), and the stored
+/// replay (`FLASHTEX_BOXMEMO_DUMP`) must hold the folds: two assignments
+/// of `\fa` (the last two made one, at the group's depth), one of `\fp`
+/// (the first overwritten) and both of `\fs`. Without the folds the
+/// replay has three of `\fa` and two of `\fp`. (No `\tracingrestores`:
+/// tracing inside a call abandons its recording.)
+#[test]
+fn a_run_inside_a_kept_group_and_an_overwritten_global_are_folded() {
+    let call = "{\\measure{q}\\show}\\show\n";
+    let src = [
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\fa{0}\\let\\fc\\relax\\let\\fd\\relax\\def\\fp{0}\\def\\fs{0}\\let\\fr\\relax\n\
+         \\def\\measure#1{\\begingroup\\def\\fa{1}\\global\\let\\fc\\fa\\def\\fa{2}\\def\\fa{#1}\
+         \\global\\let\\fd\\fa\\endgroup\
+         \\xdef\\fp{1}\\xdef\\fp{#1}\\xdef\\fs{1}\\global\\let\\fr\\fs\\xdef\\fs{#1}}\n\
+         \\def\\show{\\message{[\\meaning\\fa|\\meaning\\fc|\\meaning\\fd|\\meaning\\fp|\
+         \\meaning\\fr|\\meaning\\fs]}}\n",
+        call,
+        call,
+        call,
+        call,
+        "\\end\n",
+    ]
+    .concat();
+    let s = check("folds", &src);
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    let d = scratch("folds-dump");
+    std::fs::write(d.join("t.tex"), &src).unwrap();
+    let on = run_env(&d, "on", "measure", &[("FLASHTEX_BOXMEMO_DUMP", "1")]);
+    let dump = on
+        .err
+        .split("boxmemo dump ")
+        .find(|b| b.starts_with("\\measure:"))
+        .unwrap_or_else(|| panic!("no dump of \\measure: {}", on.err));
+    // ("  def<kind> <name> t<type> <value>")
+    let defs = |name: &str| {
+        dump.lines()
+            .filter(|l| {
+                let mut w = l.split_whitespace();
+                w.next().is_some_and(|k| k.starts_with("def")) && w.next() == Some(name)
+            })
+            .count()
+    };
+    assert_eq!(
+        defs("fa"),
+        2,
+        "the run inside the kept group is one:\n{dump}"
+    );
+    assert_eq!(defs("fp"), 1, "the overwritten \\xdef is left out:\n{dump}");
+    assert_eq!(defs("fs"), 2, "a read between keeps both:\n{dump}");
+    let _ = std::fs::remove_dir_all(&d);
 }
