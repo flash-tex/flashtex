@@ -2123,6 +2123,25 @@ const DEAD_SCALARS: &[&str] = &[
     "init_lig",
     "init_lft",
     "hyphen_passed",
+    // the language of the paragraph being broken (#2312). tex.web §816
+    // (pdftex.web l.24229) sets the `init_` three from `prev_graf` as each
+    // `line_break` starts, and §891 (l.26144) reads them only there, in
+    // the same call, copying them to `cur_lang`, `l_hyf` and `r_hyf`
+    // before the hyphenation pass; its language whatsits (§1362, §1363,
+    // l.36007, l.36018) change them only after that. Every other reader
+    // sets `cur_lang` first: `new_hyph_exceptions` (§934, l.26912),
+    // `new_patterns` (§960, l.27382), `new_graf` (§1091, l.29930) and
+    // `resume_after_display` (§1200, l.31412). e-TeX's `hyph_index` is
+    // set by `set_hyph_index` after each (l.26145, l.26914, l.26917,
+    // l.36019) and read only by `set_lc_code` in the same command. A
+    // replayed paragraph leaves them as the previous one left them.
+    "init_cur_lang",
+    "init_l_hyf",
+    "init_r_hyf",
+    "cur_lang",
+    "l_hyf",
+    "r_hyf",
+    "hyph_index",
     "pdf_stream_length",
     // pdfTeX's per-page lists: reset as `pdf_ship_out` begins ("Reset
     // resource lists"), flushed as it ends, not reset then

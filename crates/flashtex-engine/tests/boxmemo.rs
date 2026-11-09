@@ -479,6 +479,47 @@ fn protrusion_around_a_replayed_call_is_the_normal_paths() {
 }
 
 #[test]
+fn a_replayed_paragraph_in_another_language_matches_the_normal_path() {
+    // (#2312, lane AUDIT-HYPH) `line_break` leaves `cur_lang`, `l_hyf`,
+    // `r_hyf`, their `init_` copies and e-TeX's `hyph_index` as its
+    // paragraph's language set them; a replay leaves the previous call's.
+    // Each is written before every read within one command, so the whole
+    // state otherwise agrees. The calls alternate two languages (the first
+    // with saved hyphenation codes) and hyphen minima; the third and fourth
+    // replay the first and second. The measured heights are TeX Live 2026
+    // pdfTeX 1.40.29's (`pdftex -ini -etex`, macOS arm64).
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let src = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\lefthyphenmin=2 \\righthyphenmin=3\n\
+         \\savinghyphcodes=1 \\language=1 \\patterns{1a1 1e1 1i1}\n\
+         \\savinghyphcodes=0 \\language=0 \\patterns{a1b}\n\
+         \\font\\tenrm=cmr10 \\tenrm \\hyphenchar\\tenrm=`-\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\vbox{\\hsize=1pt \\hbadness10000 \\hfuzz16000pt\n\
+         \\pretolerance-1 \\hyphenpenalty=0 \\hskip0pt #1}\\global\\dimen1=\\ht0 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1]}}\n\
+         \\measure{abacabab}\\show\n\
+         \\language=1 \\lefthyphenmin=1 \\righthyphenmin=1 \\measure{abacabab}\\show\n\
+         \\language=0 \\lefthyphenmin=2 \\righthyphenmin=3 \\measure{abacabab}\\show\n\
+         \\language=1 \\lefthyphenmin=1 \\righthyphenmin=1 \\measure{abacabab}\\show\n\
+         \\end\n";
+    let s = check_with("language", src, &[("cmr10.tfm", tfm.clone())]);
+    assert!(stat(&s, "hits") >= 2, "{s}");
+    // the heights pdfTeX measures: language 0 breaks the word once, language
+    // 1 at every vowel
+    let d = scratch("language-oracle");
+    std::fs::write(d.join("cmr10.tfm"), tfm).unwrap();
+    std::fs::write(d.join("t.tex"), src).unwrap();
+    let log = run(&d, "on", "measure").log.replace('\n', "");
+    assert!(
+        log.contains("[13.88889pt] [42.36104pt] [13.88889pt] [42.36104pt]"),
+        "{log}"
+    );
+}
+
+#[test]
 fn calls_in_math_groups_compare_their_save_stack() {
     // (lane FANCYHDR) a call in a math group (`{...}` in math mode) of a
     // display, and of a display's `\\eqno` (cleveref's prefix under
