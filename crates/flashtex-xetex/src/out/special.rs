@@ -384,6 +384,11 @@ impl<M: Metrics> Builder<'_, M> {
                 }
             }
             b"code" | b"direct" => self.literal(p.rest()),
+            // `pdf:page:` and `pdf:direct:` (spc_pdfm.c's
+            // pdft_compat_handlers): operators written as they are
+            b"page:" | b"direct:" => self.literal(p.rest()),
+            // dvipdfmx reads it before the run (the trailer's /ID)
+            b"trailerid" => self.doc.ignored_special("pdf:trailerid"),
             b"literal" => {
                 if p.keyword(b"direct") {
                     self.literal(p.rest());
@@ -430,16 +435,16 @@ impl<M: Metrics> Builder<'_, M> {
                 s.restore();
                 self.reset_color();
             }
-            b"btrans" | b"begintransform" => {
+            b"btrans" | b"begintransform" | b"begintrans" | b"bt" => {
                 let m = read_transform(&mut p);
                 self.cur().save();
                 self.concat_about_point(m);
             }
-            b"etrans" | b"endtransform" => {
+            b"etrans" | b"endtransform" | b"endtrans" | b"et" => {
                 self.cur().restore();
                 self.reset_color();
             }
-            b"bcolor" | b"begincolor" => {
+            b"bcolor" | b"begincolor" | b"bc" | b"begingray" | b"bgray" | b"bg" => {
                 let Some(f) = read_color(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
@@ -448,7 +453,7 @@ impl<M: Metrics> Builder<'_, M> {
                 self.doc.colors.push((f.clone(), s.clone()));
                 self.set_colors(Some(f), Some(s));
             }
-            b"scolor" | b"setcolor" => {
+            b"scolor" | b"setcolor" | b"sc" => {
                 let Some(f) = read_color(&mut p) else {
                     self.doc.diag(format!("bad colour in `pdf:{}'", lossy(r)));
                     return;
@@ -460,19 +465,19 @@ impl<M: Metrics> Builder<'_, M> {
                 }
                 self.set_colors(Some(f), Some(s));
             }
-            b"ecolor" | b"endcolor" => {
+            b"ecolor" | b"endcolor" | b"ec" | b"endgray" | b"egray" | b"eg" => {
                 self.doc.colors.pop();
                 self.reset_color();
             }
-            b"bgcolor" => {
+            b"bgcolor" | b"bgc" | b"bbc" | b"bbg" => {
                 if let Some(c) = read_color(&mut p) {
                     self.background(c);
                 }
             }
-            b"image" => self.image_special(&mut p, true),
+            b"image" | b"img" | b"epdf" => self.image_special(&mut p, true),
             b"uxobj" | b"usexobj" => self.uxobj(&mut p),
-            b"bxobj" | b"beginxobj" => self.bxobj(&mut p),
-            b"exobj" | b"endxobj" => {
+            b"bxobj" | b"beginxobj" | b"bform" => self.bxobj(&mut p),
+            b"exobj" | b"endxobj" | b"eform" => {
                 let d = match p.object() {
                     Some(Obj::Dict(d)) => Some(self.fixup_dict(d)),
                     _ => None,
@@ -503,7 +508,7 @@ impl<M: Metrics> Builder<'_, M> {
             }
             b"stream" | b"fstream" => self.stream_special(&cmd, &mut p),
             b"ann" | b"annot" | b"annotate" | b"annotation" => self.ann(&mut p),
-            b"xann" => self.xann(&mut p),
+            b"xann" | b"xannot" | b"extendann" => self.xann(&mut p),
             b"link" => self.doc.nolink = false,
             b"nolink" => self.doc.nolink = true,
             b"bann" | b"bannot" | b"beginann" => {
@@ -527,7 +532,7 @@ impl<M: Metrics> Builder<'_, M> {
                 self.break_annot();
                 self.doc.tracking = None;
             }
-            b"dest" => {
+            b"dest" | b"destination" => {
                 let name = match p.object() {
                     Some(Obj::Str(s)) | Some(Obj::Name(s)) => s,
                     _ => {
