@@ -177,6 +177,19 @@ A recording ends at `big_switch` once every input level from the body's on is us
 - the string, hash and font counters;
 - the output counters and the page-builder state of §4.1.
 
+**Room in the buffer, the pool and the string table** (lane AUDIT-OVERFLOW, #2308). A replay does
+not run the call, so it puts no `\csname` name in the buffer above `first`, and nothing in the pool
+or the string table for a moment (`\the`, `\meaning`, `\pdfstrcmp`). The key holds no position in
+them. A call recorded with room to spare would therefore replay where its normal path stops with
+`TeX capacity exceeded`.
+
+The call writes each of these arrays from its pointer up, with no gap. At its start, a recording
+puts a marker (a value TeX never stores there) 0, 1, 2, 4, ... places above each pointer, in dead
+memory. The first marker still there at the end bounds how far up the call went (`src/capacity.rs`).
+An offer replays only where each overflow test would pass with that bound on top of the pointers as
+they are now. A recording that wrote an array's last place, or came within 64 characters of the
+pool's top, is abandoned. D9 does the same, and also keeps #2265's bounds on the stacks.
+
 ### 4.3 The effects: an operation log, as D9 keeps one
 
 A recording keeps every `eqtb` and sparse-register assignment and every group, in order, at every
