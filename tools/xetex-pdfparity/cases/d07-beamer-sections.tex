@@ -1,0 +1,26 @@
+% d07-beamer-sections: beamer with a miniframe headline (Berlin), sections, \hyperlink buttons, overlays, \againframe, an appendix
+\documentclass{beamer}
+\usetheme{Berlin}
+\title{Links}\author{FlashTeX}\institute{Lab}\date{2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Outline}\tableofcontents\end{frame}
+\section{Intro}
+\subsection{Motivation}
+\begin{frame}[label=mot]{Motivation}
+\begin{itemize}
+\item<1-> First \hyperlink{res}{\beamergotobutton{Results}}
+\item<2-> Second \hyperlink{app}{\beamerskipbutton{Appendix}}
+\end{itemize}
+\end{frame}
+\subsection{Plan}
+\begin{frame}{Plan}\hypertarget<2>{plan}{Plan} \only<2>{shown}\end{frame}
+\section{Results}
+\begin{frame}[label=res]{Results}
+\href{https://example.com}{a URL} and \hyperlink{mot}{\beamerreturnbutton{back}}.
+\end{frame}
+\againframe<2>{mot}
+\appendix
+\section{Appendix}
+\begin{frame}[label=app]{Appendix}Extra.\end{frame}
+\end{document}

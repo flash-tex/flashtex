@@ -207,6 +207,10 @@ def env():
     # on from the replay; a difference ends the host (exit 3), which the sweep reports. The
     # framed/TikZ fixtures (fixtures/real-world/framed-tikz-theorems, tikzcd-shaded-notes) and the
     # beamer ones make edits replay calls.
+    # The from-scratch references of each soundness.py run, 3 at a time beside its host
+    # (incr_bench.py's INCR_BENCH_REF_JOBS): the same comparisons; a unit left alone at the end of
+    # its shard uses the idle cpus (#2145: beamer-polish in verify mode, 3656 s with one at a time).
+    e.setdefault('INCR_BENCH_REF_JOBS', '3')
     bm = os.environ.get('FLASHTEX_SWEEP_BOXMEMO', '')
     if bm:
         e['FLASHTEX_BOXMEMO'] = bm

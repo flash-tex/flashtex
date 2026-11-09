@@ -140,7 +140,7 @@ biber release is the owner's step, with the bundle's.
 ## The gate
 
 `texbundle.py gate` (in `notex-gate.yml`, GitHub-hosted macOS, no TeX Live; the engine under
-`sandbox-exec` denying every TeX Live location, as `tests/bundle_notex.rs`) compiles every
+`sandbox-exec` denying every TeX Live location, as `crates/flashtex-engine/tests/bundle_notex.rs`) compiles every
 parity fixture and a 30-paper arXiv sample (`tl2026/gate.json`) from the bundle alone and
 requires each PDF to be byte-identical to TeX Live's pdflatex's in the bundle's tree
 (`oracle-refs.json`: hashes only; no third-party PDF is published). `tl2026/gaps.json` lists

@@ -86,6 +86,7 @@ pub fn run(argv: Vec<String>) -> ! {
     }
     flashtex_engine::system::configure(c.options);
     let mut g = crate::Globals::new();
+    g.intr_verify_on = crate::intrinsics::enabled();
     #[cfg(unix)]
     {
         g.host.spare_go = child_env.go;
@@ -105,5 +106,6 @@ pub fn run(argv: Vec<String>) -> ! {
         system::set_first_line(&mut g, system::command_line(&c.args));
     }
     g.tex_body();
+    g.write_intrinsics_report();
     system::final_end(&mut g)
 }

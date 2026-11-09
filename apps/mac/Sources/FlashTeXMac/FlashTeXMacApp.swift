@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .alertSecondButtonReturn:
             // Every dirty member stays recoverable next launch (DirtySnapshots.swift); nothing is written to the files.
             model.preserveDirtyBuffers(reason: "quit without saving")
+            model.dropUntitledDraft() // an untitled buffer's text was discarded on purpose (UntitledDrafts.swift)
             return true
         default: return false
         }

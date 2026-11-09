@@ -49,7 +49,7 @@ passed through to the candidate's `capture()` call only, never the oracle.
 
 ## Output cap
 
-Every entry point (`run.py`, `docgen.py`, the six parsers,
+Every entry point (`run.py`, `docgen.py`, the seven parsers,
 `minimize.py`) calls `run.apply_fsize_limit()` first: `RLIMIT_FSIZE`
 is set to `FUZZ_FSIZE_LIMIT_BYTES` (default 64 MiB), inherited by all
 engine children, so a runaway engine is killed by SIGXFSZ instead of
@@ -65,7 +65,7 @@ and is filed.
 ## Shell escape and random seeds
 
 Every fuzz engine run — candidate and oracle alike, in `run.py`,
-`docgen.py`, the six parser jobs, `minimize.py` and (through them)
+`docgen.py`, the seven parser jobs, `minimize.py` and (through them)
 `nightly.py` — passes `-cnf-line=shell_escape=f`
 (`FUZZ_SHELL_ESCAPE_FLAGS` in `run.py`, the one shared place), so a
 mutated `\write16` that becomes `\write18` can never run a program. The
@@ -185,9 +185,11 @@ Fake shell-script engines only, in the style of
 ## Parser fuzzers and the document generator
 
 `tools/fuzz/parsers/{tfm,type1,png,jpeg,pdfinc,ttf}.py` fuzz the candidate's
-file parsers (no oracle, only the no-panic contract) and `docgen.py` is a
-document-level differential generator (see `parsers/README-*.md` and
-`README-docgen.md`). All take `--candidate BIN` (required) and read
+file parsers (no oracle, only the no-panic contract);
+`parsers/jbig2.py` does too without `--oracle`, and with it compares the
+candidate's exit status, PDF and log with pdfTeX's (nightly runs it so);
+`docgen.py` is a document-level differential generator (see
+`parsers/README-*.md` and `README-docgen.md`). All take `--candidate BIN` (required) and read
 `FLASHTEX_POOL` / `FLASHTEX_FORMATS` from the environment; without them the
 candidate cannot start and every run looks like a graceful error.
 `python3 -m unittest discover -s tools/fuzz` does not descend into
@@ -196,7 +198,7 @@ candidate cannot start and every run looks like a graceful error.
 ## Nightly
 
 `nightly.py` runs every fuzzer (`run.py`, `docgen.py`, and
-`parsers/{tfm,type1,png,jpeg,pdfinc,ttf}.py`) one after another as
+`parsers/{tfm,type1,png,jpeg,pdfinc,ttf,jbig2}.py`) one after another as
 subprocesses inside a wall-clock budget. Each fuzzer gets a base target
 iteration count (see `FUZZERS` in `nightly.py`); the driver first runs
 20 probe iterations of each to estimate seconds per iteration, then
