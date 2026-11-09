@@ -120,6 +120,10 @@ struct Step {
     /// End the host before this compile and start a new one (the document
     /// closed and reopened; its persisted S₀ is kept).
     reopen: bool,
+    /// Changes saved this long after the compile is sent, while it runs
+    /// (the oracle makes them after its compile); that compile is not
+    /// compared (what it read depends on when), the next ones are.
+    during: Option<(u64, Vec<Op>)>,
 }
 
 fn step(ops: Vec<Op>) -> Step {
@@ -270,10 +274,17 @@ fn run(
             std::thread::sleep(Duration::from_millis(ms));
             c.cancel(id).unwrap();
         }
+        if let Some((ms, ops)) = s.during.as_ref().filter(|_| resident) {
+            std::thread::sleep(Duration::from_millis(*ms));
+            apply(&proj, &fonts, 1000 + i, ops);
+        }
         let (ev, done) = events(c, id);
+        if let Some((_, ops)) = s.during.as_ref().filter(|_| !resident) {
+            apply(&proj, &fonts, 1000 + i, ops);
+        }
         let status = done.str_field("status").unwrap_or("").to_string();
         said.push(format!("{status}:{}", starts(&done)));
-        if status == "cancelled" {
+        if status == "cancelled" || s.during.is_some() {
             outs.push(None);
             continue;
         }
@@ -318,7 +329,11 @@ fn check(name: &str, steps: &[Step]) {
     let dir = std::env::temp_dir().join(format!("flashtex-edits-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let (got, said) = run(&dir, true, steps, &vec![false; steps.len()]);
-    let skip: Vec<bool> = got.iter().map(Option::is_none).collect();
+    let skip: Vec<bool> = got
+        .iter()
+        .zip(steps)
+        .map(|(g, s)| g.is_none() && s.during.is_none())
+        .collect();
     let (want, _) = run(&dir, false, steps, &skip);
     let mut bad = vec![];
     let keep = dir.join("diff");
@@ -418,7 +433,9 @@ fn against_xelatex(dir: &Path, xelatex: &str, ours: &Out) -> String {
     }
     let text = |pdf: &Path| -> Option<String> {
         let o = Command::new("pdftotext").arg(pdf).arg("-").output().ok()?;
-        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+        o.status
+            .success()
+            .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
     };
     let mine = dir.join("ours.pdf");
     std::fs::write(&mine, &ours.pdf).unwrap();
@@ -426,7 +443,11 @@ fn against_xelatex(dir: &Path, xelatex: &str, ours: &Out) -> String {
         (Some(a), Some(b)) if a == b => format!("same text ({} bytes)", a.len()),
         (Some(a), Some(b)) => {
             let (la, lb): (Vec<_>, Vec<_>) = (a.lines().collect(), b.lines().collect());
-            let k = la.iter().zip(&lb).position(|(x, y)| x != y).unwrap_or(la.len().min(lb.len()));
+            let k = la
+                .iter()
+                .zip(&lb)
+                .position(|(x, y)| x != y)
+                .unwrap_or(la.len().min(lb.len()));
             format!(
                 "XELATEX-DIFF at line {}: ours {:?} / xelatex {:?} ({} / {} lines)",
                 k + 1,
@@ -469,8 +490,12 @@ fn tl_file(n: &str) -> Vec<u8> {
 }
 
 fn bundled_font(n: &str) -> Vec<u8> {
-    std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts").join(n))
-        .unwrap()
+    std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/mac/Fonts")
+            .join(n),
+    )
+    .unwrap()
 }
 
 /// `font` with `from` in its name table replaced by `to` (as long): the same
@@ -514,25 +539,54 @@ fn renamed_font(font: &[u8], from: &str, to: &str) -> Vec<u8> {
 fn edits_in_input_files() {
     let main = "\\documentclass{article}\n\\usepackage{fontspec}\n\\input{macros}\n\\begin{document}\n\\input{ch1}\n\\input{ch2}\n\\InputIfFileExists{extra}{}{}\n\\input{ch3}\nSee~\\ref{s3} and \\thing.\n\\end{document}\n";
     let macros = "\\newcommand\\thing{the thing}\n";
-    let ch = |k: usize| format!("\\section{{Chapter {k}}}\\label{{s{k}}}\n{}", filler(&format!("Ch{k}"), 10));
+    let ch = |k: usize| {
+        format!(
+            "\\section{{Chapter {k}}}\\label{{s{k}}}\n{}",
+            filler(&format!("Ch{k}"), 10)
+        )
+    };
     let (c1, c2, c3) = (ch(1), ch(2), ch(3));
     let steps = vec![
-        step(vec![w("main.tex", main), w("macros.tex", macros), w("ch1.tex", &c1), w("ch2.tex", &c2), w("ch3.tex", &c3)]),
+        step(vec![
+            w("main.tex", main),
+            w("macros.tex", macros),
+            w("ch1.tex", &c1),
+            w("ch2.tex", &c2),
+            w("ch3.tex", &c3),
+        ]),
         step(vec![w("ch3.tex", format!("{c3}A late edit.\n"))]),
-        step(vec![w("ch1.tex", c1.replacen("Words and more", "Wards and more", 1))]),
+        step(vec![w(
+            "ch1.tex",
+            c1.replacen("Words and more", "Wards and more", 1),
+        )]),
         step(vec![
             w("ch1.tex", c1.replacen("Ch1 3.", "Ch1 3, edited,", 1)),
             w("ch3.tex", c3.replacen("Ch3 8.", "Ch3 8, edited too,", 1)),
         ]),
-        step(vec![w("macros.tex", "\\newcommand\\thing{another thing, longer, so that the last line changes}\n")]),
-        step(vec![w("extra.tex", format!("\\section{{Extra}}\\label{{x}}\n{}", filler("Extra", 3)))]),
-        step(vec![w("extra.tex", format!("\\section{{Extra}}\\label{{x}}\n{}", filler("Extra", 5)))]),
+        step(vec![w(
+            "macros.tex",
+            "\\newcommand\\thing{another thing, longer, so that the last line changes}\n",
+        )]),
+        step(vec![w(
+            "extra.tex",
+            format!("\\section{{Extra}}\\label{{x}}\n{}", filler("Extra", 3)),
+        )]),
+        step(vec![w(
+            "extra.tex",
+            format!("\\section{{Extra}}\\label{{x}}\n{}", filler("Extra", 5)),
+        )]),
         step(vec![Op::Remove("extra.tex".into())]),
         step(vec![
-            w("ch2b.tex", "\\subsection{Two b}\\label{s2b}A new file, see~\\ref{s1}.\n"),
+            w(
+                "ch2b.tex",
+                "\\subsection{Two b}\\label{s2b}A new file, see~\\ref{s1}.\n",
+            ),
             w("ch2.tex", format!("{c2}\\input{{ch2b}}\n")),
         ]),
-        step(vec![w("ch2b.tex", "\\subsection{Two b}\\label{s2b}A new file, edited, see~\\ref{s3}.\n")]),
+        step(vec![w(
+            "ch2b.tex",
+            "\\subsection{Two b}\\label{s2b}A new file, edited, see~\\ref{s3}.\n",
+        )]),
         step(vec![
             w("main.tex", main),
             w("macros.tex", macros),
@@ -565,16 +619,34 @@ fn fontspec_font_changes() {
     let pagella = doc("texgyrepagella-regular.otf");
     let cursor = bundled_font("texgyrecursor-regular.otf");
     let steps = vec![
-        step(vec![w("main.tex", &pagella), w("myfont.otf", tl_file("lmroman10-regular.otf"))]),
+        step(vec![
+            w("main.tex", &pagella),
+            w("myfont.otf", tl_file("lmroman10-regular.otf")),
+        ]),
         step(vec![w("main.tex", doc("texgyretermes-regular.otf"))]),
         step(vec![w("main.tex", doc("TeX Gyre Heros"))]),
         step(vec![w("main.tex", &pagella)]),
         step(vec![w("myfont.otf", tl_file("lmroman12-regular.otf"))]),
-        step(vec![w("main.tex", pagella.replacen("E 2.", "E 2, edited late,", 1))]),
-        step(vec![w("myfont.otf", renamed_font(&cursor, "Cursor", "Prob3x"))]),
-        step(vec![Op::WriteKeepTime("myfont.otf".into(), renamed_font(&cursor, "Cursor", "Prob3y"))]),
-        step(vec![w("main.tex", pagella.replacen("D 1.", "D 1, edited,", 1))]),
-        step(vec![w("main.tex", &pagella), w("myfont.otf", tl_file("lmroman10-regular.otf"))]),
+        step(vec![w(
+            "main.tex",
+            pagella.replacen("E 2.", "E 2, edited late,", 1),
+        )]),
+        step(vec![w(
+            "myfont.otf",
+            renamed_font(&cursor, "Cursor", "Prob3x"),
+        )]),
+        step(vec![Op::WriteKeepTime(
+            "myfont.otf".into(),
+            renamed_font(&cursor, "Cursor", "Prob3y"),
+        )]),
+        step(vec![w(
+            "main.tex",
+            pagella.replacen("D 1.", "D 1, edited,", 1),
+        )]),
+        step(vec![
+            w("main.tex", &pagella),
+            w("myfont.otf", tl_file("lmroman10-regular.otf")),
+        ]),
     ];
     check("fontspec", &steps);
 }
@@ -610,12 +682,31 @@ fn interchar_and_interword_shaping_toggled() {
     let steps = vec![
         step(vec![w("main.tex", &base)]),
         step(vec![w("main.tex", doc(&[(4, off)]))]),
-        step(vec![w("main.tex", doc(&[(4, off)]).replacen("P1! ok 2.", "P1! ok 2, edited!", 1))]),
+        step(vec![w(
+            "main.tex",
+            doc(&[(4, off)]).replacen("P1! ok 2.", "P1! ok 2, edited!", 1),
+        )]),
         step(vec![w("main.tex", doc(&[(2, off)]))]),
         step(vec![w("main.tex", doc(&[(3, shaping)]))]),
-        step(vec![w("main.tex", doc(&[(3, shaping)]).replacen("P1! ok 1.", "P1! ok 1, edited!", 1))]),
-        step(vec![w("main.tex", doc(&[(3, shaping), (5, "\\XeTeXinterchartoks 0 \\bang = {\\kern6pt}")]))]),
-        step(vec![w("main.tex", doc(&[(5, "\\XeTeXinterchartoks 0 \\bang = {\\kern6pt}")]).replacen("P6! ok 3.", "P6! ok 3, edited!", 1))]),
+        step(vec![w(
+            "main.tex",
+            doc(&[(3, shaping)]).replacen("P1! ok 1.", "P1! ok 1, edited!", 1),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc(&[
+                (3, shaping),
+                (5, "\\XeTeXinterchartoks 0 \\bang = {\\kern6pt}"),
+            ]),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc(&[(5, "\\XeTeXinterchartoks 0 \\bang = {\\kern6pt}")]).replacen(
+                "P6! ok 3.",
+                "P6! ok 3, edited!",
+                1,
+            ),
+        )]),
         step(vec![w("main.tex", &base)]),
     ];
     check("interchar", &steps);
@@ -639,9 +730,18 @@ fn bidi_text_edits() {
     let steps = vec![
         step(vec![w("main.tex", &base)]),
         step(vec![w("main.tex", doc("مرحبا بالعالم الجميل 123", he, ""))]),
-        step(vec![w("main.tex", doc("مرحبا بالعالم الجميل 123", "שלום עולם 2024 (3.5%)", ""))]),
-        step(vec![w("main.tex", doc(ar, he, "\\XeTeXinterwordspaceshaping=2 "))]),
-        step(vec![w("main.tex", doc(ar, he, "\\XeTeXinterwordspaceshaping=2 ").replacen("A 1.", "A 1, early,", 1))]),
+        step(vec![w(
+            "main.tex",
+            doc("مرحبا بالعالم الجميل 123", "שלום עולם 2024 (3.5%)", ""),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc(ar, he, "\\XeTeXinterwordspaceshaping=2 "),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc(ar, he, "\\XeTeXinterwordspaceshaping=2 ").replacen("A 1.", "A 1, early,", 1),
+        )]),
         step(vec![w("main.tex", doc("١٢٣ مرحبا", "123 שלום", ""))]),
         step(vec![w("main.tex", &base)]),
     ];
@@ -678,11 +778,39 @@ fn polyglossia_language_switches() {
     let steps = vec![
         step(vec![w("main.tex", &base)]),
         step(vec![w("main.tex", doc("german", "", ""))]),
-        step(vec![w("main.tex", doc("english", "\\selectlanguage{french}\n", ""))]),
-        step(vec![w("main.tex", doc("english", "\\selectlanguage{french}\n", "").replacen("P4 2.", "P4 2; edited:", 1))]),
-        step(vec![w("main.tex", doc("english", "\\selectlanguage{german}\n", "\\selectlanguage{english}\n"))]),
-        step(vec![w("main.tex", doc("english", "", "\\textfrench{Bonjour ! Ça va ? Oui : bien ; merci.}\n"))]),
-        step(vec![w("main.tex", doc("english", "", "\\textfrench{Bonjour ! Ça va ? Oui : bien ; merci.}\n").replacen("P1 0.", "P1 0; early:", 1))]),
+        step(vec![w(
+            "main.tex",
+            doc("english", "\\selectlanguage{french}\n", ""),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc("english", "\\selectlanguage{french}\n", "").replacen("P4 2.", "P4 2; edited:", 1),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc(
+                "english",
+                "\\selectlanguage{german}\n",
+                "\\selectlanguage{english}\n",
+            ),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc(
+                "english",
+                "",
+                "\\textfrench{Bonjour ! Ça va ? Oui : bien ; merci.}\n",
+            ),
+        )]),
+        step(vec![w(
+            "main.tex",
+            doc(
+                "english",
+                "",
+                "\\textfrench{Bonjour ! Ça va ? Oui : bien ; merci.}\n",
+            )
+            .replacen("P1 0.", "P1 0; early:", 1),
+        )]),
         step(vec![w("main.tex", &base)]),
     ];
     check("polyglossia", &steps);
@@ -709,7 +837,10 @@ fn images_replaced_in_place() {
         step(vec![w("img.png", tl_file("example-image-16x9.png"))]),
         step(vec![w("fig.pdf", tl_file("example-image-b.pdf"))]),
         step(vec![w("main.tex", doc.replacen("A 1.", "A 1, early,", 1))]),
-        step(vec![Op::WriteKeepTime("img.png".into(), tl_file("example-image-c.png"))]),
+        step(vec![Op::WriteKeepTime(
+            "img.png".into(),
+            tl_file("example-image-c.png"),
+        )]),
         step(vec![
             w("main.tex", &doc),
             w("img.png", tl_file("example-image-a.png")),
@@ -725,7 +856,10 @@ fn images_replaced_in_place() {
 fn cancelled_compiles_between_edits() {
     let mut body = String::new();
     for i in 1..=30 {
-        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n{}", filler(&format!("S{i}"), 4)));
+        body.push_str(&format!(
+            "\\section{{Part {i}}}\\label{{p{i}}}\n{}",
+            filler(&format!("S{i}"), 4)
+        ));
     }
     let doc = format!(
         "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}See~\\ref{{p2}}.\n\\end{{document}}\n"
@@ -733,19 +867,77 @@ fn cancelled_compiles_between_edits() {
     let cancel = |ops: Vec<Op>, ms: u64| Step {
         ops,
         cancel_ms: Some(ms),
-        reopen: false,
+        ..Step::default()
     };
     let steps = vec![
         step(vec![w("main.tex", &doc)]),
         cancel(vec![w("main.tex", doc.replace("See~", "Look at~"))], 30),
-        step(vec![w("main.tex", doc.replace("See~", "Look at~").replacen("S1 1.", "S1 1, early,", 1))]),
-        cancel(vec![w("main.tex", doc.replacen("S20 1.", "S20 1, mid,", 1))], 80),
-        cancel(vec![w("main.tex", doc.replacen("S3 1.", "S3 1, early,", 1))], 15),
-        step(vec![w("main.tex", doc.replacen("S25 1.", "S25 1, late,", 1).replace("\\label{p2}", "\\label{p2}\\label{q}"))]),
+        step(vec![w(
+            "main.tex",
+            doc.replace("See~", "Look at~")
+                .replacen("S1 1.", "S1 1, early,", 1),
+        )]),
+        cancel(
+            vec![w("main.tex", doc.replacen("S20 1.", "S20 1, mid,", 1))],
+            80,
+        ),
+        cancel(
+            vec![w("main.tex", doc.replacen("S3 1.", "S3 1, early,", 1))],
+            15,
+        ),
+        step(vec![w(
+            "main.tex",
+            doc.replacen("S25 1.", "S25 1, late,", 1)
+                .replace("\\label{p2}", "\\label{p2}\\label{q}"),
+        )]),
         cancel(vec![w("main.tex", &doc)], 200),
         step(vec![w("main.tex", &doc)]),
     ];
     check("cancel", &steps);
+}
+
+/// Edits saved while a compile runs (not cancelled), in the main file and
+/// in an `\input` file, early and late: the next compile sees them.
+#[test]
+fn edits_saved_while_a_compile_runs() {
+    let mut body = String::new();
+    for i in 1..=20 {
+        body.push_str(&format!(
+            "\\section{{Part {i}}}\n{}",
+            filler(&format!("S{i}"), 4)
+        ));
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}\\input{{tail}}\n\\end{{document}}\n"
+    );
+    let tail = filler("T", 3);
+    let during = |ops: Vec<Op>, ms: u64, saved: Vec<Op>| Step {
+        ops,
+        during: Some((ms, saved)),
+        ..Step::default()
+    };
+    let steps = vec![
+        step(vec![w("main.tex", &doc), w("tail.tex", &tail)]),
+        during(
+            vec![w("main.tex", doc.replacen("S15 1.", "S15 1, late,", 1))],
+            30,
+            vec![w(
+                "main.tex",
+                doc.replacen("S2 1.", "S2 1, early,", 1)
+                    .replacen("S15 1.", "S15 1, late,", 1),
+            )],
+        ),
+        step(vec![]),
+        during(
+            vec![w("main.tex", doc.replacen("S3 1.", "S3 1, again,", 1))],
+            60,
+            vec![w("tail.tex", format!("{tail}Saved while it ran.\n"))],
+        ),
+        step(vec![]),
+        during(vec![w("main.tex", &doc)], 10, vec![w("tail.tex", &tail)]),
+        step(vec![]),
+    ];
+    check("during", &steps);
 }
 
 /// A document reopened from its persisted S₀ after the fonts it looked up
@@ -763,19 +955,28 @@ fn a_reopened_document_after_its_fonts_changed() {
     let cursor = bundled_font("texgyrecursor-regular.otf");
     let reopen = |ops: Vec<Op>| Step {
         ops,
-        cancel_ms: None,
         reopen: true,
+        ..Step::default()
     };
     let x = renamed_font(&cursor, "Cursor", "Prob3x");
     let y = renamed_font(&cursor, "Cursor", "Prob3y");
     let steps = vec![
         step(vec![w("main.tex", &doc), w("@fonts/prob3x.otf", &x)]),
         reopen(vec![w("main.tex", doc.replace("See this", "Look at this"))]),
-        reopen(vec![w("@fonts/prob3x.otf", renamed_font(&bundled_font("texgyreheros-regular.otf"), "Heros", "Prob3"))]),
+        reopen(vec![w(
+            "@fonts/prob3x.otf",
+            renamed_font(&bundled_font("texgyreheros-regular.otf"), "Heros", "Prob3"),
+        )]),
         reopen(vec![w("@fonts/prob3x.otf", &x)]),
-        reopen(vec![Op::WriteKeepTime("@fonts/prob3x.otf".into(), y.clone())]),
+        reopen(vec![Op::WriteKeepTime(
+            "@fonts/prob3x.otf".into(),
+            y.clone(),
+        )]),
         reopen(vec![w("main.tex", &doc)]),
-        reopen(vec![Op::WriteKeepTime("@fonts/prob3x.otf".into(), x.clone())]),
+        reopen(vec![Op::WriteKeepTime(
+            "@fonts/prob3x.otf".into(),
+            x.clone(),
+        )]),
         step(vec![w("main.tex", doc.replace("See this", "See that"))]),
     ];
     check("reopen-fonts", &steps);
@@ -792,7 +993,11 @@ fn the_main_font_rewritten_in_place_while_open() {
     let cursor = bundled_font("texgyrecursor-regular.otf");
     let x = renamed_font(&cursor, "Cursor", "Prob3x");
     let y = renamed_font(&cursor, "Cursor", "Prob3y");
-    let t = renamed_font(&bundled_font("texgyretermes-regular.otf"), "Termes", "Prob3x");
+    let t = renamed_font(
+        &bundled_font("texgyretermes-regular.otf"),
+        "Termes",
+        "Prob3x",
+    );
     let steps = vec![
         step(vec![w("main.tex", &doc), w("@fonts/prob3x.otf", &x)]),
         step(vec![w("main.tex", doc.replace("See this", "Look at this"))]),
@@ -818,14 +1023,25 @@ fn a_body_font_found_by_name_rewritten_in_place() {
         filler("C", 6),
         filler("D", 6)
     );
-    let x = renamed_font(&bundled_font("texgyrecursor-regular.otf"), "Cursor", "Prob3x");
-    let t = renamed_font(&bundled_font("texgyretermes-regular.otf"), "Termes", "Prob3x");
+    let x = renamed_font(
+        &bundled_font("texgyrecursor-regular.otf"),
+        "Cursor",
+        "Prob3x",
+    );
+    let t = renamed_font(
+        &bundled_font("texgyretermes-regular.otf"),
+        "Termes",
+        "Prob3x",
+    );
     let steps = vec![
         step(vec![w("main.tex", &doc), w("@fonts/prob3x.otf", &x)]),
         step(vec![w("main.tex", doc.replace("See this", "Look at this"))]),
         step(vec![w("@fonts/prob3x.otf", &t)]),
         step(vec![w("main.tex", doc.replace("See this", "See that"))]),
-        step(vec![Op::WriteKeepTime("@fonts/prob3x.otf".into(), x.clone())]),
+        step(vec![Op::WriteKeepTime(
+            "@fonts/prob3x.otf".into(),
+            x.clone(),
+        )]),
         step(vec![w("main.tex", doc.replacen("D 2.", "D 2, edited,", 1))]),
         step(vec![w("main.tex", &doc)]),
     ];
