@@ -1094,8 +1094,24 @@ impl<'a> Writer<'a> {
             };
             let (file_key, sub, program, subset) = made.as_ref().as_ref().map_err(String::clone)?;
             let ff = self.alloc();
-            self.stream(ff, sub.as_bytes(), program, true);
-            Some((format!(" /{file_key} {ff} 0 R"), *subset))
+            // a TrueType program's `/Length1` (sfnt_create_FontFile_stream)
+            let dict = if *file_key == "FontFile2" {
+                format!("{sub}/Length1 {}", program.len())
+            } else {
+                sub.to_string()
+            };
+            self.stream(ff, dict.as_bytes(), program, true);
+            // the `/CIDSet` of a PDF before 2.0
+            let cid_set = if self.doc.version.0 < 2 {
+                let codes: BTreeSet<u16> = used.iter().map(|&g| code_of(g)).collect();
+                let set = cid_set(&r.program, index, cff, used, &codes);
+                let cs = self.alloc();
+                self.stream(cs, b"", &set, true);
+                format!(" /CIDSet {cs} 0 R")
+            } else {
+                String::new()
+            };
+            Some((format!(" /{file_key} {ff} 0 R{cid_set}"), *subset))
         };
         // a subset's name has its tag (PDF 32000-1 §9.6.4); a whole font's not
         let name = if ps_name.is_empty() { "Font" } else { ps_name };
@@ -1187,7 +1203,9 @@ impl<'a> Writer<'a> {
         let mut d = String::new();
         let _ = write!(
             d,
-            "<</Type /Font /Subtype /Type0 /BaseFont /{base} /Encoding /Identity-H /DescendantFonts [{cid} 0 R]{tu}>>"
+            "<</Type /Font /Subtype /Type0 /BaseFont /{base}{} /Encoding /Identity-H /DescendantFonts [{cid} 0 R]{tu}>>",
+            // a CIDFontType0's Type0 font is named with its CMap (type0.c)
+            if cff { "-Identity-H" } else { "" }
         );
         self.object(num, d.as_bytes());
         Ok(())
@@ -1730,6 +1748,46 @@ fn cid_widths(
     }
     wa.push_str(" ]");
     (dw, Some(wa))
+}
+
+/// The bytes of a CIDFont's `/CIDSet` (bit `7 - c % 8` of byte `c / 8`
+/// for CID `c`), as xdvipdfmx writes it. For CFF outlines
+/// (`CIDFont_type0_add_CIDSet`, cidtype0.c): `.notdef` and the CIDs
+/// `codes`, through the largest. For TrueType outlines (cidtype2.c): every
+/// glyph id from 1 through the subset's last, the subset holding the used
+/// glyphs at their ids and each further composite component in the lowest
+/// free slot (`find_empty_slot`, tt_glyf.c).
+fn cid_set(
+    program: &[u8],
+    index: u32,
+    cff: bool,
+    used: &BTreeSet<u16>,
+    codes: &BTreeSet<u16>,
+) -> Vec<u8> {
+    if cff {
+        let last = codes.last().copied().unwrap_or(0) as usize;
+        let mut set = vec![0u8; last / 8 + 1];
+        for c in std::iter::once(0).chain(codes.iter().copied()) {
+            set[c as usize / 8] |= 1 << (7 - c % 8);
+        }
+        return set;
+    }
+    let held: BTreeSet<u16> = std::iter::once(0).chain(used.iter().copied()).collect();
+    let mut extra = glyf_closure(program, index, used).difference(&held).count();
+    let mut last = held.last().copied().unwrap_or(0) as usize;
+    let mut slot = 0usize;
+    while extra > 0 {
+        slot += 1;
+        if !held.contains(&(slot as u16)) {
+            extra -= 1;
+            last = last.max(slot);
+        }
+    }
+    let mut set = vec![0u8; last / 8 + 1];
+    for g in 1..=last {
+        set[g / 8] |= 1 << (7 - g % 8);
+    }
+    set
 }
 
 /// `.notdef`, the glyphs of `used` and every glyph their composite glyphs
@@ -2785,6 +2843,43 @@ mod tests {
                 )
             );
         }
+    }
+
+    /// `/CIDSet` as xdvipdfmx writes it, measured (TeX Live 2026 xetex +
+    /// xdvipdfmx 20260317): JetBrains Mono (TrueType: glyphs 1 through the
+    /// subset's last), LM Roman 10 Italic and LM Mono 10 (CFF: the CIDs).
+    #[test]
+    fn cid_sets_are_xdvipdfmxs() {
+        let set = |path: &str, cff: bool, text: &str| -> String {
+            let data =
+                std::fs::read(format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            let font = flashtex_pdf::truetype::TrueTypeFont::parse(data.clone()).unwrap();
+            let used: BTreeSet<u16> = text
+                .chars()
+                .filter(|c| *c != ' ')
+                .map(|c| font.glyph_id(c).unwrap())
+                .collect();
+            cid_set(&data, 0, cff, &used, &used)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect()
+        };
+        assert_eq!(
+            set(
+                "apps/mac/Sources/FlashTeXMac/Resources/Fonts/JetBrainsMono-Regular.ttf",
+                false,
+                "Héllo wörld ÆŒ ñ ü"
+            ),
+            format!("7f{}e0", "ff".repeat(44))
+        );
+        assert_eq!(
+            set("apps/mac/Fonts/lmroman10-italic.otf", true, "Italic"),
+            "8000000800100000608000000040"
+        );
+        assert_eq!(
+            set("apps/mac/Fonts/lmmono10-regular.otf", true, "mono"),
+            "8000000000000000001440"
+        );
     }
 
     /// The descriptor's entries as xdvipdfmx's `tt_get_fontdesc` writes
