@@ -305,55 +305,80 @@ impl<'a> Parser<'a> {
                 }
                 (self.i > st).then(|| Obj::Named(self.s[st..self.i].to_vec()))
             }
+            // pdfparse.c's parse_pdf_number: a sign (not the input's last
+            // byte), digits and at most one point up to the next white
+            // space or delimiter; `-`, `.` and `-.` are 0. There are no
+            // indirect references `n g R` in a special (the C parses them
+            // only in a PDF file): `3 0 R` is 3, 0 and a token that is not
+            // an object.
+            b'+' | b'-' | b'.' | b'0'..=b'9' => {
+                let st = self.i;
+                let mut e = st;
+                if matches!(c, b'+' | b'-') {
+                    if st + 1 >= self.s.len() {
+                        return None;
+                    }
+                    e += 1;
+                }
+                let mut dots = 0;
+                while e < self.s.len() && !is_white(self.s[e]) && !is_pdf_delim(self.s[e]) {
+                    match self.s[e] {
+                        b'0'..=b'9' => {}
+                        b'.' if dots == 0 => dots += 1,
+                        _ => return None,
+                    }
+                    e += 1;
+                }
+                self.i = e;
+                Some(Obj::Num(self.s[st..e].to_vec()))
+            }
             _ => {
                 let w = self.word()?;
                 match w {
                     b"null" => Some(Obj::Null),
                     b"true" => Some(Obj::Bool(true)),
                     b"false" => Some(Obj::Bool(false)),
-                    _ if is_number(w) => {
-                        // `n g R`
-                        let save = self.i;
-                        if is_uint(w) {
-                            if let Some(g) = self.word() {
-                                if is_uint(g) && self.keyword(b"R") {
-                                    let n = std::str::from_utf8(w).ok()?.parse().ok()?;
-                                    let g = std::str::from_utf8(g).ok()?.parse().ok()?;
-                                    return Some(Obj::Ref(n, g));
-                                }
-                            }
-                            self.i = save;
-                        }
-                        Some(Obj::Num(w.to_vec()))
-                    }
                     _ => None,
                 }
             }
         }
     }
 
-    /// `/Name` (the `/` included in the input), `#xx` resolved.
+    /// `/Name` (the `/` included in the input), `#xx` resolved, as
+    /// pdfparse.c's parse_pdf_name reads it: a `#` without two hex digits
+    /// after it is dropped with the two bytes after it (whatever they are),
+    /// one too near the end ends the name, `#00` is dropped, and an empty
+    /// name is no name.
     pub fn name(&mut self) -> Option<Vec<u8>> {
         self.skip_white();
         if self.s.get(self.i) != Some(&b'/') {
             return None;
         }
+        let save = self.i;
         self.i += 1;
         let mut out = Vec::new();
-        while self.i < self.s.len() && !is_white(self.s[self.i]) && !is_delim(self.s[self.i]) {
+        while self.i < self.s.len() && !is_white(self.s[self.i]) && !is_pdf_delim(self.s[self.i]) {
             let c = self.s[self.i];
             if c == b'#' {
-                if let (Some(h), Some(l)) = (
-                    self.s.get(self.i + 1).and_then(|&c| hexval(c)),
-                    self.s.get(self.i + 2).and_then(|&c| hexval(c)),
-                ) {
-                    out.push(h * 16 + l);
-                    self.i += 3;
+                if self.i + 2 >= self.s.len() {
+                    self.i = self.s.len();
                     continue;
                 }
+                let (h, l) = (hexval(self.s[self.i + 1]), hexval(self.s[self.i + 2]));
+                self.i += 3;
+                if let (Some(h), Some(l)) = (h, l) {
+                    if h * 16 + l != 0 {
+                        out.push(h * 16 + l);
+                    }
+                }
+                continue;
             }
             out.push(c);
             self.i += 1;
+        }
+        if out.is_empty() {
+            self.i = save;
+            return None;
         }
         Some(out)
     }
@@ -457,8 +482,70 @@ fn hexval(c: u8) -> Option<u8> {
     }
 }
 
-fn is_uint(w: &[u8]) -> bool {
-    !w.is_empty() && w.iter().all(u8::is_ascii_digit)
+/// pdfparse.c's delimiters (no `{` and `}`, which PDF has but the C
+/// does not treat as delimiters).
+fn is_pdf_delim(c: u8) -> bool {
+    matches!(c, b'(' | b')' | b'/' | b'<' | b'>' | b'[' | b']' | b'%')
+}
+
+/// A number of a special's object as xdvipdfmx writes it: the value
+/// pdfparse.c's parse_pdf_number computes from the text (digits after the
+/// point added as `d / 10^k`), written by pdfdev.c's `p_dtoa` with 8
+/// fraction digits (`.5`, `-.5`, `1.5`, `13` for `12.999999999`, `0` for
+/// `-0`). `t` is a number [`Parser`] read.
+pub fn special_number(t: &[u8]) -> Vec<u8> {
+    let (sign, digits) = match t.first() {
+        Some(b'-') => (-1.0, &t[1..]),
+        Some(b'+') => (1.0, &t[1..]),
+        _ => (1.0, t),
+    };
+    let mut v = 0.0f64;
+    let mut frac: Option<i32> = None;
+    for &c in digits {
+        match (c, frac) {
+            (b'.', _) => frac = Some(0),
+            (b'0'..=b'9', None) => v = v * 10.0 + (c - b'0') as f64,
+            (b'0'..=b'9', Some(n)) => {
+                v += (c - b'0') as f64 / 10f64.powf((n + 1) as f64);
+                frac = Some(n + 1);
+            }
+            _ => {}
+        }
+    }
+    p_dtoa(sign * v, 8)
+}
+
+/// pdfdev.c's `p_dtoa(value, prec, buf)`.
+fn p_dtoa(value: f64, prec: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut v = value;
+    if v < 0.0 {
+        v = -v;
+        out.push(b'-');
+    }
+    let mut i = v.trunc();
+    let f = v - i;
+    let p = 10i32.pow(prec);
+    let mut g = (f * p as f64 + 0.5) as i32;
+    if g == p {
+        g = 0;
+        i += 1.0;
+    }
+    if i != 0.0 {
+        let _ = write!(Bytes(&mut out), "{i:.0}");
+    } else if g == 0 {
+        out.clear();
+        out.push(b'0');
+    }
+    if g != 0 {
+        let mut d = format!("{g:0w$}", w = prec as usize).into_bytes();
+        while d.last() == Some(&b'0') {
+            d.pop();
+        }
+        out.push(b'.');
+        out.extend_from_slice(&d);
+    }
+    out
 }
 
 /// `[+-]digits[.digits]`, also `.5` and `5.`.
@@ -576,7 +663,8 @@ mod tests {
     fn objects() {
         assert_eq!(p("null"), Obj::Null);
         assert_eq!(p(" -.5 "), Obj::Num(b"-.5".to_vec()));
-        assert_eq!(p("12 0 R"), Obj::Ref(12, 0));
+        // no `n g R` in a special: the 12 alone
+        assert_eq!(p("12 0 R"), Obj::Num(b"12".to_vec()));
         assert_eq!(p("(a\\(b\\)\\101\\\nc)"), Obj::Str(b"a(b)Ac".to_vec()));
         assert_eq!(p("<48 69>"), Obj::Str(b"Hi".to_vec()));
         assert_eq!(p("<4>"), Obj::Str(vec![0x40]));
@@ -591,15 +679,59 @@ mod tests {
         assert_eq!(arr.as_array().unwrap().len(), 5);
     }
 
+    /// pdfparse.c's object reader on what TeX Live 2026's xdvipdfmx
+    /// measurably does: `pdf:obj @c <</A#41 /x#2 /B#zz /C#20D /E 1>>` is
+    /// `<</AA /x /B /C#20D /E 1>>`; `[true false null /n 3 0 R]` is no
+    /// object; the numbers `0.5 -.5 1. 1.50 +3 0.123456789 -0 007
+    /// .0000000001 12.999999999` are written `.5 -.5 1 1.5 3 .12345679 0 7
+    /// 0 13`.
+    #[test]
+    fn as_xdvipdfmx_reads_them() {
+        let d = p("<</A#41 /x#2 /B#zz /C#20D /E 1>>");
+        let d = d.as_dict().unwrap();
+        assert_eq!(d.0.len(), 3, "{d:?}");
+        assert_eq!(d.get(b"AA"), Some(&Obj::Name(b"x".to_vec())));
+        assert_eq!(d.get(b"B"), Some(&Obj::Name(b"C D".to_vec())));
+        assert_eq!(d.get(b"E"), Some(&Obj::Num(b"1".to_vec())));
+        assert_eq!(Parser::new(b"[true false null /n 3 0 R]").object(), None);
+        assert_eq!(Parser::new(b"<</A 3 0 R>>").object(), None);
+        assert_eq!(Parser::new(b"/").object(), None);
+        assert_eq!(Parser::new(b"1.2.3").object(), None);
+        assert_eq!(p("- "), Obj::Num(b"-".to_vec()));
+        for (t, w) in [
+            ("0.5", ".5"),
+            ("-.5", "-.5"),
+            ("1.", "1"),
+            ("1.50", "1.5"),
+            ("+3", "3"),
+            ("0.123456789", ".12345679"),
+            ("-0", "0"),
+            ("007", "7"),
+            ("1000000", "1000000"),
+            (".0000000001", "0"),
+            ("-.0000000001", "0"),
+            ("12.999999999", "13"),
+            ("-", "0"),
+            (".", "0"),
+            ("595.27559", "595.27559"),
+        ] {
+            assert_eq!(
+                String::from_utf8(special_number(t.as_bytes())).unwrap(),
+                w,
+                "{t}"
+            );
+        }
+    }
+
     #[test]
     fn written_back() {
-        let o = p("<</T(a\\)b\\377)/N/A#20B/R 3 0 R/X[1 -2.50 @x]>>");
+        let o = p("<</T(a\\)b\\377)/N/A#20B/X[1 -2.50 @x]>>");
         let mut out = Vec::new();
         let mut named = |n: &[u8]| (n == b"x").then(|| "7 0 R".to_string());
         Writer { named: &mut named }.write(&o, &mut out);
         assert_eq!(
             String::from_utf8(out).unwrap(),
-            "<</T (a\\)b\\377)/N /A#20B/R 3 0 R/X [1 -2.50 7 0 R]>>"
+            "<</T (a\\)b\\377)/N /A#20B/X [1 -2.50 7 0 R]>>"
         );
     }
 
