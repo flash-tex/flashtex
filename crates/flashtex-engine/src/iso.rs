@@ -420,7 +420,11 @@ pub(crate) fn with_dormant<R>(j: i32, f: impl FnOnce() -> R) -> R {
 ///   a chunk neither state wrote (a node of C, which the full walk pairs
 ///   with itself through its own entry), or that a left-out entry points at
 ///   (a shared structure's first node, `left_out_heads`), is a conflict
-///   (`pair`);
+///   (`pair`). Only entries whose structure is shared through its first
+///   node alone are left out: a macro's or token register's list, a glue
+///   specification, a shape. A box register is walked wherever it lies: a
+///   box's nodes point at shared structures (glue specifications, mark and
+///   write lists) that other roots reach without passing through the box;
 /// * every other root (the static heads, the page, the save, nest and
 ///   input stacks, the arrays, the scalars) is walked in full.
 ///
@@ -903,6 +907,9 @@ pub struct Iso<'a, O: Space, N: Space> {
     /// The restricted walk: the nodes the `eqtb` entries it leaves out
     /// point at (the same in both states), by `mem` address.
     left_out: Option<Vec<u64>>,
+    /// The restricted walk: the box registers in chunks neither state
+    /// wrote, which it walks all the same (`left_out_heads`).
+    boxes_in: Vec<i32>,
 }
 
 /// The hasher of the relocation map (`Iso::fwd`, keyed by `mem` address,
@@ -988,6 +995,7 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             equal_tokens: false,
             written: None,
             left_out: None,
+            boxes_in: Vec::new(),
         }
     }
 
@@ -2556,6 +2564,7 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
                         );
                     }
                 }
+                ps.extend_from_slice(&self.boxes_in);
                 ps
             }
         };
@@ -2586,9 +2595,16 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
     /// and the restricted walk might pair with another address through
     /// another root is one of these (review of #2211, REVIEW-C2 M1: a
     /// replay that swaps which of two macros shares a third's list).
-    fn left_out_heads(&self, written: &[u64]) -> Vec<u64> {
+    ///
+    /// A box register there is not left out but listed for the walk
+    /// (`boxes_in`): what a box reaches is not shared through the box node
+    /// alone (a glue node's specification, a mark's or a write's list are
+    /// shared with other lists and registers), so the full walk's pairing
+    /// of those with themselves through the box is kept only by walking it.
+    fn left_out_heads(&self, written: &[u64]) -> (Vec<u64>, Vec<i32>) {
         let words = (MEM_TOP as usize + 64) / 64 + 1;
         let mut h = vec![0u64; words];
+        let mut boxes = vec![];
         let ho = self.o.sc("hash_high").max(self.n.sc("hash_high"));
         let base = self.o.l.eqtb;
         for p in (1..INT_BASE).chain(EQTB_SIZE + 1..=EQTB_SIZE + ho) {
@@ -2599,15 +2615,21 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             }
             let x = self.o.eqtb(p);
             let t = b0(x);
-            let pointer = matches!(t, CALL..=LONG_OUTER_CALL | GLUE_REF | SHAPE_REF | BOX_REF)
-                || (matches!(t, TOKS_REGISTER | REGISTER)
-                    && !(MEM_BOT..=LO_MEM_STAT_MAX).contains(&rh(x)));
             let q = rh(x);
+            if t == BOX_REF {
+                if q != NULL {
+                    boxes.push(p);
+                }
+                continue;
+            }
+            let pointer = matches!(t, CALL..=LONG_OUTER_CALL | GLUE_REF | SHAPE_REF)
+                || (matches!(t, TOKS_REGISTER | REGISTER)
+                    && !(MEM_BOT..=LO_MEM_STAT_MAX).contains(&q));
             if pointer && Self::in_mem(q) {
                 set(&mut h, q);
             }
         }
-        h
+        (h, boxes)
     }
 
     /// The save stack, group by group as `show_save_groups` reads it:
@@ -3212,7 +3234,9 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             for c in d.written() {
                 v[c as usize >> 6] |= 1 << (c & 63);
             }
-            w.left_out = Some(w.left_out_heads(&v));
+            let (heads, boxes) = w.left_out_heads(&v);
+            w.left_out = Some(heads);
+            w.boxes_in = boxes;
             w.written = Some(v);
         }
         w.toks_later = Some(Vec::new());
