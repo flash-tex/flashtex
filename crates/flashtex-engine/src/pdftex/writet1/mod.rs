@@ -71,19 +71,27 @@ impl Host for Globals {
 }
 
 /// The persistent statics of writet1.c.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Persist {
     /// cs_mark's `static integer lastargOtherSubr3 = 3`.
     last_arg_other_subr3: i32,
+    /// writet1.c's `static integer t1_fontname_offset`: where the last
+    /// subset font's `/FontName` line put its subset tag, in the font
+    /// buffer. C never resets it, so a subset font whose clear part has no
+    /// `/FontName` before `/Encoding` gets its tag written at the offset
+    /// the previous subset font left (pdfTeX asserts only on 0).
+    fontname_offset: i32,
 }
 crate::codec_struct!(Persist {
-    last_arg_other_subr3
+    last_arg_other_subr3,
+    fontname_offset
 });
 
 impl Default for Persist {
     fn default() -> Self {
         Persist {
             last_arg_other_subr3: 3,
+            fontname_offset: 0,
         }
     }
 }
