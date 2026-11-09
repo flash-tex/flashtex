@@ -255,6 +255,32 @@ fn draw_calls_replay_with_their_hole() {
 }
 
 #[test]
+fn an_italic_correction_of_the_tail_before_the_call_never_replays() {
+    // (lane AUDIT-GROUPS, #2267) `\\/` reads its list's tail (tex.web
+    // §1113): as a draw call's first node, the tail from before the call,
+    // which no key holds. On main the kern of the recording's `f` was
+    // replayed after an `x` and after a box. After the call's own `f` it
+    // reads only the call's node, and replays
+    let Some(tfm) = cmr10() else {
+        common::no_texlive();
+        return;
+    };
+    let s = check_with(
+        "italcorr",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\font\\f=cmr10 \\f\n\
+         \\def\\one#1{\\setbox1\\hbox{#1\\relax\\measure{1pt}}\\showbox1 }\n\
+         \\def\\measure#1{\\/\\kern#1\\relax}\n\
+         \\one{f}\\one{f}\\one{x}\\one{\\hbox{}}\n\
+         \\def\\measure#1{f\\/\\kern#1\\relax}\n\
+         \\one{f}\\one{x}\\one{\\hbox{}}\\end\n",
+        &[("cmr10.tfm", tfm)],
+    );
+    assert!(stat(&s, "hits") >= 2, "{s}");
+}
+
+#[test]
 fn calls_ending_in_expansions_replay() {
     // (lane EDITED-PAGE) a body whose last tokens only expand -- LaTeX's
     // `\end`: `\if@endpe ... \fi` and its hooks after the last

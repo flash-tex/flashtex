@@ -3759,6 +3759,12 @@ impl Globals {
             chr != k::a_leaders - 1
         } else if c == k::remove_item || c == k::set_aux {
             self.nest_ptr > outer
+        } else if c == k::ital_corr {
+            // `\\/` reads its list's tail (tex.web §1113): before the call's
+            // first node there, that is a node from before the call, which
+            // no key holds (#2267)
+            let start_tail = self.bm_with_rec(|r| r.start.tail).unwrap_or(0);
+            !(self.nest_ptr == outer && self.cur_list.tail_field == start_tail)
         } else if c == k::make_box {
             if chr == k::vsplit_code {
                 false
