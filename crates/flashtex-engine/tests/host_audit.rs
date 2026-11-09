@@ -580,8 +580,17 @@ impl Audit {
         let mut names: Vec<&String> = ours.keys().chain(fresh.keys()).collect();
         names.sort();
         names.dedup();
+        // A fatal error before the first page writes no PDF, so pdflatex
+        // leaves the last run's in place: the host's may stay, the fresh
+        // run (an empty directory) has none.
+        let out_rel = self.out_sub.map_or(String::new(), |o| format!("{o}/"));
+        let pdf = format!("{out_rel}{}.pdf", self.job());
+        let no_pdf = fresh
+            .get(&format!("{out_rel}{}.log", self.job()))
+            .is_some_and(|l| String::from_utf8_lossy(l).contains("no output PDF file produced"));
         for n in names {
             match (ours.get(n), fresh.get(n)) {
+                (Some(_), None) if no_pdf && *n == pdf => {}
                 (Some(x), Some(y)) => {
                     let (x, y) = (norm(n, x, &self.a), norm(n, y, &b));
                     if x != y {
@@ -2144,6 +2153,309 @@ fn audit_external_tools_auto() {
         std::fs::remove_file(o.join("main.ind")).unwrap();
         t.compile(vec![]);
         t.check("the .bbl and .ind deleted");
+        t.oracle();
+    }
+}
+
+/// A file found in the output directory (pdfTeX looks there after the
+/// search path): written there by another program, changed, shadowed by
+/// one in the project, deleted.
+#[test]
+fn audit_input_from_the_output_directory() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n{}\\IfFileExists{{gen.tex}}{{\\input{{gen}}}}{{No gen.}}\n\n{}\\end{{document}}\n",
+        prose(1, 5),
+        prose(2, 5)
+    );
+    let Some(mut t) = Audit::new("outdir", &[("main.tex", main.as_bytes())], Some("out")) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    std::fs::write(
+        t.a.join("out/gen.tex"),
+        "Generated, in the output directory.\n",
+    )
+    .unwrap();
+    t.compile(vec![]);
+    t.check("out/gen.tex written");
+    std::fs::write(t.a.join("out/gen.tex"), "Generated again, other text.\n").unwrap();
+    t.compile(vec![]);
+    t.check("out/gen.tex changed");
+    std::fs::write(t.a.join("gen.tex"), "The project's own gen.tex.\n").unwrap();
+    t.compile(vec![]);
+    t.check("gen.tex in the project shadows it");
+    std::fs::remove_file(t.a.join("gen.tex")).unwrap();
+    std::fs::remove_file(t.a.join("out/gen.tex")).unwrap();
+    t.compile(vec![]);
+    t.check("both deleted");
+    t.oracle();
+}
+
+/// `\includeonly` leaves the other chapters' `.aux` files as LaTeX reads
+/// them (their counters and labels): one deleted, one rewritten by
+/// another program, while their chapters are left out.
+#[test]
+fn audit_excluded_chapter_aux_changes() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n\\include{{ch1}}\n\\include{{ch2}}\n\\include{{ch3}}\n\\end{{document}}\n"
+    );
+    let ch = |n: usize| {
+        format!(
+            "\\section{{Chapter {n}}}\\label{{s{n}}}\nSee section~\\ref{{s1}} on page~\\pageref{{s1}}.\n\n{}",
+            prose(n, 4)
+        )
+    };
+    let (c1, c2, c3) = (ch(1), ch(2), ch(3));
+    let Some(mut t) = Audit::new(
+        "chaux",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("ch1.tex", c1.as_bytes()),
+            ("ch2.tex", c2.as_bytes()),
+            ("ch3.tex", c3.as_bytes()),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    t.includeonly = Some(vec!["ch3".into()]);
+    t.compile(vec![]);
+    t.check_with("includeonly ch3", true);
+    std::fs::remove_file(t.a.join("ch2.aux")).unwrap();
+    t.compile(vec![]);
+    t.check_with("ch2.aux deleted while left out", true);
+    let p = t.a.join("ch1.aux");
+    let b = std::fs::read_to_string(&p).unwrap();
+    std::fs::write(&p, b.replace("{1}{", "{7}{")).unwrap();
+    t.compile(vec![]);
+    t.check_with("ch1.aux rewritten while left out", true);
+    let e = t.splice(
+        "ch2.tex",
+        "Paragraph 2.1 ",
+        "Paragraph 2.1 edited while left out ",
+    );
+    t.compile(vec![e]);
+    t.check_with("ch2.tex edited while left out", true);
+    t.includeonly = None;
+    t.compile(vec![]);
+    t.check("all chapters again");
+    t.oracle();
+}
+
+/// File names with spaces (`\input{"my part"}`), edited.
+#[test]
+fn audit_file_names_with_spaces() {
+    let main = format!(
+        "{PRE}\\begin{{document}}\n{}\\input{{\"my part\"}}\n{}\\end{{document}}\n",
+        prose(1, 5),
+        prose(2, 5)
+    );
+    let part = prose(3, 4);
+    let Some(mut t) = Audit::new(
+        "spaces",
+        &[
+            ("main.tex", main.as_bytes()),
+            ("my part.tex", part.as_bytes()),
+        ],
+        None,
+    ) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    let e = t.splice("my part.tex", "Paragraph 3.1 ", "Paragraph 3.1 spaced ");
+    t.compile(vec![e]);
+    t.check("my part.tex edited");
+    t.rewrite("my part.tex", "Paragraph 3.2 ", "Paragraph 3.2 outside\n\n");
+    t.compile(vec![]);
+    t.check("my part.tex changed by another program");
+    t.oracle();
+}
+
+/// A file the run writes and later reads back, changed by another program
+/// between compiles (pdflatex writes it again before it reads it), then
+/// an edit after the write: the restart must not read the other
+/// program's version (#1578).
+#[test]
+fn audit_written_file_changed_outside() {
+    let main = format!(
+        "{PRE}\\newwrite\\notes\n\\begin{{document}}\n\\immediate\\openout\\notes=\\jobname.notes\n\
+         \\immediate\\write\\notes{{Note one: alpha.}}\n\\immediate\\closeout\\notes\n{}\
+         Notes: \\input{{\\jobname.notes}}\n\n{}\\end{{document}}\n",
+        prose(1, 12),
+        prose(2, 6)
+    );
+    let Some(mut t) = Audit::new("wrout", &[("main.tex", main.as_bytes())], None) else {
+        return;
+    };
+    t.compile(vec![]);
+    t.check("open");
+    std::fs::write(t.a.join("main.notes"), "Note from another program.\n").unwrap();
+    let e = t.splice("main.tex", "Paragraph 1.10 ", "Paragraph 1.10 x ");
+    t.compile(vec![e]);
+    // the fresh run's copy of main.notes is the other program's too: the
+    // run writes it before it reads it
+    t.check("main.notes changed outside, then an edit after the write");
+}
+
+/// Random edit sequences (`AUDIT_SEEDS`, default 3 seeds of
+/// `AUDIT_STEPS`, default 14, steps): words, paragraphs and line ends
+/// spliced into the main file and two input files, another program's
+/// rewrites, an optional file created and deleted, undo, bursts, a
+/// preamble macro and new cross-references, each step checked against a
+/// fresh run.
+#[test]
+fn audit_random_sequences() {
+    let seeds: u64 = std::env::var("AUDIT_SEEDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let steps: usize = std::env::var("AUDIT_STEPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(14);
+    for seed in 1..=seeds {
+        let main = format!(
+            "{PRE}\\newcommand\\thing{{widget}}\n\\begin{{document}}\n\\tableofcontents\n\\section{{One}}\\label{{one}}\n{}\\input{{a}}\n\\section{{Two}}\\label{{two}}\nSee page~\\pageref{{three}} and the \\thing.\n\n{}\\IfFileExists{{opt.tex}}{{\\input{{opt}}}}{{}}\n\\input{{b}}\n\\section{{Three}}\\label{{three}}\nBack to page~\\pageref{{one}}.\n\n{}\\end{{document}}\n",
+            prose(1, 8),
+            prose(2, 8),
+            prose(5, 6)
+        );
+        let Some(mut t) = Audit::new(
+            &format!("random{seed}"),
+            &[
+                ("main.tex", main.as_bytes()),
+                ("a.tex", prose(3, 8).as_bytes()),
+                ("b.tex", prose(4, 8).as_bytes()),
+            ],
+            None,
+        ) else {
+            return;
+        };
+        let mut x = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut rnd = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        t.compile(vec![]);
+        t.check("open");
+        let files = ["main.tex", "a.tex", "b.tex"];
+        // a splice site: "Paragraph S.P " in one of the files
+        let site = |t: &Audit, f: &str, k: usize| -> Option<String> {
+            let text = std::fs::read_to_string(t.a.join(f)).ok()?;
+            let all: Vec<&str> = text
+                .match_indices("Paragraph ")
+                .filter_map(|(i, _)| {
+                    let rest = &text[i..];
+                    let end = rest[10..].find(' ')? + 11;
+                    Some(&rest[..end])
+                })
+                .collect();
+            (!all.is_empty()).then(|| all[k % all.len()].to_string())
+        };
+        let mut undo: Option<Edit> = None;
+        for step in 0..steps {
+            let op = rnd(9);
+            let f = files[rnd(3)];
+            let k = rnd(1000);
+            let what;
+            match op {
+                0..=2 => {
+                    let Some(s) = site(&t, f, k) else { continue };
+                    let ins = match op {
+                        0 => format!("{s}word{step} "),
+                        1 => format!("{}{s}", prose(30 + step, 1)),
+                        _ => format!("{}\n", s.trim_end()),
+                    };
+                    let e = t.splice(f, &s, &ins);
+                    undo = Some(Edit {
+                        delete: ins.len() as u64,
+                        insert: s.clone(),
+                        ..e.clone()
+                    });
+                    what = format!("step {step}: splice {op} in {f} at {s:?}");
+                    t.compile(vec![e]);
+                }
+                3 => {
+                    if f == "main.tex" {
+                        continue;
+                    }
+                    let Some(s) = site(&t, f, k) else { continue };
+                    t.rewrite(f, &s, &format!("{s}outside{step}\n\n"));
+                    undo = None;
+                    what = format!("step {step}: {f} rewritten outside");
+                    t.compile(vec![]);
+                }
+                4 => {
+                    let p = t.a.join("opt.tex");
+                    if p.exists() {
+                        std::fs::remove_file(&p).unwrap();
+                        what = format!("step {step}: opt.tex deleted");
+                    } else {
+                        std::fs::write(&p, prose(40 + step, 1)).unwrap();
+                        what = format!("step {step}: opt.tex created");
+                    }
+                    t.compile(vec![]);
+                }
+                5 => {
+                    let Some(e) = undo.take() else { continue };
+                    what = format!("step {step}: undo in {}", e.path);
+                    t.compile(vec![e]);
+                }
+                6 => {
+                    // a burst: two splices in one file, the second after the
+                    // first's text (offsets of the text after the first)
+                    let (Some(s1), Some(s2)) = (site(&t, f, k), site(&t, f, k + 1)) else {
+                        continue;
+                    };
+                    if s1 == s2 {
+                        continue;
+                    }
+                    let e1 = t.splice(f, &s1, &format!("{s1}b{step} "));
+                    let e2 = t.splice(f, &s2, &format!("{s2}c{step}\n\n"));
+                    let e2 = if e2.offset > e1.offset {
+                        Edit {
+                            offset: e2.offset + e1.insert.len() as u64 - e1.delete,
+                            ..e2
+                        }
+                    } else {
+                        e2
+                    };
+                    undo = None;
+                    what = format!("step {step}: a burst in {f}");
+                    t.burst(vec![vec![e1], vec![e2]]);
+                }
+                7 => {
+                    let text = std::fs::read_to_string(t.a.join("main.tex")).unwrap();
+                    let at = text.find("\\thing{").unwrap() + 7;
+                    let end = text[at..].find('}').unwrap() + at;
+                    let old = text[at..end].to_string();
+                    let e = Edit {
+                        path: "main.tex".into(),
+                        offset: at as u64,
+                        delete: old.len() as u64,
+                        insert: format!("gadget{step}"),
+                    };
+                    undo = None;
+                    what = format!("step {step}: the preamble macro changed");
+                    t.compile(vec![e]);
+                }
+                _ => {
+                    let Some(s) = site(&t, f, k) else { continue };
+                    let ins = format!("\\label{{l{step}}}See page~\\pageref{{l{step}}}. {s}");
+                    let e = t.splice(f, &s, &ins);
+                    undo = None;
+                    what = format!("step {step}: a label and its \\pageref in {f}");
+                    t.compile(vec![e]);
+                }
+            }
+            t.check(&what);
+        }
         t.oracle();
     }
 }
