@@ -1988,6 +1988,92 @@ fn a_converged_run_writes_what_a_run_of_its_own_writes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The line-break iterator across a restart from a page (`crate::conv`'s
+/// branch restore): the old run left XeTeX_ext.c's iterator open for the
+/// locale string `"zh"`; an edit to `"ja"` makes the same string number
+/// in the restarted run, so `linebreak_start` keeps whatever iterator the
+/// restore left open. The restarted run must break the Japanese text as a
+/// run of its own does (ICU's `line_normal`, not `line_cj`).
+#[test]
+fn a_restart_from_a_page_reopens_the_line_break_iterator_it_had() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-brk-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let ja = "あぁいぃうぅえぇおぉかっきゃくゅけょこゎ「漢字」ー々ゝゞヽヾ…‥。、！？・ァアィイ";
+    let mut body = String::new();
+    for i in 1..=24 {
+        body.push_str(&format!("\\section{{Part {i}}}\n"));
+        if i == 4 {
+            body.push_str("\\XeTeXlinebreaklocale \"zh\"\n");
+        }
+        for _ in 0..3 {
+            body.push_str(&para.repeat(2));
+            if i >= 4 {
+                body.push_str(&ja.repeat(3));
+            }
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\setmainfont{{ipaexm.ttf}}\n\
+         \\XeTeXlinebreakskip=0pt plus 1pt\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let edited = doc.replacen(
+        "\\XeTeXlinebreaklocale \"zh\"",
+        "\\XeTeXlinebreaklocale \"ja\"",
+        1,
+    );
+    assert_ne!(doc, edited);
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let err = sub.join("host.err");
+    let o = Path::new(&out);
+    let compile = |c: &mut Client, id: i64, text: &str| {
+        let mut r = request(id, &proj, &out);
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        events(c, id).1
+    };
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_CONV_DEBUG", "1"),
+        ],
+        &err,
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    compile(&mut c, 1, &doc);
+    compile(&mut c, 2, &doc);
+    let done = compile(&mut c, 3, &edited);
+    let got = std::fs::read(o.join("main.pdf")).unwrap();
+    c.bye().unwrap();
+    drop(h);
+    let log = std::fs::read_to_string(&err).unwrap();
+    assert!(log.contains("[conv]"), "no restart from a page: {log}");
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_INPROCESS", "0"),
+        ],
+        &sub.join("host2.err"),
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    compile(&mut c, 1, &edited);
+    compile(&mut c, 2, &edited);
+    let want = std::fs::read(o.join("main.pdf")).unwrap();
+    c.bye().unwrap();
+    drop(h);
+    assert!(got == want, "the PDFs differ ({done:?}): {log}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The convergence jump with unicode-math (changes/checkpoint.ch, "Dead
 /// native characters"): every script in an OpenType math font leaves a
 /// native character node xetex.web never frees, at a place that moves with
