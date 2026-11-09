@@ -2424,6 +2424,9 @@ impl Globals {
     pub fn alter_box_dimen(&mut self) {
         let mut c: small_number = 0; // §1301
         let mut b: halfword = 0; // §1301
+        if self.intr_verify_on {
+            self.flashtex_intr_op(6i32, 0i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_register_num();
         if (self.cur_val < 256i32) {
@@ -3670,6 +3673,9 @@ impl Globals {
         let mut c: i32 = 0; // §1329
         let mut n: i32 = 0; // §1329
         let mut k: i32 = 0; // §1329
+        if self.intr_verify_on {
+            self.flashtex_intr_op(16i32, 0i32, 0i32, 0i32);
+        }
         c = self.cur_chr;
         self.scan_four_bit_int();
         n = self.cur_val;
@@ -5471,6 +5477,9 @@ impl Globals {
             XeTeX_input_encoding_extension_code => {
                 // §1446
                 {
+                    if self.intr_verify_on {
+                        self.flashtex_intr_op(16i32, 0i32, 0i32, 0i32);
+                    }
                     self.scan_and_pack_name();
                     i = { let mut __f0 = ::core::mem::take(&mut j); let __r = self.get_encoding_mode_and_info(&mut __f0); j = __f0; __r };
                     if (i == XeTeX_input_mode_auto) {
@@ -5922,7 +5931,14 @@ impl Globals {
                 if (self.ckpt_request != 0i32) {
                     self.flashtex_checkpoint_hook();
                 }
+                if self.intr_verify_on {
+                    self.flashtex_intr_switch();
+                }
+                self.intr_at_switch = self.intr_verify_on;
+                self.intr_in_switch = self.intr_verify_on;
                 self.get_x_token();
+                self.intr_at_switch = false;
+                self.intr_in_switch = false;
             }
             if __goto_1 <= 2 { // reswitch
                 if (self.interrupt != 0i32) {

@@ -1185,6 +1185,9 @@ impl Globals {
     /// `sa_def` for count and dimen registers is called `sa_w_def`.
     // §1650
     pub fn sa_def(&mut self, mut p: halfword, mut e: halfword) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(5i32, 0i32, 0i32, 0i32);
+        }
         { let __v162 = (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v162); }
         if (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh() == e) {
             {
@@ -1219,6 +1222,9 @@ impl Globals {
     /// `sa_def` for count and dimen registers is called `sa_w_def`.
     // §1650
     pub fn sa_w_def(&mut self, mut p: halfword, mut w: i32) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(5i32, 0i32, 0i32, 0i32);
+        }
         { let __v164 = (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v164); }
         if (self.mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int() == w) {
             {
@@ -1250,6 +1256,9 @@ impl Globals {
     /// @<Declare \eTeX\ procedures for tr...
     // §1651
     pub fn gsa_def(&mut self, mut p: halfword, mut e: halfword) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(5i32, 0i32, 0i32, 0i32);
+        }
         { let __v166 = (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v166); }
         if (self.eqtb[crate::ix::U(((7892325i32) - 1) as usize)].int() > 0i32) {
             self.show_sa(p, 65862i32);
@@ -1269,6 +1278,9 @@ impl Globals {
     /// @<Declare \eTeX\ procedures for tr...
     // §1651
     pub fn gsa_w_def(&mut self, mut p: halfword, mut w: i32) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(5i32, 0i32, 0i32, 0i32);
+        }
         { let __v167 = (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v167); }
         if (self.eqtb[crate::ix::U(((7892325i32) - 1) as usize)].int() > 0i32) {
             self.show_sa(p, 65862i32);
@@ -1344,6 +1356,9 @@ impl Globals {
     /// appears in location `save_ptr+k` of the save stack.
     // §304
     pub fn new_save_level(&mut self, mut c: group_code) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(3i32, c, 0i32, 0i32);
+        }
         if (self.save_ptr > self.max_save_stack) {
             {
                 self.max_save_stack = self.save_ptr;
@@ -1446,6 +1461,9 @@ impl Globals {
     // §307
     pub fn eq_define(&mut self, mut p: halfword, mut t: quarterword, mut e: halfword) {
         'l_exit_f: {
+            if self.intr_verify_on {
+                self.flashtex_intr_op(1i32, p, t, e);
+            }
             if (((self.eTeX_mode == 1i32) && (self.eqtb[crate::ix::U(((p) - 1) as usize)].hh().b0() == t)) && (self.eqtb[crate::ix::U(((p) - 1) as usize)].hh().rh() == e)) {
                 {
                     if (self.eqtb[crate::ix::U(((7892325i32) - 1) as usize)].int() > 0i32) {
@@ -1480,6 +1498,9 @@ impl Globals {
     // §308
     pub fn eq_word_define(&mut self, mut p: halfword, mut w: i32) {
         'l_exit_f: {
+            if self.intr_verify_on {
+                self.flashtex_intr_op(2i32, p, w, 0i32);
+            }
             if ((self.eTeX_mode == 1i32) && (self.eqtb[crate::ix::U(((p) - 1) as usize)].int() == w)) {
                 {
                     if (self.eqtb[crate::ix::U(((7892325i32) - 1) as usize)].int() > 0i32) {
@@ -1509,6 +1530,9 @@ impl Globals {
     /// to save old values, and the new value is associated with `level_one`.
     // §309
     pub fn geq_define(&mut self, mut p: halfword, mut t: quarterword, mut e: halfword) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(9i32, p, t, e);
+        }
         if (self.eqtb[crate::ix::U(((7892325i32) - 1) as usize)].int() > 0i32) {
             self.restore_trace(p, 65862i32);
         }
@@ -1528,6 +1552,9 @@ impl Globals {
     /// to save old values, and the new value is associated with `level_one`.
     // §309
     pub fn geq_word_define(&mut self, mut p: halfword, mut w: i32) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(10i32, p, w, 0i32);
+        }
         if (self.eqtb[crate::ix::U(((7892325i32) - 1) as usize)].int() > 0i32) {
             self.restore_trace(p, 65862i32);
         }
@@ -1543,6 +1570,9 @@ impl Globals {
     /// Subroutine `save_for_after` puts a token on the stack for save-keeping.
     // §310
     pub fn save_for_after(&mut self, mut t: halfword) {
+        if self.intr_verify_on {
+            self.flashtex_intr_op(17i32, self.cur_level, 0i32, 0i32);
+        }
         if (self.cur_level > level_one) {
             {
                 if (self.save_ptr > self.max_save_stack) {
@@ -1571,6 +1601,9 @@ impl Globals {
         let mut t: halfword = 0; // §311
         let mut a: bool = false; // §311
         a = false;
+        if self.intr_verify_on {
+            self.flashtex_intr_op(4i32, 0i32, 0i32, 0i32);
+        }
         if (self.cur_level > level_one) {
             {
                 'l_done_f: {
@@ -3159,6 +3192,11 @@ impl Globals {
                     } else {
                         {
                             self.end_token_list();
+                            if self.intr_verify_on {
+                                if self.intr_in_switch {
+                                    self.flashtex_intr_popped();
+                                }
+                            }
                             { __goto_1 = 0; continue 'l_dispatch_1; }
                         }
                     }
@@ -3288,6 +3326,10 @@ impl Globals {
             self.flashtex_poll();
             save_scanner_status = self.scanner_status;
             save_warning_index = self.warning_index;
+            if self.intr_verify_on {
+                self.flashtex_intr_observe();
+            }
+            self.intr_at_switch = false;
             self.warning_index = self.cur_cs;
             ref_count = self.cur_chr;
             r = self.mem[crate::ix::U((ref_count) as usize)].hh().rh();
@@ -3996,6 +4038,7 @@ impl Globals {
         co_backup = self.cur_order;
         backup_backup = self.mem[crate::ix::U((backup_head) as usize)].hh().rh();
         'l_reswitch_b: loop {
+            self.intr_at_switch = false;
             if (self.cur_cmd < call) {
                 // §399
                 {
