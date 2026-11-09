@@ -73,10 +73,12 @@ class Minimizer:
         self.extra = []
         for n in sorted(os.listdir(case_dir)):
             p = os.path.join(case_dir, n)
-            if n.endswith(".tex"):
+            if n in ("t.tex", "u.tex"):
                 with open(p) as f:
                     self.files[n] = f.read()
-            elif n.endswith(".tfm"):
+            elif n.endswith((".tfm", ".tex")):
+                # data the case reads (--grammar align-plain: plain.tex,
+                # hyphen.tex), copied as it is
                 self.extra.append(p)
         self.work = tempfile.mkdtemp(prefix="fr-min-")
         self.runs = 0
