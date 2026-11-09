@@ -407,8 +407,7 @@ fn aux_chain_in(
         return;
     };
     let total: u64 = files.iter().map(|(_, d)| d.len() as u64).sum();
-    if seen.contains(&real)
-        || !std::fs::metadata(&real).is_ok_and(|m| total + m.len() <= MAX_INPUT)
+    if seen.contains(&real) || !std::fs::metadata(&real).is_ok_and(|m| total + m.len() <= MAX_INPUT)
     {
         return;
     }
