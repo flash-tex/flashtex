@@ -961,7 +961,13 @@ impl Host {
                             Err(e) => {
                                 ndiag += 1;
                                 errors += 1;
-                                let m = format!("could not write {}: {e}", path.display());
+                                // No path when the output directory itself
+                                // is missing: name the file instead.
+                                let m = if path.as_os_str().is_empty() {
+                                    format!("could not write {}.pdf: {e}", req.jobname)
+                                } else {
+                                    format!("could not write {}: {e}", path.display())
+                                };
                                 c.json(kind::DIAGNOSTIC, &simple_diag(id, "error", &m))?;
                                 None
                             }
